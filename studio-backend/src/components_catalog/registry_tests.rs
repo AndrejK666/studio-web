@@ -786,6 +786,7 @@ fn only_an_organization_scope_connection_serves_the_gear_repository() {
     };
     let ok = gear_repository_of(
         &input,
+        ORG,
         Some((ORG, "organization", "Acme GitHub")),
         Some("u7".into()),
         "t".into(),
@@ -798,8 +799,8 @@ fn only_an_organization_scope_connection_serves_the_gear_repository() {
     assert_eq!(ok.set_by.as_deref(), Some("u7"));
 
     for scope in ["personal", "workspace", ""] {
-        let refused =
-            gear_repository_of(&input, Some((ORG, scope, "mine")), None, "t".into()).unwrap_err();
+        let refused = gear_repository_of(&input, ORG, Some((ORG, scope, "mine")), None, "t".into())
+            .unwrap_err();
         let GearRepositoryError::NotShared { scope: named, hint } = &refused else {
             panic!("{scope}: {refused:?}");
         };
@@ -812,8 +813,22 @@ fn only_an_organization_scope_connection_serves_the_gear_repository() {
         "the walk's wording: {personal}"
     );
     assert_eq!(
-        gear_repository_of(&input, None, None, "t".into()).unwrap_err(),
+        gear_repository_of(&input, ORG, None, None, "t".into()).unwrap_err(),
         GearRepositoryError::UnknownConnection(Uuid::from_u128(0xc0))
+    );
+    // A connection found by walking up -- the platform's root's -- is not
+    // the organization's, however it is scoped.
+    let root = crate::components_catalog::tiers::PLATFORM_TENANT;
+    assert_eq!(
+        gear_repository_of(
+            &input,
+            ORG,
+            Some((root, "organization", "Platform GitHub")),
+            None,
+            "t".into()
+        )
+        .unwrap_err(),
+        GearRepositoryError::NotOwned { tenant: root }
     );
     for bad in ["acme", "acme/gears/extra", "", "a b/c"] {
         let input = GearRepositoryInput {
@@ -822,7 +837,13 @@ fn only_an_organization_scope_connection_serves_the_gear_repository() {
         };
         assert!(
             matches!(
-                gear_repository_of(&input, Some((ORG, "organization", "x")), None, "t".into()),
+                gear_repository_of(
+                    &input,
+                    ORG,
+                    Some((ORG, "organization", "x")),
+                    None,
+                    "t".into()
+                ),
                 Err(GearRepositoryError::InvalidRepo(_))
             ),
             "{bad}"
@@ -835,6 +856,7 @@ fn only_an_organization_scope_connection_serves_the_gear_repository() {
     assert_eq!(
         gear_repository_of(
             &defaulted,
+            ORG,
             Some((ORG, "organization", "")),
             None,
             "t".into()

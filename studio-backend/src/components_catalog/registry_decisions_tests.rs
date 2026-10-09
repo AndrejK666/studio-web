@@ -358,7 +358,10 @@ fn a_merge_folds_the_name_and_its_aliases_into_a_live_target() {
     assert_eq!(applied.entry.state, STATE_MERGED);
     assert_eq!(applied.entry.merged_into.as_deref(), Some("billing"));
     assert!(applied.entry.aliases.is_empty());
-    assert!(applied.entry.orphaned);
+    assert!(
+        !applied.entry.orphaned,
+        "a merged entry is not one no repository declares any more"
+    );
     let (id, into) = applied.target.unwrap();
     assert_eq!(id, "id-t");
     assert_eq!(into.state, STATE_REGISTERED, "the target keeps its state");
@@ -554,6 +557,7 @@ async fn a_merge_repoints_occurrences_and_a_later_walk_puts_the_alias_on_the_tar
     assert_eq!(source.entry.state, STATE_MERGED);
     assert_eq!(source.entry.merged_into.as_deref(), Some("billing"));
     assert!(source.occurrences.is_empty(), "its occurrences moved");
+    assert!(!source.entry.orphaned, "merged, not orphaned");
     assert_eq!(decisions[0].details["merge_into"], "billing");
 
     let (target, target_decisions) = svc
@@ -586,6 +590,11 @@ async fn a_merge_repoints_occurrences_and_a_later_walk_puts_the_alias_on_the_tar
     let source = all.iter().find(|e| e.entry.name == "billing-v1").unwrap();
     assert_eq!(source.entry.state, STATE_MERGED);
     assert!(source.occurrences.is_empty());
+    assert!(
+        !source.entry.orphaned,
+        "the walk does not count a merged entry as orphaned"
+    );
+    assert!(all.iter().all(|e| !e.entry.orphaned));
     let target = all.iter().find(|e| e.entry.name == "billing").unwrap();
     assert_eq!(target.occurrences.len(), 2);
     assert!(

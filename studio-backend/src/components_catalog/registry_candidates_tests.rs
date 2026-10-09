@@ -325,3 +325,51 @@ fn a_project_candidate_is_offered_to_spec_mapping_and_a_declaration_wins() {
     );
     assert!(nodes.iter().all(|n| n["origin"] == "project"));
 }
+
+/// "Copied in" is evidence about other occurrences: when one of them goes
+/// (its project excluded), the occurrences left -- not read again -- and the
+/// candidate entry stop saying it.
+#[test]
+fn copy_evidence_goes_with_the_occurrence_it_was_about() {
+    let mut store = Store::default();
+    let mut reads = vec![
+        read(
+            P1,
+            "f1",
+            Vec::new(),
+            vec![candidate("hooks", "src/hooks", "m1")],
+        ),
+        read(
+            P2,
+            "f2",
+            Vec::new(),
+            vec![candidate("hooks", "src/hooks", "m1")],
+        ),
+    ];
+    crate::components_catalog::candidates::apply_copies(&mut reads, &[]);
+    store.run(&walk("t1", reads));
+    let copied = |evidence: &[Evidence]| {
+        evidence
+            .iter()
+            .any(|e| e.signal == crate::components_catalog::candidates::SIGNAL_COPIED)
+    };
+    let e = store.entry("hooks");
+    assert!(copied(&e.evidence), "{:?}", e.evidence);
+    assert_eq!(e.score, Some(8));
+
+    // P2 is excluded; P1 is resolved but unchanged, so not read again.
+    let mut w = walk("t2", Vec::new());
+    w.in_scope = Some([P1].into_iter().collect());
+    w.projects_resolved = [P1].into_iter().collect();
+    w.resolved = [(P1, "k257".to_string())].into_iter().collect();
+    let plan = store.run(&w);
+    assert_eq!(plan.occurrences_removed, 1);
+    assert_eq!(store.occurrences.len(), 1);
+    let (_, occ) = &store.occurrences[0];
+    assert_eq!(occ.project_id, Some(P1));
+    assert!(!copied(&occ.evidence), "{:?}", occ.evidence);
+    assert_eq!(occ.score, Some(6));
+    let e = store.entry("hooks");
+    assert!(!copied(&e.evidence), "{:?}", e.evidence);
+    assert_eq!(e.score, Some(6));
+}

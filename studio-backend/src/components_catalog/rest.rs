@@ -1678,6 +1678,9 @@ pub struct RegistryDecisionRequest {
     pub merge_into: Option<String>,
     /// For `mark_published`: the version the platform published.
     pub version: Option<String>,
+    /// For `publish` only: answer the target repository, branch, path and
+    /// files in `publish_preview`, writing and recording nothing.
+    pub dry_run: Option<bool>,
 }
 
 /// One component of the organization's registry.
@@ -1727,6 +1730,29 @@ pub struct RegistryEntryDto {
     /// The decisions made about it, newest first. Only on the single-entry
     /// read and a decision's answer; null in the list.
     pub decisions: Option<Vec<RegistryDecisionDto>>,
+    /// What a `publish` with `dry_run: true` would write; null otherwise.
+    pub publish_preview: Option<RegistryPublishPreviewDto>,
+}
+
+/// What publishing would write into the platform's gear repository: the
+/// answer of a `publish` decision with `dry_run: true`.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryPublishPreviewDto {
+    /// The platform's gear repository, `owner/name`.
+    pub repo: String,
+    /// The branch the pull request goes back to.
+    pub base_branch: String,
+    /// `contribute/<organization>/<name>`.
+    pub branch: String,
+    /// Where the gear's files go in the platform's repository.
+    pub path: String,
+    /// The files, at their places there.
+    pub files: Vec<String>,
+    /// What is not copied (not text), relative to the gear's directory.
+    pub skipped: Vec<String>,
+    /// The pull request's title.
+    pub title: String,
 }
 
 /// A gear given to the platform: the pull request into the platform's gear
@@ -1822,6 +1848,10 @@ pub struct RegistryDeclareResultDto {
     pub repo: String,
     pub path: String,
     pub dry_run: bool,
+    /// The manifest written: `gear.gdl` (the Gearbox engine's description)
+    /// when the engine is configured, else `gear.toml` -- and always
+    /// `gear.toml` inside a crate's `src/`.
+    pub manifest: String,
 }
 
 /// The registry, narrowed and paged.
@@ -1963,6 +1993,22 @@ pub(crate) fn registry_entry_dto(e: super::registry::RegistryEntry) -> RegistryE
             })
             .collect(),
         decisions: None,
+        publish_preview: None,
+    }
+}
+
+/// A publish's plan as a dry run answers it.
+pub(crate) fn publish_preview_dto(
+    p: super::registry_publish::PublishPlan,
+) -> RegistryPublishPreviewDto {
+    RegistryPublishPreviewDto {
+        repo: p.target.repo,
+        base_branch: p.target.base_branch,
+        branch: p.branch,
+        path: p.path,
+        files: p.files.into_iter().map(|f| f.path).collect(),
+        skipped: p.skipped,
+        title: p.text.title,
     }
 }
 
@@ -2022,6 +2068,7 @@ fn decision_input(body: RegistryDecisionRequest) -> super::registry_decisions::D
         merge_into: body.merge_into,
         version: body.version,
         contribution: None,
+        dry_run: body.dry_run.unwrap_or(false),
     }
 }
 
@@ -2372,20 +2419,31 @@ impl Catalog {
             .ok()
     }
 
-    /// The caller as a person, when studio-user can say; else the token's
-    /// subject, which is what a decision records then.
+    /// The caller as a person with the name their profile carries, when
+    /// studio-user can say; else the token's subject and no name, which is
+    /// what a decision records then. The name is stored on the decision
+    /// (`by_name`), so the page shows a person, not an id.
     async fn decider(&self, ctx: &SecurityContext) -> super::registry_decisions::Decider {
         let person = match self
             .hub
             .get_scoped::<dyn crate::user_profile::PersonResolver>(&ClientScope::gts_id(
                 crate::user_profile::IDENTITY_INSTANCE_ID,
             )) {
-            Ok(people) => people.resolve_caller(ctx).await.ok(),
+            Ok(people) => match people.resolve_caller_named(ctx).await {
+                Ok(named) => Some(named),
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), "components-catalog: the decider could not be resolved as a person; the token's subject is recorded");
+                    None
+                }
+            },
             Err(_) => None,
         };
-        super::registry_decisions::Decider {
-            id: person.unwrap_or_else(|| ctx.subject_id().to_string()),
-            name: None,
+        match person {
+            Some((id, name)) => super::registry_decisions::Decider { id, name },
+            None => super::registry_decisions::Decider {
+                id: ctx.subject_id().to_string(),
+                name: None,
+            },
         }
     }
 }
@@ -2402,7 +2460,17 @@ async fn decide_registry_entry(
             .create());
     }
     let input = decision_input(body);
-    match super::registry_decisions::Action::parse(&input.action) {
+    let action = super::registry_decisions::Action::parse(&input.action);
+    if input.dry_run && action != Some(super::registry_decisions::Action::Publish) {
+        return Err(StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(
+                "dry_run",
+                "only a publish has a dry run; every other decision is recorded as made",
+                "INVALID",
+            )
+            .create());
+    }
+    match action {
         // Publishing opens a pull request into the platform (ADR-0042 §4).
         Some(super::registry_decisions::Action::Publish) => {
             return publish::publish(&catalog, &ctx, &name, &input).await;
@@ -2478,6 +2546,9 @@ fn declare_problem(e: super::registry_declare::DeclareError) -> CanonicalError {
         }
         E::NoOccurrence => precondition("occurrence".to_owned(), "REGISTRY_NO_OCCURRENCE"),
         E::NoConnection => precondition("connection".to_owned(), "REGISTRY_CONNECTION_UNKNOWN"),
+        E::NotOwnConnection { tenant } => {
+            precondition(format!("connection:{tenant}"), "CONNECTION_NOT_OWNED")
+        }
     }
 }
 
@@ -2496,6 +2567,7 @@ fn declared_dto(d: super::registry_declare::Declared, dry_run: bool) -> Registry
         repo: d.repo,
         path: d.path,
         dry_run,
+        manifest: d.manifest,
     }
 }
 
@@ -2777,8 +2849,13 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
              the entry stays registered with its `contribution`, and becomes \
              `published` when the platform's catalogue has it; 400 \
              `failed_precondition` when the platform has no gear repository, \
-             nothing declares the entry, or the directory is larger; 503 \
-             without studio-product), `mark_published` (registered to \
+             nothing declares the entry, the directory is larger, or the \
+             entry's repository is read through a connection the organization \
+             only inherits (`CONNECTION_NOT_OWNED`); 503 without \
+             studio-product; with `dry_run: true` it writes and records \
+             nothing and answers the target repository, branches, path and \
+             files in `publish_preview` -- a dry run is a publish's only), \
+             `mark_published` (registered to \
              published, optionally with the platform's `version`; a platform \
              administrator only, for when the names differ), `merge` (into the \
              existing entry `merge_into`, \
@@ -2817,10 +2894,14 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .description(
             "Declare it (ADR-0041 P3), for a `candidate` entry: opens a pull request \
              in the repository the candidate was detected in, through that \
-             repository's connection and in its project's tenant, adding a \
-             `gear.toml` -- and the Gearbox engine's `gear.gdl` when one is \
-             configured, outside a crate's `src/` -- in the module's directory, on \
-             the branch `declare/<name>`. The body is optional: `description`, \
+             repository's connection and in its project's tenant, adding the \
+             module's manifest in its directory on the branch `declare/<name>`: \
+             the Gearbox engine's `gear.gdl` when the engine is configured, else \
+             a `gear.toml` -- and always a `gear.toml` inside a crate's `src/`, \
+             where the catalogue skips a `gear.gdl`. `manifest` says which. A \
+             repository read through a connection the organization only \
+             inherits (the platform's) is refused (400 `CONNECTION_NOT_OWNED`). \
+             The body is optional: `description`, \
              `capabilities` and `category` override the entry's own; `project_id` \
              picks the occurrence when the candidate was found in several; \
              `dry_run` answers the files and writes nothing. A `declare` decision \

@@ -123,6 +123,9 @@ pub struct DeclarationSpec {
     pub plugin: bool,
 }
 
+/// Which manifest a declaration's paths write: `gear.gdl` or `gear.toml`.
+pub use super::skeleton::declaration_manifest;
+
 /// One file a declaration writes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeclarationFile {

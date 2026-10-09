@@ -34,6 +34,11 @@ describe("the organization's gear repository", () => {
       conn("4", "Jira", "organization", "jira"),
     ]);
     expect(offered.map((c) => c.id)).toEqual(["3", "1", "2"]);
+    // One the organization only inherits (the platform's) is not offered:
+    // the server refuses it as not the organization's own.
+    const inherited = { ...conn("5", "Platform GitHub", "organization"), owner_tenant_id: "root" };
+    expect(gearRepoConnections([conn("3", "Acme", "organization"), inherited], "org").map((c) => c.id)).toEqual(["3"]);
+    expect(gearRepoConnections([inherited]).map((c) => c.id)).toEqual(["5"]);
     expect(isOrganizationScope("organization")).toBe(true);
     expect(isOrganizationScope("org")).toBe(true);
     expect(isOrganizationScope("workspace")).toBe(false);

@@ -401,3 +401,119 @@ async fn only_a_platform_administrator_runs_the_platforms_catalogue() {
     // Without studio-user nobody can be shown to be one.
     assert!(!may_run_platform(None, &caller).await);
 }
+
+/// An organization's sync does not read what the platform already does:
+/// the shadowed sources, and the default crates.io keyword while the
+/// platform syncs crates.io. Its own sources and its own keyword stay.
+#[test]
+fn an_organizations_sync_leaves_to_the_platform_what_the_platform_reads() {
+    use crate::components_catalog::service::SyncSources;
+    let source = |repo: &str, mode: &str| RepoSource {
+        tenant: ORG,
+        connection_id: None,
+        repo: repo.to_owned(),
+        git_ref: String::new(),
+        mode: mode.to_owned(),
+    };
+    let platform = vec![source("constructorfabric/gears-rust", "gears")];
+    let sources = || SyncSources {
+        crates_io: Some("constructorfabric".to_owned()),
+        repos: vec![
+            source("ConstructorFabric/gears-rust", ""),
+            source("constructorfabric/gears-rust", "kits"),
+            source("acme/gears", "gears"),
+        ],
+        registry: true,
+        ..SyncSources::default()
+    };
+
+    let mut s = sources();
+    let left = leave_to_platform(
+        &mut s,
+        &platform,
+        Some("constructorfabric"),
+        "constructorfabric",
+    );
+    assert_eq!(
+        left,
+        [
+            "ConstructorFabric/gears-rust (gears)",
+            "crates.io keyword `constructorfabric`"
+        ]
+    );
+    let kept: Vec<&str> = s.repos.iter().map(|r| r.repo.as_str()).collect();
+    assert_eq!(kept, ["constructorfabric/gears-rust", "acme/gears"]);
+    assert_eq!(s.crates_io, None);
+    assert!(s.registry, "the registry walk is the organization's own");
+
+    // The default keyword stays while the platform syncs no crates.io.
+    let mut s = sources();
+    let left = leave_to_platform(&mut s, &platform, None, "constructorfabric");
+    assert_eq!(left, ["ConstructorFabric/gears-rust (gears)"]);
+    assert_eq!(s.crates_io.as_deref(), Some("constructorfabric"));
+
+    // An organization's own keyword is synced, whatever the platform's.
+    let mut s = SyncSources {
+        crates_io: Some("acme-gears".to_owned()),
+        ..sources()
+    };
+    leave_to_platform(
+        &mut s,
+        &platform,
+        Some("constructorfabric"),
+        "constructorfabric",
+    );
+    assert_eq!(s.crates_io.as_deref(), Some("acme-gears"));
+
+    // The platform's keyword, named by the organization, is the platform's.
+    let mut s = SyncSources {
+        crates_io: Some("cf-platform".to_owned()),
+        ..sources()
+    };
+    let left = leave_to_platform(&mut s, &[], Some("cf-platform"), "constructorfabric");
+    assert_eq!(left, ["crates.io keyword `cf-platform`"]);
+    assert_eq!(s.repos.len(), 3, "no platform sources, nothing shadowed");
+}
+
+/// The service reads the platform's sources and keyword from the root
+/// tenant; nothing is left in the platform's own tenant.
+#[tokio::test]
+async fn the_service_leaves_to_the_platform_from_its_stored_sources() {
+    use crate::components_catalog::service::SyncSources;
+    let svc = CatalogService::new(
+        Arc::new(MemorySink::tenant_scoped()),
+        "constructorfabric".into(),
+        None,
+    );
+    let pctx = ctx_in(PLATFORM_TENANT);
+    svc.replace_sources(
+        &pctx,
+        vec![RepoSource {
+            tenant: PLATFORM_TENANT,
+            connection_id: None,
+            repo: "constructorfabric/gears-rust".into(),
+            git_ref: String::new(),
+            mode: "gears".into(),
+        }],
+    )
+    .await
+    .unwrap();
+    svc.set_stored_keyword(&pctx, Some("constructorfabric".into()))
+        .await
+        .unwrap();
+    let mut s = SyncSources {
+        crates_io: Some("constructorfabric".into()),
+        repos: vec![RepoSource {
+            tenant: ORG,
+            connection_id: None,
+            repo: "constructorfabric/gears-rust".into(),
+            git_ref: String::new(),
+            mode: "gears".into(),
+        }],
+        ..SyncSources::default()
+    };
+    let left = svc.leave_to_platform(&ctx_in(ORG), &mut s).await;
+    assert_eq!(left.len(), 2, "{left:?}");
+    assert!(s.repos.is_empty());
+    assert!(!s.names_a_catalogue_source());
+}

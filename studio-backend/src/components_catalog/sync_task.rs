@@ -101,6 +101,16 @@ impl TaskHandler for CatalogSyncTask {
                 "studio-components-catalog: this run names no source to read".to_owned(),
             );
         }
+        // An organization's sync leaves to the platform what the platform's
+        // catalogue already reads (ADR-0042 §3): reading it here only writes
+        // nodes the organization's reads then hide.
+        let left = if sources.platform || super::tiers::is_platform(&security) {
+            Vec::new()
+        } else {
+            self.service
+                .leave_to_platform(&security, &mut sources)
+                .await
+        };
 
         let (progress, drain) = ctx.progress_bridge();
         let registry = sources.registry;
@@ -109,6 +119,9 @@ impl TaskHandler for CatalogSyncTask {
         } else {
             Ok(CatalogCounts::default())
         };
+        if let Ok(counts) = &mut outcome {
+            counts.left_to_platform = left;
+        }
         // The registry phase, last: the catalogue is written whether or not
         // it finishes, and the run's result says how it went.
         if registry && let Ok(counts) = &mut outcome {
@@ -134,6 +147,12 @@ impl TaskHandler for CatalogSyncTask {
                     summary.push_str(&format!(
                         "; registry: {} project(s), {} new entr(ies)",
                         r.projects, r.entries_created
+                    ));
+                }
+                if !counts.left_to_platform.is_empty() {
+                    summary.push_str(&format!(
+                        "; left to the platform's catalogue: {}",
+                        counts.left_to_platform.join(", ")
                     ));
                 }
                 match serde_json::to_value(counts) {

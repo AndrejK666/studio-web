@@ -3,9 +3,11 @@
 //!
 //! - `GET /registry/gear-repository` -- every member reads it.
 //! - `PUT` / `DELETE` -- an organization administrator (`component.registry`,
-//!   as for decisions). The connection must be one the organization sees and
-//!   organization-scoped: the walk reads the repository as the service and a
-//!   project writes it from below the organization.
+//!   as for decisions). The connection must be the organization's own -- never
+//!   one inherited from the platform's root, whose token is the platform's --
+//!   and organization-scoped: the walk reads the repository as the service and
+//!   a project writes it from below the organization. The repository is read
+//!   at its branch before it is stored.
 //! - `POST /registry/gear-repository/create` -- a new repository through the
 //!   connection, set as the gear repository.
 //! - `POST /registry/scaffold` -- a new gear into it, through studio-product
@@ -133,6 +135,8 @@ pub(crate) fn gear_repository_problem(e: &GearRepositoryError) -> CanonicalError
         GearRepositoryError::InvalidRepo(_) => ("repo", "INVALID"),
         GearRepositoryError::UnknownConnection(_) => ("connection_id", "UNKNOWN_CONNECTION"),
         GearRepositoryError::NotShared { .. } => ("connection_id", "CONNECTION_NOT_SHARED"),
+        GearRepositoryError::NotOwned { .. } => ("connection_id", "CONNECTION_NOT_OWNED"),
+        GearRepositoryError::Unreadable { .. } => ("repo", "GEAR_REPOSITORY_UNREADABLE"),
     };
     StudioComponentsCatalogError::invalid_argument()
         .with_field_violation(field, e.to_string(), reason)
@@ -188,6 +192,21 @@ impl Catalog {
         }
     }
 
+    /// Where the gear repository's connection is found, read and created
+    /// through: the connectors, or a 503 in an assembly without them.
+    fn gear_repository_access(
+        &self,
+    ) -> ApiResult<crate::components_catalog::registry::ConnectorAccess> {
+        self.service
+            .connector_service()
+            .map(crate::components_catalog::registry::ConnectorAccess)
+            .ok_or_else(|| {
+                CanonicalError::service_unavailable()
+                    .with_detail("no connector service is available for the gear repository")
+                    .create()
+            })
+    }
+
     /// "Create a gear"'s writer, studio-product's: a 503 in an assembly
     /// without it.
     fn scaffolds(&self) -> ApiResult<Arc<dyn crate::product::port::GearScaffolds>> {
@@ -228,9 +247,10 @@ async fn set_gear_repository(
         repo: body.repo,
         branch: body.branch,
     };
+    let access = catalog.gear_repository_access()?;
     let repo = catalog
         .service
-        .set_gear_repository(&ctx, &input, Some(by.id))
+        .set_gear_repository(&ctx, &input, Some(by.id), &access)
         .await
         .map_err(internal)?
         .map_err(|e| gear_repository_problem(&e))?;
@@ -275,6 +295,7 @@ async fn create_gear_repository(
         .as_deref()
         .map(str::trim)
         .filter(|o| !o.is_empty());
+    let access = catalog.gear_repository_access()?;
     let repo = catalog
         .service
         .create_gear_repository(
@@ -285,6 +306,7 @@ async fn create_gear_repository(
             name,
             body.private.unwrap_or(true),
             Some(by.id),
+            &access,
         )
         .await
         .map_err(|e| {
@@ -300,13 +322,22 @@ async fn create_gear_repository(
     ))
 }
 
-/// The request in the port's terms.
-fn new_gear_of(body: RegistryScaffoldRequest) -> crate::product::port::NewGear {
+/// The request in the port's terms. The gear is the organization's, so its
+/// manifest names the organization (`organization`) unless the request
+/// names something else.
+fn new_gear_of(
+    body: RegistryScaffoldRequest,
+    organization: String,
+) -> crate::product::port::NewGear {
     crate::product::port::NewGear {
         slug: body.slug,
-        app_title: body.app_title,
+        app_title: body
+            .app_title
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty())
+            .or_else(|| Some(organization).filter(|o| !o.trim().is_empty())),
         problem: body.problem,
-        origin: Some("the organization's Components page".to_owned()),
+        origin: Some("Scaffolded from the organization's Components page.".to_owned()),
         parent_dir: body.parent_dir,
         gear_kind: body.gear_kind,
         plugin_host: body.plugin_host,
@@ -355,7 +386,11 @@ async fn scaffold_organization_gear(
         .map_err(internal)?
         .ok_or_else(no_gear_repository)?;
     let scaffolds = catalog.scaffolds()?;
-    let gear = new_gear_of(body);
+    let organization = catalog
+        .service
+        .organization_name(&ctx, ctx.subject_tenant_id())
+        .await;
+    let gear = new_gear_of(body, organization);
     let dry_run = gear.dry_run;
     let done = scaffolds
         .scaffold_into(&ctx, &scaffold_target(&repo), &gear)
@@ -424,9 +459,14 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
              organization-scoped: the registry walk reads the repository as \
              the service, and a project's \"Create a gear\" writes it from below \
              the organization, so a personal or a workspace connection is \
-             refused (400 `CONNECTION_NOT_SHARED`, saying why). Queues a walk. \
-             403 for anyone but an organization administrator \
-             (`component.registry`).",
+             refused (400 `CONNECTION_NOT_SHARED`, saying why). The \
+             connection must also be the organization's own: one it only \
+             inherits from the platform's root is refused (400 \
+             `CONNECTION_NOT_OWNED`). The repository is read at the branch \
+             through the connection before it is stored; one that cannot be \
+             is refused (400 `GEAR_REPOSITORY_UNREADABLE`, with the \
+             provider's error). Queues a walk. 403 for anyone but an \
+             organization administrator (`component.registry`).",
         )
         .tag("StudioComponentsCatalog")
         .authenticated()
@@ -472,7 +512,9 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
             .description(
                 "Creates a repository through an organization-scoped connection and \
                  sets it as the organization's gear repository, on its default \
-                 branch. The connection is checked before anything is created. \
+                 branch. The connection is checked before anything is created: \
+                 the organization's own (400 `CONNECTION_NOT_OWNED` for one \
+                 inherited from the platform's root) and organization-scoped. \
                  Answers 201. 403 for anyone but an organization administrator.",
             )
             .tag("StudioComponentsCatalog")

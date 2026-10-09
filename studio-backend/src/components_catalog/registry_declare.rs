@@ -1,12 +1,19 @@
 //! Declare it: a candidate becomes a gear by a pull request (ADR-0041 P3).
 //!
 //! `POST /registry/{name}/declare` takes a `candidate` entry and opens a pull
-//! request in the repository it was detected in, adding a `gear.toml` -- and
-//! the engine's `gear.gdl` when one is configured -- in the module's own
-//! directory, on the branch `declare/<name>`. The files come from
-//! studio-product (`product::port::GearDeclarations`), the same skeleton the
-//! scaffold writes; the write goes through the repository's connection, in the
-//! project's tenant (`registry::in_tenant`), as the walk reads it.
+//! request in the repository it was detected in, adding the module's
+//! manifest in its own directory, on the branch `declare/<name>`: the
+//! engine's `gear.gdl` (with the declaration's description and category) when
+//! the Gearbox engine is configured -- gears-rust#4793 retires `gear.toml` --
+//! else a `gear.toml`. A directory inside a crate's `src/` always gets the
+//! `gear.toml`: the catalogue skips a `gear.gdl` there as an in-crate plugin,
+//! so it would never read the module as declared. The answer's `manifest`
+//! says which. The files come from studio-product
+//! (`product::port::GearDeclarations`); the write goes through the
+//! repository's connection, in the project's tenant (`registry::in_tenant`),
+//! as the walk reads it -- and only when that connection is the project's or
+//! the organization's own, never one inherited from the platform's root
+//! (`DeclareError::NotOwnConnection`).
 //!
 //! The entry stays a `candidate`: a `declare` decision records that the pull
 //! request was opened, and the walk moves the entry to `declared` once it
@@ -49,6 +56,12 @@ pub enum DeclareError {
     /// The occurrence was recorded before the walk kept its connection: read
     /// the project again first.
     NoConnection,
+    /// The walk read the repository through a connection the organization
+    /// only inherits -- the platform's root's -- so writing there would use
+    /// a token that is not the organization's.
+    NotOwnConnection {
+        tenant: uuid::Uuid,
+    },
 }
 
 impl std::fmt::Display for DeclareError {
@@ -69,6 +82,10 @@ impl std::fmt::Display for DeclareError {
                 f,
                 "the registry does not know which connection reads this repository yet; read the project again"
             ),
+            Self::NotOwnConnection { tenant } => write!(
+                f,
+                "the repository is read through a connection of tenant {tenant}, which the organization only inherits; a pull request is written with the organization's own connection: connect the repository on the project's or the organization's Connections page and read the project again"
+            ),
         }
     }
 }
@@ -82,6 +99,9 @@ pub struct Declared {
     /// The repository and directory written into.
     pub repo: String,
     pub path: String,
+    /// The manifest the declaration is: `gear.gdl` when the Gearbox engine
+    /// described it, else `gear.toml`.
+    pub manifest: String,
 }
 
 /// A refusal by the rules, or a write that failed.
@@ -196,7 +216,19 @@ impl CatalogService {
             .await?
             .ok_or_else(|| DeclareFailure::Refused(DeclareError::NotFound(wanted.to_owned())))?;
         let (occ, spec) = declaration_of(&entry, input).map_err(DeclareFailure::Refused)?;
+        // Never through a connection the organization only inherits: the
+        // platform's token is not the organization's to write with.
+        if let Some(tenant) = occ.tenant
+            && !self
+                .connection_is_organizations(ctx, tenant, occ.project_id)
+                .await
+        {
+            return Err(DeclareFailure::Refused(DeclareError::NotOwnConnection {
+                tenant,
+            }));
+        }
         let files = declarations.declaration_files(&spec).await?;
+        let manifest = manifest_of(&files);
         let branch = branch_of(&entry.entry.name);
         if input.dry_run {
             return Ok(Declared {
@@ -205,6 +237,7 @@ impl CatalogService {
                 files,
                 repo: occ.repo.clone(),
                 path: occ.path.clone(),
+                manifest,
             });
         }
         let Some(tenant) = occ.tenant else {
@@ -286,8 +319,54 @@ impl CatalogService {
             files,
             repo: occ.repo.clone(),
             path: occ.path.clone(),
+            manifest,
         })
     }
+
+    /// Whether a connection held by `tenant` is the organization's to write
+    /// with: the organization's own, its project's (`project`), or one
+    /// below the organization -- never one above it, such as the platform's
+    /// root, which the walk may have read a repository through because
+    /// connections are inherited downwards. Fails closed: a tenant whose
+    /// ancestry cannot be read is not the organization's.
+    pub(super) async fn connection_is_organizations(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        project: Option<Uuid>,
+    ) -> bool {
+        let org = ctx.subject_tenant_id();
+        if tenant == org || project == Some(tenant) {
+            return true;
+        }
+        if tenant == super::tiers::PLATFORM_TENANT {
+            return false;
+        }
+        let Some(am) = self.account_management.get() else {
+            return false;
+        };
+        // Project -> workspace -> organization: nothing Studio keeps is deeper.
+        let mut current = tenant;
+        for _ in 0..4 {
+            let parent = match am.get_tenant(ctx, current).await {
+                Ok(t) => t.parent_id.map(|p| p.0),
+                Err(_) => return false,
+            };
+            match parent {
+                Some(p) if p == org => return true,
+                Some(p) => current = p,
+                None => return false,
+            }
+        }
+        false
+    }
+}
+
+/// Which manifest a declaration's files write: `gear.gdl` (the engine's)
+/// or `gear.toml`.
+pub fn manifest_of(files: &[DeclarationFile]) -> String {
+    let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    crate::product::port::declaration_manifest(&paths).to_owned()
 }
 
 #[cfg(test)]

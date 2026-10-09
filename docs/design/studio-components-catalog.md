@@ -401,7 +401,9 @@ it and a walk only moves `last_seen` (the last walk that read a repository
 declaring it; a repository skipped as unchanged does not move it). An entry
 with no occurrence left keeps its state and says so (`orphaned: true`) rather
 than disappearing, because a registered component whose repository moved is
-still the organization's. P1 discovers what `project_gears` discovers (gears
+still the organization's. A `merged` entry is never orphaned (nor counted in
+the walk's `orphaned`): what it was found as is its target's now, so its
+having no occurrence of its own is the merge, not a loss. P1 discovers what `project_gears` discovers (gears
 and plugins); FrontX packages and kits in the catalogue's own sources are not
 registry entries yet.
 
@@ -501,7 +503,7 @@ files discovery reads anyway (`mod.rs`, `lib.rs`, gear files) and at most 40
 | `boundary` | `port.rs` or `sdk.rs` (or their directories): 2 for one, 3 for both | 2–3 |
 | `docs` | its own `README.md` or `DESIGN.md` | 1 |
 | `consumers` | other modules of the crate naming `crate::<module>` in the files read, or other crates' manifests depending on it — bounded, so it can only undercount | 1 each, up to 3 |
-| `copied` | the same name (kebab-folded) in another project of the organization: this walk's reads, or the occurrences held for repositories not read again | 2 |
+| `copied` | the same name (kebab-folded) in another project of the organization, in another repository (two projects reading one repository are one copy): this walk's reads, or the occurrences held for repositories not read again | 2 |
 
 A unit needs a structural signal (`rest`, `persistence`, `types` or
 `boundary`); the score is the sum, a candidate needs 5
@@ -526,15 +528,31 @@ walk that detects it in code with any other fingerprint proposes it again
 (back to `candidate`, counted as `reproposed`). A rejected entry that was
 never a candidate (rejected while declared) is never re-proposed.
 
+`copied` is evidence about other occurrences, so it is settled again at the
+end of every walk (`candidates::refreshed_copies`, in `plan`) from the
+occurrences the registry keeps — the ones the walk found and the ones it
+kept without reading again. When an occurrence goes (its project excluded,
+its repository no longer named, the organization's gear repository changed
+or unset), the occurrences left stop saying "copied in" it although their
+repositories were not read again; only the signal's weight moves their
+score. A `candidate` entry whose occurrences changed takes its score and
+evidence from its best one, the one Declare it picks.
+
 **Publishing (P4, ADR-0042 §4).** `publish` on a `registered` entry gives
 the gear to the platform (`registry_publish.rs`). It reads the platform's
 catalogue sources in the root tenant and takes the first in mode `gears` as
 the platform's gear repository; without one it is refused (400
 `failed_precondition`, `PLATFORM_NO_GEAR_REPOSITORY`: "the platform has no
-gear repository to contribute to"). It copies the directory of the
+gear repository to contribute to"), and one whose source names a connection
+outside the root is refused too (`PLATFORM_CONNECTION_NOT_OWNED`): the
+contribution is written only with the platform's own connection, never one
+an organization could name. It copies the directory of the
 occurrence that declares the entry (the organization's gear repository
 first; never a detector's finding), read through that occurrence's
-connection in its project's tenant, bounded by the tree listing to 200 files
+connection in its project's tenant -- only when that connection is the
+project's or the organization's own (`CONNECTION_NOT_OWNED` for one the walk
+found by walking up to the platform's root: its files are not read with the
+platform's token and given away) --, bounded by the tree listing to 200 files
 and 2 MiB (larger is 400 `REGISTRY_GEAR_TOO_LARGE`, nothing is written);
 `target/`, `node_modules/`, `.git/` and `dist/` are skipped, and a file that
 is not text is left out and named in the pull request. The files go under
@@ -555,6 +573,19 @@ version follows the platform's on later walks. When the names differ, a
 platform administrator (and only one: 403 `PLATFORM_ADMIN_REQUIRED`
 otherwise) decides `mark_published`, with an optional `version`. Without
 studio-product publishing answers 503.
+
+`dry_run: true` on a `publish` (`CatalogService::plan_publish`) makes every
+check a publish makes and reads the files, but writes and records nothing:
+the answer is the entry with `publish_preview`
+(`{repo, base_branch, branch, path, files, skipped, title}`), which the
+portal shows behind "Preview" before it offers Publish. A dry run needs no
+studio-product. Any other action with `dry_run` is a 400.
+
+Every decision records who made it (`by`, the person's Studio id) and their
+name (`by_name`), resolved on the server through studio-user's
+`PersonResolver::resolve_caller_named` (the caller's profile `display_name`);
+a decision recorded before this kept only the id, and the portal maps the
+ids it can.
 
 **Consumers (P4).** Each entry carries `consumers`: the projects that use it
 without declaring it, each `{project_id, project_name, via}` with `via` one
@@ -596,15 +627,27 @@ studio-llm-proxy 503.
 entry only, by the same rule as decisions (`component.registry`; 403
 otherwise). It picks the candidate's detected occurrence (in `project_id`
 when the body names one, else the highest-scoring one), asks studio-product
-for the files through `product::port::GearDeclarations` — a `gear.toml` in
-the module's directory, the skeleton's `[gear]` table with the name,
-description, category and capabilities, and the engine's `gear.gdl` beside it
-when an engine is configured and the directory is not inside a crate's
-`src/` (there the catalogue would read it as an in-crate plugin) — and, unless
-`dry_run`, writes them on `declare/<name>` off the ref the walk read and opens
-a pull request, through the occurrence's connection, in the project's tenant
-(`registry::in_tenant`, as the walk reads). It answers
-`{branch, pr_url, files, repo, path, dry_run}` and records a `declare`
+for the files through `product::port::GearDeclarations` — one manifest in
+the module's directory: the engine's `gear.gdl`, with the declaration's
+description and category set as the gear's own arguments (capability keys,
+which GDL has no list for, as a closing comment), when the Gearbox engine is
+configured, since gears-rust#4793 retires `gear.toml`; else a `gear.toml`,
+the skeleton's `[gear]` table with the name, description, category and
+capabilities. A directory inside a crate's `src/` always gets the
+`gear.toml`, engine or not: the catalogue's `gear_dirs` skips a `gear.gdl`
+under `src/` as the shape of a plugin compiled into its host's crate, so a
+`gear.gdl` there would never make the candidate `declared` (a `gear.toml` is
+read wherever it sits). That rule was re-checked when Declare it moved to
+`gear.gdl` and stays. Unless `dry_run`, it writes them on `declare/<name>`
+off the ref the walk read and opens a pull request, through the occurrence's
+connection, in the project's tenant (`registry::in_tenant`, as the walk
+reads) -- and only when that connection is the project's or the
+organization's own: one the walk found by walking up to the platform's root
+is refused, dry run included (400 `failed_precondition`,
+`CONNECTION_NOT_OWNED`), because a pull request is never written with the
+platform's token. It answers
+`{branch, pr_url, files, repo, path, dry_run, manifest}` (`manifest`:
+`gear.gdl` or `gear.toml`) and records a `declare`
 decision (`candidate → candidate`, with the branch, the pull request and the
 files). The entry stays a candidate until the walk reads the merged
 declaration. Without studio-product the route answers 503; an occurrence
@@ -672,7 +715,13 @@ platform's (root) tenant, and every organization reads it beside its own.
   never shadowed. An organization that configured `gears-rust` itself sees it
   once, as the platform's, until it removes the source; `GET /sources` marks
   such a source `shadowed_by_platform` (same repository, case-insensitive, in
-  the same mode). There is no data migration.
+  the same mode). There is no data migration. An organization's sync does not
+  read such a source (`tiers::leave_to_platform`, from `sync_task`): reading
+  it into the organization's tenant only wrote nodes its reads then hid. Nor
+  does it read the default crates.io keyword (or the platform's own) while the
+  platform's catalogue syncs crates.io; an organization that names a keyword
+  of its own still syncs it. What was left is logged and named in the run's
+  result (`left_to_platform`, and its summary).
 - **Annotations over facts.** A platform component's profile is the
   platform's (`auto`, `uml`, …) with the organization's profile node of the
   same `gear_name` laid over it: its `values` key by key, and every other key
@@ -695,16 +744,26 @@ platform's (root) tenant, and every organization reads it beside its own.
   it, `DELETE` unsets it (the repository is not touched), and
   `POST /registry/gear-repository/create` creates a repository through the
   connection (`connectors::sdk::create_repository`) and sets it. The
-  connection must be one the organization sees
-  (`ConnectorService::nearest_by_id` from the organization's tenant) and
-  **organization-scoped**: the walk reads the repository as the service, on
+  connection must be **the organization's own**: held in the organization's
+  catalogue, not one it sees only by inheritance
+  (`ConnectorService::nearest_by_id` walks up to the platform's root, and a
+  connection found there carries the platform's token, which Declare it,
+  the scaffold and the creation would then write with). Any other is
+  refused with a 400 (`CONNECTION_NOT_OWNED`), and a setting stored before
+  this check with such a connection is ignored when read (nothing reads or
+  writes through it; the page shows none until it is set again). It must
+  also be **organization-scoped**: the walk reads the repository as the
+  service, on
   a schedule nobody is signed in to, and a project's "Create a gear" writes
   it from below the organization. A personal connection (its token is its
   owner's) or a workspace one (readable only in that workspace) is refused
   with a 400 (`CONNECTION_NOT_SHARED`) saying why, in the walk's own words
   (`registry::gear_repository_scope_refusal`); a creation is refused before
-  anything is created. Setting, creating or removing it queues a walk and
-  ensures the hourly schedule.
+  anything is created. `PUT` reads the repository at the branch through the
+  connection (a tree listing, `registry::GearRepositoryAccess::probe`) before
+  storing it: one that cannot be read is a 400
+  (`GEAR_REPOSITORY_UNREADABLE`) with the provider's error. Setting, creating
+  or removing it queues a walk and ensures the hourly schedule.
 - **The walk reads it.** A full walk reads the organization's gear repository
   like a project's repository (fingerprint, discovery, candidates), in the
   organization's tenant, keyed by the organization where a project's read is
@@ -725,7 +784,10 @@ platform's (root) tenant, and every organization reads it beside its own.
   says which (`repo`, `target`). `POST /registry/scaffold` writes a new gear
   straight into the organization's gear repository: the same skeleton,
   through `product::port::GearScaffolds`, with a pull request by default;
-  `dry_run` answers the files. Nothing is recorded: the walk finds the gear,
+  `dry_run` answers the files. With no App Spec behind it, the manifest names
+  the organization in the app title's place (unless the request names an
+  `app_title`), and its description is the `problem` (then "Scaffolded from the organization's Components page.") when one is given.
+  Nothing is recorded: the walk finds the gear,
   `declared`, once it is merged.
 
 ##### Responsibility boundaries
@@ -754,7 +816,7 @@ than one corpus are later phases.
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `POST` | `/sync` | Queue a `catalog.sync` run over `crates_io`, `repositories` and `roadmaps`; poll `GET /studio-tasks/v1/runs/{id}`. Without `repositories` it reads the stored sources and walks the registry after them | unstable |
+| `POST` | `/sync` | Queue a `catalog.sync` run over `crates_io`, `repositories` and `roadmaps`; poll `GET /studio-tasks/v1/runs/{id}`. Without `repositories` it reads the stored sources and walks the registry after them. An organization's run leaves to the platform the sources it already reads and the default crates.io keyword while the platform syncs crates.io; the result names them (`left_to_platform`) | unstable |
 | `GET` | `/components` | Every node of every type this organization marks as a component: the platform's and the organization's, each with its `tier`; `shadowed` names the organization's left out because the platform has the same name (ADR-0042) | unstable |
 | `GET` | `/versions` | Ingested crate versions; `crate` narrows to one | unstable |
 | `GET` | `/reference` | The catalogue joined with the engine's gears; `days` (default 90, `0` skips the warehouse), `include=all` | unstable |
@@ -776,14 +838,14 @@ than one corpus are later phases.
 | `POST` | `/platform/sync` | Queue a `catalog.sync` run in the root tenant that reads the platform's stored sources; 202 with `run_id`. 403 for anyone but a platform administrator | unstable |
 | `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it, `offset`/`limit` page it; `{items: RegistryEntryDto[], total}`, each entry with its occurrences | unstable |
 | `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences and its `decisions`, newest first; 404 when absent | unstable |
-| `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `mark_published`, `merge` or `edit`, checked against the lifecycle table and recorded. `publish` opens the contribution pull request (400 `failed_precondition` with no platform gear repository, nothing declaring the entry, or a directory over 200 files / 2 MiB; 503 without studio-product); `mark_published` is a platform administrator's only. Answers the entry with its decisions, `contribution` and `consumers`. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
+| `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?, dry_run?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `mark_published`, `merge` or `edit`, checked against the lifecycle table and recorded with who made it (`by`, `by_name`). `publish` opens the contribution pull request (400 `failed_precondition` with no platform gear repository, nothing declaring the entry, a directory over 200 files / 2 MiB, or a repository read through a connection the organization only inherits, `CONNECTION_NOT_OWNED`; 503 without studio-product); with `dry_run: true` it writes and records nothing and answers `publish_preview` `{repo, base_branch, branch, path, files, skipped, title}` (a dry run is a publish's only; 400 otherwise); `mark_published` is a platform administrator's only. Answers the entry with its decisions, `contribution` and `consumers`. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
 | `POST` | `/registry/{name}/suggest` | A model's `{description, category, capabilities, at, model}` for the entry, on the caller's own key through studio-llm-proxy, capabilities bounded by the organization's vocabulary; stored as the entry's `suggestion`, never a state change. 403 for anyone but an organization administrator; 400 `failed_precondition` (`PROVIDER_KEY_REQUIRED`) without a model key; 503 when the model cannot be asked or answers no usable JSON, or without studio-llm-proxy | unstable |
-| `POST` | `/registry/{name}/declare` | Declare it, for a `candidate`: `{description?, capabilities?, category?, project_id?, dry_run?}` (all optional) → `{branch, pr_url, files, repo, path, dry_run}`: a pull request adding `gear.toml` (and `gear.gdl`) in the module's directory on `declare/<name>`, recorded as a `declare` decision. 403 for anyone but an organization administrator; 400 `failed_precondition` for an entry that is not a candidate; 503 without studio-product | unstable |
+| `POST` | `/registry/{name}/declare` | Declare it, for a `candidate`: `{description?, capabilities?, category?, project_id?, dry_run?}` (all optional) → `{branch, pr_url, files, repo, path, dry_run, manifest}`: a pull request adding the module's manifest in its directory on `declare/<name>` — the engine's `gear.gdl` when the Gearbox engine is configured, else (and always inside a crate's `src/`) a `gear.toml`; `manifest` says which — recorded as a `declare` decision. 403 for anyone but an organization administrator; 400 `failed_precondition` for an entry that is not a candidate, or a repository read through a connection the organization only inherits (`CONNECTION_NOT_OWNED`); 503 without studio-product | unstable |
 | `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do. The organization's gear repository is one more row, keyed by the organization | unstable |
 | `GET` | `/registry/gear-repository` | The organization's gear repository (ADR-0042 §2): `{gear_repository: {tenant, connection_id, connection_label, repo, branch, set_by, set_at} \| null, may_manage}`. Every member | unstable |
-| `PUT` | `/registry/gear-repository` | Set it: `{connection_id, repo, branch?}`. The connection must be organization-scoped (400 `CONNECTION_NOT_SHARED`, saying why). Queues a walk. 403 for anyone but an organization administrator | unstable |
+| `PUT` | `/registry/gear-repository` | Set it: `{connection_id, repo, branch?}`. The connection must be the organization's own (400 `CONNECTION_NOT_OWNED` for one inherited from the platform's root) and organization-scoped (400 `CONNECTION_NOT_SHARED`, saying why), and the repository readable at the branch through it (400 `GEAR_REPOSITORY_UNREADABLE`, with the provider's error). Queues a walk. 403 for anyone but an organization administrator | unstable |
 | `DELETE` | `/registry/gear-repository` | Unset it; the next full walk retires what was found there. 403 for anyone but an organization administrator | unstable |
-| `POST` | `/registry/gear-repository/create` | Create a repository through an organization-scoped connection (`{connection_id, name, owner?, is_org?, private?}`) and set it; 201. 403 for anyone but an organization administrator | unstable |
+| `POST` | `/registry/gear-repository/create` | Create a repository through an organization-scoped connection of the organization's own (`{connection_id, name, owner?, is_org?, private?}`; 400 `CONNECTION_NOT_OWNED` before anything is created otherwise) and set it; 201. 403 for anyone but an organization administrator | unstable |
 | `POST` | `/registry/scaffold` | Create a gear in the organization's gear repository: `{slug, problem?, capabilities?, gear_kind?, plugin_host?, plugin_spec?, parent_dir?, app_title?, open_pr? (default true), dry_run?}` → `{branch, commit_sha, pr_url, files, repo, dry_run}`. 403 for anyone but an organization administrator; 400 `failed_precondition` with no gear repository; 503 without studio-product | unstable |
 | `GET` | `/registry/excluded-projects` | The projects the walk skips: `{project_ids}` | unstable |
 | `PUT` | `/registry/excluded-projects` | Replace them with `{project_ids}`. Ensures the hourly registry schedule | unstable |

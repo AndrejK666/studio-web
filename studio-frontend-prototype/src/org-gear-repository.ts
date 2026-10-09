@@ -6,11 +6,15 @@ import type { Connection, RegistryOccurrence, RegistryProjectWalk } from "./api"
 
 /** The connections that can hold the organization's gear repository, best
  *  first: GitHub ones (the only provider a scaffold writes through), the
- *  organization-scoped before the rest, which the server refuses. */
-export function gearRepoConnections(connections: readonly Connection[]): Connection[] {
+ *  organization-scoped before the rest, which the server refuses. Only the
+ *  organization's own (`orgId`, when known): one it inherits from the
+ *  platform carries the platform's token, and the server refuses it
+ *  (`CONNECTION_NOT_OWNED`). */
+export function gearRepoConnections(connections: readonly Connection[], orgId?: string | null): Connection[] {
   const rank = (c: Connection) => (isOrganizationScope(c.scope) ? 0 : 1);
   return connections
     .filter((c) => c.provider === "github")
+    .filter((c) => !orgId || !c.owner_tenant_id || c.owner_tenant_id === orgId)
     .slice()
     .sort((a, b) => rank(a) - rank(b) || a.label.localeCompare(b.label));
 }

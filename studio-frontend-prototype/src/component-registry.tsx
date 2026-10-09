@@ -13,7 +13,8 @@
  *
  * Phase 3 adds candidates: code the walk found that looks like a gear and is
  * not declared one, with its evidence and score, in a Candidates view. Declare
- * it opens a pull request adding the candidate's gear.toml.
+ * it opens a pull request adding the candidate's manifest: the Gearbox
+ * engine's gear.gdl when the engine is configured, else a gear.toml.
  *
  * Phase 4 (ADR-0041 P4, ADR-0042 §4): Publish opens a pull request giving the
  * gear to the platform (pending until the platform's catalogue has it), each
@@ -29,6 +30,7 @@ import type {
   RegistryDeclareResult,
   RegistryEntry,
   RegistryProjectWalk,
+  RegistryPublishPreview,
   RegistrySuggestion,
 } from "./api";
 import { errText } from "./format";
@@ -52,8 +54,10 @@ import {
   evidenceLines,
   filterEntries,
   isDuplicated,
+  isOrphaned,
   ownerLabel,
   projectsOf,
+  publishPreviewLines,
   publishStatus,
   registryProjects,
   stateCounts,
@@ -182,7 +186,7 @@ export function ComponentRegistry({
   const duplicated = (entries ?? []).filter(isDuplicated).length;
   const walkOf = (id: string) => walks.find((w) => w.project_id === id);
   const unreadable = projects.filter((p) => !(excluded ?? []).includes(p.id) && walkLine(walkOf(p.id)).failed);
-  const orphaned = (entries ?? []).filter((e) => e.orphaned).length;
+  const orphaned = (entries ?? []).filter(isOrphaned).length;
 
   if (missing) {
     return (
@@ -391,7 +395,7 @@ function RegistryRow({
               ×{new Set(e.occurrences.map((o) => o.repo)).size} repos
             </span>
           )}
-          {e.orphaned && (
+          {isOrphaned(e) && (
             <span className="badge" style={{ marginLeft: 6 }} title="No repository declares it any more">
               orphaned
             </span>
@@ -709,8 +713,14 @@ export function DeclareCandidate({
       ) : (
         <div style={{ display: "grid", gap: 6, maxWidth: 680 }}>
           <div>
-            A pull request on <code>{preview.branch}</code> in <code>{preview.repo}</code> adds, beside{" "}
-            <code>{preview.path}</code>:
+            A pull request on <code>{preview.branch}</code> in <code>{preview.repo}</code> adds
+            {preview.manifest ? (
+              <>
+                {" "}
+                its <code>{preview.manifest}</code>
+              </>
+            ) : null}{" "}
+            beside <code>{preview.path}</code>:
           </div>
           {preview.files.map((f) => (
             <div key={f.path}>
@@ -786,6 +796,8 @@ function RegistryDecisions({
   const [category, setCategory] = useState(e.category ?? "");
   const [capabilities, setCapabilities] = useState(e.capabilities.join(", "));
   const [description, setDescription] = useState(e.description ?? "");
+  // A publish is previewed before it is opened: its dry run's answer.
+  const [preview, setPreview] = useState<RegistryPublishPreview | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -803,7 +815,25 @@ function RegistryDecisions({
 
   const open = (action: RegistryAction) => {
     setError(null);
+    setPreview(null);
     setForm(form === action ? null : action);
+  };
+
+  const previewPublish = async () => {
+    const input: RegistryDecisionInput = { action: "publish", dry_run: true };
+    if (reason.trim()) input.reason = reason.trim();
+    setBusy(true);
+    setError(null);
+    try {
+      const answer = await api.decideRegistry(token, e.name, input);
+      setPreview(answer.publish_preview ?? null);
+      if (!answer.publish_preview) setError("This backend cannot preview a publish yet.");
+    } catch (cause) {
+      setPreview(null);
+      setError(decisionRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submit = async () => {
@@ -839,6 +869,7 @@ function RegistryDecisions({
       setForm(null);
       setReason("");
       setTarget("");
+      setPreview(null);
       onDecided();
     } catch (cause) {
       setError(decisionRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
@@ -905,7 +936,9 @@ function RegistryDecisions({
         ? reason.trim() !== ""
         : form === "merge"
           ? target !== ""
-          : true;
+          : form === "publish"
+            ? preview !== null
+            : true;
 
   return (
     <div style={{ marginTop: 8, borderTop: "1px solid var(--border, rgba(0,0,0,0.1))", paddingTop: 6 }} data-registry-decisions>
@@ -962,7 +995,25 @@ function RegistryDecisions({
               Opens a pull request into the platform&apos;s gear repository with this gear&apos;s files (at most 200
               files, 2 MiB). The platform&apos;s maintainers review it; the entry is published once the platform&apos;s
               catalogue has it.
-              {e.contribution?.pr_url && <> A pull request is already open: {e.contribution.pr_url}</>}
+              {e.contribution?.pr_url && <> A pull request is already open: {e.contribution.pr_url}</>} Preview it
+              first: nothing is written until you publish.
+            </div>
+          )}
+          {form === "publish" && preview && (
+            <div className="hint" data-registry-publish-preview>
+              {publishPreviewLines(preview).map((line) => (
+                <div key={line}>{line}</div>
+              ))}
+              <details>
+                <summary>Files</summary>
+                <ul style={{ margin: "4px 0", paddingLeft: 18 }}>
+                  {preview.files.map((f) => (
+                    <li key={f}>
+                      <code>{f}</code>
+                    </li>
+                  ))}
+                </ul>
+              </details>
             </div>
           )}
           {form === "mark_published" && (
@@ -982,6 +1033,13 @@ function RegistryDecisions({
             />
           </label>
           <span>
+            {form === "publish" && (
+              <>
+                <button type="button" disabled={busy} onClick={() => void previewPublish()} data-registry-publish-preview-button>
+                  {busy && !preview ? "Previewing…" : preview ? "Preview again" : "Preview"}
+                </button>{" "}
+              </>
+            )}
             <button type="button" className="primary" disabled={busy || !ready} onClick={() => void submit()}>
               {busy ? "Saving…" : ACTION_LABEL[form].replace("…", "")}
             </button>{" "}

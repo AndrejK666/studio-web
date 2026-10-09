@@ -174,7 +174,9 @@ step.
    is found by walking up from the project
    (`organizations::sdk::organization_of`), and the write goes as the caller
    acting in the organization, where its organization-scoped connection is
-   readable.
+   readable. The catalogue answers only a setting whose connection is the
+   organization's own, never one inherited from the platform's root, so a
+   project's gear is never written with the platform's token.
 3. Else the repository the project config names first (`sources[]`).
 
 The scaffold's answer names the repository (`repo`) and which of the three
@@ -186,7 +188,23 @@ else its sources: the organization's repository holds gears, not products.
 The skeleton is generated in one place (`new_gear.rs`) for both callers: the
 project's route, and `port::GearScaffolds::scaffold_into`, through which the
 catalogue's `POST /registry/scaffold` writes a new gear straight into the
-organization's gear repository.
+organization's gear repository. The manifest's description reads well with
+or without an App Spec: the `problem` followed by the origin note when a problem is given; else "`<capability>`
+capability for `<app title>`. `<origin>`"; else, with no app title,
+"`` `<capability>` `` capability. `<origin>`". The catalogue's scaffold passes the
+organization's name as the app title when the request names none.
+
+**Declare it's manifest** (`port::GearDeclarations`,
+`skeleton::declaration`). One file beside the module the registry found:
+the engine's `gear.gdl`, with the declaration's description and category set
+as the gear's own arguments (`gdl_with`; capability keys as a closing
+comment, GDL having no list for them), when the Gearbox engine is configured
+-- gears-rust#4793 retires `gear.toml` in favour of it; else a `gear.toml`.
+A directory inside a crate's `src/` always gets the `gear.toml`: the
+catalogue skips a `gear.gdl` under `src/` (the shape of a plugin compiled
+into its host's crate), so one written there would never make the candidate
+declared. `port::declaration_manifest` says which a set of files is; the
+catalogue's Declare it answers it as `manifest`.
 
 ##### Responsibility boundaries
 

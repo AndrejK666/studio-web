@@ -136,6 +136,8 @@ pub struct DecisionInput {
     /// For `publish`: the pull request it opened into the platform's gear
     /// repository. Set by the service after opening it, never by a request.
     pub contribution: Option<super::registry::Contribution>,
+    /// For `publish` only: answer what would be written, write nothing.
+    pub dry_run: bool,
 }
 
 /// Why a decision was refused.
@@ -358,7 +360,9 @@ pub fn apply(
             }
             next.merged_into = Some(into.name.clone());
             next.aliases = Vec::new();
-            next.orphaned = true;
+            // Its occurrences are the target's now; a merged entry is not
+            // one "no repository declares any more".
+            next.orphaned = false;
             details["merge_into"] = json!(into.name);
             target = Some((id, into));
         }

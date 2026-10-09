@@ -477,6 +477,25 @@ export interface RegistryDecisionInput {
   replaced_by?: string;
   merge_into?: string;
   version?: string;
+  /** For `publish` only: answer `publish_preview`, write and record nothing. */
+  dry_run?: boolean;
+}
+
+/** What a `publish` would write into the platform's gear repository: the
+ *  answer of a dry run. */
+export interface RegistryPublishPreview {
+  /** The platform's gear repository, `owner/name`. */
+  repo: string;
+  /** The branch the pull request goes back to. */
+  base_branch: string;
+  /** `contribute/<organization>/<name>`. */
+  branch: string;
+  /** Where the gear's files go there. */
+  path: string;
+  files: string[];
+  /** Not copied (not text), relative to the gear's directory. */
+  skipped: string[];
+  title: string;
 }
 
 /** One component of the organization's registry (ADR-0041). */
@@ -515,6 +534,8 @@ export interface RegistryEntry {
   /** For a `candidate`: why it looks like a gear, signal by signal. */
   evidence?: RegistryEvidence[];
   occurrences: RegistryOccurrence[];
+  /** What a `publish` with `dry_run` would write; absent otherwise. */
+  publish_preview?: RegistryPublishPreview | null;
 }
 
 /** A gear given to the platform: the pull request into its gear repository. */
@@ -576,6 +597,10 @@ export interface RegistryDeclareResult {
   repo: string;
   path: string;
   dry_run: boolean;
+  /** `gear.gdl` (the Gearbox engine's description) or `gear.toml` -- the
+   *  latter without an engine, or inside a crate's `src/`. Absent from an
+   *  older backend. */
+  manifest?: string;
 }
 
 /** A capability a project's documents declare, and the documents that do. */

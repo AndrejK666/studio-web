@@ -99,6 +99,13 @@ pub(super) fn publish_problem(e: PublishError) -> CanonicalError {
         PublishError::NoConnection => {
             precondition("connection".to_owned(), "REGISTRY_CONNECTION_UNKNOWN")
         }
+        PublishError::NotOwnConnection { tenant } => {
+            precondition(format!("connection:{tenant}"), "CONNECTION_NOT_OWNED")
+        }
+        PublishError::PlatformConnectionNotOwned { tenant } => precondition(
+            format!("connection:{tenant}"),
+            "PLATFORM_CONNECTION_NOT_OWNED",
+        ),
         PublishError::Empty { path } => precondition(path, "REGISTRY_NOTHING_TO_GIVE"),
         PublishError::TooLarge { .. } => {
             precondition("occurrence".to_owned(), "REGISTRY_GEAR_TOO_LARGE")
@@ -113,9 +120,32 @@ pub(super) async fn publish(
     name: &str,
     input: &super::super::registry_decisions::DecisionInput,
 ) -> ApiResult<JsonBody<RegistryEntryDto>> {
+    let files = RepositoryFiles(catalog.service.as_ref());
+    if input.dry_run {
+        // What would be written, refused as a publish would be; nothing is
+        // written or recorded.
+        let (entry, plan) = catalog
+            .service
+            .plan_publish(ctx, name, input, &files)
+            .await
+            .map_err(|e| match e {
+                PublishFailure::Refused(e) => publish_problem(e),
+                PublishFailure::Decision(e) => decision_problem(e),
+                PublishFailure::Failed(e) => internal(e),
+            })?;
+        let decisions = catalog
+            .service
+            .registry_entry_with_decisions(ctx, &entry.entry.name)
+            .await
+            .map_err(internal)?
+            .map(|(_, d)| d)
+            .unwrap_or_default();
+        let mut dto = registry_entry_detail_dto(entry, decisions);
+        dto.publish_preview = Some(publish_preview_dto(plan));
+        return Ok(Json(dto));
+    }
     let contributions = catalog.contributions()?;
     let by = catalog.decider(ctx).await;
-    let files = RepositoryFiles(catalog.service.as_ref());
     match catalog
         .service
         .publish_registry(ctx, name, input, &by, &files, contributions.as_ref())

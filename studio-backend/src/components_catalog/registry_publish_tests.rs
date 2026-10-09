@@ -17,7 +17,8 @@ use crate::product::port::DeclarationWritten;
 
 const ORG: Uuid = Uuid::from_u128(0x0a6);
 const P1: Uuid = Uuid::from_u128(0x101);
-const TENANT: Uuid = Uuid::from_u128(0x7e);
+/// The tenant whose connection reads the project's repository: the project's own.
+const TENANT: Uuid = P1;
 const PLATFORM_CONNECTION: Uuid = Uuid::from_u128(0xc1);
 
 fn ctx_in(tenant: Uuid) -> SecurityContext {
@@ -141,6 +142,12 @@ fn by() -> Decider {
 
 /// The organization's registry with `ledger` declared in P1, registered.
 async fn seeded(svc: &CatalogService) {
+    seeded_through(svc, TENANT).await;
+}
+
+/// [`seeded`], with the project's repository read through a connection of
+/// `tenant`.
+async fn seeded_through(svc: &CatalogService, tenant: Uuid) {
     let ctx = ctx_in(ORG);
     let w = Walk {
         org: ORG,
@@ -166,7 +173,7 @@ async fn seeded(svc: &CatalogService) {
                 built: true,
                 doc: None,
             }],
-            tenant: Some(TENANT),
+            tenant: Some(tenant),
             ..RepoRead::default()
         }],
         resolved: [(P1, "k1".to_string())].into_iter().collect(),
@@ -450,5 +457,117 @@ async fn only_a_registered_entry_with_a_bounded_directory_is_published() {
         declared,
         PublishFailure::Refused(PublishError::NotRegistered { .. })
     ));
+    assert!(fake.writes.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_dry_run_answers_where_and_what_and_writes_nothing() {
+    let svc = service();
+    seeded(&svc).await;
+    platform(&svc).await;
+    let ctx = ctx_in(ORG);
+    let input = DecisionInput {
+        dry_run: true,
+        ..publish()
+    };
+    let (entry, plan) = svc
+        .plan_publish(&ctx, "ledger", &input, &ledger_files())
+        .await
+        .unwrap();
+    assert_eq!(entry.entry.name, "ledger");
+    assert_eq!(plan.target.repo, "cf/gears-rust");
+    assert_eq!(plan.target.tenant, PLATFORM_TENANT);
+    assert_eq!(plan.target.connection_id, Some(PLATFORM_CONNECTION));
+    assert_eq!(plan.target.base_branch, "develop");
+    assert_eq!(plan.branch, "contribute/organization/ledger");
+    assert_eq!(plan.path, "modules/ledger");
+    let paths: Vec<&str> = plan.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            "modules/ledger/Cargo.toml",
+            "modules/ledger/gear.toml",
+            "modules/ledger/src/lib.rs",
+        ]
+    );
+    assert_eq!(plan.skipped, ["logo.png"]);
+
+    // Nothing recorded: the entry is as it was, with no publish decision.
+    let (after, decisions) = svc
+        .registry_entry_with_decisions(&ctx, "ledger")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(after.entry.contribution.is_none());
+    assert!(decisions.iter().all(|d| d.action != "publish"));
+}
+
+/// The walk may read a project's repository through a connection the
+/// organization inherits from the platform's root; its files are never
+/// read with that token and given away.
+#[tokio::test]
+async fn a_gear_read_through_the_platforms_connection_is_not_published() {
+    let svc = service();
+    seeded_through(&svc, PLATFORM_TENANT).await;
+    platform(&svc).await;
+    let fake = FakeContributions::default();
+    let refused = svc
+        .publish_registry(
+            &ctx_in(ORG),
+            "ledger",
+            &publish(),
+            &by(),
+            &ledger_files(),
+            &fake,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            PublishFailure::Refused(PublishError::NotOwnConnection { tenant }) if tenant == PLATFORM_TENANT
+        ),
+        "{refused:?}"
+    );
+    assert!(fake.writes.lock().unwrap().is_empty());
+}
+
+/// Only the platform's own connection, in the root, writes into its gear
+/// repository.
+#[tokio::test]
+async fn a_platform_source_naming_another_tenants_connection_is_refused() {
+    let svc = service();
+    seeded(&svc).await;
+    svc.replace_sources(
+        &ctx_in(PLATFORM_TENANT),
+        vec![RepoSource {
+            tenant: ORG,
+            connection_id: Some(Uuid::from_u128(0xbad)),
+            repo: "cf/gears-rust".into(),
+            git_ref: "main".into(),
+            mode: "gears".into(),
+        }],
+    )
+    .await
+    .unwrap();
+    let fake = FakeContributions::default();
+    let refused = svc
+        .publish_registry(
+            &ctx_in(ORG),
+            "ledger",
+            &publish(),
+            &by(),
+            &ledger_files(),
+            &fake,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            PublishFailure::Refused(PublishError::PlatformConnectionNotOwned { tenant }) if tenant == ORG
+        ),
+        "{refused:?}"
+    );
     assert!(fake.writes.lock().unwrap().is_empty());
 }

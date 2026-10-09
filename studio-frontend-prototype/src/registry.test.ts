@@ -24,6 +24,8 @@ import {
   consumerLine,
   consumersLabel,
   deprecationImpact,
+  isOrphaned,
+  publishPreviewLines,
   publishStatus,
   suggestRefusal,
   suggestionEdit,
@@ -268,6 +270,30 @@ describe("publishing, consumers and suggestions (ADR-0041 P4)", () => {
     });
     expect(publishStatus(entry("a", { state: "published", version: "v0.3.0", contribution }))?.label).toBe("Published (v0.3.0)");
     expect(publishStatus(entry("a", { state: "published" }))?.label).toBe("Published");
+  });
+
+  it("previews a publish: where the pull request goes and what it carries", () => {
+    const lines = publishPreviewLines({
+      repo: "cf/gears-rust",
+      base_branch: "develop",
+      branch: "contribute/acme/ledger",
+      path: "modules/ledger",
+      files: ["modules/ledger/Cargo.toml", "modules/ledger/src/lib.rs"],
+      skipped: ["logo.png"],
+      title: "Contribute ledger from Acme",
+    });
+    expect(lines).toEqual([
+      "Pull request into cf/gears-rust (develop) from contribute/acme/ledger",
+      "Placed at modules/ledger/ — 2 files",
+      "Not copied (not text): logo.png",
+    ]);
+  });
+
+  it("never counts a merged entry as orphaned", () => {
+    expect(isOrphaned(entry("gone", { orphaned: true, occurrences: [] }))).toBe(true);
+    // An older backend flags the merged entry too; it is the merge, not a loss.
+    expect(isOrphaned(entry("billing-v1", { state: "merged", orphaned: true, occurrences: [] }))).toBe(false);
+    expect(isOrphaned(entry("billing"))).toBe(false);
   });
 
   it("counts and names the projects that use an entry", () => {

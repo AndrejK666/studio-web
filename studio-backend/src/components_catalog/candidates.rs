@@ -623,19 +623,59 @@ fn rank(candidates: &mut Vec<Candidate>) {
     candidates.truncate(MAX_CANDIDATES);
 }
 
+/// Where a name was found: by project, the project's name and the
+/// repositories (reader keys) it was found in there.
+type Places = BTreeMap<Uuid, (String, BTreeSet<String>)>;
+
+/// The names of the projects in `places` that make a finding in project
+/// `project`, repository `repo_key` a copy: another project, in another
+/// repository. Two projects reading one repository are one copy of the code,
+/// not two. Sorted, once each.
+fn copied_in(places: Option<&Places>, project: Uuid, repo_key: &str) -> Vec<String> {
+    let mut others: Vec<String> = places
+        .into_iter()
+        .flat_map(|by| by.iter())
+        .filter(|(p, (_, repos))| **p != project && repos.iter().any(|k| k != repo_key))
+        .map(|(_, (name, _))| name.clone())
+        .collect();
+    others.sort_unstable();
+    others.dedup();
+    others
+}
+
+/// `evidence` with its copy signal for `others` in place of whatever it
+/// said before, and the score that sums to.
+pub fn with_copies(evidence: &[Evidence], others: &[String]) -> (Vec<Evidence>, u32) {
+    let mut out: Vec<Evidence> = evidence
+        .iter()
+        .filter(|e| e.signal != SIGNAL_COPIED)
+        .cloned()
+        .collect();
+    if !others.is_empty() {
+        out.push(Evidence::new(
+            SIGNAL_COPIED,
+            format!("copied in {}", others.join(", ")),
+            W_COPIED,
+        ));
+    }
+    let score = out.iter().map(|e| e.weight).sum();
+    (out, score)
+}
+
 /// The copy signal, then the threshold, over every repository a walk read.
 ///
 /// A candidate is copied when the same name (compared [`kebab`]-folded) is
-/// found in another project of the organization: among this walk's reads
-/// (declared or candidate), or among the occurrences the registry holds for
-/// repositories this walk did not read again. What is left under
-/// [`CANDIDATE_THRESHOLD`] after it is dropped.
+/// found in another project of the organization, in another repository:
+/// among this walk's reads (declared or candidate), or among the occurrences
+/// the registry holds for repositories this walk did not read again. Two
+/// projects reading the same repository (the same reader key) are not a
+/// copy. What is left under [`CANDIDATE_THRESHOLD`] after it is dropped.
 pub fn apply_copies(reads: &mut [RepoRead], stored: &[(String, OccurrenceRecord)]) {
     let reread: BTreeSet<(Uuid, String)> = reads
         .iter()
         .map(|r| (r.project_id, r.repo_key.clone()))
         .collect();
-    let mut found: BTreeMap<String, BTreeMap<Uuid, String>> = BTreeMap::new();
+    let mut found: BTreeMap<String, Places> = BTreeMap::new();
     for r in reads.iter() {
         let names = r
             .gears
@@ -646,7 +686,10 @@ pub fn apply_copies(reads: &mut [RepoRead], stored: &[(String, OccurrenceRecord)
             found
                 .entry(kebab(name))
                 .or_default()
-                .insert(r.project_id, r.project_name.clone());
+                .entry(r.project_id)
+                .or_insert_with(|| (r.project_name.clone(), BTreeSet::new()))
+                .1
+                .insert(r.repo_key.clone());
         }
     }
     for (_, o) in stored {
@@ -661,36 +704,87 @@ pub fn apply_copies(reads: &mut [RepoRead], stored: &[(String, OccurrenceRecord)
             .or_default()
             .entry(project)
             .or_insert_with(|| {
-                o.project_name
-                    .clone()
-                    .unwrap_or_else(|| project.to_string())
-            });
+                (
+                    o.project_name
+                        .clone()
+                        .unwrap_or_else(|| project.to_string()),
+                    BTreeSet::new(),
+                )
+            })
+            .1
+            .insert(o.repo_key.clone());
     }
     for r in reads.iter_mut() {
         for c in &mut r.candidates {
-            c.evidence.retain(|e| e.signal != SIGNAL_COPIED);
-            c.score = c.evidence.iter().map(|e| e.weight).sum();
-            let mut others: Vec<&str> = found
-                .get(&kebab(&c.name))
-                .into_iter()
-                .flat_map(|by| by.iter())
-                .filter(|(p, _)| **p != r.project_id)
-                .map(|(_, name)| name.as_str())
-                .collect();
-            others.sort_unstable();
-            others.dedup();
-            if !others.is_empty() {
-                c.evidence.push(Evidence::new(
-                    SIGNAL_COPIED,
-                    format!("copied in {}", others.join(", ")),
-                    W_COPIED,
-                ));
-                c.score += W_COPIED;
-            }
+            let others = copied_in(found.get(&kebab(&c.name)), r.project_id, &r.repo_key);
+            (c.evidence, c.score) = with_copies(&c.evidence, &others);
         }
         r.candidates.retain(|c| c.score >= CANDIDATE_THRESHOLD);
         rank(&mut r.candidates);
     }
+}
+
+/// The copy signal of every detected occurrence settled again from the
+/// occurrences the registry keeps after a walk (`live`: what the walk
+/// found and what it kept), so evidence does not outlive what it was about:
+/// an occurrence retired -- its project excluded, its repository no longer
+/// named, the organization's gear repository changed -- is no copy any
+/// more. Projects are as in [`apply_copies`]: another project, another
+/// repository. `owner` says whose read an occurrence is (its project, or the
+/// organization for its gear repository). Answers each detected occurrence's
+/// index in `live` with its evidence and score, where they changed.
+pub fn refreshed_copies(
+    live: &[&OccurrenceRecord],
+    owner: impl Fn(&OccurrenceRecord) -> Option<Uuid>,
+) -> Vec<(usize, Vec<Evidence>, u32)> {
+    let mut found: BTreeMap<&str, Places> = BTreeMap::new();
+    for o in live {
+        let Some(project) = owner(o) else {
+            continue;
+        };
+        found
+            .entry(o.entry_id.as_str())
+            .or_default()
+            .entry(project)
+            .or_insert_with(|| {
+                (
+                    o.project_name
+                        .clone()
+                        .unwrap_or_else(|| project.to_string()),
+                    BTreeSet::new(),
+                )
+            })
+            .1
+            .insert(o.repo_key.clone());
+    }
+    let mut out = Vec::new();
+    for (i, o) in live.iter().enumerate() {
+        if !o.detected() {
+            continue;
+        }
+        let Some(project) = owner(o) else {
+            continue;
+        };
+        let others = copied_in(found.get(o.entry_id.as_str()), project, &o.repo_key);
+        let (evidence, _) = with_copies(&o.evidence, &others);
+        if evidence == o.evidence {
+            continue;
+        }
+        // The score moves by the copy signal's weight only: what the other
+        // signals scored stays as the detector said.
+        let copied = |ev: &[Evidence]| -> u32 {
+            ev.iter()
+                .filter(|e| e.signal == SIGNAL_COPIED)
+                .map(|e| e.weight)
+                .sum()
+        };
+        let before: u32 = o
+            .score
+            .unwrap_or_else(|| o.evidence.iter().map(|e| e.weight).sum());
+        let score = before.saturating_sub(copied(&o.evidence)) + copied(&evidence);
+        out.push((i, evidence, score));
+    }
+    out
 }
 
 #[cfg(test)]

@@ -11,7 +11,14 @@
 //! catalogued gears live under, else `gears/` -- on the branch
 //! `contribute/<organization>/<name>`. The write goes through studio-product
 //! (`product::port::GearContributions`) with the platform source's
-//! connection, acting in the root tenant (`registry::in_tenant`).
+//! connection, acting in the root tenant (`registry::in_tenant`) -- and only
+//! when that source names the root's own connection. The gear's files are
+//! read through the organization's own connection, never one it inherits
+//! from the platform (`PublishError::NotOwnConnection`).
+//!
+//! `dry_run: true` ([`CatalogService::plan_publish`]) answers the target
+//! repository, branch, path and files, refusing what a publish would refuse,
+//! and writes and records nothing.
 //!
 //! The entry stays `registered` and records the `contribution`; the walk
 //! makes it `published` once the platform's catalogue has a component by its
@@ -57,6 +64,17 @@ pub enum PublishError {
     NoOccurrence,
     /// The occurrence was recorded before the walk kept its connection.
     NoConnection,
+    /// The walk read the gear's repository through a connection the
+    /// organization only inherits (the platform's): its files are not the
+    /// organization's to read with that token and give.
+    NotOwnConnection {
+        tenant: uuid::Uuid,
+    },
+    /// The platform's gear source names a connection outside the root: a
+    /// contribution is written only with the platform's own.
+    PlatformConnectionNotOwned {
+        tenant: uuid::Uuid,
+    },
     /// The directory holds no file to give.
     Empty {
         path: String,
@@ -86,6 +104,14 @@ impl std::fmt::Display for PublishError {
             Self::NoConnection => write!(
                 f,
                 "the registry does not know which connection reads this component's repository yet; read the project again"
+            ),
+            Self::NotOwnConnection { tenant } => write!(
+                f,
+                "the component's repository is read through a connection of tenant {tenant}, which the organization only inherits; connect the repository on the project's or the organization's Connections page and read the project again"
+            ),
+            Self::PlatformConnectionNotOwned { tenant } => write!(
+                f,
+                "the platform's gear repository names a connection of tenant {tenant}, not the platform's own; a platform administrator sets the platform's source again"
             ),
             Self::Empty { path } => write!(f, "`{path}` holds no file to give"),
             Self::TooLarge { files, bytes } => write!(
@@ -350,21 +376,35 @@ pub fn contribution_text(
     }
 }
 
+/// What a publish writes, before it is written: a dry run's answer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublishPlan {
+    /// The platform's gear repository and the connection it is written
+    /// through, in the root tenant.
+    pub target: RepositoryTarget,
+    /// `contribute/<organization>/<name>`.
+    pub branch: String,
+    /// Where the gear is placed in the platform's repository.
+    pub path: String,
+    /// The files, at their places there.
+    pub files: Vec<DeclarationFile>,
+    /// What is not copied (not text), relative to the gear's directory.
+    pub skipped: Vec<String>,
+    pub text: PullRequestText,
+}
+
 impl CatalogService {
-    /// Publish the registered entry `name`: read its declaring directory
-    /// (bounded), open a pull request into the platform's gear repository
-    /// through `contributions`, and record a `publish` decision carrying the
-    /// contribution. Whether `by` may is the caller's question.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn publish_registry(
+    /// What publishing the registered entry `name` would write, and where:
+    /// its declaring directory read (bounded) and placed in the platform's
+    /// gear repository. Nothing is written. Every refusal of
+    /// [`Self::publish_registry`] is made here.
+    pub async fn plan_publish(
         &self,
         ctx: &SecurityContext,
         name: &str,
         input: &DecisionInput,
-        by: &Decider,
         files: &dyn OccurrenceFiles,
-        contributions: &dyn GearContributions,
-    ) -> Result<(RegistryEntry, Vec<DecisionRecord>), PublishFailure> {
+    ) -> Result<(RegistryEntry, PublishPlan), PublishFailure> {
         let wanted = name.trim();
         let entry = self
             .registry_entry(ctx, wanted)
@@ -378,23 +418,38 @@ impl CatalogService {
             }));
         }
 
-        // The platform's gear repository, as its administrator saved it.
-        let pctx = if super::tiers::is_platform(ctx) {
-            ctx.clone()
-        } else {
-            registry::in_tenant(ctx, super::tiers::PLATFORM_TENANT)?
-        };
+        // The platform's gear repository, as its administrator saved it --
+        // and written only through the platform's own connection, in the
+        // root: a source naming any other tenant's is not the platform's.
+        let pctx = platform_ctx(ctx)?;
         let sources = self.list_sources(&pctx).await?;
         let source = platform_gear_source(&sources)
             .cloned()
             .ok_or(PublishFailure::Refused(PublishError::NoPlatformRepository))?;
+        if source.tenant != super::tiers::PLATFORM_TENANT {
+            return Err(PublishFailure::Refused(
+                PublishError::PlatformConnectionNotOwned {
+                    tenant: source.tenant,
+                },
+            ));
+        }
 
-        // The directory to give, read as the walk read it.
+        // The directory to give, read as the walk read it -- and only
+        // through the organization's own connection, never the platform's
+        // token it inherits.
         let occ = declaring_occurrence(&entry)
             .ok_or(PublishFailure::Refused(PublishError::NoOccurrence))?
             .clone();
-        if occ.tenant.is_none() {
+        let Some(occ_tenant) = occ.tenant else {
             return Err(PublishFailure::Refused(PublishError::NoConnection));
+        };
+        if !self
+            .connection_is_organizations(ctx, occ_tenant, occ.project_id)
+            .await
+        {
+            return Err(PublishFailure::Refused(PublishError::NotOwnConnection {
+                tenant: occ_tenant,
+            }));
         }
         let octx = match occ.project_id {
             Some(project_id) => registry::in_tenant(ctx, project_id)?,
@@ -477,18 +532,49 @@ impl CatalogService {
             repo: source.repo.clone(),
             base_branch: base_of(&source),
         };
+        Ok((
+            entry,
+            PublishPlan {
+                target,
+                branch,
+                path: dest,
+                files: placed,
+                skipped,
+                text,
+            },
+        ))
+    }
+
+    /// Publish the registered entry `name`: plan it ([`Self::plan_publish`]),
+    /// open a pull request into the platform's gear repository through
+    /// `contributions`, and record a `publish` decision carrying the
+    /// contribution. Whether `by` may is the caller's question.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn publish_registry(
+        &self,
+        ctx: &SecurityContext,
+        name: &str,
+        input: &DecisionInput,
+        by: &Decider,
+        files: &dyn OccurrenceFiles,
+        contributions: &dyn GearContributions,
+    ) -> Result<(RegistryEntry, Vec<DecisionRecord>), PublishFailure> {
+        let (entry, plan) = self.plan_publish(ctx, name, input, files).await?;
+        let pctx = platform_ctx(ctx)?;
         let written = contributions
-            .contribute(&pctx, &target, &branch, &placed, &text)
+            .contribute(&pctx, &plan.target, &plan.branch, &plan.files, &plan.text)
             .await?;
-        tracing::info!(organization_id = %org, entry = %entry.entry.name, repo = %source.repo, branch = %written.branch, pr = ?written.pr_url, files = placed.len(), "components-catalog: registry: a gear was contributed to the platform");
+        let org = ctx.subject_tenant_id();
+        tracing::info!(organization_id = %org, entry = %entry.entry.name, repo = %plan.target.repo, branch = %written.branch, pr = ?written.pr_url, files = plan.files.len(), "components-catalog: registry: a gear was contributed to the platform");
 
         let mut decided = input.clone();
+        decided.dry_run = false;
         decided.contribution = Some(Contribution {
-            repo: source.repo.clone(),
+            repo: plan.target.repo.clone(),
             branch: written.branch,
             pr_url: written.pr_url,
-            path: dest,
-            files: placed.len(),
+            path: plan.path,
+            files: plan.files.len(),
             at: registry::now(),
             by: by.id.clone(),
             by_name: by.name.clone(),
@@ -499,6 +585,16 @@ impl CatalogService {
                 DecideFailure::Refused(e) => PublishFailure::Decision(e),
                 DecideFailure::Failed(e) => PublishFailure::Failed(e),
             })
+    }
+}
+
+/// The caller acting in the platform's (root) tenant, where its gear
+/// repository's source and connection are.
+fn platform_ctx(ctx: &SecurityContext) -> anyhow::Result<SecurityContext> {
+    if super::tiers::is_platform(ctx) {
+        Ok(ctx.clone())
+    } else {
+        registry::in_tenant(ctx, super::tiers::PLATFORM_TENANT)
     }
 }
 

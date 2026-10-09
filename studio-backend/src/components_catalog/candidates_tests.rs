@@ -376,3 +376,107 @@ fn names_fold_to_kebab_case() {
     assert_eq!(kebab("studio-tasks"), "studio-tasks");
     assert_eq!(kebab("__x__"), "x");
 }
+
+/// Two projects reading one repository hold one copy of the code: the same
+/// reader key is never "another project".
+#[test]
+fn the_same_repository_in_another_project_is_not_a_copy() {
+    let thin = || {
+        detect(
+            &tree(&["src/hooks/mod.rs", "src/hooks/rest.rs"]),
+            &HashMap::new(),
+            &[],
+        )
+    };
+    let mut reads = vec![
+        RepoRead {
+            project_id: Uuid::from_u128(1),
+            project_name: "studio".into(),
+            repo_key: "k-shared".into(),
+            candidates: thin(),
+            ..RepoRead::default()
+        },
+        RepoRead {
+            project_id: Uuid::from_u128(2),
+            project_name: "studio-fork".into(),
+            repo_key: "k-shared".into(),
+            candidates: thin(),
+            ..RepoRead::default()
+        },
+    ];
+    // And a stored occurrence of the same repository, not read again.
+    let stored = vec![(
+        "o".to_string(),
+        OccurrenceRecord {
+            entry: "hooks".into(),
+            project_id: Some(Uuid::from_u128(3)),
+            project_name: Some("studio-mirror".into()),
+            repo_key: "k-shared".into(),
+            ..OccurrenceRecord::default()
+        },
+    )];
+    let before = thin()[0].score;
+    apply_copies(&mut reads, &stored);
+    for r in &reads {
+        for c in &r.candidates {
+            assert!(
+                c.evidence.iter().all(|e| e.signal != SIGNAL_COPIED),
+                "{:?}",
+                c.evidence
+            );
+            assert_eq!(c.score, before);
+        }
+    }
+}
+
+/// What the registry keeps after a walk settles the copy signal: an
+/// occurrence gone takes its copy evidence with it, and only the copy
+/// signal's weight moves the score.
+#[test]
+fn copy_evidence_is_settled_from_the_occurrences_kept() {
+    let p1 = Uuid::from_u128(1);
+    let p2 = Uuid::from_u128(2);
+    let detected = |project: Uuid, name: &str, key: &str, evidence: Vec<Evidence>, score: u32| {
+        OccurrenceRecord {
+            entry: "hooks".into(),
+            entry_id: "e-hooks".into(),
+            project_id: Some(project),
+            project_name: Some(name.into()),
+            repo_key: key.into(),
+            declared_in: "detected".into(),
+            evidence,
+            score: Some(score),
+            ..OccurrenceRecord::default()
+        }
+    };
+    let rest = Evidence::new("rest", "own REST surface: rest.rs".into(), 3);
+    let stale = Evidence::new(SIGNAL_COPIED, "copied in insight".into(), W_COPIED);
+    // Insight's occurrence was retired: studio's still says it was copied.
+    let studio = detected(p1, "studio", "k1", vec![rest.clone(), stale.clone()], 7);
+    let changed = refreshed_copies(&[&studio], |o| o.project_id);
+    assert_eq!(changed.len(), 1);
+    let (i, evidence, score) = &changed[0];
+    assert_eq!(*i, 0);
+    assert_eq!(evidence, &vec![rest.clone()]);
+    assert_eq!(*score, 5, "the detector's other signals keep their score");
+
+    // With insight's occurrence there, nothing changes.
+    let insight = detected(
+        p2,
+        "insight",
+        "k2",
+        vec![
+            rest.clone(),
+            Evidence::new(SIGNAL_COPIED, "copied in studio".into(), W_COPIED),
+        ],
+        5,
+    );
+    assert!(refreshed_copies(&[&studio, &insight], |o| o.project_id).is_empty());
+
+    // A copy found since -- another project, another repository -- is said.
+    let bare = detected(p1, "studio", "k1", vec![rest.clone()], 3);
+    let changed = refreshed_copies(&[&bare, &insight], |o| o.project_id);
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0].1.last().unwrap().detail, "copied in insight");
+    assert_eq!(changed[0].2, 3 + W_COPIED);
+}

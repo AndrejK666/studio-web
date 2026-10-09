@@ -701,6 +701,9 @@ pub fn plan(
     // The projects each entry is declared (or detected) in: a project that
     // declares a component is not its consumer.
     let mut declarers: BTreeMap<String, BTreeSet<Uuid>> = BTreeMap::new();
+    // The stored occurrences kept, by id: with what the walk found, what the
+    // copy evidence is settled from at the end.
+    let mut kept: BTreeMap<String, OccurrenceRecord> = BTreeMap::new();
     for (id, occ) in occurrences {
         if produced.contains_key(id) {
             continue;
@@ -711,6 +714,7 @@ pub fn plan(
             out.retire.push(id.clone());
             out.occurrences_removed += 1;
         } else {
+            kept.insert(id.clone(), occ.clone());
             if let Some(p) = occ.project_id {
                 declarers.entry(occ.entry_id.clone()).or_default().insert(p);
             }
@@ -821,9 +825,69 @@ pub fn plan(
         }
     }
 
-    // Orphaned is a count, settled for every entry.
+    // Copy evidence settled again from what the registry keeps now (P3):
+    // an occurrence retired -- its project excluded, its repository no
+    // longer named, the organization's gear repository changed -- is no
+    // copy any more, though the repositories still holding the candidate
+    // were not read again. A candidate entry whose occurrences moved takes
+    // its score and evidence from its best one, as Declare it picks it.
+    {
+        let mut ids: Vec<(bool, String)> = Vec::new();
+        let mut live: Vec<&OccurrenceRecord> = Vec::new();
+        for (id, occ) in &produced {
+            ids.push((true, id.clone()));
+            live.push(occ);
+        }
+        for (id, occ) in &kept {
+            ids.push((false, id.clone()));
+            live.push(occ);
+        }
+        let changes = super::candidates::refreshed_copies(&live, |o| o.walked_by(walk.org));
+        let mut touched: BTreeSet<String> = BTreeSet::new();
+        for (i, evidence, score) in changes {
+            let (is_produced, id) = &ids[i];
+            let occ = if *is_produced {
+                produced.get_mut(id)
+            } else {
+                kept.get_mut(id)
+            };
+            let Some(occ) = occ else { continue };
+            occ.evidence = evidence;
+            occ.score = Some(score);
+            touched.insert(occ.entry_id.clone());
+            if !*is_produced {
+                out.edges.push(gts::found_in_edge(&occ.entry_id, id));
+                if let Ok(value) = serde_json::to_value(&*occ) {
+                    out.upsert.push(gts::occurrence_node(id.clone(), value));
+                    out.occurrences_written += 1;
+                }
+            }
+        }
+        for entry_id in &touched {
+            let Some(entry) = by_id.get_mut(entry_id) else {
+                continue;
+            };
+            if entry.state != STATE_CANDIDATE {
+                continue;
+            }
+            let best = produced
+                .values()
+                .chain(kept.values())
+                .filter(|o| &o.entry_id == entry_id && o.detected())
+                .max_by(|a, b| a.score.cmp(&b.score).then_with(|| b.path.cmp(&a.path)));
+            if let Some(best) = best {
+                entry.score = best.score;
+                entry.evidence.clone_from(&best.evidence);
+            }
+        }
+    }
+
+    // Orphaned is a count, settled for every entry -- but a merged entry
+    // is never orphaned: what it was found as is its target's now, so its
+    // having no occurrence of its own is the merge, not a loss.
     for (id, entry) in &mut by_id {
-        entry.orphaned = remaining.get(id).copied().unwrap_or(0) == 0;
+        entry.orphaned =
+            entry.state != STATE_MERGED && remaining.get(id).copied().unwrap_or(0) == 0;
     }
 
     // Who uses each entry (P4), and which contributions the platform has
@@ -1032,8 +1096,9 @@ struct SettingsRecord {
 /// The organization's gear repository, as stored (ADR-0042 §2).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GearRepository {
-    /// The tenant whose catalogue holds the connection: the organization, or
-    /// an ancestor it inherits the connection from.
+    /// The tenant whose catalogue holds the connection: the organization
+    /// itself. A connection inherited from above it (the platform's root) is
+    /// refused when the setting is made, and ignored when read.
     pub tenant: Uuid,
     pub connection_id: Uuid,
     /// `owner/name`.
@@ -1070,6 +1135,18 @@ pub enum GearRepositoryError {
     /// The connection's token is not readable where the repository is read
     /// and written: its scope, and what to do instead.
     NotShared { scope: String, hint: String },
+    /// The connection is held by another tenant than the organization --
+    /// the platform's root, which the organization inherits it from, or a
+    /// workspace. The gear repository is the organization's, written with
+    /// the organization's own token, never one it only inherits.
+    NotOwned { tenant: Uuid },
+    /// The repository or its branch could not be read through the
+    /// connection: what the provider said.
+    Unreadable {
+        repo: String,
+        branch: String,
+        error: String,
+    },
 }
 
 impl std::fmt::Display for GearRepositoryError {
@@ -1085,6 +1162,18 @@ impl std::fmt::Display for GearRepositoryError {
             Self::NotShared { scope, hint } => {
                 write!(f, "the connection is {scope}-scoped. {hint}")
             }
+            Self::NotOwned { tenant } => write!(
+                f,
+                "the connection belongs to tenant {tenant}, not to the organization: it is inherited (the platform's, or another tenant's), and the organization's gear repository is written with the organization's own connection. Add a connection on the organization's Connections page"
+            ),
+            Self::Unreadable {
+                repo,
+                branch,
+                error,
+            } => write!(
+                f,
+                "`{repo}` at `{branch}` could not be read through the connection: {error}"
+            ),
         }
     }
 }
@@ -1127,11 +1216,14 @@ pub fn normalize_repo(repo: &str) -> Option<String> {
     }
 }
 
-/// The gear repository a request sets, from the connection the organization
+/// The gear repository the organization `org` sets, from the connection it
 /// sees (`found`: the tenant holding it, its scope and label), or why not.
+/// The connection must be the organization's own: one found by walking up
+/// to the platform's root is refused ([`GearRepositoryError::NotOwned`]).
 /// Pure.
 pub fn gear_repository_of(
     input: &GearRepositoryInput,
+    org: Uuid,
     found: Option<(Uuid, &str, &str)>,
     by: Option<String>,
     at: String,
@@ -1140,6 +1232,9 @@ pub fn gear_repository_of(
         .ok_or_else(|| GearRepositoryError::InvalidRepo(input.repo.trim().to_owned()))?;
     let (tenant, scope, label) =
         found.ok_or(GearRepositoryError::UnknownConnection(input.connection_id))?;
+    if tenant != org {
+        return Err(GearRepositoryError::NotOwned { tenant });
+    }
     if let Some(hint) = gear_repository_scope_refusal(scope) {
         return Err(GearRepositoryError::NotShared {
             scope: if scope.trim().is_empty() {
@@ -1167,6 +1262,123 @@ pub fn gear_repository_of(
         set_by: by,
         set_at: Some(at),
     })
+}
+
+/// A connection as the gear repository's checks need it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoundConnection {
+    /// The tenant whose catalogue holds it.
+    pub tenant: Uuid,
+    pub scope: String,
+    pub label: String,
+    pub provider: String,
+}
+
+/// What setting the organization's gear repository reads and writes through:
+/// the connectors in production, a table in tests.
+#[async_trait::async_trait]
+pub trait GearRepositoryAccess: Send + Sync {
+    /// The connection `id` as `org` sees it -- its own, or inherited from a
+    /// tenant above it -- or `None`.
+    async fn connection(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        id: Uuid,
+    ) -> Option<FoundConnection>;
+
+    /// Read `repo` at `branch` through the connection: a tree listing, so a
+    /// repository or branch that is not there (or not readable with the
+    /// token) is an error now rather than at the first walk.
+    async fn probe(
+        &self,
+        ctx: &SecurityContext,
+        connection: &FoundConnection,
+        connection_id: Uuid,
+        repo: &str,
+        branch: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Create a repository through the connection: its `owner/name` and
+    /// default branch.
+    #[allow(clippy::too_many_arguments)]
+    async fn create(
+        &self,
+        ctx: &SecurityContext,
+        connection: &FoundConnection,
+        connection_id: Uuid,
+        owner: Option<&str>,
+        is_org: bool,
+        name: &str,
+        private: bool,
+    ) -> anyhow::Result<(String, String)>;
+}
+
+/// [`GearRepositoryAccess`] through the connector service.
+pub struct ConnectorAccess(pub Arc<crate::connectors::sdk::ConnectorService>);
+
+#[async_trait::async_trait]
+impl GearRepositoryAccess for ConnectorAccess {
+    async fn connection(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        id: Uuid,
+    ) -> Option<FoundConnection> {
+        let (tenant, c) = self.0.nearest_by_id(ctx, org, id).await?;
+        Some(FoundConnection {
+            tenant,
+            scope: c.scope,
+            label: c.label,
+            provider: c.provider,
+        })
+    }
+
+    async fn probe(
+        &self,
+        ctx: &SecurityContext,
+        connection: &FoundConnection,
+        connection_id: Uuid,
+        repo: &str,
+        branch: &str,
+    ) -> anyhow::Result<()> {
+        let repository = crate::connectors::sdk::Repository::open(
+            &self.0,
+            ctx,
+            connection.tenant,
+            Some(connection_id),
+            &connection.provider,
+            repo,
+            Some(branch),
+        )
+        .await?;
+        repository.tree().await.map(|_| ())
+    }
+
+    async fn create(
+        &self,
+        ctx: &SecurityContext,
+        connection: &FoundConnection,
+        connection_id: Uuid,
+        owner: Option<&str>,
+        is_org: bool,
+        name: &str,
+        private: bool,
+    ) -> anyhow::Result<(String, String)> {
+        let created = crate::connectors::sdk::create_repository(
+            &self.0,
+            ctx,
+            connection.tenant,
+            Some(connection_id),
+            &connection.provider,
+            owner,
+            is_org,
+            name,
+            private,
+        )
+        .await?;
+        Ok((created.full_name, created.default_branch))
+    }
 }
 
 /// What the last walk saw of one project.
@@ -1466,11 +1678,23 @@ impl CatalogService {
     }
 
     /// The organization's gear repository, when one is set (ADR-0042 §2).
+    ///
+    /// A setting whose connection is not the organization's own -- stored
+    /// before that was checked, with a connection inherited from the
+    /// platform's root -- is not answered: nothing reads or writes through
+    /// it, and the page shows none until an administrator sets it again.
     pub async fn gear_repository(
         &self,
         ctx: &SecurityContext,
     ) -> anyhow::Result<Option<GearRepository>> {
-        Ok(self.settings(ctx).await?.gear_repository)
+        let org = ctx.subject_tenant_id();
+        Ok(self.settings(ctx).await?.gear_repository.filter(|r| {
+            let owned = r.tenant == org;
+            if !owned {
+                tracing::warn!(organization_id = %org, tenant = %r.tenant, repo = %r.repo, "components-catalog: the organization's gear repository names a connection the organization does not own; it is ignored until set again");
+            }
+            owned
+        }))
     }
 
     /// Store `repo` as the organization's gear repository, or clear it with
@@ -1499,42 +1723,62 @@ impl CatalogService {
         Ok(repo)
     }
 
-    /// Set the organization's gear repository: the connection must be one the
-    /// organization sees, and organization-scoped
-    /// ([`gear_repository_scope_refusal`]). `Ok(Err(_))` is a refusal.
+    /// Set the organization's gear repository: the connection must be the
+    /// organization's own (never one inherited from the platform's root),
+    /// organization-scoped ([`gear_repository_scope_refusal`]), and the
+    /// repository readable at the branch through it. `Ok(Err(_))` is a
+    /// refusal.
     pub async fn set_gear_repository(
         &self,
         ctx: &SecurityContext,
         input: &GearRepositoryInput,
         by: Option<String>,
+        access: &dyn GearRepositoryAccess,
     ) -> anyhow::Result<Result<GearRepository, GearRepositoryError>> {
-        let connectors = self
-            .connector_service()
-            .ok_or_else(|| anyhow!("no connector service is available for the gear repository"))?;
         let org = ctx.subject_tenant_id();
-        let found = connectors
-            .nearest_by_id(ctx, org, input.connection_id)
-            .await;
+        let found = access.connection(ctx, org, input.connection_id).await;
         let repo = match gear_repository_of(
             input,
+            org,
             found
                 .as_ref()
-                .map(|(tenant, c)| (*tenant, c.scope.as_str(), c.label.as_str())),
+                .map(|c| (c.tenant, c.scope.as_str(), c.label.as_str())),
             by,
             now(),
         ) {
             Ok(repo) => repo,
             Err(refused) => return Ok(Err(refused)),
         };
+        let Some(connection) = found else {
+            return Ok(Err(GearRepositoryError::UnknownConnection(
+                input.connection_id,
+            )));
+        };
+        if let Err(e) = access
+            .probe(
+                ctx,
+                &connection,
+                repo.connection_id,
+                &repo.repo,
+                &repo.branch,
+            )
+            .await
+        {
+            return Ok(Err(GearRepositoryError::Unreadable {
+                repo: repo.repo,
+                branch: repo.branch,
+                error: format!("{e:#}"),
+            }));
+        }
         self.store_gear_repository(ctx, Some(repo.clone())).await?;
         tracing::info!(organization_id = %org, repo = %repo.repo, branch = %repo.branch, "components-catalog: the organization's gear repository was set");
         Ok(Ok(repo))
     }
 
     /// Create a repository through the connection and set it as the
-    /// organization's gear repository. The connection is checked first, so
-    /// a connection the setting would refuse creates nothing. `Ok(Err(_))`
-    /// is a refusal.
+    /// organization's gear repository. The connection is checked first --
+    /// the organization's own, organization-scoped -- so a connection the
+    /// setting would refuse creates nothing. `Ok(Err(_))` is a refusal.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_gear_repository(
         &self,
@@ -1545,41 +1789,43 @@ impl CatalogService {
         name: &str,
         private: bool,
         by: Option<String>,
+        access: &dyn GearRepositoryAccess,
     ) -> anyhow::Result<Result<GearRepository, GearRepositoryError>> {
-        let connectors = self
-            .connector_service()
-            .ok_or_else(|| anyhow!("no connector service is available for the gear repository"))?;
         let org = ctx.subject_tenant_id();
-        let Some((tenant, connection)) = connectors.nearest_by_id(ctx, org, connection_id).await
-        else {
+        let Some(connection) = access.connection(ctx, org, connection_id).await else {
             return Ok(Err(GearRepositoryError::UnknownConnection(connection_id)));
         };
+        if connection.tenant != org {
+            return Ok(Err(GearRepositoryError::NotOwned {
+                tenant: connection.tenant,
+            }));
+        }
         if let Some(hint) = gear_repository_scope_refusal(&connection.scope) {
             return Ok(Err(GearRepositoryError::NotShared {
                 scope: connection.scope.clone(),
                 hint,
             }));
         }
-        let created = crate::connectors::sdk::create_repository(
-            &connectors,
-            ctx,
-            tenant,
-            Some(connection_id),
-            &connection.provider,
-            owner,
-            is_org,
-            name,
-            private,
-        )
-        .await?;
+        let (full_name, default_branch) = access
+            .create(
+                ctx,
+                &connection,
+                connection_id,
+                owner,
+                is_org,
+                name,
+                private,
+            )
+            .await?;
         let input = GearRepositoryInput {
             connection_id,
-            repo: created.full_name.clone(),
-            branch: Some(created.default_branch.clone()),
+            repo: full_name,
+            branch: Some(default_branch),
         };
         let repo = match gear_repository_of(
             &input,
-            Some((tenant, &connection.scope, &connection.label)),
+            org,
+            Some((connection.tenant, &connection.scope, &connection.label)),
             by,
             now(),
         ) {

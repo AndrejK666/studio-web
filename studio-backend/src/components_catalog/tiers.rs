@@ -24,7 +24,9 @@
 //!   the platform's, then to the built-in.
 //! - **Sources.** An organization source naming a repository the platform
 //!   already reads in the same mode is `shadowed_by_platform`: the
-//!   organization can remove it.
+//!   organization can remove it, and its sync does not read it
+//!   ([`leave_to_platform`]) -- nor the default crates.io keyword when the
+//!   platform syncs crates.io. The run's result says what it left.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -244,6 +246,51 @@ pub fn shadowed_by_platform(source: &RepoSource, platform: &[RepoSource]) -> boo
         p.repo.trim().eq_ignore_ascii_case(source.repo.trim())
             && mode(&p.mode) == mode(&source.mode)
     })
+}
+
+/// Take out of an organization's sync what the platform's catalogue already
+/// reads, and answer what was taken, in words:
+///
+/// - every repository source [`shadowed_by_platform`] -- its components are
+///   the platform's tier, and reading them into the organization's tenant
+///   only writes nodes the organization's reads then hide;
+/// - the crates.io keyword, when the platform syncs crates.io
+///   (`platform_keyword`) and the organization's is the default one
+///   (`default_keyword`) or the platform's own. An organization that names a
+///   keyword of its own still syncs it.
+pub fn leave_to_platform(
+    sources: &mut super::service::SyncSources,
+    platform: &[RepoSource],
+    platform_keyword: Option<&str>,
+    default_keyword: &str,
+) -> Vec<String> {
+    let mut left = Vec::new();
+    sources.repos.retain(|s| {
+        if shadowed_by_platform(s, platform) {
+            let mode = if s.mode.trim().is_empty() {
+                "gears"
+            } else {
+                s.mode.trim()
+            };
+            left.push(format!("{} ({mode})", s.repo.trim()));
+            false
+        } else {
+            true
+        }
+    });
+    let platform_keyword = platform_keyword.map(str::trim).filter(|k| !k.is_empty());
+    if let (Some(platform_keyword), Some(keyword)) =
+        (platform_keyword, sources.crates_io.as_deref())
+    {
+        let keyword = keyword.trim();
+        if keyword.eq_ignore_ascii_case(default_keyword.trim())
+            || keyword.eq_ignore_ascii_case(platform_keyword)
+        {
+            left.push(format!("crates.io keyword `{keyword}`"));
+            sources.crates_io = None;
+        }
+    }
+    left
 }
 
 #[cfg(test)]

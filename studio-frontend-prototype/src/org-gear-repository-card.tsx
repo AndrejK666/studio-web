@@ -42,7 +42,7 @@ export function OrgGearRepositoryCard({
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<Mode>("view");
-  const offered = gearRepoConnections(connections);
+  const offered = gearRepoConnections(connections, tenantId);
   const [connectionId, setConnectionId] = useState("");
   const [repo, setRepo] = useState("");
   const [branch, setBranch] = useState("main");

@@ -16,7 +16,8 @@ use crate::product::port::DeclarationWritten;
 
 const ORG: Uuid = Uuid::from_u128(0x0a6);
 const P1: Uuid = Uuid::from_u128(0x101);
-const TENANT: Uuid = Uuid::from_u128(0x7e);
+/// The tenant whose connection reads the project's repository: the project's own.
+const TENANT: Uuid = P1;
 const CONNECTION: Uuid = Uuid::from_u128(0xc0);
 
 /// One write the fake was asked for, and the tenant it was asked in.
@@ -220,6 +221,7 @@ async fn declaring_opens_a_pull_request_in_the_projects_tenant_and_records_it() 
         done.pr_url.as_deref(),
         Some("https://github.com/acme/app/pull/7")
     );
+    assert_eq!(done.manifest, "gear.toml", "the writer gave a manifest");
 
     let writes = std::mem::take(&mut *fake.writes.lock().unwrap());
     assert_eq!(writes.len(), 1);
@@ -383,4 +385,54 @@ fn the_occurrence_is_the_named_projects_else_the_best_and_the_base_is_a_branch()
         assert_eq!(base_branch(&o), want);
     }
     assert_eq!(branch_of("Spec_Mapping"), "declare/spec-mapping");
+}
+
+/// The walk may read a project's repository through a connection the
+/// organization only inherits from the platform's root. Declare it never
+/// writes with that token -- not even a preview is offered.
+#[tokio::test]
+async fn a_repository_read_through_the_platforms_connection_is_not_written() {
+    let svc = service();
+    let ctx = ctx();
+    let mut w = walk_of("t1", "f1", vec![candidate("documents", "src/documents")]);
+    w.reads[0].tenant = Some(crate::components_catalog::tiers::PLATFORM_TENANT);
+    walked(&svc, &ctx, &w).await;
+    let fake = FakeDeclarations::default();
+    for dry_run in [false, true] {
+        let input = DeclareInput {
+            dry_run,
+            ..DeclareInput::default()
+        };
+        let refused = svc
+            .declare_candidate(&ctx, "documents", &input, &by(), &fake)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                DeclareFailure::Refused(DeclareError::NotOwnConnection { tenant })
+                    if tenant == crate::components_catalog::tiers::PLATFORM_TENANT
+            ),
+            "{refused:?}"
+        );
+    }
+    assert!(fake.writes.lock().unwrap().is_empty());
+    let (_, decisions) = svc
+        .registry_entry_with_decisions(&ctx, "documents")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(decisions.is_empty(), "nothing recorded");
+
+    // The organization's own connection is the organization's to write with.
+    assert!(
+        svc.connection_is_organizations(&ctx, ORG, None).await,
+        "the organization's own"
+    );
+    assert!(svc.connection_is_organizations(&ctx, P1, Some(P1)).await);
+    assert!(
+        !svc.connection_is_organizations(&ctx, Uuid::from_u128(0x7e), Some(P1))
+            .await,
+        "a tenant whose ancestry cannot be read is not the organization's"
+    );
 }

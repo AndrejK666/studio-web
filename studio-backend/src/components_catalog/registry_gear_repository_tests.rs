@@ -325,3 +325,275 @@ fn a_refused_gear_repository_names_the_field_and_why() {
         StatusCode::BAD_REQUEST
     );
 }
+
+/// A table of connections, a probe that answers as told, and a record of
+/// what was read and created.
+struct Access {
+    connections: Vec<(Uuid, crate::components_catalog::registry::FoundConnection)>,
+    unreadable: Option<String>,
+    probed: Mutex<Vec<(String, String)>>,
+    created: Mutex<Vec<String>>,
+}
+
+impl Access {
+    fn with(connections: Vec<(u128, Uuid, &str)>) -> Self {
+        Self {
+            connections: connections
+                .into_iter()
+                .map(|(id, tenant, scope)| {
+                    (
+                        Uuid::from_u128(id),
+                        crate::components_catalog::registry::FoundConnection {
+                            tenant,
+                            scope: scope.to_owned(),
+                            label: format!("conn {id}"),
+                            provider: "github".to_owned(),
+                        },
+                    )
+                })
+                .collect(),
+            unreadable: None,
+            probed: Mutex::new(Vec::new()),
+            created: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::components_catalog::registry::GearRepositoryAccess for Access {
+    async fn connection(
+        &self,
+        _ctx: &SecurityContext,
+        _org: Uuid,
+        id: Uuid,
+    ) -> Option<crate::components_catalog::registry::FoundConnection> {
+        self.connections
+            .iter()
+            .find(|(c, _)| *c == id)
+            .map(|(_, f)| f.clone())
+    }
+
+    async fn probe(
+        &self,
+        _ctx: &SecurityContext,
+        _connection: &crate::components_catalog::registry::FoundConnection,
+        _connection_id: Uuid,
+        repo: &str,
+        branch: &str,
+    ) -> anyhow::Result<()> {
+        self.probed
+            .lock()
+            .unwrap()
+            .push((repo.to_owned(), branch.to_owned()));
+        match &self.unreadable {
+            Some(e) => Err(anyhow::anyhow!("{e}")),
+            None => Ok(()),
+        }
+    }
+
+    async fn create(
+        &self,
+        _ctx: &SecurityContext,
+        _connection: &crate::components_catalog::registry::FoundConnection,
+        _connection_id: Uuid,
+        owner: Option<&str>,
+        _is_org: bool,
+        name: &str,
+        _private: bool,
+    ) -> anyhow::Result<(String, String)> {
+        let full = format!("{}/{name}", owner.unwrap_or("acme"));
+        self.created.lock().unwrap().push(full.clone());
+        Ok((full, "main".to_owned()))
+    }
+}
+
+const ROOT: Uuid = crate::components_catalog::tiers::PLATFORM_TENANT;
+
+fn input(connection: u128, repo: &str) -> GearRepositoryInput {
+    GearRepositoryInput {
+        connection_id: Uuid::from_u128(connection),
+        repo: repo.into(),
+        branch: Some("trunk".into()),
+    }
+}
+
+/// The security finding: an organization administrator naming the
+/// platform's root connection -- which the organization sees, because
+/// connections are inherited downwards -- would have had Declare it, the
+/// scaffold and create write with the platform's token.
+#[tokio::test]
+async fn the_platforms_connection_never_serves_an_organizations_gear_repository() {
+    let r = rig();
+    let svc = &r.catalog.service;
+    let ctx = caller(ADMIN);
+    let access = Access::with(vec![
+        (0xc0, ORG, "organization"),
+        (0xc1, ROOT, "organization"),
+    ]);
+
+    let refused = svc
+        .set_gear_repository(&ctx, &input(0xc1, "acme/gears"), None, &access)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused, GearRepositoryError::NotOwned { tenant: ROOT });
+    assert!(
+        refused.to_string().contains("not to the organization"),
+        "{refused}"
+    );
+    let problem = format!("{:?}", gear_repository_problem(&refused));
+    assert!(problem.contains("CONNECTION_NOT_OWNED"), "{problem}");
+    assert!(access.probed.lock().unwrap().is_empty(), "not even read");
+    assert_eq!(svc.gear_repository(&ctx).await.unwrap(), None);
+
+    // Create checks it before anything is created.
+    let refused = svc
+        .create_gear_repository(
+            &ctx,
+            Uuid::from_u128(0xc1),
+            None,
+            false,
+            "gears",
+            true,
+            None,
+            &access,
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(refused, GearRepositoryError::NotOwned { tenant: ROOT });
+    assert!(access.created.lock().unwrap().is_empty());
+
+    // The organization's own connection serves.
+    let set = svc
+        .set_gear_repository(&ctx, &input(0xc0, "acme/gears"), Some("u7".into()), &access)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(set.tenant, ORG);
+    assert_eq!(
+        access.probed.lock().unwrap().as_slice(),
+        [("acme/gears".to_owned(), "trunk".to_owned())],
+        "read at its branch before it was stored"
+    );
+    assert_eq!(svc.gear_repository(&ctx).await.unwrap(), Some(set));
+    let created = svc
+        .create_gear_repository(
+            &ctx,
+            Uuid::from_u128(0xc0),
+            None,
+            false,
+            "more-gears",
+            true,
+            None,
+            &access,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(created.repo, "acme/more-gears");
+    assert_eq!(created.tenant, ORG);
+}
+
+/// A setting stored before the check, naming the root's connection, is not
+/// read or written through: the scaffold finds no gear repository.
+#[tokio::test]
+async fn a_stored_setting_on_the_platforms_connection_is_ignored() {
+    let r = rig();
+    let ctx = caller(ADMIN);
+    r.catalog
+        .service
+        .store_gear_repository(
+            &ctx,
+            Some(GearRepository {
+                tenant: ROOT,
+                ..stored()
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.catalog.service.gear_repository(&ctx).await.unwrap(), None);
+    let Json(state) = get_gear_repository(OrgCtx(caller(MEMBER)), Extension(r.catalog.clone()))
+        .await
+        .unwrap();
+    assert!(state.gear_repository.is_none());
+    let refused = scaffold_organization_gear(
+        OrgCtx(ctx),
+        Extension(r.catalog.clone()),
+        Json(scaffold_body(None)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status(refused), StatusCode::BAD_REQUEST);
+    assert!(
+        r.scaffolds.asked.lock().unwrap().is_empty(),
+        "nothing written"
+    );
+}
+
+#[tokio::test]
+async fn a_gear_repository_that_cannot_be_read_is_refused_with_the_providers_error() {
+    let r = rig();
+    let svc = &r.catalog.service;
+    let ctx = caller(ADMIN);
+    let mut access = Access::with(vec![(0xc0, ORG, "organization")]);
+    access.unreadable = Some("GitHub 404 Not Found: No commit found for the ref trunk".into());
+    let refused = svc
+        .set_gear_repository(&ctx, &input(0xc0, "acme/gears"), None, &access)
+        .await
+        .unwrap()
+        .unwrap_err();
+    let GearRepositoryError::Unreadable {
+        repo,
+        branch,
+        error,
+    } = &refused
+    else {
+        panic!("{refused:?}");
+    };
+    assert_eq!((repo.as_str(), branch.as_str()), ("acme/gears", "trunk"));
+    assert!(error.contains("No commit found"), "{error}");
+    assert!(
+        refused.to_string().contains("could not be read"),
+        "{refused}"
+    );
+    let problem = gear_repository_problem(&refused);
+    assert!(
+        format!("{problem:?}").contains("GEAR_REPOSITORY_UNREADABLE"),
+        "{problem:?}"
+    );
+    assert_eq!(status(problem), StatusCode::BAD_REQUEST);
+    assert_eq!(svc.gear_repository(&ctx).await.unwrap(), None, "not stored");
+}
+
+/// The organization's scaffold has no App Spec: the gear is the
+/// organization's, so its manifest names it.
+#[tokio::test]
+async fn a_scaffold_names_the_organization_when_the_request_names_no_app() {
+    let r = rig();
+    r.catalog
+        .service
+        .store_gear_repository(&caller(ADMIN), Some(stored()))
+        .await
+        .unwrap();
+    let Json(_) = scaffold_organization_gear(
+        OrgCtx(caller(ADMIN)),
+        Extension(r.catalog.clone()),
+        Json(scaffold_body(Some(true))),
+    )
+    .await
+    .unwrap();
+    let mut named = scaffold_body(Some(true));
+    named.app_title = Some("Billing suite".into());
+    let Json(_) = scaffold_organization_gear(
+        OrgCtx(caller(ADMIN)),
+        Extension(r.catalog.clone()),
+        Json(named),
+    )
+    .await
+    .unwrap();
+    let asked = r.scaffolds.asked.lock().unwrap();
+    // No account management here: the organization's fallback name.
+    assert_eq!(asked[0].2.app_title.as_deref(), Some("Organization"));
+    assert_eq!(asked[1].2.app_title.as_deref(), Some("Billing suite"));
+}

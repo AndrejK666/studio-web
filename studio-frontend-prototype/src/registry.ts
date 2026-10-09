@@ -10,6 +10,7 @@ import type {
   RegistryEntry,
   RegistryOwner,
   RegistryProjectWalk,
+  RegistryPublishPreview,
   RegistrySuggestion,
 } from "./api";
 import { occurrencePlace } from "./org-gear-repository";
@@ -160,6 +161,14 @@ export function isDuplicated(e: RegistryEntry): boolean {
   return new Set(e.occurrences.map((o) => o.repo)).size > 1;
 }
 
+/** No repository declares it any more. A merged entry never is: what it was
+ *  found as belongs to the entry it was merged into, so its having no
+ *  occurrence of its own is the merge, not a loss. (An older backend still
+ *  flags merged entries; this reads past it.) */
+export function isOrphaned(e: RegistryEntry): boolean {
+  return e.orphaned && e.state !== "merged";
+}
+
 export interface RegistryFilter {
   state: string | null;
   q: string;
@@ -266,6 +275,17 @@ export function publishStatus(
     return { kind: "pending", label: "Contribution PR opened", prUrl: e.contribution.pr_url ?? null };
   }
   return null;
+}
+
+/** A publish's dry run in words: where the pull request goes and what it
+ *  carries, one line each. */
+export function publishPreviewLines(p: RegistryPublishPreview): string[] {
+  const lines = [
+    `Pull request into ${p.repo} (${p.base_branch}) from ${p.branch}`,
+    `Placed at ${p.path}/ — ${p.files.length} file${p.files.length === 1 ? "" : "s"}`,
+  ];
+  if (p.skipped.length > 0) lines.push(`Not copied (not text): ${p.skipped.join(", ")}`);
+  return lines;
 }
 
 /** "Used by 3 projects", or null when nobody uses it. */

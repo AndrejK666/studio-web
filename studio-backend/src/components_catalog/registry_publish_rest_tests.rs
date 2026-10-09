@@ -146,7 +146,97 @@ fn mark(version: Option<&str>) -> RegistryDecisionRequest {
         replaced_by: None,
         merge_into: None,
         version: version.map(str::to_owned),
+        dry_run: None,
     }
+}
+
+/// studio-user's answer for the caller: a person with a name.
+struct People;
+
+#[async_trait::async_trait]
+impl crate::user_profile::PersonResolver for People {
+    async fn resolve_caller(&self, _ctx: &SecurityContext) -> anyhow::Result<String> {
+        Ok("person-ada".into())
+    }
+    async fn resolve_recorded_subject(&self, _subject: &str) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+    async fn resolve_caller_named(
+        &self,
+        _ctx: &SecurityContext,
+    ) -> anyhow::Result<(String, Option<String>)> {
+        Ok(("person-ada".into(), Some("Ada Lovelace".into())))
+    }
+}
+
+/// A decision shows a person, not an id: the decider's name is resolved on
+/// the server and stored with the decision.
+#[tokio::test]
+async fn a_decision_records_who_made_it_by_name() {
+    let c = catalog(false);
+    c.hub
+        .register_scoped::<dyn crate::user_profile::PersonResolver>(
+            ClientScope::gts_id(crate::user_profile::IDENTITY_INSTANCE_ID),
+            Arc::new(People),
+        );
+    registered(&c).await;
+    let Json(done) = decide_registry_entry(
+        OrgCtx(caller(PLATFORM_ADMIN)),
+        Extension(c.clone()),
+        Path("ledger".to_owned()),
+        Json(mark(Some("1.0.0"))),
+    )
+    .await
+    .unwrap();
+    let decisions = done.decisions.expect("decisions");
+    assert_eq!(decisions[0].by, "person-ada");
+    assert_eq!(decisions[0].by_name.as_deref(), Some("Ada Lovelace"));
+
+    // Without studio-user: the token's subject, and no name to show.
+    let bare = catalog(false);
+    let by = bare.decider(&caller(ADMIN)).await;
+    assert_eq!(by.id, Uuid::from_u128(ADMIN).to_string());
+    assert_eq!(by.name, None);
+}
+
+#[tokio::test]
+async fn only_a_publish_has_a_dry_run() {
+    let c = catalog(false);
+    registered(&c).await;
+    let mut body = mark(Some("1.0.0"));
+    body.dry_run = Some(true);
+    let refused = decide_registry_entry(
+        OrgCtx(caller(PLATFORM_ADMIN)),
+        Extension(c.clone()),
+        Path("ledger".to_owned()),
+        Json(body),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status(refused), StatusCode::BAD_REQUEST);
+    let still = c
+        .service
+        .registry_entry(&caller(ADMIN), "ledger")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(still.entry.state, STATE_REGISTERED, "nothing was decided");
+
+    // A publish's dry run needs no writer: without studio-product it is
+    // refused by the rules (here: the platform has no gear repository), not
+    // as unavailable.
+    let mut preview = mark(None);
+    preview.action = "publish".into();
+    preview.dry_run = Some(true);
+    let refused = decide_registry_entry(
+        OrgCtx(caller(ADMIN)),
+        Extension(c.clone()),
+        Path("ledger".to_owned()),
+        Json(preview),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status(refused), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

@@ -166,6 +166,38 @@ impl SyncSources {
 }
 
 impl CatalogService {
+    /// Take out of an organization's sync what the platform's catalogue
+    /// already reads ([`super::tiers::leave_to_platform`]), and say what was
+    /// taken. Nothing is taken in the platform's own tenant, or when there is
+    /// no platform tier to read; the platform's sources are read best effort.
+    pub async fn leave_to_platform(
+        &self,
+        ctx: &SecurityContext,
+        sources: &mut SyncSources,
+    ) -> Vec<String> {
+        let Some(pctx) = self.platform_ctx(ctx) else {
+            return Vec::new();
+        };
+        let platform = match self.list_sources(&pctx).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "components-catalog: the platform's sources could not be read; the organization's sync reads all of its own");
+                return Vec::new();
+            }
+        };
+        let keyword = self.stored_keyword(&pctx).await.ok().flatten();
+        let left = super::tiers::leave_to_platform(
+            sources,
+            &platform,
+            keyword.as_deref(),
+            self.default_keyword(),
+        );
+        if !left.is_empty() {
+            tracing::info!(organization_id = %ctx.subject_tenant_id(), left = ?left, "components-catalog: the organization's sync leaves to the platform what its catalogue already reads");
+        }
+        left
+    }
+
     /// What the platform's catalogue reads, as its administrator saved it:
     /// the sources stored in the platform's tenant and its crates.io keyword.
     pub async fn platform_sync_sources(
@@ -269,6 +301,12 @@ pub struct CatalogCounts {
     /// precondition of the rest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry_error: Option<String>,
+    /// What an organization's sync did not read because the platform's
+    /// catalogue already does (ADR-0042 §3): its sources the platform reads
+    /// in the same mode, and the default crates.io keyword when the platform
+    /// syncs crates.io. Their components come from the platform's tier.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_to_platform: Vec<String>,
 }
 
 /// A roadmap board a sync could not read.
@@ -1107,6 +1145,7 @@ impl CatalogService {
             boards_unread,
             registry: None,
             registry_error: None,
+            left_to_platform: Vec::new(),
         };
         progress.set_with("done", counts.as_detail());
         Ok(counts)
