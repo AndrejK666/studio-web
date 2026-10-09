@@ -2,7 +2,7 @@
  * Screen levels
  *
  * Constructor Studio has three levels — organization, workspace, project — and
- * the rail shows the items of the level in scope and nothing else. This module
+ * the tabs show the items of the level in scope and nothing else. This module
  * is the whole of what the shell knows about that: how a screen extension
  * declares its level, and how the items of one level are ordered.
  */
@@ -18,13 +18,14 @@ export type ScreenLevel = (typeof SCREEN_LEVELS)[number];
 export const UNDECLARED_ORDER = 999;
 
 // 'hidden' is registered and mountable but never listed: a screen reached by
-// something other than the rail, such as opening an artifact.
+// something other than the tabs, such as opening an artifact.
 export type ScreenPlacement = 'main' | 'settings' | 'hidden';
 
 export interface LeveledPresentation {
   level?: string;
   placement?: string;
   section?: string;
+  parentSection?: string;
 }
 
 export type LeveledScreenExtension = ScreenExtension & {
@@ -46,13 +47,14 @@ export function levelOf(extension: ScreenExtension): ScreenLevel {
 // @cpt-end:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-3
 // @cpt-end:cpt-studiofrontend-algo-shell-levels-menu:p1:inst-2
 
-export function levelAtLeast(level: ScreenLevel, minimum: ScreenLevel): boolean {
-  return SCREEN_LEVELS.indexOf(level) >= SCREEN_LEVELS.indexOf(minimum);
-}
-
 // The MFE's own token for this item, when the item is a section of a screen.
 export function sectionOf(extension: ScreenExtension): string | undefined {
   return (extension as LeveledScreenExtension).presentation.section;
+}
+
+// For a hidden screen: the section whose tab stays active while it is mounted.
+export function parentSectionOf(extension: ScreenExtension): string | undefined {
+  return (extension as LeveledScreenExtension).presentation.parentSection;
 }
 
 export function placementOf(extension: ScreenExtension): ScreenPlacement {

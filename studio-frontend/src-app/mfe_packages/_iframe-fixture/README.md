@@ -9,7 +9,7 @@ shell would prove the loader and nothing else; this one proves the whole path â€
 build, manifest, registry, handler, mount.
 
 Its extension is `placement: hidden` (#318): registered and mountable, but in
-no level's rail.
+no level's tabs.
 
 Its frame reads the same address property as the editor's,
 `â€¦space.mfe.frame_url.v1~`, published once a project's session is ready and

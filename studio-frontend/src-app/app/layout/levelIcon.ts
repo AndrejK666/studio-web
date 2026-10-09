@@ -1,5 +1,5 @@
 /**
- * The manifest names a rail icon as `lucide:<name>`; lucide's own loader takes
+ * The manifest names a tab icon as `lucide:<name>`; lucide's own loader takes
  * the bare name. Anything else — an Iconify set the shell no longer serves, or
  * a name lucide does not have — is dropped rather than guessed at, so a typo
  * shows as a missing glyph in an item that still has its label and its place.
@@ -9,7 +9,7 @@ import type { IconName } from 'lucide-react/dynamic';
 
 const LUCIDE_PREFIX = 'lucide:';
 
-export function railIconName(
+export function levelIconName(
   declared: string | undefined,
   known: readonly IconName[]
 ): IconName | undefined {

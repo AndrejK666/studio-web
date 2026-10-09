@@ -129,7 +129,7 @@ describe('ProjectsTable rows', () => {
 
     // Local state stays put until the shell publishes the project back. It used
     // to be written here too, and that second writer is what made the shell's
-    // echo look like "nothing changed" — the rail then marked no section.
+    // echo look like "nothing changed" — the tabs then marked no section.
     const state = mfeApp.store.getState() as Record<string, { projectId: string | null }>;
     expect(state['projects/nav'].projectId).toBeNull();
   });

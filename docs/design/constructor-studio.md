@@ -1186,7 +1186,7 @@ The FrontX host that mounts microfrontends and owns navigation (ADR-0006, ADR-00
 
 ##### Responsibility scope
 
-`studio-frontend/src-app/app/`: OIDC sign-in, the levels and rail, the overlay domain, the organization and workspace in scope, the `studio-events` subscription, the Module Federation and iframe entry handlers (`mfe/MfeHandlerIframe.ts`, ADR-0021); `studio-frontend/packages/` holds the FrontX solution packages. `_iframe-fixture` is the frame-entry fixture package (Frame fixture, `/fixture/frame`, organization level), `_blank-mfe` the template, `shared` the code MFEs share.
+`studio-frontend/src-app/app/`: OIDC sign-in, the levels with each level's header and tabs, the overlay domain, the organization and workspace in scope, the `studio-events` subscription, the Module Federation and iframe entry handlers (`mfe/MfeHandlerIframe.ts`, ADR-0021); `studio-frontend/packages/` holds the FrontX solution packages. `_iframe-fixture` is the frame-entry fixture package (Frame fixture, `/fixture/frame`, organization level), `_blank-mfe` the template, `shared` the code MFEs share.
 
 ##### Responsibility boundaries
 
@@ -1210,11 +1210,11 @@ The organization level's screens.
 
 ##### Responsibility scope
 
-Screens Overview (`/organization/overview`), Workspaces (`/organization/workspaces`) and Organization settings (`/organization/settings`, reserved).
+Screens Workspaces (`/organization/workspaces`, the level's entry point) and Settings (`/organization/settings`, reserved). The Overview was removed on 2026-10-08 (`cpt-studio-feature-shell-levels`).
 
 ##### Responsibility boundaries
 
-Reads workspaces from account-management; no aggregate endpoint exists for the overview's other tiles.
+Reads workspaces from account-management.
 
 ##### Related components (by ID)
 

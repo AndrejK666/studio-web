@@ -16,6 +16,13 @@ Amended by ADR-0034 (2026-10-05): the shell's avatar is replaced by the kit's
 `Avatar`, which has no colour-by-name — see
 [Consequences](0034-the-shell-takes-its-tokens-from-the-kit.md#consequences).
 
+Amended by `shell-levels` (2026-10-08): the top bar is no longer the only shell
+row in the flow. A header naming the level in scope and the level's row of tabs
+sit between it and the screen; the header is the page's `h1`, and an MFE titles
+its section as an `h2` — see
+[The shell draws the navigation of every level](../feature/shell-levels.md#the-shell-draws-the-navigation-of-every-level)
+and [Every level has a header](../feature/shell-levels.md#every-level-has-a-header).
+
 ## Table of Contents
 
 <!-- toc -->

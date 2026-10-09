@@ -11,7 +11,7 @@
  * `ChildMfeBridge` has no `updateSharedProperty`, which is the framework saying
  * the same thing. A local write beside the publish used to fork that answer
  * across the boundary: the shell's echo then matched what this MFE had already
- * set, and every listener keyed on "it changed" was skipped — the rail's
+ * set, and every listener keyed on "it changed" was skipped — the tabs'
  * highlight among them.
  *
  * The shell is only told about ONE thing: which project is open and which
@@ -53,7 +53,7 @@ function publish(bridge: ChildMfeBridge | null, payload: Record<string, unknown>
  * first and publish second, which forked the answer to "which project is open"
  * across the realm boundary: by the time the shell's echo came back, this MFE's
  * own state already matched it, so every listener keyed on "the project
- * changed" — the rail's section among them — was skipped. `ProjectsRoot` opens
+ * changed" — the tabs' section among them — was skipped. `ProjectsRoot` opens
  * the project when the property arrives, and that is the only way in.
  */
 // @cpt-dod:cpt-studiofrontend-dod-workspace-scope-claim:p1
@@ -110,8 +110,8 @@ export function announceCreatedProject(
 }
 
 /**
- * A section this MFE moved to by itself, told to the shell so the rail follows
- * it. The rail is the shell's now, and it would otherwise keep highlighting the
+ * A section this MFE moved to by itself, told to the shell so the tabs follow
+ * it. The tabs are the shell's, and they would otherwise keep highlighting the
  * item that was last clicked — see `landOnFirstImport`.
  */
 export function announceSection(bridge: ChildMfeBridge | null, section: ProjectSection): void {

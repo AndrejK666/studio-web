@@ -46,16 +46,18 @@ projects list where it sat because there was nowhere else to put it.
 ### 1.2 Purpose
 
 `shell-levels` made the workspace a level of its own and took Projects out of
-the organization's rail: choosing a workspace is what opens its projects. That
+the organization's navigation: choosing a workspace is what opens its projects. That
 left one hole, which this feature fills — **there is no screen that lists the
 workspaces**. The chain in the top bar names the one in scope and switches
 between them, but a switcher is not a list: it shows no counts, offers no
 creation, and answers nothing about a workspace one is not in.
 
-Until this screen exists, the workspace slot doubles as the entry to the level
-even at the organization level, which is a deviation from the design recorded in
-`cpt-studiofrontend-dod-shell-levels-workspace-level`. This feature is what lets
-that be tightened back.
+Until this screen existed, the workspace slot doubled as the entry to the level
+even at the organization level, which was a deviation from the design. Since
+2026-10-08 the design itself has the slot at the organization level ("All
+workspaces"), and a pick in it enters the workspace
+(`cpt-studiofrontend-dod-shell-levels-workspace-level`); this screen stays the
+way in that shows counts and creates.
 
 **Assumptions fixed here**, because the design is silent and each changes the
 code:
@@ -184,8 +186,12 @@ the shell's level request and the overlay in between.
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspaces-screen-level`
 
 The system **MUST** register the list as a screen extension of organization-mfe
-declaring the organization level, and **MUST** place it above the settings item
-in that level's rail.
+declaring the organization level, as the first of that level's tabs, and so its
+entry point.
+
+It was second, after Overview, until the organization's Overview was removed on
+2026-10-08 (`shell-levels.md`): the design opens the organization on its
+workspaces.
 
 A screen of the MFE that owns the organization, not a package of its own: the
 rows are the organization's child tenants, and one more MFE for one table would
@@ -249,8 +255,10 @@ the projects list is a screen of one workspace already.
 The system **MUST** show each workspace's project count from the `child_count`
 of the row it already read, and **MUST NOT** issue a request per row.
 
-The same rule the chain's menus follow: account-management counts the direct
-children visible to the caller, which is exactly what the column should claim.
+The same rule the organization switch follows
+(`cpt-studiofrontend-dod-shell-levels-counts`): account-management counts the
+direct children visible to the caller, which is exactly what the column should
+claim.
 
 **Implements**:
 - `cpt-studiofrontend-algo-workspaces-screen-list`
@@ -261,7 +269,7 @@ children visible to the caller, which is exactly what the column should claim.
 
 ## 6. Acceptance Criteria
 
-- [ ] The organization's rail has a Workspaces item above Organization settings, and it mounts this screen.
+- [ ] Workspaces is the organization's first tab, a fresh session opens on it, and Settings is the last tab.
 - [ ] The screen lists every workspace of the organization in scope, with a project count per row taken from one request.
 - [ ] An organization with no workspaces shows an empty state and the creation control, not a spinner.
 - [ ] Activating a row opens that workspace's projects, and the path in the top bar gains the workspace slot naming it.

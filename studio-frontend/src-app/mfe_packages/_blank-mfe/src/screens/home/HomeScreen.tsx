@@ -123,7 +123,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   // Show skeleton while translations are loading
   if (loading) {
     return (
-      <div ref={containerRef} className="p-8">
+      <div ref={containerRef} className="p-[var(--space-6)]">
         <Skeleton className="h-8 w-64 mb-4" />
         <Skeleton className="h-4 w-96 mb-6" />
         <Card>
@@ -161,10 +161,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   }
 
   return (
-    <div ref={containerRef} className="p-8">
-      <h1 className="text-3xl font-bold mb-4">
+    <div ref={containerRef} className="p-[var(--space-6)]">
+      <h2 className="text-3xl font-bold mb-4">
         {t('title')}
-      </h1>
+      </h2>
       <p className="text-muted-foreground mb-6">
         {t('description')}
       </p>
@@ -172,9 +172,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
       <div className="space-y-6">
         <Card>
           <CardContent className="p-6">
-            <h2 className="text-xl font-semibold mb-3">
+            <h3 className="text-xl font-semibold mb-3">
               {t('bridge_info')}
-            </h2>
+            </h3>
             <dl className="grid gap-2">
               <div>
                 <dt className="font-medium">{t('domain_id')}</dt>

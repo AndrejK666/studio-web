@@ -17,11 +17,11 @@
             "closed",
             "section"
           ],
-          "$comment": "opened = this project is now in scope, with the projects next to it; closed = back to organization scope; section = the MFE moved to another section by itself, so the rail follows it."
+          "$comment": "opened = this project is now in scope, with the projects next to it; closed = back to organization scope; section = the MFE moved to another section by itself, so the tabs follow it."
         },
         "section": {
           "type": "string",
-          "$comment": "Required for kind=section: the token of the section now on screen, as declared on that rail item."
+          "$comment": "Required for kind=section: the token of the section now on screen, as declared on that tab's item."
         },
         "project": {
           "type": "object",

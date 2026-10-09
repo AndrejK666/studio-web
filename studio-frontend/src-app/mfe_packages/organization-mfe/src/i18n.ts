@@ -18,33 +18,23 @@ import {
 } from '@constructor-studio/mfe-shared';
 
 const SCREENSET = 'organization';
-const OVERVIEW_SCREEN = 'overview';
 const WORKSPACES_SCREEN = 'workspaces';
 
-export const OVERVIEW_NAMESPACE = `screen.${SCREENSET}.${OVERVIEW_SCREEN}`;
 export const WORKSPACES_NAMESPACE = `screen.${SCREENSET}.${WORKSPACES_SCREEN}`;
 
 type ModuleMap = TranslationModules;
 
-const overviewModules = import.meta.glob('./screens/overview/i18n/*.json') as ModuleMap;
 const workspacesModules = import.meta.glob('./screens/workspaces/i18n/*.json') as ModuleMap;
 const homeModules = import.meta.glob('./screens/home/i18n/*.json') as ModuleMap;
 
 
-const loadOverviewTranslations = loadScreenTranslations(overviewModules, './screens/overview/i18n');
 const loadWorkspacesTranslations = loadScreenTranslations(workspacesModules, './screens/workspaces/i18n');
-
-/** Loads the overview's dictionary. One call, in `OverviewScreen`. */
-export function useOverviewScreenTranslations(): UseScreenTranslationsReturn {
-  return useScreenTranslations(SCREENSET, OVERVIEW_SCREEN, loadOverviewTranslations);
-}
 
 /** Loads the workspaces list's dictionary. One call, in `WorkspacesScreen`. */
 export function useWorkspacesScreenTranslations(): UseScreenTranslationsReturn {
   return useScreenTranslations(SCREENSET, WORKSPACES_SCREEN, loadWorkspacesTranslations);
 }
 
-export const useOverviewText = createText(OVERVIEW_NAMESPACE);
 export const useWorkspacesText = createText(WORKSPACES_NAMESPACE);
 
 /** The home screen's dictionary and its text function in one call. */

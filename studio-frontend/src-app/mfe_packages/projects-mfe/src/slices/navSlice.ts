@@ -9,7 +9,7 @@ export type ProjectSection =
   | 'team'
   | 'settings';
 
-/** Where a freshly opened project lands, and what its rail item is. */
+/** Where a freshly opened project lands, and what its tab is. */
 export const DEFAULT_PROJECT_SECTION: ProjectSection = 'overview';
 
 export const PROJECT_SECTIONS: readonly ProjectSection[] = [

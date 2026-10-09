@@ -47,7 +47,7 @@ export const ConnectionListScreen: React.FC = () => {
         )}
         {!busy && !failed && !translationsFailed && rows.length > 0 ? (
           <footer className={styles.footer}>
-            {rows.length === 1 ? t('count_one') : t('count', { count: rows.length })}
+            {t.count('count', rows.length)}
           </footer>
         ) : null}
       </section>

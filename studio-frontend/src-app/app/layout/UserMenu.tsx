@@ -6,8 +6,16 @@
  * time, and sign-out cannot live behind a hidden panel.
  */
 
+// @cpt-dod:cpt-studiofrontend-dod-shell-levels-chain:p1
 import React, { useCallback } from 'react';
-import { useFrontX, useAppDispatch, useAppSelector, clearUser, type HeaderState } from '@gears-frontx/react';
+import {
+  useFrontX,
+  useAppDispatch,
+  useAppSelector,
+  clearUser,
+  eventBus,
+  type HeaderState,
+} from '@gears-frontx/react';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -15,9 +23,10 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from '@gears-frontx/ui-kit/dropdown-menu';
-import { Icon } from '@iconify/react';
 import { Avatar, AvatarImage, AvatarFallback } from '@gears-frontx/ui-kit/avatar';
 import { Skeleton } from '@gears-frontx/ui-kit/skeleton';
+import { Building2, LogOut } from 'lucide-react';
+import { useShellText } from '@/app/i18n/shellTranslations';
 
 /** First letters of the first two words of the name, or of the email. */
 function initialsOf(user: { displayName?: string; email?: string } | null | undefined): string {
@@ -33,6 +42,7 @@ function initialsOf(user: { displayName?: string; email?: string } | null | unde
 }
 
 export const UserMenu: React.FC = () => {
+  const t = useShellText();
   const { auth } = useFrontX();
   const dispatch = useAppDispatch();
   const headerState = useAppSelector((state) => state['layout/header'] as HeaderState | undefined);
@@ -65,8 +75,6 @@ export const UserMenu: React.FC = () => {
         </Avatar>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={6} className="min-w-56 rounded-lg">
-        {/* Identity is shown, not actionable — a menu item would offer a
-            profile screen that does not exist yet. */}
         <div className="px-2 py-1.5">
           <div className="truncate text-body font-medium text-foreground">{label}</div>
           {user?.displayName && user?.email && (
@@ -74,9 +82,16 @@ export const UserMenu: React.FC = () => {
           )}
         </div>
         <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => eventBus.emit('app/context/level/requested', { level: 'organization' })}
+        >
+          <Building2 aria-hidden="true" />
+          {t('user_menu_organization')}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void signOut()}>
-          <Icon icon="lucide:log-out" className="size-4 shrink-0" />
-          Sign out
+          <LogOut aria-hidden="true" />
+          {t('user_menu_sign_out')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

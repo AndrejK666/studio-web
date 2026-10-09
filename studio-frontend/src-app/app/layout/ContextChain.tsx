@@ -2,95 +2,121 @@
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-chain:p1
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-workspace-level:p1
-// @cpt-dod:cpt-studiofrontend-dod-shell-levels-counts:p2
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { useAppSelector, eventBus } from '@gears-frontx/react';
 import {
   Breadcrumb,
   BreadcrumbList,
   BreadcrumbItem,
-  BreadcrumbLink,
   BreadcrumbSeparator,
 } from '@gears-frontx/ui-kit/breadcrumb';
+import { Button } from '@gears-frontx/ui-kit/button';
+import { Command, CommandEmpty, CommandItem, CommandList } from '@gears-frontx/ui-kit/command';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
 } from '@gears-frontx/ui-kit/dropdown-menu';
-import {
-  ItemContent,
-  ItemDescription,
-  ItemMedia,
-  ItemTitle,
-} from '@gears-frontx/ui-kit/item';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@gears-frontx/ui-kit/input-group';
+import { Popover, PopoverContent, PopoverTrigger } from '@gears-frontx/ui-kit/popover';
 import { Skeleton } from '@gears-frontx/ui-kit/skeleton';
-import { ArrowRight, Building2, ChevronDown, Folder, FolderOpen } from 'lucide-react';
+import {
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Folder,
+  Layers,
+  Search,
+  type LucideIcon,
+} from 'lucide-react';
 import {
   APP_CONTEXT_SLICE_KEY,
   type AppContextState,
   type ContextEntity,
 } from '@/app/slices/appContextSlice';
-import { levelAtLeast, type ScreenLevel } from '@/app/mfe/screenLevels';
+import type { ScreenLevel } from '@/app/mfe/screenLevels';
+import { useShellText } from '@/app/i18n/shellTranslations';
+import type { ScreenText } from '@constructor-studio/mfe-shared';
 import { useScreenLevel } from './useScreenLevel';
+import styles from './ContextChain.module.css';
 
 interface ChainSlot {
-  level: ScreenLevel;
+  level: 'workspace' | 'project';
   caps: string;
-  current: ContextEntity;
+  /** The entity in scope; `null` names none — the workspace slot at the organization level. */
+  current: ContextEntity | null;
+  /** What the trigger reads when `current` is `null`. */
+  none?: string;
   options: ContextEntity[];
-  countNoun?: 'workspace' | 'project';
-  Icon: typeof Building2;
+  Icon: LucideIcon;
+  /** The entry for the level above, at the top of the menu. */
+  up?: { label: string; level: ScreenLevel };
   pick: (id: string) => void;
 }
 
-function pluralize(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
-}
-
-const pickOrg = (id: string) => eventBus.emit('app/context/org/changed', { orgId: id });
 const pickWorkspace = (id: string) =>
   eventBus.emit('app/context/workspace/changed', { workspaceId: id });
+const enterWorkspace = (id: string) =>
+  eventBus.emit('app/context/workspace/changed', { workspaceId: id, enter: true });
 const pickProject = (id: string) =>
   eventBus.emit('app/context/project/changed', { projectId: id });
 
 // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-1
 // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-2
-function slotsOf(level: ScreenLevel, context: AppContextState | undefined): ChainSlot[] {
+function slotsOf(
+  level: ScreenLevel,
+  context: AppContextState | undefined,
+  t: ScreenText
+): ChainSlot[] {
   if (!context?.org) return [];
+  const workspaces = context.workspaces ?? [];
 
+  // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-4
+  if (level === 'organization') {
+    const pending = workspaces.length === 0 && context.workspacesStatus === 'pending';
+    if (workspaces.length === 0 && !pending) return [];
+    return [
+      {
+        level: 'workspace',
+        caps: t('chain_workspace'),
+        current: null,
+        none: pending ? '' : t('chain_all_workspaces'),
+        options: workspaces,
+        Icon: Layers,
+        pick: enterWorkspace,
+      },
+    ];
+  }
+  // @cpt-end:cpt-studiofrontend-algo-shell-levels-path:p1:inst-4
+
+  if (!context.workspace) return [];
   const slots: ChainSlot[] = [
     {
-      level: 'organization',
-      caps: 'Organization',
-      current: context.org,
-      options: context.orgs ?? [],
-      countNoun: 'workspace',
-      Icon: Building2,
-      pick: pickOrg,
+      level: 'workspace',
+      caps: t('chain_workspace'),
+      current: context.workspace,
+      options: workspaces,
+      Icon: Layers,
+      up: { label: t('chain_all_workspaces'), level: 'organization' },
+      pick: pickWorkspace,
     },
   ];
 
-  if (levelAtLeast(level, 'workspace') && context.workspace) {
-    slots.push({
-      level: 'workspace',
-      caps: 'Workspace',
-      current: context.workspace,
-      options: context.workspaces ?? [],
-      countNoun: 'project',
-      Icon: FolderOpen,
-      pick: pickWorkspace,
-    });
-  }
-
-  if (levelAtLeast(level, 'project') && context.project) {
+  if (level === 'project' && context.project) {
     slots.push({
       level: 'project',
-      caps: 'Project',
+      caps: t('chain_project'),
       current: context.project,
       options: context.projects ?? [],
       Icon: Folder,
+      up: {
+        label: t('chain_projects_in', { workspace: context.workspace.name }),
+        level: 'workspace',
+      },
       pick: pickProject,
     });
   }
@@ -100,118 +126,71 @@ function slotsOf(level: ScreenLevel, context: AppContextState | undefined): Chai
 // @cpt-end:cpt-studiofrontend-algo-shell-levels-path:p1:inst-2
 // @cpt-end:cpt-studiofrontend-algo-shell-levels-path:p1:inst-1
 
-// TODO: 10/14 and 12/16 are the prototype's sizes written out, because the kit
-// ramp bottoms out at meta 12/16 and has no eyebrow role. Replace both with
-// roles once the ramp has them.
-const SlotLabel: React.FC<{ slot: ChainSlot; isCurrent: boolean; hasMenu: boolean }> = ({
-  slot,
-  isCurrent,
-  hasMenu,
-}) => (
-  <span
-    data-current={isCurrent || undefined}
-    className="flex h-full w-full min-w-0 flex-col justify-center gap-0.5 rounded-lg border border-transparent
-    px-2 transition-colors data-[current]:border-[color-mix(in_oklab,var(--border)_80%,transparent)]
-    data-[current]:bg-[color-mix(in_oklab,var(--muted)_20%,transparent)]"
-  >
-    <span
-      aria-hidden="true"
-      className="w-full truncate font-mono text-[10px] font-normal uppercase leading-[14px] text-muted-foreground"
+const requestLevel = (level: ScreenLevel) =>
+  eventBus.emit('app/context/level/requested', { level });
+
+/** The slot's face: the design's ghost button — icon, name, chevron. */
+const SlotFace = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentProps<typeof Button> & { chainSlot: ChainSlot; isCurrent: boolean }
+>(({ chainSlot: slot, isCurrent, ...props }, ref) => {
+  const name = slot.current ? slot.current.name : slot.none;
+  return (
+    <Button
+      ref={ref}
+      variant="utility"
+      size="sm"
+      icon={<slot.Icon strokeWidth={1.5} />}
+      aria-current={isCurrent ? 'page' : undefined}
+      aria-label={`${slot.caps}: ${name || '…'}`}
+      className={styles.slot}
+      {...props}
     >
-      {slot.caps}
-    </span>
-    <span className="flex w-full min-w-0 items-center gap-1.5">
-      {slot.current.name ? (
-        <span className="min-w-0 truncate text-[12px] leading-4 text-foreground [font-weight:var(--text-label-weight)]">
-          {slot.current.name}
-        </span>
-      ) : (
-        // An address can name a project before its tenant has been read
-        // (ADR-0028): the id is published to the MFE at once, the name follows.
-        <Skeleton className="h-4 w-24" data-testid="context-slot-pending" />
-      )}
-      {hasMenu && (
-        <ChevronDown
-          className="size-3.5 shrink-0 text-muted-foreground"
-          strokeWidth={1.5}
-          aria-hidden="true"
-        />
-      )}
-    </span>
-  </span>
-);
+      <span className={styles.face}>
+        {name ? (
+          <span className={styles.name}>{name}</span>
+        ) : (
+          // An address can name a project before its tenant has been read
+          // (ADR-0028): the id is published to the MFE at once, the name follows.
+          <Skeleton className="h-4 w-24" data-testid="context-slot-pending" />
+        )}
+        <ChevronDown className={styles.chevron} strokeWidth={1.5} aria-hidden="true" />
+      </span>
+    </Button>
+  );
+});
+SlotFace.displayName = 'SlotFace';
 
-const SLOT_CLASS =
-  'flex h-14 w-48 shrink-0 items-stretch px-1 py-1.5 text-left no-underline hover:!no-underline';
-
-const Slot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurrent }) => {
-  const enter = useCallback(() => {
-    eventBus.emit('app/context/level/requested', { level: slot.level });
-  }, [slot.level]);
-
+const MenuSlot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurrent }) => {
   const onPick = useCallback(
     (id: string) => {
       slot.pick(id);
-      if (!isCurrent) enter();
+      if (!isCurrent && slot.current) requestLevel(slot.level);
     },
-    [slot, isCurrent, enter]
+    [slot, isCurrent]
   );
-
-  const current = isCurrent ? ('page' as const) : undefined;
-
-  if (slot.options.length < 2) {
-    return (
-      <BreadcrumbLink
-        render={isCurrent ? <span /> : <button type="button" onClick={enter} />}
-        aria-current={current}
-        aria-label={`${slot.caps}: ${slot.current.name || 'loading'}`}
-        className={SLOT_CLASS}
-      >
-        <SlotLabel slot={slot} isCurrent={isCurrent} hasMenu={false} />
-      </BreadcrumbLink>
-    );
-  }
 
   return (
     <DropdownMenu>
-      <BreadcrumbLink
-        render={<DropdownMenuTrigger />}
-        aria-current={current}
-        aria-label={`${slot.caps}: ${slot.current.name || 'loading'}, switch`}
-        className={`${SLOT_CLASS} focus-visible:ring-2 focus-visible:ring-ring [&>span]:hover:bg-muted`}
-      >
-        <SlotLabel slot={slot} isCurrent={isCurrent} hasMenu />
-      </BreadcrumbLink>
-      {/* TODO: the popup radius is the kit's own --radius-lg written out */}
-      <DropdownMenuContent
-        align="start"
-        className="!min-w-72 [--radius-md:calc(var(--radius-lg)+4px)] [--radius-sm:var(--radius-lg)] [--space-1:var(--space-2)]"
-      >
-        <DropdownMenuRadioGroup value={slot.current.id} onValueChange={onPick}>
+      <DropdownMenuTrigger
+        disabled={slot.options.length === 0 && !slot.up}
+        render={<SlotFace chainSlot={slot} isCurrent={isCurrent} />}
+      />
+      <DropdownMenuContent align="start" className="!w-auto">
+        {slot.up && (
+          <>
+            <DropdownMenuItem onClick={() => requestLevel(slot.up!.level)}>
+              <slot.Icon aria-hidden="true" />
+              {slot.up.label}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        <DropdownMenuRadioGroup value={slot.current?.id ?? ''} onValueChange={onPick}>
           {slot.options.map((option) => (
-            <DropdownMenuRadioItem
-              key={option.id}
-              value={option.id}
-              closeOnClick
-              className="group"
-            >
-              <ItemMedia
-                variant="icon"
-                className="text-muted-foreground group-focus:text-current group-data-[highlighted]:text-current"
-              >
-                <slot.Icon strokeWidth={1.5} aria-hidden="true" />
-              </ItemMedia>
-              {/* The popup's --space-1 remap inherits down to this gap. */}
-              <ItemContent className="!gap-0">
-                {/* ItemTitle declares ellipsis but is a fit-content flex box, so it
-                    never truncates; block + auto width makes its own rule apply. */}
-                <ItemTitle className="!block !w-auto text-label">{option.name}</ItemTitle>
-                {slot.countNoun !== undefined && option.count !== undefined && (
-                  <ItemDescription className="group-focus:text-current group-data-[highlighted]:text-current">
-                    {pluralize(option.count, slot.countNoun)}
-                  </ItemDescription>
-                )}
-              </ItemContent>
+            <DropdownMenuRadioItem key={option.id} value={option.id} closeOnClick>
+              <slot.Icon aria-hidden="true" />
+              {option.name}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -220,30 +199,113 @@ const Slot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurre
   );
 };
 
+/** The project slot. */
+const SearchSlot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurrent }) => {
+  const t = useShellText();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const toggle = useCallback((next: boolean) => {
+    setOpen(next);
+    if (!next) setQuery('');
+  }, []);
+
+  const choose = useCallback(
+    (action: () => void) => {
+      toggle(false);
+      action();
+    },
+    [toggle]
+  );
+
+  const needle = query.trim().toLowerCase();
+  const found = needle
+    ? slot.options.filter((option) => option.name.toLowerCase().includes(needle))
+    : slot.options;
+
+  return (
+    <Popover open={open} onOpenChange={toggle}>
+      <PopoverTrigger render={<SlotFace chainSlot={slot} isCurrent={isCurrent} />} />
+      <PopoverContent align="start" initialFocus={searchRef}>
+        {slot.up && (
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Layers />}
+            className="!justify-start"
+            onClick={() => choose(() => requestLevel(slot.up!.level))}
+          >
+            {slot.up.label}
+          </Button>
+        )}
+        <Command shouldFilter={false}>
+          <InputGroup>
+            <InputGroupAddon>
+              <Search aria-hidden="true" />
+            </InputGroupAddon>
+            <InputGroupInput
+              ref={searchRef}
+              type="search"
+              placeholder={t('chain_search_projects')}
+              aria-label={t('chain_search_projects')}
+              value={query}
+              onValueChange={setQuery}
+            />
+          </InputGroup>
+          <CommandList>
+            <CommandEmpty>{t('chain_no_projects')}</CommandEmpty>
+            {found.map((option) => (
+              <CommandItem
+                key={option.id}
+                value={option.id}
+                onSelect={() =>
+                  choose(() => {
+                    if (option.id !== slot.current?.id) slot.pick(option.id);
+                  })
+                }
+              >
+                <slot.Icon aria-hidden="true" />
+                {option.name}
+                {option.id === slot.current?.id && <Check className="ml-auto" aria-hidden="true" />}
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+};
+
 export const ContextChain: React.FC = () => {
+  const t = useShellText();
   const context = useAppSelector(
     (state) => state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined
   );
   const level = useScreenLevel();
 
-  const slots = slotsOf(level, context);
+  const slots = slotsOf(level, context, t);
   if (slots.length === 0) {
-    return context?.loading ? <Skeleton className="h-9 w-40" /> : null;
+    return context?.loading ? <Skeleton className="h-8 w-40" /> : null;
   }
 
   return (
     <Breadcrumb>
       {/* @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-3 */}
-      <BreadcrumbList className="flex-nowrap gap-0">
+      <BreadcrumbList className={styles.list}>
         {slots.map((slot, index) => (
           <React.Fragment key={slot.level}>
             {index > 0 && (
-              <BreadcrumbSeparator className="w-8 shrink-0 justify-center">
+              <BreadcrumbSeparator className={styles.separator}>
                 <ArrowRight strokeWidth={1.5} />
               </BreadcrumbSeparator>
             )}
             <BreadcrumbItem>
-              <Slot slot={slot} isCurrent={slot.level === level} />
+              {slot.level === 'project' ? (
+                <SearchSlot slot={slot} isCurrent={slot.level === level} />
+              ) : (
+                <MenuSlot slot={slot} isCurrent={slot.level === level} />
+              )}
             </BreadcrumbItem>
           </React.Fragment>
         ))}

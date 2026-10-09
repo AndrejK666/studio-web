@@ -14,8 +14,14 @@ vi.mock('@constructor-studio/mfe-shared', () => ({
   useWorkspace: () => ({ workspace: null }),
 }));
 vi.mock('../../../i18n', () => ({
-  useProjectText: () => (key: string, params?: object) =>
-    params ? `${key} ${JSON.stringify(params)}` : key,
+  useProjectText: () =>
+    Object.assign(
+      (key: string, params?: object) => (params ? `${key} ${JSON.stringify(params)}` : key),
+      {
+        count: (key: string, count: number, params?: object) =>
+          `${key} ${JSON.stringify({ ...params, count })}`,
+      }
+    ),
 }));
 vi.mock('../../../shared/useArtifactImport', () => ({
   useArtifactImport: () => ({ canSync: false, start: () => {} }),

@@ -32,9 +32,10 @@ owner: studio-team
 - [5. Definitions of Done](#5-definitions-of-done)
   - [The extension declares its level](#the-extension-declares-its-level)
   - [The shell draws the navigation of every level](#the-shell-draws-the-navigation-of-every-level)
+  - [Every level has a header](#every-level-has-a-header)
   - [One entry, one mount: sections change by action](#one-entry-one-mount-sections-change-by-action)
-  - [The chain is a breadcrumb of three slots](#the-chain-is-a-breadcrumb-of-three-slots)
-  - [The workspace level has no menu](#the-workspace-level-has-no-menu)
+  - [The chain is a breadcrumb of the workspace and the project](#the-chain-is-a-breadcrumb-of-the-workspace-and-the-project)
+  - [The workspace level is its projects list](#the-workspace-level-is-its-projects-list)
   - [The entry point is the first item of the level](#the-entry-point-is-the-first-item-of-the-level)
   - [Counts arrive with the list that shows them](#counts-arrive-with-the-list-that-shows-them)
   - [The address decides, and only the shell writes it](#the-address-decides-and-only-the-shell-writes-it)
@@ -49,7 +50,8 @@ owner: studio-team
 
 The shell stops being one flat list of the MFEs it happens to have. The session
 is at a level — organization, workspace or project — the top bar names the path
-to it, and the navigation shows the sections of that level and nothing else.
+to it, a header names the level, and a row of tabs under the header shows the
+sections of that level and nothing else.
 
 ### 1.2 Purpose
 
@@ -65,6 +67,15 @@ carries two of them in its context state. What is missing is that **a screen
 cannot say which level it belongs to**, so the shell cannot group by level, and
 the level is not visible anywhere except as two switchers that share one slot.
 
+**2026-10-08: the rail became a row of tabs.** The design
+(https://studio.constructor.rocks) moved a level's navigation from a rail beside
+the content to a row of tabs under a header that names the level. The mechanism
+did not change — the same items, the same rule for the active one, the same
+address — only where and how it is drawn. What came with it: the path lost its
+organization slot, the organization's Overview was removed, and a section's
+title is the page's second heading. The DoDs
+below are written for the tabs; the rail's history is in git.
+
 **Assumptions fixed here**, because the mockups are silent and each choice
 changes the code:
 
@@ -72,9 +83,10 @@ changes the code:
   this repository owns, and never inferred from `presentation.route`. Three
   separate screen domains were rejected: a domain is a place content mounts
   into, and the content area is one.
-- The **shell draws the navigation of every level**. The project rail that
-  `projects-mfe` draws inside its own screen moves into the manifest, so one
-  mechanism governs the whole rail and the active item is decided in one place.
+- The **shell draws the navigation of every level**. The project's sections are
+  declared in `projects-mfe`'s manifest rather than drawn inside its screen, so
+  one mechanism governs every level's tabs and the active one is decided in one
+  place.
 - A menu item may point at an **entry that is already mounted**. When it does,
   the shell sends the extension an action instead of mounting again — otherwise
   changing a section inside a project would cost a full remount and lose the
@@ -84,18 +96,25 @@ changes the code:
   shell alone reads and writes; a click becomes a route, and the shell follows
   the address. MFEs still read no `location`: the level reaches them as shared
   properties and actions, as before.
-- The **workspace level has no menu**. Its only screen is the list of its
-  projects, and a rail holding one item is not a rail.
+- **Every level draws its row of tabs**, the workspace level included, whose
+  only screen is still the list of its projects. The row is the frame of every
+  level, so the content does not move up and down between levels, and the
+  workspace's settings will be its second tab.
 - Icons carry **one weight**. Filled-when-active would need a second field in
-  the presentation contract; the active item is distinguished by its background.
+  the presentation contract; the active tab is distinguished by its background.
 - Counts shown next to a name come from the **list that is already being read**
   (`child_count`). The artifact count of a project is not shown at all: it would
   be one request per project, and the slot for it stays empty until
   artifact-ingest can answer for several projects at once.
 
-**Out of scope**, deliberately, each to get its own artifact: the organization
-Overview screen, the Workspaces screen, and the Gears MFE. This feature is the
-mechanism they will sit on.
+**Out of scope**, deliberately, each to get its own artifact: the Workspaces
+screen, the Gears MFE, the workspace's settings, the project's Components, the
+Studio AI panel, putting a section's sub-tabs into the address, and translating
+a screen's label: the tabs read `presentation.label` as the rail did. This
+feature is the mechanism they sit on. The organization Overview screen, once
+listed here, was built as a placeholder and removed on 2026-10-08: the design
+has no organization overview any more (`organization-overview.md` is
+superseded).
 
 **Requirements**: `cpt-studio-fr-portal-levels`
 
@@ -108,8 +127,8 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 | Actor | Role in Feature |
 |-------|-----------------|
 | **Member** (`cpt-studio-actor-member`) | A signed-in member. Moves between levels and chooses sections of the level they are in. |
-| **Shell** (`cpt-studio-actor-shell`) | The portal shell. Owns the level, the path to it, the rail, and which extension is mounted. |
-| **MFE** (`cpt-studio-actor-mfe`) | A screenset. Declares the level of each of its screens, and receives the section to show when its entry is already mounted. |
+| **Shell** (`cpt-studio-actor-shell`) | The portal shell. Owns the level, the path to it, the level's header and tabs, and which extension is mounted. |
+| **MFE** (`cpt-studio-actor-mfe`) | A screenset. Declares the level and label of each of its screens, receives the section to show when its entry is already mounted, and titles that section. |
 
 ### 1.4 References
 
@@ -119,7 +138,8 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 - **ADR**: [ADR-0008 — simplified navigation shell](../adr/0008-simplified-navigation-shell.md)
 - **ADR**: [ADR-0010 — a project is an AM tenant](../adr/0010-projects-are-am-tenants.md)
 - **Feature**: [Workspaces in scope](workspace-scope.md) — the workspace slot this feature turns into a level
-- **Feature**: [Project artifacts](project-artifacts.md) — the sections whose rail moves into the shell
+- **Feature**: [Project artifacts](project-artifacts.md) — the sections whose navigation moved into the shell
+- **Design source**: the prototype, https://studio.constructor.rocks (the tabs, the level header, the two-slot path, the editor under Artifacts)
 - **Dependencies**: account-management (`/cf/account-management/v1`)
 
 ## 2. Actor Flows (CDSL)
@@ -139,23 +159,23 @@ rest on are the Definitions of Done, which are traced.
 **Actor**: Member
 
 **Success Scenarios**:
-- The path in the top bar gains a slot, the rail shows the sections of the new level, and the level's first section is on screen.
+- The header names the new level, its tabs show the sections of the new level, the path in the top bar gains the level's slot, and the level's first section is on screen.
 
 **Error Scenarios**:
 - The level below is empty — an organization with no workspace, a workspace with no project; the member stays where they are and the screen says so.
 - The screen of the new level fails to mount; the shell falls back to the level's entry point, and when that does not mount either nothing is mounted and the console says so (ADR-0028).
 
 **Steps**:
-1. [ ] - `p1` - Member picks a workspace in the path, or opens a project from the list - `inst-1`
+1. [ ] - `p1` - Member picks a workspace in the path or on the Workspaces screen, or opens a project from the list - `inst-1`
 2. [ ] - `p1` - Write the new level into the address, and from there into the shell's context, clearing everything below it - `inst-2`
 3. [ ] - `p1` - Run `cpt-studiofrontend-algo-shell-levels-menu` for the new level - `inst-3`
 4. [ ] - `p1` - **IF** the level has no item to show - `inst-4`
    1. [ ] - `p1` - **RETURN** stay at the level above and report that the level below is empty - `inst-5`
 5. [ ] - `p1` - Run `cpt-studiofrontend-algo-shell-levels-click` for the level's first item - `inst-6`
 6. [ ] - `p1` - **IF** the mount does not happen - `inst-7`
-   1. [ ] - `p1` - **RETURN** fall back once to the level's entry point, so the rail and the content agree; when that does not mount either, nothing is mounted and the warning says so - `inst-8`
-7. [ ] - `p1` - Run `cpt-studiofrontend-algo-shell-levels-path` so the new level is named in the top bar - `inst-9`
-8. [ ] - `p1` - **RETURN** the new level, its rail and its first section - `inst-10`
+   1. [ ] - `p1` - **RETURN** fall back once to the level's entry point, so the tabs and the content agree; when that does not mount either, nothing is mounted and the warning says so - `inst-8`
+7. [ ] - `p1` - Run `cpt-studiofrontend-algo-shell-levels-path` so the new level is named in the top bar, and name it in the level header - `inst-9`
+8. [ ] - `p1` - **RETURN** the new level, its header, its tabs and its first section - `inst-10`
 
 ### Move sideways within a level
 
@@ -164,19 +184,19 @@ rest on are the Definitions of Done, which are traced.
 **Actor**: Member
 
 **Success Scenarios**:
-- The path names the chosen sibling, the level and the rail stay as they were, and the same section of the new sibling is shown.
+- The path and the header name the chosen sibling, the level and its tabs stay as they were, and the same section of the new sibling is shown.
 
 **Error Scenarios**:
 - The chosen sibling is the current one; nothing happens and no request is made.
 - Choosing a sibling above the current level invalidates the levels below it, and the session lands at the chosen level rather than in a project that is no longer under it.
 
 **Steps**:
-1. [ ] - `p1` - Member opens a slot of the path and picks a sibling - `inst-1`
+1. [ ] - `p1` - Member opens a slot of the path, or the organization switch in the organization's header, and picks a sibling - `inst-1`
 2. [ ] - `p1` - **IF** the sibling is the one already in scope - `inst-2`
    1. [ ] - `p1` - **RETURN** nothing changes and nothing is requested - `inst-3`
 3. [ ] - `p1` - Write the sibling into its slot and clear every level below it - `inst-4`
 4. [ ] - `p1` - **IF** levels were cleared - `inst-5`
-   1. [ ] - `p1` - **RETURN** the session is at the level of the chosen sibling, with that level's rail - `inst-6`
+   1. [ ] - `p1` - **RETURN** the session is at the level of the chosen sibling, with that level's tabs - `inst-6`
 5. [ ] - `p1` - **RETURN** the same section, now of the chosen sibling - `inst-7`
 
 ### Choose a section of the level
@@ -186,14 +206,14 @@ rest on are the Definitions of Done, which are traced.
 **Actor**: Member
 
 **Success Scenarios**:
-- The chosen section is on screen and its item is the active one in the rail.
+- The chosen section is on screen and its tab is the active one.
 
 **Error Scenarios**:
 - The action reaches an entry that has meanwhile been unmounted; the shell mounts it instead of reporting a failure.
-- The MFE changes the section by itself; the rail follows it rather than pointing at the section the member last clicked.
+- The MFE changes the section by itself; the tabs follow it rather than pointing at the section the member last clicked.
 
 **Steps**:
-1. [ ] - `p1` - Member activates an item of the rail - `inst-1`
+1. [ ] - `p1` - Member activates a tab of the level - `inst-1`
 2. [ ] - `p1` - Run `cpt-studiofrontend-algo-shell-levels-click` - `inst-2`
 3. [ ] - `p1` - Mark the item active in the shell's own state, not in the MFE's - `inst-3`
 4. [ ] - `p1` - **IF** the MFE reports a section of its own - `inst-4`
@@ -208,7 +228,7 @@ rest on are the Definitions of Done, which are traced.
 
 **Input**: the level in scope, and the screen extensions registered in the screen domain
 
-**Output**: the items of the rail, in order, and which of them is the settings item. A hidden item is not among them
+**Output**: the level's tabs, in order, and which of them is the settings tab. A hidden item is not among them
 
 **Steps**:
 1. [x] - `p1` - Keep the extensions whose declared level is the level in scope - `inst-1`
@@ -216,7 +236,7 @@ rest on are the Definitions of Done, which are traced.
    1. [x] - `p1` - Treat it as belonging to the organization level, so an un-migrated manifest stays reachable - `inst-3`
 3. [x] - `p1` - Sort what is left by `presentation.order` - `inst-4`
 4. [x] - `p1` - Move the item marked as the level's settings to the end - `inst-5`
-5. [x] - `p1` - Drop the items marked hidden: they stay registered and mountable, reached by something other than the rail - `inst-7`
+5. [x] - `p1` - Drop the items marked hidden: they stay registered and mountable, reached by something other than the tabs - `inst-7`
 6. [x] - `p1` - **RETURN** the ordered items - `inst-6`
 
 ### Decide what a menu click does
@@ -242,7 +262,7 @@ the section is written when the address is applied, before the mount starts —
 Forward, and for a pasted link (ADR-0028). Deciding it when the mount finishes
 would put the decision on the far side of an await, where the next click cannot
 overrule it: two overlapping mounts then land in whichever order they happen to
-resolve, and the rail names a section the screen does not show. The mount is
+resolve, and the tabs name a section the screen does not show. The mount is
 the slow part and the part that can fail; what the member asked for is in the
 address before it starts.
 
@@ -274,14 +294,16 @@ other answers the MFE, and both go through the address.
 **Output**: the slots of the path, outermost first
 
 **Steps**:
-1. [x] - `p1` - Take the levels from the organization down to the level in scope - `inst-1`
-2. [x] - `p1` - **IF** nothing is selected at one of them, leave that slot out rather than naming an empty level - `inst-2`
-3. [x] - `p1` - **RETURN** the slots, outermost first, each with its siblings behind it - `inst-3`
+1. [x] - `p1` - Take the levels from the workspace down to the level in scope; the organization has no slot, its header names it and switches it - `inst-1`
+2. [x] - `p1` - **IF** the level in scope is the organization, take the workspace slot alone, naming no workspace ("All workspaces"); a pick in it enters the workspace. With no workspace in the organization there is no slot, and while the list is being read the slot holds a placeholder - `inst-4`
+3. [x] - `p1` - **IF** the level in scope is the workspace or the project and nothing is selected at one of those levels, leave that slot out rather than naming an empty level - `inst-2`
+4. [x] - `p1` - **RETURN** the slots, outermost first, each with its siblings behind it and an entry for the level above it: "All workspaces" in the workspace slot, "Projects in <workspace>" in the project slot - `inst-3`
 
-There is no narrow layout to fit into: the design covers the desktop only, so
-the path is drawn at one width and every slot in scope is always shown. A
-breakpoint invented here would be a guess at a design nobody has made — see the
-same reasoning in `cpt-studiofrontend-dod-shell-levels-chain`.
+There is no narrow layout for the path: it is drawn at one width and every slot
+in scope is always shown. A breakpoint invented here would be a guess at a
+design nobody has made — see the same reasoning in
+`cpt-studiofrontend-dod-shell-levels-chain`. The level's tabs are the one row
+that does change on a narrow window: they wrap, as the design shows.
 
 ## 4. States (CDSL)
 
@@ -294,13 +316,13 @@ same reasoning in `cpt-studiofrontend-dod-shell-levels-chain`.
 **Initial State**: Organization
 
 **Transitions**:
-1. [ ] - `p1` - **FROM** Organization **TO** Workspace **WHEN** a workspace is chosen in the path - `inst-1`
+1. [ ] - `p1` - **FROM** Organization **TO** Workspace **WHEN** a workspace is chosen in the path or on the Workspaces screen - `inst-1`
 2. [ ] - `p1` - **FROM** Workspace **TO** Project **WHEN** a project is opened - `inst-2`
-3. [ ] - `p1` - **FROM** Project **TO** Workspace **WHEN** the project is left - `inst-3`
-4. [ ] - `p1` - **FROM** Workspace **TO** Organization **WHEN** an organization-level item is chosen - `inst-4`
-5. [ ] - `p1` - **FROM** Project **TO** Organization **WHEN** an organization-level item is chosen, skipping the level between - `inst-5`
+3. [ ] - `p1` - **FROM** Project **TO** Workspace **WHEN** the project is left: "Back to projects" in its header, or "Projects in <workspace>" in the path - `inst-3`
+4. [ ] - `p1` - **FROM** Workspace **TO** Organization **WHEN** "All workspaces" in the path or "Organization" in the avatar menu is chosen - `inst-4`
+5. [ ] - `p1` - **FROM** Project **TO** Organization **WHEN** "All workspaces" in the path or "Organization" in the avatar menu is chosen, skipping the level between - `inst-5`
 6. [ ] - `p1` - **FROM** Project **TO** Workspace **WHEN** the workspace is switched, because the open project is not under the new one - `inst-6`
-7. [ ] - `p1` - **FROM** Workspace **TO** Organization **WHEN** the organization is switched, because neither the workspace nor the project survives it - `inst-7`
+7. [ ] - `p1` - **FROM** Organization **TO** Organization **WHEN** the organization is switched from its header, because neither the workspace nor the project of the old one survives it - `inst-7`
 8. [ ] - `p1` - **FROM** Organization **TO** the level the address names **WHEN** the session is reloaded or a link is opened, because the address is what the shell restores; an empty address stays at Organization (ADR-0028) - `inst-8`
 
 ## 5. Definitions of Done
@@ -329,47 +351,113 @@ The `order >= 100` band that separated the tenant level from the working areas
 goes away with this: the rule it stood for is now the level, and a magic number
 in an MFE manifest no longer decides where a separator is drawn.
 
+The same derived type carries an optional field that came with the tabs:
+`parentSection`, the section a hidden screen belongs to
+(`cpt-studiofrontend-dod-shell-levels-shell-draws`). A manifest that does not
+declare it is drawn as before.
+
 **Implements**:
 - `cpt-studiofrontend-algo-shell-levels-menu`
 
 **Touches**:
-- Entities: `mfe.json` (every MFE), `app/mfe/schemas`, `screenLevels`, `Rail`
+- Entities: `mfe.json` (every MFE), `app/mfe/schemas`, `screenLevels`, `LevelTabs`
 
 ### The shell draws the navigation of every level
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-shell-draws`
 
-The system **MUST** draw the rail in the shell for every level, from the
-extensions registered in the screen domain, and **MUST NOT** leave a level's
-navigation to be drawn inside an MFE.
+The system **MUST** draw a level's navigation in the shell, as a row of tabs
+under the level's header, from the extensions registered in the screen domain,
+and **MUST NOT** leave a level's navigation to be drawn inside an MFE.
 
-The rail is a permanent icon-width column that expands over the content with
-labels, not a drawer: a drawer is open or closed, and the level's sections have
-to be reachable without opening anything first. It is built on the kit's
-`Sidebar collapsible="icon"`, which already carries the icon width and the
-labels — the shell's local copy of the sidebar primitive goes away with it. No
-tooltips: the panel expands on hover, which is where the label belongs.
+A level's tabs belong to several MFEs — the organization's to organization-mfe,
+people-mfe, connections-mfe and kits-mfe — and only the shell's registry holds
+them all. An MFE drawing its own row would need the others' items and would
+decide the active one a second time; that is why `ProjectRail` was deleted, and
+the tabs do not bring it back.
 
-Icons keep one weight; the active item is distinguished by its background.
-Filled-when-active would need a second icon field in the presentation contract,
-and a contract change for an icon variant is not worth what it costs every
-manifest.
+The row is built on the kit's `NavigationMenu`. Each tab is a
+`NavigationMenuLink` whose `active` comes from the active-item rule, so the
+active tab carries `aria-current="page"` and is styled through `[data-active]`.
+The kit's `Tabs` is not used here: a `tablist` with `aria-selected` announces
+panels of one page, and a tab of the level changes the address and may mount
+another MFE. A tab shows the item's icon and its label. Icons keep one weight; the active
+tab is distinguished by its background. Filled-when-active would need a second
+icon field in the presentation contract, and a contract change for an icon
+variant is not worth what it costs every manifest. The settings tab of a level
+is labelled "Settings": the header already says whose settings they are.
 
-`ProjectRail` in `projects-mfe` is deleted, and the project's sections are
-declared in its manifest instead. What the MFE keeps is its own section state;
-what it loses is the drawing of navigation. That half lands with the sections
-themselves; the shell's rail is what this DoD covers.
+**Every level draws its row, a level of one tab included.** The row is the frame
+of every level, so the content does not move up and down between levels, and the
+workspace level, which has only Projects until its settings exist, shows where
+those will appear. On a window too narrow for the row, the row wraps to a second
+line, as the design does. Horizontal scroll and an overflow menu were rejected:
+both hide tabs a person then has to look for.
 
-The rule for a level with nothing to navigate is stated as a count, not as a
-named level: **a rail of one item is not a rail**, because that item is the
-level and the path already names it. So the workspace level needs no special
-case, and neither will any later level that turns out to have one screen.
+**A hidden screen may name the section it belongs to.** The editor is a hidden
+project-level screen (`cpt-studiofrontend-dod-shell-levels-artifact-address`),
+and while it is on screen the Artifacts tab is the active one, as in the design.
+Its manifest declares `parentSection: "artifacts"`, and the active-item rule
+takes the tab of the level with that section when the mounted screen declares
+one. The existing `section` field cannot carry this: the editor is an address
+group of its own (`space`), and to `materialize` a `section` on it would be a
+section of that group, written into the editor's address — where ADR-0028 lets a
+project route carry a section or an artifact, never both.
+
+`ProjectRail` in `projects-mfe` stays deleted, and the project's sections are
+declared in its manifest. What the MFE keeps is its own section state; what it
+loses is the drawing of navigation.
 
 **Implements**:
 - `cpt-studiofrontend-flow-shell-levels-section`
 
 **Touches**:
-- Entities: `Rail`, `Menu` (removed), `ProjectRail` (removed), `components/ui/sidebar` (removed), `mfe.json` (projects-mfe)
+- Entities: `LevelTabs`, `Rail` (removed), `Layout`, `mfe.json` (every MFE with a settings item, space-mfe)
+
+### Every level has a header
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-header`
+
+The system **MUST** draw, between the top bar and the level's tabs, a header
+naming the level in scope as the page's `h1`, and **MUST** leave the section's
+title to the MFE, as an `h2`.
+
+- **Organization:** its name, and "Switch organization". The button opens the
+  organization list the shell already holds (`app/context.orgs`, with the
+  `child_count` of each, `cpt-studiofrontend-dod-shell-levels-counts`); a pick
+  emits the existing `app/context/org/changed`. It is drawn only for a person
+  in two or more organizations: with one there is nothing to switch to.
+- **Workspace:** its name, with the organization's name above it. While the
+  workspace list is being read, a placeholder stands where the name goes, not
+  the organization's header; when the read fails, the header is empty.
+- **Project:** "Back to projects", which emits `app/context/level/requested` for
+  the workspace level and so lands on the workspace's projects list, and the
+  project's name. No type badge: a project carries no type
+  (`ProjectConfig` has `mode` and `status`, nothing the design's badge shows).
+  A linked project is open before its name is read (ADR-0028); until then a
+  placeholder stands where the name goes, not an empty heading.
+
+The header is the shell's because it sits above the tabs, which are the
+shell's. It replaces nothing the MFE drew: an MFE never named its level, it
+named its section, and still does — one heading level down. Every MFE section
+title is an `h2`, and so is the `_blank-mfe` template's. The search dialog keeps
+its `h1`, which titles a dialog rather than a section of the page. The onboarding
+state (`OrganizationAccessGate`) keeps its `h1` too: it is drawn when the person
+has no organization, and then there is no level to name.
+
+The header, the tabs and the MFE's section row start on one vertical line: the
+shell's rows use `var(--space-6)` as their side gutter, the value most screens
+already pad with, and the People, Kits and organization-settings screens and the
+`_blank-mfe` template move from `2rem` to it. The template's card titles are
+`h3`, under its section's `h2`.
+
+**Implements**:
+- `cpt-studiofrontend-flow-shell-levels-descend`
+- `cpt-studiofrontend-flow-shell-levels-sideways`
+
+**Touches**:
+- Event: `app/context/org/changed`, `app/context/level/requested`
+- Entities: `LevelHeader`, `Layout`, every MFE's section title, `_blank-mfe`
 
 ### One entry, one mount: sections change by action
 
@@ -386,11 +474,11 @@ remote module load for a tab change.
 
 The channel is **two-way**. The MFE changes the section by itself — the projects
 MFE lands on Artifacts after a first import — so the shell adopts a section the
-MFE reports rather than insisting on the one last clicked. Without that the rail
+MFE reports rather than insisting on the one last clicked. Without that the tabs
 would highlight a section that is not on screen.
 
 The active item is the shell's state, not `projects/nav`. That slice stays as the
-MFE's own view of itself, but it stops being the truth the rail reads.
+MFE's own view of itself, but it stops being the truth the tabs read.
 
 The channel is the one that already crosses a module realm: a shared property
 carries the shell's choice down (`…context.project_section.selected.v1~`, the
@@ -404,75 +492,86 @@ moves back up as `kind: 'section'`. Neither direction is an event: an MFE's
 **Touches**:
 - Property: `constructor_studio.context.project_section.selected.v1~`
 - Action: `constructor_studio.context.projects.publish.v1~` (`kind: section`)
-- Entities: `Rail`, `screenLevels`, `appContextSlice`, `sharedContext`, `contextActions`, `ProjectsRoot` (projects-mfe), `navSlice`, `ProjectRail` (removed)
+- Entities: `LevelTabs`, `screenLevels`, `appContextSlice`, `sharedContext`, `contextActions`, `ProjectsRoot` (projects-mfe), `navSlice`, `ProjectRail` (removed)
 
-### The chain is a breadcrumb of three slots
+### The chain is a breadcrumb of the workspace and the project
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-chain`
 
 The system **MUST** show the path to the level in scope as a breadcrumb in the
-top bar — one slot per level in scope, each with its own menu of siblings — and
-**MUST** build it on the kit's `Breadcrumb`.
+top bar — a slot for the workspace and, at the project level, one for the
+project, each with its own menu of siblings — and **MUST** build it on the
+kit's `Breadcrumb`. The organization **MUST NOT** have a slot.
 
-One slot per level, not one slot with several modes: the organization, the
-workspace and the project are in scope at the same time, so `ContextSwitcher`'s
-`org`/`project` alternation and the separate `WorkspaceSwitcher` are replaced by
-one slot component used three times.
+The organization is named and switched in its own header
+(`cpt-studiofrontend-dod-shell-levels-header`), and "Organization" in the
+avatar menu (`UserMenu`) leads back to its screens from any depth, by
+`app/context/level/requested`. A slot that only repeated the header would take
+room from the two that move the session.
 
-Every slot is a `BreadcrumbLink` rendered as its menu trigger, the last one
-included: `BreadcrumbPage` marks the current crumb `aria-disabled`, and here the
-current level is the most clickable thing in the bar. `aria-current="page"` is
-set by us instead.
+One slot per level, not one slot with several modes: the workspace and the
+project are in scope at the same time, so `ContextSwitcher`'s `org`/`project`
+alternation and the separate `WorkspaceSwitcher` were replaced by one slot
+component used for each level in the path.
 
-Each slot is two lines — the level's name in caps above the entity's name — and
-that has consequences that are part of this decision, not details of it:
+Each slot's menu has an entry for the level above it, above the siblings: "All
+workspaces" in the workspace slot, which emits `app/context/level/requested` for
+the organization and so lands on its Workspaces; "Projects in <workspace>" in
+the project slot, which does the same for the workspace. The project slot's menu
+also searches the projects by name.
 
-- `BreadcrumbList` ships `flex-wrap: wrap`. With 44px slots the chain would wrap
-  and break the 56px bar, so the list is `nowrap` here.
-- The width is set by the entity's name, not by the caps label: both lines
-  ellipsize, and the label — one of three constant words — is the one that gives
-  way.
-- Each slot is a fixed width, so the path does not re-lay itself out as names
-  change length, and a long name truncates inside its slot. The chain is not
-  responsive: the design covers the desktop only, and rather than invent a
-  narrow layout the list is `nowrap` and every slot in scope stays drawn.
-- The caps label is `aria-hidden`; the accessible name of the trigger says the
-  level and the entity once ("Organization: Acme Corporation, switch"), so a
-  screen reader does not read both lines and then the label again.
-- Every slot carries a label, so the separators between them stay on one
-  centreline.
+Every slot is the design's ghost button — the level's icon, the entity's name
+and a chevron — rendered as its menu's trigger, the last one included:
+`BreadcrumbPage` marks the current crumb `aria-disabled`, and here the current
+level is the most clickable thing in the bar. `aria-current="page"` is set by us
+instead. An arrow stands between two slots.
 
-Type comes from the kit's roles — `--text-meta-*` for the label, the body size
-with the label weight for the name — and the hardcoded 16px/600 in the header
-goes away.
+- `BreadcrumbList` ships `flex-wrap: wrap`; the path is `nowrap`, so it never
+  breaks the 56px bar. It is not responsive: rather than invent a narrow layout,
+  every slot in scope stays drawn.
+- A slot is as wide as its name, up to a cap, and a long name truncates inside
+  it.
+- The icon carries no text, so the accessible name of the trigger says the level
+  and the entity ("Workspace: Platform Workspace").
+- Both menus are the kit's own, at the kit's row: the workspace slot's a
+  `DropdownMenu` with the current workspace checked, the project slot's a
+  `Popover` with the way up, the kit's search field (`InputGroup` at its 32px
+  step) and a `Command` list it filters by name. Neither counts anything — the design's menus name
+  each entry and stop there.
+
+The slot is the kit's `Button` (`utility`, `sm`) at the body size with the label
+weight: `utility` is the kit's ghost with the design's 18px glyph. The path
+hardcodes no type and no icon size.
+
+Until 2026-10-08 a slot was two lines — the level's name in caps above the
+entity's — at a fixed width; it follows the design's single line now.
 
 **Implements**:
 - `cpt-studiofrontend-flow-shell-levels-sideways`
 - `cpt-studiofrontend-algo-shell-levels-path`
 
 **Touches**:
-- Entities: `Header`, `ContextSwitcher` (removed), `WorkspaceSwitcher` (removed), `appContextSlice`
+- Entities: `Header`, `ContextChain`, `UserMenu`, `ContextSwitcher` (removed), `WorkspaceSwitcher` (removed), `appContextSlice`
 
-### The workspace level has no menu
+### The workspace level is its projects list
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-shell-levels-workspace-level`
 
 The system **MUST** treat the projects list as the screen of the workspace level,
-**MUST** draw no rail at that level, and **MUST NOT** offer Projects as an item
-of the organization's rail.
+**MUST** draw that level's row of tabs even while Projects is its only tab, and
+**MUST NOT** offer Projects as a tab of the organization level.
 
-Choosing a workspace in the path is what opens its projects. A rail holding a
-single item repeats what the path already says, and the workspace's second
-screen — its settings — does not exist yet. The rail is not drawn at a level
-that has none, rather than standing empty.
+The workspace's second screen — its settings — does not exist yet. When it
+does, it is the row's second tab and nothing else here changes.
 
-The path follows the same rule: the workspace slot is drawn from the workspace
-level down and not before it, so at the organization level the path names the
-organization alone. Measured against the design, which shows one slot on the
-organization's own screens and two on the projects list. The way into a
-workspace is that level's Workspaces screen
-(`cpt-studiofrontend-dod-workspaces-screen-row-opens`); for the weeks between
-this feature and that screen the slot doubled as the entry, which is now undone.
+The workspace slot of the path is drawn at every level, the design's two
+switchers. At the organization level it names no workspace ("All workspaces"),
+and a pick in it enters the workspace with one `app/context/workspace/changed`
+that carries `enter: true` — one announcement rather than a pick and a level
+request, for the reason `cpt-studiofrontend-dod-workspaces-screen-row-opens`
+gives. A pick without `enter` at the organization level is only remembered; that
+was right while the slot was not drawn there, and is not what a person picking a
+workspace from a menu expects. The Workspaces screen stays the other way in.
 
 Picking in any slot other than the one in scope moves the session to that slot's
 level; picking a sibling of the level in scope keeps the screen, and with it
@@ -482,7 +581,8 @@ whatever section the MFE is showing.
 - `cpt-studiofrontend-flow-shell-levels-descend`
 
 **Touches**:
-- Entities: `mfe.json` (projects-mfe), `Rail`, `ContextChain`
+- Event: `app/context/workspace/changed` (`enter: true`)
+- Entities: `mfe.json` (projects-mfe), `LevelTabs`, `ContextChain`
 
 ### The entry point is the first item of the level
 
@@ -490,8 +590,16 @@ whatever section the MFE is showing.
 
 The system **MUST** mount the first item of the level in scope, by order, and
 **MUST NOT** name any screen in the shell's code to decide that. A hidden item
-is never that first item: it is not in the rail, so it cannot be where a level
-opens.
+is never that first item: it is not among the tabs, so it cannot be where a
+level opens.
+
+The organization opens on Workspaces since its Overview was removed
+(2026-10-08). Nothing in the shell names it: Workspaces is simply the
+organization's lowest order now. An old link with `section=overview` needs no
+rule of its own — `materialize` already warns that it is not a section of the
+group and opens the level's entry point with a `replace` (ADR-0028). The
+project's Overview is not affected: `overview` is still a section of the
+project.
 
 `MfeScreenContainer` currently prefers the extension whose route is `/projects`
 and falls back to the lowest order. After this feature there is no such screen
@@ -513,9 +621,9 @@ screen a session opens on is not the one screen reached by a second path.
 
 - [x] `p2` - **ID**: `cpt-studiofrontend-dod-shell-levels-counts`
 
-The system **MUST** take the count shown under a name in a slot's menu from the
-`child_count` of the tenant list already being read, and **MUST NOT** issue a
-request per row to fill a menu.
+The system **MUST** take the count shown under a name in the organization
+switch of the organization's header from the `child_count` of the tenant list
+already being read, and **MUST NOT** issue a request per row to fill a menu.
 
 Organizations, workspaces and projects are all account-management tenants, so
 the count of what is inside one arrives in the same page as its name.
@@ -523,18 +631,18 @@ the count of what is inside one arrives in the same page as its name.
 exactly what the menu should claim, and what makes "only what you can see"
 true rather than approximate.
 
-The count is left out where it would cost a request per row: the artifact count
-of a project lives in artifact-ingest, one `total` per project. The slot for it
-is drawn empty until that gear can answer for several projects at once, because
-a menu that fans out a request per row on every open is worse than a menu
-without a subtitle.
+The path's menus show names only, as the design does
+(`cpt-studiofrontend-dod-shell-levels-chain`). A count that would cost a request
+per row is not shown anywhere: the artifact count of a project lives in
+artifact-ingest, one `total` per project, and a menu that fans out a request per
+row on every open is worse than a menu without a subtitle.
 
 **Implements**:
 - `cpt-studiofrontend-flow-shell-levels-sideways`
 
 **Touches**:
 - API: `GET /cf/account-management/v1/tenants/{id}/children`
-- Entities: `appContextSlice`, `appContextEffects`
+- Entities: `appContextSlice`, `appContextEffects`, `LevelHeader`
 
 ### The address decides, and only the shell writes it
 
@@ -599,27 +707,35 @@ the artifact reaches the frame in #323.
 
 ## 6. Acceptance Criteria
 
-- [ ] At the organization level the rail shows the organization's items only; Findings, Artifacts and the other project sections are absent from it.
-- [ ] Choosing a workspace in the path shows that workspace's projects, and the rail disappears for as long as the session is at the workspace level.
-- [ ] Projects is not an item of the organization's rail anywhere in the product.
-- [ ] Opening a project shows the project's rail — Overview, Artifacts, Findings, Activity, Timeline, Team, and settings last — and the path gains a third slot.
+- [ ] At the organization level the header names the organization and the tabs read Workspaces, People, Connections, Kits and Settings; Findings, Artifacts and the other project sections are absent from them.
+- [ ] A fresh session, and an empty address, open the organization on Workspaces; a link with `section=overview` opens Workspaces with a console warning.
+- [ ] Choosing a workspace in the path or on the Workspaces screen shows that workspace's projects under a header naming the workspace, with the organization above it, and a row holding the one tab Projects.
+- [ ] Projects is not a tab of the organization level anywhere in the product.
+- [ ] Opening a project shows the project's tabs — Overview, Artifacts, Findings, Activity, Timeline, Team, and Settings last — the header names the project, and the path gains the project slot.
+- [ ] "Back to projects" in the project's header shows the workspace's projects list.
+- [ ] The level's name in the header is the page's only `h1`; the section's title below the tabs is an `h2`.
+- [ ] The header, the tabs and the section's title start on one vertical line on every level.
+- [ ] On a window too narrow for the project's tabs, the row wraps to a second line and no tab is hidden.
 - [ ] Switching between two sections of the same project does not remount the screen: a filter set on Artifacts is still set after visiting Findings and coming back.
 - [ ] Switching between two items of the same MFE at the organization level behaves the same way, with no remount.
 - [ ] Switching to an item of a different MFE mounts it, and the previous screen is unmounted.
-- [ ] After the projects MFE moves the section by itself, the rail highlights the section that is on screen, not the one last clicked.
-- [ ] Every slot of the path opens a menu of its siblings, the last slot included.
+- [ ] After the projects MFE moves the section by itself, the active tab is the section that is on screen, not the one last clicked.
+- [ ] The path has no organization slot. At the organization level it holds the workspace slot alone, reading "All workspaces", and a pick in it opens that workspace's projects; from the workspace level down it holds the workspace and, at the project level, the project.
+- [ ] Every slot of the path opens a menu of its siblings, the last slot included, with an entry for the level above: "All workspaces" leads to the organization's Workspaces, "Projects in <workspace>" to the workspace's projects; the project slot's menu filters projects by name.
+- [ ] "Organization" in the avatar menu leads to the organization's Workspaces from any level.
 - [ ] Choosing the sibling already in scope makes no request and changes nothing.
 - [ ] Switching the workspace while a project is open leaves the project and lands at the chosen workspace.
-- [ ] Switching the organization clears the workspace and the project, and the session is at the organization level.
-- [ ] Under the organization slot the menu shows how many workspaces each organization has, and under the workspace slot how many projects — without a request per row.
+- [ ] Switching the organization from its header clears the workspace and the project, and the session is at the organization level.
+- [ ] For a person in two or more organizations, the organization switch shows how many workspaces each has, without a request per row; with one organization the header has no switch. The path's menus show names only.
 - [ ] The project slot's menu shows names with no artifact count under them.
-- [ ] Every slot of the path is the same fixed width, a long name truncates inside its slot, and the top bar never wraps to a second line.
-- [ ] A screen reader announces each slot once, naming the level and the entity, and does not read the caps label separately.
+- [ ] Each slot of the path reads as the design's ghost button — icon, name, chevron — a long name truncates inside its slot, and the top bar never wraps to a second line.
+- [ ] A screen reader announces each slot as the level and the entity.
 - [ ] Reloading the page returns the session to the screen, level and section it was on; an empty address opens the organization level's first item (ADR-0028).
 - [ ] A pasted link to a project opens that project; an id the person cannot read degrades to the level's entry point with a console warning.
-- [ ] No MFE reads `location` or pushes browser history; Back and Forward move between screens, projects and sections without a reload, and the rail follows.
+- [ ] No MFE reads `location` or pushes browser history; Back and Forward move between screens, projects and sections without a reload, and the tabs follow.
 - [ ] A manifest that declares no level still shows its screen at the organization level rather than disappearing.
-- [ ] A screen declared `placement: hidden` appears in no level's rail and is never the screen a level opens on, yet the shell still mounts it when asked by id.
-- [ ] Opening a file from a project's artifacts replaces the project area with the editor while the rail, the path and the top bar stay put, and the address carries `screen=space` and the artifact.
+- [ ] A screen declared `placement: hidden` appears in no level's tabs and is never the screen a level opens on, yet the shell still mounts it when asked by id.
+- [ ] Opening a file from a project's artifacts replaces the project area with the editor while the header, the tabs, the path and the top bar stay put, the Artifacts tab stays active, and the address carries `screen=space` and the artifact.
 - [ ] Back from the editor shows the artifact list of the same project, with the project still open; Forward and reload show the editor again on the same artifact.
 - [ ] Picking another project or workspace in the path while the editor is open leaves the editor for that level's entry point; only when the level has none does the editor stay, with no artifact and a warning.
+- [ ] The last tab of the organization and of the project reads "Settings".

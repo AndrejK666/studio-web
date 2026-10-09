@@ -122,7 +122,8 @@ are what the next sync from the template would bring anyway.
   Dracula Large's type ramp and radii, which it scales by one and a half on
   purpose.
 - **The rail's `--sidebar*` overrides** in `Rail.module.css`: not new names,
-  a local re-colouring of the kit's `Sidebar` onto the card surface.
+  a local re-colouring of the kit's `Sidebar` onto the card surface. Gone with
+  the rail since `shell-levels` replaced it with tabs (2026-10-08).
 
 ### The MFEs do not change
 

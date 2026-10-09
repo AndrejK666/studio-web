@@ -17,14 +17,7 @@ interface WorkspacesToolbarProps {
 }
 
 function totalsLine(t: ScreenText, total: number, projectTotal: number): string {
-  const workspaces = t(total === 1 ? "totals_workspaces_one" : "totals_workspaces_many", {
-    count: total,
-  });
-  const projects = t(
-    projectTotal === 1 ? "totals_projects_one" : "totals_projects_many",
-    { count: projectTotal },
-  );
-  return `${workspaces} · ${projects}`;
+  return `${t.count("totals_workspaces", total)} · ${t.count("totals_projects", projectTotal)}`;
 }
 
 export const WorkspacesToolbar: React.FC<WorkspacesToolbarProps> = ({
@@ -45,9 +38,9 @@ export const WorkspacesToolbar: React.FC<WorkspacesToolbarProps> = ({
       aria-label={t("toolbar_label")}
     >
       <div className={styles.heading}>
-        <h1 className={styles.title}>
+        <h2 className={styles.title}>
           {busy ? <Skeleton className={styles.titleSkeleton} /> : t("title")}
-        </h1>
+        </h2>
         {!busy && total !== undefined && projectTotal !== undefined && (
           <p className={styles.totals}>{totalsLine(t, total, projectTotal)}</p>
         )}

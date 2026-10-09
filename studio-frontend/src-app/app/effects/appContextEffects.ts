@@ -236,8 +236,8 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-5
   // The MFE's own report of the section it moved to, written without a
-  // history entry: the person did not navigate, the screen did. The rail
-  // follows it from the address, like every other section.
+  // history entry: the person did not navigate, the screen did. The tabs
+  // follow it from the address, like every other section.
   eventBus.on('app/context/project/section', ({ section }) => {
     if (!routing) return;
     const current = routing.navigation.currentRoute();

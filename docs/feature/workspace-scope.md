@@ -30,7 +30,7 @@ owner: studio-team
 - [5. Definitions of Done](#5-definitions-of-done)
   - [The shell owns the workspace list](#the-shell-owns-the-workspace-list)
   - [Every announcement names the scope it was made in](#every-announcement-names-the-scope-it-was-made-in)
-  - [The workspace has its own slot next to the organization](#the-workspace-has-its-own-slot-next-to-the-organization)
+  - [The workspace has its own slot in the path](#the-workspace-has-its-own-slot-in-the-path)
   - [Creation is an overlay extension with one field](#creation-is-an-overlay-extension-with-one-field)
   - [A created workspace reaches the shell and becomes current](#a-created-workspace-reaches-the-shell-and-becomes-current)
   - [The projects list is rooted at the workspace](#the-projects-list-is-rooted-at-the-workspace)
@@ -45,7 +45,7 @@ owner: studio-team
 ### 1.1 Overview
 
 The workspace a session is working in: created from the Projects list, chosen in
-the shell's top bar next to the organization, and applied to everything below —
+the path in the shell's top bar, and applied to everything below —
 the Projects list shows that workspace's projects, and a new project is created
 inside it.
 
@@ -92,7 +92,7 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 | Actor | Role in Feature |
 |-------|-----------------|
 | **Member** (`cpt-studio-actor-member`) | A signed-in member of the organization in scope. Creates workspaces and chooses the current one. |
-| **Shell** (`cpt-studio-actor-shell`) | The portal shell. Reads the organization's workspaces, draws the switcher next to the organization, and publishes the current one to every MFE. |
+| **Shell** (`cpt-studio-actor-shell`) | The portal shell. Reads the organization's workspaces, draws their slot in the path, and publishes the current one to every MFE. |
 
 ### 1.4 References
 
@@ -290,40 +290,39 @@ waves through.
 - Action: `constructor_studio.context.workspaces.publish.v1~`, `constructor_studio.context.publish.v1~`
 - Entities: `appContextEffects`, `contextActions`, `projectsActions`, `workspaceActions`
 
-### The workspace has its own slot next to the organization
+### The workspace has its own slot in the path
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-workspace-scope-slot`
 
-The system **MUST** show the current workspace in the top bar next to the
-organization, as its own slot with its own menu, and **MUST** render nothing at
-all when the organization has no workspace **or when the mounted screen does not
-work in a workspace**.
+The system **MUST** show the current workspace in the top bar as its own slot
+of the path, with its own menu, and **MUST** render nothing at all when the
+organization has no workspace.
 
-A second slot rather than a third scope of the existing one: the organization
-and the workspace are both in scope at the same time, while the existing slot's
-`org`/`project` scopes are alternatives to each other.
+A slot of its own rather than a scope of another: the workspace and the project
+are both in scope at the same time. The organization once had the slot beside it;
+since 2026-10-08 the organization is named in its own header instead, and the
+workspace's is the outermost slot (`cpt-studiofrontend-dod-shell-levels-chain`).
 
-Which screens those are is **not** a list kept in the shell. The screen turns the
-slot on for itself, by executing the workspaces action against the screen domain
-when it mounts; the shell turns it off when the drawer mounts another screen.
-That is the mechanism the project slot beside it already uses, and one top bar
-governed by one mechanism is worth more than either rule chosen alone.
+Where the slot is drawn is the path's rule, not the mounted screen's: at every
+level, naming no workspace ("All workspaces") at the organization level
+(`cpt-studiofrontend-algo-shell-levels-path`). The `scoped` announcement a screen
+makes when it mounts no longer turns the slot on; it only asks the shell to read
+the workspace list again when the last read failed.
 
-Visibility only: the chosen workspace stays chosen and stays published while an
+The chosen workspace stays chosen and stays published while an
 organization-scoped screen is open, or navigating to People and back would lose
 the scope and the overlays would open without a parent.
 
-While the read is still pending on a screen that does work in a workspace, the
-slot holds a placeholder rather than collapsing — an unread list is not an empty
-one here either, and switching organizations would otherwise blank that part of
-the top bar and fill it again.
+While the read is still pending, the slot holds a placeholder rather than
+collapsing — an unread list is not an empty one here either, and switching
+organizations would otherwise blank that part of the top bar and fill it again.
 
 **Implements**:
 - `cpt-studiofrontend-flow-workspace-scope-switch`
 
 **Touches**:
 - Action: `constructor_studio.context.workspaces.publish.v1~` (`kind: scoped`)
-- Entities: `WorkspaceSwitcher`, `Header`, `ProjectsRoot`, `Menu`, `appContextSlice`
+- Entities: `ContextChain`, `Header`, `ProjectsRoot`, `appContextEffects`, `appContextSlice`
 
 ### Creation is an overlay extension with one field
 
@@ -432,8 +431,8 @@ only button is already refused.
 
 ## 6. Acceptance Criteria
 
-- [ ] With no workspace in the organization, the top bar shows the organization alone, "New project" is disabled and "New workspace" is not; with no organization at all, both are disabled.
-- [ ] The workspace slot is in the top bar on the Projects screen and absent on Connections and People.
+- [ ] With no workspace in the organization, the path in the top bar is empty, "New project" is disabled and "New workspace" is not; with no organization at all, both are disabled.
+- [ ] The workspace slot is in the top bar at every level: it names the current workspace from the workspace level down, and reads "All workspaces" at the organization level.
 - [ ] Leaving Projects for another screen and coming back shows the same workspace still current, and the Projects list unchanged.
 - [ ] Activating "New workspace" opens an overlay with a single name field; Escape, the scrim and Cancel all close it and write nothing.
 - [ ] Confirming a name creates a tenant of the workspace type whose parent is the organization in scope.
@@ -444,7 +443,7 @@ only button is already refused.
 - [ ] Switching workspaces replaces the Projects list with the chosen workspace's projects, and an open project is left.
 - [ ] Switching organizations re-reads the workspaces and selects one of the new organization's, never one of the previous organization's.
 - [ ] Choosing the organization already in scope changes nothing: the workspace stays current, an open project stays open, and no request is made.
-- [ ] On a workspace-scoped screen the slot holds a placeholder while the list is being read, rather than disappearing and coming back.
+- [ ] While the workspace list is being read, the slot holds a placeholder rather than disappearing and coming back.
 - [ ] Switching organizations while the previous organization's workspaces are still being read leaves the slot showing the new organization's, whatever order the two reads answer in.
 - [ ] A workspace picked on a screen of an organization since switched away from is not made current, and does not move the session to the workspace level either.
 - [ ] A project opened, or a sibling list published, from a workspace since left changes neither the top bar nor the project switcher.

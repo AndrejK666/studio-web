@@ -10,7 +10,7 @@ import { entryTokenOf, groupOfExtension, groupOfToken, groupScreens, tokenOf } f
 const projectsList = screen('projects.main', '/projects', 'workspace', { order: 20 });
 const projectsOverview = screen('projects.overview', '/projects/overview', 'project', { section: 'overview', order: 10 });
 const projectsArtifacts = screen('projects.artifacts', '/projects/artifacts', 'project', { section: 'artifacts', order: 20 });
-const orgOverview = screen('org.overview', '/organization/overview', 'organization', { section: 'overview', order: 10 });
+const orgWorkspaces = screen('org.workspaces', '/organization/workspaces', 'organization', { section: 'workspaces', order: 20 });
 const orgSettings = screen('org.settings', '/organization/settings', 'organization', { section: 'settings', order: 100, placement: 'settings' });
 const people = screen('people', '/people', 'organization', { order: 30 });
 const kitsList = screen('kits.main', '/kits', 'organization', { order: 50 });
@@ -31,7 +31,7 @@ describe('tokenOf', () => {
 });
 
 describe('groupScreens', () => {
-  const groups = groupScreens([projectsOverview, projectsArtifacts, projectsList, orgSettings, orgOverview, people, fixture, badRoute]);
+  const groups = groupScreens([projectsOverview, projectsArtifacts, projectsList, orgSettings, orgWorkspaces, people, fixture, badRoute]);
 
   it('groups by token and keeps every member', () => {
     expect(groups.map((g) => g.token).sort()).toEqual(['fixture', 'organization', 'people', 'projects']);
@@ -45,7 +45,7 @@ describe('groupScreens', () => {
   });
 
   it('falls back to the lowest order when every member has a section', () => {
-    expect(groupOfToken(groups, 'organization')?.owner.id).toBe('org.overview');
+    expect(groupOfToken(groups, 'organization')?.owner.id).toBe('org.workspaces');
   });
 
   // Reviewer finding (vasylcf): the middle tiebreaker had no fixture of its own.
@@ -64,7 +64,7 @@ describe('groupScreens', () => {
 });
 
 describe('entryTokenOf', () => {
-  const all = [projectsOverview, projectsArtifacts, projectsList, orgSettings, orgOverview, people, fixture];
+  const all = [projectsOverview, projectsArtifacts, projectsList, orgSettings, orgWorkspaces, people, fixture];
   it("is the token of the level's entry point, hidden items excluded", () => {
     expect(entryTokenOf(all, 'organization')).toBe('organization');
     expect(entryTokenOf(all, 'workspace')).toBe('projects');
@@ -85,5 +85,12 @@ describe('the real manifests', () => {
       'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.space.screens.main.v1',
     ]);
     expect(space?.owner.presentation).toMatchObject({ level: 'project', placement: 'hidden' });
+  });
+
+  it('open the organization on its Workspaces', () => {
+    expect(entryTokenOf(extensions, 'organization')).toBe('organization');
+    expect(groupOfToken(groupScreens(extensions), 'organization')?.owner.presentation.route).toBe(
+      '/organization/workspaces'
+    );
   });
 });

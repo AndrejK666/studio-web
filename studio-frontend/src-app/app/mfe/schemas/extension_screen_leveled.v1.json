@@ -1,7 +1,7 @@
 {
   "$id": "gts://gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Leveled Screen Extension Schema (Derived). Constructor Studio has three levels — organization, workspace, project — and the rail shows the items of the level in scope. FrontX's ExtensionPresentation carries label/icon/route/order and is not ours to widen, so the level is added the way the framework intends: a further derived Extension type, chained after frontx.screensets.layout.screen.v1 so the screen domain's extensionsTypeId still matches by prefix. An extension that does not chain through this type has no declared level and the shell reads it as the organization level.",
+  "$comment": "Leveled Screen Extension Schema (Derived). Constructor Studio has three levels — organization, workspace, project — and the tabs show the items of the level in scope. FrontX's ExtensionPresentation carries label/icon/route/order and is not ours to widen, so the level is added the way the framework intends: a further derived Extension type, chained after frontx.screensets.layout.screen.v1 so the screen domain's extensionsTypeId still matches by prefix. An extension that does not chain through this type has no declared level and the shell reads it as the organization level.",
   "allOf": [
     { "$ref": "gts://gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~" }
   ],
@@ -12,17 +12,22 @@
         "level": {
           "type": "string",
           "enum": ["organization", "workspace", "project"],
-          "$comment": "Which level's rail this screen appears in. REQUIRED here: opting into this type is the act of declaring the level, so a leveled extension without one is a mistake rather than a default."
+          "$comment": "Which level's tabs this screen appears in. REQUIRED here: opting into this type is the act of declaring the level, so a leveled extension without one is a mistake rather than a default."
         },
         "section": {
           "type": "string",
           "minLength": 1,
-          "$comment": "For items that share their entry with the item already mounted: the token the MFE understands for this one. The shell relays it through the section property instead of mounting again, so a rail of sections costs one mount rather than seven. Opaque to the shell — it never parses it. Whether it is REQUIRED, and that it is unique, cannot be stated here: both depend on the other extensions of the same level, and a schema sees one instance at a time. The rule — every item sharing an entry with another of its level carries a section of its own — is enforced by overlayContract.test.ts over the whole generated aggregate."
+          "$comment": "For items that share their entry with the item already mounted: the token the MFE understands for this one. The shell relays it through the section property instead of mounting again, so a row of sections costs one mount rather than seven. Opaque to the shell — it never parses it. Whether it is REQUIRED, and that it is unique, cannot be stated here: both depend on the other extensions of the same level, and a schema sees one instance at a time. The rule — every item sharing an entry with another of its level carries a section of its own — is enforced by overlayContract.test.ts over the whole generated aggregate."
+        },
+        "parentSection": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "For a hidden screen: the section of its level it belongs to, whose tab is active while it is mounted — the editor's is 'artifacts'. Not 'section': the editor is an address group of its own, and a section there would be one of that group, written into its address (ADR-0028)."
         },
         "placement": {
           "type": "string",
           "enum": ["main", "settings", "hidden"],
-          "$comment": "Where in the level's rail the item sits. 'settings' pins it to the end regardless of order — the rule that replaced the order >= 100 band the shell used to read. 'hidden' keeps the screen registered and mountable but out of the rail, and so never the screen a level opens on: it is reached some other way, such as opening an artifact. Defaults to 'main' when absent."
+          "$comment": "Where in the level's tabs the item sits. 'settings' pins it to the end regardless of order — the rule that replaced the order >= 100 band the shell used to read. 'hidden' keeps the screen registered and mountable but out of the tabs, and so never the screen a level opens on: it is reached some other way, such as opening an artifact. Defaults to 'main' when absent."
         }
       },
       "required": ["level"]

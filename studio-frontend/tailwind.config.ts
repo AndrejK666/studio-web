@@ -95,6 +95,10 @@ export default {
           'var(--text-heading-1-size)',
           { lineHeight: 'var(--text-heading-1-line-height)' },
         ],
+        'heading-2': [
+          'var(--text-heading-2-size)',
+          { lineHeight: 'var(--text-heading-2-line-height)' },
+        ],
         label: ['var(--text-label-size)', { lineHeight: 'var(--text-label-line-height)' }],
         meta: ['var(--text-meta-size)', { lineHeight: 'var(--text-meta-line-height)' }],
       },

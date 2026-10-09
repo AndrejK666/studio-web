@@ -37,10 +37,10 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   // schema, and the overlay domain pins no derived type — so a contribution to it
   // needs one declared somewhere. Without this, registering the search extension
   // throws, bootstrapMFE rejects, and MfeScreenContainer never renders the screen
-  // slot: the rail still lists its items while every click mounts into nothing.
+  // slot: the tabs still list their items while every click mounts into nothing.
   extensionOverlaySchemaJson as JSONSchema,
   // One derivation further down the screen chain: the level a screen belongs to —
-  // organization, workspace or project — which the rail groups by. After
+  // organization, workspace or project — which the tabs group by. After
   // extensionScreenSchema on purpose: a derived schema resolves its parent by
   // chain, so the type it extends has to be in the registry first, and a screen
   // extension that chains through this one fails to register otherwise.
@@ -66,7 +66,7 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   sharedPropertyContextOrganizationSchemaJson as JSONSchema,
   // The level between them: a project's parent and the Projects list's root.
   sharedPropertyContextWorkspaceSchemaJson as JSONSchema,
-  // The rail is the shell's, the sections are the MFE's — this is the choice
+  // The tabs are the shell's, the sections are the MFE's — this is the choice
   // crossing between them.
   sharedPropertyContextSectionSchemaJson as JSONSchema,
   sharedPropertySessionProfileSchemaJson as JSONSchema,

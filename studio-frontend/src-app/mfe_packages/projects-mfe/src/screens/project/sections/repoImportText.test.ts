@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { Refusal, ScreenText } from '@constructor-studio/mfe-shared';
+import { screenText, type Refusal } from '@constructor-studio/mfe-shared';
 import type { RepoImport, RepoImportStatus } from '../../../slices/artifactSyncSlice';
 import { notComeThrough, repoImportLine } from './repoImportText';
 
-const t: ScreenText = (key, params) => (params ? `${params.repo}: ${params.reason}` : `<${key}>`);
+const t = screenText((key, params) => (params ? `${params.repo}: ${params.reason}` : `<${key}>`), 'en');
 
 function row(status: RepoImportStatus, reason: Refusal | null = null): RepoImport {
   return {

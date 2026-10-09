@@ -78,7 +78,7 @@ describe('mountScreen', () => {
     expect(mockEmit).not.toHaveBeenCalled();
   });
 
-  it('mounts a screen hidden from the rail like any other', async () => {
+  it('mounts a screen hidden from the tabs like any other', async () => {
     const registry = registryThat(() => Promise.resolve());
 
     await mountScreen(registry, editor);

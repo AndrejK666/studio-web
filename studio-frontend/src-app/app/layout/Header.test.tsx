@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 const OVERLAY_DOMAIN = 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.overlay.v1';
 const SCREEN_DOMAIN = 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1';
 
-/** One organization-level screen, so the level in scope has a rail to open. */
+/** One organization-level screen, so the level in scope has tabs to show. */
 const peopleScreen = {
   id: 'ext.people',
   domain: SCREEN_DOMAIN,
@@ -76,7 +76,7 @@ describe('Header (global top bar)', () => {
     expect(screen.getByText('Constructor Studio')).toBeTruthy();
   });
 
-  it('carries no navigation of its own: the rail is beside the screen now', () => {
+  it('carries no navigation of its own: the level tabs are below it now', () => {
     render(<Header />);
     expect(screen.queryByLabelText('Open global navigation')).toBeNull();
   });

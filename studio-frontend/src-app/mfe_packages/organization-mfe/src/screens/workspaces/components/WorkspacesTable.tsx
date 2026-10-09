@@ -82,7 +82,7 @@ export const WorkspacesTable: React.FC<WorkspacesTableProps> = ({
 
       <div className={styles.footer}>
         <span className={styles.range}>
-          {t(total === 1 ? "range_one" : "range_many", {
+          {t.count("range", total, {
             from: rows.length === 0 ? 0 : 1,
             to: rows.length,
             total,

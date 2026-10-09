@@ -22,7 +22,8 @@
         "route": "/space",
         "order": 900,
         "level": "project",
-        "placement": "hidden"
+        "placement": "hidden",
+        "parentSection": "artifacts"
       }
     }
   ]

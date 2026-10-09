@@ -13,7 +13,8 @@ export type { HeaderProps } from './Header';
 export { Footer } from './Footer';
 export type { FooterProps } from './Footer';
 
-export { Rail } from './Rail';
+export { LevelHeader } from './LevelHeader';
+export { LevelTabs } from './LevelTabs';
 
 export { Screen } from './Screen';
 export type { ScreenProps } from './Screen';

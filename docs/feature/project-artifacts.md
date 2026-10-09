@@ -52,9 +52,9 @@ owner: studio-team
 
 What a project works on, as one table: the repositories attached to it and the
 issues, pull requests and files pulled out of them by the artifact-ingest gear.
-The table is the project's second section, reached from the project's own
-navigation rail — a 48px icon rail inside the project frame that widens into a
-labelled flyout on hover or keyboard focus. A project created from existing
+The table is the project's second section, reached from its Artifacts tab
+under the project's header (`cpt-studiofrontend-dod-shell-levels-shell-draws`).
+A project created from existing
 repositories lands here directly, and the table fills while the import runs.
 
 ### 1.2 Purpose
@@ -214,13 +214,13 @@ Definitions of Done, which are traced.
 - The artifacts of the open project are listed, with their repository, path and sync state, newest first.
 
 **Error Scenarios**:
-- The gear is unreachable or refuses; the section says so and offers a retry, and the rail keeps working.
+- The gear is unreachable or refuses; the section says so and offers a retry, and the project's tabs keep working.
 - The project has sources but nothing ingested and no import running; the section says the sources have not been synced and offers to sync them.
 - The project has no sources at all; the section says so and does not offer a sync.
 
 **Steps**:
-1. [ ] - `p1` - Member opens a project and hovers or focuses the navigation rail - `inst-1`
-2. [ ] - `p1` - The rail widens to its labelled width without displacing the content behind it - `inst-2`
+1. [ ] - `p1` - Member opens a project - `inst-1`
+2. [ ] - `p1` - The project's tabs show its sections under the project's header - `inst-2`
 3. [ ] - `p1` - Member activates Artifacts - `inst-3`
 4. [ ] - `p1` - Run `cpt-studiofrontend-algo-project-artifacts-rows` for the project in scope - `inst-4`
 5. [ ] - `p1` - **IF** the read fails - `inst-5`
@@ -848,11 +848,7 @@ placeholder, a dash or a zero dressed as an answer.
 
 ## 6. Acceptance Criteria
 
-- [ ] With a project open, the rail shows seven icons and no labels, and the content starts to its right.
-- [ ] Hovering the rail widens it to show the labels, over the content rather than pushing it, and it narrows again when the pointer leaves.
-- [ ] Tabbing into the rail widens it the same way, and every section can be reached and activated from the keyboard alone.
-- [ ] The widened rail never covers the top bar, and never extends below the project frame.
-- [ ] While the rail is narrow, hovering an icon names its section; while it is wide, no such tooltip appears.
+- [ ] With a project open, Artifacts is one of the project's tabs (`shell-levels.md`); the rail these criteria once described is gone.
 - [ ] Activating Artifacts shows the artifacts table; the open project does not change and the list behind it is not re-read.
 - [ ] The table has exactly the columns Name, Repository, Path, Sync and Updated, in that order.
 - [ ] Every row names the repository it came from by name, not by an identifier.

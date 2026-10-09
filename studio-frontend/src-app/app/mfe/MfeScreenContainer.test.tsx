@@ -144,7 +144,7 @@ describe('MfeScreenContainer', () => {
   // The sequence StrictMode produces: a mount starts against the root, the slot
   // detaches and re-attaches, and the doomed first mount is still in flight.
   // Without the release the guard in mountScreen swallows the next one and the
-  // session opens on a blank screen with no active rail item.
+  // session opens on a blank screen with no active tab.
   it('frees a doomed mount still in flight when a fresh root arrives', async () => {
     const { mountScreen, isMountingScreen } = await import('./mountScreen');
     registry.executeActionsChain.mockReturnValue(new Promise<void>(() => {}));

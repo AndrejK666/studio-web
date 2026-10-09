@@ -8,14 +8,10 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useFormatters: () => ({ formatRelative: (value: unknown) => String(value) }),
 }));
 
-vi.mock('../../../i18n', () => ({
-  useWorkspacesText:
-    () =>
-    (key: string, params?: Record<string, unknown>): string =>
-      String((en as Record<string, string>)[key] ?? key).replace(/\{(\w+)\}/g, (_match, name) =>
-        String(params?.[name] ?? `{${name}}`)
-      ),
-}));
+vi.mock('../../../i18n', async () => {
+  const { dictionaryText } = await import('@frontx-test-utils/dictionaryText');
+  return { useWorkspacesText: () => dictionaryText(en) };
+});
 
 import { WorkspacesTable } from './WorkspacesTable';
 

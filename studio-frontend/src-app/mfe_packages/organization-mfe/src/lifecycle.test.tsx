@@ -90,7 +90,7 @@ describe('organization-mfe lifecycle', () => {
     expect(Reflect.get(lifecycle, 'app')).toEqual({ id: 'blank-mfe-app' } satisfies TestApp);
   });
 
-  it('opens on the overview, which is also the fallback when no section is relayed', async () => {
+  it('opens on the workspaces, which is also the fallback when no section is relayed', async () => {
     const module = await import('./lifecycle');
     const lifecycle = module.default;
     const renderContent = Reflect.get(lifecycle, 'renderContent');
@@ -112,7 +112,7 @@ describe('organization-mfe lifecycle', () => {
       </FrontXProvider>
     );
 
-    expect(await screen.findByText('Overview')).toBeTruthy();
+    expect(await screen.findByRole('toolbar', { name: 'Workspaces' })).toBeTruthy();
   });
 
   it('renders the settings screen when the shell relays that section', async () => {

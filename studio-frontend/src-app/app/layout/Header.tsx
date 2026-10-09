@@ -87,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
         className="ml-2 size-8 shrink-0"
       />
 
-      <span className="ml-2 whitespace-nowrap text-body font-semibold text-foreground">
+      <span className="ml-2 whitespace-nowrap text-heading-2 font-semibold text-foreground">
         Constructor Studio
       </span>
 

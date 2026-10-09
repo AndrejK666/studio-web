@@ -119,9 +119,9 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
           />
         )}
         <header className={styles.header}>
-          <h1 className={styles.title}>
+          <h2 className={styles.title}>
             {busy ? <Skeleton className={styles.titleSkeleton} /> : t(`section_${section}`)}
-          </h1>
+          </h2>
         </header>
         <div className={styles.body} data-section={section}>
           {body()}

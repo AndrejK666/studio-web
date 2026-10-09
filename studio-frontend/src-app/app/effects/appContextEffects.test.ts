@@ -48,7 +48,6 @@ import {
 import { registerAppContextEffects } from './appContextEffects';
 
 const screens = [
-  screen('org.overview', '/organization/overview', 'organization', { section: 'overview', order: 10 }),
   screen('org.workspaces', '/organization/workspaces', 'organization', { section: 'workspaces', order: 20 }),
   screen('people', '/people', 'organization', { order: 30 }),
   screen('projects.main', '/projects', 'workspace', { order: 20 }),
@@ -109,12 +108,12 @@ describe('registerAppContextEffects', () => {
     expect(catalogs.loadOrganizations).toHaveBeenCalled();
   });
 
-  it('a rail click on an organization-level screen navigates with the organization only', async () => {
+  it('a tab click on an organization-level screen navigates with the organization only', async () => {
     await emit('app/context/screen/requested', { extensionId: 'people' });
     expect(handle.navigation.navigate).toHaveBeenCalledWith({ token: 'people', org: 'o1' }, 'push');
   });
 
-  it('a rail click on a project section keeps the project and names the section', async () => {
+  it('a tab click on a project section keeps the project and names the section', async () => {
     await emit('app/context/screen/requested', { extensionId: 'projects.artifacts' });
     expect(handle.navigation.navigate).toHaveBeenCalledWith(
       { token: 'projects', org: 'o1', workspace: 'w1', project: 'p1', section: 'artifacts' }, 'push'

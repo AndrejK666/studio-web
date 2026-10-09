@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FrontXProvider, createFrontXApp } from '@gears-frontx/react';
 import {
   createMfeBridgeFixture,
@@ -39,21 +39,6 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
 }));
 
 describe('ProjectsRoot', () => {
-  // The frame's rail is the kit's Sidebar, which measures the viewport. jsdom
-  // has no matchMedia; `vi.unstubAllGlobals` in the shared teardown restores it.
-  beforeEach(() => {
-    vi.stubGlobal(
-      'matchMedia',
-      (query: string) =>
-        ({
-          matches: false,
-          media: query,
-          addEventListener: () => {},
-          removeEventListener: () => {},
-        }) as unknown as MediaQueryList
-    );
-  });
-
   it('swaps the list for the project frame when a project is open', async () => {
     createFrontXApp({});
     const { mfeApp } = await import('./init');
@@ -74,8 +59,8 @@ describe('ProjectsRoot', () => {
       mfeApp.store.dispatch(openProject('11111111-1111-4111-8111-111111111111'));
     });
 
-    // The frame's own chrome is its <header> (`banner`); the rail that used to
-    // stand in for it here now comes from the kit, so it is not asserted.
+    // The frame's own chrome is its <header> (`banner`); the section navigation
+    // that used to stand in for it here is the shell's now, so it is not asserted.
     expect(await screen.findByRole('banner')).toBeTruthy();
     expect(screen.queryByRole('searchbox')).toBeNull();
 

@@ -230,7 +230,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 - **Depends On**: `cpt-studio-feature-tenancy`
 
 - **Scope**:
-  - the level ladder, the rail and the breadcrumb of three slots
+  - the level ladder, each level's header and row of tabs, and the path of the workspace and the project
   - Module Federation and iframe entries
 
 - **Out of scope**:
@@ -275,7 +275,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 - **Depends On**: `cpt-studio-feature-shell-levels`
 
 - **Scope**:
-  - the workspace slot next to the organization
+  - the workspace slot of the path
   - the New workspace overlay
 
 - **Out of scope**:
@@ -360,6 +360,8 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 ### 2.7 [The organization overview](../feature/organization-overview.md)
 
 - [ ] `p1` - **ID**: `cpt-studio-feature-organization-overview`
+
+**Superseded on 2026-10-08**: the design dropped the organization overview, and the screen is removed; the organization opens on its Workspaces (`cpt-studio-feature-shell-levels`). Kept for the record below.
 
 - **Purpose**: The organization level's first screen: tiles that either carry a number from a read the screen already makes or say which answer does not exist yet. Three of its Definitions of Done are open.
 
@@ -497,7 +499,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 - [ ] `p1` - **ID**: `cpt-studio-feature-project-artifacts`
 
-- **Purpose**: A project's rail and its artifacts table, synced per repository into the knowledge graph. Two of its Definitions of Done are open.
+- **Purpose**: A project's sections and its artifacts table, synced per repository into the knowledge graph. Two of its Definitions of Done are open.
 
 - **Depends On**: `cpt-studio-feature-project-create`, `cpt-studio-feature-knowledge-graph`
 

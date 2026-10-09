@@ -63,6 +63,7 @@ type PresentedExtension = Extension & {
     level?: string;
     placement?: string;
     section?: string;
+    parentSection?: string;
   };
 };
 
@@ -140,7 +141,7 @@ describe('generated MFE manifest', () => {
     const screenExtensions = extensions.filter((ext) => ext.domain === screenDomain.id);
 
     it('declares a level on every screen extension', () => {
-      // A screen with no level still shows up, in the organization rail — but
+      // A screen with no level still shows up, in the organization's tabs — but
       // that fallback exists for a manifest nobody has migrated yet, not for
       // ours. Anything registered here that forgot the field would silently
       // appear one level up.
@@ -279,10 +280,29 @@ describe('generated MFE manifest', () => {
 
     it('pins the settings item of each level last, whatever its order says', () => {
       const settings = screens.filter((ext) => ext.presentation?.placement === 'settings');
-      expect(settings.map((ext) => ext.presentation?.label).sort()).toEqual([
-        'Organization settings',
-        'Project settings',
+      expect(settings.map((ext) => ext.presentation?.level).sort()).toEqual([
+        'organization',
+        'project',
       ]);
+    });
+
+    // The header already says whose settings they are.
+    it('labels every settings item plain Settings', () => {
+      const settings = screens.filter((ext) => ext.presentation?.placement === 'settings');
+      expect(new Set(settings.map((ext) => ext.presentation?.label))).toEqual(new Set(['Settings']));
+    });
+
+    it('lets a hidden screen name only a section its level has', () => {
+      const sectionsOf = (level: string | undefined) =>
+        screens
+          .filter((ext) => ext.presentation?.level === level && ext.presentation?.placement !== 'hidden')
+          .map((ext) => ext.presentation?.section);
+      const named = screens.filter((ext) => ext.presentation?.parentSection !== undefined);
+      expect(named.length).toBeGreaterThan(0);
+      for (const ext of named) {
+        expect(ext.presentation?.placement).toBe('hidden');
+        expect(sectionsOf(ext.presentation?.level)).toContain(ext.presentation?.parentSection);
+      }
     });
 
     it('leaves the workspace level one screen — the projects list', () => {
@@ -291,13 +311,13 @@ describe('generated MFE manifest', () => {
     });
 
     it('declares the project sections on the entry they are sections of', () => {
-      // The editor is a project-level screen too, but hidden: no rail item.
+      // The editor is a project-level screen too, but hidden: no tab.
       const project = screens.filter(
         (ext) => ext.presentation?.level === 'project' && ext.presentation?.placement !== 'hidden'
       );
       const workspaceEntry = screens.find((ext) => ext.presentation?.level === 'workspace')?.entry;
 
-      // One entry for the whole rail: that is what lets the shell relay a
+      // One entry for every tab: that is what lets the shell relay a
       // section instead of mounting seven screens.
       expect(new Set(project.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
       // And each item carries the token the MFE understands for it.

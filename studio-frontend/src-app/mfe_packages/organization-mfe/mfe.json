@@ -24,19 +24,6 @@
   ],
   "extensions": [
     {
-      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.organization.screens.overview.v1",
-      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
-      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.organization.mfe.main.v1",
-      "presentation": {
-        "label": "Overview",
-        "icon": "lucide:layout-dashboard",
-        "route": "/organization/overview",
-        "order": 10,
-        "level": "organization",
-        "section": "overview"
-      }
-    },
-    {
       "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.organization.screens.workspaces.v1",
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.organization.mfe.main.v1",
@@ -54,7 +41,7 @@
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.organization.mfe.main.v1",
       "presentation": {
-        "label": "Organization settings",
+        "label": "Settings",
         "icon": "lucide:settings",
         "route": "/organization/settings",
         "order": 100,

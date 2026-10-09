@@ -18,7 +18,7 @@ import reducer, { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slic
 import { startRouting } from './startRouting';
 
 const screens = [
-  screen('org.overview', '/organization/overview', 'organization', { section: 'overview', order: 10 }),
+  screen('org.workspaces', '/organization/workspaces', 'organization', { section: 'workspaces', order: 20 }),
   screen('people', '/people', 'organization', { order: 30 }),
   screen('projects.main', '/projects', 'workspace', { order: 20 }),
   screen('projects.overview', '/projects/overview', 'project', { section: 'overview', order: 10 }),
@@ -60,7 +60,7 @@ describe('startRouting', () => {
     const { history, adapter } = freshNavigationHistory('/');
     const { app } = fakeApp(ready);
     startRouting(app, catalogs(), history);
-    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview');
+    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces');
     expect(adapter.length()).toBe(1);
   });
 

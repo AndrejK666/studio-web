@@ -22,15 +22,15 @@
 
 .title {
   margin: 0;
-  font-size: var(--text-display-size);
-  line-height: var(--text-display-line-height);
-  font-weight: var(--text-display-weight);
-  letter-spacing: var(--text-display-tracking);
+  font-size: var(--text-heading-1-size);
+  line-height: var(--text-heading-1-line-height);
+  font-weight: var(--text-heading-1-weight);
+  letter-spacing: var(--text-heading-1-tracking);
 }
 
 .titleSkeleton {
   width: 8rem;
-  height: var(--text-display-line-height);
+  height: var(--text-heading-1-line-height);
 }
 
 /* `input.search`, not `.search`: the kit's own `._input` rule is a single class

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 interface TestContext {
@@ -6,6 +6,7 @@ interface TestContext {
   orgs: { id: string; name: string; count?: number }[];
   workspace: { id: string; name: string; count?: number } | null;
   workspaces: { id: string; name: string; count?: number }[];
+  workspacesStatus: 'pending' | 'ready' | 'failed';
   project: { id: string; name: string } | null;
   projects: { id: string; name: string }[];
   loading: boolean;
@@ -24,9 +25,22 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   eventBus: mockEventBus,
 }));
 
+vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellText'));
+
 vi.mock('./useScreenLevel', () => ({ useScreenLevel: () => level.value }));
 
 import { ContextChain } from './ContextChain';
+
+// cmdk scrolls the highlighted row into view and measures its list; jsdom has
+// no layout for either.
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+});
 
 describe('ContextChain (the path in the top bar)', () => {
   beforeEach(() => {
@@ -42,6 +56,7 @@ describe('ContextChain (the path in the top bar)', () => {
         { id: 'ws-1', name: 'Platform Workspace', count: 8 },
         { id: 'ws-2', name: 'Product Knowledge', count: 5 },
       ],
+      workspacesStatus: 'ready',
       project: { id: 'p-1', name: 'Agent Platform' },
       projects: [
         { id: 'p-1', name: 'Agent Platform' },
@@ -65,14 +80,45 @@ describe('ContextChain (the path in the top bar)', () => {
       expect(screen.getByTestId('context-slot-pending')).toBeTruthy();
       expect(screen.queryByText('p-9')).toBeNull();
       // Reviewer finding (vasylcf): the accessible name must not trail off into nothing.
-      expect(screen.getByLabelText('Project: loading')).toBeTruthy();
+      expect(screen.getByLabelText('Project: …')).toBeTruthy();
     });
 
-    it('names the organization alone at its level, whatever is selected below', () => {
+    // The organization is named and switched in its header, not in the path.
+    it('has no organization slot at any level', () => {
+      for (const value of ['organization', 'workspace', 'project'] as const) {
+        level.value = value;
+        render(<ContextChain />);
+        expect(screen.queryByText('Acme Corporation')).toBeNull();
+        cleanup();
+      }
+    });
+
+    it('holds the workspace slot alone at the organization level, naming none', () => {
       render(<ContextChain />);
-      expect(screen.getByText('Acme Corporation')).toBeTruthy();
+      expect(screen.getByText('All workspaces')).toBeTruthy();
       expect(screen.queryByText('Platform Workspace')).toBeNull();
       expect(screen.queryByText('Agent Platform')).toBeNull();
+    });
+
+    it('holds a placeholder at the organization level while the workspaces are unread', () => {
+      context.value.workspaces = [];
+      context.value.workspacesStatus = 'pending';
+      render(<ContextChain />);
+      expect(screen.getByTestId('context-slot-pending')).toBeTruthy();
+    });
+
+    it('opens no empty menu from the placeholder', () => {
+      context.value.workspaces = [];
+      context.value.workspacesStatus = 'pending';
+      render(<ContextChain />);
+      fireEvent.click(screen.getByRole('button', { name: 'Workspace: …' }));
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+
+    it('draws no slot for an organization that has no workspace', () => {
+      context.value.workspaces = [];
+      const { container } = render(<ContextChain />);
+      expect(container.firstChild).toBeNull();
     });
 
     it('keeps the project out of the path until one is open', () => {
@@ -82,10 +128,9 @@ describe('ContextChain (the path in the top bar)', () => {
       expect(screen.queryByText('Agent Platform')).toBeNull();
     });
 
-    it('shows the whole path at the project level', () => {
+    it('shows the workspace and the project at the project level', () => {
       level.value = 'project';
       render(<ContextChain />);
-      expect(screen.getByText('Acme Corporation')).toBeTruthy();
       expect(screen.getByText('Platform Workspace')).toBeTruthy();
       expect(screen.getByText('Agent Platform')).toBeTruthy();
     });
@@ -98,6 +143,13 @@ describe('ContextChain (the path in the top bar)', () => {
       expect(screen.queryByText('Agent Platform')).toBeNull();
     });
 
+    it('draws no path below the organization while no workspace is selected', () => {
+      level.value = 'workspace';
+      context.value.workspace = null;
+      const { container } = render(<ContextChain />);
+      expect(container.firstChild).toBeNull();
+    });
+
     it('renders nothing at all before an organization resolves', () => {
       context.value.org = null;
       const { container } = render(<ContextChain />);
@@ -106,13 +158,19 @@ describe('ContextChain (the path in the top bar)', () => {
   });
 
   describe('switching', () => {
-    it('announces an organization pick', async () => {
+    // One announcement carries the workspace and the level it asks for.
+    it('enters the workspace picked at the organization level', async () => {
       render(<ContextChain />);
-      fireEvent.click(screen.getByText('Acme Corporation'));
-      fireEvent.click(await screen.findByText('Constructor Labs'));
-      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/org/changed', {
-        orgId: 'org-2',
+      fireEvent.click(screen.getByText('All workspaces'));
+      fireEvent.click(await screen.findByText('Product Knowledge'));
+      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/workspace/changed', {
+        workspaceId: 'ws-2',
+        enter: true,
       });
+      expect(mockEventBus.emit).not.toHaveBeenCalledWith(
+        'app/context/level/requested',
+        expect.anything()
+      );
     });
 
     it('announces a workspace pick from its own slot', async () => {
@@ -125,20 +183,15 @@ describe('ContextChain (the path in the top bar)', () => {
       });
     });
 
-    it('keeps the last slot clickable, unlike a breadcrumb page', () => {
+    it('marks the slot of the level in scope as the current page', () => {
       level.value = 'project';
       render(<ContextChain />);
-      const trigger = screen.getByText('Agent Platform').closest('button');
-      expect(trigger).toBeTruthy();
-      expect(trigger?.getAttribute('aria-current')).toBe('page');
-      expect(trigger?.getAttribute('aria-disabled')).toBeNull();
-    });
-
-    it('frames the slot of the level in scope and no other', () => {
-      level.value = 'workspace';
-      render(<ContextChain />);
-      expect(screen.getByText('Platform Workspace').closest('[data-current]')).toBeTruthy();
-      expect(screen.getByText('Acme Corporation').closest('[data-current]')).toBeNull();
+      expect(screen.getByText('Agent Platform').closest('button')?.getAttribute('aria-current')).toBe(
+        'page'
+      );
+      expect(
+        screen.getByText('Platform Workspace').closest('button')?.getAttribute('aria-current')
+      ).toBeNull();
     });
 
     it('enters the level of the slot that was picked in', async () => {
@@ -156,59 +209,104 @@ describe('ContextChain (the path in the top bar)', () => {
       render(<ContextChain />);
       fireEvent.click(screen.getByText('Agent Platform'));
       fireEvent.click(await screen.findByText('Developer Portal'));
+      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/project/changed', {
+        projectId: 'p-2',
+      });
       expect(mockEventBus.emit).not.toHaveBeenCalledWith(
         'app/context/level/requested',
         expect.anything()
       );
     });
+  });
 
-    it('enters a level whose slot has nothing to switch between', () => {
+  describe('the level above', () => {
+    it('leads from the workspace slot to the organization', async () => {
       level.value = 'project';
-      context.value.workspaces = [{ id: 'ws-1', name: 'Platform Workspace', count: 8 }];
       render(<ContextChain />);
       fireEvent.click(screen.getByText('Platform Workspace'));
+      fireEvent.click(await screen.findByText('All workspaces'));
+      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/level/requested', {
+        level: 'organization',
+      });
+    });
+
+    it('leads from the project slot to the workspace', async () => {
+      level.value = 'project';
+      render(<ContextChain />);
+      fireEvent.click(screen.getByText('Agent Platform'));
+      fireEvent.click(await screen.findByText('Projects in Platform Workspace'));
       expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/level/requested', {
         level: 'workspace',
       });
     });
+  });
 
-    it('draws a slot with no siblings flat, with no menu to open', () => {
-      context.value.orgs = [{ id: 'org-1', name: 'Acme Corporation', count: 3 }];
+  describe('the project search', () => {
+    it('filters the projects by name', async () => {
+      level.value = 'project';
       render(<ContextChain />);
-      expect(screen.getByText('Acme Corporation').closest('button')).toBeNull();
+      fireEvent.click(screen.getByText('Agent Platform'));
+      fireEvent.change(await screen.findByPlaceholderText('Search projects…'), {
+        target: { value: 'portal' },
+      });
+      expect(await screen.findByText('Developer Portal')).toBeTruthy();
+      expect(screen.queryAllByText('Agent Platform')).toHaveLength(1);
+    });
+
+    it('opens on the search field', async () => {
+      level.value = 'project';
+      render(<ContextChain />);
+      fireEvent.click(screen.getByText('Agent Platform'));
+      const search = await screen.findByRole('searchbox', { name: 'Search projects…' });
+      await vi.waitFor(() => expect(document.activeElement).toBe(search));
+    });
+
+    it('announces nothing when the open project is picked, and closes', async () => {
+      level.value = 'project';
+      render(<ContextChain />);
+      fireEvent.click(screen.getByText('Agent Platform'));
+      fireEvent.click(await screen.findByRole('option', { name: 'Agent Platform' }));
+      expect(mockEventBus.emit).not.toHaveBeenCalledWith(
+        'app/context/project/changed',
+        expect.anything()
+      );
+      await vi.waitFor(() => expect(screen.queryByRole('searchbox')).toBeNull());
+    });
+
+    it('opens again with an empty search', async () => {
+      level.value = 'project';
+      render(<ContextChain />);
+      fireEvent.click(screen.getByText('Agent Platform'));
+      fireEvent.change(await screen.findByRole('searchbox'), { target: { value: 'portal' } });
+      fireEvent.click(await screen.findByRole('option', { name: 'Developer Portal' }));
+      await vi.waitFor(() => expect(screen.queryByRole('searchbox')).toBeNull());
+      fireEvent.click(screen.getByText('Agent Platform'));
+      expect((await screen.findByRole('searchbox') as HTMLInputElement).value).toBe('');
+    });
+
+    it('opens the first project found on Enter', async () => {
+      level.value = 'project';
+      render(<ContextChain />);
+      fireEvent.click(screen.getByText('Agent Platform'));
+      const search = await screen.findByRole('searchbox', { name: 'Search projects…' });
+      fireEvent.change(search, { target: { value: 'portal' } });
+      await screen.findByText('Developer Portal');
+      fireEvent.keyDown(search, { key: 'Enter' });
+      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/project/changed', {
+        projectId: 'p-2',
+      });
     });
   });
 
-  describe('the caps label', () => {
-    it('names the kind above the name', () => {
-      level.value = 'workspace';
-      render(<ContextChain />);
-      expect(screen.getByText('Organization')).toBeTruthy();
-      expect(screen.getByText('Workspace')).toBeTruthy();
-    });
-
-    it('is hidden from assistive tech, which hears the whole slot instead', () => {
-      render(<ContextChain />);
-      expect(screen.getByText('Organization').getAttribute('aria-hidden')).toBe('true');
-      expect(
-        screen.getByLabelText('Organization: Acme Corporation, switch')
-      ).toBeTruthy();
-    });
-  });
-
-  describe('counts under the names', () => {
-    it('counts workspaces under an organization', async () => {
-      render(<ContextChain />);
-      fireEvent.click(screen.getByText('Acme Corporation'));
-      expect(await screen.findByText('3 workspaces')).toBeTruthy();
-      expect(screen.getByText('2 workspaces')).toBeTruthy();
-    });
-
-    it('counts projects under a workspace', async () => {
+  // The design's menus name each workspace and nothing else; counts live in the
+  // organization switch and on the Workspaces screen.
+  describe('the menus', () => {
+    it('lists the workspaces without counting their projects', async () => {
       level.value = 'workspace';
       render(<ContextChain />);
       fireEvent.click(screen.getByText('Platform Workspace'));
-      expect(await screen.findByText('8 projects')).toBeTruthy();
+      expect(await screen.findByText('Product Knowledge')).toBeTruthy();
+      expect(screen.queryByText(/projects?$/)).toBeNull();
     });
 
     it('says nothing under a project, whose artifacts nobody has counted', async () => {
@@ -217,14 +315,6 @@ describe('ContextChain (the path in the top bar)', () => {
       fireEvent.click(screen.getByText('Agent Platform'));
       expect(await screen.findByText('Developer Portal')).toBeTruthy();
       expect(screen.queryByText(/artifact/)).toBeNull();
-    });
-
-    it('leaves the subtitle out when the count did not arrive', async () => {
-      context.value.orgs = context.value.orgs.map(({ id, name }) => ({ id, name }));
-      render(<ContextChain />);
-      fireEvent.click(screen.getByText('Acme Corporation'));
-      expect(await screen.findByText('Constructor Labs')).toBeTruthy();
-      expect(screen.queryByText(/workspaces/)).toBeNull();
     });
   });
 });

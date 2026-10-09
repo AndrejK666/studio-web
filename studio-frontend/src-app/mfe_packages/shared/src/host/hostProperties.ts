@@ -15,7 +15,7 @@ export const STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION =
 export const STUDIO_SHARED_PROPERTY_SESSION_PROFILE =
   'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.session.user.profile.v1~';
 
-/** The rail's chosen section of the level in scope, as the token declared on that item, or `null`. */
+/** The tabs' chosen section of the level in scope, as the token declared on that item, or `null`. */
 export const STUDIO_SHARED_PROPERTY_CONTEXT_SECTION =
   'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project_section.selected.v1~';
 

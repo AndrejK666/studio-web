@@ -11,8 +11,7 @@ export const RepositoriesFooterNote: React.FC = () => {
 
   if (count === 0) return <>{t('selected_none')}</>;
   if (count >= MAX_SOURCES) return <>{t('selected_max', { n: count })}</>;
-  if (count === 1) return <>{t('selected_one')}</>;
-  return <>{t('selected_many', { n: count })}</>;
+  return <>{t.count('selected', count)}</>;
 };
 
 RepositoriesFooterNote.displayName = 'RepositoriesFooterNote';

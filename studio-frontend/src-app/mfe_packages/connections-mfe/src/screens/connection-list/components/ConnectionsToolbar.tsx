@@ -22,9 +22,9 @@ export const ConnectionsToolbar: React.FC<ConnectionsToolbarProps> = ({
 
   return (
     <div className={styles.toolbar} role="toolbar" aria-label={t('toolbar_label')}>
-      <h1 className={styles.title}>
+      <h2 className={styles.title}>
         {busy ? <Skeleton className={styles.titleSkeleton} /> : t('title')}
-      </h1>
+      </h2>
 
       <div className={styles.controls}>
         <Input

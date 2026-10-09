@@ -11,5 +11,19 @@
   "editor_session_reason_read": "Не удалось прочитать состояние сессии.",
   "editor_session_reason_unanswered": "Редактор не ответил.",
   "editor_session_reason_unexpected": "В редакторе произошла непредвиденная ошибка.",
-  "editor_component_unavailable": "Каталога компонентов в портале пока нет."
+  "editor_component_unavailable": "Каталога компонентов в портале пока нет.",
+  "level_tabs": "Разделы",
+  "level_switch_organization": "Сменить организацию",
+  "level_back_to_projects": "К проектам",
+  "level_workspaces_one": "{count} воркспейс",
+  "level_workspaces_few": "{count} воркспейса",
+  "level_workspaces_many": "{count} воркспейсов",
+  "chain_workspace": "Воркспейс",
+  "chain_project": "Проект",
+  "chain_all_workspaces": "Все воркспейсы",
+  "chain_projects_in": "Проекты в {workspace}",
+  "chain_search_projects": "Найти проект…",
+  "chain_no_projects": "Таких проектов нет",
+  "user_menu_organization": "Организация",
+  "user_menu_sign_out": "Выйти"
 }

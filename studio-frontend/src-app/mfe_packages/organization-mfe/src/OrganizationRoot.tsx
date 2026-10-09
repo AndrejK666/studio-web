@@ -1,6 +1,6 @@
 /** The organization level's screens, in one entry. */
 
-// @cpt-dod:cpt-studiofrontend-dod-organization-overview-item:p1
+// @cpt-dod:cpt-studiofrontend-dod-workspaces-screen-level:p1
 import React from 'react';
 import { useSharedProperty, type ChildMfeBridge } from '@gears-frontx/react';
 import {
@@ -8,7 +8,6 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
 } from '@constructor-studio/mfe-shared';
 import { HomeScreen } from './screens/home/HomeScreen';
-import { OverviewScreen } from './screens/overview/OverviewScreen';
 import { WorkspacesScreen } from './screens/workspaces/WorkspacesScreen';
 
 export interface OrganizationRootProps {
@@ -18,10 +17,12 @@ export interface OrganizationRootProps {
 export const OrganizationRoot: React.FC<OrganizationRootProps> = ({ bridge }) => {
   const section = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_SECTION);
 
+  // Workspaces is the level's entry point, and what a section this root does
+  // not know falls back to.
   if (section === 'settings') return <HomeScreen bridge={bridge} />;
   return (
     <OrganizationProvider>
-      {section === 'workspaces' ? <WorkspacesScreen /> : <OverviewScreen />}
+      <WorkspacesScreen />
     </OrganizationProvider>
   );
 };

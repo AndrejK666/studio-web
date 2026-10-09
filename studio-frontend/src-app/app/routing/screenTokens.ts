@@ -8,7 +8,7 @@
  * mounts for it. The owner is the lowest level first, then the member with no
  * section, then the lowest `order` — in that order, because `/projects/overview`
  * has the lowest order of its group but declares the project level, and
- * mounting it with no project open would make the rail draw project sections
+ * mounting it with no project open would make the tabs show project sections
  * over nothing.
  */
 import type { ScreenExtension } from '@gears-frontx/react';
@@ -76,7 +76,7 @@ export function groupOfExtension(
   return groups.find((group) => group.members.some((member) => member.id === extensionId));
 }
 
-/** The token of the level's entry point, the way the rail decides it. */
+/** The token of the level's entry point, the way the tabs decide it. */
 export function entryTokenOf(
   extensions: readonly ScreenExtension[],
   level: ScreenLevel

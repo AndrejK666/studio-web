@@ -37,7 +37,6 @@ import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { createMaterializer } from './materialize';
 
 const screens = [
-  screen('org.overview', '/organization/overview', 'organization', { section: 'overview', order: 10 }),
   screen('org.workspaces', '/organization/workspaces', 'organization', { section: 'workspaces', order: 20 }),
   screen('people', '/people', 'organization', { order: 30 }),
   screen('gears', '/gears', 'organization', { order: 40 }),
@@ -99,9 +98,9 @@ describe('materialize', () => {
   it("opens the organization level's entry point on an empty address, written once with replace", () => {
     const { materialize, adapter } = setup('/', ready);
     materialize();
-    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview');
+    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces');
     expect(adapter.length()).toBe(1);
-    expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'org.overview' }));
+    expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'org.workspaces' }));
   });
 
   // Reviewer finding (vasylcf, round 8): since the reducer picks nothing, this
@@ -426,7 +425,7 @@ describe('materialize', () => {
   it('refuses an unknown token and lands on the organization entry point', () => {
     const { materialize, adapter, warn } = setup('/?screen=nowhere;org=o1', ready);
     materialize();
-    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview');
+    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces');
     expect(warn).toHaveBeenCalled();
   });
 
@@ -474,7 +473,7 @@ describe('materialize', () => {
   it('replaces an invalid section with the level\'s first one', () => {
     const { materialize, adapter } = setup('/?screen=organization;org=o1;section=bogus', ready);
     materialize();
-    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview');
+    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces');
   });
 
   it("falls back to the level's entry point once when the mount fails", async () => {
@@ -483,7 +482,7 @@ describe('materialize', () => {
       .mockRejectedValueOnce(new Error('still no'));
     const { materialize, adapter, warn } = setup('/?screen=people;org=o1', ready);
     materialize();
-    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview'));
+    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces'));
     await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
     expect(adapter.length()).toBe(1);
     expect(warn).toHaveBeenCalledTimes(2);
@@ -500,7 +499,7 @@ describe('materialize', () => {
     mocks.mountScreen.mockImplementation(async () => undefined);
     const { materialize, transition, adapter, warn, navigation } = setup('/?screen=people;org=o1', ready);
     materialize();
-    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview'));
+    await vi.waitFor(() => expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces'));
     await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
     await new Promise((resolve) => setTimeout(resolve, 20));
     // Catalog arrivals re-run the pass without a transition: nothing is tried again.
@@ -523,16 +522,16 @@ describe('materialize', () => {
     materialize();
     await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(2));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview');
+    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces');
     expect(warn).toHaveBeenCalledTimes(2);
 
     navigation.navigate({ token: 'gears', org: 'o1' }, 'push');
     transition();
     await vi.waitFor(() => expect(mocks.mountScreen).toHaveBeenCalledTimes(4));
     expect(mocks.mountScreen.mock.calls[2][1]).toMatchObject({ id: 'gears' });
-    expect(mocks.mountScreen.mock.calls[3][1]).toMatchObject({ id: 'org.overview' });
+    expect(mocks.mountScreen.mock.calls[3][1]).toMatchObject({ id: 'org.workspaces' });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=overview');
+    expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces');
     expect(adapter.length()).toBe(2);
     expect(warn).toHaveBeenCalledTimes(4);
   });
@@ -625,7 +624,7 @@ describe('materialize', () => {
     mocks.mountScreen.mockImplementation(async (_registry: unknown, ext: ScreenExtension) => { mocks.mounted = [ext.id]; });
     retry();
     expect(mocks.mountScreen).toHaveBeenCalledTimes(3);
-    expect(mocks.mounted).toEqual(['org.overview']);
+    expect(mocks.mounted).toEqual(['org.workspaces']);
   });
 
   // Reviewer finding: every workspace's parent is the organization too.

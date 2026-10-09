@@ -9,7 +9,7 @@ const people = {
   entry: 'entry.people',
   presentation: {
     label: 'People',
-    icon: 'material-symbols:group',
+    icon: 'lucide:users',
     route: '/people',
     order: 30,
     level: 'organization',
@@ -21,7 +21,7 @@ const connections = {
   entry: 'entry.connections',
   presentation: {
     label: 'Connections',
-    icon: 'material-symbols:extension',
+    icon: 'lucide:plug',
     route: '/connections',
     order: 40,
     level: 'organization',
@@ -32,8 +32,8 @@ const settings = {
   domain: SCREEN_DOMAIN,
   entry: 'entry.organization',
   presentation: {
-    label: 'Organization settings',
-    icon: 'material-symbols:settings',
+    label: 'Settings',
+    icon: 'lucide:settings',
     route: '/organization',
     order: 100,
     level: 'organization',
@@ -46,13 +46,12 @@ const projects = {
   entry: 'entry.projects',
   presentation: {
     label: 'Projects',
-    icon: 'material-symbols:folder',
+    icon: 'lucide:folder',
     route: '/projects',
     order: 20,
     level: 'workspace',
   },
 };
-
 const overview = {
   id: 'ext.project.overview',
   domain: SCREEN_DOMAIN,
@@ -79,10 +78,23 @@ const artifacts = {
     section: 'artifacts',
   },
 };
+const editor = {
+  id: 'ext.space',
+  domain: SCREEN_DOMAIN,
+  entry: 'entry.space',
+  presentation: {
+    label: 'Editor',
+    icon: 'lucide:file-code',
+    route: '/space',
+    order: 900,
+    level: 'project',
+    placement: 'hidden',
+    parentSection: 'artifacts',
+  },
+};
 
 const { mockEventBus, mockRegistry, bootstrapState, registered, mounted, level, section } =
-  vi.hoisted(
-  () => ({
+  vi.hoisted(() => ({
     mockEventBus: { emit: vi.fn() },
     mockRegistry: { executeActionsChain: vi.fn() },
     bootstrapState: { status: 'ready' as 'pending' | 'ready' | 'failed' },
@@ -90,8 +102,7 @@ const { mockEventBus, mockRegistry, bootstrapState, registered, mounted, level, 
     mounted: { value: [] as unknown[] },
     level: { value: 'organization' as 'organization' | 'workspace' | 'project' },
     section: { value: null as string | null },
-  })
-);
+  }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
@@ -103,31 +114,19 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   eventBus: mockEventBus,
 }));
 
+vi.mock('@/app/i18n/shellTranslations', () => ({ useShellText: () => (key: string) => key }));
 vi.mock('./useScreenLevel', () => ({ useScreenLevel: () => level.value }));
 
-import { Rail } from './Rail';
+import { LevelTabs } from './LevelTabs';
 
-// The kit's Sidebar asks whether the viewport is mobile; jsdom has no
-// matchMedia, so it gets a desktop answer here.
-beforeEach(() => {
-  window.matchMedia = ((query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addEventListener: () => undefined,
-    removeEventListener: () => undefined,
-    addListener: () => undefined,
-    removeListener: () => undefined,
-    dispatchEvent: () => false,
-  })) as unknown as typeof window.matchMedia;
-});
+const tab = (name: string) => screen.getByRole('button', { name });
 
-describe('Rail (the level navigation)', () => {
+describe('LevelTabs (the level navigation)', () => {
   beforeEach(() => {
     level.value = 'organization';
     section.value = null;
     bootstrapState.status = 'ready';
-    // Deliberately out of order: the rail sorts, the registry does not.
+    // Deliberately out of order: the tabs sort, the registry does not.
     registered.value = [settings, connections, people, projects];
     mounted.value = [people];
     mockRegistry.executeActionsChain.mockResolvedValue(undefined);
@@ -138,127 +137,109 @@ describe('Rail (the level navigation)', () => {
     vi.clearAllMocks();
   });
 
-  it('lists the items of the level in scope, in order', () => {
-    render(<Rail />);
-    const labels = screen
-      .getAllByRole('button')
-      .map((button) => button.textContent)
-      .filter((text): text is string => Boolean(text));
-    expect(labels.indexOf('People')).toBeLessThan(labels.indexOf('Connections'));
-    expect(labels.indexOf('Connections')).toBeLessThan(labels.indexOf('Organization settings'));
+  it('lists the items of the level in scope, in order, settings last', () => {
+    render(<LevelTabs />);
+    const labels = screen.getAllByRole('button').map((button) => button.textContent);
+    expect(labels).toEqual(['People', 'Connections', 'Settings']);
   });
 
   it('leaves out the items of another level', () => {
-    render(<Rail />);
+    render(<LevelTabs />);
     expect(screen.queryByText('Projects')).toBeNull();
   });
 
-  it('draws no rule between the items: one gap, whatever the placement', () => {
-    const { container } = render(<Rail />);
-    expect(container.querySelectorAll('[data-orientation]').length).toBe(0);
+  it('is a navigation landmark', () => {
+    render(<LevelTabs />);
+    expect(screen.getByRole('navigation', { name: 'level_tabs' })).toBeTruthy();
   });
 
-  // The rail names the screen and stops there: leaving the project scope and
-  // the mount itself belong to the shell, and are covered in appContextEffects.
+  // The tabs name the screen and stop there: leaving the project scope and the
+  // mount itself belong to the shell, and are covered in appContextEffects.
   it('names the chosen screen to the shell', () => {
-    render(<Rail />);
-    fireEvent.click(screen.getByText('Connections'));
+    render(<LevelTabs />);
+    fireEvent.click(tab('Connections'));
     expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/screen/requested', {
       extensionId: 'ext.connections',
     });
   });
 
   it('mounts nothing itself', () => {
-    render(<Rail />);
-    fireEvent.click(screen.getByText('Connections'));
+    render(<LevelTabs />);
+    fireEvent.click(tab('Connections'));
     expect(mockRegistry.executeActionsChain).not.toHaveBeenCalled();
   });
 
-  it('marks the mounted screen as the active item', () => {
-    render(<Rail />);
-    expect(screen.getByText('People').closest('[data-active]')).toBeTruthy();
-    expect(screen.getByText('Connections').closest('[data-active]')).toBeNull();
+  it('marks the mounted screen as the current page', () => {
+    render(<LevelTabs />);
+    expect(tab('People').getAttribute('aria-current')).toBe('page');
+    expect(tab('Connections').getAttribute('aria-current')).toBeNull();
   });
 
-  it('is absent at a level with a single item, whose screen is the level itself', () => {
+  it('draws the row at a level with a single tab', () => {
     level.value = 'workspace';
-    const { container } = render(<Rail />);
-    expect(container.firstChild).toBeNull();
+    mounted.value = [projects];
+    render(<LevelTabs />);
+    expect(tab('Projects').getAttribute('aria-current')).toBe('page');
   });
 
   describe('sections of one screen', () => {
     beforeEach(() => {
       level.value = 'project';
-      registered.value = [overview, artifacts, people];
+      registered.value = [overview, artifacts, editor, people];
       mounted.value = [overview];
       section.value = 'overview';
     });
 
     // Same event for a section as for any other item: telling them apart is
     // the shell's job, since only it knows what is mounted right now.
-    it('names the section item the same way as any other item', () => {
-      render(<Rail />);
-      fireEvent.click(screen.getByText('Artifacts'));
+    it('names the section the same way as any other item', () => {
+      render(<LevelTabs />);
+      fireEvent.click(tab('Artifacts'));
       expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/screen/requested', {
         extensionId: 'ext.project.artifacts',
       });
     });
 
     it('does not decide by itself that the project is being left', () => {
-      render(<Rail />);
-      fireEvent.click(screen.getByText('Artifacts'));
+      render(<LevelTabs />);
+      fireEvent.click(tab('Artifacts'));
       expect(mockEventBus.emit).not.toHaveBeenCalledWith('app/context/project/closed');
     });
 
-    it('marks the active item by the section, since every item shares one entry', () => {
+    it('marks the active tab by the section, since every item shares one entry', () => {
       section.value = 'artifacts';
-      render(<Rail />);
-      expect(screen.getByText('Artifacts').closest('[data-active]')).toBeTruthy();
-      expect(screen.getByText('Overview').closest('[data-active]')).toBeNull();
+      render(<LevelTabs />);
+      expect(tab('Artifacts').getAttribute('aria-current')).toBe('page');
+      expect(tab('Overview').getAttribute('aria-current')).toBeNull();
     });
 
-  });
-
-  describe('the keyboard', () => {
-    // The panel expands on focus and collapses when focus leaves it. Escape is
-    // the way to collapse it while staying inside.
-    // The provider takes the events; the kit stamps the open state one node in.
-    const provider = (container: HTMLElement): HTMLElement =>
-      container.firstElementChild as HTMLElement;
-    const state = (container: HTMLElement): string | undefined =>
-      container.querySelector<HTMLElement>('[data-state]')?.dataset.state;
-
-    it('expands when focus reaches it', () => {
-      const { container } = render(<Rail />);
-      fireEvent.focus(provider(container));
-      expect(state(container)).toBe('expanded');
+    it('keeps a hidden screen out of the row', () => {
+      render(<LevelTabs />);
+      expect(screen.queryByText('Editor')).toBeNull();
     });
 
-    it('collapses on Escape without focus having to leave', () => {
-      const { container } = render(<Rail />);
-      fireEvent.focus(provider(container));
-
-      fireEvent.keyDown(provider(container), { key: 'Escape' });
-
-      expect(state(container)).toBe('collapsed');
-    });
-
-    it('ignores other keys', () => {
-      const { container } = render(<Rail />);
-      fireEvent.focus(provider(container));
-
-      fireEvent.keyDown(provider(container), { key: 'a' });
-
-      expect(state(container)).toBe('expanded');
+    it('marks the section a mounted hidden screen belongs to', () => {
+      mounted.value = [editor];
+      section.value = null;
+      render(<LevelTabs />);
+      expect(tab('Artifacts').getAttribute('aria-current')).toBe('page');
+      expect(tab('Overview').getAttribute('aria-current')).toBeNull();
     });
   });
 
-  it('holds placeholder rows while the manifest is still in flight', () => {
+  it('holds a placeholder while the manifest is still in flight', () => {
     registered.value = [];
     bootstrapState.status = 'pending';
-    const { container } = render(<Rail />);
-    // Unknown, not empty: an empty rail would claim the level has no areas.
+    const { container } = render(<LevelTabs />);
+    // Unknown, not empty: an empty row would claim the level has no sections.
     expect(container.firstChild).not.toBeNull();
-    expect(screen.queryByText('People')).toBeNull();
+    expect(screen.queryByRole('navigation')).toBeNull();
+  });
+
+  it('is absent once a failed bootstrap leaves no items', () => {
+    registered.value = [];
+    bootstrapState.status = 'failed';
+    const { container } = render(<LevelTabs />);
+    expect(container.firstChild).toBeNull();
   });
 });
