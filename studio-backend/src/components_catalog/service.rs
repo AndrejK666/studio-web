@@ -1927,27 +1927,17 @@ impl CatalogService {
 
     /// The tenant holding the connection a read from `tenant` goes through:
     /// `connection_id`'s, or the default GitHub connection's when none is
-    /// named -- found by walking up from `tenant`, so possibly one above it.
-    /// `None` when there is none to find.
+    /// named -- the row's holder, possibly above `tenant`
+    /// ([`ConnectorService::holder_of`]). `None` when there is none to find.
     pub(super) async fn connection_holder(
         &self,
         ctx: &SecurityContext,
         tenant: Uuid,
         connection_id: Option<Uuid>,
     ) -> Option<Uuid> {
-        let connectors = self.connector_service()?;
-        let id = match connection_id {
-            Some(id) => id,
-            None => {
-                connectors
-                    .named_or_default(ctx, tenant, None, "github")
-                    .await
-                    .ok()?
-                    .2
-                    .id
-            }
-        };
-        connectors.locate(ctx, tenant, id).await
+        self.connector_service()?
+            .holder_of(ctx, tenant, connection_id, "github")
+            .await
     }
 
     /// Take out of an organization's sync every source read through a
@@ -2002,12 +1992,13 @@ impl CatalogService {
         let connection_id = Uuid::parse_str(&text("connection_id")).ok();
         // The tenant it names is where the read starts; the connection may be
         // held above it.
-        let tenant = self
+        let holder = self
             .connection_holder(ctx, tenant, connection_id)
             .await
             .unwrap_or(tenant);
         Ok(vec![ProjectRepo {
             tenant,
+            holder,
             connection_id,
             repo,
             branch: text("branch"),
@@ -2035,9 +2026,10 @@ impl CatalogService {
             let Some(connection_id) = source.connection_id else {
                 continue;
             };
-            match connectors.locate(ctx, project, connection_id).await {
-                Some(tenant) => out.push(ProjectRepo {
+            match connectors.nearest_by_id(ctx, project, connection_id).await {
+                Some((tenant, c)) => out.push(ProjectRepo {
                     tenant,
+                    holder: crate::connectors::sdk::holder_of_row(&c, tenant),
                     connection_id: Some(connection_id),
                     repo: source.full_path,
                     branch: source.branch.unwrap_or_default(),
@@ -2092,8 +2084,12 @@ fn log_refused(project_id: &str, refused: &[RepoWalk]) {
 
 /// One repository a project's code is in.
 pub(super) struct ProjectRepo {
-    /// The tenant that owns the connection it is read through.
+    /// The tenant the read starts from: its catalogue (possibly inherited)
+    /// lists the connection.
     pub(super) tenant: Uuid,
+    /// The tenant whose catalogue row holds the connection -- what the
+    /// ownership rule asks ([`super::ownership`]); possibly above `tenant`.
+    pub(super) holder: Uuid,
     pub(super) connection_id: Option<Uuid>,
     /// `owner/name`.
     pub(super) repo: String,

@@ -18,6 +18,7 @@ use uuid::Uuid;
 use super::port::RepositoryTarget;
 use crate::catalog_graph::CatalogSink;
 use crate::catalog_graph::gts::{self, GtsNode};
+use crate::connectors::sdk::ownership::Ownership;
 use crate::connectors::sdk::{
     ConnectorService, Connectors, CreatedRepository, Repository, create_repository,
 };
@@ -82,6 +83,9 @@ pub struct ProductService {
     /// Reads a project's own sources, for a project with no gear repository.
     account_management:
         std::sync::OnceLock<Arc<dyn account_management_sdk::AccountManagementClient>>,
+    /// Who answers whether a write's connection is the organization's: the
+    /// connector service unless a test set a table.
+    ownership: std::sync::OnceLock<Arc<dyn Ownership>>,
 }
 
 impl ProductService {
@@ -90,7 +94,44 @@ impl ProductService {
             sink,
             connectors,
             account_management: std::sync::OnceLock::new(),
+            ownership: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Answer the ownership rule from `ownership` instead of the connector
+    /// service.
+    #[cfg(test)]
+    pub(super) fn set_ownership(&self, ownership: Arc<dyn Ownership>) {
+        let _ = self.ownership.set(ownership);
+    }
+
+    /// Refuse a write, for `scope`, into `target` through a connection the
+    /// organization `scope` is in does not own: one held by the platform's
+    /// root or another organization, which a project sees because
+    /// connections are inherited downwards
+    /// (`cpt-studio-constraint-connector-own-connections`). The error is a
+    /// [`crate::connectors::sdk::ownership::NotOwned`], which the REST layer answers 400 `CONNECTION_NOT_OWNED`.
+    pub async fn ensure_owned(
+        &self,
+        ctx: &SecurityContext,
+        scope: Uuid,
+        target: &RepositoryTarget,
+    ) -> anyhow::Result<()> {
+        let rule: Option<Arc<dyn Ownership>> = match self.ownership.get() {
+            Some(rule) => Some(Arc::clone(rule)),
+            None => self.connector_service().map(|c| c as Arc<dyn Ownership>),
+        };
+        // Without connectors there is nothing to write through: the write
+        // fails on its own, saying so.
+        if let Some(rule) = rule
+            && let Err(refused) = rule
+                .ensure_owned(ctx, scope, target.tenant, target.connection_id, "github")
+                .await
+        {
+            tracing::warn!(%scope, tenant = %target.tenant, repo = %target.repo, holder = %refused.holder, "studio-product: a write through a connection the organization does not own is refused");
+            return Err(refused.into());
+        }
+        Ok(())
     }
 
     pub fn set_account_management(
@@ -203,7 +244,15 @@ impl ProductService {
         message: &str,
         pr_title: Option<&str>,
     ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
-        let (tenant, connection_id, repo, base_branch) = self.write_target(ctx, project_id).await?;
+        let target = self.write_target(ctx, project_id).await?;
+        self.ensure_owned(ctx, scope_of(ctx, project_id), &target)
+            .await?;
+        let RepositoryTarget {
+            tenant,
+            connection_id,
+            repo,
+            base_branch,
+        } = target;
 
         let connectors = self
             .connector_service()
@@ -233,7 +282,9 @@ impl ProductService {
     /// Commit files onto a new `branch` off `target`'s base branch in the
     /// repository `target` names, through its connection, and open a pull
     /// request back: what Declare it writes (ADR-0041 P3). `ctx` is the
-    /// tenant the connection is readable from -- the project's.
+    /// tenant the connection is readable from -- the project's, or the
+    /// root's when the platform writes its own repository (publish) -- and
+    /// the write is for that tenant ([`Self::ensure_owned`]).
     pub async fn write_to_repository(
         &self,
         ctx: &SecurityContext,
@@ -242,6 +293,8 @@ impl ProductService {
         files: &[super::scaffold::ScaffoldFile],
         pull_request: &super::port::PullRequestText,
     ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
+        self.ensure_owned(ctx, ctx.subject_tenant_id(), target)
+            .await?;
         let connectors = self
             .connector_service()
             .ok_or_else(|| anyhow!("connectors service unavailable"))?;
@@ -283,13 +336,12 @@ impl ProductService {
         &self,
         ctx: &SecurityContext,
         project_id: &str,
-    ) -> anyhow::Result<(Uuid, Option<Uuid>, String, String)> {
+    ) -> anyhow::Result<RepositoryTarget> {
         let target = match self.project_gear_repo_target(ctx, project_id).await? {
             Some(t) => Some(t),
             None => self.source_target(ctx, project_id).await,
         };
-        let t = target.ok_or_else(no_repo)?;
-        Ok((t.tenant, t.connection_id, t.repo, t.base_branch))
+        target.ok_or_else(no_repo)
     }
 
     /// The gear repository connected to the project, as a write target.
@@ -399,14 +451,19 @@ impl ProductService {
 
     /// Commit a new gear's `files` onto `scaffold/<slug>` off `target`'s base
     /// branch, through its connection, with a pull request when `open_pr`.
+    /// The write is for `scope` -- the project, or the organization -- and
+    /// only through a connection its organization owns
+    /// ([`Self::ensure_owned`]).
     pub async fn scaffold_into_target(
         &self,
         ctx: &SecurityContext,
+        scope: Uuid,
         target: &RepositoryTarget,
         slug: &str,
         files: &[super::scaffold::ScaffoldFile],
         open_pr: bool,
     ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
+        self.ensure_owned(ctx, scope, target).await?;
         let connectors = self
             .connector_service()
             .ok_or_else(|| anyhow!("connectors service unavailable"))?;
@@ -447,6 +504,20 @@ impl ProductService {
         name: &str,
         private: bool,
     ) -> anyhow::Result<CreatedRepository> {
+        // Not through a connection the organization only inherits: the
+        // repository would be created with the platform's rights, and every
+        // later write to it would go through the same token.
+        self.ensure_owned(
+            ctx,
+            scope_of(ctx, project_id),
+            &RepositoryTarget {
+                tenant,
+                connection_id,
+                repo: String::new(),
+                base_branch: String::new(),
+            },
+        )
+        .await?;
         let connectors = self
             .connector_service()
             .ok_or_else(|| anyhow!("connectors service unavailable"))?;
@@ -473,6 +544,16 @@ impl ProductService {
         Ok(created)
     }
 }
+
+/// The tenant a write about project `project_id` is for: the project, or --
+/// for an id that is not one -- the caller's tenant.
+fn scope_of(ctx: &SecurityContext, project_id: &str) -> Uuid {
+    Uuid::parse_str(project_id).unwrap_or_else(|_| ctx.subject_tenant_id())
+}
+
+#[cfg(test)]
+#[path = "service_ownership_tests.rs"]
+mod ownership_tests;
 
 #[cfg(test)]
 mod tests {

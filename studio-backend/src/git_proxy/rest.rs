@@ -160,10 +160,25 @@ impl GitProxy {
                 let Some(connectors) = self.connectors.get() else {
                     continue;
                 };
-                if let Some((_, c)) = connectors
+                if let Some((at, c)) = connectors
                     .nearest_by_id(ctx, project_id, connection_id)
                     .await
                 {
+                    // The server's checkout is synced with this token: only
+                    // the organization's own (`connectors::sdk::ownership`).
+                    let holder = crate::connectors::sdk::holder_of_row(&c, at);
+                    if let Err(refused) = crate::connectors::sdk::check_owned(
+                        self.account_management.as_ref(),
+                        ctx,
+                        project_id,
+                        project_id,
+                        Some(holder),
+                    )
+                    .await
+                    {
+                        tracing::warn!(%project_id, holder = %refused.holder, "studio-git: a pushed source's connection is not the organization's; not re-synced through it");
+                        continue;
+                    }
                     connections.insert(
                         c.id,
                         Upstream {
@@ -382,6 +397,13 @@ async fn forward(
             "The workspace has no Git source by that name.",
         );
     };
+    // Never as the platform: a source connected through a connection held
+    // above the project's organization is not proxied, neither with that
+    // token nor without it.
+    if let Some(holder) = found.held_outside {
+        tracing::warn!(%workspace_id, source, %holder, "studio-git: the source's connection is not the organization's; refused");
+        return refuse(StatusCode::FORBIDDEN, &sources::not_owned_text(holder));
+    }
     let Some(url) = sources::upstream_url(&found.url, protocol_path) else {
         return refuse(
             StatusCode::NOT_FOUND,
@@ -623,7 +645,10 @@ pub fn register_routes(
     .description(
         "The first request of every clone, fetch and push. Authenticated with \
              the member's Studio token as the Basic password (or a Bearer token); \
-             answers 401 with a Basic challenge so `git` asks its credential helper.",
+             answers 401 with a Basic challenge so `git` asks its credential helper. \
+             A source whose connection is held outside the project's organization \
+             (the platform's, inherited) is refused 403 `CONNECTION_NOT_OWNED`, \
+             here and on the pack routes.",
     )
     .tag("StudioGit")
     .anonymous()

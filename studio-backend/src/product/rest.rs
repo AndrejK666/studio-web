@@ -30,6 +30,26 @@ use crate::org_scope::OrgCtx;
 #[resource_error(gts_id!("cf.studio._.product.v1~"))]
 pub struct StudioProductError;
 
+/// A write that did not happen, as a problem: 400 `failed_precondition`
+/// `CONNECTION_NOT_OWNED` when its connection is not the organization's
+/// (`cpt-studio-constraint-connector-own-connections`), else 400 with `what`
+/// and the cause.
+pub(super) fn write_problem(what: &str, e: &anyhow::Error) -> CanonicalError {
+    use crate::connectors::sdk::ownership::{CONNECTION_NOT_OWNED, NotOwned};
+    if let Some(refused) = e.downcast_ref::<NotOwned>() {
+        return StudioProductError::failed_precondition()
+            .with_precondition_violation(
+                format!("connection:{}", refused.holder),
+                format!("{what}: {refused}"),
+                CONNECTION_NOT_OWNED,
+            )
+            .create();
+    }
+    StudioProductError::invalid_argument()
+        .with_constraint(format!("{what}: {e:#}"))
+        .create()
+}
+
 /// Service handle, injected into the handlers.
 #[derive(Clone)]
 pub struct Product {
@@ -504,6 +524,22 @@ async fn set_project_repo(
     Path(project_id): Path<Uuid>,
     Json(body): Json<SetProjectRepoRequest>,
 ) -> ApiResult<JsonBody<ProductRecordDto>> {
+    // Every write to it would go through this connection: refuse one the
+    // organization does not own before it is recorded.
+    product
+        .service
+        .ensure_owned(
+            &ctx,
+            project_id,
+            &super::port::RepositoryTarget {
+                tenant: body.tenant,
+                connection_id: body.connection_id,
+                repo: body.repo.clone(),
+                base_branch: String::new(),
+            },
+        )
+        .await
+        .map_err(|e| write_problem("invalid gear repo", &e))?;
     let repo = serde_json::json!({
         "tenant": body.tenant,
         "connection_id": body.connection_id,
@@ -677,15 +713,21 @@ async fn scaffold_gear(
         (super::service::TargetOrigin::Organization, Some(octx)) => octx,
         _ => &ctx,
     };
+    // Only through a connection the project's organization owns: a source
+    // or gear repository connected through the platform's (inherited)
+    // connection is refused, CONNECTION_NOT_OWNED.
     let w = product
         .service
-        .scaffold_into_target(wctx, &target.target, &body.slug, &files, gear.open_pr)
+        .scaffold_into_target(
+            wctx,
+            project_id,
+            &target.target,
+            &body.slug,
+            &files,
+            gear.open_pr,
+        )
         .await
-        .map_err(|e| {
-            StudioProductError::invalid_argument()
-                .with_constraint(format!("scaffold failed: {e:#}"))
-                .create()
-        })?;
+        .map_err(|e| write_problem("scaffold failed", &e))?;
     Ok(Json(ScaffoldResultDto {
         branch: w.branch,
         commit_sha: w.commit_sha,
@@ -1139,11 +1181,7 @@ async fn preview_product(
                 pr_title.as_deref(),
             )
             .await
-            .map_err(|e| {
-                StudioProductError::invalid_argument()
-                    .with_constraint(format!("writing product.gdl failed: {e:#}"))
-                    .create()
-            })?;
+            .map_err(|e| write_problem("writing product.gdl failed", &e))?;
         Some(ProductWriteDto {
             branch: w.branch,
             commit_sha: w.commit_sha,
@@ -1290,11 +1328,7 @@ async fn create_repo(
             body.private.unwrap_or(true),
         )
         .await
-        .map_err(|e| {
-            StudioProductError::invalid_argument()
-                .with_constraint(format!("create repo failed: {e:#}"))
-                .create()
-        })?;
+        .map_err(|e| write_problem("create repo failed", &e))?;
     Ok((
         StatusCode::CREATED,
         Json(CreateRepoResultDto {
@@ -1342,7 +1376,10 @@ pub fn register_routes(
             "Connects a project to the repository its gears are scaffolded \
                  into, or replaces that connection. The branch defaults to \
                  `main`. The repository is reached through a studio-connector \
-                 connection, so its credential stays in credstore.",
+                 connection, so its credential stays in credstore. The \
+                 connection must be the organization's own -- held by it, a \
+                 workspace or a project of it; one inherited from the platform \
+                 or held by another organization is a 400 `CONNECTION_NOT_OWNED`.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -1371,7 +1408,9 @@ pub fn register_routes(
                  (ADR-0042); without that, the project's own repository from its \
                  sources. Returns what was written, the repository (`repo`) and \
                  which of the three it was (`target`: `project`, `organization` \
-                 or `sources`); a dry run says the same of where it would go.",
+                 or `sources`); a dry run says the same of where it would go. \
+                 Written only through a connection the organization owns: one \
+                 inherited from the platform is a 400 `CONNECTION_NOT_OWNED`.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -1393,7 +1432,9 @@ pub fn register_routes(
             "Creates a repository through the project's connector and records \
                  it as that project's gear repository in one step, so a new \
                  project does not need the repository to exist first. Answers 201; \
-                 `GET …/projects/{project_id}/gear-repo` reads the record back.",
+                 `GET …/projects/{project_id}/gear-repo` reads the record back. \
+                 A connection the organization does not own (the platform's, \
+                 inherited) is a 400 `CONNECTION_NOT_OWNED`; nothing is created.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -1615,7 +1656,9 @@ pub fn register_routes(
          description, the engine's diagnostics, and the applications and gears \
          the resolution arrived at. With `write`, also commits product.gdl to \
          the project's gear repo on a new branch. `write` with no gears commits \
-         the description a new product project starts from, without resolving it.",
+         the description a new product project starts from, without resolving it. \
+         A write through a connection the organization does not own is a 400 \
+         `CONNECTION_NOT_OWNED`.",
         )
         .tag("StudioProduct")
         .authenticated()

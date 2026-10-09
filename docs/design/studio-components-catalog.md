@@ -182,22 +182,20 @@ organization projects.
 
 - [x] `p1` - **ID**: `cpt-studio-constraint-catalog-own-connections`
 
-Connections are inherited downwards: a project sees its workspace's, its
-organization's and the platform root's (`ConnectorService::nearest_by_id`
-walks up). Seeing one is not owning it. **An organization uses only a
-connection held by itself, one of its workspaces or one of its projects --
-never one held above it**, such as the platform's root, whose token would
-read the organization's (possibly private) repositories, or write to them,
-with the platform's rights. The platform's own catalogue, synced in the root,
-reads with the root's connections by design: there the root is the
-organization. One rule (`ownership::within`, failing closed when the tree
-cannot be read) answers it everywhere:
+**An organization uses only a connection held by itself, one of its
+workspaces or one of its projects** -- the rule is the connectors'
+(`cpt-studio-constraint-connector-own-connections`, `connectors::sdk::ownership`),
+stated there once; the catalogue's `ownership` module applies it. The
+platform's own catalogue, synced in the root, reads with the root's
+connections by design: there the root is the organization. Here it means:
 
 - **Reads.** The registry walk and the on-demand reads of a project's code
   (`project_gears`, `project_dependencies`, behind spec-mapping and the
   conformance report) resolve each repository's connection -- the project's
   gear repository, its sources, the organization's gear repository -- to the
-  tenant holding it, and read none held outside the organization. The walk
+  tenant whose row holds it (`ConnectorService::holder_of`, not where an
+  inherited catalogue listed it), and read none held outside the
+  organization. The walk
   records such a repository as `failed` in the project's status with the
   hint "connect the repository with an organization-scope connection of your
   own", and what was read through it before loses its occurrences. An

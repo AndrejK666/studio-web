@@ -118,6 +118,29 @@ constructorfabric/gears-rust#4793 merges. Once a catalogue sync finds
 adopts that repository as its corpus, so the catalogue, the previews and the
 IDE read one checkout.
 
+#### A project writes only through its organization's own connections
+
+- [x] `p1` - **ID**: `cpt-studio-constraint-product-own-connections`
+
+The rule is the connectors' (`cpt-studio-constraint-connector-own-connections`):
+a project sees the platform root's connections because they are inherited,
+and must not write with them. `ProductService::ensure_owned` asks it before
+every write, for the project (or, through the ports, the caller's tenant):
+
+- the scaffold (`POST …/scaffold`, and `GearScaffolds` for the catalogue),
+  into whichever target it picked -- the project's gear repository, the
+  organization's, or the project's first source;
+- `product.gdl` (`POST …/product/preview` with `write`);
+- Declare it (`GearDeclarations`) and publish (`GearContributions`): the
+  latter is the root writing the platform's repository with the root's own
+  connection, which the rule lets through;
+- repository creation (`POST …/create-repo`), before anything is created;
+- recording a gear repository (`POST …/gear-repo`), before it is stored.
+
+A refusal is a 400 `failed_precondition` `CONNECTION_NOT_OWNED` naming the
+tenant that holds the connection and what to do: connect the repository with
+an organization-scope connection of the organization's own.
+
 ## 3. Technical Architecture
 
 ### 3.1 Domain Model

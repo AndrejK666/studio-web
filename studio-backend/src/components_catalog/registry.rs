@@ -1325,7 +1325,10 @@ impl GearRepositoryAccess for ConnectorAccess {
         org: Uuid,
         id: Uuid,
     ) -> Option<FoundConnection> {
-        let (tenant, c) = self.0.nearest_by_id(ctx, org, id).await?;
+        let (found, c) = self.0.nearest_by_id(ctx, org, id).await?;
+        // The row's holder, not where it was found: an organization without
+        // a catalogue of its own lists the root's as if they were its own.
+        let tenant = crate::connectors::sdk::holder_of_row(&c, found);
         Some(FoundConnection {
             tenant,
             scope: c.scope,
@@ -1937,19 +1940,20 @@ impl CatalogService {
             at: walk.now.clone(),
             ..ProjectWalk::default()
         };
-        let target = ProjectRepo {
-            tenant: repo.tenant,
-            connection_id: Some(repo.connection_id),
-            repo: repo.repo.clone(),
-            branch: repo.branch.clone(),
-            owned: true,
-        };
         // Its stored tenant is the organization (see `gear_repository`); the
         // connection itself must be held there or below, never above.
         let holder = self
             .connection_holder(ctx, repo.tenant, Some(repo.connection_id))
             .await
             .unwrap_or(repo.tenant);
+        let target = ProjectRepo {
+            tenant: repo.tenant,
+            holder,
+            connection_id: Some(repo.connection_id),
+            repo: repo.repo.clone(),
+            branch: repo.branch.clone(),
+            owned: true,
+        };
         if !self.tenant_within(ctx, org, holder).await {
             tracing::warn!(organization_id = %org, %holder, repo = %repo.repo, "components-catalog: registry: the gear repository's connection is not the organization's; not read");
             counts.repos_failed += 1;

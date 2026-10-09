@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use super::*;
 use crate::components_catalog::roadmap::{RoadmapFields, RoadmapSource};
+use crate::components_catalog::tiers::PLATFORM_TENANT;
 
 const ROOT: Uuid = PLATFORM_TENANT;
 const ORG: Uuid = Uuid::from_u128(0x0a6);
@@ -39,6 +40,7 @@ fn tree() -> Table {
 fn repo(tenant: Uuid, name: &str) -> ProjectRepo {
     ProjectRepo {
         tenant,
+        holder: tenant,
         connection_id: Some(Uuid::from_u128(0xc0)),
         repo: name.to_owned(),
         branch: "main".to_owned(),
@@ -82,30 +84,39 @@ impl Holders for Held<'_> {
     }
 }
 
+/// The rule is the connectors' (`connectors::ownership`, tested there); the
+/// catalogue reaches it through the sdk, the same answer.
 #[tokio::test]
-async fn only_the_organization_and_what_is_below_it_are_within_it() {
+async fn the_catalogue_asks_the_connectors_rule() {
     let tree = tree();
     let p: &dyn Tree = &tree;
-    for t in [ORG, WS, P1] {
-        assert!(within(ORG, t, p).await, "{t} is the organization's");
-    }
-    assert!(
-        !within(ORG, ROOT, p).await,
-        "the platform's root is above it"
-    );
-    assert!(!within(ORG, OTHER_ORG, p).await, "another organization");
-    assert!(
-        !within(ORG, OTHER_WS, p).await,
-        "below another organization"
-    );
-    assert!(
-        !within(ORG, Uuid::from_u128(0x7e), p).await,
-        "a tenant whose ancestry cannot be read is not the organization's"
-    );
-    // The platform's own catalogue is synced in the root: there the root is
-    // the organization, and its connections are its own.
+    assert!(within(ORG, P1, p).await);
+    assert!(!within(ORG, ROOT, p).await);
     assert!(within(ROOT, ROOT, p).await);
-    assert!(within(ROOT, ORG, p).await);
+    assert_eq!(
+        ROOT,
+        crate::connectors::sdk::ownership::PLATFORM_ROOT_TENANT
+    );
+}
+
+/// A project without a catalogue of its own lists the root's connections as
+/// if they were its own: the read starts from the project, but the
+/// connection's holder is the root, and that is what is asked.
+#[tokio::test]
+async fn a_connection_inherited_into_the_project_is_still_the_roots() {
+    let tree = tree();
+    let mut inherited = repo(P1, "acme/inherited");
+    inherited.holder = ROOT;
+    let (owned, refused) = split_owned(ORG, vec![inherited], &tree).await;
+    assert!(owned.is_empty());
+    assert_eq!(refused.len(), 1);
+    assert!(
+        refused[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("the platform's root")
+    );
 }
 
 /// The walk reads an organization's project only through a connection the

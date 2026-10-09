@@ -438,7 +438,14 @@ impl GearScaffolds for Scaffolds {
         }
         let w = self
             .service
-            .scaffold_into_target(ctx, target, &slug, &files, gear.open_pr)
+            .scaffold_into_target(
+                ctx,
+                ctx.subject_tenant_id(),
+                target,
+                &slug,
+                &files,
+                gear.open_pr,
+            )
             .await?;
         Ok(ScaffoldOutcome {
             branch: w.branch,
