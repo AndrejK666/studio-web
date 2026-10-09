@@ -24,7 +24,6 @@
 //! The rules here are pure; `RepoEnricher::project_gears` does the reading.
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value, json};
@@ -418,15 +417,32 @@ fn relevant(path: &str) -> bool {
     ) || (path.ends_with(".rs") && !rust_candidates(&[path]).is_empty())
 }
 
+/// What discovery is: moved whenever the rules here change what a repository
+/// is read as, so a stored fingerprint from the old rules no longer matches
+/// and every repository is read again once.
+pub const DISCOVERY_VERSION: &str = "project-gears/1";
+
 /// A fingerprint of the files the answer depends on, from the tree listing's
 /// `(path, blob sha)` pairs: equal while none of them changed.
-pub fn fingerprint(files: &[(String, String)]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+///
+/// Stable across builds and restarts (a uuid5 of the pairs and
+/// [`DISCOVERY_VERSION`]), because the registry stores it: the standard
+/// library's hasher promises no such thing.
+pub fn fingerprint(files: &[(String, String)]) -> String {
+    let mut text = String::from(DISCOVERY_VERSION);
     for (path, sha) in files.iter().filter(|(p, _)| relevant(p)) {
-        path.hash(&mut hasher);
-        sha.hash(&mut hasher);
+        text.push('\n');
+        text.push_str(path);
+        text.push('\0');
+        text.push_str(sha);
     }
-    hasher.finish()
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, text.as_bytes()).to_string()
+}
+
+/// Whether a repository need not be read again: a fingerprint was stored and
+/// the files have it still.
+pub fn unchanged(known: Option<&str>, print: &str) -> bool {
+    known == Some(print)
 }
 
 /// What was read per repository, kept while its fingerprint holds.
@@ -434,20 +450,20 @@ pub fn fingerprint(files: &[(String, String)]) -> u64 {
 pub struct Cache(Mutex<HashMap<String, Cached>>);
 
 /// One repository's answer, and the fingerprint it was read under.
-type Cached = (u64, Arc<Vec<LocalGear>>);
+type Cached = (String, Arc<Vec<LocalGear>>);
 
 impl Cache {
     /// Repositories remembered at most; past it, the cache starts over.
     const CAPACITY: usize = 64;
 
-    pub fn get(&self, key: &str, print: u64) -> Option<Arc<Vec<LocalGear>>> {
+    pub fn get(&self, key: &str, print: &str) -> Option<Arc<Vec<LocalGear>>> {
         let map = self.0.lock().ok()?;
         map.get(key)
-            .filter(|(p, _)| *p == print)
+            .filter(|(p, _)| p == print)
             .map(|(_, gears)| Arc::clone(gears))
     }
 
-    pub fn put(&self, key: String, print: u64, gears: Arc<Vec<LocalGear>>) {
+    pub fn put(&self, key: String, print: String, gears: Arc<Vec<LocalGear>>) {
         if let Ok(mut map) = self.0.lock() {
             if map.len() >= Self::CAPACITY && !map.contains_key(&key) {
                 map.clear();

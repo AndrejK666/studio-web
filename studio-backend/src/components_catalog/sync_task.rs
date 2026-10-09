@@ -18,7 +18,7 @@ use async_trait::async_trait;
 
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
-use super::service::{CatalogService, SyncSources};
+use super::service::{CatalogCounts, CatalogService, SyncSources};
 
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "catalog.sync";
@@ -50,27 +50,52 @@ impl TaskHandler for CatalogSyncTask {
                 ));
             }
         };
-        if sources.crates_io.is_none() && sources.repos.is_empty() && sources.roadmaps.is_empty() {
+        if !sources.names_a_catalogue_source() && !sources.registry {
             return TaskOutcome::Failed(
                 "studio-components-catalog: this run names no source to read".to_owned(),
             );
         }
 
         let (progress, drain) = ctx.progress_bridge();
-        let outcome = self
-            .service
-            .run_sync(&ctx.security, sources, &progress)
-            .await;
+        let registry = sources.registry;
+        let mut outcome = if sources.names_a_catalogue_source() {
+            self.service
+                .run_sync(&ctx.security, sources, &progress)
+                .await
+        } else {
+            Ok(CatalogCounts::default())
+        };
+        // The registry phase, last: the catalogue is written whether or not
+        // it finishes, and the run's result says how it went.
+        if registry && let Ok(counts) = &mut outcome {
+            match self
+                .service
+                .run_registry(&ctx.security, &[], &progress)
+                .await
+            {
+                Ok(r) => counts.registry = Some(r),
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), "studio-components-catalog: the registry phase failed");
+                    counts.registry_error = Some(format!("{e:#}"));
+                }
+            }
+        }
         // Drop the sender so the drain ends, then let it finish the queue.
         drop(progress);
         let _ = drain.await;
 
         match outcome {
             Ok(counts) => {
-                let summary = format!(
+                let mut summary = format!(
                     "{} gear(s), {} version(s), {} node(s) stored",
                     counts.gears, counts.versions, counts.stored,
                 );
+                if let Some(r) = &counts.registry {
+                    summary.push_str(&format!(
+                        "; registry: {} project(s), {} new entr(ies)",
+                        r.projects, r.entries_created
+                    ));
+                }
                 match serde_json::to_value(counts) {
                     Ok(result) => TaskOutcome::done_with(summary, result),
                     // The sync happened; failing the run over a serialization
@@ -111,6 +136,7 @@ mod tests {
                 mode: "gears".to_owned(),
             }],
             roadmaps: Vec::new(),
+            registry: false,
         };
         let back: SyncSources =
             serde_json::from_value(serde_json::to_value(&sources).unwrap()).unwrap();
@@ -118,6 +144,25 @@ mod tests {
         assert_eq!(back.repos.len(), 1);
         assert_eq!(back.repos[0].repo, "org/gears");
         assert_eq!(back.repos[0].tenant, Uuid::from_u128(3));
+    }
+
+    #[test]
+    fn a_registry_only_payload_names_a_source_and_no_catalogue_source() {
+        let back: SyncSources =
+            serde_json::from_value(serde_json::json!({ "registry": true })).unwrap();
+        assert!(back.registry);
+        assert!(!back.names_a_catalogue_source());
+        // An older payload has no `registry` and keeps meaning what it meant.
+        let old: SyncSources =
+            serde_json::from_value(serde_json::json!({ "crates_io": "k" })).unwrap();
+        assert!(!old.registry);
+        assert!(
+            !serde_json::to_value(&old)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("registry")
+        );
     }
 
     #[test]

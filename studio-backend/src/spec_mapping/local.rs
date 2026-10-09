@@ -22,15 +22,34 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::rest::CandidateDto;
-use crate::components_catalog::port::ComponentCatalog;
+use crate::components_catalog::port::{ComponentCatalog, Registry, project_gears_of};
 
 /// The project's own gears, or none when they cannot be read: they add to the
 /// catalogue's answer, which stands without them.
+///
+/// Taken from the organization's registry (ADR-0041) when it has found
+/// anything in the project -- kept between reads, so a plan no longer reads
+/// the repositories -- and otherwise read on demand, as before. Either way in
+/// the same shape: `origin: project` and the `path` in the repository.
 pub(super) async fn project_gears(
     catalog: &dyn ComponentCatalog,
+    registry: Option<&dyn Registry>,
     ctx: &SecurityContext,
     project_id: Uuid,
 ) -> (Vec<Value>, Map<String, Value>) {
+    if let Some(registry) = registry {
+        match registry.project_entries(ctx, project_id).await {
+            Ok(entries) => {
+                let found = project_gears_of(&entries, project_id);
+                if !found.0.is_empty() {
+                    return found;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "spec-mapping: the registry unreadable; reading the project's repositories");
+            }
+        }
+    }
     catalog
         .project_gears(ctx, &project_id.to_string())
         .await

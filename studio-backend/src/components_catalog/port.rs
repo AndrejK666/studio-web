@@ -67,6 +67,7 @@ pub fn board_sync_payload(board: BoardSource) -> anyhow::Result<Value> {
         crates_io: None,
         repos: Vec::new(),
         roadmaps: vec![board],
+        registry: false,
     })?)
 }
 
@@ -299,4 +300,124 @@ mod profiles_by_gear_tests {
         assert_eq!(map.len(), 1);
         assert_eq!(map["cf-gears-api-gateway"]["auto"]["gdl_runs"]["s"], "good");
     }
+}
+
+// ── The organization's registry (ADR-0041) ───────────────────────────────────
+
+pub use super::registry::{RegistryEntry, STATE_REJECTED};
+
+/// What the catalogue offers another gear about the organization's registry:
+/// its components, wherever they are declared, and where each was found.
+/// Read by spec-mapping for a project's own gears, and asked by studio-git to
+/// look again after a push.
+#[async_trait]
+pub trait Registry: Send + Sync {
+    /// Every entry of the organization `org`, with its occurrences. The
+    /// caller has already shown that `ctx` reaches `org` (`OrgCtx` does).
+    async fn entries(&self, ctx: &SecurityContext, org: Uuid)
+    -> anyhow::Result<Vec<RegistryEntry>>;
+
+    /// The entries found in one project of the context's organization.
+    async fn project_entries(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> anyhow::Result<Vec<RegistryEntry>>;
+
+    /// Queue a walk of the named projects of `org` (all of them when none is
+    /// named). Answers the run's id.
+    async fn queue_refresh(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project_ids: &[Uuid],
+    ) -> anyhow::Result<Uuid>;
+}
+
+/// The catalogue's answer to [`Registry`].
+pub struct CatalogRegistry {
+    service: Arc<CatalogService>,
+    hub: Arc<ClientHub>,
+}
+
+impl CatalogRegistry {
+    pub fn new(service: Arc<CatalogService>, hub: Arc<ClientHub>) -> Self {
+        Self { service, hub }
+    }
+}
+
+#[async_trait]
+impl Registry for CatalogRegistry {
+    async fn entries(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> anyhow::Result<Vec<RegistryEntry>> {
+        if org == ctx.subject_tenant_id() {
+            return self.service.registry_entries(ctx).await;
+        }
+        let acting = crate::org_scope::acting_in(ctx, org)
+            .map_err(|e| anyhow::anyhow!("acting in organization {org}: {e}"))?;
+        self.service.registry_entries(&acting).await
+    }
+
+    async fn project_entries(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> anyhow::Result<Vec<RegistryEntry>> {
+        Ok(super::registry::filter_entries(
+            self.entries(ctx, ctx.subject_tenant_id()).await?,
+            None,
+            Some(project_id),
+            None,
+        ))
+    }
+
+    async fn queue_refresh(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project_ids: &[Uuid],
+    ) -> anyhow::Result<Uuid> {
+        let queue = super::registry_task::queue(&self.hub)?;
+        super::registry_task::enqueue(
+            queue.as_ref(),
+            ctx,
+            org,
+            &super::registry_task::RegistryPayload {
+                organization_id: None,
+                project_ids: project_ids.to_vec(),
+            },
+        )
+        .await
+    }
+}
+
+/// A project's own gears as the registry knows them, in the shape
+/// [`ComponentCatalog::project_gears`] answers: one per entry found in the
+/// project (its first occurrence there), rejected entries left out. Empty
+/// when the registry has found nothing in the project yet -- the caller
+/// then reads the repositories itself.
+pub fn project_gears_of(
+    entries: &[RegistryEntry],
+    project_id: Uuid,
+) -> (Vec<Value>, Map<String, Value>) {
+    let mut gears: Vec<super::project_gears::LocalGear> = Vec::new();
+    for entry in entries.iter().filter(|e| e.entry.state != STATE_REJECTED) {
+        let Some(found) = entry
+            .occurrences
+            .iter()
+            .find(|o| o.project_id == Some(project_id))
+        else {
+            continue;
+        };
+        if !gears
+            .iter()
+            .any(|g| g.name.eq_ignore_ascii_case(&entry.entry.name))
+        {
+            gears.push(found.local_gear());
+        }
+    }
+    super::project_gears::catalogue_shape(&gears)
 }

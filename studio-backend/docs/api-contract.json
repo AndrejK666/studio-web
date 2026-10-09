@@ -531,6 +531,68 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/registry",
+      "operation_id": "studio_components_catalog.list_registry_entries",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The organization's registry of components, each with where it was found",
+      "authenticated": true,
+      "responses": [
+        "RegistryEntryListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/registry/excluded-projects",
+      "operation_id": "studio_components_catalog.get_registry_excluded_projects",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The projects the registry walk skips",
+      "authenticated": true,
+      "responses": [
+        "ExcludedProjectsDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/registry/{name}",
+      "operation_id": "studio_components_catalog.get_registry_entry",
+      "tag": "StudioComponentsCatalog",
+      "summary": "One component of the organization's registry, with its occurrences",
+      "authenticated": true,
+      "responses": [
+        "RegistryEntryDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/sources",
+      "operation_id": "studio_components_catalog.list_sources",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The organization's catalogue sources, kept on the server",
+      "authenticated": true,
+      "responses": [
+        "RepoSourceListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/types",
       "operation_id": "studio_components_catalog.list_types",
       "tag": "StudioComponentsCatalog",
@@ -3698,6 +3760,40 @@
       "request": "SaveFieldSchemaRequest",
       "responses": [
         "CatalogNodeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/registry/excluded-projects",
+      "operation_id": "studio_components_catalog.update_registry_excluded_projects",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Replace the projects the registry walk skips",
+      "authenticated": true,
+      "request": "ExcludedProjectsDto",
+      "responses": [
+        "ExcludedProjectsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/sources",
+      "operation_id": "studio_components_catalog.update_sources",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Replace the organization's catalogue sources",
+      "authenticated": true,
+      "request": "ReplaceSourcesRequest",
+      "responses": [
+        "RepoSourceListDto"
       ],
       "errors": [
         "400",

@@ -63,6 +63,14 @@ impl Ports {
             .map_err(|_| Self::unavailable("the components catalogue"))
     }
 
+    /// The organization's registry, when the catalogue publishes one. Its
+    /// absence only means the project's gears are read on demand.
+    fn registry(&self) -> Option<Arc<dyn crate::components_catalog::port::Registry>> {
+        self.hub
+            .get::<dyn crate::components_catalog::port::Registry>()
+            .ok()
+    }
+
     fn documents(&self) -> ApiResult<Arc<dyn SpecNeeds>> {
         self.hub
             .get::<dyn SpecNeeds>()
@@ -743,7 +751,8 @@ async fn get_project_plan(
     };
     let catalog = ports.catalog()?;
     let (mut components, mut profiles) = catalog.components(&org).await.map_err(internal)?;
-    let own = local::project_gears(catalog.as_ref(), &org, project_id).await;
+    let registry = ports.registry();
+    let own = local::project_gears(catalog.as_ref(), registry.as_deref(), &org, project_id).await;
     let in_repo = local::with_project_gears(&mut components, &mut profiles, own);
     let keys: Vec<String> = needs.iter().map(|c| c.key.clone()).collect();
     let rules = vocabulary_of(&vocabulary, past_decisions(&recorded, &needs));

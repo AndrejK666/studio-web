@@ -147,6 +147,17 @@ pub struct SyncSources {
     /// due and who is waiting for it.
     #[serde(default)]
     pub roadmaps: Vec<RoadmapSource>,
+    /// Walk the organization's projects into its registry after the rest
+    /// (`catalog.registry`, ADR-0041). What a sync of the stored sources asks.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub registry: bool,
+}
+
+impl SyncSources {
+    /// Whether the catalogue phases have anything to read.
+    pub fn names_a_catalogue_source(&self) -> bool {
+        self.crates_io.is_some() || !self.repos.is_empty() || !self.roadmaps.is_empty()
+    }
 }
 
 /// One catalogued component with its sources reconciled and graded.
@@ -213,6 +224,14 @@ pub struct CatalogCounts {
     /// was never read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub boards_unread: Vec<UnreadBoard>,
+    /// What the registry phase counted, when the run had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<super::registry::RegistryCounts>,
+    /// Why the registry phase did not finish. The catalogue was written all
+    /// the same: the registry is one more thing a sync keeps, not a
+    /// precondition of the rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_error: Option<String>,
 }
 
 /// A roadmap board a sync could not read.
@@ -233,7 +252,7 @@ impl CatalogCounts {
 
 pub struct CatalogService {
     crates: CratesIoClient,
-    sink: Arc<dyn CatalogSink>,
+    pub(super) sink: Arc<dyn CatalogSink>,
     keyword: String,
     connectors: Option<Connectors>,
     /// The Gearbox engine, when previews are configured: a sync writes what it
@@ -251,7 +270,11 @@ pub struct CatalogService {
     generation: Arc<std::sync::atomic::AtomicU64>,
     /// The gears each project repository declares, kept while the files they
     /// were read from are unchanged.
-    project_gears: super::project_gears::Cache,
+    pub(super) project_gears: super::project_gears::Cache,
+    /// The ClientHub, for what is resolved when it is needed rather than at
+    /// start: an organization's projects (`organizations::port::ProjectsOf`)
+    /// and the scheduler. Unset in tests.
+    pub(super) hub: std::sync::OnceLock<Arc<toolkit::client_hub::ClientHub>>,
 }
 
 /// Bumps the catalogue generation when dropped — at the end of a write, so a
@@ -285,6 +308,7 @@ impl CatalogService {
             account_management: std::sync::OnceLock::new(),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             project_gears: super::project_gears::Cache::default(),
+            hub: std::sync::OnceLock::new(),
         }
     }
 
@@ -308,6 +332,10 @@ impl CatalogService {
 
     pub fn set_products(&self, products: crate::product::port::Products) {
         let _ = self.products.set(products);
+    }
+
+    pub fn set_hub(&self, hub: Arc<toolkit::client_hub::ClientHub>) {
+        let _ = self.hub.set(hub);
     }
 
     pub fn set_account_management(
@@ -1005,6 +1033,8 @@ impl CatalogService {
             versions: versions_total,
             stored,
             boards_unread,
+            registry: None,
+            registry_error: None,
         };
         progress.set_with("done", counts.as_detail());
         Ok(counts)
@@ -1589,7 +1619,7 @@ impl CatalogService {
 
     /// A reader per repository. An invalid gear repository is an error; an
     /// invalid source is skipped.
-    fn enrichers(
+    pub(super) fn enrichers(
         &self,
         repos: Vec<ProjectRepo>,
     ) -> anyhow::Result<Vec<(ProjectRepo, RepoEnricher)>> {
@@ -1621,7 +1651,7 @@ impl CatalogService {
     /// the repositories it was seeded from, which its config records
     /// (`project_sources`), each through the connection it names. Empty when
     /// there is neither.
-    async fn project_repos(
+    pub(super) async fn project_repos(
         &self,
         ctx: &SecurityContext,
         project_id: &str,
@@ -1697,16 +1727,16 @@ impl CatalogService {
 }
 
 /// One repository a project's code is in.
-struct ProjectRepo {
+pub(super) struct ProjectRepo {
     /// The tenant that owns the connection it is read through.
-    tenant: Uuid,
-    connection_id: Option<Uuid>,
+    pub(super) tenant: Uuid,
+    pub(super) connection_id: Option<Uuid>,
     /// `owner/name`.
-    repo: String,
-    branch: String,
+    pub(super) repo: String,
+    pub(super) branch: String,
     /// The project's own gear repository: failing to read it is the answer,
     /// where a source that cannot be read is skipped.
-    owned: bool,
+    pub(super) owned: bool,
 }
 
 /// One phase, with what has been counted when it starts. Free-standing because
@@ -1722,7 +1752,7 @@ fn report(progress: &SyncReporter, phase: String, gears: usize, versions: usize,
             gears,
             versions,
             stored,
-            boards_unread: Vec::new(),
+            ..CatalogCounts::default()
         }
         .as_detail(),
     );

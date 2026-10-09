@@ -198,7 +198,9 @@ rather than duplicates.
 | `gts.cf.studio.catalog.field_schema.v1~` | What the organization says about one GTS type: its field schema (with the `quality` block) and whether it counts as a component; built-ins overlaid by the tenant's own |
 | `gts.cf.studio.catalog.source.v1~` | One catalogue source of the organization, kept on the server (ADR-0041): repository, ref, mode; replaces the browser's `cf.components.sources` |
 | `gts.cf.studio.catalog.registry_entry.v1~` | One component of the organization's registry (ADR-0041): name, kind, `state` (`candidate`, `declared`, `registered`, `published`, `rejected`, `deprecated`), owner, capabilities, and the fingerprint of the files it was last read from |
-| `gts.cf.studio.catalog.occurrence.v1~` | Where a registry entry was found: repository, ref, path, commit, project; joined to its entry by `gts.cf.studio.catalog.found_in.v1~` |
+| `gts.cf.studio.catalog.occurrence.v1~` | Where a registry entry was found: repository, ref, path, commit, project; joined to its entry by `gts.cf.studio.catalog.found_in.v1~`. Keyed on the entry, the project, the repository and the path, so one repository attached to two projects gives each its own occurrence |
+| `gts.cf.studio.catalog.registry_read.v1~` | One repository the registry walk read for one project (connection, repository, ref): the fingerprint of the files discovery reads and the commit, so an unchanged repository is not read again after a restart either |
+| `gts.cf.studio.catalog.registry_settings.v1~` | The organization's registry settings: the projects the walk skips |
 | `gts.cf.studio.catalog.component_snapshot.v1~` | One component's fields on one day: the number `n`, the grade `s` and the badge `b` (cut to 80 characters); kept out of the enumerated catalogue types |
 
 A field value has the shape `{ v, b, n, s, l, u }`. Field schemas and the
@@ -338,30 +340,65 @@ Knows nothing about plans, definitions or workbooks.
 
 #### Registry
 
-- [ ] `p2` - **ID**: `cpt-studio-component-components-catalog-registry`
+- [x] `p2` - **ID**: `cpt-studio-component-components-catalog-registry`
 
 The organization's components, wherever they are declared (ADR-0041,
-`cpt-studio-adr-component-registry`). A `catalog.registry` phase of the sync:
+`cpt-studio-adr-component-registry`). Phase P1 is built (`registry.rs`,
+`registry_task.rs`): server-side sources, the walk, `declared` entries and the
+reads. The lifecycle moves with recorded decisions (P2), candidate detectors
+(P3) and model suggestions (P4) are not.
+
+The walk is the task type `catalog.registry`, and also the last phase of a
+`catalog.sync` whose payload says `registry: true` — what `POST /sync` queues
+when its body names no `repositories`, so the Components page's button
+refreshes both. Alone it is what the schedule and a push queue. For the
+context's organization it:
 
 1. Asks organizations for the organization's projects (`ProjectsOf`).
-2. For each project not excluded, reads its gear repository and its
-   `project.config` `sources[]`, the same repositories `project_gears` reads.
-3. Skips a repository whose stored fingerprint matches.
-4. Upserts one `registry_entry` per component found, and one `occurrence` per
-   place it was found.
-5. Drops the occurrences of a repository that no longer declares them.
+2. For each project not excluded (or, for a push, the project named), resolves
+   its repositories exactly as `project_gears` does: its gear repository, else
+   its `project.config` `sources[]`.
+3. Skips a repository whose fingerprint — of the files discovery reads, stable
+   across builds, with the discovery rules' version in it — matches the one
+   stored on its `registry_read` node; that costs one tree listing.
+4. Runs `project_gears` discovery on the others, and upserts one
+   `registry_entry` per component found (by organization and name,
+   case-blind) and one `occurrence` per place it was found, joined by
+   `found_in`; the read's fingerprint and the ref's newest commit are stored.
+5. Retires the occurrences of a repository read again that no longer declares
+   them, of a repository its project no longer names, and — on a full walk —
+   of a project excluded or gone from the organization. A project whose
+   repositories could not be listed, or a repository that could not be read,
+   keeps its occurrences: "could not tell" is not "none".
 
-An entry found anew is `declared`. Discovery never moves an entry past
-`declared` and never resurrects a `rejected` one whose fingerprint is unchanged;
-the other states belong to people (P2). An entry with no occurrence left keeps
-its state and says so (`orphaned: true`) rather than disappearing, because a
-registered component whose repository moved is still the organization's.
-Phase P1 writes `declared` entries and reads; the lifecycle moves are P2.
+The rules are one pure function (`registry::plan`). An entry found anew is
+`declared`. Discovery never moves an existing entry's state — so it never
+resurrects a `rejected` one — and refreshes its kind, description, category and
+capabilities only while it is `candidate` or `declared`; past that a person owns
+it and a walk only moves `last_seen` (the last walk that read a repository
+declaring it; a repository skipped as unchanged does not move it). An entry
+with no occurrence left keeps its state and says so (`orphaned: true`) rather
+than disappearing, because a registered component whose repository moved is
+still the organization's. P1 discovers what `project_gears` discovers (gears
+and plugins); FrontX packages and kits in the catalogue's own sources are not
+registry entries yet.
+
+**Schedule and push.** Schedules are platform-level, so the hourly one names
+the organization in its payload (`{ "organization_id": … }`) and a run that
+fires in the platform tenant hands itself to that organization, as
+`reports.refresh` does. Nothing creates schedules for every organization at
+start: the schedule is ensured (`scheduler::port::Schedules::ensure`) when the
+organization saves its sources or its excluded projects. A push through
+studio-git queues a walk of the pushed project
+(`port::Registry::queue_refresh`), beside the re-sync it already queues.
 
 `ProjectsOf` lists an organization's project tenants and is published by
-organizations, so no other gear walks the tenant tree itself. The registry is
-published as `components_catalog::port::Registry`, which spec-mapping reads for
-a project's own gears instead of computing them on every plan.
+organizations (`organizations::port`), so no other gear walks the tenant tree
+itself. The registry is published as `components_catalog::port::Registry`
+(`entries`, `project_entries`, `queue_refresh`). Spec-mapping takes a
+project's own gears from it when it has entries found in that project, in the
+same shape and labelling (`origin: project`, `path`) as `project_gears`, and
+reads the repositories on demand otherwise.
 
 ### 3.3 API Contracts
 
@@ -375,7 +412,7 @@ a project's own gears instead of computing them on every plan.
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `POST` | `/sync` | Queue a `catalog.sync` run over `crates_io`, `repositories` and `roadmaps`; poll `GET /studio-tasks/v1/runs/{id}` | unstable |
+| `POST` | `/sync` | Queue a `catalog.sync` run over `crates_io`, `repositories` and `roadmaps`; poll `GET /studio-tasks/v1/runs/{id}`. Without `repositories` it reads the stored sources and walks the registry after them | unstable |
 | `GET` | `/components` | Every node of every type this organization marks as a component | unstable |
 | `GET` | `/versions` | Ingested crate versions; `crate` narrows to one | unstable |
 | `GET` | `/reference` | The catalogue joined with the engine's gears; `days` (default 90, `0` skips the warehouse), `include=all` | unstable |
@@ -390,11 +427,12 @@ a project's own gears instead of computing them on every plan.
 | `GET` | `/field-schemas` | The field schema per component type, built-ins overlaid by the tenant's own | unstable |
 | `PUT` | `/field-schemas/{describes}` | Replace the tenant's schema for one type | unstable |
 | `DELETE` | `/field-schemas/{describes}` | Revert to the built-in; reverting an unoverridden type is not an error | unstable |
-| `GET` | `/sources` | The organization's catalogue sources, kept on the server | unstable |
-| `PUT` | `/sources` | Replace them; the sync reads these when its body names none | unstable |
-| `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it; each entry with its occurrences | unstable |
-| `GET` | `/registry/{name}` | One entry, its occurrences and its decisions | unstable |
-| `PUT` | `/registry/excluded-projects` | The projects the walk skips | unstable |
+| `GET` | `/sources` | The organization's catalogue sources, kept on the server: `{items: RepoSourceDto[], total}` | unstable |
+| `PUT` | `/sources` | Replace them with `{items: RepoSourceDto[]}`; the sync reads these when its body names none. Ensures the hourly registry schedule | unstable |
+| `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it, `offset`/`limit` page it; `{items: RegistryEntryDto[], total}`, each entry with its occurrences | unstable |
+| `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences; 404 when absent. Its decisions come with P2 | unstable |
+| `GET` | `/registry/excluded-projects` | The projects the walk skips: `{project_ids}` | unstable |
+| `PUT` | `/registry/excluded-projects` | Replace them with `{project_ids}`. Ensures the hourly registry schedule | unstable |
 
 A project's gear repository and product, scaffolding and the Gearbox routes
 moved to `/studio-product/v1` with `cpt-studio-component-product`
@@ -433,8 +471,11 @@ is to move to studio-product.
 | `cpt-studio-component-tasks` | `sdk::register`, `TaskQueue` | Run `catalog.sync` |
 | `cpt-studio-component-insight` | `port::ComponentDelivery` from the ClientHub | Activity per gear |
 | `cpt-studio-component-product` | `product::port::engine`, `product::port::Products` (`ProjectProducts`), `product::sdk` | The Gearbox engine's gear facts, catalogue, corpus checkout and completion; a project's gear repository |
+| `cpt-studio-component-organizations` | `organizations::port::ProjectsOf` from the ClientHub | An organization's projects, for the registry walk |
+| `cpt-studio-component-scheduler` | `scheduler::port::Schedules` from the ClientHub | The hourly registry schedule per organization |
 
-`port::RoadmapCatalog` is published for `cpt-studio-component-reports`.
+`port::RoadmapCatalog` is published for `cpt-studio-component-reports`;
+`port::Registry` for `cpt-studio-component-spec-mapping` and studio-git.
 
 ### 3.5 External Dependencies
 

@@ -222,9 +222,10 @@ pub struct SaveFieldSchemaRequest {
     pub schema: Value,
 }
 
-/// A repository source picked on the Gears page.
+/// A repository source picked on the Gears page, and one the organization
+/// keeps on the server (`GET`/`PUT /sources`).
 #[derive(Debug)]
-#[toolkit_macros::api_dto(request)]
+#[toolkit_macros::api_dto(request, response)]
 pub struct RepoSourceDto {
     /// Tenant that owns the connection (usually the workspace/organization).
     pub tenant: Uuid,
@@ -348,6 +349,7 @@ impl SyncRequestDto {
             crates_io,
             repos,
             roadmaps,
+            registry: false,
         }
     }
 }
@@ -367,13 +369,30 @@ async fn sync(
 ) -> ApiResult<(StatusCode, JsonBody<CatalogSyncEnqueued>)> {
     let idempotency_key = crate::idempotency::key(&headers)?;
     let queue = catalog.queue()?;
-    let sources = match body {
-        Some(Json(req)) => req.into_sources(catalog.service.default_keyword()),
-        None => SyncSources {
-            crates_io: Some(catalog.service.default_keyword().to_string()),
-            ..SyncSources::default()
-        },
+    let (mut sources, names_repositories) = match body {
+        Some(Json(req)) => {
+            let names = req.repositories.is_some();
+            (req.into_sources(catalog.service.default_keyword()), names)
+        }
+        None => (
+            SyncSources {
+                crates_io: Some(catalog.service.default_keyword().to_string()),
+                ..SyncSources::default()
+            },
+            false,
+        ),
     };
+    // A body that names no repositories syncs the ones the organization keeps
+    // on the server, and walks its projects into the registry after them
+    // (ADR-0041). One that names them is read as it always was.
+    if !names_repositories {
+        sources.repos = catalog
+            .service
+            .list_sources(&ctx)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        sources.registry = true;
+    }
     let payload = serde_json::to_value(&sources)
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
@@ -1503,6 +1522,423 @@ async fn list_versions(
     }))
 }
 
+// ── Sources and the registry (ADR-0041) ──────────────────────────────────────
+
+/// The organization's catalogue sources.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RepoSourceListDto {
+    pub items: Vec<RepoSourceDto>,
+    pub total: u32,
+}
+
+/// The sources that replace the organization's.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReplaceSourcesRequest {
+    pub items: Vec<RepoSourceDto>,
+}
+
+/// The projects the registry walk skips.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct ExcludedProjectsDto {
+    pub project_ids: Vec<Uuid>,
+}
+
+/// One place a registry entry was found.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct OccurrenceDto {
+    pub project_id: Option<Uuid>,
+    pub project_name: Option<String>,
+    /// `owner/name`.
+    pub repo: String,
+    pub git_ref: Option<String>,
+    /// The component's directory, or the file when several share one.
+    pub path: String,
+    /// The newest commit on the ref when the repository was read.
+    pub commit: Option<String>,
+    /// `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`.
+    pub declared_in: String,
+}
+
+/// One component of the organization's registry.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryEntryDto {
+    pub name: String,
+    /// `gear`, `plugin`, `frontx` or `kit`.
+    pub kind: String,
+    /// `candidate`, `declared`, `registered`, `published`, `rejected` or
+    /// `deprecated`. A walk writes `declared` and never moves it.
+    pub state: String,
+    pub description: Option<String>,
+    pub owner: Option<String>,
+    pub capabilities: Vec<String>,
+    /// No occurrence is left; the entry is kept with its state.
+    pub orphaned: bool,
+    /// RFC 3339.
+    pub first_seen: Option<String>,
+    /// RFC 3339: the last walk that read a repository declaring it.
+    pub last_seen: Option<String>,
+    pub occurrences: Vec<OccurrenceDto>,
+}
+
+/// The registry, narrowed and paged.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryEntryListDto {
+    pub items: Vec<RegistryEntryDto>,
+    pub total: u32,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct RegistryQuery {
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(flatten)]
+    pub page: crate::pagination::PageQuery,
+}
+
+fn source_dto(s: RepoSource) -> RepoSourceDto {
+    RepoSourceDto {
+        tenant: s.tenant,
+        connection_id: s.connection_id,
+        repo: s.repo,
+        git_ref: Some(s.git_ref).filter(|r| !r.is_empty()),
+        mode: Some(s.mode).filter(|m| !m.is_empty()),
+    }
+}
+
+fn source_of(d: RepoSourceDto) -> RepoSource {
+    RepoSource {
+        tenant: d.tenant,
+        connection_id: d.connection_id,
+        repo: d.repo,
+        git_ref: d.git_ref.unwrap_or_default(),
+        mode: d.mode.unwrap_or_else(|| "gears".to_string()),
+    }
+}
+
+/// An entry as the registry routes answer it.
+pub(crate) fn registry_entry_dto(e: super::registry::RegistryEntry) -> RegistryEntryDto {
+    RegistryEntryDto {
+        name: e.entry.name,
+        kind: e.entry.kind,
+        state: e.entry.state,
+        description: e.entry.description,
+        owner: e.entry.owner,
+        capabilities: e.entry.capabilities,
+        orphaned: e.entry.orphaned,
+        first_seen: e.entry.first_seen,
+        last_seen: e.entry.last_seen,
+        occurrences: e
+            .occurrences
+            .into_iter()
+            .map(|o| OccurrenceDto {
+                project_id: o.project_id,
+                project_name: o.project_name,
+                repo: o.repo,
+                git_ref: o.git_ref,
+                path: o.path,
+                commit: o.commit,
+                declared_in: o.declared_in,
+            })
+            .collect(),
+    }
+}
+
+fn internal(e: anyhow::Error) -> CanonicalError {
+    CanonicalError::internal(format!("{e:#}")).create()
+}
+
+impl Catalog {
+    /// Make sure the organization's registry is walked every hour: a
+    /// platform-level schedule naming it (see `registry_task`). Best effort --
+    /// without a scheduler the registry is still walked by a sync and a push.
+    async fn ensure_registry_schedule(&self, ctx: &SecurityContext) {
+        let Ok(schedules) = self.hub.get::<dyn crate::scheduler::port::Schedules>() else {
+            tracing::info!(
+                "components-catalog: no scheduler; the registry is walked on sync and push only"
+            );
+            return;
+        };
+        let spec = super::registry_task::schedule_spec(ctx.subject_tenant_id());
+        if let Err(e) = schedules.ensure(ctx, spec).await {
+            tracing::warn!(error = %format!("{e:#}"), "components-catalog: the registry schedule could not be ensured");
+        }
+    }
+}
+
+async fn list_sources(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<RepoSourceListDto>> {
+    let items: Vec<RepoSourceDto> = catalog
+        .service
+        .list_sources(&ctx)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(source_dto)
+        .collect();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(RepoSourceListDto { items, total }))
+}
+
+async fn update_sources(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Json(body): Json<ReplaceSourcesRequest>,
+) -> ApiResult<JsonBody<RepoSourceListDto>> {
+    let items: Vec<RepoSourceDto> = catalog
+        .service
+        .replace_sources(&ctx, body.items.into_iter().map(source_of).collect())
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(source_dto)
+        .collect();
+    catalog.ensure_registry_schedule(&ctx).await;
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(RepoSourceListDto { items, total }))
+}
+
+async fn list_registry_entries(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Query(q): Query<RegistryQuery>,
+) -> ApiResult<JsonBody<RegistryEntryListDto>> {
+    let project_id = match q.project_id.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(raw) => Some(Uuid::parse_str(raw).map_err(|_| {
+            StudioComponentsCatalogError::invalid_argument()
+                .with_constraint(format!("project_id `{raw}` is not a UUID"))
+                .create()
+        })?),
+    };
+    let state = q.state.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(s) = state
+        && !super::registry::STATES.contains(&s)
+    {
+        return Err(StudioComponentsCatalogError::invalid_argument()
+            .with_constraint(format!(
+                "state `{s}` is not one of {:?}",
+                super::registry::STATES
+            ))
+            .create());
+    }
+    let entries = catalog
+        .service
+        .registry_entries(&ctx)
+        .await
+        .map_err(internal)?;
+    let matched = super::registry::filter_entries(entries, state, project_id, q.q.as_deref());
+    let (page, total) = crate::pagination::page_of(matched, q.page);
+    Ok(Json(RegistryEntryListDto {
+        items: page.into_iter().map(registry_entry_dto).collect(),
+        total,
+    }))
+}
+
+async fn get_registry_entry(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Path(name): Path<String>,
+) -> ApiResult<JsonBody<RegistryEntryDto>> {
+    match catalog
+        .service
+        .registry_entry(&ctx, &name)
+        .await
+        .map_err(internal)?
+    {
+        Some(entry) => Ok(Json(registry_entry_dto(entry))),
+        None => Err(StudioComponentsCatalogError::not_found(format!(
+            "the registry has no component `{name}`"
+        ))
+        .with_resource(name)
+        .create()),
+    }
+}
+
+async fn get_registry_excluded_projects(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<ExcludedProjectsDto>> {
+    let project_ids = catalog
+        .service
+        .excluded_projects(&ctx)
+        .await
+        .map_err(internal)?;
+    Ok(Json(ExcludedProjectsDto { project_ids }))
+}
+
+async fn update_registry_excluded_projects(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Json(body): Json<ExcludedProjectsDto>,
+) -> ApiResult<JsonBody<ExcludedProjectsDto>> {
+    let project_ids = catalog
+        .service
+        .set_excluded_projects(&ctx, body.project_ids)
+        .await
+        .map_err(internal)?;
+    catalog.ensure_registry_schedule(&ctx).await;
+    Ok(Json(ExcludedProjectsDto { project_ids }))
+}
+
+fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    let router = OperationBuilder::get("/studio-components-catalog/v1/sources")
+        .operation_id("studio_components_catalog.list_sources")
+        .summary("The organization's catalogue sources, kept on the server")
+        .description(
+            "The repositories the organization's catalogue reads, each with its \
+             connection, ref and mode, in the order they were saved. A sync whose \
+             body names no `repositories` reads these (ADR-0041); they replace the \
+             browser's `cf.components.sources`.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(list_sources)
+        .json_response_with_schema::<RepoSourceListDto>(openapi, StatusCode::OK, "Sources")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-components-catalog/v1/sources")
+        .operation_id("studio_components_catalog.update_sources")
+        .summary("Replace the organization's catalogue sources")
+        .description(
+            "Replaces the organization's catalogue sources with the ones sent: a \
+             blank repository is dropped, one named twice (same ref and mode) is \
+             kept once, a missing mode is `gears`. Answers what was stored. Also \
+             makes sure the organization's registry is walked hourly (a \
+             platform-level `catalog.registry` schedule naming it).",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(update_sources)
+        .json_request::<ReplaceSourcesRequest>(openapi, "The sources")
+        .json_response_with_schema::<RepoSourceListDto>(openapi, StatusCode::OK, "Stored sources")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/registry")
+        .operation_id("studio_components_catalog.list_registry_entries")
+        .summary("The organization's registry of components, each with where it was found")
+        .description(
+            "Every component the organization's projects declare (ADR-0041): one \
+             entry per name, with its lifecycle `state` and its occurrences \
+             (project, repository, ref, path, commit and what declares it). \
+             Filled by the `catalog.registry` walk -- hourly, after a push through \
+             studio-git, and as the last phase of a sync of the stored sources. \
+             `state`, `project_id` and `q` (name or description) narrow it; \
+             sorted by name; `offset`/`limit` page it. An entry with no \
+             occurrence left is `orphaned` and kept.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(
+            "state",
+            false,
+            "candidate, declared, registered, published, rejected or deprecated",
+        )
+        .query_param("project_id", false, "Only entries found in this project")
+        .query_param("q", false, "Text in the name or the description")
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first entry",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(list_registry_entries)
+        .json_response_with_schema::<RegistryEntryListDto>(openapi, StatusCode::OK, "Entries")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/registry/{name}")
+        .operation_id("studio_components_catalog.get_registry_entry")
+        .summary("One component of the organization's registry, with its occurrences")
+        .description(
+            "One registry entry by name (case-blind), with every place it was \
+             found. 404 when the registry has no such component. Its decisions \
+             come with the lifecycle moves (P2).",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("name", "Component name")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(get_registry_entry)
+        .json_response_with_schema::<RegistryEntryDto>(openapi, StatusCode::OK, "The entry")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/registry/excluded-projects")
+        .operation_id("studio_components_catalog.get_registry_excluded_projects")
+        .summary("The projects the registry walk skips")
+        .description(
+            "The projects of the organization the registry walk leaves out. Every \
+             other project is walked: a project is excluded, never opted in.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(get_registry_excluded_projects)
+        .json_response_with_schema::<ExcludedProjectsDto>(
+            openapi,
+            StatusCode::OK,
+            "Excluded projects",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    OperationBuilder::put("/studio-components-catalog/v1/registry/excluded-projects")
+        .operation_id("studio_components_catalog.update_registry_excluded_projects")
+        .summary("Replace the projects the registry walk skips")
+        .description(
+            "Replaces the projects the registry walk leaves out, deduplicated. The \
+             next full walk retires the occurrences found in them; their entries \
+             stay, `orphaned` when nothing else declares them. Also makes sure the \
+             organization's registry is walked hourly.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(update_registry_excluded_projects)
+        .json_request::<ExcludedProjectsDto>(openapi, "The excluded projects")
+        .json_response_with_schema::<ExcludedProjectsDto>(
+            openapi,
+            StatusCode::OK,
+            "Excluded projects",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+}
+
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
@@ -1510,6 +1946,7 @@ pub fn register_routes(
     hub: Arc<ClientHub>,
     gearbox: Option<Arc<Gearbox>>,
 ) -> Router {
+    let router = register_registry_routes(router, openapi);
     let router = OperationBuilder::post("/studio-components-catalog/v1/sync")
         .operation_id("studio_components_catalog.sync")
         .summary("Enqueue a background sync of the crates.io keyword into the graph")
@@ -1520,7 +1957,10 @@ pub fn register_routes(
              graph. Answers 202 with the `run_id` to follow at \
              `GET /studio-tasks/v1/runs/{run_id}`. Send an `Idempotency-Key` header \
              to make a retry of this request safe: a repeat with the same key \
-             answers the same run.",
+             answers the same run. A body that names no `repositories` (or no \
+             body) reads the organization's stored sources (`GET /sources`) and \
+             then walks its projects into the registry; the run's result carries \
+             `registry` counts, or `registry_error`.",
         )
         .tag("StudioComponentsCatalog")
         .authenticated()
@@ -1928,4 +2368,102 @@ pub fn register_routes(
             .register(router, openapi);
 
     router.layer(Extension(Catalog::new(service, hub, gearbox)))
+}
+
+#[cfg(test)]
+mod registry_dto_tests {
+    use super::*;
+    use crate::components_catalog::registry::{EntryRecord, OccurrenceRecord, RegistryEntry};
+
+    #[test]
+    fn an_entry_is_answered_in_the_shape_the_portal_reads() {
+        let project = Uuid::from_u128(5);
+        let entry = RegistryEntry {
+            entry: EntryRecord {
+                organization_id: Uuid::from_u128(1),
+                name: "studio-tasks".into(),
+                kind: "gear".into(),
+                state: "declared".into(),
+                description: Some("durable runs".into()),
+                category: None,
+                owner: None,
+                capabilities: vec!["tasks".into()],
+                orphaned: false,
+                first_seen: Some("2026-10-09T10:00:00Z".into()),
+                last_seen: Some("2026-10-09T11:00:00Z".into()),
+                fingerprint: Some("f".into()),
+            },
+            occurrences: vec![OccurrenceRecord {
+                organization_id: Uuid::from_u128(1),
+                entry: "studio-tasks".into(),
+                entry_id: "e".into(),
+                project_id: Some(project),
+                project_name: Some("Studio".into()),
+                repo: "acme/studio".into(),
+                repo_key: "k".into(),
+                git_ref: Some("main".into()),
+                path: "studio-backend/src/tasks".into(),
+                commit: Some("abc".into()),
+                declared_in: "attribute".into(),
+                declared_file: "studio-backend/src/tasks/mod.rs".into(),
+                kind: "gear".into(),
+                description: None,
+                category: None,
+                capabilities: Vec::new(),
+                runtime: vec!["rest".into()],
+                built: true,
+                doc_path: None,
+                doc_text: None,
+                fingerprint: "f".into(),
+                seen_at: "2026-10-09T11:00:00Z".into(),
+            }],
+        };
+        let json = serde_json::to_value(registry_entry_dto(entry)).unwrap();
+        for (key, want) in [
+            ("name", serde_json::json!("studio-tasks")),
+            ("kind", serde_json::json!("gear")),
+            ("state", serde_json::json!("declared")),
+            ("description", serde_json::json!("durable runs")),
+            ("capabilities", serde_json::json!(["tasks"])),
+            ("orphaned", serde_json::json!(false)),
+            ("first_seen", serde_json::json!("2026-10-09T10:00:00Z")),
+            ("last_seen", serde_json::json!("2026-10-09T11:00:00Z")),
+        ] {
+            assert_eq!(json[key], want, "{key}");
+        }
+        // Absent or null, the portal reads both as no owner.
+        assert!(json.get("owner").is_none_or(serde_json::Value::is_null));
+        let occ = &json["occurrences"][0];
+        for (key, want) in [
+            ("project_id", serde_json::json!(project)),
+            ("project_name", serde_json::json!("Studio")),
+            ("repo", serde_json::json!("acme/studio")),
+            ("git_ref", serde_json::json!("main")),
+            ("path", serde_json::json!("studio-backend/src/tasks")),
+            ("commit", serde_json::json!("abc")),
+            ("declared_in", serde_json::json!("attribute")),
+        ] {
+            assert_eq!(occ[key], want, "{key}");
+        }
+        // Only the contract's fields: nothing of the stored record leaks.
+        assert!(occ.get("repo_key").is_none() && occ.get("doc_text").is_none());
+    }
+
+    #[test]
+    fn a_source_round_trips_through_its_dto() {
+        let s = RepoSource {
+            tenant: Uuid::from_u128(2),
+            connection_id: None,
+            repo: "acme/gears".into(),
+            git_ref: String::new(),
+            mode: "frontx".into(),
+        };
+        let dto = source_dto(s);
+        assert_eq!(dto.git_ref, None);
+        assert_eq!(dto.mode.as_deref(), Some("frontx"));
+        let back = source_of(dto);
+        assert_eq!(back.repo, "acme/gears");
+        assert_eq!(back.git_ref, "");
+        assert_eq!(back.mode, "frontx");
+    }
 }
