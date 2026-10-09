@@ -155,7 +155,11 @@ pub fn generate(spec: &SkeletonSpec) -> (String, Vec<ScaffoldFile>) {
         .capabilities
         .iter()
         .map(|k| k.trim().to_ascii_lowercase())
-        .filter(|k| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .filter(|k| {
+            !k.is_empty()
+                && k.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
         .map(|k| format!("\"{k}\""))
         .collect();
     if !keys.is_empty() {
