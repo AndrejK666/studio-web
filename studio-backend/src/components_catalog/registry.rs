@@ -616,6 +616,23 @@ pub struct RepoWalk {
     pub hint: Option<String>,
 }
 
+/// `base` acting in `tenant`: the same subject, kind, scopes and bearer, with
+/// the tenant a project's credentials are readable from.
+pub fn in_tenant(base: &SecurityContext, tenant: Uuid) -> anyhow::Result<SecurityContext> {
+    let mut b = SecurityContext::builder()
+        .subject_id(base.subject_id())
+        .subject_tenant_id(tenant)
+        .token_scopes(base.token_scopes().to_vec());
+    if let Some(kind) = base.subject_type() {
+        b = b.subject_type(kind);
+    }
+    if let Some(token) = base.bearer_token() {
+        b = b.bearer_token(token.clone());
+    }
+    b.build()
+        .map_err(|e| anyhow!("cannot act in tenant {tenant}: {e}"))
+}
+
 /// What a person can do about a repository the walk could not read.
 ///
 /// The walk runs as the service, on a schedule nobody is signed in to, so a
@@ -624,7 +641,7 @@ pub struct RepoWalk {
 /// credential. The fix is to share the connection, not to impersonate.
 pub fn read_failure_hint(error: &str) -> Option<String> {
     let e = error.to_ascii_lowercase();
-    if e.contains("not readable") || e.contains("personal") {
+    if e.contains("personal") || e.contains("not readable") {
         return Some(
             "The repository is connected with a personal token, which the registry's background read cannot use. Share the connection with the workspace or the organization, or connect the repository with a shared token."
                 .to_owned(),
@@ -932,7 +949,20 @@ impl CatalogService {
                 format!("registry: {} ({}/{total})", project.name, i + 1),
                 serde_json::to_value(&counts).unwrap_or(Value::Null),
             );
-            let repos = match self.project_repos(ctx, &project.id.to_string()).await {
+            // A project's repositories are read in the project's own tenant:
+            // its connection and token belong to it or to the workspace above
+            // it, and a token is readable down the tree, never up. Read from
+            // the organization's tenant, every workspace connection answers
+            // "not readable". The registry's own nodes stay the organization's.
+            let pctx = match in_tenant(ctx, project.id) {
+                Ok(pctx) => pctx,
+                Err(e) => {
+                    status.error = Some(format!("{e:#}"));
+                    statuses.push(status);
+                    continue;
+                }
+            };
+            let repos = match self.project_repos(&pctx, &project.id.to_string()).await {
                 Ok(repos) => repos,
                 Err(e) => {
                     tracing::warn!(project_id = %project.id, error = %format!("{e:#}"), "components-catalog: registry: a project's repositories could not be resolved");
@@ -963,7 +993,7 @@ impl CatalogService {
                 walk.resolved.insert((project.id, key.clone()));
                 let known = stored.get(&(project.id, key.clone())).map(String::as_str);
                 match reader
-                    .project_gears_unless(ctx, &self.project_gears, known)
+                    .project_gears_unless(&pctx, &self.project_gears, known)
                     .await
                 {
                     Ok(ProjectGearsRead::Unchanged) => {
@@ -989,7 +1019,7 @@ impl CatalogService {
                             repo: target.repo.clone(),
                             repo_key: key,
                             git_ref: reader.git_ref().to_string(),
-                            commit: reader.head_commit(ctx).await,
+                            commit: reader.head_commit(&pctx).await,
                             fingerprint,
                             gears: gears.as_ref().clone(),
                         });
