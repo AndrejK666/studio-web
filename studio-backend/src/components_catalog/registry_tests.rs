@@ -566,7 +566,11 @@ fn a_personal_token_failure_says_to_share_the_connection() {
     .unwrap();
     assert!(hint.contains("personal token"), "{hint}");
     assert!(hint.contains("Share the connection"), "{hint}");
-    assert!(read_failure_hint("GitHub said 404 Not Found").unwrap().contains("not found"));
+    assert!(
+        read_failure_hint("GitHub said 404 Not Found")
+            .unwrap()
+            .contains("not found")
+    );
     assert_eq!(read_failure_hint("connection reset by peer"), None);
 }
 
@@ -593,8 +597,14 @@ fn a_full_walk_replaces_the_statuses_and_a_partial_one_only_its_projects() {
     assert_eq!(full.len(), 1, "a project out of the full walk drops out");
     let partial = merge_walks(before, vec![walked(P2, "b", "read")], false);
     assert_eq!(partial.len(), 2);
-    assert_eq!(partial.iter().find(|p| p.project_id == P2).unwrap().repos[0].status, "read");
-    assert_eq!(partial.iter().find(|p| p.project_id == P1).unwrap().repos[0].status, "read");
+    assert_eq!(
+        partial.iter().find(|p| p.project_id == P2).unwrap().repos[0].status,
+        "read"
+    );
+    assert_eq!(
+        partial.iter().find(|p| p.project_id == P1).unwrap().repos[0].status,
+        "read"
+    );
 }
 
 #[tokio::test]
@@ -611,12 +621,18 @@ async fn saving_the_exclusions_keeps_what_the_last_walk_saw() {
     svc.sink
         .upsert(
             &ctx,
-            &[gts::registry_settings_node(&org.to_string(), serde_json::to_value(&settings).unwrap())],
+            &[gts::registry_settings_node(
+                &org.to_string(),
+                serde_json::to_value(&settings).unwrap(),
+            )],
             &[],
         )
         .await
         .unwrap();
     svc.set_excluded_projects(&ctx, vec![P2]).await.unwrap();
-    assert_eq!(svc.last_walk(&ctx).await.unwrap(), vec![walked(P1, "a", "read")]);
+    assert_eq!(
+        svc.last_walk(&ctx).await.unwrap(),
+        vec![walked(P1, "a", "read")]
+    );
     assert_eq!(svc.excluded_projects(&ctx).await.unwrap(), vec![P2]);
 }
