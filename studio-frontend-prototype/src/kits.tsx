@@ -19,6 +19,7 @@ import {
 } from "./api";
 import { When, useConfirm } from "./data-table";
 import { errText } from "./format";
+import { GearConfigForm } from "./gear-config-form";
 import {
   PRODUCT_PROFILES,
   defaultPicks,
@@ -1226,84 +1227,6 @@ const chipToggleStyle = {
   fontWeight: 700,
 } as const;
 
-/** What a person typed, as the JSON value it means: `true`/`false`, a
- *  number, or else the text itself. */
-function configValue(text: string): unknown {
-  const t = text.trim();
-  if (t === "true") return true;
-  if (t === "false") return false;
-  if (t !== "" && !Number.isNaN(Number(t))) return Number(t);
-  return text;
-}
-
-/** The product's configuration of its gears: each field it sets, editable
- *  and removable, and a way to set one more. What `Make it resolve` sets
- *  (a plugin's vendor aligned with its host's) lands here too. */
-function GearConfigEditor({ product }: { product: ProductState }) {
-  const [gear, setGear] = useState("");
-  const [field, setField] = useState("");
-  const [value, setValue] = useState("");
-  const rows = Object.entries(product.config).flatMap(([g, fields]) =>
-    Object.entries(fields).map(([f, v]) => ({ g, f, v })),
-  );
-  if (product.picks.length === 0) return null;
-  return (
-    <div style={{ fontSize: 12, marginTop: 8 }} data-gear-config>
-      <div style={{ opacity: 0.7, marginBottom: 4 }}>Configuration</div>
-      {rows.length === 0 && (
-        <div style={{ opacity: 0.6 }}>No gear is configured; each runs with its defaults.</div>
-      )}
-      {rows.map(({ g, f, v }) => (
-        <div key={`${g}.${f}`} style={{ display: "flex", gap: 6, alignItems: "center", margin: "2px 0" }}>
-          <code>{gearLabel(g)}</code>
-          <span style={{ opacity: 0.6 }}>·</span>
-          <code>{f}</code>
-          <span>=</span>
-          <input
-            aria-label={`${g} ${f}`}
-            defaultValue={typeof v === "string" ? v : JSON.stringify(v)}
-            onBlur={(e) => product.setField(g, f, configValue(e.target.value))}
-            style={{ fontSize: 12, width: 180 }}
-          />
-          <button
-            type="button"
-            className="ghost"
-            title="Remove this setting"
-            aria-label={`Remove ${g} ${f}`}
-            onClick={() => product.setField(g, f, undefined)}
-          >
-            ×
-          </button>
-        </div>
-      ))}
-      <form
-        style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!gear || !field.trim()) return;
-          product.setField(gear, field.trim(), configValue(value));
-          setField("");
-          setValue("");
-        }}
-      >
-        <select value={gear} onChange={(e) => setGear(e.target.value)} aria-label="Gear to configure" style={{ fontSize: 12 }}>
-          <option value="">gear…</option>
-          {product.picks.map((p) => (
-            <option key={p} value={p}>
-              {gearLabel(p)}
-            </option>
-          ))}
-        </select>
-        <input placeholder="field" value={field} onChange={(e) => setField(e.target.value)} style={{ fontSize: 12, width: 120 }} />
-        <input placeholder="value" value={value} onChange={(e) => setValue(e.target.value)} style={{ fontSize: 12, width: 160 }} />
-        <button type="submit" className="ghost" disabled={!gear || !field.trim()}>
-          Set
-        </button>
-      </form>
-    </div>
-  );
-}
-
 /** A component's name that opens its page in the platform catalogue. */
 function ComponentLink({ nav, name, label }: { nav: PortalNav | null; name: string; label?: string }) {
   const text = label ?? gearLabel(name);
@@ -1535,7 +1458,7 @@ function ProductCard({
           ))
         )}
       </div>
-      <GearConfigEditor product={product} />
+      <GearConfigForm token={token} product={product} />
       {product.adjustments.length > 0 && (
         <div style={{ fontSize: 12, marginTop: 8 }}>
           <div style={{ opacity: 0.7 }}>Adjusted so the product can resolve — each can be undone:</div>

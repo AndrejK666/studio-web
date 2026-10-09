@@ -191,7 +191,11 @@ diagnostics.
 refreshed every `STUDIO_GEARBOX_REFRESH_SECS`; the engine catalogue; the
 extension points a plugin can fill; completion (`/gearbox/complete` drops what
 the catalogue proves cannot run and adds a plugin for a bare host and a REST
-host for REST gears, saying why, writing nothing); the preview, which writes a
+host for REST gears, saying why, writing nothing); each named gear's config
+schema (`/gearbox/config-schema`: the fields its `gear.gdl` declares, with
+`required`, `default`, and `derived` for the addresses generation writes from
+`serves[].config_key`, so the portal's product form asks for what the engine
+would refuse without); the preview, which writes a
 `product.gdl` declaring every deployment profile, validates and resolves it for
 the one asked, and with `write` commits it to the project's gear repository on
 a new branch; and the corpus over Git smart HTTP, fetch only, authenticated as
@@ -263,6 +267,7 @@ which calls this engine; moving it here is a follow-up.
 | `GET` | `/gearbox/catalogue` | The engine catalogue over the backend's corpus, for an IDE whose workspace has none | unstable |
 | `GET` | `/gearbox/extension-points` | The hosts a new plugin gear can fill | unstable |
 | `POST` | `/gearbox/complete` | Complete picked gears into a resolvable set; writes nothing | unstable |
+| `POST` | `/gearbox/config-schema` | Each named gear's config fields: required, default, derived; writes nothing | unstable |
 | `GET` | `/gearbox/corpus/info/refs` | Git smart-HTTP ref advertisement for the corpus | unstable |
 | `POST` | `/gearbox/corpus/git-upload-pack` | Git smart-HTTP upload-pack, fetch only | unstable |
 

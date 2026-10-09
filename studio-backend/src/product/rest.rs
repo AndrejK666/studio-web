@@ -252,6 +252,57 @@ pub struct CompleteProductDto {
     pub config: Value,
 }
 
+/// The most gears one config-schema request may name; a product is a few
+/// dozen at most.
+const MAX_SCHEMA_GEARS: usize = 200;
+
+/// The gears whose configuration a form is about to ask for.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct GearConfigSchemaRequest {
+    /// Crate names (`cf-gears-api-gateway`) or engine ids, as the product's
+    /// picks name them. At most 200.
+    pub gears: Vec<String>,
+}
+
+/// One field of a gear's configuration, from its `gear.gdl`.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearConfigFieldDto {
+    pub name: String,
+    /// Declared required. With no `default`, not `derived`, and not set by
+    /// the product, the engine refuses the product.
+    pub required: bool,
+    /// What the gear falls back to when the product sets nothing; absent when
+    /// it has no default.
+    pub default: Option<Value>,
+    /// Written by generation from the topology (an endpoint's address), so
+    /// not the product's to set.
+    pub derived: bool,
+}
+
+/// One requested gear's configuration schema.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearConfigSchemaDto {
+    /// The name as it was sent; the key the product's `config` uses.
+    pub gear: String,
+    /// The engine id; absent when no `gear.gdl` in the corpus describes the
+    /// gear (then `fields` is empty).
+    pub id: Option<String>,
+    /// In the order the gear declares them.
+    pub fields: Vec<GearConfigFieldDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearConfigSchemaListDto {
+    /// One per distinct requested gear, in request order.
+    pub items: Vec<GearConfigSchemaDto>,
+    /// Every requested gear is in `items`: nothing is paged.
+    pub total: u32,
+}
+
 /// Compose a product from picked gears and ask the engine about it.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -807,6 +858,44 @@ async fn complete_product(
             .collect(),
         config: serde_json::to_value(&completion.config).unwrap_or(Value::Null),
     }))
+}
+
+async fn gear_config_schemas(
+    Extension(product): Extension<Product>,
+    Json(body): Json<GearConfigSchemaRequest>,
+) -> ApiResult<JsonBody<GearConfigSchemaListDto>> {
+    if body.gears.len() > MAX_SCHEMA_GEARS {
+        return Err(StudioProductError::invalid_argument()
+            .with_constraint(format!(
+                "at most {MAX_SCHEMA_GEARS} gears per request, got {}",
+                body.gears.len()
+            ))
+            .create());
+    }
+    let schemas = product
+        .gearbox()?
+        .config_schemas(&body.gears)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let items: Vec<GearConfigSchemaDto> = schemas
+        .into_iter()
+        .map(|s| GearConfigSchemaDto {
+            gear: s.gear,
+            id: s.id,
+            fields: s
+                .fields
+                .into_iter()
+                .map(|f| GearConfigFieldDto {
+                    name: f.name,
+                    required: f.required,
+                    default: f.default,
+                    derived: f.derived,
+                })
+                .collect(),
+        })
+        .collect();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(GearConfigSchemaListDto { items, total }))
 }
 
 async fn gearbox_catalogue(
@@ -1411,6 +1500,31 @@ pub fn register_routes(
         .handler(complete_product)
         .json_request::<CompleteProductRequest>(openapi, "Picked gears")
         .json_response_with_schema::<CompleteProductDto>(openapi, StatusCode::OK, "Completed picks")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-product/v1/gearbox/config-schema")
+        .operation_id("studio_product.query_gear_config_schemas")
+        .summary("The configuration fields of named gears, as their gear.gdl declares them")
+        .description(
+            "For each named gear (crate name or engine id, at most 200): its config \
+             fields with `required`, `default`, and `derived` for the addresses \
+             generation writes. A required field with no default that the product \
+             does not set is what makes the engine refuse it. A gear the corpus \
+             does not describe answers with no `id` and no fields. Writes nothing.",
+        )
+        .tag("StudioProduct")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(gear_config_schemas)
+        .json_request::<GearConfigSchemaRequest>(openapi, "Gears to describe")
+        .json_response_with_schema::<GearConfigSchemaListDto>(
+            openapi,
+            StatusCode::OK,
+            "Config schemas",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

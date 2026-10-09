@@ -2167,6 +2167,24 @@ export interface ProductChange {
  *  Written into product.gdl as the gear's or plugin's `config`. */
 export type GearConfig = Record<string, Record<string, unknown>>;
 
+/** One config field of a gear, from its gear.gdl. */
+export interface GearConfigField {
+  name: string;
+  required: boolean;
+  /** Absent when the gear has no default. */
+  default?: unknown;
+  /** Written by generation from the topology (an address); not the product's. */
+  derived: boolean;
+}
+
+/** A gear's config schema, keyed by the name it was asked for. */
+export interface GearConfigSchema {
+  gear: string;
+  /** The engine id; absent when no gear.gdl in the corpus describes it. */
+  id?: string | null;
+  fields: GearConfigField[];
+}
+
 export interface ProjectProduct {
   project_id?: string;
   /** The product's configuration of its gears (see GearConfig). */
@@ -4004,6 +4022,15 @@ export const api = {
       `/studio-product/v1/gearbox/complete`,
       token,
       { method: "POST", body: JSON.stringify({ gears, config: config ?? {} }) },
+    ),
+  /** Each named gear's config fields as its gear.gdl declares them: required,
+   *  default, and `derived` for what generation writes. Names as the picks
+   *  spell them; a gear the corpus does not describe comes back without `id`. */
+  gearConfigSchemas: (token: string, gears: string[]) =>
+    request<{ items: GearConfigSchema[]; total: number }>(
+      `/studio-product/v1/gearbox/config-schema`,
+      token,
+      { method: "POST", body: JSON.stringify({ gears }) },
     ),
   /** Whether product previews can run, and against which gear corpus. */
   gearboxStatus: (token: string) =>

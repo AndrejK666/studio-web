@@ -3111,6 +3111,23 @@
     },
     {
       "method": "POST",
+      "path": "/studio-product/v1/gearbox/config-schema",
+      "operation_id": "studio_product.query_gear_config_schemas",
+      "tag": "StudioProduct",
+      "summary": "The configuration fields of named gears, as their gear.gdl declares them",
+      "authenticated": true,
+      "request": "GearConfigSchemaRequest",
+      "responses": [
+        "GearConfigSchemaListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-product/v1/gearbox/corpus/git-upload-pack",
       "operation_id": "studio_product.pull_corpus_pack",
       "tag": "StudioProduct",

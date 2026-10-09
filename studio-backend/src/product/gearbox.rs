@@ -190,6 +190,83 @@ impl EngineGear {
     }
 }
 
+impl EngineGear {
+    /// The config fields generation writes from the topology: each endpoint's
+    /// `config_key` (an address). A person never sets these.
+    fn derived_config(&self) -> BTreeSet<&str> {
+        self.serves
+            .iter()
+            .filter_map(|e| e.config_key.as_deref())
+            .collect()
+    }
+}
+
+/// One field of a gear's configuration, as a form asks for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfigFieldInfo {
+    pub name: String,
+    pub required: bool,
+    /// What the gear falls back to; `None` when it has none (a JSON `null`
+    /// default is no default).
+    pub default: Option<Value>,
+    /// Written by generation from the topology (`serves[].config_key`), so
+    /// not the product's to set.
+    pub derived: bool,
+}
+
+/// One requested gear's configuration schema.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GearConfigSchema {
+    /// The name as it was asked for (crate name or engine id), so a caller
+    /// joins it to its own picks and config keys unchanged.
+    pub gear: String,
+    /// The engine id; `None` when no `gear.gdl` in the corpus describes it.
+    pub id: Option<String>,
+    /// In the order the gear declares them.
+    pub fields: Vec<ConfigFieldInfo>,
+}
+
+/// The config schema of each named gear, in the order asked, duplicates
+/// dropped. A name the corpus does not describe answers with `id: None` and
+/// no fields rather than failing the rest.
+pub fn config_schemas(catalogue: &EngineCatalogue, names: &[String]) -> Vec<GearConfigSchema> {
+    let mut seen = BTreeSet::new();
+    names
+        .iter()
+        .filter(|n| seen.insert(n.as_str()))
+        .map(|name| {
+            let Some(g) = catalogue.find(name) else {
+                return GearConfigSchema {
+                    gear: name.clone(),
+                    id: None,
+                    fields: Vec::new(),
+                };
+            };
+            let derived = g.derived_config();
+            let fields = g
+                .config_schema
+                .as_ref()
+                .map(|s| {
+                    s.fields
+                        .iter()
+                        .map(|f| ConfigFieldInfo {
+                            name: f.name.clone(),
+                            required: f.required,
+                            default: f.default.clone().filter(|v| !v.is_null()),
+                            derived: derived.contains(f.name.as_str()),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            GearConfigSchema {
+                gear: name.clone(),
+                id: Some(g.id.clone()),
+                fields,
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct EngineFills {
     pub point: EnginePoint,
@@ -428,11 +505,7 @@ impl EngineCatalogue {
     /// Required fields a person would have to write: required, no default,
     /// and not an address generation writes from the topology.
     fn unset_config(&self, g: &EngineGear) -> Vec<String> {
-        let derived: BTreeSet<&str> = g
-            .serves
-            .iter()
-            .filter_map(|e| e.config_key.as_deref())
-            .collect();
+        let derived = g.derived_config();
         g.config_schema
             .as_ref()
             .map(|s| {
@@ -1808,6 +1881,12 @@ impl Gearbox {
         Ok(complete(&catalogue, picked, config))
     }
 
+    /// [`config_schemas`] against the current corpus.
+    pub async fn config_schemas(&self, names: &[String]) -> anyhow::Result<Vec<GearConfigSchema>> {
+        let (_, _, catalogue) = self.ensure_corpus().await?;
+        Ok(config_schemas(&catalogue, names))
+    }
+
     /// The extension points a new plugin gear can fill, one per host.
     pub async fn extension_points(&self) -> anyhow::Result<Vec<HostPoint>> {
         let (_, _, catalogue) = self.ensure_corpus().await?;
@@ -2416,6 +2495,72 @@ mod tests {
         std::fs::write(deep.join("gear.gdl"), "gear()").expect("write");
         assert!(holds_description(&root, 0));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_config_schema_says_what_is_required_defaulted_and_written_by_generation() {
+        let schemas = config_schemas(
+            &corpus(),
+            &names(&[
+                "cf-gears-event-broker",
+                "api-gateway",
+                "cf-gears-types-registry",
+                "cf-gears-nowhere",
+                "cf-gears-event-broker",
+            ]),
+        );
+        let asked: Vec<&str> = schemas.iter().map(|s| s.gear.as_str()).collect();
+        assert_eq!(
+            asked,
+            [
+                "cf-gears-event-broker",
+                "api-gateway",
+                "cf-gears-types-registry",
+                "cf-gears-nowhere"
+            ],
+            "in the order asked, each once, by the name it was asked by"
+        );
+
+        let broker = &schemas[0];
+        assert_eq!(broker.id.as_deref(), Some("event-broker"));
+        let field = |name: &str| ConfigFieldInfo {
+            name: name.to_string(),
+            required: false,
+            default: None,
+            derived: false,
+        };
+        assert_eq!(
+            broker.fields,
+            [
+                ConfigFieldInfo {
+                    required: true,
+                    ..field("mode")
+                },
+                ConfigFieldInfo {
+                    required: true,
+                    default: Some(json!("7d")),
+                    ..field("retention")
+                },
+                field("tuning"),
+            ],
+            "a null default is no default; declaration order is kept"
+        );
+
+        let gateway = &schemas[1];
+        assert_eq!(
+            gateway.fields,
+            [ConfigFieldInfo {
+                required: true,
+                derived: true,
+                ..field("bind_addr")
+            }],
+            "an endpoint's config_key is generation's to write"
+        );
+
+        assert_eq!(schemas[2].id.as_deref(), Some("types-registry"));
+        assert!(schemas[2].fields.is_empty(), "no schema, no fields");
+        assert_eq!(schemas[3].id, None, "not in the corpus");
+        assert!(schemas[3].fields.is_empty());
     }
 
     #[test]
