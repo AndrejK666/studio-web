@@ -631,7 +631,10 @@ pub fn read_failure_hint(error: &str) -> Option<String> {
         );
     }
     if e.contains("401") || e.contains("403") || e.contains("bad credentials") {
-        return Some("The connection's token was refused by the provider: renew it on the Connections page.".to_owned());
+        return Some(
+            "The connection's token was refused by the provider: renew it on the Connections page."
+                .to_owned(),
+        );
     }
     if e.contains("404") || e.contains("not found") {
         return Some("The repository or branch was not found with this connection: check the project's Sources.".to_owned());
@@ -641,7 +644,11 @@ pub fn read_failure_hint(error: &str) -> Option<String> {
 
 /// The last walk's statuses after `walked`: a full walk replaces them, a walk
 /// over named projects replaces only theirs.
-pub fn merge_walks(previous: Vec<ProjectWalk>, walked: Vec<ProjectWalk>, full: bool) -> Vec<ProjectWalk> {
+pub fn merge_walks(
+    previous: Vec<ProjectWalk>,
+    walked: Vec<ProjectWalk>,
+    full: bool,
+) -> Vec<ProjectWalk> {
     if full {
         return walked;
     }
@@ -1026,7 +1033,11 @@ impl CatalogService {
         // What each project's read came to, for the page's project list.
         let mut settings = self.settings(ctx).await?;
         settings.organization_id = Some(org);
-        settings.last_walk = merge_walks(std::mem::take(&mut settings.last_walk), statuses, only.is_empty());
+        settings.last_walk = merge_walks(
+            std::mem::take(&mut settings.last_walk),
+            statuses,
+            only.is_empty(),
+        );
         self.sink
             .upsert(
                 ctx,
