@@ -28,10 +28,12 @@ import {
   groupDiagnostics,
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
+import { ScaffoldModal } from "./documents";
 import {
   candidateReasons,
   candidateStrength,
   coverageSummary,
+  gearProblem,
   lookingFor,
   picksBeyondShortlist,
   rowCoverage,
@@ -551,6 +553,8 @@ function SuggestedComponents({
   const nav = usePortalNav();
   /** Rows whose "why" is open: `true` for the capability, a name for one candidate. */
   const [whyOpen, setWhyOpen] = useState<Record<string, string | true>>({});
+  /** The capability a new gear is being scaffolded for. */
+  const [scaffoldFor, setScaffoldFor] = useState<PlanRow | null>(null);
   const toggleWhy = (capability: string, candidate?: string) =>
     setWhyOpen((current) => {
       const next = { ...current };
@@ -705,6 +709,10 @@ function SuggestedComponents({
                 const shown = typeof open === "string" ? row.candidates.find((c) => c.name === open) : undefined;
                 const beyond = composing ? picksBeyondShortlist(row, product.picks) : [];
                 const rowSources = sources[row.capability] ?? [];
+                // Nothing in the product closes it and nothing built could:
+                // the honest next step is a gear of the project's own.
+                const needsGear =
+                  !row.nonfunctional && (row.gap || row.unbuilt || (composing && cover.cover === "open" && !row.candidates.some((c) => c.built === "built")));
                 const reasons = open === true ? specReasons(row) : [];
                 return (
                   <div
@@ -762,10 +770,21 @@ function SuggestedComponents({
                           WHERE IT RUNS — THE PROFILE, NOT A GEAR
                         </span>
                       )}
+                      {needsGear && (
+                        <button
+                          type="button"
+                          className="linklike"
+                          style={{ marginLeft: "auto", fontSize: 12 }}
+                          title="Scaffold a gear for it in the project's gear repository, with the specs' requirements as its PRD"
+                          onClick={() => setScaffoldFor(row)}
+                        >
+                          Create a gear for it
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="linklike"
-                        style={{ marginLeft: "auto", fontSize: 12 }}
+                        style={{ marginLeft: needsGear ? undefined : "auto", fontSize: 12 }}
                         aria-expanded={open === true}
                         onClick={() => toggleWhy(row.capability)}
                       >
@@ -912,6 +931,19 @@ function SuggestedComponents({
             </div>
           </>
         ))}
+      {scaffoldFor && (
+        <ScaffoldModal
+          capability={scaffoldFor.capability}
+          token={token}
+          projectTenantId={projectId}
+          problem={gearProblem(scaffoldFor)}
+          declares={[scaffoldFor.capability]}
+          onClose={() => {
+            setScaffoldFor(null);
+            void suggest();
+          }}
+        />
+      )}
     </section>
   );
 }

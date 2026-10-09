@@ -5,6 +5,7 @@ import {
   candidateReasons,
   candidateStrength,
   coverageSummary,
+  gearProblem,
   lookingFor,
   picksBeyondShortlist,
   rowCoverage,
@@ -124,5 +125,23 @@ describe("why the specs ask", () => {
       "Gears are matched by contracts authn/Api, then by words “login”.",
     );
     expect(lookingFor(row("auth"))).toBe("Gears are matched by words “auth”.");
+  });
+});
+
+describe("a gear made for what nothing closes", () => {
+  it("starts its PRD from the specs that ask for it", () => {
+    expect(
+      gearProblem(
+        row("audit", {
+          label: "Audit log",
+          sources: [
+            { kind: "file", id: "1", label: "docs/PRD.md", inferred: true, because: ["5.4 Audit trail"] },
+            { kind: "document", id: "2", label: "Security", inferred: false },
+          ],
+        }),
+      ),
+    ).toBe(
+      "The project needs Audit log (audit), and no gear in the catalogue closes it. The specs that ask for it: docs/PRD.md: “5.4 Audit trail”; Security.",
+    );
   });
 });

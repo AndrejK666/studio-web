@@ -156,6 +156,10 @@ pub struct ScaffoldRequest {
     /// For a `plugin` whose host declares more than one extension point: which
     /// one, by its GTS spec id, from `GET /gearbox/extension-points`.
     pub plugin_spec: Option<String>,
+    /// Capability keys the gear provides, written into its `gear.toml`, so the
+    /// gear declares them once the catalogue syncs it (`auth`, `storage`).
+    /// Ignored with `files`.
+    pub capabilities: Option<Vec<String>>,
 }
 
 /// Whether product previews can run here, and against which gear corpus.
@@ -493,6 +497,7 @@ async fn scaffold_gear(
                 parent_dir,
                 gear_gdl,
                 plugin,
+                capabilities: body.capabilities.clone().unwrap_or_default(),
             })
             .1
         }

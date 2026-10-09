@@ -3947,6 +3947,9 @@ export const api = {
       plugin_host?: string;
       /** Which of the host's points, by GTS spec id. */
       plugin_spec?: string;
+      /** Capability keys written into its gear.toml, so it declares them
+       *  once the catalogue syncs it. */
+      capabilities?: string[];
       files?: ScaffoldFile[];
       dry_run?: boolean;
       open_pr?: boolean;

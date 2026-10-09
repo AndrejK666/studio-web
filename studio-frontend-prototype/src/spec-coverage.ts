@@ -135,3 +135,16 @@ export function candidateReasons(c: Candidate, capability: string): string[] {
   if (c.composable === "undescribed") lines.push("No gear.gdl describes it, so the Gearbox engine cannot compose it yet.");
   return lines;
 }
+
+/** The opening sentence of a gear made for a capability nothing closes: what
+ *  the specs ask of it, naming the documents and requirements that do. It
+ *  becomes the new gear's PRD problem, so the gear starts from the spec. */
+export function gearProblem(row: PlanRow): string {
+  const name =
+    row.label && row.label.toLowerCase() !== row.capability ? `${row.label} (${row.capability})` : row.capability;
+  const asked = (row.sources ?? []).map((s) =>
+    s.inferred && s.because && s.because.length > 0 ? `${s.label}: ${s.because.map(quote).join(", ")}` : s.label,
+  );
+  const docs = asked.length > 0 ? ` The specs that ask for it: ${asked.join("; ")}.` : "";
+  return `The project needs ${name}, and no gear in the catalogue closes it.${docs}`;
+}
