@@ -12,6 +12,7 @@ mod cratesio;
 pub(crate) mod field_schema;
 mod history;
 pub mod port;
+mod project_gears;
 mod quality;
 pub(crate) mod reference;
 mod repo_enrich;

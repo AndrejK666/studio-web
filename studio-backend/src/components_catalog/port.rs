@@ -179,6 +179,18 @@ pub trait ComponentCatalog: Send + Sync {
         project_id: &str,
     ) -> anyhow::Result<Option<(String, std::collections::BTreeSet<String>)>>;
 
+    /// The gears the project's own code declares -- a `gear.toml` or
+    /// `gear.gdl` directory, or `#[toolkit::gear(name = ...)]` in its Rust
+    /// source -- read from the same repositories as
+    /// [`Self::project_dependencies`], in the shape of [`Self::components`]:
+    /// nodes marked `origin: "project"` with their repository `path`, and
+    /// profiles by gear name. Empty when the project has no code to read.
+    async fn project_gears(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<(Vec<Value>, Map<String, Value>)>;
+
     /// What the Gearbox engine would add to `gears` for them to resolve, and
     /// what it says cannot run. `None` when no engine is configured.
     async fn engine_completion(
@@ -238,6 +250,15 @@ impl ComponentCatalog for CatalogComponents {
         project_id: &str,
     ) -> anyhow::Result<Option<(String, std::collections::BTreeSet<String>)>> {
         self.service.project_dependencies(ctx, project_id).await
+    }
+
+    async fn project_gears(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<(Vec<Value>, Map<String, Value>)> {
+        let gears = self.service.project_gears(ctx, project_id).await?;
+        Ok(super::project_gears::catalogue_shape(&gears))
     }
 
     async fn engine_completion(

@@ -2862,22 +2862,28 @@ function kindColor(kind: string): string {
 
 // ── Scaffolding: a starter gear for a capability gap ──────────────────────
 //
-// The skeleton is generated server-side (components_catalog/skeleton.rs). This
+// The skeleton is generated server-side (product/skeleton.rs). This
 // screen asks for it with `dry_run` to show it, then asks again to write it --
 // rather than composing the files here and posting them, which is what made the
 // browser the only thing that knew what a gear looks like.
 
-function ScaffoldModal({
+export function ScaffoldModal({
   capability,
   token,
   projectTenantId,
+  problem,
+  declares,
   onBack,
   onClose,
 }: {
   capability: string;
   token: string;
   projectTenantId: string;
-  onBack: () => void;
+  /** The PRD's opening sentence: what the specs ask of the gear. */
+  problem?: string;
+  /** Capability keys written into its gear.toml, so it declares them. */
+  declares?: string[];
+  onBack?: () => void;
   onClose: () => void;
 }) {
   const [active, setActive] = useState(0);
@@ -2895,7 +2901,7 @@ function ScaffoldModal({
     let alive = true;
     setPushErr(null);
     api
-      .scaffoldGearToRepo(token, projectTenantId, { slug: capability, dry_run: true })
+      .scaffoldGearToRepo(token, projectTenantId, { slug: capability, problem, capabilities: declares, dry_run: true })
       .then((r) => {
         if (alive) setFiles(r.files);
       })
@@ -2905,7 +2911,9 @@ function ScaffoldModal({
     return () => {
       alive = false;
     };
-  }, [token, projectTenantId, capability]);
+    // `declares` is a fresh array per render; its content is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, projectTenantId, capability, problem, (declares ?? []).join(",")]);
 
   const file = files?.[active];
   const copy = () => {
@@ -2918,6 +2926,8 @@ function ScaffoldModal({
     try {
       const r = await api.scaffoldGearToRepo(token, projectTenantId, {
         slug: capability,
+        problem,
+        capabilities: declares,
         open_pr: openPr,
       });
       setResult({ branch: r.branch, pr_url: r.pr_url });
@@ -2931,7 +2941,7 @@ function ScaffoldModal({
   return (
     <Modal label="Scaffold gear" onClose={onClose} cardStyle={{ width: "min(860px, 100%)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <button onClick={onBack} title="Back to plan">←</button>
+          {onBack && <button onClick={onBack} title="Back to plan">←</button>}
           <span style={{ fontSize: 14, fontWeight: 700 }}>Scaffold gear</span>
           <code style={{ fontSize: 12 }}>cf-gears-{slug}</code>
           <button onClick={onClose} style={{ marginLeft: "auto" }} aria-label="Close">✕</button>

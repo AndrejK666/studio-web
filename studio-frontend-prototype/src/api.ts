@@ -360,6 +360,12 @@ export interface DeclaredCapability {
     inferred?: boolean;
     /** For an inferred capability, the requirements that imply it. */
     because?: string[];
+    /** For an inferred capability, the capability's words those requirements
+     *  use. Empty until a document indexed before this was kept is read again. */
+    terms?: string[];
+    /** For an inferred capability, how many requirements mention it; `because`
+     *  lists the first few. */
+    requirements?: number;
     /** `false` for a repository file nobody has confirmed on the Specs tab. */
     confirmed?: boolean;
   }[];
@@ -518,6 +524,11 @@ export interface Candidate {
   composable: Composability;
   /** The engine's reason, when `blocked`. */
   composable_why?: string | null;
+  /** `project` when the project's own repository declares this gear (whether
+   *  or not the catalogue lists it too); `catalogue` otherwise. */
+  origin?: "catalogue" | "project";
+  /** For a `project` gear, where it lives in the repository. */
+  path?: string | null;
 }
 
 /** Why a candidate was offered, in the words of the step that offered it. */
@@ -540,6 +551,17 @@ export interface PlanRow {
   nonfunctional?: boolean;
   /** The documents that need it, when the plan was read for a project. */
   sources?: DeclaredCapability["sources"];
+  /** The capability's name in the vocabulary (project plans only). */
+  label?: string | null;
+  /** The words a gear is looked for with; empty means the key itself. */
+  terms?: string[];
+  /** The contracts that satisfy it. */
+  contracts?: string[];
+  /** Every component that fills it, past the shortlist in `candidates`:
+   *  what the product's picks are checked against. Rejected gears are left
+   *  out. `strong`: a contract, a declaration or a member's confirmation;
+   *  otherwise only its words were found. */
+  providers?: { name: string; strong: boolean }[];
 }
 
 /** One weekly bar of a gear's churn. */
@@ -2098,7 +2120,7 @@ export interface ProjectGearRepo {
   branch?: string;
 }
 
-/** Whether product previews run here (`components_catalog/gearbox.rs`), and
+/** Whether product previews run here (`product/gearbox.rs`), and
  *  the gear corpus they resolve against — which a product project's IDE
  *  session checks out beside the project under `source_id`. */
 export interface GearboxStatus {
@@ -2144,6 +2166,24 @@ export interface ProductChange {
 /** How a product configures its gears: gear crate name -> field -> value.
  *  Written into product.gdl as the gear's or plugin's `config`. */
 export type GearConfig = Record<string, Record<string, unknown>>;
+
+/** One config field of a gear, from its gear.gdl. */
+export interface GearConfigField {
+  name: string;
+  required: boolean;
+  /** Absent when the gear has no default. */
+  default?: unknown;
+  /** Written by generation from the topology (an address); not the product's. */
+  derived: boolean;
+}
+
+/** A gear's config schema, keyed by the name it was asked for. */
+export interface GearConfigSchema {
+  gear: string;
+  /** The engine id; absent when no gear.gdl in the corpus describes it. */
+  id?: string | null;
+  fields: GearConfigField[];
+}
 
 export interface ProjectProduct {
   project_id?: string;
@@ -3906,7 +3946,7 @@ export const api = {
    *  (branch off the connected base branch, one commit, optional PR). */
   /** Scaffold a starter gear into the project's connected gear repo.
    *
-   *  The skeleton is generated SERVER-side (`components_catalog/skeleton.rs`).
+   *  The skeleton is generated SERVER-side (`product/skeleton.rs`).
    *  This used to send the files, which made the browser the only thing that
    *  knew what a gear looks like — so the same request could not be made
    *  without one, and any other caller had to reinvent the layout. `files` is
@@ -3930,6 +3970,9 @@ export const api = {
       plugin_host?: string;
       /** Which of the host's points, by GTS spec id. */
       plugin_spec?: string;
+      /** Capability keys written into its gear.toml, so it declares them
+       *  once the catalogue syncs it. */
+      capabilities?: string[];
       files?: ScaffoldFile[];
       dry_run?: boolean;
       open_pr?: boolean;
@@ -3979,6 +4022,15 @@ export const api = {
       `/studio-product/v1/gearbox/complete`,
       token,
       { method: "POST", body: JSON.stringify({ gears, config: config ?? {} }) },
+    ),
+  /** Each named gear's config fields as its gear.gdl declares them: required,
+   *  default, and `derived` for what generation writes. Names as the picks
+   *  spell them; a gear the corpus does not describe comes back without `id`. */
+  gearConfigSchemas: (token: string, gears: string[]) =>
+    request<{ items: GearConfigSchema[]; total: number }>(
+      `/studio-product/v1/gearbox/config-schema`,
+      token,
+      { method: "POST", body: JSON.stringify({ gears }) },
     ),
   /** Whether product previews can run, and against which gear corpus. */
   gearboxStatus: (token: string) =>
@@ -4101,6 +4153,23 @@ export const api = {
     try {
       await request<unknown>(`/credstore/v1/secrets/${encodeURIComponent(reference)}`, token);
       return "ok";
+    } catch {
+      return "broken";
+    }
+  },
+  /**
+   * Whether the caller keeps a PRIVATE secret under `reference` — their own.
+   * Credstore answers a tenant-shared value when they keep none, and the
+   * model-provider proxy ignores such a value, so a profile must not call it
+   * "set".
+   */
+  checkOwnSecret: async (token: string, reference: string): Promise<"ok" | "broken"> => {
+    try {
+      const secret = await request<{ metadata?: { sharing?: string } }>(
+        `/credstore/v1/secrets/${encodeURIComponent(reference)}`,
+        token,
+      );
+      return secret?.metadata?.sharing?.toLowerCase() === "private" ? "ok" : "broken";
     } catch {
       return "broken";
     }

@@ -806,6 +806,8 @@ impl DocumentsService {
                     CapabilitySource {
                         inferred: true,
                         because: i.because.clone(),
+                        terms: i.terms.clone(),
+                        requirements: i.count,
                         ..source.clone()
                     },
                 );
@@ -820,6 +822,8 @@ impl DocumentsService {
                 node_id: None,
                 inferred: false,
                 because: Vec::new(),
+                terms: Vec::new(),
+                requirements: 0,
                 confirmed: true,
             };
             add_all(&source, &doc.capabilities, &doc.inferred_capabilities);
@@ -847,6 +851,8 @@ impl DocumentsService {
                 node_id: Some(binding.node_id.clone()),
                 inferred: false,
                 because: Vec::new(),
+                terms: Vec::new(),
+                requirements: 0,
                 confirmed,
             };
             add_all(
@@ -1898,6 +1904,12 @@ pub struct CapabilitySource {
     pub inferred: bool,
     /// For an inferred capability, the requirements that imply it.
     pub because: Vec<String>,
+    /// For an inferred capability, the capability's words those requirements
+    /// use.
+    pub terms: Vec<String>,
+    /// For an inferred capability, how many requirements mention it; `because`
+    /// keeps the first few headings only.
+    pub requirements: usize,
     /// A person confirmed the document is what the classifier says, or Studio
     /// holds it. `false` for a repository file still awaiting review.
     pub confirmed: bool,

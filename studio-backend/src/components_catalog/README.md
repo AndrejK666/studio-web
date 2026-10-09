@@ -48,5 +48,13 @@ This README is what you need to work in the directory.
 - Board reading: [`roadmap.rs`](roadmap.rs). Repository facts:
   [`repo_facts.rs`](repo_facts.rs), pure functions tested against real
   fragments of `gears-rust`.
+- A project's own gears (`ComponentCatalog::project_gears`):
+  [`project_gears.rs`](project_gears.rs) — a `gear.toml`/`gear.gdl` directory
+  or a `#[toolkit::gear(name = …)]` attribute in the project's repository,
+  read by `RepoEnricher::project_gears` from the repositories
+  `project_dependencies` reads. Bounded (150 Rust files by name, 80 gears,
+  256 KiB a file) and cached per repository until one of the files it read
+  changes. Not stored in the graph: they are the project's, not the
+  organization's catalogue.
 - `ComponentCatalog::engine_completion` in [`port.rs`](port.rs) calls
   studio-product's engine; it is to move to studio-product.

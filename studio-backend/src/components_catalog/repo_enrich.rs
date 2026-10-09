@@ -26,6 +26,7 @@ use toolkit_security::SecurityContext;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use super::project_gears;
 use super::repo_facts::{self, CommitFacts, SpecStats, Version};
 use crate::connectors::sdk::ConnectorService;
 use crate::connectors::sdk::{RemoteFileList, Repository};
@@ -643,6 +644,183 @@ impl RepoEnricher {
             }
         }
         Ok(out)
+    }
+
+    /// The gears this repository declares itself: by a `gear.toml` or
+    /// `gear.gdl` directory, and by `#[toolkit::gear(name = …)]` in Rust
+    /// source (`project_gears` holds the rules and the bounds). Read again
+    /// only when one of the files it was read from changed: the tree listing
+    /// is the one request a repeated call costs.
+    pub async fn project_gears(
+        &self,
+        ctx: &SecurityContext,
+        cache: &project_gears::Cache,
+    ) -> Result<Arc<Vec<project_gears::LocalGear>>> {
+        use project_gears::{LocalGear, MAX_FILE_BYTES, MAX_PROJECT_GEARS};
+
+        let src = self.open(ctx).await?;
+        let tree = self.tree(&src).await?;
+        if tree.truncated {
+            warn!(repo = %self.repo, "studio-components-catalog: repository tree truncated — some of the project's gears may be missing");
+        }
+        let files: Vec<(String, String)> = tree
+            .files
+            .into_iter()
+            .filter(|e| !e.is_dir && e.size.is_none_or(|s| s <= MAX_FILE_BYTES))
+            .map(|e| (e.path, e.sha))
+            .collect();
+        let print = project_gears::fingerprint(&files);
+        let key = format!(
+            "{}/{:?}/{}@{}",
+            self.tenant,
+            self.connection_id,
+            self.repo.to_ascii_lowercase(),
+            self.git_ref
+        );
+        if let Some(hit) = cache.get(&key, print) {
+            return Ok(hit);
+        }
+        let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        let has = |p: &str| paths.contains(&p);
+        let joined = |dir: &str, rel: &str| {
+            if dir.is_empty() {
+                rel.to_string()
+            } else {
+                format!("{dir}/{rel}")
+            }
+        };
+
+        // Described by a manifest: the catalogue's own rule for a gear directory.
+        let mut gears: Vec<LocalGear> = Vec::new();
+        for dir in gear_dirs(&paths).into_iter().take(MAX_PROJECT_GEARS) {
+            let slug = dir
+                .rsplit('/')
+                .next()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| self.repo.rsplit('/').next().unwrap_or(&self.repo))
+                .to_string();
+            let toml_path = joined(&dir, "gear.toml");
+            let gdl_path = [
+                joined(&dir, "gear.gdl"),
+                joined(&dir, &format!("{slug}/gear.gdl")),
+            ]
+            .into_iter()
+            .find(|p| has(p));
+            let toml = if has(&toml_path) {
+                self.read_file(&src, &toml_path)
+                    .await
+                    .map(|b| parse_gear_toml(&b))
+            } else {
+                None
+            };
+            let gdl = match &gdl_path {
+                Some(p) => self.read_file(&src, p).await.map(|b| parse_gear_gdl(&b)),
+                None => None,
+            };
+            let declared = match (gdl, toml) {
+                (Some(g), Some(t)) => g.or(t),
+                (Some(one), None) | (None, Some(one)) => one,
+                (None, None) => DeclaredGear::empty(),
+            };
+            let mut named: Vec<(String, String)> = Vec::new();
+            for rel in ["Cargo.toml".to_string(), format!("{slug}/Cargo.toml")] {
+                let path = joined(&dir, &rel);
+                if has(&path)
+                    && let Some(name) = self
+                        .read_file(&src, &path)
+                        .await
+                        .and_then(|b| cargo_package_name(&b))
+                {
+                    named.push((rel, name));
+                }
+            }
+            let prefix = joined(&dir, "");
+            let plugin = declared.is_plugin == Some(true);
+            gears.push(LocalGear {
+                name: primary_crate(&slug, &named).unwrap_or(slug),
+                kind: if plugin { "plugin" } else { "gear" }.to_string(),
+                description: declared.description,
+                category: declared.category,
+                declared_in: gdl_path.unwrap_or(toml_path),
+                path: dir,
+                repo: self.repo.clone(),
+                capabilities: declared.capabilities.unwrap_or_default(),
+                runtime: Vec::new(),
+                built: paths
+                    .iter()
+                    .any(|p| p.starts_with(&prefix) && p.ends_with(".rs")),
+                doc: None,
+            });
+        }
+
+        // Declared in code, by the toolkit's attribute.
+        let mut bodies: std::collections::HashMap<&str, Option<String>> =
+            std::collections::HashMap::new();
+        for file in project_gears::rust_candidates(&paths) {
+            let body = self.read_file(&src, file).await;
+            let found = body
+                .as_deref()
+                .map(project_gears::code_declarations)
+                .unwrap_or_default();
+            bodies.insert(file, body);
+            if found.is_empty() {
+                continue;
+            }
+            let doc_file = project_gears::doc_file(file, &paths);
+            if !bodies.contains_key(doc_file) {
+                let body = self.read_file(&src, doc_file).await;
+                bodies.insert(doc_file, body);
+            }
+            let description = bodies
+                .get(doc_file)
+                .and_then(|b| b.as_deref())
+                .and_then(project_gears::module_doc);
+            let home = project_gears::rust_home(file);
+            for gear in found {
+                project_gears::absorb(
+                    &mut gears,
+                    LocalGear {
+                        kind: if gear.name.ends_with("-plugin") {
+                            "plugin"
+                        } else {
+                            "gear"
+                        }
+                        .to_string(),
+                        name: gear.name,
+                        description: description.clone(),
+                        category: None,
+                        path: home.clone(),
+                        declared_in: file.to_string(),
+                        repo: self.repo.clone(),
+                        capabilities: Vec::new(),
+                        runtime: gear.runtime,
+                        built: true,
+                        doc: None,
+                    },
+                );
+            }
+        }
+        gears.truncate(MAX_PROJECT_GEARS);
+
+        // Each gear's README, as a document the matching may quote.
+        for gear in &mut gears {
+            let Some(path) = project_gears::readme(&gear.path, &paths) else {
+                continue;
+            };
+            if let Some(body) = self.read_file(&src, path).await {
+                let text = doc_excerpt(&body, DOC_EXCERPT_CHARS);
+                if !text.is_empty() {
+                    gear.doc = Some((path.to_string(), text));
+                }
+            }
+        }
+        info!(
+            repo = %self.repo, gears = gears.len(),
+            "studio-components-catalog: project gears discovered"
+        );
+        let gears = Arc::new(gears);
+        cache.put(key, print, Arc::clone(&gears));
+        Ok(gears)
     }
 
     /// Fetch one text file's raw content, or `None` when it is absent.

@@ -121,6 +121,35 @@ then by how many terms they match, and the shortlist is cut after that sort.
 Components never built are labelled rather than dropped, because a design may
 name a component that is still only a design.
 
+#### Coverage is judged on every provider, and only sure ones close
+
+- [x] `p2` - **ID**: `cpt-studio-principle-spec-mapping-coverage`
+
+The shortlist is what a person reads; it is not what a product is checked
+against. Each plan row also carries its `providers`, every component that fills
+the capability before the cut, so a pick ranked sixth still counts. A provider
+is `strong` when the engine reports a contract it provides, when it declares
+the capability, or when a member confirmed it. A gear found by its words alone
+talks about the subject, which does not prove it does the job, so the screens
+say "only by words" rather than "closed". A rejected gear is no provider.
+
+#### The project's own gears are candidates too
+
+- [ ] `p2` - **ID**: `cpt-studio-principle-spec-mapping-own-gears`
+
+A project that writes gears of its own — Studio itself declares two dozen in
+`studio-backend/src` with `#[toolkit::gear(name = …)]` — would otherwise read
+every capability one of them fills as a gap. A project's plan therefore adds
+the gears its repository declares (a `gear.toml` or `gear.gdl` directory, or
+the toolkit attribute in Rust source) to the catalogue's, read from the same
+repositories as its code dependencies. They are matched by the same rules:
+their name, the first paragraph of their module documentation, the
+capabilities a `gear.toml` declares, and their README as a document to cite. A
+gear the catalogue also lists is one candidate, with the catalogue's facts;
+either way a candidate in the repository is labelled `origin: project` with its
+`path`, so a person can tell "you already have this" from "use this". Reading
+the repository fails quietly: the catalogue's answer stands without it.
+
 #### A decision ranks, and expires with what it was about
 
 - [ ] `p1` - **ID**: `cpt-studio-principle-spec-mapping-decisions-rank`
@@ -170,17 +199,21 @@ organization. A project the caller cannot reach answers 404.
 
 - **Need**: a capability key a project's documents need, with the documents
   that say so. Each source says whether the capability was `inferred` (with the
-  requirement headings `because`) and whether the document is `confirmed`.
+  requirement headings `because`, how many `requirements` mention it and which
+  of its `terms` they use) and whether the document is `confirmed`.
 - **Requirement**: one non-functional statement and its document.
 - **Vocabulary**: per capability key, its `terms`, its `contracts` and whether it
   is `nonfunctional`; the documents gear's catalogue, built-ins overlaid by the
   organization and the workspace.
-- **Plan row**: one capability, its `sources`, its candidates, and whether it is
-  a `gap`, `unbuilt` or `nonfunctional`.
+- **Plan row**: one capability, its `label`, the `terms` and `contracts` it is
+  looked for with, its `sources`, its shortlisted candidates, every `provider`
+  (with whether it is `strong`), and whether it is a `gap`, `unbuilt` or
+  `nonfunctional`.
 - **Candidate**: a gear with the `step` that proposed it (`contract` or
   `evidence`), the `contracts` it provides or the `passage` it was found by
   (and the document it `cites`), its build state, what the engine says, its
-  `version`, and an earlier `decision`.
+  `version`, an earlier `decision`, and its `origin` — `catalogue`, or
+  `project` with its `path` when the project's repository declares it.
 - **Decision**: (document, section, capability, gear) → `confirmed` or
   `rejected`, with who, when, the step, the gear version and the document
   revision.
@@ -194,6 +227,7 @@ flowchart LR
     subgraph spec-mapping[studio-spec-mapping]
         rest[rest.rs] --> plan[plan.rs]
         rest --> reading[reading.rs]
+        rest --> local[local.rs]
     end
     rest -->|SpecNeeds| docs[studio-documents]
     rest -->|ComponentCatalog| catalog[studio-components-catalog]
@@ -234,7 +268,7 @@ the catalogue of `?organization_id=` when one is named. Every list answers
 | Port | Owner | What it answers |
 |------|-------|-----------------|
 | `documents::port::SpecNeeds` | `cpt-studio-component-documents` | The project's workspace after checking the caller reaches it; the workspace's vocabulary; the project's needs and requirements from the document index |
-| `components_catalog::port::ComponentCatalog` | `cpt-studio-component-components-catalog` | Every component and its profile (`gdl_contracts`, `doc_text`, build state); a project's code dependencies; what the engine would change about a set of gears (the catalogue asks studio-product's engine; this call is to move to `cpt-studio-component-product`) |
+| `components_catalog::port::ComponentCatalog` | `cpt-studio-component-components-catalog` | Every component and its profile (`gdl_contracts`, `doc_text`, build state); a project's code dependencies; the gears a project's repository declares, in the same shape; what the engine would change about a set of gears (the catalogue asks studio-product's engine; this call is to move to `cpt-studio-component-product`) |
 | `artifact_ingest::port::MappingDecisionStore` | `cpt-studio-component-artifact-ingest` | Record a decision; list a project's decisions |
 
 A port that is not on the ClientHub makes the routes that need it answer 503;
@@ -265,6 +299,7 @@ sequenceDiagram
     M->>D: SpecNeeds: workspace, vocabulary, needs, requirements
     M->>G: MappingDecisionStore: the project's decisions
     M->>C: ComponentCatalog: components and profiles
+    M->>C: ComponentCatalog: the project's own gears
     M->>M: contract → evidence → gap, ranked by decisions; profile
     M-->>P: rows with sources and candidates, profile
     P->>M: POST /decisions (✓ or ✗ on a candidate)

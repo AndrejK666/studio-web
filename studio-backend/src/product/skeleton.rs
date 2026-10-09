@@ -46,6 +46,10 @@ pub struct SkeletonSpec {
     pub gear_gdl: Option<String>,
     /// Whether the gear is a plugin of some host's extension point.
     pub plugin: bool,
+    /// The capability keys the gear provides, written into `gear.toml` as
+    /// `capabilities = [...]`: the catalogue's sync reads that line as the
+    /// gear declaring them, so the gear closes them once it is synced.
+    pub capabilities: Vec<String>,
 }
 
 /// `My Gear` / `my gear` / `My-Gear` -> `my-gear`.
@@ -139,7 +143,7 @@ pub fn generate(spec: &SkeletonSpec) -> (String, Vec<ScaffoldFile>) {
 
     // One `[gear]` table, a human name, and the three plugin booleans: the
     // shape every gear in `gears-rust` actually has.
-    let gear_toml = format!(
+    let mut gear_toml = format!(
         "[gear]\nname = \"{title}\"\ndescription = \"{} capability for {}. {origin}\"\n\
          category = \"platform\"\nis_plugin = {plugin}\nhas_plugins = false\n\
          has_extension_point = false\n",
@@ -147,6 +151,20 @@ pub fn generate(spec: &SkeletonSpec) -> (String, Vec<ScaffoldFile>) {
         spec.app_title,
         plugin = spec.plugin
     );
+    let keys: Vec<String> = spec
+        .capabilities
+        .iter()
+        .map(|k| k.trim().to_ascii_lowercase())
+        .filter(|k| {
+            !k.is_empty()
+                && k.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .map(|k| format!("\"{k}\""))
+        .collect();
+    if !keys.is_empty() {
+        gear_toml.push_str(&format!("capabilities = [{}]\n", keys.join(", ")));
+    }
     let cargo_toml = format!(
         "[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
          [dependencies]\ntoolkit = {{ workspace = true }}\n\
@@ -221,7 +239,25 @@ mod tests {
             parent_dir: String::new(),
             gear_gdl: None,
             plugin: false,
+            capabilities: Vec::new(),
         }
+    }
+
+    /// The line the catalogue's sync reads as the gear declaring a
+    /// capability: a gear scaffolded for a capability closes it once synced.
+    #[test]
+    fn the_manifest_declares_the_capabilities_it_was_made_for() {
+        let (_, files) = generate(&SkeletonSpec {
+            capabilities: vec!["auth".into(), " Audit_Log ".into(), "bad key\"".into()],
+            ..spec("Audit Log")
+        });
+        let manifest = &files[0].content;
+        assert!(
+            manifest.contains("capabilities = [\"auth\", \"audit_log\"]\n"),
+            "{manifest}"
+        );
+        let (_, plain) = generate(&spec("Audit Log"));
+        assert!(!plain[0].content.contains("capabilities"));
     }
 
     #[test]

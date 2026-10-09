@@ -10,6 +10,7 @@ import {
   type PlanRow,
   type ProfileAdvice,
   type KitMaterialization,
+  type Conformance,
   type ProductChange,
   type ProductPreview,
   type ProjectProduct,
@@ -18,6 +19,7 @@ import {
 } from "./api";
 import { When, useConfirm } from "./data-table";
 import { errText } from "./format";
+import { GearConfigForm } from "./gear-config-form";
 import {
   PRODUCT_PROFILES,
   defaultPicks,
@@ -28,7 +30,32 @@ import {
   groupDiagnostics,
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
+import { ScaffoldModal } from "./documents";
+import {
+  candidateReasons,
+  candidateStrength,
+  coverageSummary,
+  gearProblem,
+  lookingFor,
+  picksBeyondShortlist,
+  rowCoverage,
+  specReasons,
+} from "./spec-coverage";
 import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
+import {
+  alsoCovers,
+  applyFix,
+  codeDiff,
+  codeFor,
+  codeGears,
+  fixesFrom,
+  nextStep,
+  plainText,
+  rowShortlist,
+  type Fix,
+  type NextAction,
+  type NextStep,
+} from "./components-flow";
 
 export function ProjectKits({
   token,
@@ -61,7 +88,18 @@ export function ProjectKits({
   const reconciled = useRef(new Set<string>());
   const product = useProjectProduct(token, projectId, projectName);
   /** How many capabilities the documents declare; null until they are read. */
-  const [capCount, setCapCount] = useState<number | null>(null);
+  /** What section 1 found: capabilities asked, how many the product leaves
+   *  open, and the recommended gears. */
+  const [flow, setFlow] = useState<{ capabilities: number | null; open: number; recommended: string[] }>({
+    capabilities: null,
+    open: 0,
+    recommended: [],
+  });
+  /** What the product card last heard from the engine. */
+  const [verdict, setVerdict] = useState<{ resolves: boolean | null; fixes: number }>({ resolves: null, fixes: 0 });
+  /** The next-step line asks the product card to act. */
+  const [command, setCommand] = useState<{ kind: ProductCommand; at: number } | null>(null);
+  const code = useCodeReport(token, projectId, workspaceId, section === "components");
 
   const reload = useCallback(async () => {
     setError(null);
@@ -239,7 +277,25 @@ export function ProjectKits({
           button further down, which is the answer before the question. */}
       {section === "components" && (
         <>
-      <JourneyStrip capabilities={capCount} product={product} />
+      <NextStepBar
+        step={nextStep({
+          capabilities: flow.capabilities,
+          open: flow.open,
+          picks: product.picks.length,
+          inCode: code.report ? codeGears(code.report).length : null,
+          resolves: verdict.resolves,
+          fixes: verdict.fixes,
+          written: !!product.record?.written && verdict.resolves !== null,
+          composing: product.composing,
+        })}
+        onAct={(action) => {
+          if (action === "add-recommended") {
+            product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
+          } else {
+            setCommand({ kind: action, at: Date.now() });
+          }
+        }}
+      />
       {product.gearbox && !product.gearbox.enabled && (
         <p className="hint" style={{ fontSize: 12 }}>
           Composing a product from gears needs the Gearbox engine, which is off in this deployment
@@ -250,12 +306,20 @@ export function ProjectKits({
         token={token}
         projectId={projectId}
         product={product}
-        onCapabilities={setCapCount}
+        code={code}
+        onFlow={setFlow}
       />
       {product.composing && (
-        <ProductCard token={token} projectId={projectId} projectName={projectName} product={product} />
+        <ProductCard
+          token={token}
+          projectId={projectId}
+          projectName={projectName}
+          product={product}
+          code={code}
+          command={command}
+          onVerdict={setVerdict}
+        />
       )}
-      <SpecAgainstCode token={token} projectId={projectId} workspaceId={workspaceId} />
         </>
       )}
       {section === "kits" && (
@@ -424,12 +488,19 @@ export function ProjectKits({
  *  code depends on a component that fills it; the components the code uses
  *  that no capability accounts for; and the Gearbox engine's view of the
  *  code's own gears. */
-function SpecAgainstCode({ token, projectId, workspaceId }: { token: string; projectId: string; workspaceId: string }) {
-  const [report, setReport] = useState<import("./api").Conformance | null>(null);
+type ProductCommand = Exclude<NextAction, "add-recommended">;
+
+/** What the code depends on, against what the specs declare: read from every
+ *  Cargo.toml in the project's repositories (`POST /conformance`). Read on
+ *  arrival, because section 1 shows it per capability and the product card
+ *  starts the product from it. */
+type CodeReport = { report: Conformance | null; busy: boolean; error: string | null; reload: () => void };
+
+function useCodeReport(token: string, projectId: string, workspaceId: string, on: boolean): CodeReport {
+  const [report, setReport] = useState<Conformance | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const nav = usePortalNav();
-  const compare = async () => {
+  const load = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
@@ -443,78 +514,46 @@ function SpecAgainstCode({ token, projectId, workspaceId }: { token: string; pro
     } finally {
       setBusy(false);
     }
+  }, [token, projectId, workspaceId]);
+  useEffect(() => {
+    if (on) void load();
+  }, [on, load]);
+  return { report, busy, error, reload: () => void load() };
+}
+
+/** The page's one sentence: where the person is, and the button for the next
+ *  step. It replaces three tiles that had to be read and combined. */
+function NextStepBar({ step, onAct }: { step: NextStep; onAct: (action: NextAction) => void }) {
+  const label: Record<NextAction, string> = {
+    "add-recommended": "Add the recommended gears",
+    "take-from-code": "Take the product from the code",
+    preview: "Check it",
+    fix: "Show the fixes",
+    build: "Build it in Studio-ide →",
+    open: "Open in Studio-ide",
   };
-  const missing = report?.items.filter((r) => r.status === "missing").length ?? 0;
   return (
-    <div className="card" style={{ marginTop: 12 }} data-spec-against-code>
-      <div className="card-head">
-        <div>
-          <h2>Specs ↔ code</h2>
-          <p className="subtitle">
-            What the project&apos;s documents declare, against what its code depends on — read from every
-            Cargo.toml in the gear repository.
-          </p>
-        </div>
-        <button className="ghost" disabled={busy} onClick={() => void compare()}>
-          {busy ? "Comparing…" : "Compare"}
+    <div
+      className={`next-step ${step.tone}`}
+      role="status"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        flexWrap: "wrap",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: "8px 12px",
+        margin: "0 0 12px",
+        background: step.tone === "done" ? "var(--success-soft)" : step.tone === "warn" ? "var(--warning-soft)" : "var(--accent)",
+      }}
+    >
+      <b style={{ fontSize: 13 }}>Next:</b>
+      <span style={{ fontSize: 13 }}>{step.text}</span>
+      {step.action && (
+        <button className="primary" style={{ marginLeft: "auto" }} onClick={() => onAct(step.action as NextAction)}>
+          {label[step.action]}
         </button>
-      </div>
-      {error && <div className="error">{error}</div>}
-      {report && (
-        <div style={{ fontSize: 12 }}>
-          <p style={{ margin: "0 0 8px", opacity: 0.8 }}>
-            <code>{report.repo}</code> uses {report.components_in_code.length} catalogue components ·{" "}
-            {report.total - missing} of {report.total} declared capabilities implemented
-            {missing > 0 ? ` · ${missing} missing` : ""}
-          </p>
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {report.items.map((r) => (
-              <li key={r.capability} style={{ margin: "0 0 4px" }}>
-                <span className={`badge ${r.status === "implemented" ? "ok" : "failed"}`}>{r.capability}</span>{" "}
-                {r.status === "implemented" ? (
-                  r.implemented_by.map((i, n) => (
-                    <span key={i.name}>
-                      {n > 0 && ", "}
-                      <ComponentLink nav={nav} name={i.name} />
-                      {i.declared ? "" : <span style={{ opacity: 0.5 }} title="matched by words, not declared"> ~</span>}
-                    </span>
-                  ))
-                ) : (
-                  <span style={{ opacity: 0.8 }}>
-                    nothing in the code fills it
-                    {r.candidates.length > 0 && <> · the catalogue has {r.candidates.map(gearLabel).join(", ")}</>}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-          {report.unexplained.length > 0 && (
-            <p style={{ margin: "8px 0 0" }}>
-              <b>In the code, not in the specs:</b>{" "}
-              {report.unexplained.map((u, n) => (
-                <span key={u.name}>
-                  {n > 0 && ", "}
-                  <ComponentLink nav={nav} name={u.name} />
-                  {u.declares.length > 0 && <span style={{ opacity: 0.6 }}> ({u.declares.join(", ")})</span>}
-                </span>
-              ))}
-              <span style={{ opacity: 0.7 }}> — a capability the specs do not declare, or a dependency to drop.</span>
-            </p>
-          )}
-          {report.gearbox.length > 0 && (
-            <div style={{ margin: "8px 0 0" }}>
-              <b>Gearbox on the code&apos;s own gears:</b>
-              <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-                {report.gearbox.map((g) => (
-                  <li key={`${g.gear}-${g.reason}`}>
-                    {g.added ? "needs " : "cannot run: "}
-                    <ComponentLink nav={nav} name={g.gear} /> — {g.reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
       )}
     </div>
   );
@@ -524,12 +563,14 @@ function SuggestedComponents({
   token,
   projectId,
   product,
-  onCapabilities,
+  code,
+  onFlow,
 }: {
   token: string;
   projectId: string;
   product: ProductState;
-  onCapabilities?: (count: number) => void;
+  code: CodeReport;
+  onFlow?: (flow: { capabilities: number | null; open: number; recommended: string[] }) => void;
 }) {
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
   /** Where the documents say the product runs: the profile to default to. */
@@ -540,6 +581,20 @@ function SuggestedComponents({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const nav = usePortalNav();
+  /** Rows whose "why" is open: `true` for the capability, a name for one candidate. */
+  const [whyOpen, setWhyOpen] = useState<Record<string, string | true>>({});
+  /** The capability a new gear is being scaffolded for. */
+  const [scaffoldFor, setScaffoldFor] = useState<PlanRow | null>(null);
+  /** Rows showing every candidate, not just the recommended one and the picks. */
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggleWhy = (capability: string, candidate?: string) =>
+    setWhyOpen((current) => {
+      const next = { ...current };
+      const want: string | true = candidate ?? true;
+      if (next[capability] === want) delete next[capability];
+      else next[capability] = want;
+      return next;
+    });
 
   const suggest = async () => {
     setBusy(true);
@@ -551,16 +606,11 @@ function SuggestedComponents({
       const answer = await api.projectPlan(token, projectId);
       const next = answer.items;
       setSources(Object.fromEntries(next.map((r) => [r.capability, r.sources ?? []])));
-      onCapabilities?.(next.length);
       setDocCount(new Set(next.flatMap((r) => (r.sources ?? []).map((s) => s.id))).size);
       setPlan(next);
       setAdvice(answer.profile ?? null);
-      // A product nobody has picked for yet starts from the best built gear
-      // per capability. One that has picks keeps them: suggestions are a
-      // source of candidates, not the product.
-      if (product.composing && product.loaded && product.picks.length === 0) {
-        void product.seed(defaultPicks(next));
-      }
+      // An empty product is not filled in here: the next-step line offers
+      // the code's gears or the recommended ones, and the person chooses.
     } catch (cause) {
       setError(errText(cause));
     } finally {
@@ -607,6 +657,15 @@ function SuggestedComponents({
   const gaps = plan?.filter((r) => r.gap).length ?? 0;
   const unbuilt = plan?.filter((r) => r.unbuilt).length ?? 0;
   const composing = product.composing;
+  const coverage = plan ? coverageSummary(plan, product.picks) : null;
+  const covers = useMemo(() => (plan ? alsoCovers(plan) : {}), [plan]);
+  const recommendedKey = recommended.join(",");
+  useEffect(() => {
+    onFlow?.({ capabilities: plan ? plan.length : null, open: coverage?.open ?? 0, recommended });
+    // The arrays are fresh per render; their content is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, coverage?.open, recommendedKey]);
+  const report = code.report;
 
   return (
     <section className="card" style={{ marginBottom: 16 }}>
@@ -622,8 +681,9 @@ function SuggestedComponents({
         <span style={{ display: "flex", gap: 6 }}>
           {composing && recommended.length > 0 && (
             <button
-              className="primary"
+              className="ghost"
               disabled={busy}
+              style={{ whiteSpace: "nowrap" }}
               title={`The best built component for each capability: ${recommended.join(", ")}`}
               onClick={() => product.setPicks((current) => [...current, ...recommended.filter((n) => !current.includes(n))])}
             >
@@ -650,16 +710,19 @@ function SuggestedComponents({
             <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 12px" }}>
               {plan.length} capabilit{plan.length === 1 ? "y" : "ies"} from {docCount} document
               {docCount === 1 ? "" : "s"} · {built} built candidate{built === 1 ? "" : "s"} ·{" "}
-              {unbuilt} with nothing built yet · {gaps} with nothing at all.
+              {unbuilt} with nothing built yet · {gaps} with nothing at all
+              {report && ` · the code depends on ${report.components_in_code.length} catalogue components`}
+              {code.busy && " · reading the code…"}.
             </p>
+            {code.error && <div className="hint" style={{ fontSize: 12 }}>The code could not be read: {code.error}</div>}
             {advice && (
               <p
                 style={{ fontSize: 12, margin: "0 0 12px", display: "flex", gap: 8, alignItems: "center" }}
-                title={advice.because.join("\n")}
+                title={advice.because.map(plainText).join("\n")}
               >
                 <span>
                   The documents say where it runs: <code>{advice.profile}</code> ({advice.kind}) — “
-                  {advice.because[0]}”{advice.because.length > 1 && ` and ${advice.because.length - 1} more`}.
+                  {plainText(advice.because[0] ?? "")}”{advice.because.length > 1 && ` and ${advice.because.length - 1} more`}.
                 </span>
                 {composing && product.profile !== advice.profile && (
                   <button className="ghost" onClick={() => product.setProfile(advice.profile)}>
@@ -668,157 +731,321 @@ function SuggestedComponents({
                 )}
               </p>
             )}
+            {composing && coverage && coverage.total > 0 && (
+              <p style={{ fontSize: 13, margin: "0 0 12px" }}>
+                <b>
+                  Your product closes {coverage.covered} of {coverage.total} capabilit
+                  {coverage.total === 1 ? "y" : "ies"}
+                </b>
+                {coverage.weak > 0 && ` · ${coverage.weak} only by a gear that mentions its words`}
+                {coverage.open > 0 && ` · ${coverage.open} not closed by any gear in it`}.
+              </p>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {plan.map((row) => (
-                <div
-                  key={row.capability}
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    padding: "8px 10px",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
-                    {(sources[row.capability] ?? []).length > 0 && (
-                      <span
-                        style={{ fontSize: 11, opacity: 0.65 }}
-                        title={(sources[row.capability] ?? [])
-                          .map(
-                            (src) =>
-                              `${src.label}: ${src.inferred ? `implied by ${src.because?.join("; ") || "its requirements"}` : "declared in its front matter"}${src.confirmed === false ? " (not confirmed on the Specs tab)" : ""}`,
-                          )
-                          .join("\n")}
+              {plan.map((row) => {
+                const cover = rowCoverage(row, product.picks);
+                const open = whyOpen[row.capability];
+                const shown = typeof open === "string" ? row.candidates.find((c) => c.name === open) : undefined;
+                const beyond = composing ? picksBeyondShortlist(row, product.picks) : [];
+                const rowSources = sources[row.capability] ?? [];
+                // Nothing in the product closes it and nothing built could:
+                // the honest next step is a gear of the project's own.
+                const needsGear =
+                  !row.nonfunctional && (row.gap || row.unbuilt || (composing && cover.cover === "open" && !row.candidates.some((c) => c.built === "built")));
+                const reasons = open === true ? specReasons(row) : [];
+                const inCode = codeFor(report, row.capability);
+                const { shown: shortlist, hidden } = rowShortlist(row, product.picks, !!expanded[row.capability]);
+                return (
+                  <div
+                    key={row.capability}
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      padding: "8px 10px",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
+                      {row.label && row.label.toLowerCase() !== row.capability && (
+                        <span style={{ fontSize: 12 }}>{row.label}</span>
+                      )}
+                      {composing && cover.cover === "covered" && (
+                        <span
+                          className="badge ok"
+                          title="A gear in the product provides its contract, declares it, or a member confirmed it"
+                        >
+                          closed by {cover.strong.join(", ")}
+                        </span>
+                      )}
+                      {composing && cover.cover === "weak" && (
+                        <span
+                          className="badge warn"
+                          title="The product's gears only mention its words: they talk about the subject, which does not prove they do the job"
+                        >
+                          only by words: {cover.weak.join(", ")}
+                        </span>
+                      )}
+                      {composing && cover.cover === "open" && (
+                        <span className="badge danger" title="No gear in the product fills it">
+                          not closed
+                        </span>
+                      )}
+                      {inCode && !row.nonfunctional && (
+                        <span
+                          className={`badge ${inCode.status === "implemented" ? "ok" : ""}`}
+                          title="What the project's code depends on, read from its Cargo.toml files"
+                        >
+                          {inCode.status === "implemented"
+                            ? `in the code: ${inCode.by.map((b) => gearLabel(b.name)).join(", ")}`
+                            : "not in the code"}
+                        </span>
+                      )}
+                      {rowSources.length > 0 && (
+                        <span style={{ fontSize: 11, opacity: 0.65 }}>
+                          from {rowSources.map((src) => src.label).join(", ")}
+                          {rowSources.every((src) => src.inferred) && " · read from the requirements"}
+                          {rowSources.every((src) => src.confirmed === false) && " · unconfirmed"}
+                        </span>
+                      )}
+                      {row.gap && (
+                        <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>NOTHING IN THE CATALOGUE</span>
+                      )}
+                      {row.unbuilt && (
+                        <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>NOTHING BUILT YET</span>
+                      )}
+                      {row.nonfunctional && (
+                        <span
+                          style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}
+                          title="Answered by the deployment profile, not by a gear"
+                        >
+                          WHERE IT RUNS — THE PROFILE, NOT A GEAR
+                        </span>
+                      )}
+                      {needsGear && (
+                        <button
+                          type="button"
+                          className="linklike"
+                          style={{ marginLeft: "auto", fontSize: 12 }}
+                          title="Scaffold a gear for it in the project's gear repository, with the specs' requirements as its PRD"
+                          onClick={() => setScaffoldFor(row)}
+                        >
+                          Create a gear for it
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="linklike"
+                        style={{ marginLeft: needsGear ? undefined : "auto", fontSize: 12 }}
+                        aria-expanded={open === true}
+                        onClick={() => toggleWhy(row.capability)}
                       >
-                        from {(sources[row.capability] ?? []).map((src) => src.label).join(", ")}
-                        {(sources[row.capability] ?? []).every((src) => src.inferred) && " · read from the requirements"}
-                        {(sources[row.capability] ?? []).every((src) => src.confirmed === false) && " · unconfirmed"}
-                      </span>
+                        {open === true ? "Hide why" : "Why?"}
+                      </button>
+                    </div>
+                    {open === true && (
+                      <div style={whyPanelStyle}>
+                        <div style={{ fontWeight: 700, marginBottom: 2 }}>Why the specs ask for it</div>
+                        {reasons.length === 0 ? (
+                          <div style={{ opacity: 0.7 }}>No document is recorded for it.</div>
+                        ) : (
+                          reasons.map((r) => (
+                            <div key={r.document} style={{ marginBottom: 4 }}>
+                              <code>{r.document}</code>
+                              {r.lines.map((l) => (
+                                <div key={l}>{l}</div>
+                              ))}
+                            </div>
+                          ))
+                        )}
+                        {!row.nonfunctional && (
+                          <div style={{ opacity: 0.75, marginTop: 4 }}>
+                            {lookingFor(row)} A gear&apos;s ? says why it was offered.
+                          </div>
+                        )}
+                      </div>
                     )}
-                    {row.gap && (
-                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
-                        NOTHING IN THE CATALOGUE
-                      </span>
-                    )}
-                    {row.unbuilt && (
-                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
-                        NOTHING BUILT YET
-                      </span>
-                    )}
-                    {row.nonfunctional && (
-                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }} title="Answered by the deployment profile, not by a gear">
-                        WHERE IT RUNS — THE PROFILE, NOT A GEAR
-                      </span>
-                    )}
-                  </div>
-                  {row.candidates.length > 0 && (
-                    <div
-                      style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}
-                    >
-                      {row.candidates.map((c) => {
-                        const pickable = composing && isPickable(c);
-                        const picked = pickable && product.picks.includes(c.name);
-                        return (
-                          <span
-                            key={c.name}
-                            title={
-                              matchReason(c) +
-                              (c.built === "docs-only"
-                                ? " · the catalogue found no crate under this component — docs and a manifest only"
-                                : "")
-                            }
-                            style={{
-                              ...chipStyle(picked),
-                              opacity: c.built === "docs-only" ? 0.6 : 1,
-                            }}
-                          >
-                            {pickable && (
-                              <button
-                                type="button"
-                                aria-pressed={picked}
-                                title={picked ? "In the product — click to take it out" : "Put it into the product"}
-                                onClick={() => product.toggle(c.name)}
-                                style={chipToggleStyle}
-                              >
-                                {picked ? "✓" : "+"}
-                              </button>
-                            )}
-                            <ComponentLink nav={nav} name={c.name} />
-                            <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
-                            {c.step === "contract" ? (
-                              <span title={matchReason(c)} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--success, var(--primary))" }}>
-                                CONTRACT
-                              </span>
-                            ) : c.declared ? (
-                              <span title="The gear declares this capability itself" style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}>
-                                DECLARED
-                              </span>
-                            ) : (
-                              <span title={matchReason(c)} style={{ marginLeft: 5, fontSize: 9, opacity: 0.55 }}>
-                                by words
-                              </span>
-                            )}
-                            {c.composable === "runs" && (
-                              <span title="Described for composition: the Gearbox engine can put it into a product" style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--success, var(--primary))" }}>
-                                GDL
-                              </span>
-                            )}
-                            {c.composable === "blocked" && (
-                              <span title={`Described, but cannot run from this corpus: ${c.composable_why ?? ""}`} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--danger, #c33)" }}>
-                                BLOCKED
-                              </span>
-                            )}
-                            {c.built === "docs-only" && (
-                              <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>
-                            )}
-                            {c.decision && (
-                              <span
-                                title={
-                                  c.decision.needs_review
-                                    ? "The document or the gear changed since this was decided — decide again"
-                                    : `A member ${c.decision.decision} this mapping`
-                                }
-                                style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, opacity: c.decision.needs_review ? 0.6 : 1 }}
-                              >
-                                {c.decision.decision === "confirmed" ? "CONFIRMED" : "REJECTED"}
-                                {c.decision.needs_review && " · REVIEW"}
-                              </span>
-                            )}
-                            {(sources[row.capability] ?? []).length > 0 && (
-                              <>
+                    {(row.candidates.length > 0 || beyond.length > 0) && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                        {shortlist.map((c) => {
+                          const pickable = composing && isPickable(c);
+                          const others = (covers[c.name] ?? []).filter((k) => k !== row.capability);
+                          const picked = pickable && product.picks.includes(c.name);
+                          const strong = candidateStrength(c) === "strong";
+                          return (
+                            <span
+                              key={c.name}
+                              title={
+                                matchReason(c) +
+                                (c.built === "docs-only"
+                                  ? " · the catalogue found no crate under this component — docs and a manifest only"
+                                  : "")
+                              }
+                              style={{
+                                ...chipStyle(picked),
+                                opacity: c.built === "docs-only" ? 0.6 : 1,
+                              }}
+                            >
+                              {pickable && (
                                 <button
                                   type="button"
-                                  title="Confirm: this gear covers the capability"
-                                  disabled={busy}
-                                  onClick={() => void decide(row.capability, c, "confirmed")}
-                                  style={{ ...chipToggleStyle, marginLeft: 6 }}
-                                >
-                                  ✓
-                                </button>
-                                <button
-                                  type="button"
-                                  title="Reject: this gear does not cover the capability"
-                                  disabled={busy}
-                                  onClick={() => void decide(row.capability, c, "rejected")}
+                                  aria-pressed={picked}
+                                  title={picked ? "In the product — click to take it out" : "Put it into the product"}
+                                  onClick={() => product.toggle(c.name)}
                                   style={chipToggleStyle}
                                 >
-                                  ✗
+                                  {picked ? "✓" : "+"}
                                 </button>
-                              </>
-                            )}
+                              )}
+                              <ComponentLink nav={c.origin === "project" ? null : nav} name={c.name} />
+                              <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
+                              {c.origin === "project" && (
+                                <span
+                                  title={`Declared in this project's own repository${c.path ? `: ${c.path}` : ""}`}
+                                  style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}
+                                >
+                                  THIS REPO
+                                </span>
+                              )}
+                              <span
+                                style={{
+                                  marginLeft: 5,
+                                  fontSize: 9,
+                                  fontWeight: strong ? 700 : 400,
+                                  opacity: strong ? 1 : 0.55,
+                                  color: strong ? "var(--success, var(--primary))" : undefined,
+                                }}
+                              >
+                                {c.step === "contract" ? "CONTRACT" : c.declared ? "DECLARED" : strong ? "CONFIRMED" : "words"}
+                              </span>
+                              {c.composable === "blocked" && (
+                                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--danger, #c33)" }}>
+                                  BLOCKED
+                                </span>
+                              )}
+                              {c.built === "docs-only" && <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>}
+                              {c.decision?.decision === "rejected" && !c.decision.needs_review && (
+                                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}>REJECTED</span>
+                              )}
+                              {c.decision?.needs_review && (
+                                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, opacity: 0.6 }}>REVIEW</span>
+                              )}
+                              <button
+                                type="button"
+                                title="Why this gear is offered for this capability"
+                                aria-expanded={shown?.name === c.name}
+                                onClick={() => toggleWhy(row.capability, c.name)}
+                                style={{ ...chipToggleStyle, marginLeft: 6, padding: "0 2px" }}
+                              >
+                                ?
+                              </button>
+                              {others.length > 0 && (
+                                <span
+                                  style={{ marginLeft: 4, fontSize: 9, opacity: 0.6 }}
+                                  title={`The same gear is offered for ${others.join(", ")} too: one gear, several answers`}
+                                >
+                                  also {others.join(", ")}
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })}
+                        {(hidden > 0 || expanded[row.capability]) && (
+                          <button
+                            type="button"
+                            className="linklike"
+                            style={{ fontSize: 11 }}
+                            onClick={() => setExpanded((e) => ({ ...e, [row.capability]: !e[row.capability] }))}
+                          >
+                            {expanded[row.capability] ? "fewer" : `${hidden} more`}
+                          </button>
+                        )}
+                        {beyond.map((p) => (
+                          <span
+                            key={p.name}
+                            title="In the product and fills this capability; ranked below the candidates shown"
+                            style={chipStyle(true)}
+                          >
+                            <span style={{ ...chipToggleStyle, cursor: "default" }}>✓</span>
+                            <ComponentLink nav={nav} name={p.name} />
+                            <span style={{ marginLeft: 5, fontSize: 9, opacity: p.strong ? 1 : 0.55 }}>
+                              in the product{p.strong ? "" : " · words"}
+                            </span>
                           </span>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ))}
+                        ))}
+                      </div>
+                    )}
+                    {shown && (
+                      <div style={whyPanelStyle}>
+                        <div style={{ fontWeight: 700, marginBottom: 2 }}>
+                          Why {shown.name} for {row.capability}
+                        </div>
+                        {candidateReasons(shown, row.capability).map((l) => (
+                          <div key={l}>{l}</div>
+                        ))}
+                        {rowSources.length > 0 && (
+                          <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <button type="button" disabled={busy} onClick={() => void decide(row.capability, shown, "confirmed")}>
+                              It fills {row.capability}
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost"
+                              disabled={busy}
+                              onClick={() => void decide(row.capability, shown, "rejected")}
+                            >
+                              It does not
+                            </button>
+                            <span style={{ opacity: 0.65 }}>
+                              Recorded for the project: a confirmed gear closes the capability and ranks first; a
+                              rejected one stops being offered for it.
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+            {report && report.unexplained.length > 0 && (
+              <p style={{ fontSize: 12, margin: "10px 0 0" }}>
+                <b>In the code, not in the specs:</b>{" "}
+                {report.unexplained.map((u, n) => (
+                  <span key={u.name}>
+                    {n > 0 && ", "}
+                    <ComponentLink nav={nav} name={u.name} />
+                    {u.declares.length > 0 && <span style={{ opacity: 0.6 }}> ({u.declares.join(", ")})</span>}
+                  </span>
+                ))}
+                <span style={{ opacity: 0.7 }}> — a capability the specs do not declare, or a dependency to drop.</span>
+              </p>
+            )}
           </>
         ))}
+      {scaffoldFor && (
+        <ScaffoldModal
+          capability={scaffoldFor.capability}
+          token={token}
+          projectTenantId={projectId}
+          problem={gearProblem(scaffoldFor)}
+          declares={[scaffoldFor.capability]}
+          onClose={() => {
+            setScaffoldFor(null);
+            void suggest();
+          }}
+        />
+      )}
     </section>
   );
 }
+
+const whyPanelStyle = {
+  fontSize: 12,
+  margin: "6px 0 2px",
+  padding: "6px 8px",
+  background: "var(--muted, rgba(0,0,0,0.04))",
+  borderRadius: 6,
+} as const;
 
 /* ── The project's product ────────────────────────────────────────────────── */
 
@@ -1000,84 +1227,6 @@ const chipToggleStyle = {
   fontWeight: 700,
 } as const;
 
-/** What a person typed, as the JSON value it means: `true`/`false`, a
- *  number, or else the text itself. */
-function configValue(text: string): unknown {
-  const t = text.trim();
-  if (t === "true") return true;
-  if (t === "false") return false;
-  if (t !== "" && !Number.isNaN(Number(t))) return Number(t);
-  return text;
-}
-
-/** The product's configuration of its gears: each field it sets, editable
- *  and removable, and a way to set one more. What `Make it resolve` sets
- *  (a plugin's vendor aligned with its host's) lands here too. */
-function GearConfigEditor({ product }: { product: ProductState }) {
-  const [gear, setGear] = useState("");
-  const [field, setField] = useState("");
-  const [value, setValue] = useState("");
-  const rows = Object.entries(product.config).flatMap(([g, fields]) =>
-    Object.entries(fields).map(([f, v]) => ({ g, f, v })),
-  );
-  if (product.picks.length === 0) return null;
-  return (
-    <div style={{ fontSize: 12, marginTop: 8 }} data-gear-config>
-      <div style={{ opacity: 0.7, marginBottom: 4 }}>Configuration</div>
-      {rows.length === 0 && (
-        <div style={{ opacity: 0.6 }}>No gear is configured; each runs with its defaults.</div>
-      )}
-      {rows.map(({ g, f, v }) => (
-        <div key={`${g}.${f}`} style={{ display: "flex", gap: 6, alignItems: "center", margin: "2px 0" }}>
-          <code>{gearLabel(g)}</code>
-          <span style={{ opacity: 0.6 }}>·</span>
-          <code>{f}</code>
-          <span>=</span>
-          <input
-            aria-label={`${g} ${f}`}
-            defaultValue={typeof v === "string" ? v : JSON.stringify(v)}
-            onBlur={(e) => product.setField(g, f, configValue(e.target.value))}
-            style={{ fontSize: 12, width: 180 }}
-          />
-          <button
-            type="button"
-            className="ghost"
-            title="Remove this setting"
-            aria-label={`Remove ${g} ${f}`}
-            onClick={() => product.setField(g, f, undefined)}
-          >
-            ×
-          </button>
-        </div>
-      ))}
-      <form
-        style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!gear || !field.trim()) return;
-          product.setField(gear, field.trim(), configValue(value));
-          setField("");
-          setValue("");
-        }}
-      >
-        <select value={gear} onChange={(e) => setGear(e.target.value)} aria-label="Gear to configure" style={{ fontSize: 12 }}>
-          <option value="">gear…</option>
-          {product.picks.map((p) => (
-            <option key={p} value={p}>
-              {gearLabel(p)}
-            </option>
-          ))}
-        </select>
-        <input placeholder="field" value={field} onChange={(e) => setField(e.target.value)} style={{ fontSize: 12, width: 120 }} />
-        <input placeholder="value" value={value} onChange={(e) => setValue(e.target.value)} style={{ fontSize: 12, width: 160 }} />
-        <button type="submit" className="ghost" disabled={!gear || !field.trim()}>
-          Set
-        </button>
-      </form>
-    </div>
-  );
-}
-
 /** A component's name that opens its page in the platform catalogue. */
 function ComponentLink({ nav, name, label }: { nav: PortalNav | null; name: string; label?: string }) {
   const text = label ?? gearLabel(name);
@@ -1099,69 +1248,32 @@ function ComponentLink({ nav, name, label }: { nav: PortalNav | null; name: stri
  *  catalogue page; the engine's verdict on them; and the two ways onward — into
  *  the project's repository, and into the IDE where the language server keeps
  *  checking it. */
-/** Where the person is in the page's three steps, at a glance. */
-function JourneyStrip({ capabilities, product }: { capabilities: number | null; product: ProductState }) {
-  const last = product.record?.last_preview;
-  const steps: { n: number; label: string; state: string; done: boolean }[] = [
-    {
-      n: 1,
-      label: "Your specs ask for",
-      state: capabilities == null ? "reading…" : `${capabilities} capabilit${capabilities === 1 ? "y" : "ies"}`,
-      done: (capabilities ?? 0) > 0,
-    },
-    {
-      n: 2,
-      label: "Your product",
-      state:
-        product.picks.length === 0
-          ? "no components yet"
-          : `${product.picks.length} component${product.picks.length === 1 ? "" : "s"}` +
-            (last ? (last.ok ? " · resolves" : " · does not resolve") : ""),
-      done: !!last?.ok,
-    },
-    {
-      n: 3,
-      label: "Built in Studio-ide",
-      state: product.record?.written ? `product.gdl on ${product.record.written.branch}` : "not yet",
-      done: !!product.record?.written,
-    },
-  ];
-  return (
-    <ol className="journey-strip" style={{ display: "flex", gap: 8, listStyle: "none", padding: 0, margin: "0 0 12px", flexWrap: "wrap" }}>
-      {steps.map((st) => (
-        <li
-          key={st.n}
-          style={{
-            flex: "1 1 200px",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            padding: "6px 10px",
-            fontSize: 12,
-            background: st.done ? "var(--accent)" : "transparent",
-          }}
-        >
-          <b>
-            {st.done ? "✓" : st.n} · {st.label}
-          </b>
-          <div style={{ opacity: 0.7 }}>{st.state}</div>
-        </li>
-      ))}
-    </ol>
-  );
-}
 
 function ProductCard({
   token,
   projectId,
   projectName,
   product,
+  code,
+  command,
+  onVerdict,
 }: {
   token: string;
   projectId: string;
   projectName: string;
   product: ProductState;
+  code: CodeReport;
+  command: { kind: ProductCommand; at: number } | null;
+  onVerdict: (v: { resolves: boolean | null; fixes: number }) => void;
 }) {
   const nav = usePortalNav();
+  const cardRef = useRef<HTMLElement | null>(null);
+  /** The engine's completion of a product that does not resolve, as fixes. */
+  const [fixes, setFixes] = useState<Fix[] | null>(null);
+  /** "Take the product from the code" is open. */
+  const [fromCode, setFromCode] = useState(false);
+  /** A fix was applied: preview again once the product has changed. */
+  const recheck = useRef(false);
   const { gearbox, picks, profile, record } = product;
   const [asPr, setAsPr] = useState(false);
   const [busy, setBusy] = useState<"preview" | "save" | null>(null);
@@ -1180,7 +1292,7 @@ function ProductCard({
   // The picks and profile the shown preview answers. Anything else and the
   // preview is about a different product, which the screen has to say.
   const [asked, setAsked] = useState<string | null>(null);
-  const question = JSON.stringify([profile, [...picks].sort()]);
+  const question = JSON.stringify([profile, [...picks].sort(), product.config]);
   const stale = preview !== null && asked !== question;
   const productId = productIdFrom(projectName);
   // The crate behind an engine id, for linking a resolved gear to its page.
@@ -1237,12 +1349,76 @@ function ProductCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.completedAt]);
 
+  // Ask the engine on arrival, so the verdict and its fixes are on screen
+  // without a click; a product with nothing in it has nothing to ask.
+  const asked0 = useRef(false);
+  useEffect(() => {
+    if (!product.loaded || asked0.current || picks.length === 0) return;
+    asked0.current = true;
+    void run(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.loaded, picks.length]);
+
+  // A fix changed the product: check it again.
+  useEffect(() => {
+    if (!recheck.current || picks.length === 0) return;
+    recheck.current = false;
+    const timer = setTimeout(() => void run(false), 450);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question]);
+
+  // A product that does not resolve: ask the engine how it would, without
+  // applying it, and list each change as its own fix.
+  useEffect(() => {
+    if (!preview || preview.ok || stale) {
+      setFixes(null);
+      return;
+    }
+    let live = true;
+    api
+      .completeProduct(token, picks, product.config)
+      .then((done) => live && setFixes(fixesFrom(picks, product.config, done)))
+      .catch(() => live && setFixes([]));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview, stale]);
+
+  useEffect(() => {
+    onVerdict({ resolves: preview && !stale ? preview.ok : null, fixes: fixes?.length ?? 0 });
+  }, [preview, stale, fixes, onVerdict]);
+
+  const applyOne = (fix: Fix) => {
+    recheck.current = true;
+    if (fix.kind === "config") product.setField(fix.gear, fix.field, fix.value);
+    else if (fix.kind === "remove") product.toggle(fix.gear);
+    else product.setPicks((current) => applyFix(current, product.config, fix).picks);
+  };
+
+  // The next-step line's button.
+  useEffect(() => {
+    if (!command) return;
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (command.kind === "preview") void run(false);
+    if (command.kind === "fix" && fixes && fixes.length > 0) document.getElementById("product-fixes")?.focus();
+    if (command.kind === "build") void buildInTheia();
+    if (command.kind === "open") openOnDesktop(record?.written?.branch);
+    if (command.kind === "take-from-code") setFromCode(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [command?.at]);
+
+  const inCode = code.report ? codeGears(code.report) : [];
+  const diff = codeDiff(picks, inCode);
+  const resolvesNow = !!preview?.ok && !stale;
+
   const errors = preview?.diagnostics.filter((d) => d.severity === "error").length ?? 0;
   const warnings = preview?.diagnostics.filter((d) => d.severity === "warning").length ?? 0;
   const last = record?.last_preview;
 
   return (
-    <section className="card" style={{ marginBottom: 16 }}>
+    <section className="card" style={{ marginBottom: 16 }} ref={cardRef}>
       <div className="card-head">
         <div>
           <h2>
@@ -1263,7 +1439,7 @@ function ProductCard({
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
         {picks.length === 0 ? (
           <span className="empty" style={{ fontSize: 12 }}>
-            Nothing in the product yet — add the recommended components above, or pick them with +.
+            Nothing in the product yet — take it from the code, add the recommended components above, or pick them with +.
           </span>
         ) : (
           picks.map((name) => (
@@ -1282,7 +1458,7 @@ function ProductCard({
           ))
         )}
       </div>
-      <GearConfigEditor product={product} />
+      <GearConfigForm token={token} product={product} />
       {product.adjustments.length > 0 && (
         <div style={{ fontSize: 12, marginTop: 8 }}>
           <div style={{ opacity: 0.7 }}>Adjusted so the product can resolve — each can be undone:</div>
@@ -1327,8 +1503,18 @@ function ProductCard({
         >
           Make it resolve
         </button>
+        {inCode.length > 0 && (
+          <button
+            className="ghost"
+            aria-expanded={fromCode}
+            title="The gears the project's code already depends on, read from its Cargo.toml files"
+            onClick={() => setFromCode((v) => !v)}
+          >
+            From the code ({inCode.length})
+          </button>
+        )}
         <button
-          className="primary"
+          className={resolvesNow ? "primary" : "ghost"}
           disabled={busy !== null || picks.length === 0}
           title="Save product.gdl to the repository and open the desktop Studio on it: it clones the project and opens the product in the Gearbox view"
           onClick={() => void buildInTheia()}
@@ -1352,6 +1538,119 @@ function ProductCard({
         )}
       </div>
       {error && <div className="error">{error}</div>}
+
+      {fromCode && code.report && (
+        <div style={{ fontSize: 12, marginTop: 10, border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px" }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+            The code depends on {inCode.length} gear{inCode.length === 1 ? "" : "s"} ({code.report.repo})
+          </div>
+          {diff.add.length > 0 && (
+            <div>
+              <b>Not in the product yet:</b> {diff.add.map(gearLabel).join(", ")}
+            </div>
+          )}
+          {diff.drop.length > 0 && (
+            <div>
+              <b>In the product, not in the code:</b> {diff.drop.map(gearLabel).join(", ")}
+            </div>
+          )}
+          {diff.add.length === 0 && diff.drop.length === 0 && <div>The product is exactly what the code uses.</div>}
+          {code.report.gearbox.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <b>What the engine says about the code&apos;s gears:</b>
+              <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+                {code.report.gearbox.map((g) => (
+                  <li key={`${g.gear}-${g.reason}`}>
+                    {g.added ? "needs " : "cannot run: "}
+                    <ComponentLink nav={nav} name={g.gear} /> — {g.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <button
+              className="primary"
+              disabled={busy !== null}
+              title="Replace the product with the code's gears, then let the engine complete it so it resolves"
+              onClick={() => {
+                setFromCode(false);
+                void product.seed(inCode);
+              }}
+            >
+              Make the product the code&apos;s
+            </button>
+            {diff.add.length > 0 && picks.length > 0 && (
+              <button
+                className="ghost"
+                disabled={busy !== null}
+                onClick={() => {
+                  setFromCode(false);
+                  void product.seed([...picks, ...diff.add]);
+                }}
+              >
+                Add the {diff.add.length} missing
+              </button>
+            )}
+            <button className="ghost" onClick={() => code.reload()} disabled={code.busy}>
+              {code.busy ? "Reading…" : "Read the code again"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {fixes && fixes.length > 0 && (
+        <div
+          id="product-fixes"
+          tabIndex={-1}
+          style={{ fontSize: 12, marginTop: 10, border: "1px solid var(--warning, #c90)", borderRadius: 8, padding: "8px 10px" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <b>
+              How to make it resolve — {fixes.length} fix{fixes.length === 1 ? "" : "es"} from the engine
+            </b>
+            <button className="primary" style={{ marginLeft: "auto" }} disabled={busy !== null} onClick={() => void product.complete()}>
+              Apply all
+            </button>
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {fixes.map((f) => (
+              <li
+                key={`${f.kind}-${f.gear}-${f.kind === "config" ? f.field : ""}`}
+                style={{ display: "flex", alignItems: "center", gap: 8, margin: "3px 0" }}
+              >
+                <span>
+                  {f.kind === "add" && (
+                    <>
+                      Add <ComponentLink nav={nav} name={f.gear} />
+                    </>
+                  )}
+                  {f.kind === "remove" && (
+                    <>
+                      Take out <ComponentLink nav={nav} name={f.gear} />
+                    </>
+                  )}
+                  {f.kind === "config" && (
+                    <>
+                      Set <code>{gearLabel(f.gear)}</code> · <code>{f.field}</code> ={" "}
+                      <code>{typeof f.value === "string" ? f.value : JSON.stringify(f.value)}</code>
+                    </>
+                  )}
+                  <span style={{ opacity: 0.7 }}> — {f.reason}</span>
+                </span>
+                <button className="ghost" style={{ marginLeft: "auto" }} disabled={busy !== null} onClick={() => applyOne(f)}>
+                  Apply
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {preview && !preview.ok && !stale && fixes && fixes.length === 0 && (
+        <p className="hint" style={{ fontSize: 12 }}>
+          The engine offers no change that makes it resolve; the errors below say what it needs.
+        </p>
+      )}
 
       {preview && (
         <div style={{ marginTop: 10, opacity: stale ? 0.55 : 1 }}>

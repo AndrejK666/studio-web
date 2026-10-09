@@ -375,8 +375,16 @@ profiles, a project's code dependencies and the engine's completion through
 `port::ComponentCatalog`. A project's code is the run-time dependencies of every
 `Cargo.toml` in its gear repository (read through
 `product::port::ProjectProducts`), or, without one, in the repositories its
-project config names. The engine's completion is still served here, calling
-studio-product's engine; it is to move to studio-product.
+project config names. From the same repositories it reads the gears the
+project declares itself (`project_gears`): a `gear.toml` or `gear.gdl`
+directory, and a `#[toolkit::gear(name = …)]` attribute in a Rust file named
+as a gear's entry point is (`lib.rs`, `mod.rs`, `module.rs`, `*gear*`,
+`*plugin*`). They are answered in the components' shape, marked
+`origin: project` with their `path`, and are not written to the graph: they
+belong to the project, not to the organization's catalogue. The read is
+bounded and kept per repository until one of the files it read changes. The
+engine's completion is still served here, calling studio-product's engine; it
+is to move to studio-product.
 
 ### 3.4 Internal Dependencies
 
@@ -385,9 +393,9 @@ studio-product's engine; it is to move to studio-product.
 | `types_registry` | `types-registry-sdk` | Register the catalogue types at init |
 | `account_management` | `account-management-sdk` | Read a project's configured sources |
 | `credstore` | `credstore-sdk` | Through `ConnectorService`, the connection tokens |
-| `cpt-studio-component-connector` | `ConnectorService` over the source drivers on the ClientHub | Read repositories and boards |
+| `cpt-studio-component-connector` | `connectors::sdk::Connectors`: a `Repository` per source (tree, files, path history, tags, clone source for the corpus) and `ConnectorDriver::graphql` for boards (`roadmap.rs`) | Read repositories and boards |
 | `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (`graph` feature), through `catalog_graph::build_sink` | The catalogue |
-| `cpt-studio-component-tasks` | `registry::register`, `TaskQueue` | Run `catalog.sync` |
+| `cpt-studio-component-tasks` | `sdk::register`, `TaskQueue` | Run `catalog.sync` |
 | `cpt-studio-component-insight` | `port::ComponentDelivery` from the ClientHub | Activity per gear |
 | `cpt-studio-component-product` | `product::port::engine`, `product::port::Products` (`ProjectProducts`), `product::sdk` | The Gearbox engine's gear facts, catalogue, corpus checkout and completion; a project's gear repository |
 

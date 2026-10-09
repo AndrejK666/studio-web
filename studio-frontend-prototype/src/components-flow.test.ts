@@ -1,0 +1,125 @@
+import { describe, expect, it } from "vitest";
+
+import type { Candidate, PlanRow } from "./api";
+import {
+  alsoCovers,
+  applyFix,
+  codeDiff,
+  codeGears,
+  fixesFrom,
+  nextStep,
+  plainText,
+  recommended,
+  rowShortlist,
+  type FlowState,
+} from "./components-flow";
+
+const cand = (name: string, extra: Partial<Candidate> = {}): Candidate => ({
+  name,
+  kind: "gear",
+  step: "evidence",
+  score: 1,
+  why: ["x"],
+  built: "built",
+  composable: "runs",
+  ...extra,
+});
+const row = (capability: string, candidates: Candidate[]): PlanRow => ({ capability, candidates, gap: false, unbuilt: false });
+
+describe("plainText", () => {
+  it("drops the markdown around a quoted statement", () => {
+    expect(plainText("**Purpose**: The `deploy/README.md` and [runbook](x.md) stack")).toBe(
+      "Purpose: The deploy/README.md and runbook stack",
+    );
+    expect(plainText("- __Must__ run on premises")).toBe("Must run on premises");
+  });
+});
+
+describe("fixes from the engine's completion", () => {
+  const completion = {
+    gears: ["a", "rg-tr-plugin"],
+    changes: [
+      { gear: "rg-tr-plugin", added: true, reason: "tenant-resolver needs a plugin" },
+      { gear: "dead", added: false, reason: "no gear.gdl" },
+      { gear: "rg-tr-plugin", added: true, reason: "again" },
+    ],
+    config: { "keycloak-idp-plugin": { vendor: "cf" }, a: { port: 1 } },
+  };
+
+  it("lists each change once, and only config that differs", () => {
+    const fixes = fixesFrom(["a", "dead"], { a: { port: 1 } }, completion);
+    expect(fixes).toEqual([
+      { kind: "add", gear: "rg-tr-plugin", reason: "tenant-resolver needs a plugin" },
+      { kind: "remove", gear: "dead", reason: "no gear.gdl" },
+      { kind: "config", gear: "keycloak-idp-plugin", field: "vendor", value: "cf", reason: "the engine needs vendor = cf" },
+    ]);
+  });
+
+  it("applies one fix at a time", () => {
+    const [add, remove, config] = fixesFrom(["a", "dead"], { dead: { x: 1 } }, completion);
+    expect(applyFix(["a"], {}, add).picks).toEqual(["a", "rg-tr-plugin"]);
+    expect(applyFix(["a", "dead"], { dead: { x: 1 } }, remove)).toEqual({ picks: ["a"], config: {} });
+    expect(applyFix(["a"], {}, config).config).toEqual({ "keycloak-idp-plugin": { vendor: "cf" } });
+  });
+});
+
+describe("the product against the code", () => {
+  it("keeps only pickable gears and says what changes", () => {
+    expect(codeGears({ components_in_code: ["api-gateway", "@cf/ui"] })).toEqual(["api-gateway"]);
+    expect(codeDiff(["a", "b"], ["b", "c"])).toEqual({ add: ["c"], drop: ["a"], keep: ["b"] });
+  });
+});
+
+describe("a shorter section 1", () => {
+  const auth = row("auth", [
+    cand("docs", { built: "docs-only" }),
+    cand("blocked", { composable: "blocked" }),
+    cand("best"),
+    cand("other"),
+  ]);
+
+  it("recommends a built gear the engine can run", () => {
+    expect(recommended(auth)?.name).toBe("best");
+  });
+
+  it("shows the recommended one and the picks, and folds the rest", () => {
+    const { shown, hidden } = rowShortlist(auth, ["other"], false);
+    expect(shown.map((c) => c.name)).toEqual(["best", "other"]);
+    expect(hidden).toBe(2);
+    expect(rowShortlist(auth, [], true).hidden).toBe(0);
+  });
+
+  it("says when one gear answers several capabilities", () => {
+    expect(alsoCovers([row("auth", [cand("authn")]), row("authz", [cand("authn"), cand("z")])])).toEqual({
+      authn: ["auth", "authz"],
+      z: ["authz"],
+    });
+  });
+});
+
+describe("the next step", () => {
+  const base: FlowState = { capabilities: 8, open: 0, picks: 3, inCode: 22, resolves: true, fixes: 0, written: false, composing: true };
+
+  it("starts from the code when the code already has gears", () => {
+    expect(nextStep({ ...base, picks: 0 }).action).toBe("take-from-code");
+    expect(nextStep({ ...base, picks: 0, inCode: 0 }).action).toBe("add-recommended");
+  });
+
+  it("asks for a preview, then for the fixes, before the build", () => {
+    expect(nextStep({ ...base, resolves: null }).action).toBe("preview");
+    expect(nextStep({ ...base, resolves: false, fixes: 3 })).toEqual({
+      text: "The product does not resolve. 3 fixes below make it resolve.",
+      action: "fix",
+      tone: "todo",
+    });
+    expect(nextStep({ ...base, resolves: false }).action).toBeUndefined();
+  });
+
+  it("builds once it resolves, and says what is still open", () => {
+    expect(nextStep(base).action).toBe("build");
+    const gap = nextStep({ ...base, open: 2 });
+    expect(gap.tone).toBe("warn");
+    expect(gap.text).toContain("2 capabilities the specs ask for are not closed yet.");
+    expect(nextStep({ ...base, written: true }).action).toBe("open");
+  });
+});

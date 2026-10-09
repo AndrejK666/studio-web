@@ -135,8 +135,11 @@ Several people work in one session, so its environment names Studio's service
 identity (`STUDIO_ACTOR_ID` is `service_actor`), not the launcher. Provider
 keys are not injected: the agents reach their models through
 `studio-llm-proxy` (`ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` under
-`gateway_url`, with `STUDIO_LLM_AUTH=bearer`), each window with its own
-person's token. The launcher's git author is not injected either; commits
+`gateway_url`, at `/studio-llm/v1/workspaces/<workspace>/providers/<provider>`,
+with `STUDIO_LLM_AUTH=bearer`), each window with its own person's token. The
+proxy answers with that person's profile key, else an AI connection they reach;
+the workspace in the URL is what lets the workspace's own connection count.
+The launcher's git author is not injected either; commits
 carry the entrypoint's neutral author. `agent_env` and `git_identity_env` stay
 in the code for the one-person desktop and the connection-scoped path that
 replaces them.
@@ -394,7 +397,7 @@ caller's identity, and resolves an S2S token back to the session's
 |-------------------|----------------|----------|
 | `cpt-studio-component-account-management` | `AccountManagementClient` | Workspace access; the project's sources from its config |
 | `credstore` (`cpt-studio-component-platform-feature-gears`) | `CredStoreClientV1` | Repository tokens, under the caller's identity |
-| `cpt-studio-component-tasks` | `TaskQueue` (resolved per request), task registry | `session.await_ready` and `session.reap` |
+| `cpt-studio-component-tasks` | `TaskQueue` (resolved per request), `sdk::register` | `session.await_ready` and `session.reap` |
 | `cpt-studio-component-scheduler` | `platform_schedules()` | The `session-reaper` schedule |
 | `cpt-studio-component-theia-bridge` | consumes `StudioSessionDiscoveryClientV1` | Control endpoint and token discovery |
 

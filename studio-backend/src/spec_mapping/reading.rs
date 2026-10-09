@@ -25,6 +25,11 @@ pub struct InferredCapability {
     pub because: Vec<String>,
     /// How many requirements mention them, which may exceed `because`.
     pub count: usize,
+    /// Which of the capability's words those requirements use, in vocabulary
+    /// order: what the reader is shown as the reason. Empty in an index
+    /// written before it was kept, until the document is read again.
+    #[serde(default)]
+    pub terms: Vec<String>,
 }
 
 /// How many requirement headings an inferred capability keeps as evidence.
@@ -108,8 +113,18 @@ pub fn inferred_capabilities(content: &str, vocabulary: &[Capability]) -> Vec<In
                 .iter()
                 .filter(|(_, text)| words.iter().any(|w| mentions(text, w)))
                 .collect();
+            let terms: Vec<String> = words
+                .iter()
+                .filter(|w| hits.iter().any(|(_, text)| mentions(text, w)))
+                .fold(Vec::new(), |mut acc: Vec<String>, w| {
+                    if !acc.iter().any(|a| a == w) {
+                        acc.push((*w).to_owned());
+                    }
+                    acc
+                });
             (!hits.is_empty()).then(|| InferredCapability {
                 key: c.key.clone(),
+                terms,
                 because: hits
                     .iter()
                     .filter(|(heading, _)| !heading.is_empty())
@@ -247,6 +262,15 @@ mod tests {
         }
         let connectors = inferred.iter().find(|c| c.key == "connectors").unwrap();
         assert_eq!(connectors.because, vec!["First-Class Connectors"]);
+        assert!(
+            !connectors.terms.is_empty()
+                && connectors
+                    .terms
+                    .iter()
+                    .all(|t| body.to_lowercase().contains(t.as_str())),
+            "the words shown as the reason are words the requirements use: {:?}",
+            connectors.terms
+        );
         assert!(inferred_capabilities("# No requirements\n", &vocabulary).is_empty());
     }
 

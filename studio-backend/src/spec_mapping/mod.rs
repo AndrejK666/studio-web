@@ -15,6 +15,7 @@
 //! each is read through the port its owner publishes. The design is
 //! `docs/design/studio-spec-mapping.md`.
 
+mod local;
 pub(crate) mod plan;
 pub(crate) mod reading;
 mod rest;

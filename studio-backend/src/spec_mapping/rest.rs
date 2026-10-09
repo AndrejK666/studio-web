@@ -22,6 +22,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::local;
 use super::plan::{self, PastDecision, Vocabulary};
 use crate::artifact_ingest::port::{MappingDecision, MappingDecisionStore};
 use crate::components_catalog::port::ComponentCatalog;
@@ -104,6 +105,27 @@ pub struct PlanRowDto {
     /// The documents that need it, when the plan was read from a project
     /// (`GET /plan?project_id=`). Empty for a plan asked by value.
     pub sources: Vec<CapabilitySourceDto>,
+    /// The capability's name in the vocabulary, when the plan was read from a
+    /// project. Null for a plan asked by value.
+    pub label: Option<String>,
+    /// The words a gear is looked for with. Empty means the key itself.
+    pub terms: Vec<String>,
+    /// The contracts that satisfy it, as the vocabulary names them.
+    pub contracts: Vec<String>,
+    /// Every component that fills it, past the shortlist in `candidates`:
+    /// what a product's picks are checked against. Rejected gears are left out.
+    pub providers: Vec<ProviderDto>,
+}
+
+/// A component that fills a capability.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProviderDto {
+    pub name: String,
+    /// It provides one of the capability's contracts, declares the capability,
+    /// or a member confirmed it. `false`: only its words were found, which
+    /// says it talks about the subject, not that it does the job.
+    pub strong: bool,
 }
 
 /// One component offered for one capability.
@@ -147,6 +169,11 @@ pub struct CandidateDto {
     pub composable: String,
     /// The engine's reason, when `blocked`. Null otherwise.
     pub composable_why: Option<String>,
+    /// `catalogue`, or `project` for a gear the project's own repository
+    /// declares -- whether or not the catalogue lists it too.
+    pub origin: String,
+    /// For a `project` gear, where it lives in the repository. Null otherwise.
+    pub path: Option<String>,
 }
 
 #[derive(Debug)]
@@ -341,6 +368,12 @@ pub struct CapabilitySourceDto {
     pub inferred: bool,
     /// For an inferred capability, the headings of the requirements that imply it.
     pub because: Vec<String>,
+    /// For an inferred capability, the capability's words those requirements
+    /// use. Empty until a document indexed before this was kept is read again.
+    pub terms: Vec<String>,
+    /// For an inferred capability, how many requirements mention it; `because`
+    /// lists the first few.
+    pub requirements: u32,
     /// `false` for a repository file the classifier proposed and nobody has
     /// confirmed yet. It still counts, and the screens say it is unconfirmed.
     pub confirmed: bool,
@@ -495,6 +528,8 @@ fn capability_source_dto(s: CapabilitySource) -> CapabilitySourceDto {
         node_id: s.node_id,
         inferred: s.inferred,
         because: s.because,
+        terms: s.terms,
+        requirements: u32::try_from(s.requirements).unwrap_or(u32::MAX),
         confirmed: s.confirmed,
     }
 }
@@ -506,15 +541,38 @@ fn declared_dto(c: DeclaredCapability) -> DeclaredCapabilityDto {
     }
 }
 
-fn plan_dto(rows: Vec<plan::PlanRow>, profile: Option<plan::ProfileAdvice>) -> MappingPlanDto {
+fn plan_dto(
+    rows: Vec<plan::PlanRow>,
+    vocabulary: &Vocabulary,
+    profile: Option<plan::ProfileAdvice>,
+) -> MappingPlanDto {
     let items: Vec<PlanRowDto> = rows
         .into_iter()
         .map(|row| PlanRowDto {
+            terms: vocabulary
+                .terms
+                .get(&row.capability)
+                .cloned()
+                .unwrap_or_default(),
+            contracts: vocabulary
+                .contracts
+                .get(&row.capability)
+                .cloned()
+                .unwrap_or_default(),
             capability: row.capability,
             gap: row.gap,
             unbuilt: row.unbuilt,
             nonfunctional: row.nonfunctional,
             sources: Vec::new(),
+            label: None,
+            providers: row
+                .providers
+                .into_iter()
+                .map(|p| ProviderDto {
+                    name: p.name,
+                    strong: p.strong,
+                })
+                .collect(),
             candidates: row
                 .candidates
                 .into_iter()
@@ -536,6 +594,8 @@ fn plan_dto(rows: Vec<plan::PlanRow>, profile: Option<plan::ProfileAdvice>) -> M
                     built: c.built.as_str().to_owned(),
                     composable: c.composable.as_str().to_owned(),
                     composable_why: c.composable_why,
+                    origin: "catalogue".to_owned(),
+                    path: None,
                 })
                 .collect(),
         })
@@ -569,6 +629,7 @@ async fn create_plan(
     let rows = plan::plan(&req.capabilities, &components, &profiles, &vocabulary);
     Ok(Json(plan_dto(
         rows,
+        &vocabulary,
         plan::deployment_profile(&req.requirements),
     )))
 }
@@ -680,15 +741,26 @@ async fn get_project_plan(
             }),
         Err(_) => Vec::new(),
     };
-    let (components, profiles) = ports.catalog()?.components(&org).await.map_err(internal)?;
+    let catalog = ports.catalog()?;
+    let (mut components, mut profiles) = catalog.components(&org).await.map_err(internal)?;
+    let own = local::project_gears(catalog.as_ref(), &org, project_id).await;
+    let in_repo = local::with_project_gears(&mut components, &mut profiles, own);
     let keys: Vec<String> = needs.iter().map(|c| c.key.clone()).collect();
     let rules = vocabulary_of(&vocabulary, past_decisions(&recorded, &needs));
     let rows = plan::plan(&keys, &components, &profiles, &rules);
     let statements: Vec<String> = requirements.into_iter().map(|r| r.text).collect();
-    let mut dto = plan_dto(rows, plan::deployment_profile(&statements));
+    let mut dto = plan_dto(rows, &rules, plan::deployment_profile(&statements));
+    local::mark_in_repo(
+        dto.items.iter_mut().flat_map(|r| r.candidates.iter_mut()),
+        &in_repo,
+    );
     let mut sources: BTreeMap<String, Vec<CapabilitySource>> =
         needs.into_iter().map(|c| (c.key, c.sources)).collect();
     for row in &mut dto.items {
+        row.label = vocabulary
+            .iter()
+            .find(|c| c.key == row.capability)
+            .map(|c| c.label.clone());
         row.sources = sources
             .remove(&row.capability)
             .unwrap_or_default()
@@ -1155,6 +1227,8 @@ mod tests {
             node_id: None,
             inferred: true,
             because: vec!["5.1 Login".into()],
+            terms: vec!["login".into()],
+            requirements: 1,
             confirmed: false,
         }
     }

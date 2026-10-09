@@ -128,7 +128,9 @@ Both records are owned nodes in the catalogue graph, keyed on the project id
 with a deterministic instance id, so a write replaces rather than duplicates.
 Their type ids keep the `catalog` segment they had before the split, because
 the nodes already stored carry them; the types-registry registration moved
-here (`catalog_graph::gts::product_type_schemas`).
+here (`catalog_graph::gts::product_type_schemas`). With graph-storage the
+store registers the whole catalogue vocabulary, its own two types included,
+before each write (`GraphSink::register_types`).
 
 | Type | What it is |
 |------|-----------|
@@ -150,10 +152,15 @@ same bytes.
 ##### Responsibility scope
 
 `skeleton.rs` generates the canonical starter gear (the request's `files` are
-optional; a plugin names its `plugin_host` from `/gearbox/extension-points`);
-`scaffold.rs` creates a branch off the connected base branch named after the
-slug, commits the files through the git-data API as one tree and one commit,
-and optionally opens a pull request. `create-repo` creates the repository
+optional; a plugin names its `plugin_host` from `/gearbox/extension-points`;
+the request's `capabilities` are written into `gear.toml`, so a gear made for a
+capability nothing closes declares it once the catalogue syncs it);
+`scaffold.rs` commits the files onto a branch off the connected base branch,
+named after the slug, in one commit through the project's
+`connectors::sdk::Repository` (`commit_files`), and optionally opens or reuses
+a pull request (`open_pull_request`); how the provider makes that commit
+(GitHub: the git-data API, one tree, one commit) is the driver's
+(`connectors/github_write.rs`). `create-repo` creates the repository
 through the connector and records it as the project's gear repository in one
 step. A project with no gear repository is written into the repository its
 project config names (`sources[]`).
@@ -184,7 +191,11 @@ diagnostics.
 refreshed every `STUDIO_GEARBOX_REFRESH_SECS`; the engine catalogue; the
 extension points a plugin can fill; completion (`/gearbox/complete` drops what
 the catalogue proves cannot run and adds a plugin for a bare host and a REST
-host for REST gears, saying why, writing nothing); the preview, which writes a
+host for REST gears, saying why, writing nothing); each named gear's config
+schema (`/gearbox/config-schema`: the fields its `gear.gdl` declares, with
+`required`, `default`, and `derived` for the addresses generation writes from
+`serves[].config_key`, so the portal's product form asks for what the engine
+would refuse without); the preview, which writes a
 `product.gdl` declaring every deployment profile, validates and resolves it for
 the one asked, and with `write` commits it to the project's gear repository on
 a new branch; and the corpus over Git smart HTTP, fetch only, authenticated as
@@ -256,6 +267,7 @@ which calls this engine; moving it here is a follow-up.
 | `GET` | `/gearbox/catalogue` | The engine catalogue over the backend's corpus, for an IDE whose workspace has none | unstable |
 | `GET` | `/gearbox/extension-points` | The hosts a new plugin gear can fill | unstable |
 | `POST` | `/gearbox/complete` | Complete picked gears into a resolvable set; writes nothing | unstable |
+| `POST` | `/gearbox/config-schema` | Each named gear's config fields: required, default, derived; writes nothing | unstable |
 | `GET` | `/gearbox/corpus/info/refs` | Git smart-HTTP ref advertisement for the corpus | unstable |
 | `POST` | `/gearbox/corpus/git-upload-pack` | Git smart-HTTP upload-pack, fetch only | unstable |
 
@@ -282,11 +294,11 @@ catalogue's ([studio-components-catalog](studio-components-catalog.md)).
 |-------------------|----------------|----------|
 | `types_registry` | `types-registry-sdk` | Register `project_gear_repo` and `project_product` at init |
 | `account_management` | `account-management-sdk` | A project's configured sources, for a write without a gear repository; whether a caller reaches the organization a request names |
-| `cpt-studio-component-connector` | `connectors::sdk::Connectors` | Create repositories, write scaffolds and `product.gdl` |
+| `cpt-studio-component-connector` | `connectors::sdk::Connectors`; `Repository`, `create_repository`; `git_checkout` | Create repositories, write scaffolds and `product.gdl` (`Repository::commit_files`, `open_pull_request`); the corpus checkout (`git_checkout::clone_or_update`) |
 | `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (`graph` feature), through `catalog_graph::build_sink` | The two records |
 | `cpt-studio-component-git-proxy` | `git_proxy::sdk` (`authenticate_member`, `send_upstream`, `stream_back`) | The corpus relay |
-| `cpt-studio-component-artifact-ingest` | `artifact_ingest::sdk::clone_or_update` | The corpus checkout |
 | `authn_resolver` | `AuthNResolverClient` | Authenticate a member on the corpus relay |
+| `cpt-studio-component-session` | `studio_session::sdk::TenantMembership` | Whether the caller reaches the workspace |
 
 `port::engine` and `port::ProjectProducts` are published for
 `cpt-studio-component-components-catalog`.

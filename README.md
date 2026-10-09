@@ -67,7 +67,7 @@ Who the product is designed around, and what it deliberately is not, is in
 |---|---|
 | **Portal** | The primary web UI, built on [FrontX](https://github.com/constructorfabric/gears-frontx). It talks to the backend through one contract ([ADR-0020](docs/adr/0020-one-contract-with-the-frontend.md)) and is told about background work over the `studio-events` push channel ([ADR-0026](docs/adr/0026-studio-events-push-channel.md)). |
 | **Prototype portal** | The first portal: a workbench over the live API with a screen per gear, including the system view of gears and LLM upstreams. |
-| **Backend** | A Gears host with almost no code of its own: each capability is a gear linked in as a crate. Serves OpenAPI at `/cf/docs`. |
+| **Backend** | A Gears host with almost no code of its own. Platform gears are linked in as crates from crates.io; Studio's own gears are modules of the one backend crate. Serves OpenAPI at `/cf/docs`. |
 | **IDE session** | Eclipse Theia with the Studio extensions, launched by the backend per workspace ([ADR-0003](docs/adr/0003-theia-sessions.md)); it reaches the backend through the Theia bridge ([ADR-0022](docs/adr/0022-theia-backend-bridge.md)). |
 | **Desktop Studio** | The same IDE as an Electron app. Credentials stay on the server and Git and LLM calls are proxied ([ADR-0027](docs/adr/0027-a-desktop-session-keeps-the-secrets-on-the-server.md)). |
 | **PostgreSQL** | One server for every gear database and for `graph_storage`, which holds the domain model ([ADR-0024](docs/adr/0024-domain-model-in-graph-storage.md)). |
@@ -80,7 +80,7 @@ The full architecture — gears, storage, interfaces — is in the
 
 ```
 studio-web/
-├── studio-backend/             Rust backend: the Gears host, its config and gear crates
+├── studio-backend/             Rust backend: the Gears host, its config and Studio's gears (`src/`)
 ├── studio-frontend/            Portal: FrontX shell, microfrontends, packages, e2e tests
 ├── studio-frontend-prototype/  Prototype portal
 ├── theia/                      IDE: browser session image, desktop app, Studio extensions
@@ -152,8 +152,8 @@ its feature off with a clear message rather than breaking the stack.
 
 | Capability | What to set |
 |---|---|
-| Ask AI, mini-chat, Codex agent | `STUDIO_LLM_API_KEY` (any OpenAI-compatible key) |
-| Claude Code agent in sessions | `STUDIO_ANTHROPIC_API_KEY` |
+| Ask AI, mini-chat | `STUDIO_LLM_API_KEY` (any OpenAI-compatible key) |
+| Claude Code, Codex and the chat in IDE sessions | Nothing to set: each person adds their own key to their profile, or an owner connects one under Connections |
 | Secrets that survive a restart | `STUDIO_CREDSTORE_KEY` — generate once with `openssl rand -base64 32` and keep it; a new key makes stored values unreadable |
 | A private session image from GHCR | `STUDIO_REGISTRY_USER`, `STUDIO_REGISTRY_TOKEN` (a PAT with `read:packages`) |
 | Spec quality, Insight analytics | `STUDIO_SPEC_QUALITY_API_KEY`, `STUDIO_INSIGHT_API_KEY` |
