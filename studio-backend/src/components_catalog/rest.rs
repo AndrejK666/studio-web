@@ -1638,8 +1638,10 @@ pub struct RegistryOwnerDto {
 #[derive(Debug, Clone, PartialEq)]
 #[toolkit_macros::api_dto(response)]
 pub struct RegistryDecisionDto {
-    /// `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or
-    /// `edit`.
+    /// `register`, `reject`, `deprecate`, `restore`, `publish`,
+    /// `mark_published`, `merge` or `edit`; `declare` (Declare it) and
+    /// `published` (by `platform-sync`, when the platform's catalogue has a
+    /// contributed gear) are recorded too.
     pub action: String,
     /// The state before; equal to `to` for an edit.
     pub from: String,
@@ -1659,10 +1661,10 @@ pub struct RegistryDecisionDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct RegistryDecisionRequest {
-    /// `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or
-    /// `edit`.
+    /// `register`, `reject`, `deprecate`, `restore`, `publish`,
+    /// `mark_published`, `merge` or `edit`.
     pub action: String,
-    /// Why. Required to reject.
+    /// Why. Required to reject; for `publish`, said in the pull request.
     pub reason: Option<String>,
     /// Required to register (unless the entry has one); set by an edit.
     pub owner: Option<RegistryOwnerDto>,
@@ -1674,7 +1676,7 @@ pub struct RegistryDecisionRequest {
     pub replaced_by: Option<String>,
     /// For `merge`: the existing entry to fold this one into.
     pub merge_into: Option<String>,
-    /// For `publish`: the version published.
+    /// For `mark_published`: the version the platform published.
     pub version: Option<String>,
 }
 
@@ -1699,8 +1701,18 @@ pub struct RegistryEntryDto {
     pub merged_into: Option<String>,
     /// For a `deprecated` entry, the entry to use instead.
     pub replaced_by: Option<String>,
-    /// For a `published` entry, the version published.
+    /// For a `published` entry, the platform's version of it when known.
     pub version: Option<String>,
+    /// The pull request that gave it to the platform (ADR-0042 §4), once a
+    /// `publish` decision opened one; it stays `registered` until the
+    /// platform's catalogue has it.
+    pub contribution: Option<RegistryContributionDto>,
+    /// The projects that use it without declaring it (P4): by a Cargo
+    /// dependency of their code, by their product's picks, or both.
+    pub consumers: Vec<RegistryConsumerDto>,
+    /// What a model last proposed for it (`POST /registry/{name}/suggest`);
+    /// never a state change.
+    pub suggestion: Option<RegistrySuggestionDto>,
     /// No occurrence is left; the entry is kept with its state.
     pub orphaned: bool,
     /// RFC 3339.
@@ -1715,6 +1727,50 @@ pub struct RegistryEntryDto {
     /// The decisions made about it, newest first. Only on the single-entry
     /// read and a decision's answer; null in the list.
     pub decisions: Option<Vec<RegistryDecisionDto>>,
+}
+
+/// A gear given to the platform: the pull request into the platform's gear
+/// repository.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryContributionDto {
+    /// The platform's gear repository, `owner/name`.
+    pub repo: String,
+    /// `contribute/<organization>/<name>`.
+    pub branch: String,
+    pub pr_url: Option<String>,
+    /// Where the gear's files went in the platform's repository.
+    pub path: String,
+    pub files: u32,
+    /// RFC 3339.
+    pub at: String,
+    pub by: String,
+    pub by_name: Option<String>,
+}
+
+/// A project that uses a registry entry it does not declare.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryConsumerDto {
+    pub project_id: Uuid,
+    pub project_name: String,
+    /// `cargo`, `product`, or both.
+    pub via: Vec<String>,
+}
+
+/// What a model proposed for a registry entry.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistrySuggestionDto {
+    pub description: Option<String>,
+    /// One of the platform's categories, or null.
+    pub category: Option<String>,
+    /// Keys of the organization's capability vocabulary only.
+    pub capabilities: Vec<String>,
+    /// RFC 3339.
+    pub at: String,
+    /// `provider:model`.
+    pub model: String,
 }
 
 /// One signal a candidate detector found (ADR-0041 P3).
@@ -1857,6 +1913,27 @@ pub(crate) fn registry_entry_dto(e: super::registry::RegistryEntry) -> RegistryE
         merged_into: e.entry.merged_into,
         replaced_by: e.entry.replaced_by,
         version: e.entry.version,
+        contribution: e.entry.contribution.map(|c| RegistryContributionDto {
+            repo: c.repo,
+            branch: c.branch,
+            pr_url: c.pr_url,
+            path: c.path,
+            files: u32::try_from(c.files).unwrap_or(u32::MAX),
+            at: c.at,
+            by: c.by,
+            by_name: c.by_name,
+        }),
+        consumers: e
+            .entry
+            .consumers
+            .into_iter()
+            .map(|c| RegistryConsumerDto {
+                project_id: c.project_id,
+                project_name: c.project_name,
+                via: c.via,
+            })
+            .collect(),
+        suggestion: e.entry.suggestion.map(suggestion_dto),
         orphaned: e.entry.orphaned,
         first_seen: e.entry.first_seen,
         last_seen: e.entry.last_seen,
@@ -1886,6 +1963,17 @@ pub(crate) fn registry_entry_dto(e: super::registry::RegistryEntry) -> RegistryE
             })
             .collect(),
         decisions: None,
+    }
+}
+
+/// A suggestion as the registry routes answer it.
+pub(crate) fn suggestion_dto(s: super::registry::Suggestion) -> RegistrySuggestionDto {
+    RegistrySuggestionDto {
+        description: s.description,
+        category: s.category,
+        capabilities: s.capabilities,
+        at: s.at,
+        model: s.model,
     }
 }
 
@@ -1933,6 +2021,7 @@ fn decision_input(body: RegistryDecisionRequest) -> super::registry_decisions::D
         replaced_by: body.replaced_by,
         merge_into: body.merge_into,
         version: body.version,
+        contribution: None,
     }
 }
 
@@ -2312,10 +2401,24 @@ async fn decide_registry_entry(
             .with_reason("REGISTRY_ADMIN_REQUIRED")
             .create());
     }
+    let input = decision_input(body);
+    match super::registry_decisions::Action::parse(&input.action) {
+        // Publishing opens a pull request into the platform (ADR-0042 §4).
+        Some(super::registry_decisions::Action::Publish) => {
+            return publish::publish(&catalog, &ctx, &name, &input).await;
+        }
+        // The platform says what it has: only its administrator marks it.
+        Some(super::registry_decisions::Action::MarkPublished)
+            if !may_run_platform(catalog.organizations().as_deref(), &ctx).await =>
+        {
+            return Err(platform_refusal());
+        }
+        _ => {}
+    }
     let by = catalog.decider(&ctx).await;
     match catalog
         .service
-        .decide_registry(&ctx, &name, &decision_input(body), &by)
+        .decide_registry(&ctx, &name, &input, &by)
         .await
     {
         Ok((entry, decisions)) => Ok(Json(registry_entry_detail_dto(entry, decisions))),
@@ -2549,11 +2652,15 @@ fn register_platform_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
 #[path = "registry_gear_repository_rest.rs"]
 mod gear_repository;
 
+#[path = "registry_publish_rest.rs"]
+mod publish;
+
 fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = register_platform_routes(router, openapi);
     // Before `/registry/{name}`'s routes, though axum prefers the literal
     // segment either way.
     let router = gear_repository::register(router, openapi);
+    let router = publish::register(router, openapi);
     let router = OperationBuilder::get("/studio-components-catalog/v1/sources")
         .operation_id("studio_components_catalog.list_sources")
         .summary("The organization's catalogue sources, kept on the server")
@@ -2662,8 +2769,19 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
              (candidate or declared, with a `reason`), `deprecate` (registered or \
              published, optionally `replaced_by` an existing entry), `restore` \
              (rejected back to declared, or candidate when nothing declares it; \
-             deprecated back to registered), `publish` (registered, optionally \
-             with a `version`), `merge` (into the existing entry `merge_into`, \
+             deprecated back to registered), `publish` (registered: opens a \
+             pull request into the platform's gear repository -- the platform's \
+             catalogue source in mode `gears` -- copying the directory the entry \
+             is declared in, at most 200 files and 2 MiB, under the platform's \
+             parent directory for gears, on `contribute/<organization>/<name>`; \
+             the entry stays registered with its `contribution`, and becomes \
+             `published` when the platform's catalogue has it; 400 \
+             `failed_precondition` when the platform has no gear repository, \
+             nothing declares the entry, or the directory is larger; 503 \
+             without studio-product), `mark_published` (registered to \
+             published, optionally with the platform's `version`; a platform \
+             administrator only, for when the names differ), `merge` (into the \
+             existing entry `merge_into`, \
              which takes this one's occurrences and its name as an alias, so a \
              later walk puts what it finds under that name there) and `edit` \
              (owner, kind, category, capabilities, description; no state move). \
@@ -2671,7 +2789,7 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
              A move the entry's state does not allow is `failed_precondition`; \
              403 for anyone but the organization's owner, a platform \
              administrator, or a holder of `component.registry`. Answers the \
-             entry with its decisions.",
+             entry with its decisions and its `consumers`.",
         )
         .tag("StudioComponentsCatalog")
         .authenticated()
@@ -2690,6 +2808,7 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     let router = OperationBuilder::post("/studio-components-catalog/v1/registry/{name}/declare")

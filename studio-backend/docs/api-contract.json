@@ -2496,6 +2496,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/{name}/suggest",
+      "operation_id": "studio_components_catalog.analyze_registry_entry",
+      "tag": "StudioComponentsCatalog",
+      "summary": "A model's description, category and capabilities for a registry entry",
+      "authenticated": true,
+      "responses": [
+        "RegistrySuggestionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/sync",
       "operation_id": "studio_components_catalog.sync",
       "tag": "StudioComponentsCatalog",

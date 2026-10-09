@@ -297,7 +297,7 @@ pub struct CatalogService {
     /// construction, because the engine is configured separately.
     gearbox: std::sync::OnceLock<Arc<crate::product::sdk::Gearbox>>,
     /// A project's gear repository, which `studio-product` keeps.
-    products: std::sync::OnceLock<crate::product::port::Products>,
+    pub(super) products: std::sync::OnceLock<crate::product::port::Products>,
     /// Reads a project's own sources, for a project with no gear repository.
     pub(super) account_management:
         std::sync::OnceLock<Arc<dyn account_management_sdk::AccountManagementClient>>,

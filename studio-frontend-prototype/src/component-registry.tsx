@@ -13,12 +13,24 @@
  *
  * Phase 3 adds candidates: code the walk found that looks like a gear and is
  * not declared one, with its evidence and score, in a Candidates view. Declare
- * it opens a pull request adding the candidate's gear.toml. */
+ * it opens a pull request adding the candidate's gear.toml.
+ *
+ * Phase 4 (ADR-0041 P4, ADR-0042 §4): Publish opens a pull request giving the
+ * gear to the platform (pending until the platform's catalogue has it), each
+ * entry says which projects use it, and Suggest asks a model -- on the
+ * caller's own key -- for a description, category and capabilities that an
+ * Apply turns into an edit. */
 
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "./api";
-import type { RegistryDecisionInput, RegistryDeclareResult, RegistryEntry, RegistryProjectWalk } from "./api";
+import type {
+  RegistryDecisionInput,
+  RegistryDeclareResult,
+  RegistryEntry,
+  RegistryProjectWalk,
+  RegistrySuggestion,
+} from "./api";
 import { errText } from "./format";
 import { occurrencePlace } from "./org-gear-repository";
 import {
@@ -29,18 +41,24 @@ import {
   allowedActions,
   candidateWhere,
   candidatesOf,
+  consumerLine,
+  consumersLabel,
   declareRefusal,
   decisionLine,
   decisionRefusal,
   decisionTargets,
+  deprecationImpact,
   detectedProjects,
   evidenceLines,
   filterEntries,
   isDuplicated,
   ownerLabel,
   projectsOf,
+  publishStatus,
   registryProjects,
   stateCounts,
+  suggestRefusal,
+  suggestionEdit,
   walkLine,
 } from "./registry";
 import type { RegistryAction } from "./registry";
@@ -49,11 +67,14 @@ export function ComponentRegistry({
   token,
   projects,
   onOpenComponent,
+  isPlatformAdmin = false,
 }: {
   token: string;
   /** The organization's projects, for choosing which ones the walk reads. */
   projects: { id: string; name: string }[];
   onOpenComponent?: (name: string) => void;
+  /** A platform administrator may mark a contributed entry published by hand. */
+  isPlatformAdmin?: boolean;
 }) {
   const [entries, setEntries] = useState<RegistryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -286,6 +307,7 @@ export function ComponentRegistry({
                     onToggle={() => setOpen(open === e.name ? null : e.name)}
                     onDecided={() => void load()}
                     onOpenComponent={onOpenComponent}
+                    isPlatformAdmin={isPlatformAdmin}
                   />
                 ))}
               </tbody>
@@ -343,6 +365,7 @@ function RegistryRow({
   onToggle,
   onDecided,
   onOpenComponent,
+  isPlatformAdmin = false,
 }: {
   token: string;
   entry: RegistryEntry;
@@ -353,8 +376,11 @@ function RegistryRow({
   onToggle: () => void;
   onDecided: () => void;
   onOpenComponent?: (name: string) => void;
+  isPlatformAdmin?: boolean;
 }) {
   const first = e.occurrences[0];
+  const published = publishStatus(e);
+  const used = consumersLabel(e);
   return (
     <>
       <tr style={{ cursor: "pointer" }} onClick={onToggle} aria-expanded={open}>
@@ -374,8 +400,25 @@ function RegistryRow({
         </td>
         <td>
           <span className={`badge ${STATE_TONE[e.state] ?? ""}`}>{STATE_LABEL[e.state] ?? e.state}</span>
+          {published && (
+            <span
+              className={`badge ${published.kind === "published" ? "ok" : "info"}`}
+              style={{ marginLeft: 6 }}
+              title={published.kind === "pending" ? "Waiting for the platform's maintainers to merge the pull request" : "In the platform's catalogue"}
+              data-registry-publish-status
+            >
+              {published.label}
+            </span>
+          )}
         </td>
-        <td style={{ fontSize: 13 }}>{projectsOf(e).join(", ") || "—"}</td>
+        <td style={{ fontSize: 13 }}>
+          {projectsOf(e).join(", ") || "—"}
+          {used && (
+            <div style={{ fontSize: 12, opacity: 0.75 }} data-registry-used-by>
+              {used}
+            </div>
+          )}
+        </td>
         <td style={{ fontSize: 12 }}>
           {first ? (
             <>
@@ -435,6 +478,29 @@ function RegistryRow({
                 <b>Published version:</b> {e.version}
               </div>
             )}
+            {e.contribution && (
+              <div data-registry-contribution>
+                <b>{e.state === "published" ? "Contributed" : "Contribution PR opened"}:</b>{" "}
+                {e.contribution.pr_url ? (
+                  <a href={e.contribution.pr_url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}>
+                    {e.contribution.pr_url}
+                  </a>
+                ) : (
+                  <code>{e.contribution.branch}</code>
+                )}{" "}
+                <span style={{ opacity: 0.7 }}>
+                  — {e.contribution.files} file{e.contribution.files === 1 ? "" : "s"} into <code>{e.contribution.repo}</code> at{" "}
+                  <code>{e.contribution.path}</code>
+                  {e.state !== "published" && "; published once the platform's catalogue has it"}
+                </span>
+              </div>
+            )}
+            {(e.consumers ?? []).length > 0 && (
+              <div data-registry-consumers>
+                <b>{consumersLabel(e)}:</b> {(e.consumers ?? []).map(consumerLine).join(", ")}
+              </div>
+            )}
+            <SuggestDescription token={token} entry={e} onApplied={onDecided} />
             <div style={{ marginTop: 4 }}>
               <b>Found in</b>
             </div>
@@ -458,7 +524,15 @@ function RegistryRow({
                 Open in the catalogue →
               </button>
             )}
-            <RegistryDecisions token={token} entry={e} entries={entries} people={people} names={names} onDecided={onDecided} />
+            <RegistryDecisions
+              token={token}
+              entry={e}
+              entries={entries}
+              people={people}
+              names={names}
+              onDecided={onDecided}
+              isPlatformAdmin={isPlatformAdmin}
+            />
           </td>
         </tr>
       )}
@@ -688,6 +762,7 @@ function RegistryDecisions({
   people,
   names,
   onDecided,
+  isPlatformAdmin = false,
 }: {
   token: string;
   entry: RegistryEntry;
@@ -695,6 +770,7 @@ function RegistryDecisions({
   people: { id: string; name: string }[];
   names: Record<string, string>;
   onDecided: () => void;
+  isPlatformAdmin?: boolean;
 }) {
   const [detail, setDetail] = useState<RegistryEntry | null>(null);
   const [form, setForm] = useState<RegistryAction | null>(null);
@@ -754,7 +830,7 @@ function RegistryDecisions({
     if (reason.trim()) input.reason = reason.trim();
     if (form === "deprecate" && target) input.replaced_by = target;
     if (form === "merge") input.merge_into = target;
-    if (form === "publish" && version.trim()) input.version = version.trim();
+    if (form === "mark_published" && version.trim()) input.version = version.trim();
     setBusy(true);
     setError(null);
     try {
@@ -835,7 +911,7 @@ function RegistryDecisions({
     <div style={{ marginTop: 8, borderTop: "1px solid var(--border, rgba(0,0,0,0.1))", paddingTop: 6 }} data-registry-decisions>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <b>Decide</b>
-        {allowedActions(e.state).map((a) => (
+        {allowedActions(e.state, { platformAdmin: isPlatformAdmin }).map((a) => (
           <button key={a} type="button" className={form === a ? "primary" : ""} onClick={() => open(a)} disabled={busy}>
             {ACTION_LABEL[a]}
           </button>
@@ -875,8 +951,21 @@ function RegistryDecisions({
             </>
           )}
           {form === "deprecate" && targetSelect("Replaced by", false)}
+          {form === "deprecate" && deprecationImpact(detail ?? e) && (
+            <div className="hint" data-registry-deprecate-impact>
+              {deprecationImpact(detail ?? e)}
+            </div>
+          )}
           {form === "merge" && targetSelect("Merge into", true)}
           {form === "publish" && (
+            <div className="hint" data-registry-publish-explain>
+              Opens a pull request into the platform&apos;s gear repository with this gear&apos;s files (at most 200
+              files, 2 MiB). The platform&apos;s maintainers review it; the entry is published once the platform&apos;s
+              catalogue has it.
+              {e.contribution?.pr_url && <> A pull request is already open: {e.contribution.pr_url}</>}
+            </div>
+          )}
+          {form === "mark_published" && (
             <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <b>Version</b>
               <input value={version} onChange={(ev) => setVersion(ev.target.value)} placeholder="e.g. 1.0.0" aria-label="Version" />
@@ -920,6 +1009,90 @@ function RegistryDecisions({
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/** Suggest (ADR-0041 P4): a model's description, category and capability
+ *  keys for the entry, asked on the caller's own key. The suggestion is shown
+ *  beside what the entry says; Apply sends it as an edit. */
+function SuggestDescription({
+  token,
+  entry: e,
+  onApplied,
+}: {
+  token: string;
+  entry: RegistryEntry;
+  onApplied: () => void;
+}) {
+  const [suggestion, setSuggestion] = useState<RegistrySuggestion | null>(e.suggestion ?? null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [applied, setApplied] = useState(false);
+
+  const ask = async () => {
+    setBusy(true);
+    setError(null);
+    setApplied(false);
+    try {
+      setSuggestion(await api.suggestRegistry(token, e.name));
+    } catch (cause) {
+      setError(suggestRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const apply = async () => {
+    if (!suggestion) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.decideRegistry(token, e.name, suggestionEdit(suggestion));
+      setApplied(true);
+      onApplied();
+    } catch (cause) {
+      setError(decisionRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ margin: "6px 0" }} data-registry-suggest>
+      <button type="button" disabled={busy} onClick={() => void ask()}>
+        {busy && !suggestion ? "Asking…" : suggestion ? "Suggest again" : "Suggest a description"}
+      </button>{" "}
+      <span className="hint" style={{ fontSize: 12 }}>
+        asks a model on your own key; nothing changes until you apply it
+      </span>
+      {suggestion && (
+        <div style={{ marginTop: 4, padding: 6, background: "var(--muted, rgba(0,0,0,0.04))" }} data-registry-suggestion>
+          <div>
+            <b>Suggested</b> <span style={{ opacity: 0.6 }}>by {suggestion.model}</span>
+          </div>
+          {suggestion.description && <div>{suggestion.description}</div>}
+          <div>
+            <b>Category:</b> {suggestion.category ?? <span style={{ opacity: 0.6 }}>none fits</span>}
+          </div>
+          <div>
+            <b>Capabilities:</b>{" "}
+            {suggestion.capabilities.length ? suggestion.capabilities.join(", ") : <span style={{ opacity: 0.6 }}>none fits</span>}
+          </div>
+          {applied ? (
+            <div data-registry-suggestion-applied>Applied as an edit.</div>
+          ) : (
+            <button type="button" className="primary" disabled={busy} onClick={() => void apply()} style={{ marginTop: 4 }}>
+              Apply
+            </button>
+          )}
+        </div>
+      )}
+      {error && (
+        <div className="error" style={{ fontSize: 12 }} data-registry-suggest-error>
+          {error}
+        </div>
       )}
     </div>
   );

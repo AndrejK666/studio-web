@@ -63,6 +63,7 @@ fn read(project: Uuid, print: &str, gears: Vec<LocalGear>, candidates: Vec<Candi
         candidates,
         tenant: Some(TENANT),
         connection_id: None,
+        cargo_deps: Vec::new(),
     }
 }
 
@@ -78,6 +79,7 @@ fn walk(now: &str, reads: Vec<RepoRead>) -> Walk {
         in_scope: None,
         resolved,
         reads,
+        ..Walk::default()
     }
 }
 

@@ -65,7 +65,8 @@ fn the_transition_table_allows_exactly_the_lifecycle_moves() {
         ("deprecate", "published", "deprecated"),
         ("restore", "rejected", "declared"),
         ("restore", "deprecated", "registered"),
-        ("publish", "registered", "published"),
+        ("publish", "registered", "registered"),
+        ("mark_published", "registered", "published"),
         ("merge", "candidate", "merged"),
         ("merge", "declared", "merged"),
         ("merge", "registered", "merged"),
@@ -243,12 +244,57 @@ fn deprecating_names_an_existing_replacement_and_restoring_clears_it() {
 }
 
 #[test]
-fn publishing_records_the_version() {
-    let mut req = input("publish");
+fn marking_published_records_the_version() {
+    let mut req = input("mark_published");
     req.version = Some(" 0.3.0 ".into());
     let applied = apply(&entry("a", STATE_REGISTERED), true, &req, &nobody).unwrap();
     assert_eq!(applied.entry.state, STATE_PUBLISHED);
     assert_eq!(applied.entry.version.as_deref(), Some("0.3.0"));
+}
+
+/// Publishing keeps the entry `registered` and records the contribution it
+/// opened; without one it is refused, so no request can claim a pull request.
+#[test]
+fn publishing_records_the_contribution_and_keeps_the_state() {
+    let refused = apply(
+        &entry("a", STATE_REGISTERED),
+        true,
+        &input("publish"),
+        &nobody,
+    );
+    assert!(matches!(
+        refused,
+        Err(DecisionError::Invalid {
+            field: "action",
+            ..
+        })
+    ));
+    let mut req = input("publish");
+    req.contribution = Some(crate::components_catalog::registry::Contribution {
+        repo: "cf/gears-rust".into(),
+        branch: "contribute/acme/a".into(),
+        pr_url: Some("https://github.com/cf/gears-rust/pull/9".into()),
+        path: "gears/a".into(),
+        files: 3,
+        at: "2026-10-09T10:00:00Z".into(),
+        by: "ada-id".into(),
+        by_name: None,
+    });
+    let applied = apply(&entry("a", STATE_REGISTERED), true, &req, &nobody).unwrap();
+    assert_eq!(applied.entry.state, STATE_REGISTERED);
+    assert_eq!(applied.to, STATE_REGISTERED);
+    assert_eq!(
+        applied
+            .entry
+            .contribution
+            .as_ref()
+            .and_then(|c| c.pr_url.as_deref()),
+        Some("https://github.com/cf/gears-rust/pull/9")
+    );
+    assert_eq!(
+        applied.details["contribution"]["branch"],
+        "contribute/acme/a"
+    );
 }
 
 #[test]
@@ -357,6 +403,7 @@ fn walk_of(now: &str, print: &str, gears: Vec<LocalGear>) -> Walk {
         resolved: [(P1, "k1".to_string())].into_iter().collect(),
         projects_resolved: [P1].into_iter().collect(),
         in_scope: Some([P1].into_iter().collect()),
+        ..Walk::default()
     }
 }
 

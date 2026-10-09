@@ -131,6 +131,68 @@ pub struct EntryRecord {
     /// with any other fingerprint proposes it again.
     #[serde(default)]
     pub candidate_fingerprints: Vec<String>,
+    /// The pull request that gave it to the platform (ADR-0042 §4), opened by
+    /// a `publish` decision. The entry stays `registered` until the
+    /// platform's catalogue has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contribution: Option<Contribution>,
+    /// The projects that use it without declaring it: by a Cargo dependency
+    /// or by their product's picks (P4). The walk keeps it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub consumers: Vec<Consumer>,
+    /// What a model last proposed for it (P4). Never a state change:
+    /// applying it is an `edit` decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<Suggestion>,
+}
+
+/// A gear given to the platform: the pull request into the platform's gear
+/// repository (ADR-0042 §4).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contribution {
+    /// The platform's gear repository, `owner/name`.
+    pub repo: String,
+    /// `contribute/<organization>/<name>`.
+    pub branch: String,
+    #[serde(default)]
+    pub pr_url: Option<String>,
+    /// Where the gear's files went in the platform's repository.
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub files: usize,
+    /// RFC 3339.
+    pub at: String,
+    /// Who published it: their Studio id, else the token's subject.
+    pub by: String,
+    #[serde(default)]
+    pub by_name: Option<String>,
+}
+
+/// A project that uses an entry it does not declare (P4).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Consumer {
+    pub project_id: Uuid,
+    pub project_name: String,
+    /// `cargo` (a Cargo dependency of its code), `product` (its product's
+    /// picks), or both.
+    pub via: Vec<String>,
+}
+
+/// What a model proposed for an entry (P4).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Suggestion {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Keys of the organization's capability vocabulary only.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// RFC 3339.
+    pub at: String,
+    /// `provider:model`.
+    pub model: String,
 }
 
 /// Who answers for an entry.
@@ -231,6 +293,9 @@ pub struct OccurrenceRecord {
     pub scope: Option<String>,
 }
 
+/// Who a decision the platform's sync makes is by.
+pub const PLATFORM_SYNC: &str = "platform-sync";
+
 /// The scope of an occurrence found in the organization's gear repository.
 pub const SCOPE_ORGANIZATION: &str = "organization";
 /// The scope of an occurrence found in a project's repository.
@@ -298,6 +363,11 @@ pub struct ReadRecord {
     #[serde(default)]
     pub commit: Option<String>,
     pub read_at: String,
+    /// The crates its `Cargo.toml` files depend on at run time, as read under
+    /// `fingerprint` (P4): a repository skipped as unchanged keeps its
+    /// consumers by them.
+    #[serde(default)]
+    pub cargo_deps: Vec<String>,
 }
 
 /// One entry with every place it was found: what the registry answers.
@@ -340,6 +410,8 @@ pub struct RepoRead {
     /// The tenant whose connection reads it, and the connection.
     pub tenant: Option<Uuid>,
     pub connection_id: Option<Uuid>,
+    /// The crates its Cargo manifests depend on (P4).
+    pub cargo_deps: Vec<String>,
 }
 
 /// What a walk saw.
@@ -363,6 +435,15 @@ pub struct Walk {
     /// project (excluded, or gone from the organization) is retired. `None`
     /// for a walk over named projects, which leaves the others alone.
     pub in_scope: Option<BTreeSet<Uuid>>,
+    /// Each project's product picks (studio-product's record, P4): read this
+    /// walk, or carried from the last one for a project not read now.
+    pub product_picks: BTreeMap<Uuid, Vec<String>>,
+    /// Each project's name, for its consumer records.
+    pub project_names: BTreeMap<Uuid, String>,
+    /// The platform's components (ADR-0042) by folded name, each with its
+    /// newest version when known. `None` when the platform's tier was not
+    /// read: nothing is found published then.
+    pub platform: Option<BTreeMap<String, Option<String>>>,
 }
 
 /// What a walk writes.
@@ -383,12 +464,15 @@ pub struct Plan {
     pub declared_from_candidates: usize,
     /// Rejected candidates whose code changed, proposed again.
     pub reproposed: usize,
+    /// Contributed entries the platform's catalogue now has, now `published`:
+    /// `(entry id, name, version)`. The caller records a decision for each.
+    pub published: Vec<(String, String, Option<String>)>,
 }
 
 /// Whether a stored `(project, repository)` pair is gone, by what the walk
 /// saw. The organization's gear repository is the pair `(organization,
 /// repository)`: on a full walk it is in scope only while it is set.
-fn pair_gone(walk: &Walk, project: Option<Uuid>, repo_key: &str) -> bool {
+pub(super) fn pair_gone(walk: &Walk, project: Option<Uuid>, repo_key: &str) -> bool {
     let Some(project) = project else {
         return false;
     };
@@ -614,6 +698,9 @@ pub fn plan(
     let mut remaining: BTreeMap<String, usize> = BTreeMap::new();
     // The fingerprints of the code each entry is still detected in.
     let mut prints: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // The projects each entry is declared (or detected) in: a project that
+    // declares a component is not its consumer.
+    let mut declarers: BTreeMap<String, BTreeSet<Uuid>> = BTreeMap::new();
     for (id, occ) in occurrences {
         if produced.contains_key(id) {
             continue;
@@ -624,6 +711,9 @@ pub fn plan(
             out.retire.push(id.clone());
             out.occurrences_removed += 1;
         } else {
+            if let Some(p) = occ.project_id {
+                declarers.entry(occ.entry_id.clone()).or_default().insert(p);
+            }
             *remaining.entry(occ.entry_id.clone()).or_default() += 1;
             if let Some(print) = occ.module_fingerprint.as_ref().filter(|_| occ.detected()) {
                 prints
@@ -634,6 +724,9 @@ pub fn plan(
         }
     }
     for occ in produced.values() {
+        if let Some(p) = occ.project_id {
+            declarers.entry(occ.entry_id.clone()).or_default().insert(p);
+        }
         *remaining.entry(occ.entry_id.clone()).or_default() += 1;
         if let Some(print) = &occ.module_fingerprint {
             prints
@@ -732,6 +825,36 @@ pub fn plan(
     for (id, entry) in &mut by_id {
         entry.orphaned = remaining.get(id).copied().unwrap_or(0) == 0;
     }
+
+    // Who uses each entry (P4), and which contributions the platform has
+    // taken (ADR-0042 §4).
+    let uses = super::registry_consumers::project_uses(walk, reads, &read_now);
+    let names_seen = super::registry_consumers::names_from(occurrences, &by_id);
+    for (id, entry) in &mut by_id {
+        if entry.state == STATE_MERGED {
+            entry.consumers.clear();
+        } else {
+            entry.consumers = super::registry_consumers::consumers_of(
+                entry,
+                &uses,
+                declarers.get(id),
+                walk,
+                &names_seen,
+            );
+        }
+        if let Some(platform) = &walk.platform
+            && let Some(version) = super::registry_consumers::platform_version(platform, entry)
+        {
+            if entry.state == STATE_REGISTERED && entry.contribution.is_some() {
+                entry.state = STATE_PUBLISHED.to_string();
+                entry.version.clone_from(&version);
+                out.published
+                    .push((id.clone(), entry.name.clone(), version));
+            } else if entry.state == STATE_PUBLISHED && version.is_some() {
+                entry.version = version;
+            }
+        }
+    }
     for (id, entry) in &by_id {
         if entry.orphaned {
             out.orphaned += 1;
@@ -769,6 +892,7 @@ pub fn plan(
             fingerprint: read.fingerprint.clone(),
             commit: read.commit.clone(),
             read_at: walk.now.clone(),
+            cargo_deps: read.cargo_deps.clone(),
         };
         if let Ok(value) = serde_json::to_value(&record) {
             out.upsert.push(gts::registry_read_node(
@@ -1057,6 +1181,11 @@ pub struct ProjectWalk {
     pub error: Option<String>,
     #[serde(default)]
     pub repos: Vec<RepoWalk>,
+    /// The gears the project's product picks, as studio-product recorded
+    /// them when the walk read the project (P4): what its `product`
+    /// consumers are found by. `None` when there was no record to read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_gears: Option<Vec<String>>,
 }
 
 /// What the last walk did with one repository of a project.
@@ -1169,6 +1298,9 @@ pub struct RegistryCounts {
     /// Rejected candidates proposed again because their code changed.
     #[serde(default)]
     pub reproposed: usize,
+    /// Contributed entries the platform's catalogue now has (ADR-0042 §4).
+    #[serde(default)]
+    pub published: usize,
 }
 
 pub(super) fn now() -> String {
@@ -1496,6 +1628,23 @@ impl CatalogService {
             .find(|e| e.entry.name.eq_ignore_ascii_case(wanted)))
     }
 
+    /// The platform's components as folded names with their versions
+    /// (`registry_consumers::platform_components`), best effort: `None` when
+    /// there is no platform tier to read from here, or it did not answer.
+    pub(super) async fn platform_components(
+        &self,
+        ctx: &SecurityContext,
+    ) -> Option<BTreeMap<String, Option<String>>> {
+        let pctx = self.platform_ctx(ctx)?;
+        match self.sink.list(&pctx, Some(gts::GEAR_TYPE)).await {
+            Ok(nodes) => Some(super::registry_consumers::platform_components(&nodes)),
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "components-catalog: registry: the platform's catalogue did not answer; nothing is found published this walk");
+                None
+            }
+        }
+    }
+
     /// An organization's projects, from the organizations gear.
     fn projects_of(&self) -> anyhow::Result<Arc<dyn crate::organizations::port::ProjectsOf>> {
         self.hub
@@ -1608,6 +1757,9 @@ impl CatalogService {
                         candidates: candidates.as_ref().clone(),
                         tenant: Some(target.tenant),
                         connection_id: target.connection_id,
+                        // The organization's gear repository is no project:
+                        // what it depends on makes nobody a consumer.
+                        cargo_deps: Vec::new(),
                     });
                 }
                 Err(e) => {
@@ -1629,7 +1781,7 @@ impl CatalogService {
 
     /// The organization's name, as account-management says; "Organization"
     /// when it cannot.
-    async fn organization_name(&self, ctx: &SecurityContext, org: Uuid) -> String {
+    pub(super) async fn organization_name(&self, ctx: &SecurityContext, org: Uuid) -> String {
         match self.account_management.get() {
             Some(am) => am
                 .get_tenant(ctx, org)
@@ -1688,8 +1840,22 @@ impl CatalogService {
             in_scope: only
                 .is_empty()
                 .then(|| in_scope.iter().map(|p| p.id).collect()),
+            project_names: in_scope.iter().map(|p| (p.id, p.name.clone())).collect(),
+            platform: self.platform_components(ctx).await,
             ..Walk::default()
         };
+        // Each project's product picks as the last walk read them: kept for a
+        // project this walk does not read again, replaced for one it does.
+        let previous = self.last_walk(ctx).await.unwrap_or_default();
+        for p in &previous {
+            if let Some(picks) = &p.product_gears {
+                walk.product_picks.insert(p.project_id, picks.clone());
+                walk.project_names
+                    .entry(p.project_id)
+                    .or_insert_with(|| p.project_name.clone());
+            }
+        }
+        let products = self.products.get().and_then(|p| p.get());
         let total = in_scope.len();
         let mut statuses: Vec<ProjectWalk> = Vec::with_capacity(total);
         // Components still recorded per (project, repository): what an
@@ -1727,10 +1893,32 @@ impl CatalogService {
                 Ok(pctx) => pctx,
                 Err(e) => {
                     status.error = Some(format!("{e:#}"));
+                    status.product_gears = walk.product_picks.get(&project.id).cloned();
                     statuses.push(status);
                     continue;
                 }
             };
+            // What its product picks (P4): read now, else what was read last.
+            status.product_gears = match &products {
+                Some(products) => {
+                    match products.product_gears(&pctx, &project.id.to_string()).await {
+                        Ok(picks) => picks,
+                        Err(e) => {
+                            tracing::warn!(project_id = %project.id, error = %format!("{e:#}"), "components-catalog: registry: a project's product could not be read; its last picks are kept");
+                            walk.product_picks.get(&project.id).cloned()
+                        }
+                    }
+                }
+                None => walk.product_picks.get(&project.id).cloned(),
+            };
+            match &status.product_gears {
+                Some(picks) => {
+                    walk.product_picks.insert(project.id, picks.clone());
+                }
+                None => {
+                    walk.product_picks.remove(&project.id);
+                }
+            }
             let repos = match self.project_repos(&pctx, &project.id.to_string()).await {
                 Ok(repos) => repos,
                 Err(e) => {
@@ -1786,7 +1974,17 @@ impl CatalogService {
                             components: gears.len(),
                             ..RepoWalk::default()
                         });
+                        // What its code depends on (P4): kept on the read,
+                        // so an unchanged repository keeps its consumers.
+                        let cargo_deps = match reader.cargo_dependencies(&pctx).await {
+                            Ok(deps) => deps.into_iter().collect(),
+                            Err(e) => {
+                                tracing::warn!(project_id = %project.id, repo = %target.repo, error = %format!("{e:#}"), "components-catalog: registry: a repository's Cargo dependencies could not be read");
+                                Vec::new()
+                            }
+                        };
                         walk.reads.push(RepoRead {
+                            cargo_deps,
                             project_id: project.id,
                             organization: false,
                             project_name: project.name.clone(),
@@ -1832,7 +2030,29 @@ impl CatalogService {
             .collect();
         // The one signal across projects, then the threshold.
         super::candidates::apply_copies(&mut walk.reads, &occurrences);
-        let plan = plan(&walk, &entries, &occurrences, &reads);
+        let mut plan = plan(&walk, &entries, &occurrences, &reads);
+        // A contribution the platform took is `published` by the platform's
+        // sync, and recorded as its decision (ADR-0042 §4).
+        for (entry_id, name, version) in &plan.published {
+            if let Some((node, edge)) = super::registry_decisions::decision_node(
+                super::registry_decisions::DecisionRecord {
+                    organization_id: org,
+                    entry: name.clone(),
+                    entry_id: entry_id.clone(),
+                    action: "published".to_owned(),
+                    from: STATE_REGISTERED.to_owned(),
+                    to: STATE_PUBLISHED.to_owned(),
+                    by: PLATFORM_SYNC.to_owned(),
+                    by_name: Some("platform sync".to_owned()),
+                    at: walk.now.clone(),
+                    reason: Some("the platform's catalogue has it".to_owned()),
+                    details: serde_json::json!({ "version": version }),
+                },
+            ) {
+                plan.upsert.push(node);
+                plan.edges.push(edge);
+            }
+        }
         self.sink.upsert(ctx, &plan.upsert, &plan.edges).await?;
         for id in &plan.retire {
             if let Err(e) = self.sink.delete(ctx, id).await {
@@ -1864,6 +2084,7 @@ impl CatalogService {
         counts.orphaned = plan.orphaned;
         counts.candidates = plan.candidates_found;
         counts.reproposed = plan.reproposed;
+        counts.published = plan.published.len();
         tracing::info!(organization_id = %org, ?counts, "components-catalog: registry walked");
         progress.set_with(
             "registry: done",

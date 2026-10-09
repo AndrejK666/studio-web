@@ -147,7 +147,7 @@ fn registry_admin_required() -> CanonicalError {
 
 impl Catalog {
     /// 403 unless the caller may decide about the registry.
-    async fn require_registry_admin(&self, ctx: &SecurityContext) -> ApiResult<()> {
+    pub(super) async fn require_registry_admin(&self, ctx: &SecurityContext) -> ApiResult<()> {
         if may_decide(self.authority().as_deref(), ctx).await {
             Ok(())
         } else {

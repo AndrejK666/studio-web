@@ -451,7 +451,8 @@ export interface RegistryOwner {
 
 /** One decision a person made about a registry entry (ADR-0041 P2). */
 export interface RegistryDecision {
-  /** `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or `edit`. */
+  /** `register`, `reject`, `deprecate`, `restore`, `publish`, `mark_published`,
+   *  `merge` or `edit`; also `declare` and `published` (by `platform-sync`). */
   action: string;
   from: string;
   to: string;
@@ -494,8 +495,15 @@ export interface RegistryEntry {
   merged_into?: string | null;
   /** For a `deprecated` entry, the entry to use instead. */
   replaced_by?: string | null;
-  /** For a `published` entry, the version published. */
+  /** For a `published` entry, the platform's version of it when known. */
   version?: string | null;
+  /** The pull request that gave it to the platform (ADR-0042 §4); the entry
+   *  stays `registered` until the platform's catalogue has it. */
+  contribution?: RegistryContribution | null;
+  /** The projects that use it without declaring it (ADR-0041 P4). */
+  consumers?: RegistryConsumer[];
+  /** What a model last proposed for it; never a state change. */
+  suggestion?: RegistrySuggestion | null;
   /** Only on the single-entry read and a decision's answer, newest first. */
   decisions?: RegistryDecision[] | null;
   /** No repository declares it any more; kept because it was the organization's. */
@@ -507,6 +515,39 @@ export interface RegistryEntry {
   /** For a `candidate`: why it looks like a gear, signal by signal. */
   evidence?: RegistryEvidence[];
   occurrences: RegistryOccurrence[];
+}
+
+/** A gear given to the platform: the pull request into its gear repository. */
+export interface RegistryContribution {
+  repo: string;
+  /** `contribute/<organization>/<name>`. */
+  branch: string;
+  pr_url?: string | null;
+  /** Where the files went in the platform's repository. */
+  path: string;
+  files: number;
+  at: string;
+  by: string;
+  by_name?: string | null;
+}
+
+/** A project that uses a registry entry it does not declare. */
+export interface RegistryConsumer {
+  project_id: string;
+  project_name: string;
+  /** `cargo`, `product`, or both. */
+  via: string[];
+}
+
+/** What `POST /registry/{name}/suggest` proposed. */
+export interface RegistrySuggestion {
+  description?: string | null;
+  category?: string | null;
+  /** Keys of the organization's capability vocabulary only. */
+  capabilities: string[];
+  at: string;
+  /** `provider:model`. */
+  model: string;
 }
 
 /** One signal a candidate detector found (ADR-0041 P3). */
@@ -4014,6 +4055,13 @@ export const api = {
     request<RegistryEntry>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/decisions`, token, {
       method: "POST",
       body: JSON.stringify(decision),
+    }),
+  /** A model's description, category and capabilities for an entry, on the
+   *  caller's own key (ADR-0041 P4). Stored on the entry; never a state
+   *  change. 400 `PROVIDER_KEY_REQUIRED` without a model key. */
+  suggestRegistry: (token: string, name: string) =>
+    request<RegistrySuggestion>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/suggest`, token, {
+      method: "POST",
     }),
   /** What the last registry walk saw of each project: read, unchanged, or
    *  not readable and why. */

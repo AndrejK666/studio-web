@@ -450,7 +450,11 @@ pub(super) fn relevant(path: &str) -> bool {
 ///
 /// `/4`: the candidate detectors (`candidates.rs`) read the presence of
 /// signal files too, so every repository is read once more to find them.
-pub const DISCOVERY_VERSION: &str = "project-gears/4";
+///
+/// `/5`: the registry keeps each repository's Cargo dependencies on its
+/// read (the consumer graph, ADR-0041 P4), so every repository is read once
+/// more to record them.
+pub const DISCOVERY_VERSION: &str = "project-gears/5";
 
 /// A fingerprint of the files the answer depends on, from the tree listing's
 /// `(path, blob sha)` pairs: equal while none of them changed. The files the

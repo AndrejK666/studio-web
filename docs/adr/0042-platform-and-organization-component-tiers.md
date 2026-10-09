@@ -157,7 +157,7 @@ Studio's side follows once the engine answers this.
 2. **The organization's gear repository** as the default target of "Create a
    gear". *Built: see the catalogue design's Tiers component.*
 3. **Publish as contribution:** a pull request into `gears-rust` (ADR-0041's
-   P4).
+   P4). *Built: see the catalogue design's Registry component, Publishing.*
 4. **Several corpora and pinned versions**, once the engine supports them.
 
 ## Traceability

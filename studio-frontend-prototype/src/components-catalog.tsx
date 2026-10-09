@@ -1098,7 +1098,12 @@ export function ComponentsCatalog({
           {err && (viewMode === "graph" || gears !== null) && <p className="gcat-err">{err}</p>}
 
           {pane === "registry" ? (
-            <ComponentRegistry token={token} projects={projects} onOpenComponent={(name) => { setPane("catalogue"); setSelected(name); }} />
+            <ComponentRegistry
+              token={token}
+              projects={projects}
+              isPlatformAdmin={isPlatformAdmin}
+              onOpenComponent={(name) => { setPane("catalogue"); setSelected(name); }}
+            />
           ) : viewMode === "graph" ? (
             <>
               <div className="dt-toolbar">

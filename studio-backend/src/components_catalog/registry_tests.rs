@@ -46,6 +46,7 @@ fn walk(now: &str, reads: Vec<RepoRead>, resolved: &[(Uuid, &str)]) -> Walk {
         resolved: resolved.iter().map(|(p, k)| (*p, k.to_string())).collect(),
         projects_resolved: resolved.iter().map(|(p, _)| *p).collect(),
         in_scope: Some(resolved.iter().map(|(p, _)| *p).collect()),
+        ..Walk::default()
     }
 }
 
@@ -329,6 +330,7 @@ fn an_excluded_project_loses_its_occurrences_and_a_failed_one_keeps_them() {
         resolved: BTreeSet::new(),
         projects_resolved: BTreeSet::new(),
         in_scope: Some([P1].into_iter().collect()),
+        ..Walk::default()
     };
     let plan = store.run(&w);
     assert_eq!(plan.occurrences_removed, 1);
@@ -592,6 +594,7 @@ fn walked(project: Uuid, name: &str, status: &str) -> ProjectWalk {
             error: None,
             hint: None,
         }],
+        product_gears: None,
     }
 }
 
@@ -761,6 +764,7 @@ fn a_reread_replaces_what_the_organizations_repository_holds_and_unsetting_it_re
         resolved: [(P1, "k1".to_string())].into_iter().collect(),
         projects_resolved: [P1].into_iter().collect(),
         reads: Vec::new(),
+        ..Walk::default()
     };
     store.run(&push);
     assert_eq!(store.occurrences_of("ledger").len(), 1);

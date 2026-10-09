@@ -345,7 +345,7 @@ Knows nothing about plans, definitions or workbooks.
 - [x] `p2` - **ID**: `cpt-studio-component-components-catalog-registry`
 
 The organization's components, wherever they are declared (ADR-0041,
-`cpt-studio-adr-component-registry`). Phases P1, P2 and P3 are built:
+`cpt-studio-adr-component-registry`). Every phase is built:
 
 - [x] **P1** (`registry.rs`, `registry_task.rs`): server-side sources, the
   walk, `declared` entries and the reads.
@@ -354,7 +354,9 @@ The organization's components, wherever they are declared (ADR-0041,
 - [x] **P3** (`candidates.rs`, `registry_declare.rs`): structural candidate
   detectors with evidence and a score, re-proposal of a rejected candidate
   whose code changed, and Declare it.
-- [ ] **P4**: model suggestions, the consumer graph and publishing.
+- [x] **P4** (`registry_publish.rs`, `registry_consumers.rs`,
+  `registry_suggest.rs`): publishing as a pull request into the platform's
+  gear repository, the consumer graph, and model suggestions.
 
 The walk is the task type `catalog.registry`, and also the last phase of a
 `catalog.sync` whose payload says `registry: true` — what `POST /sync` queues
@@ -431,7 +433,8 @@ decision, `POST /registry/{name}/decisions`, checked against one table
 | `deprecate` | `registered`, `published` | `deprecated` | `replaced_by`: an existing live entry, optional |
 | `restore` | `rejected` | `declared`, or `candidate` when nothing declares it | — |
 | `restore` | `deprecated` | `registered` | clears `replaced_by` |
-| `publish` | `registered` | `published` | `version`, optional |
+| `publish` | `registered` | `registered` | opens a pull request into the platform's gear repository and records its `contribution` (see Publishing) |
+| `mark_published` | `registered` | `published` | `version`, optional; a platform administrator only |
 | `merge` | any state but `merged` | `merged` | `merge_into`: an existing live entry |
 | `edit` | any | unchanged | `owner`, `kind`, `category`, `capabilities`, `description` |
 
@@ -523,6 +526,72 @@ walk that detects it in code with any other fingerprint proposes it again
 (back to `candidate`, counted as `reproposed`). A rejected entry that was
 never a candidate (rejected while declared) is never re-proposed.
 
+**Publishing (P4, ADR-0042 §4).** `publish` on a `registered` entry gives
+the gear to the platform (`registry_publish.rs`). It reads the platform's
+catalogue sources in the root tenant and takes the first in mode `gears` as
+the platform's gear repository; without one it is refused (400
+`failed_precondition`, `PLATFORM_NO_GEAR_REPOSITORY`: "the platform has no
+gear repository to contribute to"). It copies the directory of the
+occurrence that declares the entry (the organization's gear repository
+first; never a detector's finding), read through that occurrence's
+connection in its project's tenant, bounded by the tree listing to 200 files
+and 2 MiB (larger is 400 `REGISTRY_GEAR_TOO_LARGE`, nothing is written);
+`target/`, `node_modules/`, `.git/` and `dist/` are skipped, and a file that
+is not text is left out and named in the pull request. The files go under
+the platform's parent directory for gears -- the one most of its catalogued
+gears' `repo_path` sit in, else `gears/` -- as `<parent>/<name>/`, on the
+branch `contribute/<organization>/<name>` off the source's ref, written
+through studio-product (`product::port::GearContributions`) with the
+source's connection, acting in the root tenant. The pull request names the
+organization, the entry, its owner, its capabilities, where it came from and
+the decision's reason. The entry stays `registered` and records the
+`contribution` (`{repo, branch, pr_url, path, files, at, by}`) on itself and
+on its `publish` decision. A walk reads the platform's catalogue once (its
+gear nodes' names, crates and directories, with and without `cf-gears-`,
+through `platform_ctx`); a contributed `registered` entry whose name or alias
+is among them becomes `published`, with the platform's newest version, and a
+`published` decision by `platform-sync` is recorded. A `published` entry's
+version follows the platform's on later walks. When the names differ, a
+platform administrator (and only one: 403 `PLATFORM_ADMIN_REQUIRED`
+otherwise) decides `mark_published`, with an optional `version`. Without
+studio-product publishing answers 503.
+
+**Consumers (P4).** Each entry carries `consumers`: the projects that use it
+without declaring it, each `{project_id, project_name, via}` with `via` one
+or both of `cargo` and `product`. A walk that reads a repository anew also
+reads the run-time dependencies of its `Cargo.toml` files (as
+`project_dependencies` does) and keeps them on its `registry_read` node
+(`cargo_deps`), so a repository skipped as unchanged keeps them and one read
+again replaces them; `DISCOVERY_VERSION` moved to `project-gears/5` so every
+repository is read once to record them. It reads each project's product
+picks from studio-product (`ProjectProducts::product_gears`) and keeps them
+on the project's last-walk status, carried for a project the walk did not
+read. A crate or a pick names an entry by its name or an alias, folded as
+candidate names are, bare or as `cf-gears-<name>`. A project that declares
+the entry is not its consumer; neither is the organization's gear
+repository, nor a project out of scope. Deprecating answers the entry with
+its consumers, and the page says which projects will see it deprecated.
+
+**Suggestions (P4).** `POST /registry/{name}/suggest` (same rule as
+decisions, `component.registry`) asks a model, on the caller's own key, what
+the entry is (`registry_suggest.rs`). The question carries its name, kind,
+evidence, up to ten occurrences and its README (at most 8 KiB), the
+platform's categories and the organization's capability vocabulary
+(`documents::port::CapabilityVocabulary`, the built-in one without the
+documents gear). It goes out through studio-llm-proxy's
+`ModelProviders::complete` (ADR-0039: the provider the caller has a key for,
+as the IDE's chat picks it; never a key Studio holds). The answer is parsed
+deterministically: one JSON object -- the whole answer, a fenced block, or
+from its first `{` to its last `}` -- with `description` a string,
+`category` one of the platform's categories or dropped, `capabilities` only
+the vocabulary's keys (matched by key or label, once each). It is stored on
+the entry as `suggestion` (`{description, category, capabilities, at,
+model}`) and answered; it never moves the entry, and applying it is an
+`edit` decision. A caller with no model key gets 400 `failed_precondition`
+(`PROVIDER_KEY_REQUIRED`); an answer that is not the JSON asked for, or a
+provider that fails, is 503 (the canonical errors have no 502); without
+studio-llm-proxy 503.
+
 **Declare it (P3).** `POST /registry/{name}/declare`, for a `candidate`
 entry only, by the same rule as decisions (`component.registry`; 403
 otherwise). It picks the candidate's detected occurrence (in `project_id`
@@ -556,7 +625,10 @@ The platform's components and the organization's, read together
 - [x] **Phase 2** (`registry.rs`, `registry_gear_repository_rest.rs`,
   studio-product's scaffold): the organization's gear repository as the
   default target of "Create a gear", and read by the registry walk.
-- [ ] **Phase 3**: publishing as a pull request into the platform's repository.
+- [x] **Phase 3** (`registry_publish.rs`, studio-product's
+  `GearContributions`): publishing as a pull request into the platform's gear
+  repository, `published` once the platform's sync finds it (see Registry,
+  Publishing).
 - [ ] **Phase 4**: several corpora and pinned versions, once the engine has
   them.
 
@@ -704,7 +776,8 @@ than one corpus are later phases.
 | `POST` | `/platform/sync` | Queue a `catalog.sync` run in the root tenant that reads the platform's stored sources; 202 with `run_id`. 403 for anyone but a platform administrator | unstable |
 | `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it, `offset`/`limit` page it; `{items: RegistryEntryDto[], total}`, each entry with its occurrences | unstable |
 | `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences and its `decisions`, newest first; 404 when absent | unstable |
-| `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or `edit`, checked against the lifecycle table and recorded. Answers the entry with its decisions. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
+| `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `mark_published`, `merge` or `edit`, checked against the lifecycle table and recorded. `publish` opens the contribution pull request (400 `failed_precondition` with no platform gear repository, nothing declaring the entry, or a directory over 200 files / 2 MiB; 503 without studio-product); `mark_published` is a platform administrator's only. Answers the entry with its decisions, `contribution` and `consumers`. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
+| `POST` | `/registry/{name}/suggest` | A model's `{description, category, capabilities, at, model}` for the entry, on the caller's own key through studio-llm-proxy, capabilities bounded by the organization's vocabulary; stored as the entry's `suggestion`, never a state change. 403 for anyone but an organization administrator; 400 `failed_precondition` (`PROVIDER_KEY_REQUIRED`) without a model key; 503 when the model cannot be asked or answers no usable JSON, or without studio-llm-proxy | unstable |
 | `POST` | `/registry/{name}/declare` | Declare it, for a `candidate`: `{description?, capabilities?, category?, project_id?, dry_run?}` (all optional) → `{branch, pr_url, files, repo, path, dry_run}`: a pull request adding `gear.toml` (and `gear.gdl`) in the module's directory on `declare/<name>`, recorded as a `declare` decision. 403 for anyone but an organization administrator; 400 `failed_precondition` for an entry that is not a candidate; 503 without studio-product | unstable |
 | `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do. The organization's gear repository is one more row, keyed by the organization | unstable |
 | `GET` | `/registry/gear-repository` | The organization's gear repository (ADR-0042 §2): `{gear_repository: {tenant, connection_id, connection_label, repo, branch, set_by, set_at} \| null, may_manage}`. Every member | unstable |
@@ -751,7 +824,9 @@ is to move to studio-product.
 | `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (`graph` feature), through `catalog_graph::build_sink` | The catalogue |
 | `cpt-studio-component-tasks` | `sdk::register`, `TaskQueue` | Run `catalog.sync` |
 | `cpt-studio-component-insight` | `port::ComponentDelivery` from the ClientHub | Activity per gear |
-| `cpt-studio-component-product` | `product::port::engine`, `product::port::Products` (`ProjectProducts`), `product::port::GearDeclarations`, `product::sdk` | The Gearbox engine's gear facts, catalogue, corpus checkout and completion; a project's gear repository; Declare it's files and pull request |
+| `cpt-studio-component-product` | `product::port::engine`, `product::port::Products` (`ProjectProducts`), `product::port::GearDeclarations`, `product::port::GearContributions`, `product::sdk` | The Gearbox engine's gear facts, catalogue, corpus checkout and completion; a project's gear repository and product picks; Declare it's files and pull request; Publish's pull request into the platform |
+| `cpt-studio-component-llm-proxy` | `llm_proxy::port::ModelProviders::complete` from the ClientHub | A registry suggestion, on the caller's key (ADR-0039) |
+| `cpt-studio-component-documents` | `documents::port::CapabilityVocabulary` from the ClientHub | The organization's capability vocabulary, bounding a suggestion |
 | `cpt-studio-component-organizations` | `organizations::port::ProjectsOf` from the ClientHub | An organization's projects, for the registry walk |
 | `cpt-studio-component-scheduler` | `scheduler::port::Schedules` from the ClientHub | The hourly registry schedule per organization |
 

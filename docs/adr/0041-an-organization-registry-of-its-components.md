@@ -157,7 +157,9 @@ Phases:
 2. **P2:** lifecycle moves with recorded decisions, owners, and permissions
    through the PDP.
 3. **P3:** structural candidate detectors and Declare it.
-4. **P4:** model suggestions, the consumer graph, and publishing.
+4. **P4:** model suggestions, the consumer graph, and publishing. *Built:
+   see the catalogue design's Registry component (Publishing, Consumers,
+   Suggestions).*
 
 ## Traceability
 

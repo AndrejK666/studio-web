@@ -21,6 +21,12 @@ import {
   registryProjects,
   stateCounts,
   walkLine,
+  consumerLine,
+  consumersLabel,
+  deprecationImpact,
+  publishStatus,
+  suggestRefusal,
+  suggestionEdit,
 } from "./registry";
 
 const entry = (name: string, extra: Partial<RegistryEntry> = {}): RegistryEntry => ({
@@ -92,6 +98,8 @@ describe("decisions about an entry", () => {
     expect(allowedActions("declared")).toEqual(["register", "reject", "merge", "edit"]);
     expect(allowedActions("candidate")).toEqual(["register", "reject", "merge", "edit"]);
     expect(allowedActions("registered")).toEqual(["publish", "deprecate", "merge", "edit"]);
+    expect(allowedActions("registered", { platformAdmin: true })).toEqual(["publish", "mark_published", "deprecate", "merge", "edit"]);
+    expect(allowedActions("published", { platformAdmin: true })).toEqual(["deprecate", "merge", "edit"]);
     expect(allowedActions("published")).toEqual(["deprecate", "merge", "edit"]);
     expect(allowedActions("rejected")).toEqual(["restore", "merge", "edit"]);
     expect(allowedActions("deprecated")).toEqual(["restore", "merge", "edit"]);
@@ -138,9 +146,22 @@ describe("decisions about an entry", () => {
     expect(decisionLine({ action: "merge", from: "registered", to: "registered", by: "u3", at, details: { merged_from: "billing-v1" } })).toBe(
       "u3 merged: took in billing-v1",
     );
-    expect(decisionLine({ action: "publish", from: "registered", to: "published", by: "u3", at, details: { version: "1.0.0" } })).toBe(
-      "u3 published (registered → published): version 1.0.0",
-    );
+    expect(
+      decisionLine({ action: "mark_published", from: "registered", to: "published", by: "u3", at, details: { version: "1.0.0" } }),
+    ).toBe("u3 marked published (registered → published): version 1.0.0");
+    expect(
+      decisionLine({
+        action: "publish",
+        from: "registered",
+        to: "registered",
+        by: "u3",
+        at,
+        details: { contribution: { repo: "cf/gears-rust", pr_url: "https://github.com/cf/gears-rust/pull/9" } },
+      }),
+    ).toBe("u3 opened a contribution to the platform for: pull request https://github.com/cf/gears-rust/pull/9");
+    expect(
+      decisionLine({ action: "published", from: "registered", to: "published", by: "platform-sync", by_name: "platform sync", at, details: { version: "0.2.0" } }),
+    ).toBe("platform sync found it on the platform (registered → published): version 0.2.0");
   });
 
   it("says a refusal for a non-administrator in plain words", () => {
@@ -224,5 +245,54 @@ describe("candidates (ADR-0041 P3)", () => {
 
   it("labels the candidate state for people", () => {
     expect(STATE_LABEL.candidate).toBe("could become a gear");
+  });
+});
+
+describe("publishing, consumers and suggestions (ADR-0041 P4)", () => {
+  const contribution = {
+    repo: "cf/gears-rust",
+    branch: "contribute/acme/ledger",
+    pr_url: "https://github.com/cf/gears-rust/pull/9",
+    path: "gears/ledger",
+    files: 3,
+    at: "2026-10-09T10:00:00Z",
+    by: "u1",
+  };
+
+  it("says a contribution is pending until the platform has it, then its version", () => {
+    expect(publishStatus(entry("a", { state: "registered" }))).toBeNull();
+    expect(publishStatus(entry("a", { state: "registered", contribution }))).toEqual({
+      kind: "pending",
+      label: "Contribution PR opened",
+      prUrl: "https://github.com/cf/gears-rust/pull/9",
+    });
+    expect(publishStatus(entry("a", { state: "published", version: "v0.3.0", contribution }))?.label).toBe("Published (v0.3.0)");
+    expect(publishStatus(entry("a", { state: "published" }))?.label).toBe("Published");
+  });
+
+  it("counts and names the projects that use an entry", () => {
+    const used = entry("ledger", {
+      consumers: [
+        { project_id: "p1", project_name: "Insight", via: ["cargo", "product"] },
+        { project_id: "p2", project_name: "", via: ["product"] },
+      ],
+    });
+    expect(consumersLabel(used)).toBe("Used by 2 projects");
+    expect(consumersLabel(entry("x"))).toBeNull();
+    expect(consumerLine(used.consumers![0])).toBe("Insight (cargo, product)");
+    expect(consumerLine(used.consumers![1])).toBe("p2 (product)");
+    expect(deprecationImpact(used)).toBe("2 projects use it and will see it deprecated: Insight, p2.");
+    expect(deprecationImpact(entry("x"))).toBeNull();
+  });
+
+  it("applies a suggestion as an edit and explains a refused one", () => {
+    expect(
+      suggestionEdit({ description: "Keeps books.", category: "bss", capabilities: ["billing"], at: "t", model: "anthropic:m" }),
+    ).toEqual({ action: "edit", description: "Keeps books.", category: "bss", capabilities: ["billing"] });
+    expect(suggestionEdit({ capabilities: [], at: "t", model: "m" })).toEqual({ action: "edit", capabilities: [] });
+    expect(suggestRefusal(400, "No anthropic key for you.")).toContain("Add a model key");
+    expect(suggestRefusal(403, "Forbidden")).toContain("Only an organization administrator");
+    expect(suggestRefusal(503, "unreadable")).toContain("No suggestion this time");
+    expect(ACTION_LABEL.mark_published).toBe("Mark published");
   });
 });

@@ -4,7 +4,14 @@
  *
  * Pure rules behind `component-registry.tsx`, kept here for their tests. */
 
-import type { RegistryDecision, RegistryEntry, RegistryOwner, RegistryProjectWalk } from "./api";
+import type {
+  RegistryDecision,
+  RegistryDecisionInput,
+  RegistryEntry,
+  RegistryOwner,
+  RegistryProjectWalk,
+  RegistrySuggestion,
+} from "./api";
 import { occurrencePlace } from "./org-gear-repository";
 
 /** The states in the order a component moves through them. */
@@ -32,7 +39,7 @@ export const STATE_TONE: Record<string, string> = {
 };
 
 /** What a person can do to an entry (ADR-0041 P2). */
-export type RegistryAction = "register" | "reject" | "deprecate" | "restore" | "publish" | "merge" | "edit";
+export type RegistryAction = "register" | "reject" | "deprecate" | "restore" | "publish" | "mark_published" | "merge" | "edit";
 
 /** The button for each action. */
 export const ACTION_LABEL: Record<RegistryAction, string> = {
@@ -40,7 +47,8 @@ export const ACTION_LABEL: Record<RegistryAction, string> = {
   reject: "Reject",
   deprecate: "Deprecate",
   restore: "Restore",
-  publish: "Publish",
+  publish: "Publish to the platform…",
+  mark_published: "Mark published",
   merge: "Merge into…",
   edit: "Edit",
 };
@@ -52,7 +60,9 @@ export const ACTION_DONE: Record<string, string> = {
   reject: "rejected",
   deprecate: "deprecated",
   restore: "restored",
-  publish: "published",
+  publish: "opened a contribution to the platform for",
+  mark_published: "marked published",
+  published: "found it on the platform",
   merge: "merged",
   edit: "edited",
 };
@@ -60,13 +70,16 @@ export const ACTION_DONE: Record<string, string> = {
 /** The actions the server allows from a state, in the order the buttons
  *  show. The same table the backend enforces; a move outside it is refused
  *  there too. */
-export function allowedActions(state: string): RegistryAction[] {
+export function allowedActions(state: string, opts: { platformAdmin?: boolean } = {}): RegistryAction[] {
   switch (state) {
     case "candidate":
     case "declared":
       return ["register", "reject", "merge", "edit"];
     case "registered":
-      return ["publish", "deprecate", "merge", "edit"];
+      // Only a platform administrator says by hand that the platform has it.
+      return opts.platformAdmin
+        ? ["publish", "mark_published", "deprecate", "merge", "edit"]
+        : ["publish", "deprecate", "merge", "edit"];
     case "published":
       return ["deprecate", "merge", "edit"];
     case "rejected":
@@ -108,6 +121,10 @@ export function decisionLine(d: RegistryDecision, names: Record<string, string> 
   if (typeof details.version === "string") extra.push(`version ${details.version}`);
   if (typeof details.pr_url === "string") extra.push(`pull request ${details.pr_url}`);
   else if (typeof details.branch === "string" && d.action === "declare") extra.push(`branch ${details.branch}`);
+  const contribution = details.contribution as { pr_url?: string | null; repo?: string } | undefined;
+  if (contribution && typeof contribution === "object") {
+    extra.push(contribution.pr_url ? `pull request ${contribution.pr_url}` : `into ${contribution.repo ?? "the platform"}`);
+  }
   const owner = details.owner as RegistryOwner | undefined;
   if (owner && typeof owner === "object" && owner.name) extra.push(`owner ${ownerLabel(owner)}`);
   const said = [extra.join(", "), d.reason ? `“${d.reason}”` : ""].filter(Boolean).join(" — ");
@@ -232,4 +249,58 @@ export function walkLine(w: RegistryProjectWalk | undefined): { text: string; fa
   const n = w.repos.reduce((sum, r) => sum + r.components, 0);
   const fresh = w.repos.some((r) => r.status === "read");
   return { text: `${fresh ? "read" : "unchanged"} · ${n} component${n === 1 ? "" : "s"}`, failed: false, hint: null };
+}
+
+/* ── Publishing, consumers and suggestions (ADR-0041 P4, ADR-0042 §4) ────── */
+
+/** Where an entry stands with the platform: a contribution waiting for its
+ *  pull request to be merged, or published (with the platform's version). */
+export function publishStatus(
+  e: Pick<RegistryEntry, "state" | "contribution" | "version">,
+): { kind: "pending" | "published"; label: string; prUrl: string | null } | null {
+  if (e.state === "published") {
+    const label = e.version ? `Published (v${e.version.replace(/^v/, "")})` : "Published";
+    return { kind: "published", label, prUrl: e.contribution?.pr_url ?? null };
+  }
+  if (e.state === "registered" && e.contribution) {
+    return { kind: "pending", label: "Contribution PR opened", prUrl: e.contribution.pr_url ?? null };
+  }
+  return null;
+}
+
+/** "Used by 3 projects", or null when nobody uses it. */
+export function consumersLabel(e: Pick<RegistryEntry, "consumers">): string | null {
+  const n = (e.consumers ?? []).length;
+  if (n === 0) return null;
+  return `Used by ${n} project${n === 1 ? "" : "s"}`;
+}
+
+/** One consumer in words: "Insight (cargo, product)". */
+export function consumerLine(c: { project_name: string; project_id: string; via: string[] }): string {
+  return `${c.project_name || c.project_id} (${c.via.join(", ")})`;
+}
+
+/** What deprecating it affects: the projects that use it, or null. */
+export function deprecationImpact(e: Pick<RegistryEntry, "consumers">): string | null {
+  const used = e.consumers ?? [];
+  if (used.length === 0) return null;
+  const names = used.map((c) => c.project_name || c.project_id);
+  return `${names.length} project${names.length === 1 ? " uses" : "s use"} it and will see it deprecated: ${names.join(", ")}.`;
+}
+
+/** Applying a suggestion: the `edit` decision that sets what it proposed. */
+export function suggestionEdit(s: RegistrySuggestion): RegistryDecisionInput {
+  const input: RegistryDecisionInput = { action: "edit", capabilities: s.capabilities };
+  if (s.description) input.description = s.description;
+  if (s.category) input.category = s.category;
+  return input;
+}
+
+/** What a refused suggestion says to a person: a 403 is the administrator
+ *  rule, a 400 a missing model key, a 503 a model that could not be asked. */
+export function suggestRefusal(status: number | undefined, fallback: string): string {
+  if (status === 403) return `Only an organization administrator can ask for a suggestion (${fallback}).`;
+  if (status === 400) return `Add a model key to your profile, or connect one under Connections, to ask for a suggestion (${fallback}).`;
+  if (status === 503) return `No suggestion this time (${fallback}).`;
+  return fallback;
 }

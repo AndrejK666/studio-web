@@ -11,9 +11,14 @@
 //! | `deprecate` | registered, published | deprecated (optionally `replaced_by`) |
 //! | `restore` | rejected | declared, or candidate when nothing declares it |
 //! | `restore` | deprecated | registered |
-//! | `publish` | registered | published (optionally a `version`) |
+//! | `publish` | registered | registered, with the `contribution` it opened (ADR-0042 §4, `registry_publish.rs`) |
+//! | `mark_published` | registered | published (optionally a `version`; a platform administrator) |
 //! | `merge` | anything but merged | merged, folded into `merge_into` |
 //! | `edit` | any | unchanged: owner, kind, category, capabilities, description |
+//!
+//! The platform's sync moves a contributed entry to `published` itself, as
+//! a `published` decision by `platform-sync`, once the platform's catalogue
+//! has it (`registry::plan`).
 //!
 //! Declare it (`registry_declare.rs`, P3) records a `declare` decision on a
 //! candidate without moving it: the walk moves it to `declared` once the pull
@@ -45,17 +50,19 @@ pub enum Action {
     Deprecate,
     Restore,
     Publish,
+    MarkPublished,
     Merge,
     Edit,
 }
 
 /// Every action, as the route spells it.
-pub const ACTIONS: [&str; 7] = [
+pub const ACTIONS: [&str; 8] = [
     "register",
     "reject",
     "deprecate",
     "restore",
     "publish",
+    "mark_published",
     "merge",
     "edit",
 ];
@@ -68,6 +75,7 @@ impl Action {
             "deprecate" => Self::Deprecate,
             "restore" => Self::Restore,
             "publish" => Self::Publish,
+            "mark_published" => Self::MarkPublished,
             "merge" => Self::Merge,
             "edit" => Self::Edit,
             _ => return None,
@@ -81,6 +89,7 @@ impl Action {
             Self::Deprecate => "deprecate",
             Self::Restore => "restore",
             Self::Publish => "publish",
+            Self::MarkPublished => "mark_published",
             Self::Merge => "merge",
             Self::Edit => "edit",
         }
@@ -101,7 +110,10 @@ pub fn transition(action: Action, from: &str, declared_somewhere: bool) -> Optio
             STATE_CANDIDATE
         }),
         (Action::Restore, STATE_DEPRECATED) => Some(STATE_REGISTERED),
-        (Action::Publish, STATE_REGISTERED) => Some(STATE_PUBLISHED),
+        // Publishing opens a contribution; the platform's sync, or a
+        // platform administrator's `mark_published`, makes it `published`.
+        (Action::Publish, STATE_REGISTERED) => Some(STATE_REGISTERED),
+        (Action::MarkPublished, STATE_REGISTERED) => Some(STATE_PUBLISHED),
         (Action::Merge, s) if s != STATE_MERGED => Some(STATE_MERGED),
         (Action::Edit, s) => registry::STATES.iter().find(|k| **k == s).copied(),
         _ => None,
@@ -121,6 +133,9 @@ pub struct DecisionInput {
     pub replaced_by: Option<String>,
     pub merge_into: Option<String>,
     pub version: Option<String>,
+    /// For `publish`: the pull request it opened into the platform's gear
+    /// repository. Set by the service after opening it, never by a request.
+    pub contribution: Option<super::registry::Contribution>,
 }
 
 /// Why a decision was refused.
@@ -310,6 +325,16 @@ pub fn apply(
             next.replaced_by = None;
         }
         Action::Publish => {
+            let contribution = input.contribution.clone().ok_or(DecisionError::Invalid {
+                field: "action",
+                message:
+                    "publishing opens a pull request into the platform's gear repository first"
+                        .to_owned(),
+            })?;
+            details["contribution"] = json!(contribution);
+            next.contribution = Some(contribution);
+        }
+        Action::MarkPublished => {
             next.version = trimmed(&input.version);
             details["version"] = json!(next.version);
         }

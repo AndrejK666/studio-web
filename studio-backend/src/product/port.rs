@@ -9,6 +9,8 @@
 //!   corpus.
 //! - [`GearDeclarations`]: Declare it (ADR-0041 P3) -- the manifest that
 //!   makes existing code a gear, written on a branch with a pull request.
+//! - [`GearContributions`]: Publish (ADR-0042 §4) -- a gear's files written
+//!   into the platform's gear repository, with a pull request.
 //!
 //! All are resolved when used, so a consumer does not depend on the order
 //! gears start in.
@@ -32,6 +34,29 @@ pub trait ProjectProducts: Send + Sync + 'static {
         ctx: &SecurityContext,
         project_id: &str,
     ) -> anyhow::Result<Option<Value>>;
+
+    /// The gears the project's product picks, as recorded (crate names or
+    /// engine ids). `None` before anything was picked. The registry's
+    /// consumer graph reads it (ADR-0041 P4).
+    async fn product_gears(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<Vec<String>>>;
+}
+
+/// The picks of a product record: its `gears`, trimmed, blanks dropped.
+pub fn picks_of(record: &Value) -> Option<Vec<String>> {
+    let gears = record.get("gears")?.as_array()?;
+    Some(
+        gears
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|g| !g.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    )
 }
 
 #[async_trait]
@@ -45,6 +70,17 @@ impl ProjectProducts for super::service::ProductService {
             .get_project_repo(ctx, project_id)
             .await?
             .map(|n| n.value))
+    }
+
+    async fn product_gears(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<Vec<String>>> {
+        Ok(self
+            .get_project_product(ctx, project_id)
+            .await?
+            .and_then(|n| picks_of(&n.value)))
     }
 }
 
@@ -206,6 +242,67 @@ impl GearDeclarations for Declarations {
     }
 
     async fn open_declaration(
+        &self,
+        ctx: &SecurityContext,
+        target: &RepositoryTarget,
+        branch: &str,
+        files: &[DeclarationFile],
+        text: &PullRequestText,
+    ) -> anyhow::Result<DeclarationWritten> {
+        let files: Vec<super::scaffold::ScaffoldFile> = files
+            .iter()
+            .map(|f| super::scaffold::ScaffoldFile {
+                path: f.path.clone(),
+                content: f.content.clone(),
+            })
+            .collect();
+        let w = self
+            .service
+            .write_to_repository(ctx, target, branch, &files, text)
+            .await?;
+        Ok(DeclarationWritten {
+            branch: w.branch,
+            commit_sha: w.commit_sha,
+            pr_url: w.pr_url,
+        })
+    }
+}
+
+// ── Publish: give a gear to the platform (ADR-0042 §4) ────────────────────────
+
+/// What studio-product offers for contributing a gear to the platform: the
+/// gear's files, already read and placed by the catalogue's registry, written
+/// on a branch of the platform's gear repository with a pull request back.
+/// The registry's `publish` decision asks it.
+#[async_trait]
+pub trait GearContributions: Send + Sync {
+    /// Commit `files` onto `branch` off the target's base branch and open a
+    /// pull request back (or answer the one already open). `ctx` must reach
+    /// the target's connection: the platform's (root) tenant.
+    async fn contribute(
+        &self,
+        ctx: &SecurityContext,
+        target: &RepositoryTarget,
+        branch: &str,
+        files: &[DeclarationFile],
+        text: &PullRequestText,
+    ) -> anyhow::Result<DeclarationWritten>;
+}
+
+/// studio-product's [`GearContributions`]: the scaffold's writer.
+pub struct Contributions {
+    service: Arc<super::service::ProductService>,
+}
+
+impl Contributions {
+    pub(super) fn new(service: Arc<super::service::ProductService>) -> Self {
+        Self { service }
+    }
+}
+
+#[async_trait]
+impl GearContributions for Contributions {
+    async fn contribute(
         &self,
         ctx: &SecurityContext,
         target: &RepositoryTarget,

@@ -121,6 +121,7 @@ fn walk_of(now: &str, print: &str, candidates: Vec<Candidate>) -> Walk {
         resolved: [(P1, "k1".to_string())].into_iter().collect(),
         projects_resolved: [P1].into_iter().collect(),
         in_scope: Some([P1].into_iter().collect()),
+        ..Walk::default()
     }
 }
 

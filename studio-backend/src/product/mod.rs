@@ -113,6 +113,11 @@ impl RestApiCapability for StudioProductGear {
                 ctx.client_hub(),
             ))
                 as Arc<dyn port::GearDeclarations>);
+        // Publish: a gear given to the platform's gear repository (ADR-0042 §4).
+        ctx.client_hub().register::<dyn port::GearContributions>(
+            Arc::new(port::Contributions::new(Arc::clone(&service)))
+                as Arc<dyn port::GearContributions>,
+        );
         // "Create a gear" into the organization's gear repository, which the
         // catalogue's registry keeps (ADR-0042 §2).
         ctx.client_hub()

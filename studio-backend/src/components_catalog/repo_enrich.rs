@@ -660,6 +660,40 @@ impl RepoEnricher {
         Ok(out)
     }
 
+    /// Every file at the ref with its size when the host reports it: one
+    /// tree listing. What publishing bounds a gear's directory by.
+    pub async fn file_listing(&self, ctx: &SecurityContext) -> Result<Vec<(String, Option<i64>)>> {
+        let src = self.open(ctx).await?;
+        let tree = self.tree(&src).await?;
+        if tree.truncated {
+            anyhow::bail!(
+                "the repository {} is too large to list in one read",
+                self.repo
+            );
+        }
+        Ok(tree
+            .files
+            .into_iter()
+            .filter(|e| !e.is_dir)
+            .map(|e| (e.path, e.size))
+            .collect())
+    }
+
+    /// The text of each of `paths` at the ref, through one opened
+    /// repository; `None` for a file that is gone or not text.
+    pub async fn read_texts(
+        &self,
+        ctx: &SecurityContext,
+        paths: &[String],
+    ) -> Result<Vec<(String, Option<String>)>> {
+        let src = self.open(ctx).await?;
+        let mut out = Vec::with_capacity(paths.len());
+        for path in paths {
+            out.push((path.clone(), self.read_file(&src, path).await));
+        }
+        Ok(out)
+    }
+
     /// The gears this repository declares itself: by a `gear.toml` or
     /// `gear.gdl` directory, and by `#[toolkit::gear(name = …)]` in Rust
     /// source (`project_gears` holds the rules and the bounds). Read again
