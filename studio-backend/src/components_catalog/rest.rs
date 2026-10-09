@@ -232,7 +232,10 @@ pub struct SaveFieldSchemaRequest {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request, response)]
 pub struct RepoSourceDto {
-    /// Tenant that owns the connection (usually the workspace/organization).
+    /// Tenant whose connections the source reads through (usually the
+    /// organization). On an organization's routes it must be the
+    /// organization or within it (the nil id stands for the organization);
+    /// the platform's sources read through the root's.
     pub tenant: Uuid,
     /// Connection to use; when omitted the first GitHub connection is taken.
     pub connection_id: Option<Uuid>,
@@ -257,7 +260,8 @@ pub struct RepoSourceDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct RoadmapSourceDto {
-    /// Tenant that owns the GitHub connection.
+    /// Tenant that owns the GitHub connection: the organization or within it
+    /// (the nil id stands for the organization).
     pub tenant: Uuid,
     /// Connection to use; when omitted the first GitHub connection is taken.
     /// It needs to read organization projects (`read:project`).
@@ -378,7 +382,6 @@ async fn sync(
     body: Option<Json<SyncRequestDto>>,
 ) -> ApiResult<(StatusCode, JsonBody<CatalogSyncEnqueued>)> {
     let idempotency_key = crate::idempotency::key(&headers)?;
-    let queue = catalog.queue()?;
     let (mut sources, names_repositories) = match body {
         Some(Json(req)) => {
             let names = req.repositories.is_some();
@@ -392,6 +395,11 @@ async fn sync(
             false,
         ),
     };
+    // What the body names reads only through the organization's own
+    // connections; the run checks each connection again (`retain_owned_sources`).
+    sources.repos = owned_sources(&catalog, &ctx, std::mem::take(&mut sources.repos)).await?;
+    sources.roadmaps =
+        owned_roadmaps(&catalog, &ctx, std::mem::take(&mut sources.roadmaps)).await?;
     // A body that names no repositories syncs the ones the organization keeps
     // on the server, and walks its projects into the registry after them
     // (ADR-0041). One that names them is read as it always was.
@@ -406,6 +414,7 @@ async fn sync(
     let payload = serde_json::to_value(&sources)
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
+    let queue = catalog.queue()?;
     let run_id = queue
         .enqueue(
             &ctx,
@@ -2176,15 +2185,74 @@ async fn update_sources(
     Extension(catalog): Extension<Catalog>,
     Json(body): Json<ReplaceSourcesRequest>,
 ) -> ApiResult<JsonBody<RepoSourceListDto>> {
+    let sources = owned_sources(
+        &catalog,
+        &ctx,
+        body.items.into_iter().map(source_of).collect(),
+    )
+    .await?;
     let stored = catalog
         .service
-        .replace_sources(&ctx, body.items.into_iter().map(source_of).collect())
+        .replace_sources(&ctx, sources)
         .await
         .map_err(internal)?;
     let items = marked_sources(&catalog, &ctx, stored).await;
     catalog.ensure_registry_schedule(&ctx).await;
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
     Ok(Json(RepoSourceListDto { items, total }))
+}
+
+/// An organization's sources, each naming the tenant its connection is read
+/// from: the organization when none is named (the nil id), else one within
+/// it. One naming a tenant outside it -- the platform's root, whose
+/// connections the organization only inherits -- is a 400
+/// (`SOURCE_TENANT_NOT_OWNED`). See [`super::ownership`].
+async fn owned_sources(
+    catalog: &Catalog,
+    ctx: &SecurityContext,
+    sources: Vec<RepoSource>,
+) -> ApiResult<Vec<RepoSource>> {
+    let org = ctx.subject_tenant_id();
+    let mut out = Vec::with_capacity(sources.len());
+    for s in sources {
+        let tree = super::service::TreeAs(catalog.service.as_ref(), ctx);
+        let owned = super::ownership::owned_source(org, s, &tree)
+            .await
+            .map_err(source_tenant_refusal)?;
+        out.push(owned);
+    }
+    Ok(out)
+}
+
+/// [`owned_sources`] for the roadmap boards a sync body names.
+async fn owned_roadmaps(
+    catalog: &Catalog,
+    ctx: &SecurityContext,
+    roadmaps: Vec<RoadmapSource>,
+) -> ApiResult<Vec<RoadmapSource>> {
+    let org = ctx.subject_tenant_id();
+    let mut out = Vec::with_capacity(roadmaps.len());
+    for mut r in roadmaps {
+        let tree = super::service::TreeAs(catalog.service.as_ref(), ctx);
+        r.tenant = super::ownership::source_tenant(org, r.tenant, &tree)
+            .await
+            .map_err(source_tenant_refusal)?;
+        out.push(r);
+    }
+    Ok(out)
+}
+
+fn source_tenant_refusal(tenant: Uuid) -> CanonicalError {
+    StudioComponentsCatalogError::failed_precondition()
+        .with_precondition_violation(
+            format!("tenant:{tenant}"),
+            format!(
+                "the source names tenant {tenant}, which is not this organization nor within \
+                 it; a source reads only through a connection of the organization's own"
+            ),
+            super::ownership::SOURCE_TENANT_NOT_OWNED,
+        )
+        .create()
 }
 
 // ── the platform's catalogue (ADR-0042) ─────────────────────────────────────
@@ -2727,6 +2795,10 @@ mod gear_repository;
 #[path = "registry_publish_rest.rs"]
 mod publish;
 
+#[cfg(test)]
+#[path = "sources_rest_tests.rs"]
+mod sources_tests;
+
 fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = register_platform_routes(router, openapi);
     // Before `/registry/{name}`'s routes, though axum prefers the literal
@@ -2758,7 +2830,10 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .description(
             "Replaces the organization's catalogue sources with the ones sent: a \
              blank repository is dropped, one named twice (same ref and mode) is \
-             kept once, a missing mode is `gears`. Answers what was stored. Also \
+             kept once, a missing mode is `gears`. A source's `tenant` (whose \
+             connection it reads through) is the organization when nil, else must \
+             be the organization or within it: one outside it, such as the \
+             platform's root, is a 400 `SOURCE_TENANT_NOT_OWNED`. Answers what was stored. Also \
              makes sure the organization's registry is walked hourly (a \
              platform-level `catalog.registry` schedule naming it).",
         )
@@ -3022,7 +3097,11 @@ pub fn register_routes(
              answers the same run. A body that names no `repositories` (or no \
              body) reads the organization's stored sources (`GET /sources`) and \
              then walks its projects into the registry; the run's result carries \
-             `registry` counts, or `registry_error`.",
+             `registry` counts, or `registry_error`. A repository or board in the \
+             body naming a tenant outside the organization is a 400 \
+             `SOURCE_TENANT_NOT_OWNED` (nil is the organization); the run reads no \
+             source whose connection is held outside the organization and names \
+             those in `not_owned`.",
         )
         .tag("StudioComponentsCatalog")
         .authenticated()
@@ -3036,6 +3115,7 @@ pub fn register_routes(
             StatusCode::ACCEPTED,
             "Sync enqueued",
         )
+        .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

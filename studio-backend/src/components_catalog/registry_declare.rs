@@ -328,37 +328,19 @@ impl CatalogService {
     /// below the organization -- never one above it, such as the platform's
     /// root, which the walk may have read a repository through because
     /// connections are inherited downwards. Fails closed: a tenant whose
-    /// ancestry cannot be read is not the organization's.
+    /// ancestry cannot be read is not the organization's
+    /// ([`super::ownership::within`]).
     pub(super) async fn connection_is_organizations(
         &self,
         ctx: &SecurityContext,
         tenant: Uuid,
         project: Option<Uuid>,
     ) -> bool {
-        let org = ctx.subject_tenant_id();
-        if tenant == org || project == Some(tenant) {
+        if project == Some(tenant) {
             return true;
         }
-        if tenant == super::tiers::PLATFORM_TENANT {
-            return false;
-        }
-        let Some(am) = self.account_management.get() else {
-            return false;
-        };
-        // Project -> workspace -> organization: nothing Studio keeps is deeper.
-        let mut current = tenant;
-        for _ in 0..4 {
-            let parent = match am.get_tenant(ctx, current).await {
-                Ok(t) => t.parent_id.map(|p| p.0),
-                Err(_) => return false,
-            };
-            match parent {
-                Some(p) if p == org => return true,
-                Some(p) => current = p,
-                None => return false,
-            }
-        }
-        false
+        self.tenant_within(ctx, ctx.subject_tenant_id(), tenant)
+            .await
     }
 }
 

@@ -111,6 +111,15 @@ impl TaskHandler for CatalogSyncTask {
                 .leave_to_platform(&security, &mut sources)
                 .await
         };
+        // An organization reads only through connections it owns; the
+        // platform's sync, in the root, reads with the root's by design.
+        let not_owned = if super::tiers::is_platform(&security) {
+            Vec::new()
+        } else {
+            self.service
+                .retain_owned_sources(&security, &mut sources)
+                .await
+        };
 
         let (progress, drain) = ctx.progress_bridge();
         let registry = sources.registry;
@@ -121,6 +130,7 @@ impl TaskHandler for CatalogSyncTask {
         };
         if let Ok(counts) = &mut outcome {
             counts.left_to_platform = left;
+            counts.not_owned = not_owned;
         }
         // The registry phase, last: the catalogue is written whether or not
         // it finishes, and the run's result says how it went.
@@ -153,6 +163,12 @@ impl TaskHandler for CatalogSyncTask {
                     summary.push_str(&format!(
                         "; left to the platform's catalogue: {}",
                         counts.left_to_platform.join(", ")
+                    ));
+                }
+                if !counts.not_owned.is_empty() {
+                    summary.push_str(&format!(
+                        "; not read, its connection is not the organization's: {}",
+                        counts.not_owned.join(", ")
                     ));
                 }
                 match serde_json::to_value(counts) {

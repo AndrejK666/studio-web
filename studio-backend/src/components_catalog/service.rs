@@ -21,6 +21,7 @@ use uuid::Uuid;
 use super::cratesio::{CrateDetail, CratesIoClient};
 use super::field_schema::{self, TypeFieldSchema};
 use super::gts::{self, GtsEdge, GtsNode};
+use super::registry::RepoWalk;
 use super::repo_enrich::{RepoEnricher, RepoGear, RepoMode};
 use super::roadmap::{self, RoadmapSource};
 use crate::connectors::sdk::{ConnectorService, Connectors};
@@ -307,6 +308,12 @@ pub struct CatalogCounts {
     /// syncs crates.io. Their components come from the platform's tier.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub left_to_platform: Vec<String>,
+    /// What an organization's sync did not read because its connection is
+    /// not the organization's own: held above it, such as the platform's
+    /// root's, or named through a tenant outside it (`repo`, or
+    /// `owner/number` for a board).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_owned: Vec<String>,
 }
 
 /// A roadmap board a sync could not read.
@@ -1146,6 +1153,7 @@ impl CatalogService {
             registry: None,
             registry_error: None,
             left_to_platform: Vec::new(),
+            not_owned: Vec::new(),
         };
         progress.set_with("done", counts.as_detail());
         Ok(counts)
@@ -1782,7 +1790,8 @@ impl CatalogService {
         ctx: &SecurityContext,
         project_id: &str,
     ) -> anyhow::Result<Option<(String, BTreeSet<String>)>> {
-        let repos = self.project_repos(ctx, project_id).await?;
+        let (repos, refused) = self.project_repos(ctx, ctx, project_id).await?;
+        log_refused(project_id, &refused);
         if repos.is_empty() {
             return Ok(None);
         }
@@ -1816,7 +1825,8 @@ impl CatalogService {
         ctx: &SecurityContext,
         project_id: &str,
     ) -> anyhow::Result<Vec<super::project_gears::LocalGear>> {
-        let repos = self.project_repos(ctx, project_id).await?;
+        let (repos, refused) = self.project_repos(ctx, ctx, project_id).await?;
+        log_refused(project_id, &refused);
         let mut out: Vec<super::project_gears::LocalGear> = Vec::new();
         if repos.is_empty() {
             return Ok(out);
@@ -1872,7 +1882,99 @@ impl CatalogService {
     /// the repositories it was seeded from, which its config records
     /// (`project_sources`), each through the connection it names. Empty when
     /// there is neither.
+    ///
+    /// Only a repository read through a connection the organization owns is
+    /// answered ([`super::ownership`]): one whose connection is held above
+    /// the organization -- the platform's root, found by walking up from the
+    /// project -- comes back as a refused [`RepoWalk`] instead. `ctx` is
+    /// the context the connections are read in (the project's, for the
+    /// walk); `org_ctx` is the organization's, which names the organization
+    /// and reads the tree.
     pub(super) async fn project_repos(
+        &self,
+        ctx: &SecurityContext,
+        org_ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<(Vec<ProjectRepo>, Vec<RepoWalk>)> {
+        let repos = self.project_repos_unchecked(ctx, project_id).await?;
+        let tree = TreeAs(self, org_ctx);
+        Ok(super::ownership::split_owned(org_ctx.subject_tenant_id(), repos, &tree).await)
+    }
+
+    /// The parent of `tenant` as `ctx` reads the tree: `Some(None)` for a
+    /// tenant without one, `None` when it cannot be read.
+    pub(super) async fn parent_of(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+    ) -> Option<Option<Uuid>> {
+        let am = self.account_management.get()?;
+        am.get_tenant(ctx, tenant)
+            .await
+            .ok()
+            .map(|t| t.parent_id.map(|p| p.0))
+    }
+
+    /// Whether `tenant` is `org` or below it ([`super::ownership::within`]).
+    pub(super) async fn tenant_within(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        tenant: Uuid,
+    ) -> bool {
+        super::ownership::within(org, tenant, &TreeAs(self, ctx)).await
+    }
+
+    /// The tenant holding the connection a read from `tenant` goes through:
+    /// `connection_id`'s, or the default GitHub connection's when none is
+    /// named -- found by walking up from `tenant`, so possibly one above it.
+    /// `None` when there is none to find.
+    pub(super) async fn connection_holder(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        connection_id: Option<Uuid>,
+    ) -> Option<Uuid> {
+        let connectors = self.connector_service()?;
+        let id = match connection_id {
+            Some(id) => id,
+            None => {
+                connectors
+                    .named_or_default(ctx, tenant, None, "github")
+                    .await
+                    .ok()?
+                    .2
+                    .id
+            }
+        };
+        connectors.locate(ctx, tenant, id).await
+    }
+
+    /// Take out of an organization's sync every source read through a
+    /// connection the organization does not own
+    /// ([`super::ownership::retain_owned_sources`]), and say which. The
+    /// platform's own sync, in the root, keeps the root's connections.
+    pub async fn retain_owned_sources(
+        &self,
+        ctx: &SecurityContext,
+        sources: &mut SyncSources,
+    ) -> Vec<String> {
+        let refused = super::ownership::retain_owned_sources(
+            ctx.subject_tenant_id(),
+            sources,
+            &HoldersAs(self, ctx),
+            &TreeAs(self, ctx),
+        )
+        .await;
+        if !refused.is_empty() {
+            tracing::warn!(organization_id = %ctx.subject_tenant_id(), ?refused, "studio-components-catalog: sources read through a connection the organization does not own are not read");
+        }
+        refused
+    }
+
+    /// [`Self::project_repos`] before the ownership check: each repository
+    /// with the tenant holding its connection.
+    async fn project_repos_unchecked(
         &self,
         ctx: &SecurityContext,
         project_id: &str,
@@ -1897,9 +1999,16 @@ impl CatalogService {
         }
         let tenant = Uuid::parse_str(&text("tenant"))
             .map_err(|_| anyhow!("the project's gear repo names no tenant"))?;
+        let connection_id = Uuid::parse_str(&text("connection_id")).ok();
+        // The tenant it names is where the read starts; the connection may be
+        // held above it.
+        let tenant = self
+            .connection_holder(ctx, tenant, connection_id)
+            .await
+            .unwrap_or(tenant);
         Ok(vec![ProjectRepo {
             tenant,
-            connection_id: Uuid::parse_str(&text("connection_id")).ok(),
+            connection_id,
             repo,
             branch: text("branch"),
             owned: true,
@@ -1944,6 +2053,40 @@ impl CatalogService {
         let mut seen = std::collections::HashSet::new();
         out.retain(|r| seen.insert((r.connection_id, r.repo.to_ascii_lowercase())));
         out
+    }
+}
+
+/// The tenant tree as `ctx` reads it ([`CatalogService::parent_of`]).
+pub(super) struct TreeAs<'a>(
+    pub(super) &'a CatalogService,
+    pub(super) &'a SecurityContext,
+);
+
+#[async_trait::async_trait]
+impl super::ownership::Tree for TreeAs<'_> {
+    async fn parent_of(&self, tenant: Uuid) -> Option<Option<Uuid>> {
+        self.0.parent_of(self.1, tenant).await
+    }
+}
+
+/// Where connections are held, as `ctx` reads them
+/// ([`CatalogService::connection_holder`]).
+struct HoldersAs<'a>(&'a CatalogService, &'a SecurityContext);
+
+#[async_trait::async_trait]
+impl super::ownership::Holders for HoldersAs<'_> {
+    async fn holder_of(&self, tenant: Uuid, connection_id: Option<Uuid>) -> Option<Uuid> {
+        self.0
+            .connection_holder(self.1, tenant, connection_id)
+            .await
+    }
+}
+
+/// An on-demand read's repositories refused for their connection: skipped
+/// and logged, like one that cannot be read.
+fn log_refused(project_id: &str, refused: &[RepoWalk]) {
+    for r in refused {
+        tracing::warn!(project_id, repo = r.repo, error = ?r.error, "studio-components-catalog: a project repository is not read through a connection the organization does not own");
     }
 }
 

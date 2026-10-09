@@ -1944,6 +1944,22 @@ impl CatalogService {
             branch: repo.branch.clone(),
             owned: true,
         };
+        // Its stored tenant is the organization (see `gear_repository`); the
+        // connection itself must be held there or below, never above.
+        let holder = self
+            .connection_holder(ctx, repo.tenant, Some(repo.connection_id))
+            .await
+            .unwrap_or(repo.tenant);
+        if !self.tenant_within(ctx, org, holder).await {
+            tracing::warn!(organization_id = %org, %holder, repo = %repo.repo, "components-catalog: registry: the gear repository's connection is not the organization's; not read");
+            counts.repos_failed += 1;
+            status
+                .repos
+                .push(super::ownership::refused_walk(&repo.repo, holder));
+            walk.projects_resolved.insert(org);
+            statuses.push(status);
+            return;
+        }
         let readers = match self.enrichers(vec![target]) {
             Ok(readers) => readers,
             Err(e) => {
@@ -2165,8 +2181,18 @@ impl CatalogService {
                     walk.product_picks.remove(&project.id);
                 }
             }
-            let repos = match self.project_repos(&pctx, &project.id.to_string()).await {
-                Ok(repos) => repos,
+            // Read only through a connection the organization owns: one held
+            // above it (the platform's root) is refused and said so, and what
+            // was read through it before loses its occurrences.
+            let repos = match self
+                .project_repos(&pctx, ctx, &project.id.to_string())
+                .await
+            {
+                Ok((repos, refused)) => {
+                    counts.repos_failed += refused.len();
+                    status.repos.extend(refused);
+                    repos
+                }
                 Err(e) => {
                     tracing::warn!(project_id = %project.id, error = %format!("{e:#}"), "components-catalog: registry: a project's repositories could not be resolved");
                     status.error = Some(format!("{e:#}"));

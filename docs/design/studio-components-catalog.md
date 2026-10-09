@@ -178,6 +178,41 @@ connection. No connection, no access or a truncated tree degrades to
 what it said last. Reading a board needs a connection that can read
 organization projects.
 
+#### An organization reads and writes only through its own connections
+
+- [x] `p1` - **ID**: `cpt-studio-constraint-catalog-own-connections`
+
+Connections are inherited downwards: a project sees its workspace's, its
+organization's and the platform root's (`ConnectorService::nearest_by_id`
+walks up). Seeing one is not owning it. **An organization uses only a
+connection held by itself, one of its workspaces or one of its projects --
+never one held above it**, such as the platform's root, whose token would
+read the organization's (possibly private) repositories, or write to them,
+with the platform's rights. The platform's own catalogue, synced in the root,
+reads with the root's connections by design: there the root is the
+organization. One rule (`ownership::within`, failing closed when the tree
+cannot be read) answers it everywhere:
+
+- **Reads.** The registry walk and the on-demand reads of a project's code
+  (`project_gears`, `project_dependencies`, behind spec-mapping and the
+  conformance report) resolve each repository's connection -- the project's
+  gear repository, its sources, the organization's gear repository -- to the
+  tenant holding it, and read none held outside the organization. The walk
+  records such a repository as `failed` in the project's status with the
+  hint "connect the repository with an organization-scope connection of your
+  own", and what was read through it before loses its occurrences. An
+  organization's catalogue sync reads no source (repository or board) whose
+  connection -- the one named, or the default its tenant would take -- is
+  held outside it, and names them in the run's result (`not_owned`).
+- **Source records.** A source's `tenant` (`PUT /sources`, the `POST /sync`
+  body) is the organization when nil and must otherwise be the organization
+  or within it: one outside it is a 400 (`SOURCE_TENANT_NOT_OWNED`).
+  `/platform/sources` keeps the root's.
+- **Writes.** Declare it, publish, the scaffold and the organization's gear
+  repository write only through the organization's own connection
+  (`CONNECTION_NOT_OWNED`); publishing writes the platform's repository only
+  through the root's own (`PLATFORM_CONNECTION_NOT_OWNED`).
+
 ## 3. Technical Architecture
 
 ### 3.1 Domain Model
@@ -387,7 +422,9 @@ context's organization it:
 The walk runs as the service, on a schedule nobody is signed in to, so it
 reads only what a shared connection reaches. A repository connected with one
 person's token is not readable to it, by design: an organization-wide job does
-not borrow a person's credential. The walk records that per project (kept on
+not borrow a person's credential. Nor does it read through a connection the
+organization only inherits from the platform's root (see "An organization
+reads and writes only through its own connections"). The walk records both per project (kept on
 the organization's registry settings, replaced by each full walk) with what to
 do about it, and `GET /registry/projects` serves it, so a project the walk could
 not read is not mistaken for one with no components.
@@ -816,7 +853,7 @@ than one corpus are later phases.
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `POST` | `/sync` | Queue a `catalog.sync` run over `crates_io`, `repositories` and `roadmaps`; poll `GET /studio-tasks/v1/runs/{id}`. Without `repositories` it reads the stored sources and walks the registry after them. An organization's run leaves to the platform the sources it already reads and the default crates.io keyword while the platform syncs crates.io; the result names them (`left_to_platform`) | unstable |
+| `POST` | `/sync` | Queue a `catalog.sync` run over `crates_io`, `repositories` and `roadmaps`; poll `GET /studio-tasks/v1/runs/{id}`. Without `repositories` it reads the stored sources and walks the registry after them. An organization's run leaves to the platform the sources it already reads and the default crates.io keyword while the platform syncs crates.io; the result names them (`left_to_platform`), and reads no source whose connection is not the organization's own (`not_owned`). 400 `SOURCE_TENANT_NOT_OWNED` for a body source naming a tenant outside the organization | unstable |
 | `GET` | `/components` | Every node of every type this organization marks as a component: the platform's and the organization's, each with its `tier`; `shadowed` names the organization's left out because the platform has the same name (ADR-0042) | unstable |
 | `GET` | `/versions` | Ingested crate versions; `crate` narrows to one | unstable |
 | `GET` | `/reference` | The catalogue joined with the engine's gears; `days` (default 90, `0` skips the warehouse), `include=all` | unstable |
@@ -832,7 +869,7 @@ than one corpus are later phases.
 | `PUT` | `/field-schemas/{describes}` | Replace the tenant's schema for one type | unstable |
 | `DELETE` | `/field-schemas/{describes}` | Revert to the built-in; reverting an unoverridden type is not an error | unstable |
 | `GET` | `/sources` | The organization's catalogue sources, kept on the server: `{items: RepoSourceDto[], total}`, each with `shadowed_by_platform` when the platform already reads it | unstable |
-| `PUT` | `/sources` | Replace them with `{items: RepoSourceDto[]}`; the sync reads these when its body names none. Ensures the hourly registry schedule | unstable |
+| `PUT` | `/sources` | Replace them with `{items: RepoSourceDto[]}`; the sync reads these when its body names none. A source's `tenant` is the organization when nil, else within it (400 `SOURCE_TENANT_NOT_OWNED`). Ensures the hourly registry schedule | unstable |
 | `GET` | `/platform/sources` | The platform's catalogue sources and crates.io keyword: `{items, total, crates_io}`. 403 for anyone but a platform administrator | unstable |
 | `PUT` | `/platform/sources` | Replace them with `{items, crates_io}`; ensures the platform's daily sync schedule. 403 for anyone but a platform administrator | unstable |
 | `POST` | `/platform/sync` | Queue a `catalog.sync` run in the root tenant that reads the platform's stored sources; 202 with `run_id`. 403 for anyone but a platform administrator | unstable |

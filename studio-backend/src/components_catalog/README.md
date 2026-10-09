@@ -57,6 +57,11 @@ This README is what you need to work in the directory.
   256 KiB a file) and cached per repository until one of the files it read
   changes. Not stored in the graph: they are the project's, not the
   organization's catalogue.
+- Whose connection an organization reads and writes through:
+  [`ownership.rs`](ownership.rs) — only one held by the organization or
+  below it, never one inherited from the platform's root. The walk,
+  `project_gears`/`project_dependencies`, the sync and the `/sources` routes
+  ask it.
 - `ComponentCatalog::engine_completion` in [`port.rs`](port.rs) calls
   studio-product's engine; it is to move to studio-product.
 - The organization's registry (ADR-0041, phase P1): [`registry.rs`](registry.rs)

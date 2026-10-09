@@ -2524,6 +2524,7 @@
         "CatalogSyncEnqueued"
       ],
       "errors": [
+        "400",
         "401",
         "500"
       ]
