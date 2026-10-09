@@ -1598,6 +1598,61 @@ pub struct OccurrenceDto {
     pub declared_in: String,
 }
 
+/// Who answers for a registry entry.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct RegistryOwnerDto {
+    /// `person` or `team`.
+    pub kind: String,
+    /// The person's Studio id, or the team's key, when known.
+    pub id: Option<String>,
+    pub name: String,
+}
+
+/// One decision a person made about a registry entry.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryDecisionDto {
+    /// `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or
+    /// `edit`.
+    pub action: String,
+    /// The state before; equal to `to` for an edit.
+    pub from: String,
+    pub to: String,
+    /// The person who decided: their Studio id, else the token's subject.
+    pub by: String,
+    pub by_name: Option<String>,
+    /// RFC 3339.
+    pub at: String,
+    pub reason: Option<String>,
+    /// The fields the decision set (`owner`, `replaced_by`, `merge_into`,
+    /// `version`, `merged_from`, …).
+    pub details: Value,
+}
+
+/// A decision about a registry entry.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RegistryDecisionRequest {
+    /// `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or
+    /// `edit`.
+    pub action: String,
+    /// Why. Required to reject.
+    pub reason: Option<String>,
+    /// Required to register (unless the entry has one); set by an edit.
+    pub owner: Option<RegistryOwnerDto>,
+    pub kind: Option<String>,
+    pub category: Option<String>,
+    pub capabilities: Option<Vec<String>>,
+    pub description: Option<String>,
+    /// For `deprecate`: an existing entry to use instead.
+    pub replaced_by: Option<String>,
+    /// For `merge`: the existing entry to fold this one into.
+    pub merge_into: Option<String>,
+    /// For `publish`: the version published.
+    pub version: Option<String>,
+}
+
 /// One component of the organization's registry.
 #[derive(Debug, Clone, PartialEq)]
 #[toolkit_macros::api_dto(response)]
@@ -1605,12 +1660,22 @@ pub struct RegistryEntryDto {
     pub name: String,
     /// `gear`, `plugin`, `frontx` or `kit`.
     pub kind: String,
-    /// `candidate`, `declared`, `registered`, `published`, `rejected` or
-    /// `deprecated`. A walk writes `declared` and never moves it.
+    /// `candidate`, `declared`, `registered`, `published`, `rejected`,
+    /// `deprecated` or `merged`. A walk writes `declared` and never moves it;
+    /// the rest are people's decisions.
     pub state: String,
     pub description: Option<String>,
-    pub owner: Option<String>,
+    pub category: Option<String>,
+    pub owner: Option<RegistryOwnerDto>,
     pub capabilities: Vec<String>,
+    /// Names merged into this entry; a walk finding any of them puts it here.
+    pub aliases: Vec<String>,
+    /// For a `merged` entry, the entry it was folded into.
+    pub merged_into: Option<String>,
+    /// For a `deprecated` entry, the entry to use instead.
+    pub replaced_by: Option<String>,
+    /// For a `published` entry, the version published.
+    pub version: Option<String>,
     /// No occurrence is left; the entry is kept with its state.
     pub orphaned: bool,
     /// RFC 3339.
@@ -1618,6 +1683,9 @@ pub struct RegistryEntryDto {
     /// RFC 3339: the last walk that read a repository declaring it.
     pub last_seen: Option<String>,
     pub occurrences: Vec<OccurrenceDto>,
+    /// The decisions made about it, newest first. Only on the single-entry
+    /// read and a decision's answer; null in the list.
+    pub decisions: Option<Vec<RegistryDecisionDto>>,
 }
 
 /// The registry, narrowed and paged.
@@ -1667,8 +1735,17 @@ pub(crate) fn registry_entry_dto(e: super::registry::RegistryEntry) -> RegistryE
         kind: e.entry.kind,
         state: e.entry.state,
         description: e.entry.description,
-        owner: e.entry.owner,
+        category: e.entry.category,
+        owner: e.entry.owner.map(|o| RegistryOwnerDto {
+            kind: o.kind,
+            id: o.id,
+            name: o.name,
+        }),
         capabilities: e.entry.capabilities,
+        aliases: e.entry.aliases,
+        merged_into: e.entry.merged_into,
+        replaced_by: e.entry.replaced_by,
+        version: e.entry.version,
         orphaned: e.entry.orphaned,
         first_seen: e.entry.first_seen,
         last_seen: e.entry.last_seen,
@@ -1685,7 +1762,122 @@ pub(crate) fn registry_entry_dto(e: super::registry::RegistryEntry) -> RegistryE
                 declared_in: o.declared_in,
             })
             .collect(),
+        decisions: None,
     }
+}
+
+/// A decision as the registry routes answer it.
+pub(crate) fn registry_decision_dto(
+    d: super::registry_decisions::DecisionRecord,
+) -> RegistryDecisionDto {
+    RegistryDecisionDto {
+        action: d.action,
+        from: d.from,
+        to: d.to,
+        by: d.by,
+        by_name: d.by_name,
+        at: d.at,
+        reason: d.reason,
+        details: d.details,
+    }
+}
+
+/// An entry with its decisions, as the single-entry read answers it.
+pub(crate) fn registry_entry_detail_dto(
+    e: super::registry::RegistryEntry,
+    decisions: Vec<super::registry_decisions::DecisionRecord>,
+) -> RegistryEntryDto {
+    RegistryEntryDto {
+        decisions: Some(decisions.into_iter().map(registry_decision_dto).collect()),
+        ..registry_entry_dto(e)
+    }
+}
+
+/// The decision a request carries, in the service's terms.
+fn decision_input(body: RegistryDecisionRequest) -> super::registry_decisions::DecisionInput {
+    super::registry_decisions::DecisionInput {
+        action: body.action,
+        reason: body.reason,
+        owner: body.owner.map(|o| super::registry::Owner {
+            kind: o.kind,
+            id: o.id,
+            name: o.name,
+        }),
+        kind: body.kind,
+        category: body.category,
+        capabilities: body.capabilities,
+        description: body.description,
+        replaced_by: body.replaced_by,
+        merge_into: body.merge_into,
+        version: body.version,
+    }
+}
+
+/// The privilege that moves a registry entry's lifecycle (ADR-0041 P2).
+///
+/// Deciding what is the organization's component is administration: one
+/// answer per organization, asked of studio-user (ADR-0040), never of the
+/// PDP, whose clamp would admit every member.
+pub(crate) const REGISTRY_PRIVILEGE: &str = "component.registry";
+
+/// May the caller decide about the organization's registry? Its owner or a
+/// platform administrator may; on the roles model, so may whoever holds
+/// [`REGISTRY_PRIVILEGE`]. Without studio-user nobody can be shown to hold
+/// it, so nobody does.
+pub(crate) async fn may_decide(
+    authority: Option<&dyn crate::user_profile::OrgAuthority>,
+    ctx: &SecurityContext,
+) -> bool {
+    match authority {
+        Some(authority) => {
+            authority
+                .may_administer(ctx, ctx.subject_tenant_id(), REGISTRY_PRIVILEGE)
+                .await
+        }
+        None => false,
+    }
+}
+
+/// A refused decision as a problem: 404 for an entry that is not there, 400
+/// `failed_precondition` for a move its state does not allow, 400
+/// `invalid_argument` for an incomplete request.
+fn decision_problem(e: super::registry_decisions::DecisionError) -> CanonicalError {
+    use super::registry_decisions::DecisionError as E;
+    let message = e.to_string();
+    match e {
+        E::NotFound(name) => StudioComponentsCatalogError::not_found(message)
+            .with_resource(name)
+            .create(),
+        E::Illegal { action, from } => StudioComponentsCatalogError::failed_precondition()
+            .with_precondition_violation(
+                format!("state:{from}"),
+                format!("{message}; `{action}` applies to {}", allowed_from(&action)),
+                "REGISTRY_TRANSITION_NOT_ALLOWED",
+            )
+            .create(),
+        E::UnknownAction(_) => StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation("action", message, "INVALID")
+            .create(),
+        E::Invalid { field, .. } => StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(field, message, "INVALID")
+            .create(),
+        E::UnknownEntry { field, .. } => StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation(field, message, "UNKNOWN_ENTRY")
+            .create(),
+    }
+}
+
+/// The states an action applies to, for the refusal's words.
+fn allowed_from(action: &str) -> String {
+    use super::registry_decisions::{Action, transition};
+    let Some(action) = Action::parse(action) else {
+        return "nothing".to_owned();
+    };
+    let from: Vec<&str> = super::registry::STATES
+        .into_iter()
+        .filter(|s| transition(action, s, true).is_some())
+        .collect();
+    from.join(", ")
 }
 
 fn internal(e: anyhow::Error) -> CanonicalError {
@@ -1788,16 +1980,68 @@ async fn get_registry_entry(
 ) -> ApiResult<JsonBody<RegistryEntryDto>> {
     match catalog
         .service
-        .registry_entry(&ctx, &name)
+        .registry_entry_with_decisions(&ctx, &name)
         .await
         .map_err(internal)?
     {
-        Some(entry) => Ok(Json(registry_entry_dto(entry))),
+        Some((entry, decisions)) => Ok(Json(registry_entry_detail_dto(entry, decisions))),
         None => Err(StudioComponentsCatalogError::not_found(format!(
             "the registry has no component `{name}`"
         ))
         .with_resource(name)
         .create()),
+    }
+}
+
+impl Catalog {
+    /// Who may decide about the registry: studio-user's answer, resolved per
+    /// request like every other port.
+    fn authority(&self) -> Option<Arc<dyn crate::user_profile::OrgAuthority>> {
+        self.hub
+            .get_scoped::<dyn crate::user_profile::OrgAuthority>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            ))
+            .ok()
+    }
+
+    /// The caller as a person, when studio-user can say; else the token's
+    /// subject, which is what a decision records then.
+    async fn decider(&self, ctx: &SecurityContext) -> super::registry_decisions::Decider {
+        let person = match self
+            .hub
+            .get_scoped::<dyn crate::user_profile::PersonResolver>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            )) {
+            Ok(people) => people.resolve_caller(ctx).await.ok(),
+            Err(_) => None,
+        };
+        super::registry_decisions::Decider {
+            id: person.unwrap_or_else(|| ctx.subject_id().to_string()),
+            name: None,
+        }
+    }
+}
+
+async fn decide_registry_entry(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Path(name): Path<String>,
+    Json(body): Json<RegistryDecisionRequest>,
+) -> ApiResult<JsonBody<RegistryEntryDto>> {
+    if !may_decide(catalog.authority().as_deref(), &ctx).await {
+        return Err(StudioComponentsCatalogError::permission_denied()
+            .with_reason("REGISTRY_ADMIN_REQUIRED")
+            .create());
+    }
+    let by = catalog.decider(&ctx).await;
+    match catalog
+        .service
+        .decide_registry(&ctx, &name, &decision_input(body), &by)
+        .await
+    {
+        Ok((entry, decisions)) => Ok(Json(registry_entry_detail_dto(entry, decisions))),
+        Err(super::registry_decisions::DecideFailure::Refused(e)) => Err(decision_problem(e)),
+        Err(super::registry_decisions::DecideFailure::Failed(e)) => Err(internal(e)),
     }
 }
 
@@ -1919,7 +2163,7 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .query_param(
             "state",
             false,
-            "candidate, declared, registered, published, rejected or deprecated",
+            "candidate, declared, registered, published, rejected, deprecated or merged",
         )
         .query_param("project_id", false, "Only entries found in this project")
         .query_param("q", false, "Text in the name or the description")
@@ -1943,8 +2187,8 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .summary("One component of the organization's registry, with its occurrences")
         .description(
             "One registry entry by name (case-blind), with every place it was \
-             found. 404 when the registry has no such component. Its decisions \
-             come with the lifecycle moves (P2).",
+             found and the decisions people made about it, newest first. 404 \
+             when the registry has no such component.",
         )
         .tag("StudioComponentsCatalog")
         .authenticated()
@@ -1954,6 +2198,45 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .handler(get_registry_entry)
         .json_response_with_schema::<RegistryEntryDto>(openapi, StatusCode::OK, "The entry")
         .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-components-catalog/v1/registry/{name}/decisions")
+        .operation_id("studio_components_catalog.decide_registry_entry")
+        .summary("Move a registry entry through its lifecycle, as a recorded decision")
+        .description(
+            "An organization administrator's decision about one entry (ADR-0041 \
+             P2): `register` (candidate or declared, with an `owner`), `reject` \
+             (candidate or declared, with a `reason`), `deprecate` (registered or \
+             published, optionally `replaced_by` an existing entry), `restore` \
+             (rejected back to declared, or candidate when nothing declares it; \
+             deprecated back to registered), `publish` (registered, optionally \
+             with a `version`), `merge` (into the existing entry `merge_into`, \
+             which takes this one's occurrences and its name as an alias, so a \
+             later walk puts what it finds under that name there) and `edit` \
+             (owner, kind, category, capabilities, description; no state move). \
+             Every decision is recorded with who, when, the states and why. \
+             A move the entry's state does not allow is `failed_precondition`; \
+             403 for anyone but the organization's owner, a platform \
+             administrator, or a holder of `component.registry`. Answers the \
+             entry with its decisions.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("name", "Component name")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(decide_registry_entry)
+        .json_request::<RegistryDecisionRequest>(openapi, "The decision")
+        .json_response_with_schema::<RegistryEntryDto>(
+            openapi,
+            StatusCode::OK,
+            "The entry after it",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -2477,6 +2760,10 @@ mod registry_dto_tests {
                 category: None,
                 owner: None,
                 capabilities: vec!["tasks".into()],
+                aliases: vec!["tasks".into()],
+                merged_into: None,
+                replaced_by: None,
+                version: None,
                 orphaned: false,
                 first_seen: Some("2026-10-09T10:00:00Z".into()),
                 last_seen: Some("2026-10-09T11:00:00Z".into()),
@@ -2554,5 +2841,128 @@ mod registry_dto_tests {
         assert_eq!(back.repo, "acme/gears");
         assert_eq!(back.git_ref, "");
         assert_eq!(back.mode, "frontx");
+    }
+
+    #[test]
+    fn an_entry_with_decisions_carries_owner_aliases_and_history() {
+        use crate::components_catalog::registry::Owner;
+        use crate::components_catalog::registry_decisions::DecisionRecord;
+        let entry = RegistryEntry {
+            entry: EntryRecord {
+                organization_id: Uuid::from_u128(1),
+                name: "billing".into(),
+                kind: "gear".into(),
+                state: "deprecated".into(),
+                description: None,
+                category: Some("payments".into()),
+                owner: Some(Owner {
+                    kind: "team".into(),
+                    id: None,
+                    name: "Payments".into(),
+                }),
+                capabilities: Vec::new(),
+                aliases: vec!["billing-old".into()],
+                merged_into: None,
+                replaced_by: Some("invoicing".into()),
+                version: Some("1.2.0".into()),
+                orphaned: false,
+                first_seen: None,
+                last_seen: None,
+                fingerprint: None,
+            },
+            occurrences: Vec::new(),
+        };
+        let list = serde_json::to_value(registry_entry_dto(entry.clone())).unwrap();
+        assert!(list["decisions"].is_null(), "the list stays light");
+        assert_eq!(
+            list["owner"],
+            serde_json::json!({"kind": "team", "id": null, "name": "Payments"})
+        );
+        assert_eq!(list["aliases"], serde_json::json!(["billing-old"]));
+        assert_eq!(list["replaced_by"], "invoicing");
+        assert_eq!(list["category"], "payments");
+        assert_eq!(list["version"], "1.2.0");
+        let decision = DecisionRecord {
+            organization_id: Uuid::from_u128(1),
+            entry: "billing".into(),
+            entry_id: "e".into(),
+            action: "deprecate".into(),
+            from: "registered".into(),
+            to: "deprecated".into(),
+            by: "person-1".into(),
+            by_name: None,
+            at: "2026-10-09T12:00:00Z".into(),
+            reason: Some("replaced".into()),
+            details: serde_json::json!({"replaced_by": "invoicing"}),
+        };
+        let one = serde_json::to_value(registry_entry_detail_dto(entry, vec![decision])).unwrap();
+        let d = &one["decisions"][0];
+        assert_eq!(d["action"], "deprecate");
+        assert_eq!(d["from"], "registered");
+        assert_eq!(d["to"], "deprecated");
+        assert_eq!(d["by"], "person-1");
+        assert_eq!(d["reason"], "replaced");
+        assert_eq!(d["details"]["replaced_by"], "invoicing");
+        assert!(d.get("organization_id").is_none() && d.get("entry_id").is_none());
+    }
+
+    #[test]
+    fn a_decision_request_reads_into_the_services_terms() {
+        let body: RegistryDecisionRequest = serde_json::from_value(serde_json::json!({
+            "action": "register",
+            "owner": {"kind": "person", "id": "u1", "name": "Ada"},
+            "capabilities": ["billing"]
+        }))
+        .unwrap();
+        let input = decision_input(body);
+        assert_eq!(input.action, "register");
+        assert_eq!(input.owner.as_ref().map(|o| o.name.as_str()), Some("Ada"));
+        assert_eq!(input.capabilities, Some(vec!["billing".to_owned()]));
+        assert_eq!(input.reason, None);
+    }
+
+    /// A fake studio-user: grants the registry privilege to one subject.
+    struct Authority(Uuid);
+
+    #[async_trait::async_trait]
+    impl crate::user_profile::OrgAuthority for Authority {
+        async fn may_administer(&self, ctx: &SecurityContext, _org: Uuid, privilege: &str) -> bool {
+            privilege == REGISTRY_PRIVILEGE && ctx.subject_id() == self.0
+        }
+        async fn may_dispose(&self, _ctx: &SecurityContext, _org: Uuid) -> bool {
+            false
+        }
+    }
+
+    fn caller(id: u128) -> SecurityContext {
+        SecurityContext::builder()
+            .subject_id(Uuid::from_u128(id))
+            .subject_tenant_id(Uuid::from_u128(1))
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn only_an_administrator_decides_and_without_studio_user_nobody_does() {
+        let authority = Authority(Uuid::from_u128(7));
+        assert!(may_decide(Some(&authority), &caller(7)).await);
+        assert!(
+            !may_decide(Some(&authority), &caller(8)).await,
+            "a member is refused"
+        );
+        assert!(!may_decide(None, &caller(7)).await);
+    }
+
+    #[test]
+    fn a_refused_move_says_which_states_the_action_applies_to() {
+        use crate::components_catalog::registry_decisions::DecisionError;
+        assert_eq!(allowed_from("publish"), "registered");
+        assert_eq!(allowed_from("deprecate"), "registered, published");
+        let problem = decision_problem(DecisionError::Illegal {
+            action: "publish".into(),
+            from: "declared".into(),
+        });
+        let text = format!("{problem:?}");
+        assert!(text.contains("REGISTRY_TRANSITION_NOT_ALLOWED"), "{text}");
     }
 }

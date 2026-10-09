@@ -105,8 +105,13 @@ pub const REGISTRY_READ_TYPE: &str = "gts.cf.studio.catalog.registry_read.v1~";
 /// per organization.
 pub const REGISTRY_SETTINGS_TYPE: &str = "gts.cf.studio.catalog.registry_settings.v1~";
 
+/// One decision a person made about a registry entry (ADR-0041 P2): the
+/// action, the state it moved the entry from and to, who, when and why.
+/// Joined to its entry by [`REL_DECIDED`].
+pub const REGISTRY_DECISION_TYPE: &str = "gts.cf.studio.catalog.registry_decision.v1~";
+
 /// Every catalog node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 14] = [
+pub const ALL_NODE_TYPES: [&str; 15] = [
     GEAR_TYPE,
     CRATE_VERSION_TYPE,
     GEAR_PROFILE_TYPE,
@@ -121,6 +126,7 @@ pub const ALL_NODE_TYPES: [&str; 14] = [
     OCCURRENCE_TYPE,
     REGISTRY_READ_TYPE,
     REGISTRY_SETTINGS_TYPE,
+    REGISTRY_DECISION_TYPE,
 ];
 
 /// gear → crate_version — a version published under this crate.
@@ -133,8 +139,11 @@ pub const REL_HAS_VERSION: &str = "gts.cf.studio.catalog.has_version.v1~";
 /// registry_entry → occurrence — a place the entry was found.
 pub const REL_FOUND_IN: &str = "gts.cf.studio.catalog.found_in.v1~";
 
+/// registry_entry → registry_decision — a decision made about the entry.
+pub const REL_DECIDED: &str = "gts.cf.studio.catalog.decided.v1~";
+
 /// Every catalog relation type, for registering in the graph.
-pub const ALL_EDGE_TYPES: [&str; 2] = [REL_HAS_VERSION, REL_FOUND_IN];
+pub const ALL_EDGE_TYPES: [&str; 3] = [REL_HAS_VERSION, REL_FOUND_IN, REL_DECIDED];
 
 /// The graph-storage families the catalog's types derive from. Catalog rows
 /// are *owned* nodes (the graph is where they live) joined by *static* edges
@@ -203,7 +212,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 14] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 15] = [
     (
         GEAR_TYPE,
         "Gear",
@@ -274,6 +283,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 14] = [
         "Registry settings",
         "The organization's registry settings: the projects its walk skips.",
     ),
+    (
+        REGISTRY_DECISION_TYPE,
+        "Registry decision",
+        "One decision a person made about a registry entry: the action, the states it moved between, who, when and why.",
+    ),
 ];
 
 const SNAPSHOT_DOC: (&str, &str, &str) = (
@@ -285,7 +299,7 @@ const SNAPSHOT_DOC: (&str, &str, &str) = (
 /// The relation types as catalog entries. Registered alongside the nodes so
 /// the platform registry catalogs everything this gear puts in the graph (see
 /// `crate::gts_inventory`).
-const EDGE_TYPE_DOCS: [(&str, &str, &str); 2] = [
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 3] = [
     (
         REL_HAS_VERSION,
         "HasVersion",
@@ -295,6 +309,11 @@ const EDGE_TYPE_DOCS: [(&str, &str, &str); 2] = [
         REL_FOUND_IN,
         "FoundIn",
         "A place a registry entry was found.",
+    ),
+    (
+        REL_DECIDED,
+        "Decided",
+        "A decision a person made about a registry entry.",
     ),
 ];
 
@@ -669,6 +688,24 @@ pub fn registry_settings_node(org: &str, value: Value) -> GtsNode {
         type_id: REGISTRY_SETTINGS_TYPE,
         instance_id: registry_settings_instance_id(org),
         value,
+    }
+}
+
+/// A registry decision node. Its id is drawn fresh: every decision is its own.
+pub fn registry_decision_node(instance_id: String, value: Value) -> GtsNode {
+    GtsNode {
+        type_id: REGISTRY_DECISION_TYPE,
+        instance_id,
+        value,
+    }
+}
+
+/// registry_entry → registry_decision.
+pub fn decided_edge(entry_id: &str, decision_id: &str) -> GtsEdge {
+    GtsEdge {
+        type_id: REL_DECIDED,
+        from: entry_id.to_string(),
+        to: decision_id.to_string(),
     }
 }
 

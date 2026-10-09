@@ -2359,6 +2359,25 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/{name}/decisions",
+      "operation_id": "studio_components_catalog.decide_registry_entry",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Move a registry entry through its lifecycle, as a recorded decision",
+      "authenticated": true,
+      "request": "RegistryDecisionRequest",
+      "responses": [
+        "RegistryEntryDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/sync",
       "operation_id": "studio_components_catalog.sync",
       "tag": "StudioComponentsCatalog",

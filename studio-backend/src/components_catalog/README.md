@@ -74,6 +74,16 @@ This README is what you need to work in the directory.
   exclusions are saved; studio-git queues a walk of a pushed project through
   `port::Registry::queue_refresh`. Spec-mapping reads a project's own gears
   from `port::Registry` when it has found any there.
+- The registry's lifecycle (ADR-0041, phase P2):
+  [`registry_decisions.rs`](registry_decisions.rs). `POST
+  /registry/{name}/decisions` moves an entry by the pure `transition`/`apply`
+  table (register, reject, deprecate, restore, publish, merge, edit), records a
+  `registry_decision` node joined by `decided`, and for a merge re-points the
+  occurrences (`repoint`) and adds the name to the target's `aliases`, which
+  `registry::plan` consults so later findings land on the target. Only an
+  organization administrator decides: studio-user's `OrgAuthority` with the
+  privilege `component.registry`. Tested in
+  [`registry_decisions_tests.rs`](registry_decisions_tests.rs).
 - The fingerprint ([`project_gears.rs`](project_gears.rs) `fingerprint`) is a
   uuid5 of the files read and `DISCOVERY_VERSION`, because it is stored: move
   the version when discovery's rules change, and every repository is read once

@@ -635,8 +635,8 @@ export const SURFACES: Surface[] = [
     area: "organization",
     title: "Components catalogue",
     does: "Browse every gear a product can be built from, with its profile and documentation.",
-    components: ["ComponentsCatalog", "ComponentRegistry", "GearDetail", "ProfileEditor"],
-    gears: ["studio-components-catalog", "studio-connector", "studio-kits"],
+    components: ["ComponentsCatalog", "ComponentRegistry", "RegistryDecisions", "GearDetail", "ProfileEditor"],
+    gears: ["studio-components-catalog", "studio-connector", "studio-kits", "studio-user"],
   },
   {
     id: "reports",

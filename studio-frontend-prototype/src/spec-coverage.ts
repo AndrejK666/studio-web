@@ -112,6 +112,13 @@ export function candidateReasons(c: Candidate, capability: string): string[] {
   if (c.origin === "project") {
     lines.push(`Declared in this project's own repository${c.path ? `, at ${c.path}` : ""}: you already have it.`);
   }
+  if (c.registry_state === "deprecated") {
+    lines.push(
+      c.replaced_by
+        ? `Deprecated in the organization's registry — use ${c.replaced_by} instead.`
+        : "Deprecated in the organization's registry: no longer to be chosen.",
+    );
+  }
   if (c.step === "contract") {
     lines.push(`Provides ${(c.contracts ?? []).join(", ")}: a contract ${quote(capability)} is satisfied by.`);
   }

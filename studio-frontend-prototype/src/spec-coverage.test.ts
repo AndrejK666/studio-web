@@ -89,6 +89,18 @@ describe("why a gear is offered", () => {
     );
   });
 
+  it("says when the organization's registry deprecated the gear, and what replaces it", () => {
+    const lines = candidateReasons(
+      cand("old-ledger", { origin: "project", path: "src/old", registry_state: "deprecated", replaced_by: "ledger" }),
+      "ledger",
+    );
+    expect(lines[1]).toBe("Deprecated in the organization's registry — use ledger instead.");
+    expect(candidateReasons(cand("a", { registry_state: "deprecated" }), "x")[0]).toBe(
+      "Deprecated in the organization's registry: no longer to be chosen.",
+    );
+    expect(candidateReasons(cand("a", { registry_state: "registered" }), "x").some((l) => l.includes("Deprecated"))).toBe(false);
+  });
+
   it("names the contract and what blocks the engine", () => {
     const lines = candidateReasons(
       cand("a", { step: "contract", contracts: ["authn/Api@v1"], composable: "blocked", composable_why: "needs a plugin" }),

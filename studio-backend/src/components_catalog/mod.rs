@@ -16,6 +16,7 @@ mod project_gears;
 mod quality;
 pub(crate) mod reference;
 mod registry;
+mod registry_decisions;
 mod registry_task;
 mod repo_enrich;
 mod repo_facts;

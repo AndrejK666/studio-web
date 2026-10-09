@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import type { RegistryEntry } from "./api";
-import { filterEntries, isDuplicated, projectsOf, registryProjects, stateCounts, walkLine } from "./registry";
+import {
+  ACTION_LABEL,
+  REGISTRY_STATES,
+  STATE_LABEL,
+  allowedActions,
+  decisionLine,
+  decisionRefusal,
+  decisionTargets,
+  filterEntries,
+  isDuplicated,
+  ownerLabel,
+  projectsOf,
+  registryProjects,
+  stateCounts,
+  walkLine,
+} from "./registry";
 
 const entry = (name: string, extra: Partial<RegistryEntry> = {}): RegistryEntry => ({
   name,
@@ -64,5 +79,69 @@ describe("what the last walk saw", () => {
       walkLine({ project_id: "p", project_name: "x", at, repos: [{ repo: "a", status: "unchanged", components: 2 }, { repo: "b", status: "read", components: 1 }] }),
     ).toEqual({ text: "read · 3 components", failed: false, hint: null });
     expect(walkLine(undefined).text).toBe("not read yet");
+  });
+});
+
+describe("decisions about an entry", () => {
+  it("offers the moves the server allows from each state", () => {
+    expect(allowedActions("declared")).toEqual(["register", "reject", "merge", "edit"]);
+    expect(allowedActions("candidate")).toEqual(["register", "reject", "merge", "edit"]);
+    expect(allowedActions("registered")).toEqual(["publish", "deprecate", "merge", "edit"]);
+    expect(allowedActions("published")).toEqual(["deprecate", "merge", "edit"]);
+    expect(allowedActions("rejected")).toEqual(["restore", "merge", "edit"]);
+    expect(allowedActions("deprecated")).toEqual(["restore", "merge", "edit"]);
+    expect(allowedActions("merged")).toEqual(["edit"]);
+    expect(allowedActions("unheard-of")).toEqual([]);
+    for (const s of REGISTRY_STATES) {
+      expect(STATE_LABEL[s]).toBeTruthy();
+      for (const a of allowedActions(s)) expect(ACTION_LABEL[a]).toBeTruthy();
+    }
+  });
+
+  it("names an owner and the entries a decision may point at", () => {
+    expect(ownerLabel({ kind: "person", id: "u1", name: "Ada" })).toBe("Ada (person)");
+    expect(ownerLabel({ kind: "team", name: "Payments" })).toBe("Payments (team)");
+    expect(ownerLabel(null)).toBeNull();
+    const all = [
+      entry("billing"),
+      entry("ledger", { state: "registered" }),
+      entry("old", { state: "merged" }),
+      entry("Alpha"),
+    ];
+    expect(decisionTargets(all, "Billing")).toEqual(["Alpha", "ledger"]);
+  });
+
+  it("writes a decision as one line, with who, the move and why", () => {
+    const at = "2026-10-09T12:00:00Z";
+    expect(
+      decisionLine(
+        { action: "deprecate", from: "registered", to: "deprecated", by: "u1", at, reason: "superseded", details: { replaced_by: "ledger" } },
+        { u1: "Ada" },
+      ),
+    ).toBe("Ada deprecated (registered → deprecated): use ledger instead — “superseded”");
+    expect(
+      decisionLine({
+        action: "register",
+        from: "declared",
+        to: "registered",
+        by: "u2",
+        by_name: "Bob",
+        at,
+        details: { owner: { kind: "team", name: "Payments" } },
+      }),
+    ).toBe("Bob registered (declared → registered): owner Payments (team)");
+    expect(decisionLine({ action: "merge", from: "registered", to: "registered", by: "u3", at, details: { merged_from: "billing-v1" } })).toBe(
+      "u3 merged: took in billing-v1",
+    );
+    expect(decisionLine({ action: "publish", from: "registered", to: "published", by: "u3", at, details: { version: "1.0.0" } })).toBe(
+      "u3 published (registered → published): version 1.0.0",
+    );
+  });
+
+  it("says a refusal for a non-administrator in plain words", () => {
+    expect(decisionRefusal(403, "HTTP 403 · Forbidden")).toContain("Only an organization administrator");
+    expect(decisionRefusal(400, "a `declared` entry cannot be moved by `publish`")).toBe(
+      "a `declared` entry cannot be moved by `publish`",
+    );
   });
 });

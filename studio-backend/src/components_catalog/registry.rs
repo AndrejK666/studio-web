@@ -48,15 +48,20 @@ pub const STATE_PUBLISHED: &str = "published";
 pub const STATE_REJECTED: &str = "rejected";
 /// Still present, no longer to be chosen (P2, a person).
 pub const STATE_DEPRECATED: &str = "deprecated";
+/// Folded into another entry: one component found under two names (P2, a
+/// person). Its occurrences and later findings belong to the entry it was
+/// merged into, which carries its name among its `aliases`.
+pub const STATE_MERGED: &str = "merged";
 
 /// Every lifecycle state, in the order the lifecycle runs.
-pub const STATES: [&str; 6] = [
+pub const STATES: [&str; 7] = [
     STATE_CANDIDATE,
     STATE_DECLARED,
     STATE_REGISTERED,
     STATE_PUBLISHED,
     STATE_REJECTED,
     STATE_DEPRECATED,
+    STATE_MERGED,
 ];
 
 /// The states whose descriptive fields discovery still owns: nobody has
@@ -80,10 +85,24 @@ pub struct EntryRecord {
     pub description: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
-    #[serde(default)]
-    pub owner: Option<String>,
+    /// Who answers for it: a person or a team. Set by a person's decision.
+    #[serde(default, deserialize_with = "owner_of")]
+    pub owner: Option<Owner>,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// Other names the same component was found under, merged into this one.
+    /// A walk puts what it finds under any of them onto this entry.
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    /// For a `merged` entry, the entry it was folded into.
+    #[serde(default)]
+    pub merged_into: Option<String>,
+    /// For a `deprecated` entry, the entry to use instead, when one was named.
+    #[serde(default)]
+    pub replaced_by: Option<String>,
+    /// For a `published` entry, the version published, when one was named.
+    #[serde(default)]
+    pub version: Option<String>,
     /// No occurrence is left. Kept, with its state: a registered component
     /// whose repository moved is still the organization's.
     #[serde(default)]
@@ -98,6 +117,37 @@ pub struct EntryRecord {
     /// The fingerprint of the repository files it was last read from.
     #[serde(default)]
     pub fingerprint: Option<String>,
+}
+
+/// Who answers for an entry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Owner {
+    /// `person` or `team`.
+    pub kind: String,
+    /// The person's Studio id, or the team's key, when known.
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+}
+
+/// An owner as stored: the object, or -- written before owners had a shape --
+/// a bare name, read as a team of that name.
+fn owner_of<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Owner>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Stored {
+        Shaped(Owner),
+        Named(String),
+    }
+    Ok(match Option::<Stored>::deserialize(d)? {
+        Some(Stored::Shaped(o)) => Some(o),
+        Some(Stored::Named(name)) if !name.trim().is_empty() => Some(Owner {
+            kind: "team".to_owned(),
+            id: None,
+            name,
+        }),
+        _ => None,
+    })
 }
 
 /// Where an entry was found, as stored. Carries what the repository said
@@ -268,6 +318,20 @@ fn pair_gone(walk: &Walk, project: Option<Uuid>, repo_key: &str) -> bool {
         && !walk.resolved.contains(&(project, repo_key.to_string()))
 }
 
+/// Every alias (case-folded) to the id of the entry that carries it. A merged
+/// entry's own aliases moved with it, so only live entries are asked.
+pub fn aliases_of(entries: &[(String, EntryRecord)]) -> HashMap<String, String> {
+    entries
+        .iter()
+        .filter(|(_, e)| e.state != STATE_MERGED)
+        .flat_map(|(id, e)| {
+            e.aliases
+                .iter()
+                .map(move |a| (a.trim().to_ascii_lowercase(), id.clone()))
+        })
+        .collect()
+}
+
 /// What a walk changes in the registry. Pure: the stored entries,
 /// occurrences and reads (each with its instance id) and what the walk saw,
 /// to the nodes to write and the ids to retire.
@@ -281,6 +345,8 @@ fn pair_gone(walk: &Walk, project: Option<Uuid>, repo_key: &str) -> bool {
 ///   the ones it no longer declares are retired. So are the occurrences of a
 ///   repository a project no longer names, and of a project out of scope.
 /// - An entry with no occurrence left is `orphaned` and kept.
+/// - A component found under a name merged into another entry (one of its
+///   `aliases`) is that entry's: its occurrence is written under it.
 pub fn plan(
     walk: &Walk,
     entries: &[(String, EntryRecord)],
@@ -298,6 +364,9 @@ pub fn plan(
     // The entries by id, and the name each goes by.
     let mut by_id: BTreeMap<String, EntryRecord> = entries.iter().cloned().collect();
     let originals: BTreeMap<String, EntryRecord> = by_id.clone();
+    // A name merged into another entry is that entry's: what a read finds
+    // under it lands there, never on the merged entry.
+    let alias_of = aliases_of(entries);
 
     // What the reads found, keyed by occurrence id; the first finding of a
     // component in one read wins, as in `project_gears`.
@@ -310,7 +379,10 @@ pub fn plan(
     for read in &walk.reads {
         let project = read.project_id.to_string();
         for gear in &read.gears {
-            let entry_id = gts::registry_entry_instance_id(&org, &gear.name);
+            let entry_id = alias_of
+                .get(&gear.name.trim().to_ascii_lowercase())
+                .cloned()
+                .unwrap_or_else(|| gts::registry_entry_instance_id(&org, &gear.name));
             let name = names
                 .entry(entry_id.clone())
                 .or_insert_with(|| {
@@ -407,6 +479,10 @@ pub fn plan(
                         category: gear.category.clone(),
                         owner: None,
                         capabilities: gear.capabilities.clone(),
+                        aliases: Vec::new(),
+                        merged_into: None,
+                        replaced_by: None,
+                        version: None,
                         orphaned: false,
                         first_seen: Some(walk.now.clone()),
                         last_seen: Some(walk.now.clone()),
@@ -703,7 +779,7 @@ pub struct RegistryCounts {
     pub orphaned: usize,
 }
 
-fn now() -> String {
+pub(super) fn now() -> String {
     time::OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_default()
@@ -711,7 +787,7 @@ fn now() -> String {
 
 /// Typed records of one node type, each with its instance id. A payload that
 /// does not read as `T` is skipped and logged.
-fn records<T: serde::de::DeserializeOwned>(nodes: Vec<GtsNode>) -> Vec<(String, T)> {
+pub(super) fn records<T: serde::de::DeserializeOwned>(nodes: Vec<GtsNode>) -> Vec<(String, T)> {
     nodes
         .into_iter()
         .filter_map(|n| match serde_json::from_value::<T>(n.value) {

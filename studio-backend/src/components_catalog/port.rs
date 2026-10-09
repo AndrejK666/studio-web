@@ -304,7 +304,15 @@ mod profiles_by_gear_tests {
 
 // ── The organization's registry (ADR-0041) ───────────────────────────────────
 
-pub use super::registry::{RegistryEntry, STATE_REJECTED};
+pub use super::registry::{RegistryEntry, STATE_DEPRECATED, STATE_MERGED, STATE_REJECTED};
+
+/// Whether the registry still offers an entry to build with. A `rejected`
+/// entry is not a gear by the organization's decision, and a `merged` one is
+/// another entry under an old name; a `deprecated` one is still offered, with
+/// its state, so a screen can say what replaces it.
+pub fn offered(state: &str) -> bool {
+    state != STATE_REJECTED && state != STATE_MERGED
+}
 
 /// What the catalogue offers another gear about the organization's registry:
 /// its components, wherever they are declared, and where each was found.
@@ -396,7 +404,7 @@ impl Registry for CatalogRegistry {
 
 /// A project's own gears as the registry knows them, in the shape
 /// [`ComponentCatalog::project_gears`] answers: one per entry found in the
-/// project (its first occurrence there), rejected entries left out. Empty
+/// project (its first occurrence there), entries not [`offered`] left out. Empty
 /// when the registry has found nothing in the project yet -- the caller
 /// then reads the repositories itself.
 pub fn project_gears_of(
@@ -404,7 +412,7 @@ pub fn project_gears_of(
     project_id: Uuid,
 ) -> (Vec<Value>, Map<String, Value>) {
     let mut gears: Vec<super::project_gears::LocalGear> = Vec::new();
-    for entry in entries.iter().filter(|e| e.entry.state != STATE_REJECTED) {
+    for entry in entries.iter().filter(|e| offered(&e.entry.state)) {
         let Some(found) = entry
             .occurrences
             .iter()

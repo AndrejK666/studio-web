@@ -197,7 +197,8 @@ rather than duplicates.
 | `gts.cf.studio.catalog.roadmap_item.v1~` | A gear on a roadmap board, keyed on board and issue, whether or not its code exists |
 | `gts.cf.studio.catalog.field_schema.v1~` | What the organization says about one GTS type: its field schema (with the `quality` block) and whether it counts as a component; built-ins overlaid by the tenant's own |
 | `gts.cf.studio.catalog.source.v1~` | One catalogue source of the organization, kept on the server (ADR-0041): repository, ref, mode; replaces the browser's `cf.components.sources` |
-| `gts.cf.studio.catalog.registry_entry.v1~` | One component of the organization's registry (ADR-0041): name, kind, `state` (`candidate`, `declared`, `registered`, `published`, `rejected`, `deprecated`), owner, capabilities, and the fingerprint of the files it was last read from |
+| `gts.cf.studio.catalog.registry_entry.v1~` | One component of the organization's registry (ADR-0041): name, kind, `state` (`candidate`, `declared`, `registered`, `published`, `rejected`, `deprecated`, `merged`), owner (`{kind: person\|team, id?, name}`), category, capabilities, `aliases` (names merged into it), `merged_into`, `replaced_by`, the published `version`, and the fingerprint of the files it was last read from |
+| `gts.cf.studio.catalog.registry_decision.v1~` | One decision a person made about a registry entry: `action`, the state it moved `from` and `to`, `by` (the person's Studio id, else the token's subject), `at`, `reason` and `details` (the fields it set); joined to its entry by `gts.cf.studio.catalog.decided.v1~` |
 | `gts.cf.studio.catalog.occurrence.v1~` | Where a registry entry was found: repository, ref, path, commit, project; joined to its entry by `gts.cf.studio.catalog.found_in.v1~`. Keyed on the entry, the project, the repository and the path, so one repository attached to two projects gives each its own occurrence |
 | `gts.cf.studio.catalog.registry_read.v1~` | One repository the registry walk read for one project (connection, repository, ref): the fingerprint of the files discovery reads and the commit, so an unchanged repository is not read again after a restart either |
 | `gts.cf.studio.catalog.registry_settings.v1~` | The organization's registry settings: the projects the walk skips |
@@ -343,10 +344,14 @@ Knows nothing about plans, definitions or workbooks.
 - [x] `p2` - **ID**: `cpt-studio-component-components-catalog-registry`
 
 The organization's components, wherever they are declared (ADR-0041,
-`cpt-studio-adr-component-registry`). Phase P1 is built (`registry.rs`,
-`registry_task.rs`): server-side sources, the walk, `declared` entries and the
-reads. The lifecycle moves with recorded decisions (P2), candidate detectors
-(P3) and model suggestions (P4) are not.
+`cpt-studio-adr-component-registry`). Phases P1 and P2 are built:
+
+- [x] **P1** (`registry.rs`, `registry_task.rs`): server-side sources, the
+  walk, `declared` entries and the reads.
+- [x] **P2** (`registry_decisions.rs`): the lifecycle moved by people, with
+  owners, recorded decisions, merging and the permission check.
+- [ ] **P3**: candidate detectors and Declare it.
+- [ ] **P4**: model suggestions, the consumer graph and publishing.
 
 The walk is the task type `catalog.registry`, and also the last phase of a
 `catalog.sync` whose payload says `registry: true` — what `POST /sync` queues
@@ -408,6 +413,62 @@ project's own gears from it when it has entries found in that project, in the
 same shape and labelling (`origin: project`, `path`) as `project_gears`, and
 reads the repositories on demand otherwise.
 
+**The lifecycle (P2).** Past `declared`, an entry moves only by a person's
+decision, `POST /registry/{name}/decisions`, checked against one table
+(`registry_decisions::transition`):
+
+| Action | From | To | Carries |
+|---|---|---|---|
+| `register` | `candidate`, `declared` | `registered` | `owner` (required unless the entry has one), and `kind`, `category`, `capabilities` |
+| `reject` | `candidate`, `declared` | `rejected` | `reason` (required) |
+| `deprecate` | `registered`, `published` | `deprecated` | `replaced_by`: an existing live entry, optional |
+| `restore` | `rejected` | `declared`, or `candidate` when nothing declares it | — |
+| `restore` | `deprecated` | `registered` | clears `replaced_by` |
+| `publish` | `registered` | `published` | `version`, optional |
+| `merge` | any state but `merged` | `merged` | `merge_into`: an existing live entry |
+| `edit` | any | unchanged | `owner`, `kind`, `category`, `capabilities`, `description` |
+
+Any other move is refused as `failed_precondition`
+(`REGISTRY_TRANSITION_NOT_ALLOWED`, naming the states the action applies to);
+a missing owner or reason, or a `replaced_by`/`merge_into` that names no live
+entry, is `invalid_argument`. An owner is `{kind: person|team, id?, name}`; an
+owner stored as a bare name before P2 reads as a team of that name.
+
+A **merge** folds one component found under two names into one entry. The
+merged entry's occurrences are re-pointed to the target (written under the
+target, the old ones retired), the target takes its name — and any names it
+carried — into `aliases`, and the merged entry keeps `state: merged` and
+`merged_into`. A later walk that finds a component under an alias writes its
+occurrence under the target ([`plan`] asks `aliases_of` first), so the merged
+entry never fills again. A merge records a decision on both entries
+(`merged_from` on the target's).
+
+Every decision is a `registry_decision` node joined to its entry by `decided`,
+recording who (`by`: the caller as a person through studio-user's
+`PersonResolver`, else the token's subject), when, the states, the reason and
+the fields it set. `GET /registry/{name}` and a decision's answer carry the
+entry's `decisions`, newest first; the list route leaves them out.
+
+**Who decides.** Only an organization administrator: the route asks
+studio-user's `OrgAuthority::may_administer` for the privilege
+`component.registry` (ADR-0040 — no other gear reads the access config). An
+owner and a platform administrator always may; on the roles model, so may
+whoever holds the privilege. Anyone else gets 403 (`REGISTRY_ADMIN_REQUIRED`);
+without studio-user nobody may. Reads stay open to every member.
+
+**What the walk does with decisions.** Nothing a person decided moves: a walk
+still writes only `declared`, refreshes descriptive fields only while
+discovery owns the entry, keeps the occurrences of `rejected` and `merged`
+entries' repositories up to date (for a merged one, under its target), and
+only says when it saw an entry last.
+
+**What spec-mapping offers.** A project gear whose registry entry is
+`rejected` or `merged` is not offered, whether the plan read the registry or
+fell back to reading the repositories. A `deprecated` one is still offered,
+marked on its candidate with `registry_state` and `replaced_by` (both set only
+for registry-backed candidates), and the portal says "Deprecated in the
+organization's registry — use X instead".
+
 ### 3.3 API Contracts
 
 - [x] `p2` - **ID**: `cpt-studio-interface-components-catalog-rest`
@@ -438,7 +499,8 @@ reads the repositories on demand otherwise.
 | `GET` | `/sources` | The organization's catalogue sources, kept on the server: `{items: RepoSourceDto[], total}` | unstable |
 | `PUT` | `/sources` | Replace them with `{items: RepoSourceDto[]}`; the sync reads these when its body names none. Ensures the hourly registry schedule | unstable |
 | `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it, `offset`/`limit` page it; `{items: RegistryEntryDto[], total}`, each entry with its occurrences | unstable |
-| `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences; 404 when absent. Its decisions come with P2 | unstable |
+| `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences and its `decisions`, newest first; 404 when absent | unstable |
+| `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or `edit`, checked against the lifecycle table and recorded. Answers the entry with its decisions. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
 | `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do | unstable |
 | `GET` | `/registry/excluded-projects` | The projects the walk skips: `{project_ids}` | unstable |
 | `PUT` | `/registry/excluded-projects` | Replace them with `{project_ids}`. Ensures the hourly registry schedule | unstable |

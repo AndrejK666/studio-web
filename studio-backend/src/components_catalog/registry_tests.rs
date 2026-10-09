@@ -197,7 +197,11 @@ fn discovery_never_moves_a_state_and_never_resurrects_a_rejected_entry() {
             e.state = STATE_REJECTED.into();
         } else {
             e.state = STATE_REGISTERED.into();
-            e.owner = Some("ada".into());
+            e.owner = Some(Owner {
+                kind: "person".into(),
+                id: Some("ada-id".into()),
+                name: "Ada".into(),
+            });
             e.description = Some("what a person wrote".into());
         }
     }
@@ -217,7 +221,7 @@ fn discovery_never_moves_a_state_and_never_resurrects_a_rejected_entry() {
         assert_eq!(store.entry("kept").state, STATE_REJECTED, "{now}");
         let owned = store.entry("owned");
         assert_eq!(owned.state, STATE_REGISTERED);
-        assert_eq!(owned.owner.as_deref(), Some("ada"));
+        assert_eq!(owned.owner.as_ref().map(|o| o.name.as_str()), Some("Ada"));
         // What a person owns is theirs; a walk only says when it saw it.
         assert_eq!(owned.description.as_deref(), Some("what a person wrote"));
         assert_eq!(owned.last_seen.as_deref(), Some(now));

@@ -382,15 +382,63 @@ export interface RegistryProjectWalk {
   }[];
 }
 
+/** Who answers for a registry entry. */
+export interface RegistryOwner {
+  kind: "person" | "team";
+  /** The person's Studio id, or the team's key, when known. */
+  id?: string | null;
+  name: string;
+}
+
+/** One decision a person made about a registry entry (ADR-0041 P2). */
+export interface RegistryDecision {
+  /** `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or `edit`. */
+  action: string;
+  from: string;
+  to: string;
+  /** The person's Studio id, else the token's subject. */
+  by: string;
+  by_name?: string | null;
+  at: string;
+  reason?: string | null;
+  /** The fields it set: `owner`, `replaced_by`, `merge_into`, `version`, `merged_from`, … */
+  details?: Record<string, unknown> | null;
+}
+
+/** What `POST /registry/{name}/decisions` takes. */
+export interface RegistryDecisionInput {
+  action: string;
+  reason?: string;
+  owner?: RegistryOwner;
+  kind?: string;
+  category?: string | null;
+  capabilities?: string[];
+  description?: string | null;
+  replaced_by?: string;
+  merge_into?: string;
+  version?: string;
+}
+
 /** One component of the organization's registry (ADR-0041). */
 export interface RegistryEntry {
   name: string;
   kind: string;
-  /** `candidate`, `declared`, `registered`, `published`, `rejected` or `deprecated`. */
+  /** `candidate`, `declared`, `registered`, `published`, `rejected`, `deprecated` or `merged`. */
   state: string;
   description?: string | null;
-  owner?: string | null;
+  category?: string | null;
+  owner?: RegistryOwner | null;
   capabilities: string[];
+  /** Names merged into this entry. */
+  aliases?: string[];
+  /** For a `merged` entry, the entry it was folded into. */
+  merged_into?: string | null;
+  /** For a `deprecated` entry, the entry to use instead. */
+  replaced_by?: string | null;
+  /** For a `published` entry, the version published. */
+  version?: string | null;
+  /** Only on the single-entry read and a decision's answer, newest first. */
+  decisions?: RegistryDecision[] | null;
   /** No repository declares it any more; kept because it was the organization's. */
   orphaned: boolean;
   first_seen?: string | null;
@@ -584,6 +632,10 @@ export interface Candidate {
   origin?: "catalogue" | "project";
   /** For a `project` gear, where it lives in the repository. */
   path?: string | null;
+  /** For a gear the organization's registry backs, its state there. */
+  registry_state?: string | null;
+  /** For a `deprecated` registry gear, the entry to use instead. */
+  replaced_by?: string | null;
 }
 
 /** Why a candidate was offered, in the words of the step that offered it. */
@@ -3830,6 +3882,16 @@ export const api = {
     for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
     return request<{ items: RegistryEntry[]; total: number }>(`/studio-components-catalog/v1/registry?${qs}`, token);
   },
+  /** One registry entry with its decisions, newest first. */
+  registryEntry: (token: string, name: string) =>
+    request<RegistryEntry>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}`, token),
+  /** Move a registry entry through its lifecycle (ADR-0041 P2). An
+   *  organization administrator only: anyone else gets a 403 problem. */
+  decideRegistry: (token: string, name: string, decision: RegistryDecisionInput) =>
+    request<RegistryEntry>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/decisions`, token, {
+      method: "POST",
+      body: JSON.stringify(decision),
+    }),
   /** What the last registry walk saw of each project: read, unchanged, or
    *  not readable and why. */
   registryProjects: (token: string) =>

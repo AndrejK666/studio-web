@@ -6,26 +6,34 @@
  * of the organization that is not excluded, and keeps what it finds, so this
  * page is the answer to "what components do we have" between page loads.
  *
- * Phase 1 reads: the states past "declared in a project" are moved by people
- * in the next phase. What a person decides here today is which projects the
- * walk reads. */
+ * The states past "declared in a project" are moved by people (phase 2): an
+ * organization administrator registers, rejects, deprecates, restores,
+ * publishes, merges or edits an entry from its expanded row, and every move
+ * is recorded with who, when and why. Everyone else reads. */
 
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "./api";
-import type { RegistryEntry, RegistryProjectWalk } from "./api";
+import type { RegistryDecisionInput, RegistryEntry, RegistryProjectWalk } from "./api";
 import { errText } from "./format";
 import {
+  ACTION_LABEL,
   REGISTRY_STATES,
   STATE_LABEL,
   STATE_TONE,
+  allowedActions,
+  decisionLine,
+  decisionRefusal,
+  decisionTargets,
   filterEntries,
   isDuplicated,
+  ownerLabel,
   projectsOf,
   registryProjects,
   stateCounts,
   walkLine,
 } from "./registry";
+import type { RegistryAction } from "./registry";
 
 export function ComponentRegistry({
   token,
@@ -71,6 +79,27 @@ export function ComponentRegistry({
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  /** The people a decision can name as owner, and who decided: the caller's
+   *  colleagues and the caller. Best effort -- without them an id is shown. */
+  const [people, setPeople] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    let live = true;
+    void Promise.all([
+      api.myColleagues(token).catch(() => []),
+      api.myProfile(token).catch(() => null),
+    ]).then(([colleagues, me]) => {
+      if (!live) return;
+      const out = new Map<string, string>();
+      if (me) out.set(me.id, me.display_name || me.email || me.id);
+      for (const c of colleagues) if (!out.has(c.user_id)) out.set(c.user_id, c.display_name || c.user_id);
+      setPeople([...out].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)));
+    });
+    return () => {
+      live = false;
+    };
+  }, [token]);
+  const names = useMemo(() => Object.fromEntries(people.map((p) => [p.id, p.name])), [people]);
 
   /** Read every project again now, rather than waiting for the schedule. */
   const readNow = async () => {
@@ -219,9 +248,14 @@ export function ComponentRegistry({
                 {shown.map((e) => (
                   <RegistryRow
                     key={e.name}
+                    token={token}
                     entry={e}
+                    entries={entries}
+                    people={people}
+                    names={names}
                     open={open === e.name}
                     onToggle={() => setOpen(open === e.name ? null : e.name)}
+                    onDecided={() => void load()}
                     onOpenComponent={onOpenComponent}
                   />
                 ))}
@@ -269,14 +303,24 @@ export function ComponentRegistry({
 }
 
 function RegistryRow({
+  token,
   entry: e,
+  entries,
+  people,
+  names,
   open,
   onToggle,
+  onDecided,
   onOpenComponent,
 }: {
+  token: string;
   entry: RegistryEntry;
+  entries: RegistryEntry[];
+  people: { id: string; name: string }[];
+  names: Record<string, string>;
   open: boolean;
   onToggle: () => void;
+  onDecided: () => void;
   onOpenComponent?: (name: string) => void;
 }) {
   const first = e.occurrences[0];
@@ -320,9 +364,33 @@ function RegistryRow({
                 <b>Capabilities:</b> {e.capabilities.join(", ")}
               </div>
             )}
-            {e.owner && (
+            <div>
+              <b>Owner:</b> {ownerLabel(e.owner) ?? <span style={{ opacity: 0.6 }}>nobody yet</span>}
+            </div>
+            {e.category && (
               <div>
-                <b>Owner:</b> {e.owner}
+                <b>Category:</b> {e.category}
+              </div>
+            )}
+            {(e.aliases ?? []).length > 0 && (
+              <div>
+                <b>Also found as:</b> {(e.aliases ?? []).join(", ")}
+              </div>
+            )}
+            {e.state === "merged" && e.merged_into && (
+              <div>
+                <b>Merged into</b> {e.merged_into}: what is found under this name is recorded there.
+              </div>
+            )}
+            {e.state === "deprecated" && (
+              <div>
+                <b>Deprecated</b>
+                {e.replaced_by ? ` — use ${e.replaced_by} instead.` : ": no longer to be chosen."}
+              </div>
+            )}
+            {e.state === "published" && e.version && (
+              <div>
+                <b>Published version:</b> {e.version}
               </div>
             )}
             <div style={{ marginTop: 4 }}>
@@ -348,9 +416,257 @@ function RegistryRow({
                 Open in the catalogue →
               </button>
             )}
+            <RegistryDecisions token={token} entry={e} entries={entries} people={people} names={names} onDecided={onDecided} />
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+/** An entry's decisions history and the moves its state allows. Anyone may
+ *  read the history; only an organization administrator's move is accepted,
+ *  and anyone else is told so by the server's 403. */
+function RegistryDecisions({
+  token,
+  entry: e,
+  entries,
+  people,
+  names,
+  onDecided,
+}: {
+  token: string;
+  entry: RegistryEntry;
+  entries: RegistryEntry[];
+  people: { id: string; name: string }[];
+  names: Record<string, string>;
+  onDecided: () => void;
+}) {
+  const [detail, setDetail] = useState<RegistryEntry | null>(null);
+  const [form, setForm] = useState<RegistryAction | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [ownerKind, setOwnerKind] = useState<"person" | "team">(e.owner?.kind ?? "person");
+  const [ownerId, setOwnerId] = useState(e.owner?.id ?? "");
+  const [ownerName, setOwnerName] = useState(e.owner?.name ?? "");
+  const [reason, setReason] = useState("");
+  const [target, setTarget] = useState("");
+  const [version, setVersion] = useState("");
+  const [kind, setKind] = useState(e.kind);
+  const [category, setCategory] = useState(e.category ?? "");
+  const [capabilities, setCapabilities] = useState(e.capabilities.join(", "));
+  const [description, setDescription] = useState(e.description ?? "");
+
+  useEffect(() => {
+    let live = true;
+    api
+      .registryEntry(token, e.name)
+      .then((d) => live && setDetail(d))
+      .catch(() => live && setDetail(null));
+    return () => {
+      live = false;
+    };
+  }, [token, e.name, e.state]);
+
+  const targets = useMemo(() => decisionTargets(entries, e.name), [entries, e.name]);
+  const decisions = detail?.decisions ?? [];
+
+  const open = (action: RegistryAction) => {
+    setError(null);
+    setForm(form === action ? null : action);
+  };
+
+  const submit = async () => {
+    if (!form) return;
+    const input: RegistryDecisionInput = { action: form };
+    const owner = () =>
+      ownerName.trim()
+        ? { kind: ownerKind, id: ownerKind === "person" ? ownerId || null : null, name: ownerName.trim() }
+        : undefined;
+    if (form === "register" || form === "edit") {
+      input.owner = owner();
+      if (form === "edit") {
+        input.kind = kind.trim() || undefined;
+        input.category = category.trim() || null;
+        input.description = description.trim() || null;
+      } else if (category.trim()) {
+        input.category = category.trim();
+      }
+      input.capabilities = capabilities
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean);
+    }
+    if (reason.trim()) input.reason = reason.trim();
+    if (form === "deprecate" && target) input.replaced_by = target;
+    if (form === "merge") input.merge_into = target;
+    if (form === "publish" && version.trim()) input.version = version.trim();
+    setBusy(true);
+    setError(null);
+    try {
+      const after = await api.decideRegistry(token, e.name, input);
+      setDetail(after);
+      setForm(null);
+      setReason("");
+      setTarget("");
+      onDecided();
+    } catch (cause) {
+      setError(decisionRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const ownerFields = (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      <b>Owner</b>
+      <select value={ownerKind} onChange={(ev) => setOwnerKind(ev.target.value as "person" | "team")} aria-label="Owner kind">
+        <option value="person">person</option>
+        <option value="team">team</option>
+      </select>
+      {ownerKind === "person" && people.length > 0 ? (
+        <select
+          value={ownerId}
+          aria-label="Owner"
+          onChange={(ev) => {
+            setOwnerId(ev.target.value);
+            setOwnerName(people.find((p) => p.id === ev.target.value)?.name ?? "");
+          }}
+        >
+          <option value="">choose a person…</option>
+          {people.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          placeholder={ownerKind === "person" ? "Person's name" : "Team name"}
+          value={ownerName}
+          onChange={(ev) => {
+            setOwnerName(ev.target.value);
+            setOwnerId("");
+          }}
+          aria-label="Owner name"
+        />
+      )}
+    </div>
+  );
+
+  const targetSelect = (label: string, required: boolean) => (
+    <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <b>{label}</b>
+      <select value={target} onChange={(ev) => setTarget(ev.target.value)} aria-label={label}>
+        <option value="">{required ? "choose an entry…" : "none"}</option>
+        {targets.map((t) => (
+          <option key={t} value={t}>
+            {t}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  const ready =
+    form === "register"
+      ? ownerName.trim() !== ""
+      : form === "reject"
+        ? reason.trim() !== ""
+        : form === "merge"
+          ? target !== ""
+          : true;
+
+  return (
+    <div style={{ marginTop: 8, borderTop: "1px solid var(--border, rgba(0,0,0,0.1))", paddingTop: 6 }} data-registry-decisions>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <b>Decide</b>
+        {allowedActions(e.state).map((a) => (
+          <button key={a} type="button" className={form === a ? "primary" : ""} onClick={() => open(a)} disabled={busy}>
+            {ACTION_LABEL[a]}
+          </button>
+        ))}
+      </div>
+      {form && (
+        <div style={{ display: "grid", gap: 6, margin: "6px 0", maxWidth: 560 }}>
+          {(form === "register" || form === "edit") && ownerFields}
+          {(form === "register" || form === "edit") && (
+            <>
+              {form === "edit" && (
+                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <b>Kind</b>
+                  <input value={kind} onChange={(ev) => setKind(ev.target.value)} aria-label="Kind" />
+                </label>
+              )}
+              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <b>Category</b>
+                <input value={category} onChange={(ev) => setCategory(ev.target.value)} aria-label="Category" />
+              </label>
+              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <b>Capabilities</b>
+                <input
+                  value={capabilities}
+                  onChange={(ev) => setCapabilities(ev.target.value)}
+                  placeholder="comma-separated keys"
+                  aria-label="Capabilities"
+                  style={{ flex: 1 }}
+                />
+              </label>
+              {form === "edit" && (
+                <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <b>Description</b>
+                  <input value={description} onChange={(ev) => setDescription(ev.target.value)} aria-label="Description" style={{ flex: 1 }} />
+                </label>
+              )}
+            </>
+          )}
+          {form === "deprecate" && targetSelect("Replaced by", false)}
+          {form === "merge" && targetSelect("Merge into", true)}
+          {form === "publish" && (
+            <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <b>Version</b>
+              <input value={version} onChange={(ev) => setVersion(ev.target.value)} placeholder="e.g. 1.0.0" aria-label="Version" />
+            </label>
+          )}
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <b>{form === "reject" ? "Reason" : "Why"}</b>
+            <input
+              value={reason}
+              onChange={(ev) => setReason(ev.target.value)}
+              placeholder={form === "reject" ? "required: why this is not a gear" : "optional"}
+              aria-label="Reason"
+              style={{ flex: 1 }}
+            />
+          </label>
+          <span>
+            <button type="button" className="primary" disabled={busy || !ready} onClick={() => void submit()}>
+              {busy ? "Saving…" : ACTION_LABEL[form].replace("…", "")}
+            </button>{" "}
+            <button type="button" onClick={() => setForm(null)} disabled={busy}>
+              Cancel
+            </button>
+          </span>
+        </div>
+      )}
+      {error && (
+        <div className="error" style={{ fontSize: 12 }} data-registry-decision-error>
+          {error}
+        </div>
+      )}
+      <div style={{ marginTop: 4 }}>
+        <b>Decisions</b>
+      </div>
+      {decisions.length === 0 ? (
+        <div style={{ opacity: 0.6 }}>None yet: {e.state === "declared" ? "found by the walk, nobody has decided." : "nothing recorded."}</div>
+      ) : (
+        <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+          {decisions.map((d, i) => (
+            <li key={`${d.at}:${i}`}>
+              <span style={{ opacity: 0.6 }}>{new Date(d.at).toLocaleString()}</span> · {decisionLine(d, names)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

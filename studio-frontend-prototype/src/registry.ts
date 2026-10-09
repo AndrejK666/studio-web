@@ -4,10 +4,10 @@
  *
  * Pure rules behind `component-registry.tsx`, kept here for their tests. */
 
-import type { RegistryEntry, RegistryProjectWalk } from "./api";
+import type { RegistryDecision, RegistryEntry, RegistryOwner, RegistryProjectWalk } from "./api";
 
 /** The states in the order a component moves through them. */
-export const REGISTRY_STATES = ["candidate", "declared", "registered", "published", "deprecated", "rejected"] as const;
+export const REGISTRY_STATES = ["candidate", "declared", "registered", "published", "deprecated", "rejected", "merged"] as const;
 
 export const STATE_LABEL: Record<string, string> = {
   candidate: "candidate",
@@ -16,6 +16,7 @@ export const STATE_LABEL: Record<string, string> = {
   published: "published",
   deprecated: "deprecated",
   rejected: "rejected",
+  merged: "merged",
 };
 
 /** The badge tone a state is drawn in. */
@@ -26,7 +27,95 @@ export const STATE_TONE: Record<string, string> = {
   published: "ok",
   deprecated: "danger",
   rejected: "",
+  merged: "",
 };
+
+/** What a person can do to an entry (ADR-0041 P2). */
+export type RegistryAction = "register" | "reject" | "deprecate" | "restore" | "publish" | "merge" | "edit";
+
+/** The button for each action. */
+export const ACTION_LABEL: Record<RegistryAction, string> = {
+  register: "Register",
+  reject: "Reject",
+  deprecate: "Deprecate",
+  restore: "Restore",
+  publish: "Publish",
+  merge: "Merge into…",
+  edit: "Edit",
+};
+
+/** The past tense, for the decisions history. */
+export const ACTION_DONE: Record<string, string> = {
+  register: "registered",
+  reject: "rejected",
+  deprecate: "deprecated",
+  restore: "restored",
+  publish: "published",
+  merge: "merged",
+  edit: "edited",
+};
+
+/** The actions the server allows from a state, in the order the buttons
+ *  show. The same table the backend enforces; a move outside it is refused
+ *  there too. */
+export function allowedActions(state: string): RegistryAction[] {
+  switch (state) {
+    case "candidate":
+    case "declared":
+      return ["register", "reject", "merge", "edit"];
+    case "registered":
+      return ["publish", "deprecate", "merge", "edit"];
+    case "published":
+      return ["deprecate", "merge", "edit"];
+    case "rejected":
+      return ["restore", "merge", "edit"];
+    case "deprecated":
+      return ["restore", "merge", "edit"];
+    case "merged":
+      return ["edit"];
+    default:
+      return [];
+  }
+}
+
+/** An owner in a few words: "Ada (person)", "Payments (team)". */
+export function ownerLabel(o: RegistryOwner | null | undefined): string | null {
+  if (!o || !o.name) return null;
+  return `${o.name} (${o.kind === "person" ? "person" : "team"})`;
+}
+
+/** The entries a decision may name (a replacement, a merge target): every
+ *  other entry that is not merged itself. */
+export function decisionTargets(entries: readonly RegistryEntry[], self: string): string[] {
+  return entries
+    .filter((e) => e.state !== "merged" && e.name.toLowerCase() !== self.toLowerCase())
+    .map((e) => e.name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+/** One line of the decisions history. `names` turns a person id into a name. */
+export function decisionLine(d: RegistryDecision, names: Record<string, string> = {}): string {
+  const who = d.by_name || names[d.by] || d.by;
+  const what = ACTION_DONE[d.action] ?? d.action;
+  const move = d.from === d.to ? "" : ` (${d.from} → ${d.to})`;
+  const details = d.details ?? {};
+  const extra: string[] = [];
+  if (typeof details.replaced_by === "string") extra.push(`use ${details.replaced_by} instead`);
+  if (typeof details.merge_into === "string") extra.push(`into ${details.merge_into}`);
+  if (typeof details.merged_from === "string") extra.push(`took in ${details.merged_from}`);
+  if (typeof details.version === "string") extra.push(`version ${details.version}`);
+  const owner = details.owner as RegistryOwner | undefined;
+  if (owner && typeof owner === "object" && owner.name) extra.push(`owner ${ownerLabel(owner)}`);
+  const said = [extra.join(", "), d.reason ? `“${d.reason}”` : ""].filter(Boolean).join(" — ");
+  return `${who} ${what}${move}${said ? `: ${said}` : ""}`;
+}
+
+/** What a refused decision says to a person. A 403 means only an
+ *  administrator may decide; anything else is the server's own words. */
+export function decisionRefusal(status: number | undefined, fallback: string): string {
+  if (status === 403) return `Only an organization administrator can decide about the registry (${fallback}).`;
+  return fallback;
+}
 
 export function stateCounts(entries: readonly RegistryEntry[]): Record<string, number> {
   const out: Record<string, number> = {};
