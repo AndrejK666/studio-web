@@ -431,7 +431,7 @@ fn relevant(path: &str) -> bool {
 /// What discovery is: moved whenever the rules here change what a repository
 /// is read as, so a stored fingerprint from the old rules no longer matches
 /// and every repository is read again once.
-pub const DISCOVERY_VERSION: &str = "project-gears/1";
+pub const DISCOVERY_VERSION: &str = "project-gears/2";
 
 /// A fingerprint of the files the answer depends on, from the tree listing's
 /// `(path, blob sha)` pairs: equal while none of them changed.
