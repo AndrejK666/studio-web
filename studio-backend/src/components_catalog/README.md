@@ -66,8 +66,8 @@ This README is what you need to work in the directory.
   `project_repos` resolves, read with `RepoEnricher::project_gears_unless`
   only when its stored fingerprint (`registry_read`) moved. What a walk writes
   is the pure `registry::plan`, tested in
-  [`registry_tests.rs`](registry_tests.rs): a new entry is `declared`, an
-  existing state never moves, an entry with no occurrence left is `orphaned`
+  [`registry_tests.rs`](registry_tests.rs): a new entry is `declared` (or a
+  `candidate`, P3), no state a person set moves, an entry with no occurrence left is `orphaned`
   and kept. The task is `catalog.registry` ([`registry_task.rs`](registry_task.rs));
   a `catalog.sync` with `registry: true` runs it as its last phase. The hourly
   schedule (platform-level, naming the organization) is ensured when sources or
@@ -84,6 +84,18 @@ This README is what you need to work in the directory.
   organization administrator decides: studio-user's `OrgAuthority` with the
   privilege `component.registry`. Tested in
   [`registry_decisions_tests.rs`](registry_decisions_tests.rs).
+- Candidates (ADR-0041, phase P3): [`candidates.rs`](candidates.rs) holds the
+  pure structural detectors (REST surface, persistence, types, a port/sdk,
+  docs, consumers, copies across projects; weights, the threshold and the cap),
+  run by `project_gears_unless(…, with_candidates: true)` over the tree and the
+  files already read, and `apply_copies` across a walk's reads. `registry::plan`
+  writes them as `candidate` entries with `detected` occurrences, moves one
+  found declared to `declared`, and re-proposes a rejected one whose module
+  fingerprint changed ([`registry_candidates_tests.rs`](registry_candidates_tests.rs),
+  [`candidates_tests.rs`](candidates_tests.rs)). Declare it is
+  [`registry_declare.rs`](registry_declare.rs): `POST /registry/{name}/declare`
+  asks studio-product's `product::port::GearDeclarations` for the files and the
+  pull request, in the project's tenant, and records a `declare` decision.
 - The fingerprint ([`project_gears.rs`](project_gears.rs) `fingerprint`) is a
   uuid5 of the files read and `DISCOVERY_VERSION`, because it is stored: move
   the version when discovery's rules change, and every repository is read once

@@ -106,6 +106,12 @@ impl RestApiCapability for StudioProductGear {
         ctx.client_hub().register::<dyn port::ProjectProducts>(
             Arc::clone(&service) as Arc<dyn port::ProjectProducts>
         );
+        ctx.client_hub()
+            .register::<dyn port::GearDeclarations>(Arc::new(port::Declarations::new(
+                Arc::clone(&service),
+                ctx.client_hub(),
+            ))
+                as Arc<dyn port::GearDeclarations>);
 
         let gearbox = port::engine(&ctx.client_hub());
         let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);

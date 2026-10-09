@@ -8,6 +8,7 @@
 //! in-memory store so the catalog still works when the `graph` feature is off.
 
 mod activity;
+mod candidates;
 mod cratesio;
 pub(crate) mod field_schema;
 mod history;
@@ -17,6 +18,7 @@ mod quality;
 pub(crate) mod reference;
 mod registry;
 mod registry_decisions;
+mod registry_declare;
 mod registry_task;
 mod repo_enrich;
 mod repo_facts;

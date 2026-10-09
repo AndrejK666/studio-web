@@ -29,6 +29,7 @@ fn entry(name: &str, state: &str) -> EntryRecord {
         first_seen: None,
         last_seen: None,
         fingerprint: None,
+        ..EntryRecord::default()
     }
 }
 
@@ -351,6 +352,7 @@ fn walk_of(now: &str, print: &str, gears: Vec<LocalGear>) -> Walk {
             commit: None,
             fingerprint: print.into(),
             gears,
+            ..RepoRead::default()
         }],
         resolved: [(P1, "k1".to_string())].into_iter().collect(),
         projects_resolved: [P1].into_iter().collect(),
@@ -647,6 +649,7 @@ fn repointing_moves_only_the_merged_entrys_occurrences() {
         doc_text: None,
         fingerprint: "f".into(),
         seen_at: "t".into(),
+        ..OccurrenceRecord::default()
     };
     let stored = vec![
         ("o1".to_string(), occ("src", "a")),

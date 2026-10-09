@@ -6,6 +6,11 @@ import {
   REGISTRY_STATES,
   STATE_LABEL,
   allowedActions,
+  candidateWhere,
+  candidatesOf,
+  declareRefusal,
+  detectedProjects,
+  evidenceLines,
   decisionLine,
   decisionRefusal,
   decisionTargets,
@@ -143,5 +148,81 @@ describe("decisions about an entry", () => {
     expect(decisionRefusal(400, "a `declared` entry cannot be moved by `publish`")).toBe(
       "a `declared` entry cannot be moved by `publish`",
     );
+  });
+});
+
+describe("candidates (ADR-0041 P3)", () => {
+  const detected = (project: string, path: string) => ({
+    project_id: project,
+    project_name: project === "p1" ? "studio-web" : "insight",
+    repo: "cf/app",
+    path,
+    declared_in: "detected",
+  });
+  const hooks = entry("hooks", {
+    state: "candidate",
+    score: 5,
+    evidence: [
+      { signal: "rest", detail: "own REST surface: rest.rs", weight: 3 },
+      { signal: "copied", detail: "copied in insight", weight: 2 },
+    ],
+    occurrences: [detected("p1", "src/hooks"), detected("p2", "src/hooks"), detected("p2", "lib/hooks")],
+  });
+  const documents = entry("documents", {
+    state: "candidate",
+    score: 8,
+    evidence: [
+      { signal: "boundary", detail: "exposes a boundary: port", weight: 2 },
+      { signal: "rest", detail: "own REST surface: rest.rs", weight: 3 },
+      { signal: "persistence", detail: "owns persistence: repo.rs", weight: 3 },
+    ],
+    occurrences: [detected("p1", "studio-backend/src/documents")],
+  });
+
+  it("lists only candidates, strongest first", () => {
+    expect(candidatesOf([hooks, entry("billing"), documents]).map((e) => e.name)).toEqual(["documents", "hooks"]);
+  });
+
+  it("writes the evidence heaviest first, with its weight", () => {
+    expect(evidenceLines(documents)).toEqual([
+      "own REST surface: rest.rs (+3)",
+      "owns persistence: repo.rs (+3)",
+      "exposes a boundary: port (+2)",
+    ]);
+    expect(evidenceLines(entry("billing"))).toEqual([]);
+  });
+
+  it("says where it was detected and in which projects", () => {
+    expect(candidateWhere(documents)).toBe("studio-web · studio-backend/src/documents");
+    expect(detectedProjects(hooks)).toEqual(["p1", "p2"]);
+    expect(detectedProjects(entry("billing"))).toEqual([]);
+  });
+
+  it("records a Declare it with its pull request", () => {
+    const at = "2026-10-09T12:00:00Z";
+    expect(
+      decisionLine({
+        action: "declare",
+        from: "candidate",
+        to: "candidate",
+        by: "u1",
+        by_name: "Ada",
+        at,
+        details: { branch: "declare/hooks", pr_url: "https://github.com/cf/app/pull/7" },
+      }),
+    ).toBe("Ada opened a pull request declaring: pull request https://github.com/cf/app/pull/7");
+    expect(
+      decisionLine({ action: "declare", from: "candidate", to: "candidate", by: "u1", at, details: { branch: "declare/hooks" } }),
+    ).toBe("u1 opened a pull request declaring: branch declare/hooks");
+  });
+
+  it("explains a refused Declare it", () => {
+    expect(declareRefusal(403, "Forbidden")).toContain("Only an organization administrator can declare");
+    expect(declareRefusal(503, "no product")).toContain("not available in this deployment");
+    expect(declareRefusal(400, "not a candidate")).toBe("not a candidate");
+  });
+
+  it("labels the candidate state for people", () => {
+    expect(STATE_LABEL.candidate).toBe("could become a gear");
   });
 });

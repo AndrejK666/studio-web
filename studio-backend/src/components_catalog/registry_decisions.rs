@@ -15,6 +15,10 @@
 //! | `merge` | anything but merged | merged, folded into `merge_into` |
 //! | `edit` | any | unchanged: owner, kind, category, capabilities, description |
 //!
+//! Declare it (`registry_declare.rs`, P3) records a `declare` decision on a
+//! candidate without moving it: the walk moves it to `declared` once the pull
+//! request it opened is merged and read.
+//!
 //! The rules are [`transition`] and [`apply`], pure; [`repoint`] moves a
 //! merged entry's occurrences onto the entry it was merged into. Every
 //! decision is recorded as a `registry_decision` node joined to its entry.
@@ -403,6 +407,15 @@ pub struct DecisionRecord {
     pub details: Value,
 }
 
+/// A decision as a node under a fresh id, and the edge joining it to its
+/// entry. `None` when it does not serialize.
+pub(super) fn decision_node(record: DecisionRecord) -> Option<(GtsNode, GtsEdge)> {
+    let id = Uuid::new_v4().to_string();
+    let edge = gts::decided_edge(&record.entry_id, &id);
+    let value = serde_json::to_value(record).ok()?;
+    Some((gts::registry_decision_node(id, value), edge))
+}
+
 /// Who decides.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Decider {
@@ -503,7 +516,9 @@ impl CatalogService {
         .into_iter()
         .filter(|(_, o)| o.organization_id == org)
         .collect();
-        let declared_somewhere = occurrences.iter().any(|(_, o)| o.entry_id == source_id);
+        let declared_somewhere = occurrences
+            .iter()
+            .any(|(_, o)| o.entry_id == source_id && !o.detected());
         let lookup = |n: &str| {
             entries
                 .iter()
@@ -524,8 +539,7 @@ impl CatalogService {
         let reason = trimmed(&input.reason);
         let mut record =
             |entry_id: &str, entry_name: &str, from: &str, to: &str, details: Value| {
-                let id = Uuid::new_v4().to_string();
-                let value = serde_json::to_value(DecisionRecord {
+                if let Some((node, edge)) = decision_node(DecisionRecord {
                     organization_id: org,
                     entry: entry_name.to_owned(),
                     entry_id: entry_id.to_owned(),
@@ -537,10 +551,9 @@ impl CatalogService {
                     at: at.clone(),
                     reason: reason.clone(),
                     details,
-                });
-                if let Ok(value) = value {
-                    edges.push(gts::decided_edge(entry_id, &id));
-                    nodes.push(gts::registry_decision_node(id, value));
+                }) {
+                    edges.push(edge);
+                    nodes.push(node);
                 }
             };
         record(

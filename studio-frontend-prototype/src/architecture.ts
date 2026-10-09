@@ -575,9 +575,10 @@ export const SURFACES: Surface[] = [
     area: "project",
     title: "Components and kits",
     does: "Pick the gears a product is built from, compare the spec with the code, install kits.",
-    components: ["ProjectKits", "SuggestedComponents", "ProductCard", "GearConfigForm"],
+    components: ["ProjectKits", "SuggestedComponents", "ProductCard", "GearConfigForm", "ProjectCandidate"],
     gears: [
       "account-management",
+      "studio-components-catalog",
       "studio-documents",
       "studio-kits",
       "studio-product",
@@ -635,7 +636,7 @@ export const SURFACES: Surface[] = [
     area: "organization",
     title: "Components catalogue",
     does: "Browse every gear a product can be built from, with its profile and documentation.",
-    components: ["ComponentsCatalog", "ComponentRegistry", "RegistryDecisions", "GearDetail", "ProfileEditor"],
+    components: ["ComponentsCatalog", "ComponentRegistry", "RegistryDecisions", "DeclareCandidate", "GearDetail", "ProfileEditor"],
     gears: ["studio-components-catalog", "studio-connector", "studio-kits", "studio-user"],
   },
   {

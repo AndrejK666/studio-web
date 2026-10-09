@@ -17,7 +17,7 @@
 //!   `occurrence` per place it was found, joined by `found_in`.
 //!
 //! The rules -- what a walk writes, retires and marks orphaned, and that
-//! discovery never moves an entry's state -- are [`plan`], a pure function;
+//! discovery moves no state but candidate to declared -- are [`plan`], a pure function;
 //! the rest is reading and writing around it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -30,15 +30,17 @@ use time::format_description::well_known::Rfc3339;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::candidates::{Candidate, kebab};
+pub use super::candidates::{DETECTED, Evidence};
 use super::gts::{self, GtsEdge, GtsNode};
 use super::project_gears::LocalGear;
 use super::repo_enrich::ProjectGearsRead;
 use super::service::{CatalogService, RepoSource};
 use crate::tasks::sdk::SyncReporter;
 
-/// Code that looks like a gear, with evidence (P3).
+/// Code that looks like a gear, with evidence (P3). Discovery writes it.
 pub const STATE_CANDIDATE: &str = "candidate";
-/// The repository declares it. The only state discovery writes.
+/// The repository declares it. Discovery writes it, and moves a candidate here.
 pub const STATE_DECLARED: &str = "declared";
 /// Accepted as the organization's component (P2, a person).
 pub const STATE_REGISTERED: &str = "registered";
@@ -73,7 +75,7 @@ fn discovery_owns(state: &str) -> bool {
 }
 
 /// A registry entry, as stored.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EntryRecord {
     pub organization_id: Uuid,
     pub name: String,
@@ -117,6 +119,18 @@ pub struct EntryRecord {
     /// The fingerprint of the repository files it was last read from.
     #[serde(default)]
     pub fingerprint: Option<String>,
+    /// For a candidate: the sum of its evidence's weights, at its best
+    /// occurrence (P3).
+    #[serde(default)]
+    pub score: Option<u32>,
+    /// For a candidate: why it looks like a gear, at its best occurrence.
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+    /// For a candidate: the fingerprints of the code it was found in, one per
+    /// occurrence. Frozen while it is `rejected`; a walk that finds it in code
+    /// with any other fingerprint proposes it again.
+    #[serde(default)]
+    pub candidate_fingerprints: Vec<String>,
 }
 
 /// Who answers for an entry.
@@ -153,7 +167,7 @@ fn owner_of<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Owner>, D::
 /// Where an entry was found, as stored. Carries what the repository said
 /// there, so a project's own gears can be answered from the registry in the
 /// shape `project_gears` answers them.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OccurrenceRecord {
     pub organization_id: Uuid,
     /// The entry's name.
@@ -173,7 +187,8 @@ pub struct OccurrenceRecord {
     pub path: String,
     #[serde(default)]
     pub commit: Option<String>,
-    /// `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`.
+    /// `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`; `detected`
+    /// for a candidate nothing declares.
     pub declared_in: String,
     /// The file that declares it, relative to the repository root.
     pub declared_file: String,
@@ -195,9 +210,29 @@ pub struct OccurrenceRecord {
     pub doc_text: Option<String>,
     pub fingerprint: String,
     pub seen_at: String,
+    /// The tenant whose connection reads the repository, and the connection:
+    /// where Declare it writes.
+    #[serde(default)]
+    pub tenant: Option<Uuid>,
+    #[serde(default)]
+    pub connection_id: Option<Uuid>,
+    /// For a candidate (`declared_in: detected`): its score here.
+    #[serde(default)]
+    pub score: Option<u32>,
+    /// For a candidate: what fired here.
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+    /// For a candidate: the fingerprint of the module's own files.
+    #[serde(default)]
+    pub module_fingerprint: Option<String>,
 }
 
 impl OccurrenceRecord {
+    /// Found by a detector, not declared.
+    pub fn detected(&self) -> bool {
+        self.declared_in == DETECTED
+    }
+
     /// The gear as `project_gears` found it here.
     pub fn local_gear(&self) -> LocalGear {
         LocalGear {
@@ -254,7 +289,7 @@ pub fn declared_in_of(file: &str) -> &'static str {
 }
 
 /// One repository a walk read anew.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RepoRead {
     pub project_id: Uuid,
     pub project_name: String,
@@ -264,6 +299,11 @@ pub struct RepoRead {
     pub commit: Option<String>,
     pub fingerprint: String,
     pub gears: Vec<LocalGear>,
+    /// What looks like a gear here (P3), the copy signal applied.
+    pub candidates: Vec<Candidate>,
+    /// The tenant whose connection reads it, and the connection.
+    pub tenant: Option<Uuid>,
+    pub connection_id: Option<Uuid>,
 }
 
 /// What a walk saw.
@@ -301,6 +341,12 @@ pub struct Plan {
     pub occurrences_written: usize,
     pub occurrences_removed: usize,
     pub orphaned: usize,
+    /// Candidate findings written (P3).
+    pub candidates_found: usize,
+    /// Candidates found declared, now `declared`.
+    pub declared_from_candidates: usize,
+    /// Rejected candidates whose code changed, proposed again.
+    pub reproposed: usize,
 }
 
 /// Whether a stored `(project, repository)` pair is gone, by what the walk
@@ -332,21 +378,74 @@ pub fn aliases_of(entries: &[(String, EntryRecord)]) -> HashMap<String, String> 
         .collect()
 }
 
+/// Every live entry by its name folded as candidate names are ([`kebab`]):
+/// `spec_mapping` declared and `spec-mapping` detected are one component.
+fn folded_of(entries: &[(String, EntryRecord)]) -> HashMap<String, String> {
+    entries
+        .iter()
+        .filter(|(_, e)| e.state != STATE_MERGED)
+        .map(|(id, e)| (kebab(&e.name), id.clone()))
+        .collect()
+}
+
+/// What a read found at one place.
+#[derive(Clone, Copy)]
+enum Finding<'a> {
+    /// The repository declares it.
+    Declared(&'a LocalGear),
+    /// A detector found it (P3).
+    Detected(&'a Candidate),
+}
+
+impl Finding<'_> {
+    fn name(&self) -> &str {
+        match self {
+            Finding::Declared(g) => &g.name,
+            Finding::Detected(c) => &c.name,
+        }
+    }
+
+    fn path(&self) -> &str {
+        match self {
+            Finding::Declared(g) => &g.path,
+            Finding::Detected(c) => &c.path,
+        }
+    }
+}
+
+/// The candidate fields of an entry, from its best finding and every
+/// fingerprint it is found under.
+fn propose(entry: &mut EntryRecord, best: &Candidate, prints: &[String]) {
+    entry.state = STATE_CANDIDATE.to_string();
+    entry.score = Some(best.score);
+    entry.evidence = best.evidence.clone();
+    entry.candidate_fingerprints = prints.to_vec();
+    if entry.description.is_none() {
+        entry.description = best.description.clone();
+    }
+}
+
 /// What a walk changes in the registry. Pure: the stored entries,
 /// occurrences and reads (each with its instance id) and what the walk saw,
 /// to the nodes to write and the ids to retire.
 ///
-/// - A component found anew is `declared`. An existing entry keeps its state,
-///   whatever it is: a `rejected` entry is not resurrected, and nothing a
-///   person decided is undone by a walk.
+/// - A component a repository declares, found anew, is `declared`; one only
+///   a detector found (P3) is a `candidate`, with its score and evidence.
+/// - Discovery owns `candidate` and `declared`, so a candidate later found
+///   declared becomes `declared`. Every other state is a person's and stays:
+///   a `rejected` entry is not resurrected by a declaration.
+/// - A `rejected` candidate is proposed again (back to `candidate`) only when
+///   a detector finds it in code whose fingerprint is not among the ones it
+///   was rejected under.
 /// - Discovery refreshes what an entry says (kind, description, category,
 ///   capabilities) only while nobody owns it ([`discovery_owns`]).
 /// - The occurrences of a repository read anew are what that read found;
-///   the ones it no longer declares are retired. So are the occurrences of a
+///   the ones it no longer has are retired. So are the occurrences of a
 ///   repository a project no longer names, and of a project out of scope.
 /// - An entry with no occurrence left is `orphaned` and kept.
 /// - A component found under a name merged into another entry (one of its
-///   `aliases`) is that entry's: its occurrence is written under it.
+///   `aliases`) is that entry's: its occurrence is written under it. A name
+///   spelled differently (`spec_mapping`, `spec-mapping`) is the same entry.
 pub fn plan(
     walk: &Walk,
     entries: &[(String, EntryRecord)],
@@ -367,70 +466,116 @@ pub fn plan(
     // A name merged into another entry is that entry's: what a read finds
     // under it lands there, never on the merged entry.
     let alias_of = aliases_of(entries);
+    let mut folded = folded_of(entries);
 
     // What the reads found, keyed by occurrence id; the first finding of a
-    // component in one read wins, as in `project_gears`.
+    // component at one place in one read wins, as in `project_gears`.
     let mut produced: BTreeMap<String, OccurrenceRecord> = BTreeMap::new();
-    let mut found_by_entry: BTreeMap<String, (&RepoRead, &LocalGear)> = BTreeMap::new();
+    let mut declared_by_entry: BTreeMap<String, (&RepoRead, &LocalGear)> = BTreeMap::new();
+    let mut detected_by_entry: BTreeMap<String, Vec<&Candidate>> = BTreeMap::new();
+    let mut first_read: BTreeMap<String, &RepoRead> = BTreeMap::new();
     // The name an entry goes by: the stored one, else the first spelling
     // found. `Studio-Tasks` in one project and `studio-tasks` in another are
     // one entry under one name.
     let mut names: BTreeMap<String, String> = BTreeMap::new();
     for read in &walk.reads {
         let project = read.project_id.to_string();
-        for gear in &read.gears {
+        let findings = read
+            .gears
+            .iter()
+            .map(Finding::Declared)
+            .chain(read.candidates.iter().map(Finding::Detected));
+        for finding in findings {
+            let found_name = finding.name();
             let entry_id = alias_of
-                .get(&gear.name.trim().to_ascii_lowercase())
+                .get(&found_name.trim().to_ascii_lowercase())
                 .cloned()
-                .unwrap_or_else(|| gts::registry_entry_instance_id(&org, &gear.name));
+                .or_else(|| {
+                    let exact = gts::registry_entry_instance_id(&org, found_name);
+                    originals.contains_key(&exact).then_some(exact)
+                })
+                .or_else(|| folded.get(&kebab(found_name)).cloned())
+                .unwrap_or_else(|| gts::registry_entry_instance_id(&org, found_name));
+            folded
+                .entry(kebab(found_name))
+                .or_insert_with(|| entry_id.clone());
             let name = names
                 .entry(entry_id.clone())
                 .or_insert_with(|| {
-                    by_id
+                    originals
                         .get(&entry_id)
                         .map(|e| e.name.clone())
-                        .unwrap_or_else(|| gear.name.clone())
+                        .unwrap_or_else(|| found_name.to_string())
                 })
                 .clone();
-            let id = gts::occurrence_instance_id(&entry_id, &project, &read.repo, &gear.path);
+            let id = gts::occurrence_instance_id(&entry_id, &project, &read.repo, finding.path());
             if produced.contains_key(&id) {
                 continue;
             }
-            found_by_entry
-                .entry(entry_id.clone())
-                .or_insert((read, gear));
-            produced.insert(
-                id,
-                OccurrenceRecord {
-                    organization_id: walk.org,
-                    entry: name,
-                    entry_id,
-                    project_id: Some(read.project_id),
-                    project_name: Some(read.project_name.clone()),
-                    repo: read.repo.clone(),
-                    repo_key: read.repo_key.clone(),
-                    git_ref: Some(read.git_ref.clone()).filter(|r| !r.is_empty()),
-                    path: gear.path.clone(),
-                    commit: read.commit.clone(),
-                    declared_in: declared_in_of(&gear.declared_in).to_string(),
-                    declared_file: gear.declared_in.clone(),
-                    kind: gear.kind.clone(),
-                    description: gear.description.clone(),
-                    category: gear.category.clone(),
-                    capabilities: gear.capabilities.clone(),
-                    runtime: gear.runtime.clone(),
-                    built: gear.built,
-                    doc_path: gear.doc.as_ref().map(|(p, _)| p.clone()),
-                    doc_text: gear.doc.as_ref().map(|(_, t)| t.clone()),
-                    fingerprint: read.fingerprint.clone(),
-                    seen_at: walk.now.clone(),
-                },
-            );
+            first_read.entry(entry_id.clone()).or_insert(read);
+            let base = OccurrenceRecord {
+                organization_id: walk.org,
+                entry: name,
+                entry_id: entry_id.clone(),
+                project_id: Some(read.project_id),
+                project_name: Some(read.project_name.clone()),
+                repo: read.repo.clone(),
+                repo_key: read.repo_key.clone(),
+                git_ref: Some(read.git_ref.clone()).filter(|r| !r.is_empty()),
+                path: finding.path().to_string(),
+                commit: read.commit.clone(),
+                fingerprint: read.fingerprint.clone(),
+                seen_at: walk.now.clone(),
+                tenant: read.tenant,
+                connection_id: read.connection_id,
+                ..OccurrenceRecord::default()
+            };
+            let occ = match finding {
+                Finding::Declared(gear) => {
+                    declared_by_entry
+                        .entry(entry_id.clone())
+                        .or_insert((read, gear));
+                    OccurrenceRecord {
+                        declared_in: declared_in_of(&gear.declared_in).to_string(),
+                        declared_file: gear.declared_in.clone(),
+                        kind: gear.kind.clone(),
+                        description: gear.description.clone(),
+                        category: gear.category.clone(),
+                        capabilities: gear.capabilities.clone(),
+                        runtime: gear.runtime.clone(),
+                        built: gear.built,
+                        doc_path: gear.doc.as_ref().map(|(p, _)| p.clone()),
+                        doc_text: gear.doc.as_ref().map(|(_, t)| t.clone()),
+                        ..base
+                    }
+                }
+                Finding::Detected(candidate) => {
+                    detected_by_entry
+                        .entry(entry_id.clone())
+                        .or_default()
+                        .push(candidate);
+                    out.candidates_found += 1;
+                    OccurrenceRecord {
+                        declared_in: DETECTED.to_string(),
+                        declared_file: candidate.main_file.clone(),
+                        kind: "gear".to_string(),
+                        description: candidate.description.clone(),
+                        built: true,
+                        score: Some(candidate.score),
+                        evidence: candidate.evidence.clone(),
+                        module_fingerprint: Some(candidate.fingerprint.clone()),
+                        ..base
+                    }
+                }
+            };
+            produced.insert(id, occ);
         }
     }
 
     // The stored occurrences that stay, and the ones that go.
     let mut remaining: BTreeMap<String, usize> = BTreeMap::new();
+    // The fingerprints of the code each entry is still detected in.
+    let mut prints: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (id, occ) in occurrences {
         if produced.contains_key(id) {
             continue;
@@ -443,52 +588,104 @@ pub fn plan(
             out.occurrences_removed += 1;
         } else {
             *remaining.entry(occ.entry_id.clone()).or_default() += 1;
+            if let Some(print) = occ.module_fingerprint.as_ref().filter(|_| occ.detected()) {
+                prints
+                    .entry(occ.entry_id.clone())
+                    .or_default()
+                    .insert(print.clone());
+            }
         }
     }
     for occ in produced.values() {
         *remaining.entry(occ.entry_id.clone()).or_default() += 1;
+        if let Some(print) = &occ.module_fingerprint {
+            prints
+                .entry(occ.entry_id.clone())
+                .or_default()
+                .insert(print.clone());
+        }
     }
 
-    // The entries the reads found: new ones declared, known ones seen again.
-    for (entry_id, (read, gear)) in &found_by_entry {
+    // The entries the reads found: new ones declared or proposed, known ones
+    // seen again.
+    for (entry_id, read) in &first_read {
+        let declared = declared_by_entry.get(entry_id);
+        let detected: &[&Candidate] = detected_by_entry
+            .get(entry_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let best = detected
+            .iter()
+            .copied()
+            .max_by(|a, b| a.score.cmp(&b.score).then_with(|| b.path.cmp(&a.path)));
+        let entry_prints: Vec<String> = prints
+            .get(entry_id)
+            .map(|p| p.iter().cloned().collect())
+            .unwrap_or_default();
+        let read_print = declared.map_or(&read.fingerprint, |(r, _)| &r.fingerprint);
         match by_id.get_mut(entry_id) {
             Some(entry) => {
                 entry.last_seen = Some(walk.now.clone());
-                entry.fingerprint = Some(read.fingerprint.clone());
-                if discovery_owns(&entry.state) {
-                    entry.kind = gear.kind.clone();
-                    entry.description = gear.description.clone().or(entry.description.take());
-                    entry.category = gear.category.clone().or(entry.category.take());
-                    if !gear.capabilities.is_empty() {
-                        entry.capabilities = gear.capabilities.clone();
+                entry.fingerprint = Some(read_print.clone());
+                if let Some((_, gear)) = declared {
+                    // Discovery owns both, so a candidate found declared is
+                    // declared now: the Declare it pull request merged.
+                    if entry.state == STATE_CANDIDATE {
+                        entry.state = STATE_DECLARED.to_string();
+                        out.declared_from_candidates += 1;
+                    }
+                    if discovery_owns(&entry.state) {
+                        entry.kind = gear.kind.clone();
+                        entry.description = gear.description.clone().or(entry.description.take());
+                        entry.category = gear.category.clone().or(entry.category.take());
+                        if !gear.capabilities.is_empty() {
+                            entry.capabilities = gear.capabilities.clone();
+                        }
+                        entry.score = None;
+                        entry.evidence.clear();
+                        entry.candidate_fingerprints.clear();
+                    }
+                } else if let Some(best) = best {
+                    if entry.state == STATE_CANDIDATE {
+                        propose(entry, best, &entry_prints);
+                    } else if entry.state == STATE_REJECTED
+                        && !entry.candidate_fingerprints.is_empty()
+                        && detected
+                            .iter()
+                            .any(|c| !entry.candidate_fingerprints.contains(&c.fingerprint))
+                    {
+                        // The code it was rejected in changed: ask again.
+                        propose(entry, best, &entry_prints);
+                        out.reproposed += 1;
                     }
                 }
             }
             None => {
-                by_id.insert(
-                    entry_id.clone(),
-                    EntryRecord {
-                        organization_id: walk.org,
-                        name: names
-                            .get(entry_id)
-                            .cloned()
-                            .unwrap_or_else(|| gear.name.clone()),
-                        kind: gear.kind.clone(),
-                        state: STATE_DECLARED.to_string(),
-                        description: gear.description.clone(),
-                        category: gear.category.clone(),
-                        owner: None,
-                        capabilities: gear.capabilities.clone(),
-                        aliases: Vec::new(),
-                        merged_into: None,
-                        replaced_by: None,
-                        version: None,
-                        orphaned: false,
-                        first_seen: Some(walk.now.clone()),
-                        last_seen: Some(walk.now.clone()),
-                        fingerprint: Some(read.fingerprint.clone()),
-                    },
-                );
+                let name = names
+                    .get(entry_id)
+                    .cloned()
+                    .unwrap_or_else(|| entry_id.clone());
+                let mut entry = EntryRecord {
+                    organization_id: walk.org,
+                    name,
+                    first_seen: Some(walk.now.clone()),
+                    last_seen: Some(walk.now.clone()),
+                    fingerprint: Some(read_print.clone()),
+                    ..EntryRecord::default()
+                };
+                if let Some((_, gear)) = declared {
+                    entry.kind = gear.kind.clone();
+                    entry.state = STATE_DECLARED.to_string();
+                    entry.description = gear.description.clone();
+                    entry.category = gear.category.clone();
+                    entry.capabilities = gear.capabilities.clone();
+                } else if let Some(best) = best {
+                    entry.kind = "gear".to_string();
+                    propose(&mut entry, best, &entry_prints);
+                } else {
+                    continue;
+                }
+                by_id.insert(entry_id.clone(), entry);
                 out.created += 1;
             }
         }
@@ -777,6 +974,12 @@ pub struct RegistryCounts {
     pub occurrences_removed: usize,
     #[serde(default)]
     pub orphaned: usize,
+    /// Candidate findings (P3).
+    #[serde(default)]
+    pub candidates: usize,
+    /// Rejected candidates proposed again because their code changed.
+    #[serde(default)]
+    pub reproposed: usize,
 }
 
 pub(super) fn now() -> String {
@@ -1069,7 +1272,7 @@ impl CatalogService {
                 walk.resolved.insert((project.id, key.clone()));
                 let known = stored.get(&(project.id, key.clone())).map(String::as_str);
                 match reader
-                    .project_gears_unless(&pctx, &self.project_gears, known)
+                    .project_gears_unless(&pctx, &self.project_gears, known, true)
                     .await
                 {
                     Ok(ProjectGearsRead::Unchanged) => {
@@ -1081,7 +1284,11 @@ impl CatalogService {
                             ..RepoWalk::default()
                         });
                     }
-                    Ok(ProjectGearsRead::Read { fingerprint, gears }) => {
+                    Ok(ProjectGearsRead::Read {
+                        fingerprint,
+                        gears,
+                        candidates,
+                    }) => {
                         counts.repos_read += 1;
                         status.repos.push(RepoWalk {
                             repo: target.repo.clone(),
@@ -1098,6 +1305,9 @@ impl CatalogService {
                             commit: reader.head_commit(&pctx).await,
                             fingerprint,
                             gears: gears.as_ref().clone(),
+                            candidates: candidates.as_ref().clone(),
+                            tenant: Some(target.tenant),
+                            connection_id: target.connection_id,
                         });
                     }
                     Err(e) => {
@@ -1129,6 +1339,8 @@ impl CatalogService {
             .into_iter()
             .filter(|(_, r)| r.organization_id == org)
             .collect();
+        // The one signal across projects, then the threshold.
+        super::candidates::apply_copies(&mut walk.reads, &occurrences);
         let plan = plan(&walk, &entries, &occurrences, &reads);
         self.sink.upsert(ctx, &plan.upsert, &plan.edges).await?;
         for id in &plan.retire {
@@ -1159,6 +1371,8 @@ impl CatalogService {
         counts.occurrences_written = plan.occurrences_written;
         counts.occurrences_removed = plan.occurrences_removed;
         counts.orphaned = plan.orphaned;
+        counts.candidates = plan.candidates_found;
+        counts.reproposed = plan.reproposed;
         tracing::info!(organization_id = %org, ?counts, "components-catalog: registry walked");
         progress.set_with(
             "registry: done",
@@ -1171,3 +1385,7 @@ impl CatalogService {
 #[cfg(test)]
 #[path = "registry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "registry_candidates_tests.rs"]
+mod candidate_tests;

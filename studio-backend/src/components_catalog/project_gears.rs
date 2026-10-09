@@ -324,7 +324,7 @@ fn strip_name_prefix(text: &str) -> &str {
     text
 }
 
-fn skipped(path: &str) -> bool {
+pub(super) fn skipped(path: &str) -> bool {
     path.split('/').any(|seg| SKIP.contains(&seg))
 }
 
@@ -437,7 +437,7 @@ pub fn absorb(gears: &mut Vec<LocalGear>, found: LocalGear) {
 }
 
 /// The files the answer is read from: what a cached answer is checked against.
-fn relevant(path: &str) -> bool {
+pub(super) fn relevant(path: &str) -> bool {
     matches!(
         file_name(path),
         "gear.toml" | "gear.gdl" | "Cargo.toml" | "README.md"
@@ -447,21 +447,31 @@ fn relevant(path: &str) -> bool {
 /// What discovery is: moved whenever the rules here change what a repository
 /// is read as, so a stored fingerprint from the old rules no longer matches
 /// and every repository is read again once.
-pub const DISCOVERY_VERSION: &str = "project-gears/3";
+///
+/// `/4`: the candidate detectors (`candidates.rs`) read the presence of
+/// signal files too, so every repository is read once more to find them.
+pub const DISCOVERY_VERSION: &str = "project-gears/4";
 
 /// A fingerprint of the files the answer depends on, from the tree listing's
-/// `(path, blob sha)` pairs: equal while none of them changed.
+/// `(path, blob sha)` pairs: equal while none of them changed. The files the
+/// candidate detectors only look for ([`super::candidates::signal_file`])
+/// count by path: adding a `rest.rs` moves it, editing one does not.
 ///
 /// Stable across builds and restarts (a uuid5 of the pairs and
 /// [`DISCOVERY_VERSION`]), because the registry stores it: the standard
 /// library's hasher promises no such thing.
 pub fn fingerprint(files: &[(String, String)]) -> String {
     let mut text = String::from(DISCOVERY_VERSION);
-    for (path, sha) in files.iter().filter(|(p, _)| relevant(p)) {
-        text.push('\n');
-        text.push_str(path);
-        text.push('\0');
-        text.push_str(sha);
+    for (path, sha) in files {
+        if relevant(path) {
+            text.push('\n');
+            text.push_str(path);
+            text.push('\0');
+            text.push_str(sha);
+        } else if super::candidates::signal_file(path) {
+            text.push('\n');
+            text.push_str(path);
+        }
     }
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, text.as_bytes()).to_string()
 }
@@ -476,26 +486,46 @@ pub fn unchanged(known: Option<&str>, print: &str) -> bool {
 #[derive(Default)]
 pub struct Cache(Mutex<HashMap<String, Cached>>);
 
-/// One repository's answer, and the fingerprint it was read under.
-type Cached = (String, Arc<Vec<LocalGear>>);
+/// One repository's answer, the candidates when they were looked for, and
+/// the fingerprint it was read under.
+type Cached = (
+    String,
+    Arc<Vec<LocalGear>>,
+    Option<Arc<Vec<super::candidates::Candidate>>>,
+);
+
+/// What a cached read found: the gears, and the candidates.
+pub type Found = (Arc<Vec<LocalGear>>, Arc<Vec<super::candidates::Candidate>>);
 
 impl Cache {
     /// Repositories remembered at most; past it, the cache starts over.
     const CAPACITY: usize = 64;
 
-    pub fn get(&self, key: &str, print: &str) -> Option<Arc<Vec<LocalGear>>> {
+    /// The gears and the candidates, when both were read under `print`. A
+    /// read that did not look for candidates answers `None` when they are
+    /// asked for.
+    pub fn get_found(&self, key: &str, print: &str, candidates: bool) -> Option<Found> {
         let map = self.0.lock().ok()?;
-        map.get(key)
-            .filter(|(p, _)| p == print)
-            .map(|(_, gears)| Arc::clone(gears))
+        let (_, gears, found) = map.get(key).filter(|(p, _, _)| p == print)?;
+        match found {
+            Some(c) => Some((Arc::clone(gears), Arc::clone(c))),
+            None if !candidates => Some((Arc::clone(gears), Arc::new(Vec::new()))),
+            None => None,
+        }
     }
 
-    pub fn put(&self, key: String, print: String, gears: Arc<Vec<LocalGear>>) {
+    pub fn put_found(
+        &self,
+        key: String,
+        print: String,
+        gears: Arc<Vec<LocalGear>>,
+        candidates: Option<Arc<Vec<super::candidates::Candidate>>>,
+    ) {
         if let Ok(mut map) = self.0.lock() {
             if map.len() >= Self::CAPACITY && !map.contains_key(&key) {
                 map.clear();
             }
-            map.insert(key, (print, gears));
+            map.insert(key, (print, gears, candidates));
         }
     }
 }

@@ -197,9 +197,9 @@ rather than duplicates.
 | `gts.cf.studio.catalog.roadmap_item.v1~` | A gear on a roadmap board, keyed on board and issue, whether or not its code exists |
 | `gts.cf.studio.catalog.field_schema.v1~` | What the organization says about one GTS type: its field schema (with the `quality` block) and whether it counts as a component; built-ins overlaid by the tenant's own |
 | `gts.cf.studio.catalog.source.v1~` | One catalogue source of the organization, kept on the server (ADR-0041): repository, ref, mode; replaces the browser's `cf.components.sources` |
-| `gts.cf.studio.catalog.registry_entry.v1~` | One component of the organization's registry (ADR-0041): name, kind, `state` (`candidate`, `declared`, `registered`, `published`, `rejected`, `deprecated`, `merged`), owner (`{kind: person\|team, id?, name}`), category, capabilities, `aliases` (names merged into it), `merged_into`, `replaced_by`, the published `version`, and the fingerprint of the files it was last read from |
+| `gts.cf.studio.catalog.registry_entry.v1~` | One component of the organization's registry (ADR-0041): name, kind, `state` (`candidate`, `declared`, `registered`, `published`, `rejected`, `deprecated`, `merged`), owner (`{kind: person\|team, id?, name}`), category, capabilities, `aliases` (names merged into it), `merged_into`, `replaced_by`, the published `version`, and the fingerprint of the files it was last read from; for a candidate (P3) its `score`, `evidence` (`[{signal, detail, weight}]`) and `candidate_fingerprints` (the code it was found — or rejected — in) |
 | `gts.cf.studio.catalog.registry_decision.v1~` | One decision a person made about a registry entry: `action`, the state it moved `from` and `to`, `by` (the person's Studio id, else the token's subject), `at`, `reason` and `details` (the fields it set); joined to its entry by `gts.cf.studio.catalog.decided.v1~` |
-| `gts.cf.studio.catalog.occurrence.v1~` | Where a registry entry was found: repository, ref, path, commit, project; joined to its entry by `gts.cf.studio.catalog.found_in.v1~`. Keyed on the entry, the project, the repository and the path, so one repository attached to two projects gives each its own occurrence |
+| `gts.cf.studio.catalog.occurrence.v1~` | Where a registry entry was found: repository, ref, path, commit, project, what declares it (`declared_in`; `detected` for a candidate, with its score, evidence and module fingerprint), and the tenant and connection it was read through; joined to its entry by `gts.cf.studio.catalog.found_in.v1~`. Keyed on the entry, the project, the repository and the path, so one repository attached to two projects gives each its own occurrence |
 | `gts.cf.studio.catalog.registry_read.v1~` | One repository the registry walk read for one project (connection, repository, ref): the fingerprint of the files discovery reads and the commit, so an unchanged repository is not read again after a restart either |
 | `gts.cf.studio.catalog.registry_settings.v1~` | The organization's registry settings: the projects the walk skips |
 | `gts.cf.studio.catalog.component_snapshot.v1~` | One component's fields on one day: the number `n`, the grade `s` and the badge `b` (cut to 80 characters); kept out of the enumerated catalogue types |
@@ -344,13 +344,15 @@ Knows nothing about plans, definitions or workbooks.
 - [x] `p2` - **ID**: `cpt-studio-component-components-catalog-registry`
 
 The organization's components, wherever they are declared (ADR-0041,
-`cpt-studio-adr-component-registry`). Phases P1 and P2 are built:
+`cpt-studio-adr-component-registry`). Phases P1, P2 and P3 are built:
 
 - [x] **P1** (`registry.rs`, `registry_task.rs`): server-side sources, the
   walk, `declared` entries and the reads.
 - [x] **P2** (`registry_decisions.rs`): the lifecycle moved by people, with
   owners, recorded decisions, merging and the permission check.
-- [ ] **P3**: candidate detectors and Declare it.
+- [x] **P3** (`candidates.rs`, `registry_declare.rs`): structural candidate
+  detectors with evidence and a score, re-proposal of a rejected candidate
+  whose code changed, and Declare it.
 - [ ] **P4**: model suggestions, the consumer graph and publishing.
 
 The walk is the task type `catalog.registry`, and also the last phase of a
@@ -385,8 +387,9 @@ do about it, and `GET /registry/projects` serves it, so a project the walk could
 not read is not mistaken for one with no components.
 
 The rules are one pure function (`registry::plan`). An entry found anew is
-`declared`. Discovery never moves an existing entry's state — so it never
-resurrects a `rejected` one — and refreshes its kind, description, category and
+`declared` (or, found only by a detector, a `candidate` — see Candidates
+below). Discovery moves no state but `candidate` to `declared` — so a
+declaration never resurrects a `rejected` one — and refreshes its kind, description, category and
 capabilities only while it is `candidate` or `declared`; past that a person owns
 it and a walk only moves `last_seen` (the last walk that read a repository
 declaring it; a repository skipped as unchanged does not move it). An entry
@@ -457,7 +460,8 @@ whoever holds the privilege. Anyone else gets 403 (`REGISTRY_ADMIN_REQUIRED`);
 without studio-user nobody may. Reads stay open to every member.
 
 **What the walk does with decisions.** Nothing a person decided moves: a walk
-still writes only `declared`, refreshes descriptive fields only while
+still writes only `candidate` and `declared` (and re-proposes a rejected
+candidate only when its code changed), refreshes descriptive fields only while
 discovery owns the entry, keeps the occurrences of `rejected` and `merged`
 entries' repositories up to date (for a merged one, under its target), and
 only says when it saw an entry last.
@@ -467,7 +471,72 @@ only says when it saw an entry last.
 fell back to reading the repositories. A `deprecated` one is still offered,
 marked on its candidate with `registry_state` and `replaced_by` (both set only
 for registry-backed candidates), and the portal says "Deprecated in the
-organization's registry — use X instead".
+organization's registry — use X instead". A registry `candidate` found in the
+project's own code is offered too, with `origin: project` and
+`registry_state: candidate`: the Components tab says it "could become a
+gear", and its `?` panel lists the registry's evidence and offers Declare it.
+
+**Candidates (P3).** A walk that reads a repository anew also asks what in
+it looks like a gear and is not declared one (`candidates::detect`, pure).
+The unit is a Rust module directory (a `mod.rs`, or a directory beside its
+`name.rs`) or a crate (a `Cargo.toml` with a `src/lib.rs`, not the
+repository root) that no declared gear covers — not a gear's directory and
+nothing inside one; tests, `target/` and the other trees discovery skips are
+skipped. The detectors read the tree listing the walk already has, the Rust
+files discovery reads anyway (`mod.rs`, `lib.rs`, gear files) and at most 40
+`Cargo.toml` files. Each signal carries a weight and a line a person reads:
+
+| Signal | Fires on | Weight |
+|---|---|---|
+| `rest` | `rest.rs`, `routes.rs`, `api.rs` or a `rest/`, `routes/`, `api/` directory; else `OperationBuilder::` or `Router::new` in its `mod.rs`/`lib.rs` | 3 |
+| `persistence` | `migrations/`, `migrations.rs`, `entity.rs`, `entity/`, `repo.rs`, `repository.rs` | 3 |
+| `types` | `gts.rs`, `types/`, `*.schema.json` under it | 2 |
+| `boundary` | `port.rs` or `sdk.rs` (or their directories): 2 for one, 3 for both | 2–3 |
+| `docs` | its own `README.md` or `DESIGN.md` | 1 |
+| `consumers` | other modules of the crate naming `crate::<module>` in the files read, or other crates' manifests depending on it — bounded, so it can only undercount | 1 each, up to 3 |
+| `copied` | the same name (kebab-folded) in another project of the organization: this walk's reads, or the occurrences held for repositories not read again | 2 |
+
+A unit needs a structural signal (`rest`, `persistence`, `types` or
+`boundary`); the score is the sum, a candidate needs 5
+(`CANDIDATE_THRESHOLD`), and at most 30 are kept per repository, highest
+first. It is named after its module or its crate's package, kebab-case. The
+files the detectors look for count in the repository's fingerprint by path
+(adding a `rest.rs` reads the repository again; editing one does not), and
+`DISCOVERY_VERSION` moved to `project-gears/4` so every repository is read
+once more.
+
+A candidate is written as an entry in state `candidate` with its `score` and
+`evidence` (`[{signal, detail, weight}]`, from its best occurrence) and an
+occurrence `declared_in: detected` that also carries them, the module's own
+fingerprint (its discovery files by sha, its signal files by path), and the
+tenant and connection it was read through. Discovery owns `candidate` as it
+owns `declared`, so a candidate a later walk finds declared becomes
+`declared` (under any spelling: `spec_mapping` declared is the
+`spec-mapping` candidate), and its evidence is dropped. A person's states
+stay — with one exception ADR-0041 sets: a `rejected` candidate keeps the
+fingerprints of the code it was rejected in (`candidate_fingerprints`), and a
+walk that detects it in code with any other fingerprint proposes it again
+(back to `candidate`, counted as `reproposed`). A rejected entry that was
+never a candidate (rejected while declared) is never re-proposed.
+
+**Declare it (P3).** `POST /registry/{name}/declare`, for a `candidate`
+entry only, by the same rule as decisions (`component.registry`; 403
+otherwise). It picks the candidate's detected occurrence (in `project_id`
+when the body names one, else the highest-scoring one), asks studio-product
+for the files through `product::port::GearDeclarations` — a `gear.toml` in
+the module's directory, the skeleton's `[gear]` table with the name,
+description, category and capabilities, and the engine's `gear.gdl` beside it
+when an engine is configured and the directory is not inside a crate's
+`src/` (there the catalogue would read it as an in-crate plugin) — and, unless
+`dry_run`, writes them on `declare/<name>` off the ref the walk read and opens
+a pull request, through the occurrence's connection, in the project's tenant
+(`registry::in_tenant`, as the walk reads). It answers
+`{branch, pr_url, files, repo, path, dry_run}` and records a `declare`
+decision (`candidate → candidate`, with the branch, the pull request and the
+files). The entry stays a candidate until the walk reads the merged
+declaration. Without studio-product the route answers 503; an occurrence
+recorded before the walk kept its connection is `failed_precondition` until
+the project is read again.
 
 ### 3.3 API Contracts
 
@@ -501,6 +570,7 @@ organization's registry — use X instead".
 | `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it, `offset`/`limit` page it; `{items: RegistryEntryDto[], total}`, each entry with its occurrences | unstable |
 | `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences and its `decisions`, newest first; 404 when absent | unstable |
 | `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `merge` or `edit`, checked against the lifecycle table and recorded. Answers the entry with its decisions. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
+| `POST` | `/registry/{name}/declare` | Declare it, for a `candidate`: `{description?, capabilities?, category?, project_id?, dry_run?}` (all optional) → `{branch, pr_url, files, repo, path, dry_run}`: a pull request adding `gear.toml` (and `gear.gdl`) in the module's directory on `declare/<name>`, recorded as a `declare` decision. 403 for anyone but an organization administrator; 400 `failed_precondition` for an entry that is not a candidate; 503 without studio-product | unstable |
 | `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do | unstable |
 | `GET` | `/registry/excluded-projects` | The projects the walk skips: `{project_ids}` | unstable |
 | `PUT` | `/registry/excluded-projects` | Replace them with `{project_ids}`. Ensures the hourly registry schedule | unstable |
@@ -541,7 +611,7 @@ is to move to studio-product.
 | `cpt-studio-component-graph-storage` | `GraphStorageClientV1` (`graph` feature), through `catalog_graph::build_sink` | The catalogue |
 | `cpt-studio-component-tasks` | `sdk::register`, `TaskQueue` | Run `catalog.sync` |
 | `cpt-studio-component-insight` | `port::ComponentDelivery` from the ClientHub | Activity per gear |
-| `cpt-studio-component-product` | `product::port::engine`, `product::port::Products` (`ProjectProducts`), `product::sdk` | The Gearbox engine's gear facts, catalogue, corpus checkout and completion; a project's gear repository |
+| `cpt-studio-component-product` | `product::port::engine`, `product::port::Products` (`ProjectProducts`), `product::port::GearDeclarations`, `product::sdk` | The Gearbox engine's gear facts, catalogue, corpus checkout and completion; a project's gear repository; Declare it's files and pull request |
 | `cpt-studio-component-organizations` | `organizations::port::ProjectsOf` from the ClientHub | An organization's projects, for the registry walk |
 | `cpt-studio-component-scheduler` | `scheduler::port::Schedules` from the ClientHub | The hourly registry schedule per organization |
 

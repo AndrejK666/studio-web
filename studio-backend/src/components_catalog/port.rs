@@ -404,7 +404,8 @@ impl Registry for CatalogRegistry {
 
 /// A project's own gears as the registry knows them, in the shape
 /// [`ComponentCatalog::project_gears`] answers: one per entry found in the
-/// project (its first occurrence there), entries not [`offered`] left out. Empty
+/// project (where it is declared there, else where it was detected: a
+/// candidate), entries not [`offered`] left out. Empty
 /// when the registry has found nothing in the project yet -- the caller
 /// then reads the repositories itself.
 pub fn project_gears_of(
@@ -413,11 +414,16 @@ pub fn project_gears_of(
 ) -> (Vec<Value>, Map<String, Value>) {
     let mut gears: Vec<super::project_gears::LocalGear> = Vec::new();
     for entry in entries.iter().filter(|e| offered(&e.entry.state)) {
-        let Some(found) = entry
-            .occurrences
-            .iter()
-            .find(|o| o.project_id == Some(project_id))
-        else {
+        // Where the project declares it, else where a detector found it: a
+        // candidate is offered too, as "could become a gear" (its
+        // `registry_state` says which).
+        let here = || {
+            entry
+                .occurrences
+                .iter()
+                .filter(|o| o.project_id == Some(project_id))
+        };
+        let Some(found) = here().find(|o| !o.detected()).or_else(|| here().next()) else {
             continue;
         };
         if !gears

@@ -261,14 +261,24 @@ fn the_fingerprint_moves_only_with_the_files_read() {
 #[test]
 fn a_cached_answer_is_served_only_for_the_same_files() {
     let cache = Cache::default();
-    cache.put(
+    cache.put_found(
         "k".into(),
         "1".into(),
         Arc::new(vec![gear("a", "a", "a/mod.rs")]),
+        None,
     );
-    assert!(cache.get("k", "1").is_some());
-    assert!(cache.get("k", "2").is_none());
-    assert!(cache.get("other", "1").is_none());
+    assert!(cache.get_found("k", "1", false).is_some());
+    assert!(cache.get_found("k", "2", false).is_none());
+    assert!(cache.get_found("other", "1", false).is_none());
+    // Read without candidates: a walk that wants them reads again.
+    assert!(cache.get_found("k", "1", true).is_none());
+    cache.put_found(
+        "k".into(),
+        "1".into(),
+        Arc::new(Vec::new()),
+        Some(Arc::new(Vec::new())),
+    );
+    assert!(cache.get_found("k", "1", true).is_some());
 }
 
 /// studio-documents' own `mod.rs` names its test files above its attribute

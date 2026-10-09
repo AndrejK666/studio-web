@@ -9,12 +9,16 @@
  * The states past "declared in a project" are moved by people (phase 2): an
  * organization administrator registers, rejects, deprecates, restores,
  * publishes, merges or edits an entry from its expanded row, and every move
- * is recorded with who, when and why. Everyone else reads. */
+ * is recorded with who, when and why. Everyone else reads.
+ *
+ * Phase 3 adds candidates: code the walk found that looks like a gear and is
+ * not declared one, with its evidence and score, in a Candidates view. Declare
+ * it opens a pull request adding the candidate's gear.toml. */
 
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "./api";
-import type { RegistryDecisionInput, RegistryEntry, RegistryProjectWalk } from "./api";
+import type { RegistryDecisionInput, RegistryDeclareResult, RegistryEntry, RegistryProjectWalk } from "./api";
 import { errText } from "./format";
 import {
   ACTION_LABEL,
@@ -22,9 +26,14 @@ import {
   STATE_LABEL,
   STATE_TONE,
   allowedActions,
+  candidateWhere,
+  candidatesOf,
+  declareRefusal,
   decisionLine,
   decisionRefusal,
   decisionTargets,
+  detectedProjects,
+  evidenceLines,
   filterEntries,
   isDuplicated,
   ownerLabel,
@@ -57,6 +66,8 @@ export function ComponentRegistry({
   const [walks, setWalks] = useState<RegistryProjectWalk[]>([]);
   const [sync, setSync] = useState("");
   const [busy, setBusy] = useState(false);
+  /** Every component, or only the candidates (ADR-0041 P3). */
+  const [view, setView] = useState<"all" | "candidates">("all");
 
   const load = async () => {
     setError(null);
@@ -200,6 +211,23 @@ export function ComponentRegistry({
               — {unreadable.map((p) => p.name).join(", ")}. {walkLine(walkOf(unreadable[0].id)).hint ?? "See the projects below."}
             </div>
           )}
+          <div style={{ display: "flex", gap: 6, margin: "0 0 8px" }} role="group" aria-label="View">
+            <button type="button" className={view === "all" ? "primary" : ""} onClick={() => setView("all")}>
+              All components
+            </button>
+            <button
+              type="button"
+              className={view === "candidates" ? "primary" : ""}
+              onClick={() => setView("candidates")}
+              data-registry-candidates-tab
+            >
+              Candidates ({counts.candidate ?? 0})
+            </button>
+          </div>
+          {view === "candidates" ? (
+            <CandidatesView token={token} entries={entries} people={people} names={names} onDecided={() => void load()} />
+          ) : (
+          <>
           <div className="chips" role="group" aria-label="State">
             <button type="button" className={`chip ${state === null ? "on" : ""}`} onClick={() => setState(null)}>
               all<span className="chip-n">{entries.length}</span>
@@ -261,6 +289,8 @@ export function ComponentRegistry({
                 ))}
               </tbody>
             </table>
+          )}
+          </>
           )}
 
           <details style={{ marginTop: 12, fontSize: 13 }}>
@@ -359,6 +389,17 @@ function RegistryRow({
       {open && (
         <tr>
           <td colSpan={4} style={{ fontSize: 12, background: "var(--muted, rgba(0,0,0,0.03))" }}>
+            {e.state === "candidate" && (
+              <div data-registry-evidence>
+                <b>Looks like a gear</b> (score {e.score ?? 0}):
+                <ul style={{ margin: "2px 0 4px", paddingLeft: 18 }}>
+                  {evidenceLines(e).map((l) => (
+                    <li key={l}>{l}</li>
+                  ))}
+                </ul>
+                <DeclareCandidate token={token} entry={e} onDeclared={onDecided} />
+              </div>
+            )}
             {e.capabilities.length > 0 && (
               <div>
                 <b>Capabilities:</b> {e.capabilities.join(", ")}
@@ -421,6 +462,218 @@ function RegistryRow({
         </tr>
       )}
     </>
+  );
+}
+
+/** Code that looks like a gear, strongest first, with why and what to do
+ *  about it: Declare it, or the decisions a candidate allows (register,
+ *  reject, merge, edit). */
+function CandidatesView({
+  token,
+  entries,
+  people,
+  names,
+  onDecided,
+}: {
+  token: string;
+  entries: RegistryEntry[];
+  people: { id: string; name: string }[];
+  names: Record<string, string>;
+  onDecided: () => void;
+}) {
+  const candidates = useMemo(() => candidatesOf(entries), [entries]);
+  const [open, setOpen] = useState<string | null>(null);
+  if (candidates.length === 0) {
+    return (
+      <p className="empty" data-registry-candidates>
+        No candidates: nothing in the projects&apos; code looks like a gear that is not declared one.
+      </p>
+    );
+  }
+  return (
+    <div data-registry-candidates>
+      <p className="hint" style={{ fontSize: 12, margin: "0 0 6px" }}>
+        Modules and crates that look like gears — their own REST surface, tables, types, a port or an SDK,
+        other code using them, copies in other projects — and are not declared one. Strongest first.
+      </p>
+      <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        {candidates.map((e) => (
+          <li key={e.name} style={{ borderTop: "1px solid var(--border, rgba(0,0,0,0.1))", padding: "6px 0" }}>
+            <div
+              style={{ display: "flex", gap: 8, alignItems: "baseline", cursor: "pointer", flexWrap: "wrap" }}
+              onClick={() => setOpen(open === e.name ? null : e.name)}
+              aria-expanded={open === e.name}
+            >
+              <b>{e.name}</b>
+              <span className="badge info" title="The sum of its evidence's weights">
+                score {e.score ?? 0}
+              </span>
+              <span style={{ fontSize: 12, opacity: 0.75 }}>{candidateWhere(e)}</span>
+            </div>
+            {e.description && <div style={{ fontSize: 12, opacity: 0.75 }}>{e.description}</div>}
+            <ul style={{ margin: "2px 0 0", paddingLeft: 18, fontSize: 12 }}>
+              {evidenceLines(e).map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+            {open === e.name ? (
+              <div style={{ fontSize: 12 }}>
+                <DeclareCandidate token={token} entry={e} onDeclared={onDecided} />
+                <RegistryDecisions token={token} entry={e} entries={entries} people={people} names={names} onDecided={onDecided} />
+              </div>
+            ) : (
+              <button type="button" className="linklike" style={{ fontSize: 12 }} onClick={() => setOpen(e.name)}>
+                Declare it, register or reject…
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** A project's candidate, as its Components tab offers it ("could become a
+ *  gear"): the registry's evidence for it, and Declare it for this project's
+ *  occurrence. */
+export function ProjectCandidate({ token, name, projectId }: { token: string; name: string; projectId: string }) {
+  const [entry, setEntry] = useState<RegistryEntry | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .registryEntry(token, name)
+      .then((e) => live && setEntry(e))
+      .catch(() => live && setEntry(null));
+    return () => {
+      live = false;
+    };
+  }, [token, name]);
+  if (!entry || entry.state !== "candidate") return null;
+  return (
+    <div style={{ marginTop: 4 }} data-project-candidate>
+      <b>Why it looks like a gear</b> (score {entry.score ?? 0}):
+      <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+        {evidenceLines(entry).map((l) => (
+          <li key={l}>{l}</li>
+        ))}
+      </ul>
+      <DeclareCandidate token={token} entry={entry} projectId={projectId} />
+    </div>
+  );
+}
+
+/** Declare it (ADR-0041 P3): preview the files a pull request would add
+ *  beside the candidate's code, then open it. The entry stays a candidate
+ *  until the registry reads the merged declaration. */
+export function DeclareCandidate({
+  token,
+  entry,
+  projectId,
+  onDeclared,
+}: {
+  token: string;
+  /** The candidate; only its name and occurrences are read. */
+  entry: Pick<RegistryEntry, "name" | "occurrences">;
+  /** Declare the occurrence in this project, when the candidate is in several. */
+  projectId?: string;
+  onDeclared?: () => void;
+}) {
+  const [preview, setPreview] = useState<RegistryDeclareResult | null>(null);
+  const [done, setDone] = useState<RegistryDeclareResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [description, setDescription] = useState("");
+  const inProjects = detectedProjects(entry);
+  const project = projectId ?? (inProjects.length > 1 ? inProjects[0] : undefined);
+
+  const run = async (dry: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api.declareRegistry(token, entry.name, {
+        dry_run: dry,
+        project_id: project,
+        description: description.trim() || undefined,
+      });
+      if (dry) setPreview(result);
+      else {
+        setDone(result);
+        setPreview(null);
+        onDeclared?.();
+      }
+    } catch (cause) {
+      setError(declareRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <div style={{ margin: "6px 0" }} data-declare-done>
+        <b>Pull request opened</b> on <code>{done.branch}</code> in <code>{done.repo}</code>
+        {done.pr_url ? (
+          <>
+            {" "}
+            —{" "}
+            <a href={done.pr_url} target="_blank" rel="noreferrer">
+              {done.pr_url}
+            </a>
+          </>
+        ) : null}
+        . Once it is merged, the registry reads it as declared.
+      </div>
+    );
+  }
+  return (
+    <div style={{ margin: "6px 0" }} data-declare-candidate>
+      {!preview ? (
+        <button type="button" disabled={busy} onClick={() => void run(true)}>
+          {busy ? "Preparing…" : "Declare it…"}
+        </button>
+      ) : (
+        <div style={{ display: "grid", gap: 6, maxWidth: 680 }}>
+          <div>
+            A pull request on <code>{preview.branch}</code> in <code>{preview.repo}</code> adds, beside{" "}
+            <code>{preview.path}</code>:
+          </div>
+          {preview.files.map((f) => (
+            <div key={f.path}>
+              <code>{f.path}</code>
+              <pre style={{ margin: "2px 0", padding: 6, fontSize: 11, overflowX: "auto", background: "var(--muted, rgba(0,0,0,0.04))" }}>
+                {f.content}
+              </pre>
+            </div>
+          ))}
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <b>Description</b>
+            <input
+              value={description}
+              onChange={(ev) => setDescription(ev.target.value)}
+              placeholder="optional: what this gear does"
+              aria-label="Description"
+              style={{ flex: 1 }}
+            />
+          </label>
+          <span>
+            <button type="button" className="primary" disabled={busy} onClick={() => void run(false)}>
+              {busy ? "Opening…" : "Open the pull request"}
+            </button>{" "}
+            <button type="button" disabled={busy} onClick={() => void run(true)}>
+              Preview again
+            </button>{" "}
+            <button type="button" disabled={busy} onClick={() => setPreview(null)}>
+              Cancel
+            </button>
+          </span>
+        </div>
+      )}
+      {error && (
+        <div className="error" style={{ fontSize: 12 }} data-declare-error>
+          {error}
+        </div>
+      )}
+    </div>
   );
 }
 

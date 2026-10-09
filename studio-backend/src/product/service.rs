@@ -194,6 +194,44 @@ impl ProductService {
             files,
             message,
             pr_title,
+            None,
+        )
+        .await
+    }
+
+    /// Commit files onto a new `branch` off `target`'s base branch in the
+    /// repository `target` names, through its connection, and open a pull
+    /// request back: what Declare it writes (ADR-0041 P3). `ctx` is the
+    /// tenant the connection is readable from -- the project's.
+    pub async fn write_to_repository(
+        &self,
+        ctx: &SecurityContext,
+        target: &super::port::RepositoryTarget,
+        branch: &str,
+        files: &[super::scaffold::ScaffoldFile],
+        pull_request: &super::port::PullRequestText,
+    ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
+        let connectors = self
+            .connector_service()
+            .ok_or_else(|| anyhow!("connectors service unavailable"))?;
+        let repo = Repository::open(
+            &connectors,
+            ctx,
+            target.tenant,
+            target.connection_id,
+            "github",
+            &target.repo,
+            None,
+        )
+        .await?;
+        super::scaffold::write_scaffold(
+            &repo,
+            &target.base_branch,
+            branch,
+            files,
+            &pull_request.message,
+            Some(&pull_request.title),
+            Some(&pull_request.body),
         )
         .await
     }

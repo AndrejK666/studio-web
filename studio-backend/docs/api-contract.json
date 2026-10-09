@@ -2378,6 +2378,25 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/registry/{name}/declare",
+      "operation_id": "studio_components_catalog.open_registry_declaration",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Declare a candidate a gear, by a pull request in its repository",
+      "authenticated": true,
+      "request": "RegistryDeclareRequest",
+      "responses": [
+        "RegistryDeclareResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/sync",
       "operation_id": "studio_components_catalog.sync",
       "tag": "StudioComponentsCatalog",

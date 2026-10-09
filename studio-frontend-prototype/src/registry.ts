@@ -10,7 +10,7 @@ import type { RegistryDecision, RegistryEntry, RegistryOwner, RegistryProjectWal
 export const REGISTRY_STATES = ["candidate", "declared", "registered", "published", "deprecated", "rejected", "merged"] as const;
 
 export const STATE_LABEL: Record<string, string> = {
-  candidate: "candidate",
+  candidate: "could become a gear",
   declared: "declared in a project",
   registered: "registered",
   published: "published",
@@ -46,6 +46,7 @@ export const ACTION_LABEL: Record<RegistryAction, string> = {
 
 /** The past tense, for the decisions history. */
 export const ACTION_DONE: Record<string, string> = {
+  declare: "opened a pull request declaring",
   register: "registered",
   reject: "rejected",
   deprecate: "deprecated",
@@ -104,6 +105,8 @@ export function decisionLine(d: RegistryDecision, names: Record<string, string> 
   if (typeof details.merge_into === "string") extra.push(`into ${details.merge_into}`);
   if (typeof details.merged_from === "string") extra.push(`took in ${details.merged_from}`);
   if (typeof details.version === "string") extra.push(`version ${details.version}`);
+  if (typeof details.pr_url === "string") extra.push(`pull request ${details.pr_url}`);
+  else if (typeof details.branch === "string" && d.action === "declare") extra.push(`branch ${details.branch}`);
   const owner = details.owner as RegistryOwner | undefined;
   if (owner && typeof owner === "object" && owner.name) extra.push(`owner ${ownerLabel(owner)}`);
   const said = [extra.join(", "), d.reason ? `“${d.reason}”` : ""].filter(Boolean).join(" — ");
@@ -165,6 +168,52 @@ export function registryProjects(entries: readonly RegistryEntry[]): { id: strin
     for (const o of e.occurrences) if (o.project_id && !out.has(o.project_id)) out.set(o.project_id, o.project_name || o.project_id);
   }
   return [...out].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/* ── Candidates (ADR-0041 P3) ─────────────────────────────────────────────── */
+
+/** Code that looks like a gear and is not declared one, strongest first. */
+export function candidatesOf(entries: readonly RegistryEntry[]): RegistryEntry[] {
+  return entries
+    .filter((e) => e.state === "candidate")
+    .slice()
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || a.name.localeCompare(b.name));
+}
+
+/** Why a candidate looks like a gear, one line per signal, heaviest first:
+ *  "own REST surface: rest.rs (+3)". */
+export function evidenceLines(e: Pick<RegistryEntry, "evidence">): string[] {
+  return (e.evidence ?? [])
+    .slice()
+    .sort((a, b) => b.weight - a.weight)
+    .map((v) => `${v.detail} (+${v.weight})`);
+}
+
+/** Where a candidate was detected, for its row: the first detected
+ *  occurrence's project and path. */
+export function candidateWhere(e: RegistryEntry): string {
+  const o = e.occurrences.find((x) => x.declared_in === "detected") ?? e.occurrences[0];
+  if (!o) return "—";
+  const project = o.project_name || o.project_id || o.repo;
+  return `${project} · ${o.path}`;
+}
+
+/** The project ids a candidate was detected in, so Declare it can name one
+ *  when it was found in several. */
+export function detectedProjects(e: Pick<RegistryEntry, "occurrences">): string[] {
+  const out: string[] = [];
+  for (const o of e.occurrences) {
+    if (o.declared_in === "detected" && o.project_id && !out.includes(o.project_id)) out.push(o.project_id);
+  }
+  return out;
+}
+
+/** What a refused Declare it says to a person: a 403 is the administrator
+ *  rule, a 503 a deployment without studio-product. */
+export function declareRefusal(status: number | undefined, fallback: string): string {
+  if (status === 403) return `Only an organization administrator can declare a gear (${fallback}).`;
+  if (status === 503) return `Declaring a gear is not available in this deployment (${fallback}).`;
+  return fallback;
 }
 
 /** One line for what the last walk did with a project. */

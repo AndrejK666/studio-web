@@ -1594,7 +1594,8 @@ pub struct OccurrenceDto {
     pub path: String,
     /// The newest commit on the ref when the repository was read.
     pub commit: Option<String>,
-    /// `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`.
+    /// `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`; `detected`
+    /// where a candidate detector found it and nothing declares it.
     pub declared_in: String,
 }
 
@@ -1682,10 +1683,65 @@ pub struct RegistryEntryDto {
     pub first_seen: Option<String>,
     /// RFC 3339: the last walk that read a repository declaring it.
     pub last_seen: Option<String>,
+    /// For a `candidate`: the sum of its evidence's weights (P3).
+    pub score: Option<u32>,
+    /// For a `candidate`: why it looks like a gear, signal by signal.
+    pub evidence: Vec<EvidenceDto>,
     pub occurrences: Vec<OccurrenceDto>,
     /// The decisions made about it, newest first. Only on the single-entry
     /// read and a decision's answer; null in the list.
     pub decisions: Option<Vec<RegistryDecisionDto>>,
+}
+
+/// One signal a candidate detector found (ADR-0041 P3).
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct EvidenceDto {
+    /// `rest`, `persistence`, `types`, `boundary`, `docs`, `consumers` or
+    /// `copied`.
+    pub signal: String,
+    /// What it fired on: "own REST surface: rest.rs", "used by 3 modules",
+    /// "copied in insight".
+    pub detail: String,
+    pub weight: u32,
+}
+
+/// What Declare it takes. Every field is optional; the entry's own facts
+/// fill what is left out.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RegistryDeclareRequest {
+    pub description: Option<String>,
+    pub capabilities: Option<Vec<String>>,
+    pub category: Option<String>,
+    /// Answer the files only: nothing is written or recorded.
+    pub dry_run: Option<bool>,
+    /// The project whose occurrence to declare, when the candidate was found
+    /// in several; else its highest-scoring one.
+    pub project_id: Option<Uuid>,
+}
+
+/// One file Declare it writes.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeclaredFileDto {
+    pub path: String,
+    pub content: String,
+}
+
+/// What Declare it did, or -- for a dry run -- would do.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryDeclareResultDto {
+    /// `declare/<name>`.
+    pub branch: String,
+    /// The pull request; null for a dry run.
+    pub pr_url: Option<String>,
+    pub files: Vec<DeclaredFileDto>,
+    /// `owner/name` written into, and the module's directory there.
+    pub repo: String,
+    pub path: String,
+    pub dry_run: bool,
 }
 
 /// The registry, narrowed and paged.
@@ -1749,6 +1805,17 @@ pub(crate) fn registry_entry_dto(e: super::registry::RegistryEntry) -> RegistryE
         orphaned: e.entry.orphaned,
         first_seen: e.entry.first_seen,
         last_seen: e.entry.last_seen,
+        score: e.entry.score,
+        evidence: e
+            .entry
+            .evidence
+            .into_iter()
+            .map(|v| EvidenceDto {
+                signal: v.signal,
+                detail: v.detail,
+                weight: v.weight,
+            })
+            .collect(),
         occurrences: e
             .occurrences
             .into_iter()
@@ -2045,6 +2112,103 @@ async fn decide_registry_entry(
     }
 }
 
+impl Catalog {
+    /// Declare it's writer, studio-product's, resolved per request: a 503
+    /// in an assembly without it.
+    fn declarations(&self) -> ApiResult<Arc<dyn crate::product::port::GearDeclarations>> {
+        self.hub
+            .get::<dyn crate::product::port::GearDeclarations>()
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "declaring a gear is not available in this deployment \
+                         (studio-product is not part of it)",
+                    )
+                    .create()
+            })
+    }
+}
+
+/// The request in the service's terms; no body is an empty one.
+fn declare_input(body: Option<RegistryDeclareRequest>) -> super::registry_declare::DeclareInput {
+    match body {
+        Some(b) => super::registry_declare::DeclareInput {
+            description: b.description,
+            capabilities: b.capabilities,
+            category: b.category,
+            dry_run: b.dry_run.unwrap_or(false),
+            project_id: b.project_id,
+        },
+        None => super::registry_declare::DeclareInput::default(),
+    }
+}
+
+/// A refused Declare it as a problem: 404 for no such entry, 400
+/// `failed_precondition` for an entry that is not a candidate or cannot be
+/// written to yet.
+fn declare_problem(e: super::registry_declare::DeclareError) -> CanonicalError {
+    use super::registry_declare::DeclareError as E;
+    let message = e.to_string();
+    let precondition = |subject: String, kind: &str| {
+        StudioComponentsCatalogError::failed_precondition()
+            .with_precondition_violation(subject, message.clone(), kind)
+            .create()
+    };
+    match e {
+        E::NotFound(name) => StudioComponentsCatalogError::not_found(message.clone())
+            .with_resource(name)
+            .create(),
+        E::NotCandidate { state } => {
+            precondition(format!("state:{state}"), "REGISTRY_NOT_A_CANDIDATE")
+        }
+        E::NoOccurrence => precondition("occurrence".to_owned(), "REGISTRY_NO_OCCURRENCE"),
+        E::NoConnection => precondition("connection".to_owned(), "REGISTRY_CONNECTION_UNKNOWN"),
+    }
+}
+
+fn declared_dto(d: super::registry_declare::Declared, dry_run: bool) -> RegistryDeclareResultDto {
+    RegistryDeclareResultDto {
+        branch: d.branch,
+        pr_url: d.pr_url,
+        files: d
+            .files
+            .into_iter()
+            .map(|f| DeclaredFileDto {
+                path: f.path,
+                content: f.content,
+            })
+            .collect(),
+        repo: d.repo,
+        path: d.path,
+        dry_run,
+    }
+}
+
+async fn declare_registry_entry(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Path(name): Path<String>,
+    body: Option<Json<RegistryDeclareRequest>>,
+) -> ApiResult<JsonBody<RegistryDeclareResultDto>> {
+    if !may_decide(catalog.authority().as_deref(), &ctx).await {
+        return Err(StudioComponentsCatalogError::permission_denied()
+            .with_reason("REGISTRY_ADMIN_REQUIRED")
+            .create());
+    }
+    let declarations = catalog.declarations()?;
+    let by = catalog.decider(&ctx).await;
+    let input = declare_input(body.map(|Json(b)| b));
+    match catalog
+        .service
+        .declare_candidate(&ctx, &name, &input, &by, declarations.as_ref())
+        .await
+    {
+        Ok(done) => Ok(Json(declared_dto(done, input.dry_run))),
+        Err(super::registry_declare::DeclareFailure::Refused(e)) => Err(declare_problem(e)),
+        Err(super::registry_declare::DeclareFailure::Failed(e)) => Err(internal(e)),
+    }
+}
+
 async fn list_registry_projects(
     OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
@@ -2239,6 +2403,45 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-components-catalog/v1/registry/{name}/declare")
+        .operation_id("studio_components_catalog.open_registry_declaration")
+        .summary("Declare a candidate a gear, by a pull request in its repository")
+        .description(
+            "Declare it (ADR-0041 P3), for a `candidate` entry: opens a pull request \
+             in the repository the candidate was detected in, through that \
+             repository's connection and in its project's tenant, adding a \
+             `gear.toml` -- and the Gearbox engine's `gear.gdl` when one is \
+             configured, outside a crate's `src/` -- in the module's directory, on \
+             the branch `declare/<name>`. The body is optional: `description`, \
+             `capabilities` and `category` override the entry's own; `project_id` \
+             picks the occurrence when the candidate was found in several; \
+             `dry_run` answers the files and writes nothing. A `declare` decision \
+             is recorded; the entry stays a candidate until a walk reads the merged \
+             declaration and makes it `declared`. 403 for anyone but an \
+             organization administrator (`component.registry`); 400 \
+             `failed_precondition` for an entry that is not a candidate; 503 \
+             without studio-product.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("name", "Component name")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(declare_registry_entry)
+        .json_request::<RegistryDeclareRequest>(openapi, "What to declare it with (optional)")
+        .json_response_with_schema::<RegistryDeclareResultDto>(
+            openapi,
+            StatusCode::OK,
+            "The branch, the pull request and the files",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-components-catalog/v1/registry/projects")
@@ -2768,6 +2971,7 @@ mod registry_dto_tests {
                 first_seen: Some("2026-10-09T10:00:00Z".into()),
                 last_seen: Some("2026-10-09T11:00:00Z".into()),
                 fingerprint: Some("f".into()),
+                ..EntryRecord::default()
             },
             occurrences: vec![OccurrenceRecord {
                 organization_id: Uuid::from_u128(1),
@@ -2792,6 +2996,7 @@ mod registry_dto_tests {
                 doc_text: None,
                 fingerprint: "f".into(),
                 seen_at: "2026-10-09T11:00:00Z".into(),
+                ..OccurrenceRecord::default()
             }],
         };
         let json = serde_json::to_value(registry_entry_dto(entry)).unwrap();
@@ -2869,6 +3074,7 @@ mod registry_dto_tests {
                 first_seen: None,
                 last_seen: None,
                 fingerprint: None,
+                ..EntryRecord::default()
             },
             occurrences: Vec::new(),
         };
@@ -2951,6 +3157,53 @@ mod registry_dto_tests {
             "a member is refused"
         );
         assert!(!may_decide(None, &caller(7)).await);
+    }
+
+    #[test]
+    fn a_candidate_carries_its_score_and_evidence_and_declare_reads_its_body() {
+        use crate::components_catalog::candidates::Evidence;
+        let entry = RegistryEntry {
+            entry: EntryRecord {
+                name: "documents".into(),
+                state: "candidate".into(),
+                score: Some(8),
+                evidence: vec![Evidence {
+                    signal: "rest".into(),
+                    detail: "own REST surface: rest.rs".into(),
+                    weight: 3,
+                }],
+                ..EntryRecord::default()
+            },
+            occurrences: Vec::new(),
+        };
+        let json = serde_json::to_value(registry_entry_dto(entry)).unwrap();
+        assert_eq!(json["score"], 8);
+        assert_eq!(
+            json["evidence"][0],
+            serde_json::json!({"signal": "rest", "detail": "own REST surface: rest.rs", "weight": 3})
+        );
+
+        // No body is an empty one; a dry run says so.
+        assert_eq!(
+            declare_input(None),
+            crate::components_catalog::registry_declare::DeclareInput::default()
+        );
+        let body: RegistryDeclareRequest =
+            serde_json::from_value(serde_json::json!({"dry_run": true, "capabilities": ["docs"]}))
+                .unwrap();
+        let input = declare_input(Some(body));
+        assert!(input.dry_run);
+        assert_eq!(input.capabilities, Some(vec!["docs".to_owned()]));
+
+        let problem = format!(
+            "{:?}",
+            declare_problem(
+                crate::components_catalog::registry_declare::DeclareError::NotCandidate {
+                    state: "declared".into()
+                }
+            )
+        );
+        assert!(problem.contains("REGISTRY_NOT_A_CANDIDATE"), "{problem}");
     }
 
     #[test]

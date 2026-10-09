@@ -106,10 +106,20 @@ export function lookingFor(row: PlanRow): string {
   return `Gears are matched by ${parts.join(", then by ")}.`;
 }
 
+/** Code in the project's own repository that is not a gear yet: the
+ *  organization's registry found it looks like one (ADR-0041 P3). */
+export function couldBecomeGear(c: Candidate): boolean {
+  return c.origin === "project" && c.registry_state === "candidate";
+}
+
 /** Why a candidate is offered for a capability, and what stands in its way. */
 export function candidateReasons(c: Candidate, capability: string): string[] {
   const lines: string[] = [];
-  if (c.origin === "project") {
+  if (couldBecomeGear(c)) {
+    lines.push(
+      `Found in this project's own code${c.path ? `, at ${c.path}` : ""}, and not a gear yet: it looks like one, so it could become a gear. Declare it to open a pull request adding its gear.toml.`,
+    );
+  } else if (c.origin === "project") {
     lines.push(`Declared in this project's own repository${c.path ? `, at ${c.path}` : ""}: you already have it.`);
   }
   if (c.registry_state === "deprecated") {

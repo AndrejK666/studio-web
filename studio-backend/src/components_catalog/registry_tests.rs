@@ -34,6 +34,7 @@ fn read(project: Uuid, repo_key: &str, print: &str, gears: Vec<LocalGear>) -> Re
         commit: Some("c0ffee".into()),
         fingerprint: print.into(),
         gears,
+        ..RepoRead::default()
     }
 }
 

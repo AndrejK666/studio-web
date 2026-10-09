@@ -31,9 +31,11 @@ import {
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
 import { ScaffoldModal } from "./documents";
+import { ProjectCandidate } from "./component-registry";
 import {
   candidateReasons,
   candidateStrength,
+  couldBecomeGear,
   coverageSummary,
   gearProblem,
   lookingFor,
@@ -898,13 +900,23 @@ function SuggestedComponents({
                               )}
                               <ComponentLink nav={c.origin === "project" ? null : nav} name={c.name} />
                               <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
-                              {c.origin === "project" && (
+                              {couldBecomeGear(c) ? (
                                 <span
-                                  title={`Declared in this project's own repository${c.path ? `: ${c.path}` : ""}`}
+                                  title={`This project's own code${c.path ? ` at ${c.path}` : ""} looks like a gear and is not declared one: it could become a gear`}
                                   style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}
+                                  data-could-become-gear
                                 >
-                                  THIS REPO
+                                  COULD BE A GEAR
                                 </span>
+                              ) : (
+                                c.origin === "project" && (
+                                  <span
+                                    title={`Declared in this project's own repository${c.path ? `: ${c.path}` : ""}`}
+                                    style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}
+                                  >
+                                    THIS REPO
+                                  </span>
+                                )
                               )}
                               <span
                                 style={{
@@ -982,6 +994,7 @@ function SuggestedComponents({
                         {candidateReasons(shown, row.capability).map((l) => (
                           <div key={l}>{l}</div>
                         ))}
+                        {couldBecomeGear(shown) && <ProjectCandidate token={token} name={shown.name} projectId={projectId} />}
                         {rowSources.length > 0 && (
                           <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
                             <button type="button" disabled={busy} onClick={() => void decide(row.capability, shown, "confirmed")}>

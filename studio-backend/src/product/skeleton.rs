@@ -226,9 +226,123 @@ pub fn generate(spec: &SkeletonSpec) -> (String, Vec<ScaffoldFile>) {
     (slug, files)
 }
 
+/// A TOML basic string's contents: quotes and backslashes escaped, line
+/// breaks folded to spaces.
+fn toml_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+}
+
+/// The manifest that declares existing code a gear: what Declare it writes
+/// beside a module the registry found (ADR-0041 P3). One `[gear]` table in
+/// the shape [`generate`] writes, without the crate, the entrypoint or the
+/// docs -- the code is already there.
+///
+/// `gear_gdl`, the engine's description, is written beside it unless the
+/// directory is inside a crate's `src/`: there the catalogue reads a
+/// `gear.gdl` as a plugin compiled into its host crate, which this is not.
+pub fn declaration(
+    dir: &str,
+    name: &str,
+    description: &str,
+    category: Option<&str>,
+    capabilities: &[String],
+    plugin: bool,
+    gear_gdl: Option<String>,
+) -> Vec<ScaffoldFile> {
+    let dir = dir.trim().trim_matches('/');
+    let at = |file: &str| {
+        if dir.is_empty() {
+            file.to_owned()
+        } else {
+            format!("{dir}/{file}")
+        }
+    };
+    let category = category
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .unwrap_or("platform");
+    let mut gear_toml = format!(
+        "[gear]\nname = \"{}\"\ndescription = \"{}\"\ncategory = \"{}\"\nis_plugin = {plugin}\n\
+         has_plugins = false\nhas_extension_point = false\n",
+        toml_text(&title_case(&gear_slug(name))),
+        toml_text(description),
+        toml_text(category),
+    );
+    let keys: Vec<String> = capabilities
+        .iter()
+        .map(|k| k.trim().to_ascii_lowercase())
+        .filter(|k| {
+            !k.is_empty()
+                && k.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .map(|k| format!("\"{k}\""))
+        .collect();
+    if !keys.is_empty() {
+        gear_toml.push_str(&format!("capabilities = [{}]\n", keys.join(", ")));
+    }
+    let mut files = vec![ScaffoldFile {
+        path: at("gear.toml"),
+        content: gear_toml,
+    }];
+    let in_src = dir.split('/').any(|seg| seg == "src");
+    if let Some(gdl) = gear_gdl.filter(|_| !in_src) {
+        files.push(ScaffoldFile {
+            path: at("gear.gdl"),
+            content: gdl,
+        });
+    }
+    files
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_declaration_is_a_manifest_beside_the_code_and_a_gdl_outside_src() {
+        let files = declaration(
+            "studio-backend/src/documents/",
+            "documents",
+            "Documents \"and\" their\nversions",
+            None,
+            &["docs".into(), "bad key".into()],
+            false,
+            Some("gear \"documents\" {}\n".into()),
+        );
+        assert_eq!(files.len(), 1, "no gear.gdl inside a crate's src/");
+        assert_eq!(files[0].path, "studio-backend/src/documents/gear.toml");
+        let toml = &files[0].content;
+        assert!(toml.starts_with("[gear]\nname = \"Documents\"\n"), "{toml}");
+        assert!(
+            toml.contains("description = \"Documents \\\"and\\\" their versions\""),
+            "{toml}"
+        );
+        assert!(toml.contains("category = \"platform\""));
+        assert!(toml.contains("capabilities = [\"docs\"]\n"), "{toml}");
+
+        let crate_files = declaration(
+            "crates/billing",
+            "billing",
+            "Billing.",
+            Some("payments"),
+            &[],
+            false,
+            Some("gear \"billing\" {}\n".into()),
+        );
+        let paths: Vec<&str> = crate_files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            ["crates/billing/gear.toml", "crates/billing/gear.gdl"]
+        );
+        assert!(crate_files[0].content.contains("category = \"payments\""));
+        assert!(!crate_files[0].content.contains("capabilities"));
+    }
 
     fn spec(capability: &str) -> SkeletonSpec {
         SkeletonSpec {

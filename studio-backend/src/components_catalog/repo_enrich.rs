@@ -115,6 +115,9 @@ pub enum ProjectGearsRead {
     Read {
         fingerprint: String,
         gears: Arc<Vec<project_gears::LocalGear>>,
+        /// What looks like a gear and is not declared one, before the copy
+        /// signal (`candidates::detect`). Empty unless asked for.
+        candidates: Arc<Vec<super::candidates::Candidate>>,
     },
 }
 
@@ -667,7 +670,7 @@ impl RepoEnricher {
         ctx: &SecurityContext,
         cache: &project_gears::Cache,
     ) -> Result<Arc<Vec<project_gears::LocalGear>>> {
-        match self.project_gears_unless(ctx, cache, None).await? {
+        match self.project_gears_unless(ctx, cache, None, false).await? {
             ProjectGearsRead::Read { gears, .. } => Ok(gears),
             // Asked with no fingerprint to compare with, so never answered.
             ProjectGearsRead::Unchanged => Ok(Arc::new(Vec::new())),
@@ -707,11 +710,17 @@ impl RepoEnricher {
     /// fingerprint `known`: then only the tree listing is paid for, and the
     /// answer is [`ProjectGearsRead::Unchanged`]. What the registry walk asks,
     /// with the fingerprint it stored the last time.
+    ///
+    /// With `with_candidates`, also what looks like a gear and is not
+    /// declared one (`candidates::detect`): from the tree listing and the
+    /// files already read, plus at most `candidates::MAX_MANIFEST_READS`
+    /// `Cargo.toml` files.
     pub async fn project_gears_unless(
         &self,
         ctx: &SecurityContext,
         cache: &project_gears::Cache,
         known: Option<&str>,
+        with_candidates: bool,
     ) -> Result<ProjectGearsRead> {
         use project_gears::{LocalGear, MAX_FILE_BYTES, MAX_PROJECT_GEARS};
 
@@ -731,10 +740,11 @@ impl RepoEnricher {
             return Ok(ProjectGearsRead::Unchanged);
         }
         let key = self.repo_key();
-        if let Some(hit) = cache.get(&key, &print) {
+        if let Some((gears, candidates)) = cache.get_found(&key, &print, with_candidates) {
             return Ok(ProjectGearsRead::Read {
                 fingerprint: print,
-                gears: hit,
+                gears,
+                candidates,
             });
         }
         let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
@@ -871,15 +881,36 @@ impl RepoEnricher {
                 }
             }
         }
+        // What looks like a gear and is not declared one: from the tree, the
+        // Rust files read above, and the manifests (bounded).
+        let candidates = if with_candidates {
+            let mut texts: std::collections::HashMap<String, String> = bodies
+                .into_iter()
+                .filter_map(|(path, body)| body.map(|b| (path.to_string(), b)))
+                .collect();
+            for manifest in super::candidates::manifests_to_read(&paths) {
+                if texts.contains_key(manifest) {
+                    continue;
+                }
+                if let Some(body) = self.read_file(&src, manifest).await {
+                    texts.insert(manifest.to_string(), body);
+                }
+            }
+            Some(Arc::new(super::candidates::detect(&files, &texts, &gears)))
+        } else {
+            None
+        };
         info!(
             repo = %self.repo, gears = gears.len(),
+            candidates = candidates.as_ref().map_or(0, |c| c.len()),
             "studio-components-catalog: project gears discovered"
         );
         let gears = Arc::new(gears);
-        cache.put(key, print.clone(), Arc::clone(&gears));
+        cache.put_found(key, print.clone(), Arc::clone(&gears), candidates.clone());
         Ok(ProjectGearsRead::Read {
             fingerprint: print,
             gears,
+            candidates: candidates.unwrap_or_default(),
         })
     }
 

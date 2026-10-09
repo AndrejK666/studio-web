@@ -4,6 +4,7 @@ import type { Candidate, PlanRow } from "./api";
 import {
   candidateReasons,
   candidateStrength,
+  couldBecomeGear,
   coverageSummary,
   gearProblem,
   lookingFor,
@@ -87,6 +88,17 @@ describe("why a gear is offered", () => {
     expect(candidateReasons(cand("studio-documents", { origin: "project", path: "studio-backend/src/documents" }), "storage")[0]).toBe(
       "Declared in this project's own repository, at studio-backend/src/documents: you already have it.",
     );
+  });
+
+  it("offers a registry candidate in the project's code as something that could become a gear", () => {
+    const c = cand("documents", { origin: "project", path: "studio-backend/src/documents", registry_state: "candidate" });
+    expect(couldBecomeGear(c)).toBe(true);
+    const first = candidateReasons(c, "storage")[0];
+    expect(first).toContain("not a gear yet");
+    expect(first).toContain("at studio-backend/src/documents");
+    expect(first).toContain("Declare it");
+    expect(couldBecomeGear(cand("documents", { origin: "project", registry_state: "declared" }))).toBe(false);
+    expect(couldBecomeGear(cand("documents", { registry_state: "candidate" }))).toBe(false);
   });
 
   it("says when the organization's registry deprecated the gear, and what replaces it", () => {

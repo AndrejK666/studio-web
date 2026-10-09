@@ -360,7 +360,8 @@ export interface RegistryOccurrence {
   git_ref?: string | null;
   path: string;
   commit?: string | null;
-  /** `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`. */
+  /** `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`; `detected`
+   *  where a candidate detector found it and nothing declares it. */
   declared_in: string;
 }
 
@@ -443,7 +444,39 @@ export interface RegistryEntry {
   orphaned: boolean;
   first_seen?: string | null;
   last_seen?: string | null;
+  /** For a `candidate`: the sum of its evidence's weights (P3). */
+  score?: number | null;
+  /** For a `candidate`: why it looks like a gear, signal by signal. */
+  evidence?: RegistryEvidence[];
   occurrences: RegistryOccurrence[];
+}
+
+/** One signal a candidate detector found (ADR-0041 P3). */
+export interface RegistryEvidence {
+  /** `rest`, `persistence`, `types`, `boundary`, `docs`, `consumers` or `copied`. */
+  signal: string;
+  /** "own REST surface: rest.rs", "used by 3 modules", "copied in insight". */
+  detail: string;
+  weight: number;
+}
+
+/** What `POST /registry/{name}/declare` takes; all optional. */
+export interface RegistryDeclareInput {
+  description?: string;
+  capabilities?: string[];
+  category?: string;
+  dry_run?: boolean;
+  project_id?: string;
+}
+
+/** What Declare it did, or would do on a dry run. */
+export interface RegistryDeclareResult {
+  branch: string;
+  pr_url?: string | null;
+  files: { path: string; content: string }[];
+  repo: string;
+  path: string;
+  dry_run: boolean;
 }
 
 /** A capability a project's documents declare, and the documents that do. */
@@ -3902,6 +3935,14 @@ export const api = {
     request<{ project_ids: string[] }>("/studio-components-catalog/v1/registry/excluded-projects", token, {
       method: "PUT",
       body: JSON.stringify({ project_ids: projectIds }),
+    }),
+  /** Declare a candidate a gear (ADR-0041 P3): a pull request adding its
+   *  `gear.toml` (and `gear.gdl`) in the repository it was found in. With
+   *  `dry_run`, only the files. An organization administrator only. */
+  declareRegistry: (token: string, name: string, input: RegistryDeclareInput = {}) =>
+    request<RegistryDeclareResult>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/declare`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
     }),
   /** Poll a background catalog sync. The task id is a studio-tasks run id,
    * read through `taskRun`; the counts are the run's `result`. */
