@@ -270,3 +270,29 @@ fn a_cached_answer_is_served_only_for_the_same_files() {
     assert!(cache.get("k", "2").is_none());
     assert!(cache.get("other", "1").is_none());
 }
+
+/// studio-documents' own `mod.rs` names its test files above its attribute
+/// (`#[cfg(test)] mod repo_tests;`). Those lines are not where the tests
+/// begin: stopping there lost the gear on the local stand.
+#[test]
+fn a_test_file_named_above_the_attribute_does_not_hide_the_gear() {
+    let body = "mod repo;\n\
+                #[cfg(test)]\n\
+                mod repo_tests;\n\
+                #[cfg(test)]\n\
+                // a comment\n\
+                mod sync_analysis_tests;\n\
+                \n\
+                #[toolkit::gear(\n    name = \"studio-documents\",\n    deps = [types_registry]\n)]\n\
+                pub struct Documents;\n\
+                #[cfg(test)]\n\
+                mod tests {\n\
+                #[toolkit::gear(name = \"a-test-gear\")]\n\
+                struct T;\n\
+                }\n";
+    let names: Vec<String> = code_declarations(body)
+        .into_iter()
+        .map(|g| g.name)
+        .collect();
+    assert_eq!(names, vec!["studio-documents"]);
+}

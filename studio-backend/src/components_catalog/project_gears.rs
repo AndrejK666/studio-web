@@ -142,6 +142,15 @@ pub struct CodeGear {
 /// generated into a string (`product::skeleton`) does not. Reading stops at
 /// the file's `#[cfg(test)]`: a gear a test declares is not the project's.
 /// An attribute without a `name` names no gear and is skipped.
+/// Whether the item after a `#[cfg(test)]` ends on its own line (`mod x;`,
+/// `use y;`), rather than opening a body.
+fn cfg_test_item_is_one_line(rest: &str) -> bool {
+    rest.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with("//") && !l.starts_with("#["))
+        .is_some_and(|l| l.ends_with(';'))
+}
+
 pub fn code_declarations(body: &str) -> Vec<CodeGear> {
     let mut out = Vec::new();
     let mut offset = 0;
@@ -150,6 +159,13 @@ pub fn code_declarations(body: &str) -> Vec<CodeGear> {
         offset += line.len();
         let trimmed = line.trim_start();
         if trimmed.starts_with("#[cfg(test)]") {
+            // `#[cfg(test)] mod repo_tests;` only names a test file, and a
+            // gear's own `mod.rs` usually has a few of them above its
+            // attribute (studio-documents does). Only an item with a body --
+            // the inline `mod tests { … }` -- is where the tests begin.
+            if cfg_test_item_is_one_line(&body[offset..]) {
+                continue;
+            }
             break;
         }
         if !ATTRIBUTES.iter().any(|a| {
@@ -431,7 +447,7 @@ fn relevant(path: &str) -> bool {
 /// What discovery is: moved whenever the rules here change what a repository
 /// is read as, so a stored fingerprint from the old rules no longer matches
 /// and every repository is read again once.
-pub const DISCOVERY_VERSION: &str = "project-gears/2";
+pub const DISCOVERY_VERSION: &str = "project-gears/3";
 
 /// A fingerprint of the files the answer depends on, from the tree listing's
 /// `(path, blob sha)` pairs: equal while none of them changed.
