@@ -343,6 +343,43 @@ export interface Conformance {
   gearbox: ProductChange[];
 }
 
+/** One catalogue source, as the sync takes it and the server keeps it. */
+export interface CatalogRepoSource {
+  tenant: string;
+  connection_id: string | null;
+  repo: string;
+  git_ref: string | null;
+  mode: string;
+}
+
+/** Where a registry entry was found. */
+export interface RegistryOccurrence {
+  project_id?: string | null;
+  project_name?: string | null;
+  repo: string;
+  git_ref?: string | null;
+  path: string;
+  commit?: string | null;
+  /** `gear.toml`, `gear.gdl`, `attribute`, `package` or `kit`. */
+  declared_in: string;
+}
+
+/** One component of the organization's registry (ADR-0041). */
+export interface RegistryEntry {
+  name: string;
+  kind: string;
+  /** `candidate`, `declared`, `registered`, `published`, `rejected` or `deprecated`. */
+  state: string;
+  description?: string | null;
+  owner?: string | null;
+  capabilities: string[];
+  /** No repository declares it any more; kept because it was the organization's. */
+  orphaned: boolean;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  occurrences: RegistryOccurrence[];
+}
+
 /** A capability a project's documents declare, and the documents that do. */
 export interface DeclaredCapability {
   key: string;
@@ -3758,6 +3795,29 @@ export const api = {
       method: "POST",
       headers: idempotent(),
       ...(body ? { body: JSON.stringify(body) } : {}),
+    }),
+  /** The organization's catalogue sources kept on the server (ADR-0041): what
+   *  a scheduled sync reads when nobody names the sources. */
+  catalogSources: (token: string) =>
+    request<{ items: CatalogRepoSource[]; total: number }>("/studio-components-catalog/v1/sources", token),
+  saveCatalogSources: (token: string, items: CatalogRepoSource[]) =>
+    request<{ items: CatalogRepoSource[]; total: number }>("/studio-components-catalog/v1/sources", token, {
+      method: "PUT",
+      body: JSON.stringify({ items }),
+    }),
+  /** The organization's component registry (ADR-0041): every component its
+   *  projects declare, with where each was found. */
+  componentRegistry: (token: string, params: { state?: string; project_id?: string; q?: string } = {}) => {
+    const qs = new URLSearchParams({ limit: "500" });
+    for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
+    return request<{ items: RegistryEntry[]; total: number }>(`/studio-components-catalog/v1/registry?${qs}`, token);
+  },
+  registryExcludedProjects: (token: string) =>
+    request<{ project_ids: string[] }>("/studio-components-catalog/v1/registry/excluded-projects", token),
+  saveRegistryExcludedProjects: (token: string, projectIds: string[]) =>
+    request<{ project_ids: string[] }>("/studio-components-catalog/v1/registry/excluded-projects", token, {
+      method: "PUT",
+      body: JSON.stringify({ project_ids: projectIds }),
     }),
   /** Poll a background catalog sync. The task id is a studio-tasks run id,
    * read through `taskRun`; the counts are the run's `result`. */

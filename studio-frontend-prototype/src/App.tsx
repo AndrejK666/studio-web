@@ -2582,6 +2582,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             categoryFilter={filters.gearCategory}
             onCategories={setComponentCategories}
             focus={componentFocus}
+            projects={workspaces.filter((w) => w.orgId === orgAsSpace?.id).map((w) => ({ id: w.id, name: w.name }))}
           />
         )}
         {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
