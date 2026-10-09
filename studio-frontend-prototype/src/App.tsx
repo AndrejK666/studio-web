@@ -115,6 +115,8 @@ import { gearParentDir, gearSlug } from "./scaffold";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
+import { orgPeople } from "./org-people";
+import { PullRequestsOnMe } from "./pull-requests-on-me";
 import {
   BookIcon,
   CheckIcon,
@@ -6455,6 +6457,8 @@ function HomeView({
           )}
         </div>
 
+        <PullRequestsOnMe token={token} workspaces={workspaces} onOpenWorkspace={onOpenDashboard} />
+
         <div className="card">
           <h2>Build</h2>
           <ul className="home-links">
@@ -9109,8 +9113,9 @@ function AccessView({
     };
   }, [token, org]);
 
-  // Grant subjects: org accounts (owned by the org tenant or its projects) and
-  // teams (RG groups). Best-effort — a failed load just leaves a picker empty.
+  // Grant subjects: the organization's members, by person id — the key every
+  // grant names (ADR-0040 §5) — and teams (RG groups). Best-effort: a failed
+  // load just leaves a picker empty.
   useEffect(() => {
     let live = true;
     if (!org) {
@@ -9118,15 +9123,10 @@ function AccessView({
       setTeams([]);
       return;
     }
-    const ids = [org.id, ...projects.map((p) => p.id)];
-    Promise.all(
-      ids.map((id) => api.tenantUsersAll(token, id).then((p) => p.items ?? [], () => [])),
-    ).then((lists) => {
-      if (!live) return;
-      const m = new Map<string, { id: string; name: string }>();
-      for (const u of lists.flat()) m.set(u.id, { id: u.id, name: u.display_name ?? u.username });
-      setMembers([...m.values()].sort((a, b) => a.name.localeCompare(b.name)));
-    });
+    orgPeople(token, org.id).then(
+      (people) => live && setMembers(people.map((p) => ({ id: p.id, name: p.name }))),
+      () => live && setMembers([]),
+    );
     api.groups(token).then(
       (p) =>
         live &&
@@ -9136,7 +9136,23 @@ function AccessView({
     return () => {
       live = false;
     };
-  }, [token, org, projects]);
+  }, [token, org]);
+
+  // The caller as a person: what a grant names (ADR-0040 §5). Until it is
+  // known — or on a backend without studio-user — the sign-in subject stands
+  // in, which every grant matcher still accepts.
+  const [personId, setPersonId] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.myProfile(token).then(
+      (p) => live && setPersonId(p.id),
+      () => live && setPersonId(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [token]);
+  const myKeys = [personId, meId].filter((k): k is string => !!k);
 
   function mutate(next: AccessConfig) {
     setCfg(next);
@@ -9170,7 +9186,7 @@ function AccessView({
   }
 
   const selfGranted = (c: AccessConfig): boolean =>
-    c.grants.some((g) => g.subjectType === "member" && g.subjectId === meId);
+    c.grants.some((g) => g.subjectType === "member" && myKeys.includes(g.subjectId));
 
   /** Give the current user an org-wide Owner grant so enabling roles can't lock
    *  them out. Returns the config with the grant appended (idempotent). */
@@ -9180,7 +9196,7 @@ function AccessView({
     const grant: GrantDef = {
       id: `g_self_${Date.now().toString(36)}`,
       subjectType: "member",
-      subjectId: meId,
+      subjectId: personId ?? meId,
       subjectName: `${meName} (you)`,
       roleKey: ownerKey,
       scopeType: "org",
