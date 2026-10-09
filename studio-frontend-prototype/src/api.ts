@@ -360,6 +360,12 @@ export interface DeclaredCapability {
     inferred?: boolean;
     /** For an inferred capability, the requirements that imply it. */
     because?: string[];
+    /** For an inferred capability, the capability's words those requirements
+     *  use. Empty until a document indexed before this was kept is read again. */
+    terms?: string[];
+    /** For an inferred capability, how many requirements mention it; `because`
+     *  lists the first few. */
+    requirements?: number;
     /** `false` for a repository file nobody has confirmed on the Specs tab. */
     confirmed?: boolean;
   }[];
@@ -540,6 +546,17 @@ export interface PlanRow {
   nonfunctional?: boolean;
   /** The documents that need it, when the plan was read for a project. */
   sources?: DeclaredCapability["sources"];
+  /** The capability's name in the vocabulary (project plans only). */
+  label?: string | null;
+  /** The words a gear is looked for with; empty means the key itself. */
+  terms?: string[];
+  /** The contracts that satisfy it. */
+  contracts?: string[];
+  /** Every component that fills it, past the shortlist in `candidates`:
+   *  what the product's picks are checked against. Rejected gears are left
+   *  out. `strong`: a contract, a declaration or a member's confirmation;
+   *  otherwise only its words were found. */
+  providers?: { name: string; strong: boolean }[];
 }
 
 /** One weekly bar of a gear's churn. */

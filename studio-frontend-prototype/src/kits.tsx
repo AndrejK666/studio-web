@@ -28,6 +28,15 @@ import {
   groupDiagnostics,
 } from "./product";
 import { usePortalNav, type PortalNav } from "./portal-nav";
+import {
+  candidateReasons,
+  candidateStrength,
+  coverageSummary,
+  lookingFor,
+  picksBeyondShortlist,
+  rowCoverage,
+  specReasons,
+} from "./spec-coverage";
 import { DesktopMissingHint, desktopLink, useDesktopLauncher } from "./open-in-desktop";
 
 export function ProjectKits({
@@ -540,6 +549,16 @@ function SuggestedComponents({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const nav = usePortalNav();
+  /** Rows whose "why" is open: `true` for the capability, a name for one candidate. */
+  const [whyOpen, setWhyOpen] = useState<Record<string, string | true>>({});
+  const toggleWhy = (capability: string, candidate?: string) =>
+    setWhyOpen((current) => {
+      const next = { ...current };
+      const want: string | true = candidate ?? true;
+      if (next[capability] === want) delete next[capability];
+      else next[capability] = want;
+      return next;
+    });
 
   const suggest = async () => {
     setBusy(true);
@@ -607,6 +626,7 @@ function SuggestedComponents({
   const gaps = plan?.filter((r) => r.gap).length ?? 0;
   const unbuilt = plan?.filter((r) => r.unbuilt).length ?? 0;
   const composing = product.composing;
+  const coverage = plan ? coverageSummary(plan, product.picks) : null;
 
   return (
     <section className="card" style={{ marginBottom: 16 }}>
@@ -668,157 +688,241 @@ function SuggestedComponents({
                 )}
               </p>
             )}
+            {composing && coverage && coverage.total > 0 && (
+              <p style={{ fontSize: 13, margin: "0 0 12px" }}>
+                <b>
+                  Your product closes {coverage.covered} of {coverage.total} capabilit
+                  {coverage.total === 1 ? "y" : "ies"}
+                </b>
+                {coverage.weak > 0 && ` · ${coverage.weak} only by a gear that mentions its words`}
+                {coverage.open > 0 && ` · ${coverage.open} not closed by any gear in it`}.
+              </p>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {plan.map((row) => (
-                <div
-                  key={row.capability}
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    padding: "8px 10px",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
-                    {(sources[row.capability] ?? []).length > 0 && (
-                      <span
-                        style={{ fontSize: 11, opacity: 0.65 }}
-                        title={(sources[row.capability] ?? [])
-                          .map(
-                            (src) =>
-                              `${src.label}: ${src.inferred ? `implied by ${src.because?.join("; ") || "its requirements"}` : "declared in its front matter"}${src.confirmed === false ? " (not confirmed on the Specs tab)" : ""}`,
-                          )
-                          .join("\n")}
+              {plan.map((row) => {
+                const cover = rowCoverage(row, product.picks);
+                const open = whyOpen[row.capability];
+                const shown = typeof open === "string" ? row.candidates.find((c) => c.name === open) : undefined;
+                const beyond = composing ? picksBeyondShortlist(row, product.picks) : [];
+                const rowSources = sources[row.capability] ?? [];
+                const reasons = open === true ? specReasons(row) : [];
+                return (
+                  <div
+                    key={row.capability}
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      padding: "8px 10px",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
+                      {row.label && row.label.toLowerCase() !== row.capability && (
+                        <span style={{ fontSize: 12 }}>{row.label}</span>
+                      )}
+                      {composing && cover.cover === "covered" && (
+                        <span
+                          className="badge ok"
+                          title="A gear in the product provides its contract, declares it, or a member confirmed it"
+                        >
+                          closed by {cover.strong.join(", ")}
+                        </span>
+                      )}
+                      {composing && cover.cover === "weak" && (
+                        <span
+                          className="badge warn"
+                          title="The product's gears only mention its words: they talk about the subject, which does not prove they do the job"
+                        >
+                          only by words: {cover.weak.join(", ")}
+                        </span>
+                      )}
+                      {composing && cover.cover === "open" && (
+                        <span className="badge danger" title="No gear in the product fills it">
+                          not closed
+                        </span>
+                      )}
+                      {rowSources.length > 0 && (
+                        <span style={{ fontSize: 11, opacity: 0.65 }}>
+                          from {rowSources.map((src) => src.label).join(", ")}
+                          {rowSources.every((src) => src.inferred) && " · read from the requirements"}
+                          {rowSources.every((src) => src.confirmed === false) && " · unconfirmed"}
+                        </span>
+                      )}
+                      {row.gap && (
+                        <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>NOTHING IN THE CATALOGUE</span>
+                      )}
+                      {row.unbuilt && (
+                        <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>NOTHING BUILT YET</span>
+                      )}
+                      {row.nonfunctional && (
+                        <span
+                          style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}
+                          title="Answered by the deployment profile, not by a gear"
+                        >
+                          WHERE IT RUNS — THE PROFILE, NOT A GEAR
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="linklike"
+                        style={{ marginLeft: "auto", fontSize: 12 }}
+                        aria-expanded={open === true}
+                        onClick={() => toggleWhy(row.capability)}
                       >
-                        from {(sources[row.capability] ?? []).map((src) => src.label).join(", ")}
-                        {(sources[row.capability] ?? []).every((src) => src.inferred) && " · read from the requirements"}
-                        {(sources[row.capability] ?? []).every((src) => src.confirmed === false) && " · unconfirmed"}
-                      </span>
+                        {open === true ? "Hide why" : "Why?"}
+                      </button>
+                    </div>
+                    {open === true && (
+                      <div style={whyPanelStyle}>
+                        <div style={{ fontWeight: 700, marginBottom: 2 }}>Why the specs ask for it</div>
+                        {reasons.length === 0 ? (
+                          <div style={{ opacity: 0.7 }}>No document is recorded for it.</div>
+                        ) : (
+                          reasons.map((r) => (
+                            <div key={r.document} style={{ marginBottom: 4 }}>
+                              <code>{r.document}</code>
+                              {r.lines.map((l) => (
+                                <div key={l}>{l}</div>
+                              ))}
+                            </div>
+                          ))
+                        )}
+                        {!row.nonfunctional && (
+                          <div style={{ opacity: 0.75, marginTop: 4 }}>
+                            {lookingFor(row)} A gear&apos;s ? says why it was offered.
+                          </div>
+                        )}
+                      </div>
                     )}
-                    {row.gap && (
-                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
-                        NOTHING IN THE CATALOGUE
-                      </span>
-                    )}
-                    {row.unbuilt && (
-                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>
-                        NOTHING BUILT YET
-                      </span>
-                    )}
-                    {row.nonfunctional && (
-                      <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }} title="Answered by the deployment profile, not by a gear">
-                        WHERE IT RUNS — THE PROFILE, NOT A GEAR
-                      </span>
-                    )}
-                  </div>
-                  {row.candidates.length > 0 && (
-                    <div
-                      style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}
-                    >
-                      {row.candidates.map((c) => {
-                        const pickable = composing && isPickable(c);
-                        const picked = pickable && product.picks.includes(c.name);
-                        return (
-                          <span
-                            key={c.name}
-                            title={
-                              matchReason(c) +
-                              (c.built === "docs-only"
-                                ? " · the catalogue found no crate under this component — docs and a manifest only"
-                                : "")
-                            }
-                            style={{
-                              ...chipStyle(picked),
-                              opacity: c.built === "docs-only" ? 0.6 : 1,
-                            }}
-                          >
-                            {pickable && (
-                              <button
-                                type="button"
-                                aria-pressed={picked}
-                                title={picked ? "In the product — click to take it out" : "Put it into the product"}
-                                onClick={() => product.toggle(c.name)}
-                                style={chipToggleStyle}
-                              >
-                                {picked ? "✓" : "+"}
-                              </button>
-                            )}
-                            <ComponentLink nav={nav} name={c.name} />
-                            <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
-                            {c.step === "contract" ? (
-                              <span title={matchReason(c)} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--success, var(--primary))" }}>
-                                CONTRACT
-                              </span>
-                            ) : c.declared ? (
-                              <span title="The gear declares this capability itself" style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}>
-                                DECLARED
-                              </span>
-                            ) : (
-                              <span title={matchReason(c)} style={{ marginLeft: 5, fontSize: 9, opacity: 0.55 }}>
-                                by words
-                              </span>
-                            )}
-                            {c.composable === "runs" && (
-                              <span title="Described for composition: the Gearbox engine can put it into a product" style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--success, var(--primary))" }}>
-                                GDL
-                              </span>
-                            )}
-                            {c.composable === "blocked" && (
-                              <span title={`Described, but cannot run from this corpus: ${c.composable_why ?? ""}`} style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--danger, #c33)" }}>
-                                BLOCKED
-                              </span>
-                            )}
-                            {c.built === "docs-only" && (
-                              <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>
-                            )}
-                            {c.decision && (
-                              <span
-                                title={
-                                  c.decision.needs_review
-                                    ? "The document or the gear changed since this was decided — decide again"
-                                    : `A member ${c.decision.decision} this mapping`
-                                }
-                                style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, opacity: c.decision.needs_review ? 0.6 : 1 }}
-                              >
-                                {c.decision.decision === "confirmed" ? "CONFIRMED" : "REJECTED"}
-                                {c.decision.needs_review && " · REVIEW"}
-                              </span>
-                            )}
-                            {(sources[row.capability] ?? []).length > 0 && (
-                              <>
+                    {(row.candidates.length > 0 || beyond.length > 0) && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                        {row.candidates.map((c) => {
+                          const pickable = composing && isPickable(c);
+                          const picked = pickable && product.picks.includes(c.name);
+                          const strong = candidateStrength(c) === "strong";
+                          return (
+                            <span
+                              key={c.name}
+                              title={
+                                matchReason(c) +
+                                (c.built === "docs-only"
+                                  ? " · the catalogue found no crate under this component — docs and a manifest only"
+                                  : "")
+                              }
+                              style={{
+                                ...chipStyle(picked),
+                                opacity: c.built === "docs-only" ? 0.6 : 1,
+                              }}
+                            >
+                              {pickable && (
                                 <button
                                   type="button"
-                                  title="Confirm: this gear covers the capability"
-                                  disabled={busy}
-                                  onClick={() => void decide(row.capability, c, "confirmed")}
-                                  style={{ ...chipToggleStyle, marginLeft: 6 }}
-                                >
-                                  ✓
-                                </button>
-                                <button
-                                  type="button"
-                                  title="Reject: this gear does not cover the capability"
-                                  disabled={busy}
-                                  onClick={() => void decide(row.capability, c, "rejected")}
+                                  aria-pressed={picked}
+                                  title={picked ? "In the product — click to take it out" : "Put it into the product"}
+                                  onClick={() => product.toggle(c.name)}
                                   style={chipToggleStyle}
                                 >
-                                  ✗
+                                  {picked ? "✓" : "+"}
                                 </button>
-                              </>
-                            )}
+                              )}
+                              <ComponentLink nav={nav} name={c.name} />
+                              <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
+                              <span
+                                style={{
+                                  marginLeft: 5,
+                                  fontSize: 9,
+                                  fontWeight: strong ? 700 : 400,
+                                  opacity: strong ? 1 : 0.55,
+                                  color: strong ? "var(--success, var(--primary))" : undefined,
+                                }}
+                              >
+                                {c.step === "contract" ? "CONTRACT" : c.declared ? "DECLARED" : strong ? "CONFIRMED" : "words"}
+                              </span>
+                              {c.composable === "blocked" && (
+                                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--danger, #c33)" }}>
+                                  BLOCKED
+                                </span>
+                              )}
+                              {c.built === "docs-only" && <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>}
+                              {c.decision?.decision === "rejected" && !c.decision.needs_review && (
+                                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}>REJECTED</span>
+                              )}
+                              {c.decision?.needs_review && (
+                                <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, opacity: 0.6 }}>REVIEW</span>
+                              )}
+                              <button
+                                type="button"
+                                title="Why this gear is offered for this capability"
+                                aria-expanded={shown?.name === c.name}
+                                onClick={() => toggleWhy(row.capability, c.name)}
+                                style={{ ...chipToggleStyle, marginLeft: 6, padding: "0 2px" }}
+                              >
+                                ?
+                              </button>
+                            </span>
+                          );
+                        })}
+                        {beyond.map((p) => (
+                          <span
+                            key={p.name}
+                            title="In the product and fills this capability; ranked below the candidates shown"
+                            style={chipStyle(true)}
+                          >
+                            <span style={{ ...chipToggleStyle, cursor: "default" }}>✓</span>
+                            <ComponentLink nav={nav} name={p.name} />
+                            <span style={{ marginLeft: 5, fontSize: 9, opacity: p.strong ? 1 : 0.55 }}>
+                              in the product{p.strong ? "" : " · words"}
+                            </span>
                           </span>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ))}
+                        ))}
+                      </div>
+                    )}
+                    {shown && (
+                      <div style={whyPanelStyle}>
+                        <div style={{ fontWeight: 700, marginBottom: 2 }}>
+                          Why {shown.name} for {row.capability}
+                        </div>
+                        {candidateReasons(shown, row.capability).map((l) => (
+                          <div key={l}>{l}</div>
+                        ))}
+                        {rowSources.length > 0 && (
+                          <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
+                            <button type="button" disabled={busy} onClick={() => void decide(row.capability, shown, "confirmed")}>
+                              It fills {row.capability}
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost"
+                              disabled={busy}
+                              onClick={() => void decide(row.capability, shown, "rejected")}
+                            >
+                              It does not
+                            </button>
+                            <span style={{ opacity: 0.65 }}>
+                              Recorded for the project: a confirmed gear closes the capability and ranks first; a
+                              rejected one stops being offered for it.
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </>
         ))}
     </section>
   );
 }
+
+const whyPanelStyle = {
+  fontSize: 12,
+  margin: "6px 0 2px",
+  padding: "6px 8px",
+  background: "var(--muted, rgba(0,0,0,0.04))",
+  borderRadius: 6,
+} as const;
 
 /* ── The project's product ────────────────────────────────────────────────── */
 

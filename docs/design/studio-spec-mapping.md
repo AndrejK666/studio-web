@@ -121,6 +121,18 @@ then by how many terms they match, and the shortlist is cut after that sort.
 Components never built are labelled rather than dropped, because a design may
 name a component that is still only a design.
 
+#### Coverage is judged on every provider, and only sure ones close
+
+- [x] `p2` - **ID**: `cpt-studio-principle-spec-mapping-coverage`
+
+The shortlist is what a person reads; it is not what a product is checked
+against. Each plan row also carries its `providers`, every component that fills
+the capability before the cut, so a pick ranked sixth still counts. A provider
+is `strong` when the engine reports a contract it provides, when it declares
+the capability, or when a member confirmed it. A gear found by its words alone
+talks about the subject, which does not prove it does the job, so the screens
+say "only by words" rather than "closed". A rejected gear is no provider.
+
 #### A decision ranks, and expires with what it was about
 
 - [ ] `p1` - **ID**: `cpt-studio-principle-spec-mapping-decisions-rank`
@@ -170,13 +182,16 @@ organization. A project the caller cannot reach answers 404.
 
 - **Need**: a capability key a project's documents need, with the documents
   that say so. Each source says whether the capability was `inferred` (with the
-  requirement headings `because`) and whether the document is `confirmed`.
+  requirement headings `because`, how many `requirements` mention it and which
+  of its `terms` they use) and whether the document is `confirmed`.
 - **Requirement**: one non-functional statement and its document.
 - **Vocabulary**: per capability key, its `terms`, its `contracts` and whether it
   is `nonfunctional`; the documents gear's catalogue, built-ins overlaid by the
   organization and the workspace.
-- **Plan row**: one capability, its `sources`, its candidates, and whether it is
-  a `gap`, `unbuilt` or `nonfunctional`.
+- **Plan row**: one capability, its `label`, the `terms` and `contracts` it is
+  looked for with, its `sources`, its shortlisted candidates, every `provider`
+  (with whether it is `strong`), and whether it is a `gap`, `unbuilt` or
+  `nonfunctional`.
 - **Candidate**: a gear with the `step` that proposed it (`contract` or
   `evidence`), the `contracts` it provides or the `passage` it was found by
   (and the document it `cites`), its build state, what the engine says, its

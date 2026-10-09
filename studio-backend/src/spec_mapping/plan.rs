@@ -255,6 +255,36 @@ pub struct PlanRow {
     /// The capability is answered by the deployment profile, not by gears, so
     /// it offers none and is not a gap.
     pub nonfunctional: bool,
+    /// EVERY component that fills it, before the shortlist is cut: what a
+    /// product's picks are checked against. A gear a member rejected for this
+    /// capability is not one.
+    pub providers: Vec<Provider>,
+}
+
+/// A component that fills a capability, and how surely.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provider {
+    pub name: String,
+    /// The engine reports a contract it provides, the gear declares the
+    /// capability, or a member confirmed it. Otherwise it was only found by
+    /// its words, which says the gear talks about the subject, not that it
+    /// does the job.
+    pub strong: bool,
+}
+
+impl Provider {
+    fn of(c: &Candidate) -> Option<Self> {
+        let decided = c.decision.as_ref().filter(|d| !d.needs_review);
+        if decided.is_some_and(|d| d.decision == "rejected") {
+            return None;
+        }
+        Some(Provider {
+            name: c.name.clone(),
+            strong: c.step == Step::Contract
+                || c.declared
+                || decided.is_some_and(|d| d.decision == "confirmed"),
+        })
+    }
 }
 
 /// How many candidates a row offers before the tail is cut.
@@ -576,6 +606,7 @@ fn plan_with_limit(
                     gap: false,
                     unbuilt: false,
                     nonfunctional: true,
+                    providers: Vec::new(),
                 };
             }
             let own = vec![capability.clone()];
@@ -699,6 +730,7 @@ fn plan_with_limit(
             // one; before the cut, so the duplicate does not eat a slot.
             let mut seen = std::collections::HashSet::new();
             candidates.retain(|c| seen.insert(c.name.clone()));
+            let providers: Vec<Provider> = candidates.iter().filter_map(Provider::of).collect();
             if let Some(n) = limit {
                 candidates.truncate(n);
             }
@@ -714,6 +746,7 @@ fn plan_with_limit(
                 unbuilt,
                 candidates,
                 nonfunctional: false,
+                providers,
             }
         })
         .collect()
@@ -933,6 +966,52 @@ mod tests {
     }
 
     // ---- contract first, evidence second, gap last -----------------------
+
+    /// A product's picks are checked against every gear that fills the
+    /// capability, not the five shown: a pick ranked sixth still covers it.
+    /// Only a contract, a declaration or a member's confirmation makes it a
+    /// strong cover; a rejected gear covers nothing.
+    #[test]
+    fn providers_are_every_match_past_the_shortlist_and_say_how_sure() {
+        let mut components: Vec<Value> = (0..7)
+            .map(|i| component(&format!("wordy-{i}"), "login screens"))
+            .collect();
+        components.push(component("declares", "x"));
+        components.push(component("rejected", "login"));
+        let mut vocab = vocabulary(&[("auth", &["login"])]);
+        vocab.decisions = vec![
+            PastDecision {
+                capability: "auth".into(),
+                gear: "rejected".into(),
+                decision: "rejected".into(),
+                gear_version: None,
+                document_changed: false,
+            },
+            PastDecision {
+                capability: "auth".into(),
+                gear: "wordy-6".into(),
+                decision: "confirmed".into(),
+                gear_version: None,
+                document_changed: false,
+            },
+        ];
+        let profiles: serde_json::Map<String, Value> = [(
+            "declares".to_owned(),
+            json!({ "auto": { "capabilities": { "v": "auth" } } }),
+        )]
+        .into_iter()
+        .collect();
+        let rows = plan(&["auth".to_owned()], &components, &profiles, &vocab);
+        let row = &rows[0];
+        assert_eq!(row.candidates.len(), SHORTLIST);
+        let names: Vec<&str> = row.providers.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(row.providers.len(), 8, "{names:?}");
+        assert!(!names.contains(&"rejected"));
+        let strong = |n: &str| row.providers.iter().find(|p| p.name == n).unwrap().strong;
+        assert!(strong("declares"));
+        assert!(strong("wordy-6"), "a confirmed mapping is a strong cover");
+        assert!(!strong("wordy-0"), "found by its words only");
+    }
 
     #[test]
     fn a_contract_is_satisfied_by_its_id_any_version_or_a_gts_chain_ending_in_it() {
