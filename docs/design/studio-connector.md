@@ -191,11 +191,17 @@ question through `connectors::sdk` without reaching into another gear:
   the same rule over account-management's tree and the real catalogue; the
   organization is the scope's (`organizations::sdk::organization_of`), or the
   scope itself when it has none (the root).
+- `ConnectorService::ensure_secret_owned` -- the same rule for a use that
+  names a token reference instead of a connection: the connection holding it,
+  found from the tenant the use is for, must be the organization's. No
+  connection holding it at all is reported, and its reader refuses it:
+  credstore would still lend the token.
 
 Where it is applied: the components catalogue
 (`cpt-studio-constraint-catalog-own-connections`), studio-product's writes
 (`cpt-studio-constraint-product-own-connections`) and studio-git's upstream
-token (`cpt-studio-constraint-git-own-connections`). A refused write is a 400
+token (`cpt-studio-constraint-git-own-connections`) and artifact-ingest's
+repository sync (`cpt-studio-component-artifact-ingest`). A refused write is a 400
 `failed_precondition` `CONNECTION_NOT_OWNED`; a refused read is skipped and
 reported.
 

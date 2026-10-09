@@ -457,6 +457,32 @@ impl ConnectorService {
         check_owned(self.am.as_ref(), ctx, scope, tenant, holder).await
     }
 
+    /// The same rule for a use that names a token rather than a connection
+    /// (a repository sync carries the `secret_ref` it reads with): `caller`
+    /// may act for `tenant`, and the connection holding `secret_ref`, found
+    /// from `tenant`, is held within `tenant`'s organization. `Ok(None)` when
+    /// no connection reachable from `tenant` holds that reference -- the
+    /// caller decides; credstore would still read it, so a reader of
+    /// repositories refuses it.
+    pub async fn ensure_secret_owned(
+        &self,
+        ctx: &SecurityContext,
+        caller: Uuid,
+        tenant: Uuid,
+        secret_ref: &str,
+    ) -> Result<Option<Uuid>, NotOwned> {
+        check_owned(self.am.as_ref(), ctx, caller, tenant, None).await?;
+        let Some((at, c)) = self
+            .nearest(ctx, tenant, |c| c.secret_ref == secret_ref)
+            .await
+        else {
+            return Ok(None);
+        };
+        let holder = holder_of_row(&c, at);
+        check_owned(self.am.as_ref(), ctx, tenant, tenant, Some(holder)).await?;
+        Ok(Some(holder))
+    }
+
     async fn nearest(
         &self,
         ctx: &SecurityContext,
