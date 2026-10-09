@@ -680,8 +680,9 @@ function SuggestedComponents({
         <span style={{ display: "flex", gap: 6 }}>
           {composing && recommended.length > 0 && (
             <button
-              className="primary"
+              className="ghost"
               disabled={busy}
+              style={{ whiteSpace: "nowrap" }}
               title={`The best built component for each capability: ${recommended.join(", ")}`}
               onClick={() => product.setPicks((current) => [...current, ...recommended.filter((n) => !current.includes(n))])}
             >
