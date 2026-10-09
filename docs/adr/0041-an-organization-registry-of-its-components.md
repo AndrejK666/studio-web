@@ -92,7 +92,7 @@ candidate ──► declared ──► registered ──► published
 | `candidate` | Code that looks like a gear, with the evidence and a score | discovery |
 | `declared` | The repository declares it: `gear.toml`, `gear.gdl`, `#[toolkit::gear]`, a FrontX package, a kit manifest | discovery |
 | `registered` | Accepted as the organization's component, with an owner, a kind, a category and its capabilities | an organization administrator |
-| `published` | A released version others can depend on: the Gearbox corpus or crates.io | an organization administrator, as a separate act |
+| `published` | Given to the platform tier: a pull request into the platform's repository, merged by its maintainers (ADR-0042) | an organization administrator, as a separate act |
 | `rejected` | A candidate the organization decided is not a gear, with the reason | an organization administrator |
 | `deprecated` | Still present, no longer to be chosen, with its replacement | an organization administrator |
 
