@@ -17,7 +17,7 @@ The Constructor Studio backend service, assembled from [CF/Gears](https://github
 Plus Studio's own gears in `src/` (26 by default, 27 with `theia-bridge`) and the 11 connector plugin gears in `src/connectors/plugin.rs`. The live list is `GET /cf/studio-assembly/v1/manifest`.
 
 Ask AI needs a real provider key: put your OpenAI API key into
-`static-credstore-plugin.config.secrets[key=openai-key]` (both profiles ship
+`static-credstore-plugin.config.secrets[key=studio-assistant-llm-key]` (both profiles ship
 `sk-REPLACE_ME`). Without it, chats are created but streamed replies fail at the
 provider with 401.
 
