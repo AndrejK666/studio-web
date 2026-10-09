@@ -117,6 +117,10 @@ fn only_the_files_a_gear_is_declared_in_are_read() {
         "studio-backend/target/debug/build/x/out/mod.rs",
         "studio-backend/tests/common/mod.rs",
         "crates/foo/src/lib.rs",
+        // Test modules: their fixtures write gear attributes in strings.
+        "studio-backend/src/components_catalog/project_gears_tests.rs",
+        "studio-backend/src/plugin_test.rs",
+        "studio-backend/src/gearbox/tests.rs",
     ];
     assert_eq!(
         rust_candidates(&paths),
