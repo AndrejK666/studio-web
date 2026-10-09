@@ -698,8 +698,11 @@ The platform's components and the organization's, read together
 
 - [x] **Phase 1** (`tiers.rs`, the platform routes, the joined reads): the
   platform's catalogue synced in the root tenant, reads that join both tiers,
-  `tier` on every component and candidate, the Components page in tabs
-  (Platform | Ours | All).
+  `tier` on every component and candidate, and two pages for two levels: the
+  platform's components at the top of the portal's path, read by every
+  organization (its sources and sync for a platform administrator only), and
+  the organization's own (registry, catalogue, gear repository, its sources)
+  under the organization.
 - [x] **Phase 2** (`registry.rs`, `registry_gear_repository_rest.rs`,
   studio-product's scaffold): the organization's gear repository as the
   default target of "Create a gear", and read by the registry walk.

@@ -152,8 +152,10 @@ Studio's side follows once the engine answers this.
 **Phases in Studio:**
 
 1. **The platform tier:** sync in the root tenant, reads join the two tiers, the
-   tier on every component, the Components page in tabs (Platform | Ours |
-   All). *Built: see the catalogue design's Tiers component.*
+   tier on every component, and the two tiers as two levels of the portal:
+   the platform at the top of the path (Platform › organization › workspace ›
+   project), its components shared by every organization, and the
+   organization's own components one level down. *Built: see the catalogue design's Tiers component.*
 2. **The organization's gear repository** as the default target of "Create a
    gear". *Built: see the catalogue design's Tiers component.*
 3. **Publish as contribution:** a pull request into `gears-rust` (ADR-0041's

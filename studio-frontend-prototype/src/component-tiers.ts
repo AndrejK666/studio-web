@@ -2,13 +2,15 @@
  *
  * The platform's components are synced once, in the platform's tenant, and
  * every organization reads them beside its own. The server marks each node
- * with its `tier`; this file is what the page does with the mark: the
- * Platform | Ours | All tabs, the note about components the platform shadows,
+ * with its `tier`; this file is what the pages do with the mark: which nodes
+ * each level shows (the platform's at the top of the path, the
+ * organization's under it), the note about components the platform shadows,
  * and the hint on a source the platform already reads. */
 
 import type { CatalogNode, CatalogRepoSource } from "./api";
 
-/** The tabs over the catalogue. `organization` reads "Ours". */
+/** The levels the catalogue is shown at. `all` is what a product draws on
+ *  (a project's candidates), not a page of its own. */
 export type TierTab = "platform" | "organization" | "all";
 
 export const TIER_TABS: { value: TierTab; label: string; title: string }[] = [

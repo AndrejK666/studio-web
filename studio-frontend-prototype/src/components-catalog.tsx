@@ -12,7 +12,6 @@ import type {
   StudioKit,
 } from "./api";
 import {
-  TIER_TABS,
   annotationNote,
   inTierTab,
   shadowedNote,
@@ -449,9 +448,17 @@ export function ComponentsCatalog({
   focus = null,
   projects = [],
   isPlatformAdmin = false,
+  tier = "organization",
+  orgName,
 }: {
   token: string;
   tenantId?: string;
+  /** Which level this page is (ADR-0042): the platform's components, shared
+   *  by every organization, or the organization's own. Two places in the
+   *  navigation -- the platform above the organizations -- never a toggle. */
+  tier?: "platform" | "organization";
+  /** The organization's name, for the organization level's heading. */
+  orgName?: string;
   /** Whether the caller is a platform administrator: the one who names the
    *  platform's catalogue sources (ADR-0042). */
   isPlatformAdmin?: boolean;
@@ -479,10 +486,11 @@ export function ComponentsCatalog({
   const [selected, setSelected] = useSelectedComponent(focus?.name ?? null);
   /** The catalogue (what the sources list) or the registry (what the
    *  organization's projects declare, ADR-0041). */
-  const [pane, setPane] = useState<"catalogue" | "registry">("catalogue");
-  /** Which tier the catalogue shows (ADR-0042): the platform's, ours, or
-   *  both. The registry is the organization's, so it sits under Ours. */
-  const [tierTab, setTierTab] = useState<TierTab>("all");
+  const [pane, setPane] = useState<"catalogue" | "registry">("registry");
+  /** Which tier the catalogue shows (ADR-0042), fixed by the level the page
+   *  was opened at. */
+  const tierTab: TierTab = tier;
+  const platformLevel = tier === "platform";
   /** The organization's components the platform shadows, by name. */
   const [shadowed, setShadowed] = useState<string[]>([]);
   /** The organization's sources as the server keeps them, each marked
@@ -777,6 +785,7 @@ export function ComponentsCatalog({
     return rows;
   }, [gears, query, hideSdk, sortMode, categoryFilter, profiles, resolved, componentTypes, tierTab]);
   const tiers = useMemo(() => tierCounts(gears ?? []), [gears]);
+  const levelNodes = useMemo(() => (gears ?? []).filter((g) => inTierTab(g, tierTab)), [gears, tierTab]);
 
   // The organization's sources as the server keeps them, read when the
   // Sources panel opens: which of them the platform already provides.
@@ -931,7 +940,7 @@ export function ComponentsCatalog({
   const syncing = sync.endsWith("…");
   /* What filled the catalogue, read off the nodes -- the picker below is only
      this browser's choice for the NEXT sync. */
-  const filledFrom = useMemo(() => syncedSources(gears ?? [], profiles).join(" + "), [gears, profiles]);
+  const filledFrom = useMemo(() => syncedSources(levelNodes, profiles).join(" + "), [levelNodes, profiles]);
   const sourceSummary = [
     sources.gears.enabled && "gears",
     sources.frontx.enabled && "frontx",
@@ -963,33 +972,28 @@ export function ComponentsCatalog({
         <>
           <div className="gcat-topbar">
             <div className="crumb">
-              <h1>Components</h1>
-              <span className="asof">{filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}</span>
-              <span className="chips" role="tablist" aria-label="Tier" style={{ margin: "0 0 0 12px" }}>
-                {TIER_TABS.map((t) => (
-                  <button
-                    key={t.value}
-                    type="button"
-                    role="tab"
-                    title={t.title}
-                    aria-selected={tierTab === t.value}
-                    className={`chip ${tierTab === t.value ? "on" : ""}`}
-                    onClick={() => {
-                      setTierTab(t.value);
-                      if (t.value !== "organization") setPane("catalogue");
-                    }}
-                  >
-                    {t.label} <span className="n">{tiers[t.value]}</span>
-                  </button>
-                ))}
+              <span
+                className={`gcat-level gcat-level-${tier}`}
+                data-level={tier}
+                title={
+                  platformLevel
+                    ? "The platform: above every organization, shared by all of them"
+                    : "This organization: what its projects build"
+                }
+              >
+                {platformLevel ? "Platform" : orgName ? `Organization · ${orgName}` : "Organization"}
               </span>
-              {tierTab === "organization" && (
-                <span className="chips" role="tablist" aria-label="Ours" style={{ margin: "0 0 0 8px" }}>
-                  <button type="button" role="tab" aria-selected={pane === "catalogue"} className={`chip ${pane === "catalogue" ? "on" : ""}`} onClick={() => setPane("catalogue")}>
-                    Catalogue
-                  </button>
+              <h1>{platformLevel ? "Platform components" : "Our components"}</h1>
+              <span className="asof">
+                {tiers[tier]} · {filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}
+              </span>
+              {!platformLevel && (
+                <span className="chips" role="tablist" aria-label="Our components" style={{ margin: "0 0 0 12px" }}>
                   <button type="button" role="tab" aria-selected={pane === "registry"} className={`chip ${pane === "registry" ? "on" : ""}`} onClick={() => setPane("registry")}>
                     Registry
+                  </button>
+                  <button type="button" role="tab" aria-selected={pane === "catalogue"} className={`chip ${pane === "catalogue" ? "on" : ""}`} onClick={() => setPane("catalogue")}>
+                    Catalogue <span className="n">{tiers.organization}</span>
                   </button>
                 </span>
               )}
@@ -1013,39 +1017,44 @@ export function ComponentsCatalog({
                   </button>
                 ))}
               </div>
-              <button
-                className={`iconbtn${showSources ? " active" : ""}`}
-                onClick={() => setShowSources((v) => !v)}
-                aria-expanded={showSources}
-              >
-                Sources{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
-              </button>
-              {isPlatformAdmin && (
+              {!platformLevel && (
+                <>
+                  <button
+                    className={`iconbtn${showSources ? " active" : ""}`}
+                    onClick={() => setShowSources((v) => !v)}
+                    aria-expanded={showSources}
+                    title="The repositories this organization's catalogue reads, besides its projects"
+                  >
+                    Our sources{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
+                  </button>
+                  <button className="iconbtn" onClick={() => setShowReport(true)}>
+                    Roadmap report
+                  </button>
+                  <button className="iconbtn primary" disabled={busy} onClick={() => void runSync()}>
+                    {syncing ? "Syncing…" : "Sync"}
+                  </button>
+                </>
+              )}
+              {platformLevel && isPlatformAdmin && (
                 <button
-                  className={`iconbtn${showPlatformSources ? " active" : ""}`}
+                  className={`iconbtn primary${showPlatformSources ? " active" : ""}`}
                   onClick={() => setShowPlatformSources((v) => !v)}
                   aria-expanded={showPlatformSources}
-                  title="The sources of the platform's catalogue, which every organization reads"
+                  title="What the platform's components are read from. Only a platform administrator changes it."
                 >
-                  Platform sources
+                  Platform sources &amp; sync
                 </button>
               )}
-              <button className="iconbtn" onClick={() => setShowReport(true)}>
-                Roadmap report
-              </button>
-              <button className="iconbtn primary" disabled={busy} onClick={() => void runSync()}>
-                {syncing ? "Syncing…" : "Sync"}
-              </button>
             </div>
           </div>
 
           {showReport && <RoadmapReportDialog token={token} org={tenantId} onClose={() => setShowReport(false)} />}
 
-          {isPlatformAdmin && showPlatformSources && (
+          {platformLevel && isPlatformAdmin && showPlatformSources && (
             <PlatformSourcesPanel token={token} onSynced={() => void reload()} />
           )}
 
-          {showSources && serverSources && shadowedSources(serverSources).length > 0 && (
+          {!platformLevel && serverSources && shadowedSources(serverSources).length > 0 && (
             <div className="gcat-hint" data-shadowed-sources>
               {shadowedSources(serverSources).map((s) => (
                 <p key={`${s.repo}|${s.mode}|${s.git_ref ?? ""}`}>
@@ -1058,7 +1067,7 @@ export function ComponentsCatalog({
             </div>
           )}
 
-          {showSources && (
+          {!platformLevel && showSources && (
             <SourcesPanel
               sources={sources}
               setSrc={setSrc}
@@ -1068,23 +1077,26 @@ export function ComponentsCatalog({
             />
           )}
 
-          {tierTab === "platform" && (
-            <p className="gcat-hint">
-              The platform's components: synced once, for every organization, and read-only here. A field you
-              edit on one is kept as your organization's annotation, over the platform's facts.
+          {platformLevel ? (
+            <p className="gcat-sub" data-level-note>
+              <strong>The common set every organization builds on.</strong> Gears, tools and SDKs from the
+              platform's Gears repository, micro-frontends from FrontX and kits, synced once for all
+              organizations, with crates.io adding published versions. Every organization sees the same list;
+              a field you edit is kept as your organization's annotation, over the platform's facts. A gear an
+              organization publishes joins this set once the platform merges it.
             </p>
+          ) : (
+            <>
+              <p className="gcat-sub" data-level-note>
+                <strong>Built by this organization.</strong> Every component its projects declare, the code
+                that could become one, and the gears it keeps in its own gear repository. Only this
+                organization's members see them; publishing one gives it to the platform. The common set is
+                one level up, under <em>Platform</em> — a product draws on both.
+              </p>
+              <OrgGearRepositoryCard token={token} tenantId={tenantId} connections={connections} />
+              {shadowedNote(shadowed) && <p className="gcat-hint" data-shadowed>{shadowedNote(shadowed)}</p>}
+            </>
           )}
-          {tierTab === "organization" && (
-            <OrgGearRepositoryCard token={token} tenantId={tenantId} connections={connections} />
-          )}
-          {shadowedNote(shadowed) && <p className="gcat-hint" data-shadowed>{shadowedNote(shadowed)}</p>}
-
-          <p className="gcat-sub">
-            A catalogue of platform <strong>components</strong> — gears, tools and SDKs from the Gears
-            repository, micro-frontends from FrontX, and kits — read through a connector, with
-            crates.io adding published versions. Each component opens a page of grouped fields,
-            traffic lights and sources; an empty cell is a finding, not an omission.
-          </p>
 
           {truncated && (
             <p className="gcat-hint">
@@ -1097,7 +1109,7 @@ export function ComponentsCatalog({
           {/* A catalogue that never loaded says so in the list, with Retry. */}
           {err && (viewMode === "graph" || gears !== null) && <p className="gcat-err">{err}</p>}
 
-          {pane === "registry" ? (
+          {!platformLevel && pane === "registry" ? (
             <ComponentRegistry
               token={token}
               projects={projects}
@@ -3580,6 +3592,9 @@ const GCAT_CSS = `
 .gcat * { box-sizing:border-box; }
 
 .gcat .gcat-topbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
+.gcat .gcat-level { display:inline-block; font:600 11px/1 var(--mono, monospace); letter-spacing:.06em; text-transform:uppercase; padding:4px 8px; border-radius:6px; margin-right:10px; vertical-align:middle; }
+.gcat .gcat-level-platform { background:color-mix(in srgb, var(--accent, #2563eb) 14%, transparent); color:var(--accent, #2563eb); }
+.gcat .gcat-level-organization { background:color-mix(in srgb, #16a34a 14%, transparent); color:#15803d; }
 .gcat .crumb { display:flex; align-items:center; gap:10px; min-width:0; }
 .gcat .crumb h1 { font-size:20px; font-weight:600; letter-spacing:-.015em; margin:0; }
 .gcat .crumb .sep { color:var(--studio-edge); }
