@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RegistryEntry } from "./api";
-import { filterEntries, isDuplicated, projectsOf, registryProjects, stateCounts } from "./registry";
+import { filterEntries, isDuplicated, projectsOf, registryProjects, stateCounts, walkLine } from "./registry";
 
 const entry = (name: string, extra: Partial<RegistryEntry> = {}): RegistryEntry => ({
   name,
@@ -44,5 +44,25 @@ describe("the registry", () => {
       { id: "p2", name: "insight" },
       { id: "p1", name: "studio-web" },
     ]);
+  });
+});
+
+describe("what the last walk saw", () => {
+  const at = "2026-10-09T13:00:00Z";
+  it("says a project was not readable, and what to do", () => {
+    const line = walkLine({
+      project_id: "p1",
+      project_name: "studio-web",
+      at,
+      repos: [{ repo: "cf/studio-web", status: "failed", components: 0, error: "not readable", hint: "Share the connection" }],
+    });
+    expect(line).toEqual({ text: "1 of 1 repository not readable", failed: true, hint: "Share the connection" });
+  });
+
+  it("counts what it read, and says when nothing changed", () => {
+    expect(
+      walkLine({ project_id: "p", project_name: "x", at, repos: [{ repo: "a", status: "unchanged", components: 2 }, { repo: "b", status: "read", components: 1 }] }),
+    ).toEqual({ text: "read · 3 components", failed: false, hint: null });
+    expect(walkLine(undefined).text).toBe("not read yet");
   });
 });

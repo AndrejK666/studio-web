@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiError, api } from "./api";
-import type { RegistryEntry } from "./api";
+import type { RegistryEntry, RegistryProjectWalk } from "./api";
 import { errText } from "./format";
 import {
   REGISTRY_STATES,
@@ -24,6 +24,7 @@ import {
   projectsOf,
   registryProjects,
   stateCounts,
+  walkLine,
 } from "./registry";
 
 export function ComponentRegistry({
@@ -44,18 +45,22 @@ export function ComponentRegistry({
   const [project, setProject] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [excluded, setExcluded] = useState<string[] | null>(null);
+  /** What the last walk saw of each project. */
+  const [walks, setWalks] = useState<RegistryProjectWalk[]>([]);
   const [sync, setSync] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     setError(null);
     try {
-      const [list, ex] = await Promise.all([
+      const [list, ex, walked] = await Promise.all([
         api.componentRegistry(token),
         api.registryExcludedProjects(token).catch(() => ({ project_ids: [] as string[] })),
+        api.registryProjects(token).catch(() => ({ items: [] as RegistryProjectWalk[], total: 0 })),
       ]);
       setEntries(list.items);
       setExcluded(ex.project_ids);
+      setWalks(walked.items);
     } catch (cause) {
       // A backend from before the registry answers 404: say so plainly.
       if (cause instanceof ApiError && cause.status === 404) setMissing(true);
@@ -113,6 +118,8 @@ export function ComponentRegistry({
   const seen = useMemo(() => registryProjects(entries ?? []), [entries]);
   const shown = useMemo(() => filterEntries(entries ?? [], { state, q, project }), [entries, state, q, project]);
   const duplicated = (entries ?? []).filter(isDuplicated).length;
+  const walkOf = (id: string) => walks.find((w) => w.project_id === id);
+  const unreadable = projects.filter((p) => !(excluded ?? []).includes(p.id) && walkLine(walkOf(p.id)).failed);
   const orphaned = (entries ?? []).filter((e) => e.orphaned).length;
 
   if (missing) {
@@ -156,6 +163,14 @@ export function ComponentRegistry({
             {duplicated > 0 && ` · ${duplicated} declared in more than one repository`}
             {orphaned > 0 && ` · ${orphaned} no repository declares any more`}
           </p>
+          {unreadable.length > 0 && (
+            <div className="error" style={{ fontSize: 12, margin: "0 0 8px" }} data-registry-unreadable>
+              <b>
+                {unreadable.length} project{unreadable.length === 1 ? "" : "s"} could not be read
+              </b>{" "}
+              — {unreadable.map((p) => p.name).join(", ")}. {walkLine(walkOf(unreadable[0].id)).hint ?? "See the projects below."}
+            </div>
+          )}
           <div className="chips" role="group" aria-label="State">
             <button type="button" className={`chip ${state === null ? "on" : ""}`} onClick={() => setState(null)}>
               all<span className="chip-n">{entries.length}</span>
@@ -223,20 +238,28 @@ export function ComponentRegistry({
               Every project is read unless it is excluded here: a registry with gaps nobody chose is what
               this page is for.
             </p>
-            <ul style={{ listStyle: "none", padding: 0, margin: 0, columns: 2 }}>
-              {projects.map((p) => (
-                <li key={p.id}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={!(excluded ?? []).includes(p.id)}
-                      disabled={excluded === null}
-                      onChange={() => void toggleProject(p.id)}
-                    />{" "}
-                    {p.name}
-                  </label>
-                </li>
-              ))}
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {projects.map((p) => {
+                const line = walkLine(walkOf(p.id));
+                const off = (excluded ?? []).includes(p.id);
+                return (
+                  <li key={p.id} style={{ margin: "3px 0" }}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={!off}
+                        disabled={excluded === null}
+                        onChange={() => void toggleProject(p.id)}
+                      />{" "}
+                      {p.name}
+                    </label>{" "}
+                    <span style={{ fontSize: 12, opacity: off ? 0.5 : 0.75, color: line.failed && !off ? "var(--danger, #c33)" : undefined }}>
+                      {off ? "excluded" : line.text}
+                    </span>
+                    {line.hint && !off && <div style={{ fontSize: 12, opacity: 0.8, marginLeft: 22 }}>{line.hint}</div>}
+                  </li>
+                );
+              })}
             </ul>
           </details>
         </>

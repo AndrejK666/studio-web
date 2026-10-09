@@ -371,6 +371,14 @@ context's organization it:
    repositories could not be listed, or a repository that could not be read,
    keeps its occurrences: "could not tell" is not "none".
 
+The walk runs as the service, on a schedule nobody is signed in to, so it
+reads only what a shared connection reaches. A repository connected with one
+person's token is not readable to it, by design: an organization-wide job does
+not borrow a person's credential. The walk records that per project (kept on
+the organization's registry settings, replaced by each full walk) with what to
+do about it, and `GET /registry/projects` serves it, so a project the walk could
+not read is not mistaken for one with no components.
+
 The rules are one pure function (`registry::plan`). An entry found anew is
 `declared`. Discovery never moves an existing entry's state — so it never
 resurrects a `rejected` one — and refreshes its kind, description, category and
@@ -431,6 +439,7 @@ reads the repositories on demand otherwise.
 | `PUT` | `/sources` | Replace them with `{items: RepoSourceDto[]}`; the sync reads these when its body names none. Ensures the hourly registry schedule | unstable |
 | `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it, `offset`/`limit` page it; `{items: RegistryEntryDto[], total}`, each entry with its occurrences | unstable |
 | `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences; 404 when absent. Its decisions come with P2 | unstable |
+| `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do | unstable |
 | `GET` | `/registry/excluded-projects` | The projects the walk skips: `{project_ids}` | unstable |
 | `PUT` | `/registry/excluded-projects` | Replace them with `{project_ids}`. Ensures the hourly registry schedule | unstable |
 

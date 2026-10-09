@@ -552,3 +552,71 @@ async fn the_registry_reads_back_what_a_walk_wrote() {
     assert_eq!(one.map(|e| e.entry.name).as_deref(), Some("studio-tasks"));
     assert!(svc.registry_entry(&ctx, "nope").await.unwrap().is_none());
 }
+
+// ---- what the last walk saw ----------------------------------------------
+
+/// The walk runs as the service. A repository connected with someone's
+/// personal token is not readable to it, and the page says what to do about
+/// that instead of showing a project with no components.
+#[test]
+fn a_personal_token_failure_says_to_share_the_connection() {
+    let hint = read_failure_hint(
+        "the token for connection '222' is not readable — it may belong to another user (personal scope) or have been removed",
+    )
+    .unwrap();
+    assert!(hint.contains("personal token"), "{hint}");
+    assert!(hint.contains("Share the connection"), "{hint}");
+    assert!(read_failure_hint("GitHub said 404 Not Found").unwrap().contains("not found"));
+    assert_eq!(read_failure_hint("connection reset by peer"), None);
+}
+
+fn walked(project: Uuid, name: &str, status: &str) -> ProjectWalk {
+    ProjectWalk {
+        project_id: project,
+        project_name: name.into(),
+        at: "2026-10-09T13:00:00Z".into(),
+        error: None,
+        repos: vec![RepoWalk {
+            repo: "o/r".into(),
+            status: status.into(),
+            components: 3,
+            error: None,
+            hint: None,
+        }],
+    }
+}
+
+#[test]
+fn a_full_walk_replaces_the_statuses_and_a_partial_one_only_its_projects() {
+    let before = vec![walked(P1, "a", "read"), walked(P2, "b", "failed")];
+    let full = merge_walks(before.clone(), vec![walked(P1, "a", "unchanged")], true);
+    assert_eq!(full.len(), 1, "a project out of the full walk drops out");
+    let partial = merge_walks(before, vec![walked(P2, "b", "read")], false);
+    assert_eq!(partial.len(), 2);
+    assert_eq!(partial.iter().find(|p| p.project_id == P2).unwrap().repos[0].status, "read");
+    assert_eq!(partial.iter().find(|p| p.project_id == P1).unwrap().repos[0].status, "read");
+}
+
+#[tokio::test]
+async fn saving_the_exclusions_keeps_what_the_last_walk_saw() {
+    let svc = service();
+    let ctx = ctx();
+    svc.sink.register_types(&ctx).await.unwrap();
+    let org = ctx.subject_tenant_id();
+    let settings = SettingsRecord {
+        organization_id: Some(org),
+        excluded_project_ids: vec![],
+        last_walk: vec![walked(P1, "a", "read")],
+    };
+    svc.sink
+        .upsert(
+            &ctx,
+            &[gts::registry_settings_node(&org.to_string(), serde_json::to_value(&settings).unwrap())],
+            &[],
+        )
+        .await
+        .unwrap();
+    svc.set_excluded_projects(&ctx, vec![P2]).await.unwrap();
+    assert_eq!(svc.last_walk(&ctx).await.unwrap(), vec![walked(P1, "a", "read")]);
+    assert_eq!(svc.excluded_projects(&ctx).await.unwrap(), vec![P2]);
+}

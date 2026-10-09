@@ -1546,6 +1546,41 @@ pub struct ExcludedProjectsDto {
     pub project_ids: Vec<Uuid>,
 }
 
+/// What the last registry walk saw of one project.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryProjectDto {
+    pub project_id: Uuid,
+    pub project_name: String,
+    /// When the walk read it, RFC 3339.
+    pub at: String,
+    /// The project's repositories could not be listed at all.
+    pub error: Option<String>,
+    pub repos: Vec<RegistryRepoStatusDto>,
+}
+
+/// What the last registry walk did with one repository of a project.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryRepoStatusDto {
+    pub repo: String,
+    /// `read` (read anew), `unchanged` (nothing it reads changed) or `failed`.
+    pub status: String,
+    /// Components found in it: read now, or still recorded for it.
+    pub components: u32,
+    pub error: Option<String>,
+    /// What a person can do about `error`, when the walk knows -- for a
+    /// repository connected with a personal token, share the connection.
+    pub hint: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryProjectListDto {
+    pub items: Vec<RegistryProjectDto>,
+    pub total: u32,
+}
+
 /// One place a registry entry was found.
 #[derive(Debug, Clone, PartialEq)]
 #[toolkit_macros::api_dto(response)]
@@ -1766,6 +1801,37 @@ async fn get_registry_entry(
     }
 }
 
+async fn list_registry_projects(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+) -> ApiResult<JsonBody<RegistryProjectListDto>> {
+    let walked = catalog.service.last_walk(&ctx).await.map_err(internal)?;
+    let items: Vec<RegistryProjectDto> = walked
+        .into_iter()
+        .map(|p| RegistryProjectDto {
+            project_id: p.project_id,
+            project_name: p.project_name,
+            at: p.at,
+            error: p.error,
+            repos: p
+                .repos
+                .into_iter()
+                .map(|r| RegistryRepoStatusDto {
+                    repo: r.repo,
+                    status: r.status,
+                    components: u32::try_from(r.components).unwrap_or(u32::MAX),
+                    error: r.error,
+                    hint: r.hint,
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(Json(RegistryProjectListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
 async fn get_registry_excluded_projects(
     OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
@@ -1889,6 +1955,29 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
         .json_response_with_schema::<RegistryEntryDto>(openapi, StatusCode::OK, "The entry")
         .error_401(openapi)
         .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/registry/projects")
+        .operation_id("studio_components_catalog.list_registry_projects")
+        .summary("What the last registry walk saw of each project")
+        .description(
+            "Per project the last walk read: when, and per repository whether it was \
+             read anew, unchanged or not readable, how many components it holds, and \
+             for a failure what a person can do. A repository connected with a \
+             personal token is not readable to the walk, which runs as the service.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(list_registry_projects)
+        .json_response_with_schema::<RegistryProjectListDto>(
+            openapi,
+            StatusCode::OK,
+            "The last walk, per project",
+        )
+        .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
