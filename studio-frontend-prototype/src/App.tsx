@@ -2598,7 +2598,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         )}
         {(view === "gears" || view === "platform") && (
           <ComponentsCatalog
-            key={view}
+            // Remounted when the organization resolves: the registry and the
+            // catalogue read it once, and a page opened straight from its
+            // address mounts before the organization is known.
+            key={`${view}:${orgAsSpace?.id ?? ""}`}
             tier={view === "platform" ? "platform" : "organization"}
             orgName={orgAsSpace?.name}
             token={token}

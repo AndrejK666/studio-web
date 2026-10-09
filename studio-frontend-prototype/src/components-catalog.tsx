@@ -3593,8 +3593,8 @@ const GCAT_CSS = `
 
 .gcat .gcat-topbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
 .gcat .gcat-level { display:inline-block; font:600 11px/1 var(--mono, monospace); letter-spacing:.06em; text-transform:uppercase; padding:4px 8px; border-radius:6px; margin-right:10px; vertical-align:middle; }
-.gcat .gcat-level-platform { background:color-mix(in srgb, var(--accent, #2563eb) 14%, transparent); color:var(--accent, #2563eb); }
-.gcat .gcat-level-organization { background:color-mix(in srgb, #16a34a 14%, transparent); color:#15803d; }
+.gcat .gcat-level-platform { background:#dbeafe; color:#1d4ed8; }
+.gcat .gcat-level-organization { background:#dcfce7; color:#15803d; }
 .gcat .crumb { display:flex; align-items:center; gap:10px; min-width:0; }
 .gcat .crumb h1 { font-size:20px; font-weight:600; letter-spacing:-.015em; margin:0; }
 .gcat .crumb .sep { color:var(--studio-edge); }
