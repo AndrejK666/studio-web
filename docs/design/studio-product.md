@@ -150,7 +150,9 @@ same bytes.
 ##### Responsibility scope
 
 `skeleton.rs` generates the canonical starter gear (the request's `files` are
-optional; a plugin names its `plugin_host` from `/gearbox/extension-points`);
+optional; a plugin names its `plugin_host` from `/gearbox/extension-points`;
+the request's `capabilities` are written into `gear.toml`, so a gear made for a
+capability nothing closes declares it once the catalogue syncs it);
 `scaffold.rs` creates a branch off the connected base branch named after the
 slug, commits the files through the git-data API as one tree and one commit,
 and optionally opens a pull request. `create-repo` creates the repository
