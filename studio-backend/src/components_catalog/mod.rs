@@ -15,6 +15,8 @@ pub mod port;
 mod project_gears;
 mod quality;
 pub(crate) mod reference;
+mod registry;
+mod registry_task;
 mod repo_enrich;
 mod repo_facts;
 mod rest;
@@ -98,6 +100,13 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         crate::tasks::sdk::register(Arc::new(sync_task::CatalogSyncTask::new(Arc::clone(
             &service,
         ))))?;
+        // The registry walk (ADR-0041): an organization's projects, read for
+        // the components they declare. Resolved through the hub when it runs.
+        service.set_hub(ctx.client_hub());
+        crate::tasks::sdk::register(Arc::new(registry_task::RegistryTask::new(
+            Arc::clone(&service),
+            ctx.client_hub(),
+        )))?;
 
         // The Gearbox engine is studio-product's; the catalogue reads what it
         // says about each gear, and a sync follows the gears repository with
@@ -133,6 +142,12 @@ impl RestApiCapability for StudioComponentsCatalogGear {
             .register::<dyn port::ComponentCatalog>(Arc::new(port::CatalogComponents::new(
                 Arc::clone(&service),
                 gearbox.clone(),
+            )));
+        // The organization's registry, for spec-mapping and studio-git.
+        ctx.client_hub()
+            .register::<dyn port::Registry>(Arc::new(port::CatalogRegistry::new(
+                Arc::clone(&service),
+                ctx.client_hub(),
             )));
 
         let _ = self.service.set(service.clone());

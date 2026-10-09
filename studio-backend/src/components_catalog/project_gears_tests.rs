@@ -248,13 +248,21 @@ fn the_fingerprint_moves_only_with_the_files_read() {
     };
     assert_eq!(fingerprint(&files("r", "x")), fingerprint(&files("r", "y")));
     assert_ne!(fingerprint(&files("r", "x")), fingerprint(&files("q", "x")));
+    // Stored by the registry, so it must not depend on the build: a uuid5 of
+    // the pairs, the same string every time.
+    assert_eq!(fingerprint(&files("r", "x")).len(), 36);
+    assert_ne!(fingerprint(&[]), fingerprint(&files("r", "x")));
 }
 
 #[test]
 fn a_cached_answer_is_served_only_for_the_same_files() {
     let cache = Cache::default();
-    cache.put("k".into(), 1, Arc::new(vec![gear("a", "a", "a/mod.rs")]));
-    assert!(cache.get("k", 1).is_some());
-    assert!(cache.get("k", 2).is_none());
-    assert!(cache.get("other", 1).is_none());
+    cache.put(
+        "k".into(),
+        "1".into(),
+        Arc::new(vec![gear("a", "a", "a/mod.rs")]),
+    );
+    assert!(cache.get("k", "1").is_some());
+    assert!(cache.get("k", "2").is_none());
+    assert!(cache.get("other", "1").is_none());
 }

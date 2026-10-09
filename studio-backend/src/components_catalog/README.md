@@ -21,7 +21,8 @@ This README is what you need to work in the directory.
   `STUDIO_GEARBOX_*` variables are studio-product's.
 - A sync is a `catalog.sync` run on [`../tasks`](../tasks): `POST /sync`, then
   poll `GET /studio-tasks/v1/runs/{id}`. It answers 503 in a profile whose
-  `studio-tasks` has no database.
+  `studio-tasks` has no database. A body without `repositories` reads the
+  sources stored on the server and walks the registry after them.
 - Repository access is a connection from [`../connectors`](../connectors); the
   graph is the same one [`../artifact_ingest`](../artifact_ingest) writes to.
   The node vocabulary and the store are
@@ -58,3 +59,22 @@ This README is what you need to work in the directory.
   organization's catalogue.
 - `ComponentCatalog::engine_completion` in [`port.rs`](port.rs) calls
   studio-product's engine; it is to move to studio-product.
+- The organization's registry (ADR-0041, phase P1): [`registry.rs`](registry.rs)
+  keeps the catalogue sources on the server (`source` nodes, `GET`/`PUT
+  /sources`), the excluded projects (`registry_settings`), and the walk —
+  every project from `organizations::port::ProjectsOf`, each repository
+  `project_repos` resolves, read with `RepoEnricher::project_gears_unless`
+  only when its stored fingerprint (`registry_read`) moved. What a walk writes
+  is the pure `registry::plan`, tested in
+  [`registry_tests.rs`](registry_tests.rs): a new entry is `declared`, an
+  existing state never moves, an entry with no occurrence left is `orphaned`
+  and kept. The task is `catalog.registry` ([`registry_task.rs`](registry_task.rs));
+  a `catalog.sync` with `registry: true` runs it as its last phase. The hourly
+  schedule (platform-level, naming the organization) is ensured when sources or
+  exclusions are saved; studio-git queues a walk of a pushed project through
+  `port::Registry::queue_refresh`. Spec-mapping reads a project's own gears
+  from `port::Registry` when it has found any there.
+- The fingerprint ([`project_gears.rs`](project_gears.rs) `fingerprint`) is a
+  uuid5 of the files read and `DISCOVERY_VERSION`, because it is stored: move
+  the version when discovery's rules change, and every repository is read once
+  more.
