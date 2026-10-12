@@ -7,7 +7,7 @@ lives in the code.
 Status: proposal, 2026-10-12. It is part of
 [studio-documents](design/studio-documents.md), the gear that already owns the
 document index, the analysis on sync and the findings, as the module
-`studio-backend/src/documents/model/`. Requirements:
+`studio-backend/src/documents/spec_model/`. Requirements:
 `cpt-studio-fr-spec-domain-model` and `cpt-studio-fr-spec-contradictions` in the
 [PRD](prd/constructor-studio.md).
 
@@ -133,7 +133,7 @@ rebuild is resolved only when the text of one of its sides changed.
 
 ## A build
 
-One `documents.model_build` run on studio-tasks, under the security context of
+One `documents.spec_model_build` run on studio-tasks, under the security context of
 the member who started it, in stages:
 
 1. **Index** (no model). Lists the project's typed documents and their
@@ -160,10 +160,10 @@ the member who started it, in stages:
 ```mermaid
 sequenceDiagram
     participant P as Portal (Domain model tab)
-    participant D as studio-documents (model/)
+    participant D as studio-documents (spec_model/)
     participant L as studio-llm-proxy
     participant G as studio-artifact-ingest
-    P->>D: POST /model/builds {project_id}
+    P->>D: POST /spec-model/builds {project_id}
     D-->>P: 202 task_run
     D->>D: index, reference rules
     loop each document with no extraction for its revision
@@ -175,11 +175,11 @@ sequenceDiagram
         D->>L: complete: both passages in context
     end
     D->>G: SpecFindingWriter: spec_finding nodes (detector model)
-    P->>D: GET /model, GET /model/findings
-    P->>D: POST /model/findings/{fingerprint}/decision
+    P->>D: GET /spec-model, GET /spec-model/findings
+    P->>D: POST /spec-model/findings/{fingerprint}/decision
 ```
 
-In the code, under `studio-backend/src/documents/model/`: `index.rs`,
+In the code, under `studio-backend/src/documents/spec_model/`: `index.rs`,
 `extract.rs`, `assemble.rs`, `rules.rs` and `judge.rs`, the first, third and
 fourth pure functions; `build_task.rs` for the run; the routes in the gear's
 `rest.rs`. The text is read through `artifact_ingest::port::RepoFileReader`, as
@@ -216,23 +216,23 @@ Under `/studio-documents/v1`, beside the gear's other routes:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/model/builds` | Build a project's model on the caller's key: `202` with the `task_run` to follow |
-| `GET` | `/model?project_id=` | The assembled model: entities with their facts and sources, requirements, constraints, decisions; whether it is stale and which documents are not extracted yet |
-| `GET` | `/model/findings?project_id=` | The findings with their sides, fix and decision, filterable by `rule` and `status` |
-| `POST` | `/model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
+| `POST` | `/spec-model/builds` | Build a project's model on the caller's key: `202` with the `task_run` to follow |
+| `GET` | `/spec-model?project_id=` | The assembled model: entities with their facts and sources, requirements, constraints, decisions; whether it is stale and which documents are not extracted yet |
+| `GET` | `/spec-model/findings?project_id=` | The findings with their sides, fix and decision, filterable by `rule` and `status` |
+| `POST` | `/spec-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
 
 Every list answers `{items, total}`. A project the caller cannot reach answers
 404.
 
 ## Tables
 
-- `studio_document_model_extractions`: `project_id`, `path`, `revision`,
+- `studio_spec_model_extractions`: `project_id`, `path`, `revision`,
   `extractor_version`, `facts jsonb`, `dropped` (facts whose quote failed),
   `created_at`; unique on the first four.
-- `studio_document_model_judgements`: `project_id`, `fingerprint`, `revisions`
+- `studio_spec_model_judgements`: `project_id`, `fingerprint`, `revisions`
   (sorted, one per side), `judge_version`, `verdict` (`conflict` or `none`),
   `finding jsonb`, `created_at`; unique on the first four.
-- `studio_document_model_decisions`: `project_id`, `fingerprint`, `decision`
+- `studio_spec_model_decisions`: `project_id`, `fingerprint`, `decision`
   (`confirmed` or `dismissed`), `decided_by`, `decided_at`, `revisions`.
 
 The assembled model is not stored: it is computed from the extractions of the
