@@ -53,7 +53,6 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0038](0038-one-story-for-async-work.md) | One story for async work: a run does the work, an event says it happened | proposed | 2026-10-08 |
 | [0039](0039-one-way-out-to-llm-providers.md) | One way out to the model providers | accepted | 2026-10-08 |
 | [0040](0040-one-owner-for-people-and-membership.md) | One owner for people and membership | proposed | 2026-10-08 |
-| [0042](0042-platform-gears-and-organization-gears.md) | Platform gears and an organization's own gears | proposed | 2026-10-12 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
