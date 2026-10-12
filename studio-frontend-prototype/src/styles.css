@@ -693,6 +693,15 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--muted-foreground); padding: 8px 10px 2px;
 }
+/* The open level's heading: what level, and which one. */
+.nav-level-title { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; }
+.nav-level-title .nav-level-name {
+  text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 600;
+  color: var(--foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nav-level-platform .nav-level-name { font-weight: 400; color: var(--muted-foreground); font-size: 12px; }
+.drawer nav .nav-level-pin { color: var(--muted-foreground); font-size: 12px; }
+.drawer nav .nav-level-pin.on { color: var(--primary); }
 /* The pinned section's heading carries its own control, so it is a row rather
    than a label. */
 .nav-section-pinned .nav-section-title {

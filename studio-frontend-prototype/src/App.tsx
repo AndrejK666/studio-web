@@ -616,82 +616,47 @@ function NavIcon({ name }: { name: string }) {
   );
 }
 
-// Sectioned nav (concept v2). Two nouns carry the whole product — Projects and
-// People — and everything that used to need a level above them (organizations,
-// the workspace/project split, "pick a workspace first" dead ends) is gone from
-// the sidebar. Sources, secrets and nested projects are not top-level surfaces:
-// they belong TO a project and live on its page, which is what makes the
-// project the unit rather than a folder you have to select first.
-const NAV_SECTIONS: {
-  title: string | null;
-  /** Drawn only inside the "+" picker: pinnable, but not a group of its own. */
-  hidden?: boolean;
-  items: { id: View; icon: string; label: string }[];
-}[] = [
-  {
-    // Was a group called WORK, holding these three. That was not a category so
-    // much as what concept v2 left over after everything else moved onto a
-    // project, and three unrelated destinations under a heading claiming they
-    // belong together is a heading that has stopped meaning anything.
-    //
-    // The slot is the rail's most valuable one, so it holds what this person
-    // always needs instead (see pins.ts). These three stay the defaults, so
-    // nothing moves on first use, and they remain here as the list the "+"
-    // picker offers — unpinning one must not put it out of reach.
-    title: "Organization",
-    hidden: true,
-    items: [
-      { id: "projects", icon: "grid", label: "Workspaces" },
-      { id: "people", icon: "users", label: "People" },
-      // Shared connector catalogue. It is owned by the hidden organization —
-      // which is exactly why it sits here and not inside one project: every
-      // project of the org inherits it. Labelled "Connections" to match the
-      // sidebar in the product mockups.
-      { id: "connectors", icon: "plug", label: "Connections" },
-      // Chats and Files are hidden: neither is a surface of the organization.
-      // A chat is had inside a project and a file is an artifact of one, so an
-      // org-wide list of either is a flat, contextless feed sitting one click
-      // from the top of the product. The views and their routes are kept
-      // (`view === "chats"`, `view === "files"`), so putting an entry back here
-      // is the whole of un-hiding them.
-    ],
-  },
-  // Spec Quality is no longer a top-level surface — it moved onto the project
-  // page (the "Analyze" project tab), where it runs over that project's
-  // ingested artifacts.
-  {
-    // The level above every organization (ADR-0042): the common set of
-    // components all of them build on. Everyone reads it; only a platform
-    // administrator changes its sources. First, because it is the top of the
-    // path (Platform › organization › workspace › project).
-    title: "Platform",
-    items: [{ id: "platform", icon: "layers", label: "Components" }],
-  },
-  {
-    // This organization's own surfaces. The section used to be called
-    // "Platform", which named the level above for things that are the
-    // organization's.
-    title: "Organization",
-    items: [
-      // What this organization's projects build: the registry, candidates,
-      // its gear repository and its own catalogue sources.
-      { id: "gears", icon: "package", label: "Our components" },
-      // Every report the Studio draws, configured once for the organization
-      // (studio-reports): the roadmap workbook is the first.
-      { id: "reports", icon: "activity", label: "Reports" },
-      // The type catalogue the line above is a view of. Which types are
-      // components is a judgement this organization makes here, not a constant
-      // in a gear — so the two surfaces sit next to each other.
-      { id: "objects", icon: "grid", label: "Objects" },
-      // Lists of the domain model's objects that people define and save as
-      // data (views.tsx): a new one is not a release.
-      { id: "views", icon: "grid", label: "Views" },
-      // What the deployment is doing in the background, and what fires on its
-      // own: studio-tasks runs plus studio-scheduler schedules.
-      { id: "tasks", icon: "scan", label: "Background work" },
-      { id: "system", icon: "cog", label: "System" },
-    ],
-  },
+// The rail follows the path (Platform › organization › workspace › project):
+// it lists the sections of the level the path has open, and nothing else.
+// The platform has its shared components and the deployment; an
+// organization its overview, workspaces, people, connections and own
+// components; a workspace and a project their own sections
+// (WORKSPACE_TABS, PROJECT_TABS). Moving up or down is the path's job.
+type Level = "platform" | "organization" | "workspace" | "project";
+
+const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; label: string }[]> = {
+  platform: [
+    // The common set every organization builds on (ADR-0042).
+    { id: "platform", icon: "layers", label: "Components" },
+    // How the deployment itself is doing.
+    { id: "system", icon: "cog", label: "System" },
+  ],
+  organization: [
+    { id: "org", icon: "home", label: "Overview" },
+    { id: "projects", icon: "grid", label: "Workspaces" },
+    { id: "people", icon: "users", label: "People" },
+    // Owned by the organization and inherited by every project in it.
+    { id: "connectors", icon: "plug", label: "Connections" },
+    // What its projects build: the registry, candidates, its gear repository.
+    { id: "gears", icon: "package", label: "Our components" },
+    // Every report the Studio draws, configured once for the organization.
+    { id: "reports", icon: "activity", label: "Reports" },
+    // The type catalogue, and the lists of its objects people save.
+    { id: "objects", icon: "grid", label: "Objects" },
+    { id: "views", icon: "grid", label: "Views" },
+    // Its studio-tasks runs and studio-scheduler schedules.
+    { id: "tasks", icon: "scan", label: "Background work" },
+  ],
+};
+
+/** The views whose level is the platform; every other portal view is the
+ *  organization's. */
+const PLATFORM_VIEWS: ReadonlySet<View> = new Set(LEVEL_NAV.platform.map((n) => n.id));
+
+/** Every destination the "+" picker can pin, by level. */
+const NAV_SECTIONS: { title: string; items: { id: View; icon: string; label: string }[] }[] = [
+  { title: "Platform", items: LEVEL_NAV.platform },
+  { title: "Organization", items: LEVEL_NAV.organization },
 ];
 
 type AdminView =
@@ -1585,6 +1550,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
    *  two are mutually exclusive, so exactly one band ever shows. */
   const workspaceOpen =
     !adminOpen && !activeSpace && view === "projects" && !!crumb.projectId && !crumb.nestedId;
+  /** The level the path has open, which decides what the rail lists. */
+  const level: Level = projectOpen
+    ? "project"
+    : workspaceOpen
+      ? "workspace"
+      : PLATFORM_VIEWS.has(view)
+        ? "platform"
+        : "organization";
 
   const panelView: PanelView = dash ? "dashboard" : view;
 
@@ -1806,7 +1779,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             <PathBar
               orgs={orgOptions}
               activeOrg={activeOrg}
-              platformOpen={view === "platform" && !activeSpace}
+              platformOpen={PLATFORM_VIEWS.has(view) && !activeSpace}
               onOpenPlatform={() => {
                 setCrumb({});
                 setView("platform");
@@ -2100,14 +2073,92 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 </>
               ) : (
                 <>
-                {/* Organization / workspace switchers used to live here; the
-                    horizontal path picker (org › workspace › project) above the
-                    content is now the single place to switch context, so the
-                    sidebar keeps only the nav surfaces below. */}
-                {/* The open project's sections are NOT here any more — they are
-                    the band across the top of the work area (.project-sections).
-                    Listing them in both places was the same navigation twice,
-                    and the rail is for context, not for the open thing's parts. */}
+                {/* The open level's sections. The path above the content
+                    picks the level; the rail lists what is in it. */}
+                <div className={`nav-section nav-section-level nav-level-${level}`} data-level={level}>
+                  <div className="nav-section-title nav-level-title">
+                    <span className="nav-level-kind">
+                      {level === "platform"
+                        ? "Platform"
+                        : level === "organization"
+                          ? "Organization"
+                          : level === "workspace"
+                            ? "Workspace"
+                            : "Project"}
+                    </span>
+                    <span className="nav-level-name">
+                      {level === "platform"
+                        ? "shared by every organization"
+                        : level === "organization"
+                          ? (activeOrg?.name ?? "")
+                          : level === "workspace"
+                            ? (orgWorkspaces.find((w) => w.id === crumb.projectId)?.name ?? "")
+                            : (projectLabel ?? "")}
+                    </span>
+                  </div>
+                  {level === "project"
+                    ? PROJECT_TABS.map((t) => (
+                        <button
+                          key={t.id}
+                          className={projectTab === t.id ? "active" : ""}
+                          aria-current={projectTab === t.id ? "page" : undefined}
+                          title={t.label}
+                          onClick={() => setProjectTab(t.id)}
+                        >
+                          <span className="ico"><NavIcon name={t.icon} /></span> {t.label}
+                        </button>
+                      ))
+                    : level === "workspace"
+                      ? WORKSPACE_TABS.map((t) => (
+                          <button
+                            key={t.id}
+                            className={workspaceTab === t.id ? "active" : ""}
+                            aria-current={workspaceTab === t.id ? "page" : undefined}
+                            title={t.hint}
+                            onClick={() => setWorkspaceTab(t.id)}
+                          >
+                            <span className="ico"><NavIcon name={t.icon} /></span> {t.label}
+                          </button>
+                        ))
+                      : LEVEL_NAV[level].map((n) => (
+                          <button
+                            key={n.id}
+                            className={view === n.id && !activeSpace ? "active" : ""}
+                            aria-current={view === n.id && !activeSpace ? "page" : undefined}
+                            title={n.label}
+                            onClick={() => {
+                              setCrumb({});
+                              setView(n.id);
+                              setActiveSpace(null); // portal navigation leaves the space
+                            }}
+                          >
+                            <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
+                          </button>
+                        ))}
+                  {level === "project" &&
+                    (() => {
+                      // Pinning a project section belongs with its sections.
+                      const pin: Pin = {
+                        kind: "project",
+                        projectId: crumb.nestedId ?? "",
+                        workspaceId: crumb.projectId ?? "",
+                        name: projectLabel ?? "Project",
+                        tab: projectTab,
+                      };
+                      const already = isPinned(pins, pin);
+                      return (
+                        <button
+                          className={`nav-level-pin${already ? " on" : ""}`}
+                          aria-pressed={already}
+                          title={already ? "Unpin this section" : "Pin this section to the rail"}
+                          onClick={() => setPinned(togglePin(pins, pin))}
+                        >
+                          <span className="ico" aria-hidden>{already ? "★" : "☆"}</span>
+                          {already ? "Pinned" : "Pin this section"}
+                        </button>
+                      );
+                    })()}
+                </div>
                 <PinnedSection
                   pins={pins}
                   setPins={setPinned}
@@ -2130,33 +2181,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                     setView("projects");
                   }}
                 />
-                {
-                  // ── Organization context: work surfaces of the whole org ──
-                  NAV_SECTIONS.filter((sec) => !sec.hidden).map((sec) => {
-                    const items = sec.items;
-                    return (
-                      <div
-                        key={sec.title ?? "_top"}
-                        className={`nav-section${sec.title ? ` nav-section-${sec.title.toLowerCase()}` : ""}`}
-                      >
-                        {sec.title && <div className="nav-section-title">{sec.title}</div>}
-                        {items.map((n) => (
-                          <button
-                            key={n.id}
-                            className={view === n.id && !activeSpace ? "active" : ""}
-                            title={n.label}
-                            onClick={() => {
-                              setView(n.id);
-                              setActiveSpace(null); // portal navigation leaves the space
-                            }}
-                          >
-                            <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
-                          </button>
-                        ))}
-                      </div>
-                    );
-                  })
-                }
                 </>
               )}
             </nav>
@@ -2253,83 +2277,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           )}
         </nav>
       )}
-      {/* The project's sections, as the product draws them: a 44px band across
-          the top of the work area, not a list inside the navigation rail.
-
-          They used to live in the rail (commit a2b7f89). The product keeps the
-          rail for where you ARE — organization, workspaces, products — and puts
-          the sections of the thing you have open on the thing itself, which is
-          also why they can be a row: seven short labels fit across a work area
-          and would each cost a line in a 240px column. */}
-      {projectOpen && (
-        <nav className="project-sections" aria-label="Project sections">
-          {PROJECT_TABS.map((t) => (
-            <button
-              key={t.id}
-              className={`psection${projectTab === t.id ? " on" : ""}`}
-              aria-current={projectTab === t.id ? "page" : undefined}
-              onClick={() => setProjectTab(t.id)}
-            >
-              <span className="ico" aria-hidden>
-                <NavIcon name={t.icon} />
-              </span>
-              {t.label}
-            </button>
-          ))}
-          {/* Pinning a project section belongs on the section, not in the rail:
-              the rail cannot know which project is open, and a picker listing
-              every project x every section is a list nobody reads. */}
-          {(() => {
-            const pin: Pin = {
-              kind: "project",
-              projectId: crumb.nestedId ?? "",
-              workspaceId: crumb.projectId ?? "",
-              name: projectLabel ?? "Project",
-              tab: projectTab,
-            };
-            const already = isPinned(pins, pin);
-            return (
-              <button
-                className={`psection psection-pin${already ? " on" : ""}`}
-                aria-pressed={already}
-                title={
-                  already
-                    ? "Unpin this section from the rail"
-                    : "Pin this section to the top of the rail"
-                }
-                onClick={() => setPinned(togglePin(pins, pin))}
-              >
-                <span className="ico" aria-hidden>
-                  {already ? "★" : "☆"}
-                </span>
-                {already ? "Pinned" : "Pin"}
-              </button>
-            );
-          })()}
-        </nav>
-      )}
-      {/* A workspace gets the same band, because it is the same kind of thing:
-          something you have open, with sections of its own. Its projects are
-          one of those sections rather than a table pinned above a different
-          switch — the level above should not invent its own navigation. */}
-      {workspaceOpen && (
-        <nav className="project-sections" aria-label="Workspace sections">
-          {WORKSPACE_TABS.map((t) => (
-            <button
-              key={t.id}
-              className={`psection${workspaceTab === t.id ? " on" : ""}`}
-              aria-current={workspaceTab === t.id ? "page" : undefined}
-              title={t.hint}
-              onClick={() => setWorkspaceTab(t.id)}
-            >
-              <span className="ico" aria-hidden>
-                <NavIcon name={t.icon} />
-              </span>
-              {t.label}
-            </button>
-          ))}
-        </nav>
-      )}
+      {/* The project's and the workspace's sections used to be a band across
+          the top of the work area. The rail follows the path now, so they are
+          listed there, as the platform's and the organization's are. */}
       {/* Spaces host: all session iframes stay mounted; only the active one
           is visible, so switching never reloads the IDE. */}
       {/* While the portal is active the host stays rendered but parked as a
@@ -5197,7 +5147,7 @@ function PinnedSection({
             );
           })}
           <p className="nav-pin-empty">
-            A project&apos;s own section is pinned from the band above it.
+            A project&apos;s own section is pinned from its list, with the project open.
           </p>
         </div>
       )}

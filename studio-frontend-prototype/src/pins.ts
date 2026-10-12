@@ -9,8 +9,9 @@
 //!
 //! So it holds what this person always needs instead, which is a different
 //! thing per person and per week: a destination, or one project's own section.
-//! The three that used to live there are the defaults, so nothing moves on
-//! first use and the section means something immediately.
+//! Those three were the defaults until the rail followed the path: they are
+//! the organization level's own sections now, so pinning them by default
+//! would list them twice. Nothing is pinned until somebody pins it.
 //!
 //! Nothing here touches the DOM or the API — a pin is a list operation and a
 //! string key, and the rail is where that gets drawn.
@@ -64,12 +65,8 @@ export function togglePin(pins: readonly Pin[], pin: Pin): Pin[] {
   return without.length === pins.length ? [...pins, pin] : without;
 }
 
-/** The three that used to be the WORK group. */
-export const DEFAULT_PINS: readonly Pin[] = [
-  { kind: "view", id: "projects" },
-  { kind: "view", id: "people" },
-  { kind: "view", id: "connectors" },
-];
+/** Nothing: every level lists its own sections (see LEVEL_NAV). */
+export const DEFAULT_PINS: readonly Pin[] = [];
 
 const KEY = "studio.pins";
 
