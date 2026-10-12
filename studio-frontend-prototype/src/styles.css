@@ -702,8 +702,6 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
   color: var(--foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .nav-level-platform .nav-level-name { font-weight: 400; color: var(--muted-foreground); font-size: 12px; }
-.drawer nav .nav-level-pin { color: var(--muted-foreground); font-size: 12px; }
-.drawer nav .nav-level-pin.on { color: var(--primary); }
 /* The pinned section's heading carries its own control, so it is a row rather
    than a label. */
 .nav-section-pinned .nav-section-title {

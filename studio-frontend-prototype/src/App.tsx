@@ -2135,29 +2135,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                             <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
                           </button>
                         ))}
-                  {level === "project" &&
-                    (() => {
-                      // Pinning a project section belongs with its sections.
-                      const pin: Pin = {
-                        kind: "project",
-                        projectId: crumb.nestedId ?? "",
-                        workspaceId: crumb.projectId ?? "",
-                        name: projectLabel ?? "Project",
-                        tab: projectTab,
-                      };
-                      const already = isPinned(pins, pin);
-                      return (
-                        <button
-                          className={`nav-level-pin${already ? " on" : ""}`}
-                          aria-pressed={already}
-                          title={already ? "Unpin this section" : "Pin this section to the rail"}
-                          onClick={() => setPinned(togglePin(pins, pin))}
-                        >
-                          <span className="ico" aria-hidden>{already ? "★" : "☆"}</span>
-                          {already ? "Pinned" : "Pin this section"}
-                        </button>
-                      );
-                    })()}
                 </div>
                 <PinnedSection
                   pins={pins}
@@ -2277,9 +2254,86 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           )}
         </nav>
       )}
-      {/* The project's and the workspace's sections used to be a band across
-          the top of the work area. The rail follows the path now, so they are
-          listed there, as the platform's and the organization's are. */}
+      {/* The open project's sections are listed in the rail too (it follows
+          the path); the band stays, because it is where the work area says
+          which section is on screen and where a section is pinned. */}
+      {/* The project's sections, as the product draws them: a 44px band across
+          the top of the work area, not a list inside the navigation rail.
+
+          They used to live in the rail (commit a2b7f89). The product keeps the
+          rail for where you ARE — organization, workspaces, products — and puts
+          the sections of the thing you have open on the thing itself, which is
+          also why they can be a row: seven short labels fit across a work area
+          and would each cost a line in a 240px column. */}
+      {projectOpen && (
+        <nav className="project-sections" aria-label="Project sections">
+          {PROJECT_TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`psection${projectTab === t.id ? " on" : ""}`}
+              aria-current={projectTab === t.id ? "page" : undefined}
+              onClick={() => setProjectTab(t.id)}
+            >
+              <span className="ico" aria-hidden>
+                <NavIcon name={t.icon} />
+              </span>
+              {t.label}
+            </button>
+          ))}
+          {/* Pinning a project section belongs on the section, not in the rail:
+              the rail cannot know which project is open, and a picker listing
+              every project x every section is a list nobody reads. */}
+          {(() => {
+            const pin: Pin = {
+              kind: "project",
+              projectId: crumb.nestedId ?? "",
+              workspaceId: crumb.projectId ?? "",
+              name: projectLabel ?? "Project",
+              tab: projectTab,
+            };
+            const already = isPinned(pins, pin);
+            return (
+              <button
+                className={`psection psection-pin${already ? " on" : ""}`}
+                aria-pressed={already}
+                title={
+                  already
+                    ? "Unpin this section from the rail"
+                    : "Pin this section to the top of the rail"
+                }
+                onClick={() => setPinned(togglePin(pins, pin))}
+              >
+                <span className="ico" aria-hidden>
+                  {already ? "★" : "☆"}
+                </span>
+                {already ? "Pinned" : "Pin"}
+              </button>
+            );
+          })()}
+        </nav>
+      )}
+      {/* A workspace gets the same band, because it is the same kind of thing:
+          something you have open, with sections of its own. Its projects are
+          one of those sections rather than a table pinned above a different
+          switch — the level above should not invent its own navigation. */}
+      {workspaceOpen && (
+        <nav className="project-sections" aria-label="Workspace sections">
+          {WORKSPACE_TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`psection${workspaceTab === t.id ? " on" : ""}`}
+              aria-current={workspaceTab === t.id ? "page" : undefined}
+              title={t.hint}
+              onClick={() => setWorkspaceTab(t.id)}
+            >
+              <span className="ico" aria-hidden>
+                <NavIcon name={t.icon} />
+              </span>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      )}
       {/* Spaces host: all session iframes stay mounted; only the active one
           is visible, so switching never reloads the IDE. */}
       {/* While the portal is active the host stays rendered but parked as a
@@ -5147,7 +5201,7 @@ function PinnedSection({
             );
           })}
           <p className="nav-pin-empty">
-            A project&apos;s own section is pinned from its list, with the project open.
+            A project&apos;s own section is pinned from the band above it.
           </p>
         </div>
       )}
