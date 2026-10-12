@@ -27,7 +27,11 @@
 //! twice and disagreed quietly — and the rules below are exactly the kind that
 //! disagree quietly: which queue a row belongs in, and what counts as coverage.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
+
+pub use crate::artifact_ingest::port::ReviewSummary;
 
 /// Where a row's bytes live. An implementation detail of ours, kept visible
 /// because the two behave differently — an authored document reaches the
@@ -99,6 +103,8 @@ pub struct Binding {
     pub type_key: Option<String>,
     pub state: BindingState,
     pub conforms: Option<bool>,
+    /// The classifier's confidence in `type_key`, when it gave one.
+    pub confidence: Option<f32>,
     pub updated_at: String,
 }
 
@@ -126,7 +132,7 @@ pub struct Candidate {
 }
 
 /// One row of the list, whatever it came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpecRow {
     /// Unique across all three kinds: the binding id, the document id, or the
     /// candidate's node prefixed so it cannot collide with either.
@@ -153,6 +159,47 @@ pub struct SpecRow {
     /// The repository the file came from, for the provenance column. Empty for
     /// an authored row and for a file whose sync recorded none.
     pub repo: String,
+    /// That repository's `full_path`, which is how a reader knows it. Empty
+    /// wherever `repo` is, and for a repository the graph no longer holds.
+    pub repo_full_path: String,
+    /// The binding's confidence in its proposed type. `None` for an authored
+    /// row, a never-classified file, and a classifier that gave none.
+    pub confidence: Option<f32>,
+    /// What the document's recorded Spec Quality verdicts say. Default — no
+    /// date, no findings — when none was ever recorded, which is also how a
+    /// refusal reads: Spec Quality records nothing for a type it will not take.
+    pub review: ReviewSummary,
+}
+
+/// What the graph knows about the rows, looked up by key rather than walked.
+#[derive(Debug, Clone, Default)]
+pub struct Known {
+    /// `file node id -> repo node id`.
+    pub repos: HashMap<String, String>,
+    /// `repo node id -> full_path`.
+    pub repo_paths: HashMap<String, String>,
+    /// `subject -> its verdicts folded`: a file's node id, or
+    /// [`authored_subject`] for a document written in Studio.
+    pub reviews: HashMap<String, ReviewSummary>,
+}
+
+impl Known {
+    fn repo(&self, node_id: &str) -> (String, String) {
+        let repo = self.repos.get(node_id).cloned().unwrap_or_default();
+        let path = self.repo_paths.get(&repo).cloned().unwrap_or_default();
+        (repo, path)
+    }
+
+    fn review(&self, subject: &str) -> ReviewSummary {
+        self.reviews.get(subject).cloned().unwrap_or_default()
+    }
+}
+
+/// The `subject` a verdict on a document written in Studio is recorded under:
+/// it has no graph node, so its id stands in for one.
+#[must_use]
+pub fn authored_subject(document_id: &str) -> String {
+    format!("studio-doc:{document_id}")
 }
 
 /// The queues the filter chips offer.
@@ -321,11 +368,12 @@ pub fn rows(
     bindings: &[Binding],
     authored: &[Authored],
     candidates: &[Candidate],
-    repo_of: &dyn Fn(&str) -> String,
+    known: &Known,
 ) -> Vec<SpecRow> {
     let mut out: Vec<SpecRow> = Vec::new();
 
     for b in bindings {
+        let (repo, repo_full_path) = known.repo(&b.node_id);
         out.push(SpecRow {
             id: b.id.clone(),
             origin: Origin::Repository,
@@ -337,7 +385,10 @@ pub fn rows(
             status: None,
             conforms: b.conforms,
             updated_at: b.updated_at.clone(),
-            repo: repo_of(&b.node_id),
+            repo,
+            repo_full_path,
+            confidence: b.confidence,
+            review: known.review(&b.node_id),
         });
     }
 
@@ -354,6 +405,9 @@ pub fn rows(
             conforms: d.conforms,
             updated_at: d.updated_at.clone(),
             repo: String::new(),
+            repo_full_path: String::new(),
+            confidence: None,
+            review: known.review(&authored_subject(&d.id)),
         });
     }
 
@@ -361,6 +415,7 @@ pub fn rows(
         if bindings.iter().any(|b| b.node_id == c.node_id) {
             continue;
         }
+        let (repo, repo_full_path) = known.repo(&c.node_id);
         out.push(SpecRow {
             id: format!("candidate:{}", c.node_id),
             // It IS a repository file — the only thing it lacks is a decision.
@@ -379,7 +434,10 @@ pub fn rows(
             status: None,
             conforms: None,
             updated_at: String::new(),
-            repo: repo_of(&c.node_id),
+            repo,
+            repo_full_path,
+            confidence: None,
+            review: known.review(&c.node_id),
         });
     }
 
@@ -547,8 +605,8 @@ pub fn pipeline(
 mod tests {
     use super::*;
 
-    fn no_repo(_: &str) -> String {
-        String::new()
+    fn nothing_known() -> Known {
+        Known::default()
     }
 
     fn ids(entries: &[PipelineEntry]) -> Vec<&str> {
@@ -563,6 +621,7 @@ mod tests {
             type_key: Some("prd".to_owned()),
             state,
             conforms: None,
+            confidence: None,
             updated_at: "2026-09-01T00:00:00Z".to_owned(),
         }
     }
@@ -586,7 +645,7 @@ mod tests {
             &[binding("b1", "docs/prd.md", BindingState::Confirmed)],
             &[doc("d1", "Written here")],
             &[],
-            &no_repo,
+            &nothing_known(),
         );
         assert_eq!(out.len(), 2);
         let origins: Vec<Origin> = out.iter().map(|r| r.origin).collect();
@@ -604,7 +663,7 @@ mod tests {
             )],
             &[doc("d1", "Product requirements")],
             &[],
-            &no_repo,
+            &nothing_known(),
         );
         let repo = out.iter().find(|r| r.origin == Origin::Repository).unwrap();
         let authored = out.iter().find(|r| r.origin == Origin::Authored).unwrap();
@@ -614,7 +673,7 @@ mod tests {
 
     #[test]
     fn an_authored_row_has_no_path_until_it_is_committed() {
-        let out = rows(&[], &[doc("d1", "Spec")], &[], &no_repo);
+        let out = rows(&[], &[doc("d1", "Spec")], &[], &nothing_known());
         assert_eq!(out[0].path, "");
     }
 
@@ -624,7 +683,7 @@ mod tests {
         older.updated_at = "2026-08-01T00:00:00Z".to_owned();
         let mut newer = binding("b2", "b.md", BindingState::Confirmed);
         newer.updated_at = "2026-09-20T00:00:00Z".to_owned();
-        let out = rows(&[older, newer], &[], &[], &no_repo);
+        let out = rows(&[older, newer], &[], &[], &nothing_known());
         assert_eq!(out[0].id, "b2");
     }
 
@@ -635,7 +694,7 @@ mod tests {
         let mut undated = binding("b1", "a.md", BindingState::Confirmed);
         undated.updated_at = String::new();
         let dated = binding("b2", "b.md", BindingState::Confirmed);
-        let out = rows(&[undated, dated], &[], &[], &no_repo);
+        let out = rows(&[undated, dated], &[], &[], &nothing_known());
         assert_eq!(out[0].id, "b2");
         assert_eq!(out[1].id, "b1");
     }
@@ -646,7 +705,7 @@ mod tests {
             &[binding("b1", "a.md", BindingState::Confirmed)],
             &[doc("d1", "Zzz")],
             &[],
-            &no_repo,
+            &nothing_known(),
         );
         assert_eq!(out[0].origin, Origin::Authored);
     }
@@ -657,7 +716,7 @@ mod tests {
     fn an_authored_document_stays_out_of_the_review_queue() {
         // It was written AS a type, so there is nothing to review about what
         // it is.
-        let out = rows(&[], &[doc("d1", "Spec")], &[], &no_repo);
+        let out = rows(&[], &[doc("d1", "Spec")], &[], &nothing_known());
         assert!(!in_filter(&out[0], Filter::NeedsReview));
         assert!(in_filter(&out[0], Filter::Bound));
     }
@@ -665,7 +724,7 @@ mod tests {
     #[test]
     fn an_undecided_repository_file_is_in_the_review_queue() {
         for state in [BindingState::Detected, BindingState::Unknown] {
-            let out = rows(&[binding("b1", "a.md", state)], &[], &[], &no_repo);
+            let out = rows(&[binding("b1", "a.md", state)], &[], &[], &nothing_known());
             assert!(in_filter(&out[0], Filter::NeedsReview), "{state:?}");
         }
     }
@@ -673,7 +732,7 @@ mod tests {
     #[test]
     fn a_decided_file_counts_as_bound_whichever_way_it_was_decided() {
         for state in [BindingState::Confirmed, BindingState::Manual] {
-            let out = rows(&[binding("b1", "a.md", state)], &[], &[], &no_repo);
+            let out = rows(&[binding("b1", "a.md", state)], &[], &[], &nothing_known());
             assert!(in_filter(&out[0], Filter::Bound), "{state:?}");
             assert!(!in_filter(&out[0], Filter::NeedsReview), "{state:?}");
         }
@@ -685,7 +744,7 @@ mod tests {
             &[binding("b1", "a.md", BindingState::NotADocument)],
             &[],
             &[],
-            &no_repo,
+            &nothing_known(),
         );
         assert!(in_filter(&out[0], Filter::NotDocuments));
         assert!(!in_filter(&out[0], Filter::Bound));
@@ -708,7 +767,7 @@ mod tests {
                 node_id: "n9".to_owned(),
                 path: "d.md".to_owned(),
             }],
-            &no_repo,
+            &nothing_known(),
         );
         for row in &out {
             let claimed = queues_of(row);
@@ -740,7 +799,7 @@ mod tests {
                 node_id: "n9".to_owned(),
                 path: "d.md".to_owned(),
             }],
-            &no_repo,
+            &nothing_known(),
         );
         let counted = counts(&out);
         for (filter, n) in &counted {
@@ -767,7 +826,7 @@ mod tests {
                 node_id: "n1".to_owned(),
                 path: "docs/readme.md".to_owned(),
             }],
-            &no_repo,
+            &nothing_known(),
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].origin, Origin::Repository);
@@ -788,7 +847,7 @@ mod tests {
                 node_id: b.node_id.clone(),
                 path: b.path.clone(),
             }],
-            &no_repo,
+            &nothing_known(),
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "b1");
@@ -803,7 +862,7 @@ mod tests {
                 node_id: "n1".to_owned(),
                 path: "a.md".to_owned(),
             }],
-            &no_repo,
+            &nothing_known(),
         );
         assert!(in_filter(&out[0], Filter::NotScanned));
         assert!(!in_filter(&out[0], Filter::NeedsReview));
@@ -812,12 +871,14 @@ mod tests {
 
     #[test]
     fn a_rows_repository_comes_from_the_node_it_was_ingested_from() {
-        let repo_of = |node: &str| {
-            if node == "n1" {
-                "constructorfabric/studio-web".to_owned()
-            } else {
-                String::new()
-            }
+        let known = Known {
+            repos: [("n1".to_owned(), "repo-1".to_owned())].into(),
+            repo_paths: [(
+                "repo-1".to_owned(),
+                "constructorfabric/studio-web".to_owned(),
+            )]
+            .into(),
+            ..Known::default()
         };
         let out = rows(
             &[],
@@ -826,13 +887,86 @@ mod tests {
                 node_id: "n1".to_owned(),
                 path: "a.md".to_owned(),
             }],
-            &repo_of,
+            &known,
         );
         let file = out.iter().find(|r| r.origin == Origin::Repository).unwrap();
         let written = out.iter().find(|r| r.origin == Origin::Authored).unwrap();
-        assert_eq!(file.repo, "constructorfabric/studio-web");
+        assert_eq!(file.repo, "repo-1");
+        assert_eq!(file.repo_full_path, "constructorfabric/studio-web");
         // An authored document is not in a repository until somebody commits it.
         assert_eq!(written.repo, "");
+        assert_eq!(written.repo_full_path, "");
+    }
+
+    #[test]
+    fn a_repository_the_graph_no_longer_holds_has_no_path_rather_than_its_id() {
+        let known = Known {
+            repos: [("node-b1".to_owned(), "gone".to_owned())].into(),
+            ..Known::default()
+        };
+        let out = rows(
+            &[binding("b1", "a.md", BindingState::Confirmed)],
+            &[],
+            &[],
+            &known,
+        );
+        assert_eq!(out[0].repo, "gone");
+        assert_eq!(out[0].repo_full_path, "");
+    }
+
+    // ---- the review summary -----------------------------------------------
+
+    fn reviewed(findings: u32) -> ReviewSummary {
+        ReviewSummary {
+            checked_at: Some("2026-10-01T00:00:00Z".to_owned()),
+            findings,
+        }
+    }
+
+    #[test]
+    fn each_row_carries_its_own_documents_review() {
+        let known = Known {
+            reviews: [
+                ("node-b1".to_owned(), reviewed(3)),
+                (authored_subject("d1"), reviewed(0)),
+            ]
+            .into(),
+            ..Known::default()
+        };
+        let out = rows(
+            &[
+                binding("b1", "a.md", BindingState::Confirmed),
+                binding("b2", "b.md", BindingState::Confirmed),
+            ],
+            &[doc("d1", "Spec")],
+            &[],
+            &known,
+        );
+        let by_id = |id: &str| out.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(by_id("b1").review, reviewed(3));
+        // An authored document's verdicts are kept under `studio-doc:<id>`.
+        assert_eq!(by_id("d1").review, reviewed(0));
+        // Never checked: no date, nothing found — not "checked and clean".
+        assert_eq!(by_id("b2").review, ReviewSummary::default());
+    }
+
+    #[test]
+    fn only_a_binding_has_a_confidence_in_its_type() {
+        let mut b = binding("b1", "a.md", BindingState::Detected);
+        b.confidence = Some(0.75);
+        let out = rows(
+            &[b],
+            &[doc("d1", "Spec")],
+            &[Candidate {
+                node_id: "n9".to_owned(),
+                path: "c.md".to_owned(),
+            }],
+            &nothing_known(),
+        );
+        let by_id = |id: &str| out.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(by_id("b1").confidence, Some(0.75));
+        assert_eq!(by_id("d1").confidence, None);
+        assert_eq!(by_id("candidate:n9").confidence, None);
     }
 
     // ---- the pipeline -----------------------------------------------------

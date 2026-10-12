@@ -259,7 +259,11 @@ not two lists merged by eye.
 `spec_rows.rs`: `/spec-rows` folds bindings, authored documents and the
 ingested files (`artifact_ingest::port::ArtifactFiles`) into rows with an
 `origin` (`repository` or `authored`) and the queues each row is in
-(`not-scanned`, `needs-review`, `bound`, `not-documents`); `/spec-pipeline`
+(`not-scanned`, `needs-review`, `bound`, `not-documents`). Each row also
+carries its review summary — `checked_at` and `findings`, folded from the
+recorded `spec_finding` verdicts by the same rule as the rollup's
+`open_findings` — the binding's `confidence` and the repository's
+`repo_full_path`; `/spec-pipeline`
 answers what a project has of each type it declares; `/specs-per-source`
 counts per repository. `port::DocumentCounter` gives the portfolio rollup the
 same counts.
@@ -267,7 +271,13 @@ same counts.
 ##### Responsibility boundaries
 
 The ingested-file list is optional: without the ingest gear the rows still
-carry authored documents and bindings, and say so through `files_known`.
+carry authored documents and bindings, and say so through `files_known`;
+when the verdicts cannot be read, `reviews_known` is false and no row's review
+summary means "never checked"; when the repositories cannot be read,
+`repos_known` is false and an empty `repo_full_path` means unknown, not gone.
+The rollup's `open_findings` also counts verdicts on documents that are gone,
+since nothing retires a verdict with its document, so it can exceed the sum of
+the rows' `findings`.
 
 ##### Related components (by ID)
 

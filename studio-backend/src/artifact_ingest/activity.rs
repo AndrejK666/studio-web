@@ -35,7 +35,7 @@
 //! pulled is its own node with its own `created_at`.
 
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// A day, in milliseconds.
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -242,17 +242,79 @@ pub fn activity_feed(
 
 // ── one project's row ────────────────────────────────────────────────────────
 
-/// The severities a detector writes for something still wrong. The rest —
-/// `gate-passed`, `clean`, `analyzed` — are verdicts too, but nothing is left
-/// to do about them, and a row counting them would call a checked project
-/// busy.
-const OPEN_SEVERITIES: [&str; 3] = ["high", "gate-failed", "some"];
+/// The severities a detector writes for a verdict that FAILED. The rest are
+/// verdicts too, but nothing is left to do about them, and a row counting them
+/// would call a checked project busy.
+///
+/// `some` is not among them, although it reads like a warning: its only
+/// writer is traceability, for a document that cites no other one in its set,
+/// recorded with the gate passed and no items (`spec_quality/record.rs`).
+/// Counting it put a red "1 finding" on a document whose analysis shows nothing
+/// to fix.
+const FAILING_SEVERITIES: [&str; 2] = ["high", "gate-failed"];
+
+/// How many things one verdict says are wrong with its document.
+///
+/// The findings a detector placed in the text, under `details.findings` — "3
+/// findings" means three places, not three detectors that looked. A verdict
+/// recorded before the server kept the items has only its severity to say it
+/// with, so a failing one counts as one rather than letting an old row read as
+/// clean.
+///
+/// The one rule for both the Specs list and the projects table: when each
+/// counted its own way they disagreed about the same project.
+#[must_use]
+pub fn placed_findings(verdict: &Value) -> u32 {
+    let items = verdict
+        .get("details")
+        .and_then(|d| d.get("findings"))
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    if items > 0 {
+        return u32::try_from(items).unwrap_or(u32::MAX);
+    }
+    u32::from(field_str(verdict, "severity").is_some_and(|s| FAILING_SEVERITIES.contains(&s)))
+}
+
+/// What a document's recorded verdicts say, for its row on the Specs list.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReviewSummary {
+    /// `recorded_at` of the newest verdict, as written. `None` when no verdict
+    /// carries a readable one — never checked, or checked before verdicts
+    /// were dated.
+    pub checked_at: Option<String>,
+    /// [`placed_findings`] summed over every detector's verdict.
+    pub findings: u32,
+}
+
+/// Every document's verdicts folded into its summary, keyed by `subject`: a
+/// file's node id, or `studio-doc:<id>` for a document written in Studio.
+#[must_use]
+pub fn review_by_subject(findings: &[(String, Value)]) -> HashMap<String, ReviewSummary> {
+    let mut out: HashMap<String, (ReviewSummary, Option<i64>)> = HashMap::new();
+    for (_, f) in findings {
+        let Some(subject) = field_str(f, "subject") else {
+            continue;
+        };
+        let (summary, newest) = out.entry(subject.trim().to_owned()).or_default();
+        summary.findings = summary.findings.saturating_add(placed_findings(f));
+        if let Some(at) = instant(f, "recorded_at")
+            && newest.is_none_or(|n| at > n)
+        {
+            *newest = Some(at);
+            summary.checked_at = field_str(f, "recorded_at").map(str::to_owned);
+        }
+    }
+    out.into_iter().map(|(k, (s, _))| (k, s)).collect()
+}
 
 /// What a project's row in the projects table says about its review and its
 /// sources, folded from the nodes those columns are about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectSignals {
-    /// Findings whose verdict is still something to fix.
+    /// Findings still to fix, counted by [`placed_findings`] — the Specs
+    /// list's rule, over every verdict in the project, including those on
+    /// documents that are gone: nothing retires a verdict with its document.
     pub open_findings: u32,
     /// Unresolved threads the project's repositories report: on documents and
     /// on pull requests under review. `None` when no repository could say —
@@ -284,8 +346,7 @@ pub fn project_signals(
 ) -> ProjectSignals {
     let open_findings = findings
         .iter()
-        .filter(|(_, f)| field_str(f, "severity").is_some_and(|s| OPEN_SEVERITIES.contains(&s)))
-        .count();
+        .fold(0u32, |n, (_, f)| n.saturating_add(placed_findings(f)));
 
     let mut open_comments: Option<u32> = None;
     for repo in repos {
@@ -310,7 +371,7 @@ pub fn project_signals(
     }
 
     ProjectSignals {
-        open_findings: u32::try_from(open_findings).unwrap_or(u32::MAX),
+        open_findings,
         open_comments,
         pulls: total,
         pulls_known: !pulls.is_empty(),
@@ -726,7 +787,79 @@ mod tests {
             verdict("f", "analyzed", 1),
         ];
         let s = project_signals(&findings, &[], &[], &[], NOW, 7);
-        assert_eq!(s.open_findings, 3);
+        assert_eq!(s.open_findings, 2);
+    }
+
+    #[test]
+    fn a_verdict_counts_the_findings_it_placed_in_the_text() {
+        // Three places in the text, whatever the verdict's own word for it —
+        // and the projects table counts them the same way the Specs list does.
+        let placed = json!({
+            "subject": "a",
+            "severity": "gate-passed",
+            "details": { "findings": [{ "id": "1" }, { "id": "2" }, { "id": "3" }] },
+        });
+        assert_eq!(placed_findings(&placed), 3);
+        let s = project_signals(
+            &[("a".to_owned(), placed), verdict("b", "high", 1)],
+            &[],
+            &[],
+            &[],
+            NOW,
+            7,
+        );
+        assert_eq!(s.open_findings, 4);
+    }
+
+    #[test]
+    fn a_verdict_without_items_counts_once_if_it_failed_and_never_otherwise() {
+        for (severity, n) in [
+            ("high", 1),
+            ("gate-failed", 1),
+            // Traceability's "cites nothing", recorded with the gate passed.
+            ("some", 0),
+            ("gate-passed", 0),
+            ("clean", 0),
+        ] {
+            let v = json!({ "severity": severity, "details": { "findings": [] } });
+            assert_eq!(placed_findings(&v), n, "{severity}");
+        }
+    }
+
+    #[test]
+    fn a_documents_review_is_its_verdicts_summed_and_dated_by_the_newest() {
+        let findings = [
+            (
+                "f1".to_owned(),
+                json!({ "subject": "n1", "detector": "purpose", "recorded_at": ago(3),
+                        "details": { "findings": [{ "id": "1" }, { "id": "2" }] } }),
+            ),
+            (
+                "f2".to_owned(),
+                json!({ "subject": "n1", "detector": "bloat", "recorded_at": ago(1), "severity": "high" }),
+            ),
+            (
+                "f3".to_owned(),
+                json!({ "subject": "studio-doc:d1", "detector": "leak", "recorded_at": ago(2), "severity": "clean" }),
+            ),
+        ];
+        let by = review_by_subject(&findings);
+        assert_eq!(by["n1"].findings, 3);
+        assert_eq!(by["n1"].checked_at.as_deref(), Some(ago(1).as_str()));
+        // Checked and clean is not the same as never checked.
+        assert_eq!(by["studio-doc:d1"].findings, 0);
+        assert!(by["studio-doc:d1"].checked_at.is_some());
+        assert!(!by.contains_key("n2"));
+    }
+
+    #[test]
+    fn an_undated_verdict_counts_but_does_not_date_the_check() {
+        let by = review_by_subject(&[(
+            "f".to_owned(),
+            json!({ "subject": "n1", "severity": "high" }),
+        )]);
+        assert_eq!(by["n1"].findings, 1);
+        assert_eq!(by["n1"].checked_at, None);
     }
 
     #[test]

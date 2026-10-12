@@ -2036,6 +2036,36 @@ impl super::port::ArtifactFiles for IngestService {
     ) -> anyhow::Result<Vec<super::port::IngestedFile>> {
         self.graph.files_in_scope(ctx, scope).await
     }
+
+    async fn reviews(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<HashMap<String, super::port::ReviewSummary>> {
+        let findings: Vec<(String, serde_json::Value)> = self
+            .list_in_scope(ctx, Some("spec_finding"), scope)
+            .await?
+            .into_iter()
+            .map(|n| (n.instance_id, n.value))
+            .collect();
+        Ok(super::activity::review_by_subject(&findings))
+    }
+
+    async fn repo_paths(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<HashMap<String, String>> {
+        Ok(self
+            .list_in_scope(ctx, Some("repo"), scope)
+            .await?
+            .into_iter()
+            .filter_map(|n| {
+                let path = n.value.get("full_path")?.as_str()?.to_owned();
+                Some((n.instance_id, path))
+            })
+            .collect())
+    }
 }
 
 /// The checkout, offered to whoever owns the documents in it.

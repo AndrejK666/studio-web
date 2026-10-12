@@ -2034,7 +2034,14 @@ pub struct SpecScopeQuery {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct SpecRowDto {
-    /// Unique across all three kinds a row can be.
+    /// Unique across all three kinds a row can be, and what a caller acts on:
+    ///
+    /// - a bound repository file: the binding id — `PUT
+    ///   …/document-bindings/{id}`, and `binding_ids` in a quality run;
+    /// - an authored document: the document id — `document_ids` in a quality
+    ///   run, and what opens it;
+    /// - a file nothing has classified: `candidate:<node_id>`, which names no
+    ///   record yet and is not accepted by either.
     pub id: String,
     /// `repository` or `authored` — where the bytes live, which is the one
     /// thing the two kinds genuinely differ in.
@@ -2056,6 +2063,34 @@ pub struct SpecRowDto {
     pub updated_at: String,
     /// The repository the file was ingested from. Empty for an authored row.
     pub repo: String,
+    /// That repository's `full_path`. Empty for an authored row, and for a
+    /// repository row whose repository is unknown: the files could not be read
+    /// (`sources.files_known` false — the file-to-repository map comes from
+    /// that read), the repository paths could not be read
+    /// (`sources.repos_known` false), or the graph no longer holds the
+    /// repository (both true).
+    pub repo_full_path: String,
+    /// The binding's confidence in its type. Meaningful while `state` is
+    /// `detected`; `1.0` for a type a person chose (`manual`); a confirmed
+    /// binding keeps the classifier's number. Null for an authored row, a file
+    /// nothing has classified, and a classifier that gave none.
+    pub confidence: Option<f64>,
+    /// RFC 3339 time of the newest verdict recorded for this document, from
+    /// ANY detector — `bloat` and `traceability`, which a sync runs over every
+    /// typed document as a set, included. So it says that something looked,
+    /// not that `purpose` or `leak` did, and not whether Spec Quality takes
+    /// the document's type (a refusal records nothing, but a set detector may
+    /// still have dated the document).
+    ///
+    /// Null when no verdict carries a date: never checked, or — with
+    /// `findings > 0` — checked before verdicts were dated. Read `findings`
+    /// first.
+    pub checked_at: Option<String>,
+    /// Findings placed in the text, across all the document's verdicts: the
+    /// items of each verdict's `details.findings`, and one for a failed
+    /// verdict (`high`, `gate-failed`) recorded without items. Traceability's
+    /// `some` ("cites no other document") passed its gate and counts nothing.
+    pub findings: u32,
     /// Which queues this row is in, out of `not-scanned`, `needs-review`,
     /// `bound` and `not-documents`.
     ///
@@ -2085,6 +2120,12 @@ pub struct SpecRowsSourcesDto {
     /// nobody could ask, so `not-scanned` is empty for that reason rather than
     /// because the project has none — a distinction a screen must not collapse.
     pub files_known: bool,
+    /// Whether the recorded verdicts could be read. False means every row's
+    /// `checked_at` and `findings` are unknown rather than "never checked".
+    pub reviews_known: bool,
+    /// Whether the repositories' paths could be read. False means an empty
+    /// `repo_full_path` is unknown rather than a repository that is gone.
+    pub repos_known: bool,
     pub counts: Vec<SpecCountDto>,
 }
 
@@ -2186,31 +2227,65 @@ async fn list_spec_rows(
 
     let (bindings, authored) = read_both(&service, workspace_id, project_id).await?;
 
-    // The never-classified files, and their provenance. Absent when no ingest
-    // gear is here, which costs one queue rather than the screen.
-    let (candidates, repos, files_known) = match quality.files() {
-        Some(files) => match files.list_files(&ctx, &project_id.to_string()).await {
-            Ok(found) => {
-                let repos: std::collections::HashMap<String, String> = found
-                    .iter()
-                    .map(|f| (f.node_id.clone(), f.repo.clone()))
-                    .collect();
-                let candidates: Vec<super::spec_rows::Candidate> = found
-                    .into_iter()
-                    .map(|f| super::spec_rows::Candidate {
-                        node_id: f.node_id,
-                        path: f.path,
-                    })
-                    .collect();
-                (candidates, repos, true)
+    // The never-classified files, their provenance and the recorded verdicts.
+    // Absent when no ingest gear is here, which costs one queue and the review
+    // columns rather than the screen.
+    let scope = project_id.to_string();
+    let mut known = super::spec_rows::Known::default();
+    let (candidates, files_known, reviews_known, repos_known) = match quality.files() {
+        Some(files) => {
+            let (found, reviews, repo_paths) = tokio::join!(
+                files.list_files(&ctx, &scope),
+                files.reviews(&ctx, &scope),
+                files.repo_paths(&ctx, &scope),
+            );
+            // Each read degrades one part of the answer, and the response says
+            // which through its `*_known` flag; the cause is only in the log.
+            let repos_known = match repo_paths {
+                Ok(paths) => {
+                    known.repo_paths = paths;
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, project = %scope, "spec-rows: repository paths unreadable");
+                    false
+                }
+            };
+            let reviews_known = match reviews {
+                Ok(r) => {
+                    known.reviews = r;
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, project = %scope, "spec-rows: recorded verdicts unreadable");
+                    false
+                }
+            };
+            match found {
+                Ok(found) => {
+                    known.repos = found
+                        .iter()
+                        .map(|f| (f.node_id.clone(), f.repo.clone()))
+                        .collect();
+                    let candidates: Vec<super::spec_rows::Candidate> = found
+                        .into_iter()
+                        .map(|f| super::spec_rows::Candidate {
+                            node_id: f.node_id,
+                            path: f.path,
+                        })
+                        .collect();
+                    (candidates, true, reviews_known, repos_known)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, project = %scope, "spec-rows: ingested files unreadable");
+                    (Vec::new(), false, reviews_known, repos_known)
+                }
             }
-            Err(_) => (Vec::new(), std::collections::HashMap::new(), false),
-        },
-        None => (Vec::new(), std::collections::HashMap::new(), false),
+        }
+        None => (Vec::new(), false, false, false),
     };
 
-    let repo_of = |node: &str| repos.get(node).cloned().unwrap_or_default();
-    let rows = super::spec_rows::rows(&bindings, &authored, &candidates, &repo_of);
+    let rows = super::spec_rows::rows(&bindings, &authored, &candidates, &known);
     let counts = super::spec_rows::counts(&rows)
         .into_iter()
         .map(|(queue, count)| SpecCountDto {
@@ -2237,6 +2312,10 @@ async fn list_spec_rows(
             conforms: r.conforms,
             updated_at: r.updated_at,
             repo: r.repo,
+            repo_full_path: r.repo_full_path,
+            confidence: r.confidence.map(f64::from),
+            checked_at: r.review.checked_at,
+            findings: r.review.findings,
         })
         .collect();
 
@@ -2245,6 +2324,8 @@ async fn list_spec_rows(
         items,
         sources: SpecRowsSourcesDto {
             files_known,
+            reviews_known,
+            repos_known,
             counts,
         },
     }))
@@ -2328,6 +2409,7 @@ async fn read_both(
             path: b.path,
             type_key: b.type_key,
             conforms: b.conforms,
+            confidence: b.confidence,
             updated_at: b.updated_at,
         })
         .collect();

@@ -946,6 +946,18 @@ export interface SpecRow {
   updated_at: string;
   /** Instance id of the repo node this file came from. Empty for an authored row. */
   repo: string;
+  /** That repository's `full_path`; empty for an authored row, and for a
+   *  repository that is unknown (`files_known` / `repos_known` false) or gone. */
+  repo_full_path: string;
+  /** The binding's confidence in its type: meaningful while `state` is
+   *  `detected`; `1.0` for a type a person chose. */
+  confidence?: number | null;
+  /** RFC 3339 time of the newest verdict from ANY detector (set detectors a
+   *  sync runs included). Null: no dated verdict — read `findings` first. */
+  checked_at?: string | null;
+  /** Findings placed in the text across every verdict; a failed verdict
+   *  (`high`, `gate-failed`) without items counts as one. */
+  findings: number;
   /** Which queues this row is in. Decided by the server, because a second
    *  portal deciding it again is how two screens start disagreeing about what
    *  needs review. */
@@ -2712,12 +2724,19 @@ export const api = {
    *  those pages was a slice of the tenant's entire typed node set.
    *
    *  `sources.files_known` false means nobody could ask for those files, so
-   *  `not-scanned` is empty for that reason rather than because there are none. */
+   *  `not-scanned` is empty for that reason rather than because there are none.
+   *  `reviews_known` false likewise means every row's review is unknown, not
+   *  "never checked". */
   specRows: (token: string, projectId: string) =>
     request<{
       items: SpecRow[];
       total: number;
-      sources: { files_known: boolean; counts: { queue: SpecFilter; count: number }[] };
+      sources: {
+        files_known: boolean;
+        reviews_known: boolean;
+        repos_known: boolean;
+        counts: { queue: SpecFilter; count: number }[];
+      };
     }>(`/studio-documents/v1/spec-rows?project_id=${encodeURIComponent(projectId)}`, token),
 
   /** How many specs came out of each repository.

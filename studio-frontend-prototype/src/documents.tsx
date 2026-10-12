@@ -49,7 +49,7 @@ import {
   useSpecQualityCapabilities,
 } from "./spec-quality";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
-import { findingBreakdown, findingCount, findingDotTone, findingLabel } from "./spec-findings";
+import { rowReview } from "./spec-findings";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
@@ -433,14 +433,6 @@ function IngestedDocumentsView({
   const [err, setErr] = useState<string | null>(null);
   /** Detector verdicts read back from the graph, keyed by document node id. */
   const [findings, setFindings] = useState<Record<string, SpecFinding[]>>({});
-  /** What each repository is called, keyed by its node id.
-   *
-   *  A file node carries only the repo's instance id — a v5 UUID over
-   *  (scope, connector, path) — which identifies the repository perfectly and
-   *  tells a reader nothing. The repo node itself holds `full_path`, so one
-   *  extra listing turns the column from an id into "owner/name". A repository
-   *  missing from the map keeps its id: unnamed provenance still beats none. */
-  const [repoNames, setRepoNames] = useState<Record<string, string>>({});
   const [view, setView] = useViewMode("specs.view");
   /** The list itself, folded by studio-documents.
    *
@@ -453,6 +445,9 @@ function IngestedDocumentsView({
    *  `not scanned` queue is empty for that reason rather than because the
    *  project has none. The two must not read the same. */
   const [filesKnown, setFilesKnown] = useState(true);
+  /** False when the recorded verdicts could not be read: every row's review
+   *  is then unknown, which must not read as "Check needed". */
+  const [reviewsKnown, setReviewsKnown] = useState(true);
   /** Where the project stands against its workspace's journey. */
   const [stages, setStages] = useState<StageStatus[]>([]);
   /** The types a stage wants and the project has no document for. */
@@ -475,6 +470,7 @@ function IngestedDocumentsView({
       setRows(specs.items);
       setRowCounts(specs.sources.counts);
       setFilesKnown(specs.sources.files_known);
+      setReviewsKnown(specs.sources.reviews_known ?? true);
     } catch (e) {
       setErr(errText(e));
     }
@@ -503,6 +499,10 @@ function IngestedDocumentsView({
     } catch {
       setStages([]);
     }
+    // The verdicts themselves, for the Analysis card and for skipping what a
+    // detector already looked at. The list does not read them: its review
+    // column is the row's own `checked_at` and `findings`, counted on the
+    // server by the rule the projects table uses.
     try {
       const found = await api.listSpecFindings(token, projectTenantId);
       const byNode: Record<string, SpecFinding[]> = {};
@@ -511,24 +511,6 @@ function IngestedDocumentsView({
       setFindings(byNode);
     } catch {
       // Leave whatever was already read; the column simply shows nothing.
-    }
-    // The names behind the repository ids each row carries. Its own listing —
-    // `repo` nodes, not `file` ones — and allowed to fail separately: losing
-    // the names must leave the ids on screen, not blank the column.
-    try {
-      const names: Record<string, string> = {};
-      let cursor: string | undefined;
-      do {
-        const page = await api.listArtifactNodes(token, "repo", projectTenantId, cursor, 200);
-        for (const n of page.nodes) {
-          const label = n.value.full_path ?? n.value.name;
-          if (typeof label === "string" && label) names[n.instance_id] = label;
-        }
-        cursor = page.next_cursor;
-      } while (cursor);
-      setRepoNames(names);
-    } catch {
-      // Ids stay on screen.
     }
     return specs;
   }, [token, workspaceId, projectTenantId]);
@@ -1363,8 +1345,7 @@ function IngestedDocumentsView({
                got". */
             <TileGrid>
               {visible.map((row) => {
-                const findingKey = row.node_id ?? (row.origin === "authored" ? STUDIO_DOC + row.id : null);
-                const open = findingKey ? findingCount(findings[findingKey]) : 0;
+                const open = reviewsKnown ? row.findings : 0;
                 const repoId = row.repo || undefined;
                 return (
                   <Tile
@@ -1396,7 +1377,7 @@ function IngestedDocumentsView({
                           {row.origin === "authored"
                             ? "Authored here"
                             : repoId
-                              ? (repoNames[repoId] ?? repoId)
+                              ? row.repo_full_path || repoId
                               : "—"}
                         </span>
                         <span style={{ marginLeft: "auto" }}>{relTime(row.updated_at)}</span>
@@ -1420,16 +1401,15 @@ function IngestedDocumentsView({
               <span>State</span>
               <span>Origin</span>
               <span>Path</span>
-              <span>Status</span>
+              <span>Review</span>
               <span>Updated</span>
               <span />
             </div>
             {visible.map((row) => {
               const b = bindings.find((x) => x.id === row.id);
-              const findingKey = row.node_id ?? (row.origin === "authored" ? STUDIO_DOC + row.id : null);
-              const open = findingKey ? findings[findingKey] : undefined;
               const repoId = row.repo || undefined;
               const state = b?.state ?? row.state ?? null;
+              const review = rowReview({ ...row, state }, reviewsKnown);
               const opened = selectedId === row.id && selected ? selected : null;
               const openedDoc =
                 selectedId === row.id && row.origin === "authored"
@@ -1506,7 +1486,7 @@ function IngestedDocumentsView({
                   {row.origin === "authored" ? (
                     <span className="ing-origin">Authored</span>
                   ) : repoId ? (
-                    (repoNames[repoId] ?? repoId)
+                    row.repo_full_path || repoId
                   ) : (
                     <span className="ing-dash">—</span>
                   )}
@@ -1523,8 +1503,8 @@ function IngestedDocumentsView({
                   title={[
                     b
                       ? `${stateLabel(b.state)}${
-                          b.confidence != null && b.state === "detected"
-                            ? ` · ${Math.round(b.confidence * 100)}%`
+                          row.confidence != null && b.state === "detected"
+                            ? ` · ${Math.round(row.confidence * 100)}%`
                             : ""
                         }`
                       : row.origin === "authored"
@@ -1540,32 +1520,11 @@ function IngestedDocumentsView({
                     .filter(Boolean)
                     .join(" · ")}
                 >
-                  <span
-                    className="ing-dot"
-                    style={{ background: findingDotTone(open, row.conforms) }}
-                    aria-hidden
-                  />
-                  {/* A document written in Studio reports its editorial status
-                      until a detector has looked at it; once one has, its
-                      findings, like any other document. */}
-                  {row.origin === "authored" && !open?.length
-                    ? (row.status ?? "draft")
-                    : b || open?.length
-                      ? findingLabel(open)
-                      : /* Nothing has read this file yet, so it has no verdict
-                           to report — and a finding count of zero would claim
-                           it came back clean. */
-                        "not scanned"}
-                  {findingCount(open) > 0 && (
-                    /* What the count is made of, by kind: "3 sections of
-                       another kind · 2 duplicates of other docs" says what
-                       to go and fix; "5 findings" only says how much. On a
-                       line of its own under the count, cut to the column:
-                       inline it ran over the next column. */
-                    <span className="ing-kinds" title={findingBreakdown(open)}>
-                      {findingBreakdown(open)}
-                    </span>
-                  )}
+                  <span className="ing-dot" style={{ background: review.tone }} aria-hidden />
+                  {/* The FrontX portal's four states, from the row the server
+                      folded: Needs type, Check needed, N findings, 0 findings.
+                      Which kinds they are is in the Analysis card. */}
+                  {review.label}
                 </span>
                 <span className="ing-updated" title={row.updated_at}>
                   {/* A candidate carries no timestamp: the graph node's is
