@@ -73,9 +73,15 @@ organization's work without its say.
   under a platform administrator's settings.
 - **Who reads it:** every organization, read-only. An organization does not
   configure the platform's sources, and cannot edit their facts.
-- **What an organization keeps of its own about a platform component:** its
-  annotations (the profile's `values` layer). They are kept per organization,
-  as overrides of the platform's facts, never as a copy.
+- **What an organization keeps of its own about a platform component:**
+  - **Annotations** (the profile's `values` layer). They are kept per
+    organization, as overrides of the platform's facts, never as a copy.
+  - **A fork** (decided 2026-10-12). This is an organization gear with the
+    same id, recorded as overriding `<platform gear>@<version>`. In that
+    organization the fork replaces the platform gear in mapping and in
+    composition. Other organizations still get the platform's gear. When
+    the platform gear moves past the recorded version, the fork is shown as
+    behind; nothing is merged automatically.
 
 ### 2. The organization tier
 
@@ -107,8 +113,10 @@ ADR-0041's `published` now means **contributed to the platform tier**:
 1. An organization administrator publishes a `registered` component.
 2. Studio opens a pull request into the platform's repository (`gears-rust`),
    bringing the gear's crate, `gear.toml` and `gear.gdl`.
-3. The platform's maintainers review and merge it in that repository, as for
-   any contribution.
+3. The publication is reviewed and approved by a platform administrator, or
+   by a person holding the platform role for it (`platform-gear-curator`)
+   (decided 2026-10-12). The pull request is the mechanism: the approval is
+   that role's, and the merge in `gears-rust` follows it.
 4. The entry is `published` once the platform's sync finds it.
 
 A released version (crates.io, or a git tag) is recorded on the entry as it
@@ -128,6 +136,11 @@ see "More Information".
   candidate.
 - Good: a gear an organization writes reaches its products. Once given, it
   also reaches every other organization's products, through one reviewed path.
+- Good: an organization that needs a platform gear changed is not blocked
+  on the platform. It forks the gear, and its fork wins inside that
+  organization.
+- Bad: a fork can fall behind the platform's gear. Studio says so, and
+  merging the two is left to the organization.
 - Bad: the catalogue's reads now join two tenants. Organizations that
   configured `gears-rust` as their own source see it twice until those
   sources are removed. They are marked shadowed by the platform, and the
@@ -160,7 +173,10 @@ Studio's side follows once the engine answers this.
    gear". *Built: see the catalogue design's Tiers component.*
 3. **Publish as contribution:** a pull request into `gears-rust` (ADR-0041's
    P4). *Built: see the catalogue design's Registry component, Publishing.*
-4. **Several corpora and pinned versions**, once the engine supports them.
+4. **Several corpora, per-gear versions and forks in composition**, once the
+   engine supports them: each product picks a version per gear, and an
+   organization's fork replaces the platform gear for that organization.
+   Built on #702, in a separate PR.
 
 ## Traceability
 
