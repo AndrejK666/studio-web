@@ -180,8 +180,8 @@ backend:
   #
   # The backend keeps one checkout of the corpus under `mountPath`, refreshed
   # at most every `refreshSecs`. `emptyDir` for the reason artifactClone gives:
-  # a restart re-clones. Empty `corpusUrl`/`corpusRef` take the code's
-  # defaults (product/gearbox.rs).
+  # a restart re-clones. `corpusUrl` (the platform's gears, ADR-0042)
+  # is required once enabled; an empty `corpusRef` means `main`.
   gearbox:
     enabled: false
     sizeLimit: 2Gi

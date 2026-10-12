@@ -176,10 +176,8 @@ spec:
             # gear catalogue, product previews and the corpus relay.
             - name: STUDIO_GEARBOX_WORKDIR
               value: {{ .mountPath | quote }}
-            {{- with .corpusUrl }}
             - name: STUDIO_GEARBOX_CORPUS_URL
-              value: {{ . | quote }}
-            {{- end }}
+              value: {{ required "backend.gearbox.corpusUrl: name the platform's gear corpus (ADR-0042)" .corpusUrl | quote }}
             {{- with .corpusRef }}
             - name: STUDIO_GEARBOX_CORPUS_REF
               value: {{ . | quote }}

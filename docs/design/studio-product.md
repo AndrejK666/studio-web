@@ -110,13 +110,14 @@ to the old one on 404. They go once no supported desktop release reads them.
 - [x] `p2` - **ID**: `cpt-studio-constraint-product-gearbox-optional`
 
 Previews, the engine catalogue, extension points, completion, repository facts
-and the corpus relay need `STUDIO_GEARBOX_WORKDIR` (the chart's
-`backend.gearbox`). The default corpus ref is `feature/gearbox`, because
-`gear.gdl` descriptors exist only on that branch until
-constructorfabric/gears-rust#4793 merges. Once a catalogue sync finds
-`gear.gdl` descriptors in the catalogue's own gears repository, the engine
-adopts that repository as its corpus, so the catalogue, the previews and the
-IDE read one checkout.
+and the corpus relay need `STUDIO_GEARBOX_WORKDIR` and
+`STUDIO_GEARBOX_CORPUS_URL` (the chart's `backend.gearbox`, where `corpusUrl`
+is required once it is enabled). The corpus is the platform's gears
+(ADR-0042), named by the deployment and by nothing else: there is no built-in
+default, and no catalogue sync can repoint it. The deployments name
+`MikeFalcon77/gears-rust` at `feature/gearbox` for now, because `gear.gdl`
+descriptors exist only on that branch until constructorfabric/gears-rust#4793
+merges.
 
 #### A project writes only through its organization's own connections
 
@@ -416,8 +417,8 @@ reads no configuration section; it is configured by environment.
 |---|---|---|
 | `STUDIO_GEARBOX_WORKDIR` | unset: Gearbox is off | Where the corpus is checked out |
 | `STUDIO_GEARBOX_BIN` | `gearbox` | The engine CLI |
-| `STUDIO_GEARBOX_CORPUS_URL` | `https://github.com/MikeFalcon77/gears-rust.git` | The corpus |
-| `STUDIO_GEARBOX_CORPUS_REF` | `feature/gearbox` | Its ref |
+| `STUDIO_GEARBOX_CORPUS_URL` | unset: Gearbox is off | The corpus: the platform's gears |
+| `STUDIO_GEARBOX_CORPUS_REF` | `main` | Its ref |
 | `STUDIO_GEARBOX_REFRESH_SECS` | `600` | How often the checkout is refreshed |
 
 On start, with Gearbox configured, the corpus is checked out and the engine run

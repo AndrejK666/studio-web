@@ -14,18 +14,22 @@
 //! `catalogue`, `validate` and `resolve` with `--format json` rather than
 //! holding a JSON-RPC session: a preview is one question, not a conversation.
 //!
-//! Off unless `STUDIO_GEARBOX_WORKDIR` is set. Configuration:
+//! Off unless `STUDIO_GEARBOX_WORKDIR` and `STUDIO_GEARBOX_CORPUS_URL` are
+//! both set. Configuration:
 //!
 //! | Variable | Default |
 //! |---|---|
 //! | `STUDIO_GEARBOX_WORKDIR` | unset: previews are unavailable |
 //! | `STUDIO_GEARBOX_BIN` | `gearbox` |
-//! | `STUDIO_GEARBOX_CORPUS_URL` | `https://github.com/MikeFalcon77/gears-rust.git` |
-//! | `STUDIO_GEARBOX_CORPUS_REF` | `feature/gearbox` |
+//! | `STUDIO_GEARBOX_CORPUS_URL` | unset: previews are unavailable |
+//! | `STUDIO_GEARBOX_CORPUS_REF` | `main` |
 //! | `STUDIO_GEARBOX_REFRESH_SECS` | `600` |
 //!
-//! The corpus ref is where the descriptors live: `gear.gdl` files exist only on
-//! that branch until constructorfabric/gears-rust#4793 merges.
+//! The corpus is the platform's gears (ADR-0042), named by the deployment and
+//! by nothing else: no catalogue sync can repoint it. The ref is where the
+//! descriptors live; `gear.gdl` files exist only on a fork's branch until
+//! constructorfabric/gears-rust#4793 merges, which is what the Helm values and
+//! the compose file point at for now.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
@@ -45,8 +49,7 @@ use tracing::warn;
 /// workspace, which is what makes `path("../gears-rust")` resolve there.
 pub const CORPUS_SOURCE_ID: &str = "gears-rust";
 
-const DEFAULT_CORPUS_URL: &str = "https://github.com/MikeFalcon77/gears-rust.git";
-const DEFAULT_CORPUS_REF: &str = "feature/gearbox";
+const DEFAULT_CORPUS_REF: &str = "main";
 const DEFAULT_REFRESH: Duration = Duration::from_secs(600);
 /// A catalogue load plus a resolve is well under a second on the corpus; a
 /// minute is for a cold disk, not for a healthy run.
@@ -67,8 +70,10 @@ pub struct GearboxConfig {
 }
 
 impl GearboxConfig {
-    /// `None` when `STUDIO_GEARBOX_WORKDIR` is unset: without a place for the
-    /// corpus there is nothing to resolve against.
+    /// `None` when `STUDIO_GEARBOX_WORKDIR` is unset — without a place for the
+    /// corpus there is nothing to resolve against — or when no corpus is
+    /// named: the platform's gears are the deployment's to name, so there is
+    /// no built-in one to fall back to.
     pub fn from_env() -> Option<Self> {
         let var = |name: &str| {
             std::env::var(name)
@@ -77,11 +82,16 @@ impl GearboxConfig {
                 .filter(|s| !s.is_empty())
         };
         let workdir = PathBuf::from(var("STUDIO_GEARBOX_WORKDIR")?);
+        let Some(corpus_url) = var("STUDIO_GEARBOX_CORPUS_URL") else {
+            warn!(
+                "studio-product: STUDIO_GEARBOX_WORKDIR is set but STUDIO_GEARBOX_CORPUS_URL is not; product previews are off"
+            );
+            return None;
+        };
         Some(Self {
             bin: PathBuf::from(var("STUDIO_GEARBOX_BIN").unwrap_or_else(|| "gearbox".into())),
             workdir,
-            corpus_url: var("STUDIO_GEARBOX_CORPUS_URL")
-                .unwrap_or_else(|| DEFAULT_CORPUS_URL.into()),
+            corpus_url,
             corpus_ref: var("STUDIO_GEARBOX_CORPUS_REF")
                 .unwrap_or_else(|| DEFAULT_CORPUS_REF.into()),
             refresh: var("STUDIO_GEARBOX_REFRESH_SECS")
@@ -1145,33 +1155,6 @@ fn rpc_once(
     outcome
 }
 
-/// Whether `dir` holds a `gear.gdl` anywhere below it, within a depth that
-/// covers `gears/system/<host>/plugins/<plugin>/gear.gdl`.
-fn holds_description(dir: &Path, depth: usize) -> bool {
-    const SKIP: [&str; 5] = ["target", "node_modules", ".git", ".gearbox", "dist"];
-    if depth > 7 {
-        return false;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    let mut subdirs = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let Ok(kind) = entry.file_type() else {
-            continue;
-        };
-        if kind.is_file() && name == "gear.gdl" {
-            return true;
-        }
-        if kind.is_dir() && !name.starts_with('.') && !SKIP.contains(&name.as_ref()) {
-            subdirs.push(entry.path());
-        }
-    }
-    subdirs.iter().any(|d| holds_description(d, depth + 1))
-}
-
 /// A product id is a kebab-case id in GDL: lowercase letters, digits, single
 /// interior hyphens, starting with a letter.
 pub fn is_kebab_id(s: &str) -> bool {
@@ -1594,10 +1577,9 @@ struct Corpus {
     raw: Option<Arc<Value>>,
 }
 
-/// Where the corpus is checked out from. The configured one to begin with;
-/// the component catalogue's own gears repository once a sync finds
-/// `gear.gdl` descriptors in it ([`Gearbox::adopt_if_described`]), so the
-/// portal's catalogue, its previews and the IDE read one checkout.
+/// A repository checked out under the engine's working directory: the corpus,
+/// which is the configured one and only that (ADR-0042 §7), or a catalogue
+/// source whose files the component catalogue reads.
 #[derive(Clone)]
 pub struct CorpusSource {
     /// `owner/repo@ref`, as a person reads it.
@@ -1615,7 +1597,7 @@ pub struct CorpusSource {
 pub struct Gearbox {
     cfg: GearboxConfig,
     corpus: Mutex<Option<Corpus>>,
-    source: std::sync::Mutex<CorpusSource>,
+    source: CorpusSource,
 }
 
 impl Gearbox {
@@ -1638,15 +1620,12 @@ impl Gearbox {
         Self {
             cfg,
             corpus: Mutex::new(None),
-            source: std::sync::Mutex::new(source),
+            source,
         }
     }
 
     fn current_source(&self) -> CorpusSource {
-        match self.source.lock() {
-            Ok(s) => s.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
+        self.source.clone()
     }
 
     /// The corpus repository as `owner/repo`, for comparing with a project's.
@@ -1704,26 +1683,6 @@ impl Gearbox {
         })
         .await
         .context("catalogue source checkout task")?
-    }
-
-    /// Check `source` out and make it the corpus if it holds any `gear.gdl`.
-    /// Returns whether it did. A source with no descriptors — a gears
-    /// repository before it adopted Gearbox — leaves the current corpus alone:
-    /// switching to it would empty every preview.
-    pub async fn adopt_if_described(&self, source: CorpusSource) -> anyhow::Result<bool> {
-        let dir = self.checkout(&source).await?;
-        let described = tokio::task::spawn_blocking(move || holds_description(&dir, 0))
-            .await
-            .unwrap_or(false);
-        if described {
-            match self.source.lock() {
-                Ok(mut current) => *current = source,
-                Err(poisoned) => *poisoned.into_inner() = source,
-            }
-            // The next question re-reads the new checkout and its catalogue.
-            *self.corpus.lock().await = None;
-        }
-        Ok(described)
     }
 
     /// What the engine knows about every gear the corpus describes, keyed by
@@ -2482,19 +2441,6 @@ mod tests {
             f["cf-authz-resolver"]["gdl_contracts"]["v"],
             "authz-resolver/AuthZResolverApi@v1, cf.toolkit.plugins.plugin.v1~cf.core.authz_resolver.plugin.v1~"
         );
-    }
-
-    #[test]
-    fn a_checkout_is_described_when_it_holds_a_gear_gdl_somewhere() {
-        let root = std::env::temp_dir().join(format!("gbx-described-{}", uuid::Uuid::new_v4()));
-        let deep = root.join("gears/system/authn-resolver/plugins/static");
-        std::fs::create_dir_all(&deep).expect("mkdir");
-        std::fs::create_dir_all(root.join("target/debug")).expect("mkdir");
-        std::fs::write(root.join("target/debug/gear.gdl"), "").expect("write");
-        assert!(!holds_description(&root, 0), "target/ does not count");
-        std::fs::write(deep.join("gear.gdl"), "gear()").expect("write");
-        assert!(holds_description(&root, 0));
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
