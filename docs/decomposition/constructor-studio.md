@@ -854,6 +854,8 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
   - [x] `p1` - `cpt-studio-fr-spec-quality`
   - [ ] `p1` - `cpt-studio-fr-spec-gear-mapping`
   - [ ] `p1` - `cpt-studio-fr-mapping-decisions`
+  - [ ] `p1` - `cpt-studio-fr-spec-domain-model`
+  - [ ] `p1` - `cpt-studio-fr-spec-contradictions`
 
 - **Design Principles Covered**:
 

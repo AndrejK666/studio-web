@@ -53,6 +53,8 @@ query.
 | `cpt-studio-fr-document-catalogue` | Types, stages and capabilities are rows keyed `(tenant_id, key)` at organization or workspace level, overlaid on built-ins in that order; a `hidden` row is a tombstone. |
 | `cpt-studio-fr-documents` | Workspace- and project-level documents with create-from-template, questionnaire composition (`intake.rs`), structural validation (`validate.rs`) and per-project stage status. |
 | `cpt-studio-fr-repository-documents` | `classify.rs` decides a file's type from its front matter, then from four scored signals; the verdict is a row in `studio_document_bindings` keyed on the file's graph node. |
+| `cpt-studio-fr-spec-domain-model` | Planned, in `documents/model/`: a project's facts extracted per document revision on the caller's key, merged into one model with every fact's passage and status ([spec-domain-model.md](../spec-domain-model.md)). |
+| `cpt-studio-fr-spec-contradictions` | Planned, in `documents/model/`: deterministic rules over the merged model propose, a model call confirms, and the findings are recorded as `spec_finding` nodes beside the detectors'. |
 | `cpt-studio-fr-spec-quality` | Detector verdicts are recorded per document in `studio_document_analyses`; a stage can gate on them. Analysis of a project's documents is queued as a `spec_quality.analyze_batch` run. |
 
 #### NFR Allocation
@@ -598,7 +600,9 @@ capabilities `[db, rest]`, config section `gears.studio-documents`.
 [`docs/documents-from-a-repository.md`](../documents-from-a-repository.md)
 explains why a binding is kept instead of a copy of the file, and
 [`docs/spec-findings.md`](../spec-findings.md) how the findings a sync records
-reach the editor.
+reach the editor. [`docs/spec-domain-model.md`](../spec-domain-model.md) is the
+planned domain model read from a project's documents and the disagreements
+found in it.
 
 ## 5. Traceability
 

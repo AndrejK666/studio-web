@@ -59,6 +59,7 @@ repository.
 - [gear-intelligence-sync.md](gear-intelligence-sync.md) — importing delivery evidence for the gear catalogue.
 - [kit-registry-prototype.md](kit-registry-prototype.md) — the kit registry's prototype slice.
 - [rendered-markdown-diff.md](rendered-markdown-diff.md) — two versions of a document rendered side by side: where it opens from, how it compares, how other extensions call it.
+- [spec-domain-model.md](spec-domain-model.md) — a proposal: the domain model read from a project's documents, and where they disagree about it.
 - [spec-findings.md](spec-findings.md) — a proposal: what Studio reports about a specification, where in the text, and what a person can do with it.
 - [desktop-studio.md](desktop-studio.md) — the desktop Studio: how it works and how to run it (ADR-0027).
 - [desktop-release-notes.md](desktop-release-notes.md) — what a member notices in each desktop release, and what does not work yet.
