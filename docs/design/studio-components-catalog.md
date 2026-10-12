@@ -147,10 +147,10 @@ something. An unknown value fails, with the fix that would answer it.
 The engine the catalogue reads — gear facts from `gear.gdl`, the engine half
 of the reference, completion — is studio-product's, and off unless configured
 (`cpt-studio-constraint-product-gearbox-optional`). Without it the catalogue is
-still served, from crates.io and the repository scans. Once a sync finds
-`gear.gdl` descriptors in the catalogue's own gears repository, it asks the
-engine to adopt that repository as its corpus, so the catalogue, the previews
-and the IDE read one checkout. The engine is `product::port::engine`, resolved
+still served, from crates.io and the repository scans. The engine's corpus is
+the platform's gears, which the deployment configures. A sync reads facts from
+it and never repoints it, because one organization's sources must not change
+what every other one previews (ADR-0042 §7). The engine is `product::port::engine`, resolved
 from the ClientHub; a project's gear repository, for its code dependencies, is
 `product::port::ProjectProducts`. Nothing in studio-product reads the
 catalogue back.

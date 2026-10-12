@@ -100,8 +100,8 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         ))))?;
 
         // The Gearbox engine is studio-product's; the catalogue reads what it
-        // says about each gear, and a sync follows the gears repository with
-        // it. Every gear's `init` has run by now, so it is published if it
+        // says about each gear from the configured platform corpus, which a
+        // sync never changes (ADR-0042 §7). Every gear's `init` has run by now, so it is published if it
         // is configured at all.
         let gearbox = crate::product::port::engine(&ctx.client_hub());
         if let Some(g) = &gearbox {
