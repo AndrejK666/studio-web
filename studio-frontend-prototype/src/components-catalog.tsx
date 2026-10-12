@@ -1037,7 +1037,7 @@ export function ComponentsCatalog({
               )}
               {platformLevel && isPlatformAdmin && (
                 <button
-                  className={`iconbtn primary${showPlatformSources ? " active" : ""}`}
+                  className={`iconbtn${showPlatformSources ? " active" : " primary"}`}
                   onClick={() => setShowPlatformSources((v) => !v)}
                   aria-expanded={showPlatformSources}
                   title="What the platform's components are read from. Only a platform administrator changes it."
@@ -1393,7 +1393,7 @@ function PlatformSourcesPanel({ token, onSynced }: { token: string; onSynced: ()
   };
 
   return (
-    <div className="sources" data-platform-sources>
+    <div className="platform-sources" data-platform-sources>
       <p className="gcat-hint">
         <strong>Platform sources.</strong> What the platform's catalogue reads — the shared components every
         organization sees under Platform. Only a platform administrator sees and changes this.
@@ -3615,6 +3615,9 @@ const GCAT_CSS = `
 .gcat .iconbtn.active { border-color:var(--studio-accent); color:var(--studio-accent); background:var(--studio-accent-soft); }
 
 /* sources panel */
+.gcat .platform-sources { display:block; margin:0 0 14px; padding:12px 14px; border:1px solid var(--studio-edge, #e5e7eb); border-radius:10px; }
+.gcat .platform-sources .editrow { flex-wrap:wrap; }
+.gcat .platform-sources .editrow input, .gcat .platform-sources .editrow select { min-width:140px; }
 .gcat .sources { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin:0 0 14px; }
 .gcat .src-col { background:var(--studio-surface); border:1px solid var(--studio-line); border-radius:var(--studio-radius); padding:11px 13px 12px; box-shadow:0 1px 2px var(--studio-shadow); }
 .gcat .src-head { display:flex; align-items:center; gap:8px; font-weight:600; font-size:12.5px; cursor:pointer; }
