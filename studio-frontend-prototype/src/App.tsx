@@ -57,6 +57,7 @@ import {
 } from "./project-sources";
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
+import { SpecModelTab } from "./spec-model-tab";
 import { GearsTable, PermissionsTable } from "./system-tables";
 import {
   StudioBridgeProvider,
@@ -5069,6 +5070,11 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // prototype that renames the product's sections is a prototype of a
   // different product.
   { id: "specs", icon: "scan", label: "Specs" },
+  // What the specs say the application is, read out of them, and where they
+  // disagree about it (docs/spec-domain-model.md). Next to Specs because it is
+  // made of them, and before Components because what a product is composed
+  // from should answer this model.
+  { id: "model", icon: "layers", label: "Domain model" },
   { id: "components", icon: "package", label: "Components" },
   // Kits are how the project works (workflows, conventions pinned to a Git
   // version), not what it is made of, so they stopped sharing a page with the
@@ -5441,6 +5447,13 @@ function ProjectScreen({
               onOpenStudio={onOpenStudio}
             />
           </>
+        )}
+        {tab === "model" && (
+          <SpecModelTab
+            token={token}
+            projectId={proj.id}
+            onOpenFile={(path) => void studio?.openFile(proj, path)}
+          />
         )}
         {tab === "specs" && (
           <DocumentsTab

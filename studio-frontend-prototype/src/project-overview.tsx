@@ -77,6 +77,7 @@ import { PullRequestsWaiting } from "./pull-requests-waiting";
 export type ProjTab =
   | "overview"
   | "specs"
+  | "model"
   | "components"
   | "kits"
   | "artifacts"

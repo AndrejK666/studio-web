@@ -1,3 +1,4 @@
+import type { SpecModel, SpecModelBuild, SpecModelFinding } from "./spec-model";
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
@@ -2738,6 +2739,39 @@ export const api = {
         counts: { queue: SpecFilter; count: number }[];
       };
     }>(`/studio-documents/v1/spec-rows?project_id=${encodeURIComponent(projectId)}`, token),
+
+  /** A project's domain model as read from its documents so far: the facts of
+   *  every document at its current revision, where each document stands, and
+   *  the build as the replica answering knows it (docs/spec-domain-model.md). */
+  specModel: (token: string, projectId: string) =>
+    request<SpecModel>(`/studio-documents/v1/spec-model?project_id=${encodeURIComponent(projectId)}`, token),
+  /** Read every document not yet read at its revision, on the caller's own
+   *  model key, in the background. A build already running is answered with
+   *  its state. */
+  startSpecModelBuild: (token: string, projectId: string) =>
+    request<SpecModelBuild>("/studio-documents/v1/spec-model/builds", token, {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId }),
+    }),
+  /** Where the documents disagree, or refer to what is not there, with each
+   *  finding's decision. */
+  specModelFindings: (token: string, projectId: string) =>
+    request<{ items: SpecModelFinding[]; total: number }>(
+      `/studio-documents/v1/spec-model/findings?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** A member's ✓ (confirmed) or ✗ (dismissed) on one finding. */
+  decideSpecModelFinding: (
+    token: string,
+    projectId: string,
+    fingerprint: string,
+    decision: "confirmed" | "dismissed",
+  ) =>
+    request<{ fingerprint: string; decision: string; decided_by: string; decided_at: string }>(
+      `/studio-documents/v1/spec-model/findings/${encodeURIComponent(fingerprint)}/decision`,
+      token,
+      { method: "POST", body: JSON.stringify({ project_id: projectId, decision }) },
+    ),
 
   /** How many specs came out of each repository.
    *
