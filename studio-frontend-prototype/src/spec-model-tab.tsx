@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import {
   buildLine,
+  codeSpans,
   coverageCounts,
   entitiesOf,
   factsByKind,
@@ -173,6 +174,15 @@ function ViewChip({
   );
 }
 
+/** Text the backend wrote with backticked names, the names set as code. */
+function Prose({ text }: { text: string }) {
+  return (
+    <>
+      {codeSpans(text).map((s, i) => (s.code ? <code key={i}>{s.text}</code> : s.text))}
+    </>
+  );
+}
+
 function SideLink({ side, onOpenFile }: { side: SpecModelSide; onOpenFile?: (path: string) => void }) {
   return (
     <div className="sm-side">
@@ -235,7 +245,9 @@ function Problems({
               </button>
             </div>
           </div>
-          <p className="sm-message">{f.message}</p>
+          <p className="sm-message">
+            <Prose text={f.message} />
+          </p>
           <div className={f.sides.length === 2 ? "sm-sides sm-two" : "sm-sides"}>
             {f.sides.slice(0, 6).map((s, i) => (
               <SideLink key={i} side={s} onOpenFile={onOpenFile} />
@@ -254,7 +266,9 @@ function Problems({
               <span className="hint">Needs a decision:</span>
               <ul>
                 {f.decide.map((o) => (
-                  <li key={o}>{o}</li>
+                  <li key={o}>
+                    <Prose text={o} />
+                  </li>
                 ))}
               </ul>
             </div>

@@ -213,6 +213,22 @@ export function buildLine(build: SpecModelBuild): string {
   return "";
 }
 
+/** A message cut where the backend quoted a name in backticks, so the screen
+ *  sets those parts as code rather than printing the backticks. An unpaired
+ *  backtick stays as written. */
+export function codeSpans(text: string): { code: boolean; text: string }[] {
+  const out: { code: boolean; text: string }[] = [];
+  const re = /`([^`]+)`/g;
+  let at = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index > at) out.push({ code: false, text: text.slice(at, m.index) });
+    out.push({ code: true, text: m[1] });
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push({ code: false, text: text.slice(at) });
+  return out;
+}
+
 /** "path:12-14", or the path alone for a whole document. */
 export function sideLabel(side: SpecModelSide): string {
   if (!side.line_start) return side.path;

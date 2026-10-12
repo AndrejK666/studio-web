@@ -303,17 +303,21 @@ documents' current revisions, which is cheap and never stale.
 A project tab beside Specs and Components in the prototype
 (`studio-frontend-prototype`), with three views:
 
-- **Entities**: a list, and a graph of their relations. Opening one shows its
-  definition, attributes, relations, lifecycle and the requirements and
-  constraints about it, each with "where it is said" (the passages, as links
-  into the document) and its status. Facts that are not `active` are shown
-  greyed, with the words that made them so.
-- **Problems**: the findings, grouped by rule, high first. Each shows both
-  passages side by side, the explanation, the proposed edit (or the decision
-  to take), ✓/✗, and "open in the editor" at either side.
-- **Coverage**: which documents are extracted at their current revision, which
-  are stale or failed, and the Build button with the size of what it will
-  read.
+- **Problems** (first, since it is what a person acts on): undecided before
+  confirmed before dismissed, high first, disagreements before references.
+  Each shows both passages side by side, the explanation, the proposed edit
+  (or the decision to take), ✓/✗, and "open in the editor" at either side.
+- **Entities**: a filterable list, and the entities each one relates to.
+  Opening one shows its definition, attributes, relations, constraints,
+  lifecycle and the requirements about it, each with "where it is said" (the
+  passage, as a link into the document) and its status. Facts that are not
+  `active` are shown greyed, with the words that made them so. A graph of the
+  relations is later.
+- **Documents**: which documents are extracted at their current revision,
+  which are stale, failed or never read, and how many facts each gave and
+  how many were dropped.
+
+The Build button sits above all three and says what a running build is doing.
 
 ## Calibration
 
@@ -375,6 +379,17 @@ repository's 135 documents they find one thing (an ADR cited and never
 committed), on the other's 75 they find 35, among them requirement ids a
 design traces to and no PRD defines, sections renamed under a link, and a
 relative path one `..` short.
+
+**On a stand**, the same day: the other repository whole (172 documents
+classified out of 267 Markdown files) as a project's checkout, through the REST
+routes and the tab. References gave 55 findings. Six more first came from a
+defect, not from the documents: links to a Helm template or a seed-job template
+read as dangling, because the tree was built from the files read as text and a
+`.tpl` is not one. The tree is now the checkout's whole listing
+(`RepoFileReader::read_repo_listing`). A build with no key stops at once and
+says where to add one. A ✓ or ✗ survives a reload. The routes answer in under
+a second from a checkout on a volume; from a Windows bind mount, reading the
+3,562 files took 10–17 s.
 
 ## Later
 

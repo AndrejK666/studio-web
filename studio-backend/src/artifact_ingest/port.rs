@@ -49,6 +49,41 @@ pub trait RepoFileReader: Send + Sync + 'static {
         Ok(Vec::new())
     }
 
+    /// Every file of the checkout [`Self::read_repo_files`] reads, text or
+    /// not, as `(path, text)` — the text for exactly the files that method
+    /// returns. A link in a document may lead to any file, a template or an
+    /// image as much as another document, so whether it resolves is a
+    /// question about this listing, not about the text files.
+    ///
+    /// The default knows only the text files, which is all a reader that
+    /// cannot walk the checkout has to give.
+    async fn read_repo_listing(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
+        Ok(self
+            .read_repo_files(workspace_id, repo_dir)
+            .await?
+            .into_iter()
+            .map(|(path, text)| (path, Some(text)))
+            .collect())
+    }
+
+    /// The same, from the sync's clone [`Self::read_synced_clone`] reads.
+    async fn read_synced_clone_listing(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
+        Ok(self
+            .read_synced_clone(secret_ref, repo_full_path)
+            .await?
+            .into_iter()
+            .map(|(path, text)| (path, Some(text)))
+            .collect())
+    }
+
     /// One text file of the checkout [`Self::read_repo_files`] reads, by its
     /// repo-relative `path`. `None` when the checkout does not hold it as text.
     ///

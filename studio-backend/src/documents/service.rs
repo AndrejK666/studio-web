@@ -1552,13 +1552,16 @@ impl DocumentsService {
             Some(project_id),
             workspace_id,
         );
-        let mut by_path = self.checkout_files(ctx, &tenants, reader).await;
+        // The whole listing, not the text files alone: a link that leads to a
+        // template or an image resolves as surely as one to a document.
+        let mut by_path = self.checkout_listing(ctx, &tenants, reader).await;
         let tree = by_path.keys().cloned().collect();
         let documents = rows
             .into_iter()
             .filter_map(|row| {
                 by_path
                     .remove(&row.path)
+                    .flatten()
                     .map(|text| super::spec_model::SourceText {
                         path: row.path,
                         text,
@@ -1870,7 +1873,22 @@ impl DocumentsService {
         tenants: &[Uuid],
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
     ) -> std::collections::BTreeMap<String, String> {
-        let mut by_path: std::collections::BTreeMap<String, String> =
+        self.checkout_listing(ctx, tenants, reader)
+            .await
+            .into_iter()
+            .filter_map(|(path, text)| text.map(|t| (path, t)))
+            .collect()
+    }
+
+    /// Every file of those checkouts, text or not, with the text of the ones
+    /// [`Self::checkout_files`] gives — tried tenant by tenant the same way.
+    async fn checkout_listing(
+        &self,
+        ctx: &SecurityContext,
+        tenants: &[Uuid],
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> std::collections::BTreeMap<String, Option<String>> {
+        let mut by_path: std::collections::BTreeMap<String, Option<String>> =
             std::collections::BTreeMap::new();
         for tenant in tenants {
             // A tenant that has recorded no sources has no checkout to read,
@@ -1888,7 +1906,7 @@ impl DocumentsService {
                     .secret_ref
                     .as_ref()
                     .map(|secret_ref| (secret_ref, &resolved.source.full_path));
-                let mut files = match reader.read_repo_files(&tenant.to_string(), dir).await {
+                let mut files = match reader.read_repo_listing(&tenant.to_string(), dir).await {
                     Ok(files) => files,
                     Err(error) => {
                         tracing::warn!(%error, dir, "studio-documents: a checkout could not be read");
@@ -1902,7 +1920,7 @@ impl DocumentsService {
                     && let Some((secret_ref, full_path)) = clone
                 {
                     files = reader
-                        .read_synced_clone(secret_ref, full_path)
+                        .read_synced_clone_listing(secret_ref, full_path)
                         .await
                         .unwrap_or_else(|error| {
                             tracing::warn!(%error, dir, "studio-documents: the synced clone could not be read");

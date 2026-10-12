@@ -1859,15 +1859,23 @@ impl IngestService {
         workspace_id: &str,
         repo_dir: &str,
     ) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(text_only(
+            self.read_repo_listing(workspace_id, repo_dir).await?,
+        ))
+    }
+
+    /// Every file of that checkout, with the text of the ones
+    /// [`Self::read_repo_files`] reads.
+    pub async fn read_repo_listing(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
         let Some(dir) = self.shared_checkout_dir(Some(workspace_id), Some(repo_dir)) else {
             return Ok(Vec::new());
         };
         let (_dir, walked, _commit) = self.walk_checkout(dir).await?;
-        Ok(walked
-            .files
-            .into_iter()
-            .filter_map(|f| f.text.map(|t| (f.path, t)))
-            .collect())
+        Ok(walked.files.into_iter().map(|f| (f.path, f.text)).collect())
     }
 
     /// Every text file of the clone a sync of `repo_full_path` through
@@ -1879,6 +1887,19 @@ impl IngestService {
         secret_ref: &str,
         repo_full_path: &str,
     ) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(text_only(
+            self.read_synced_clone_listing(secret_ref, repo_full_path)
+                .await?,
+        ))
+    }
+
+    /// Every file of that clone, with the text of the ones
+    /// [`Self::read_synced_clone`] reads.
+    pub async fn read_synced_clone_listing(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
         let Some(root) = self.work_root.as_ref() else {
             return Ok(Vec::new());
         };
@@ -1887,11 +1908,7 @@ impl IngestService {
             return Ok(Vec::new());
         }
         let (_dir, walked, _commit) = self.walk_checkout(dir).await?;
-        Ok(walked
-            .files
-            .into_iter()
-            .filter_map(|f| f.text.map(|t| (f.path, t)))
-            .collect())
+        Ok(walked.files.into_iter().map(|f| (f.path, f.text)).collect())
     }
 
     /// The nodes of one type set that name `scope` as their workspace or
@@ -2269,6 +2286,22 @@ impl super::port::RepoFileReader for IngestService {
         IngestService::read_synced_clone(self, secret_ref, repo_full_path).await
     }
 
+    async fn read_repo_listing(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
+        IngestService::read_repo_listing(self, workspace_id, repo_dir).await
+    }
+
+    async fn read_synced_clone_listing(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
+        IngestService::read_synced_clone_listing(self, secret_ref, repo_full_path).await
+    }
+
     async fn read_repo_file(
         &self,
         workspace_id: &str,
@@ -2296,6 +2329,14 @@ impl super::port::RepoFileReader for IngestService {
         }
         read_one(dir, path).await
     }
+}
+
+/// The files of a listing that were read as text.
+fn text_only(listing: Vec<(String, Option<String>)>) -> Vec<(String, String)> {
+    listing
+        .into_iter()
+        .filter_map(|(path, text)| text.map(|t| (path, t)))
+        .collect()
 }
 
 /// [`git_checkout::read_text_file`] off the async runtime.

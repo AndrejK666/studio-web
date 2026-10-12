@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLine,
+  codeSpans,
   coverageCounts,
   entitiesOf,
   factsByKind,
@@ -112,6 +113,17 @@ describe("coverage and progress", () => {
     expect(buildLine(base)).toBe("Reading documents 1/4 · docs/PRD.md");
     expect(buildLine({ ...base, done: 4, candidates: 10, judged: 3 })).toBe("Checking disagreements 3/10");
     expect(buildLine({ ...base, running: false, error: "add a key" })).toBe("Stopped: add a key");
+  });
+
+  it("sets backticked names as code and leaves a lone backtick alone", () => {
+    expect(codeSpans("The link to `a.md` leads nowhere: no `b.md`.")).toEqual([
+      { code: false, text: "The link to " },
+      { code: true, text: "a.md" },
+      { code: false, text: " leads nowhere: no " },
+      { code: true, text: "b.md" },
+      { code: false, text: "." },
+    ]);
+    expect(codeSpans("a ` b")).toEqual([{ code: false, text: "a ` b" }]);
   });
 
   it("labels a side by its lines", () => {
