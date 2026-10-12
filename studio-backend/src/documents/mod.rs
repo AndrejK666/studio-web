@@ -29,6 +29,7 @@ mod rest;
 mod review_guide;
 pub mod sdk;
 mod service;
+mod spec_model;
 mod spec_rows;
 #[cfg(test)]
 mod sync_analysis_tests;

@@ -51,12 +51,22 @@ like a contradiction. So every fact carries:
 - **where**: path, line range and the verbatim quote. The quote is checked
   mechanically against the document revision it was extracted from; a quote
   not found there, whitespace collapsed, drops the fact;
-- **status**: `active`; `proposed` (from a proposed ADR, or a requirement the
-  text marks as such); `deferred` ("future", "planned", "out of this release",
-  "known gap"); `superseded` (the text, or a later decision, says it was
-  replaced); `resolved` (an open question the text closes elsewhere); or
-  `evidence` (research notes, audits, examples: what someone found, not what
-  the product must do). The words that gave the status are kept with it.
+- **status**: `active`; `proposed` (from a proposed ADR with no sign of being
+  built, or a requirement the text marks as such); `deferred` ("future",
+  "planned", "out of this release", "known gap"); `superseded` (the text, or a
+  later decision, says it was replaced); `resolved` (an open question the text
+  closes elsewhere); or `evidence` (research notes, audits, examples, an ADR's
+  Context, a component's "why it exists": what someone found or what was
+  true before, not what the product must do). The words that gave the status
+  are kept with it.
+
+Status belongs to a clause, not a block: "Planned. … returns nothing today"
+holds a deferred plan and an active statement about now. And a proposed ADR is
+not always unbuilt: a team may leave records `proposed` after shipping them,
+so an ADR whose own text says "Built", "Implemented in" or "done in #N" counts
+as in force for those parts. Supersession is read from the later record
+("Supersedes", "Amends", "retired by"), not from an index's status column,
+which drifts.
 
 A finding is only ever raised between `active` facts, or between an `active`
 fact and the `active` decision that replaced it.
@@ -144,8 +154,8 @@ the member who started it, in stages:
    revision. The prompt is the same for every project.
 3. **Assemble** (no model). Merges subjects by normalised name and aliases
    across documents; applies decision status (a fact resting on a proposed ADR
-   is `proposed`; a superseded ADR's facts are `superseded`); groups facts by
-   (subject, aspect).
+   with no sign of being built is `proposed`; a superseded ADR's facts are
+   `superseded`); groups facts by (subject, aspect).
 4. **Candidates** (no model). Runs the rules of the catalogue over the
    assembled model.
 5. **Judge** (model, per new candidate). Shows both passages with their whole
@@ -185,6 +195,22 @@ fourth pure functions; `build_task.rs` for the run; the routes in the gear's
 `rest.rs`. The text is read through `artifact_ingest::port::RepoFileReader`, as
 classification already reads it.
 
+**Built so far:** stage 1. `index.rs` and `finding.rs`, served by
+`GET /spec-model/findings?project_id=`, computed on read (it is cheap and needs
+no key). The reference rules, as built:
+- an identifier is checked only in a family (the first two segments, as in `cpt-…`) the project defines
+  at least five of, with the kit's defining labels `**ID**:` and `**Contract**:`;
+- an ADR number is checked only when the project has ADRs, and resolved to the
+  nearest ADR directory; a tie is `reference.ambiguous`;
+- a link is checked against every file of the project's checkouts, and an
+  anchor against the target's headings and explicit ids, compared with
+  everything but letters and digits removed, because renderers slug headings
+  differently and a link is not broken on the renderer it was written for;
+- a line naming what something used to be called ("formerly", "renamed") is
+  history and is not resolved;
+- one missing thing is one finding with every place that cites it, and its
+  fingerprint is the thing alone.
+
 ## The rule catalogue
 
 Calibrated on real documentation ([calibration](#calibration)). **Run:**
@@ -194,11 +220,11 @@ Calibrated on real documentation ([calibration](#calibration)). **Run:**
 | `reference.dangling` | An identifier, ADR or file referenced and defined nowhere in the project | index | high |
 | `reference.ambiguous` | A bare ADR number that two namespaces of the project both have, cited from outside both | index | medium |
 | `reference.misattributed` | A citation whose stated purpose does not match the cited ADR's title and decision | judge | high |
-| `contradiction.value` | Two `active` facts give one aspect of one subject different values (an enum, a number, a routing, a shape, a percentile) | rules + judge | high |
+| `contradiction.value` | Two `active` facts give one aspect of one subject different values (an enum, a number, a routing, a shape, a percentile), including a stated count against the list it counts ("five tables" beside six); only an explicit count or a closed list, never "used by" or a parenthetical example | rules + judge | high |
 | `contradiction.cardinality` | One row or object per A in one place, per B in another | rules + judge | high |
 | `contradiction.lifecycle` | Who or what starts, dates, ends or re-runs something, stated two ways | rules + judge | high |
 | `contradiction.access` | Who may read or write, or whether a check runs, stated two ways | rules + judge | high |
-| `contradiction.decision` | Text against an `active` decision, or text treating a `proposed` decision as made | rules + judge | high |
+| `contradiction.decision` | Text against an `active` decision, or text treating as made a `proposed` decision with no sign of being built | rules + judge | high |
 | `stale.superseded` | `active` text describing what a later decision or section replaced | rules + judge | medium, marked "check" |
 
 **Not run**, and why:
@@ -286,9 +312,35 @@ What made extraction hard, and what the design answers it with:
   ADR, and they disagree: hence merging by subject and aspect.
 - Two ADR sets number from 0001: hence ADR namespaces in the index.
 
-Before the catalogue grows, every rule is run on a second, dissimilar project
-(this repository's own `docs/` is the next), and kept only if it is quiet there
-too.
+**The second calibration**, the same day, on this repository's own
+specifications (24 documents, about 11,400 lines: the PRD, the product design
+and decomposition, eight gear designs, the ADRs from 0030): 70 facts, 14
+findings confirmed against 45 candidates rejected.
+
+| Rule | Confirmed / candidates | Verdict |
+|---|---|---|
+| `contradiction.value` | 7 / 21 | precise once a count must be explicit |
+| `stale.superseded` | 3 / 6 | precise |
+| `contradiction.access` | 1 / 4 | precise |
+| `contradiction.decision` | 2 / about 70 | noisy until built-but-proposed ADRs count as in force |
+| `reference.dangling` | 1 / 7 | precise when paths resolve from the component described |
+| `reference.misattributed`, `.ambiguous`, `contradiction.cardinality`, `.lifecycle` | 0 | quiet: no false positives |
+
+What it found: the product design still sending the IDE's chat to a configured
+upstream with a key from config, which the LLM proxy's design and ADR-0039
+removed; the product design and PRD saying the PDP maps no privilege where the
+accepted ADR-0035 (and the code) map the domain object; a curator allowed to
+publish in one section of the catalogue's design and only a platform
+administrator in two others. What it changed here: the clause-level status,
+built-but-proposed ADRs, Context as evidence and supersession read from the
+later record (see [the principles](#principles)), and the count rule of
+`contradiction.value`.
+
+The built reference rules were then run on both corpora whole: on this
+repository's 135 documents they find one thing (an ADR cited and never
+committed), on the other's 75 they find 35, among them requirement ids a
+design traces to and no PRD defines, sections renamed under a link, and a
+relative path one `..` short.
 
 ## Later
 

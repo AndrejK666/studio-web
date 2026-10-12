@@ -1526,6 +1526,51 @@ impl DocumentsService {
         Ok(quality::docs_for(&wanted, &by_path))
     }
 
+    /// The findings of a project's documents that need no model: references
+    /// to an identifier, ADR, file or section the project does not have, and
+    /// bare ADR numbers two of its ADR sets share (`docs/spec-domain-model.md`).
+    ///
+    /// The documents are the project's bindings that are documents at all,
+    /// guessed or confirmed, read as written; the tree they are resolved
+    /// against is every file of the project's checkouts.
+    pub async fn spec_model_references(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Result<Vec<super::spec_model::finding::Finding>> {
+        let rows: Vec<DocumentBinding> = self
+            .all_bindings(workspace_id, Some(project_id))
+            .await?
+            .into_iter()
+            .filter(|row| row.state != BindingState::NotADocument)
+            .collect();
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tenants = checkout_tenants(
+            rows.iter().map(|r| r.project_id),
+            Some(project_id),
+            workspace_id,
+        );
+        let by_path = self.checkout_files(ctx, &tenants, reader).await;
+        let docs: Vec<super::spec_model::index::SourceDoc<'_>> = rows
+            .iter()
+            .filter_map(|row| {
+                by_path
+                    .get(&row.path)
+                    .map(|text| super::spec_model::index::SourceDoc {
+                        path: &row.path,
+                        text,
+                        doc_type: row.type_key.as_deref(),
+                    })
+            })
+            .collect();
+        let tree: std::collections::BTreeSet<String> = by_path.keys().cloned().collect();
+        Ok(super::spec_model::index::reference_findings(&docs, &tree).1)
+    }
+
     /// What each analysed document's result is recorded against, by the path
     /// the run names it with.
     ///

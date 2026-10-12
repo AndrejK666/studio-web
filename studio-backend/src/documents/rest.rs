@@ -2051,6 +2051,83 @@ async fn delete_binding(
 
 // ── registration ─────────────────────────────────────────────────────────────
 
+// ── the domain model read from a project's documents ─────────────────────────
+
+/// One passage a finding rests on.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelSideDto {
+    pub path: String,
+    /// First line, from 1; absent when the side is a whole document.
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
+    /// The passage verbatim, or the document's title for a whole document.
+    pub quote: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelFindingDto {
+    /// Stable across re-runs and line shifts.
+    pub fingerprint: String,
+    pub rule: String,
+    /// `high`, `medium` or `low`.
+    pub severity: String,
+    pub message: String,
+    pub sides: Vec<SpecModelSideDto>,
+    /// The decision a person has to take when the documents cannot tell
+    /// which side is right: one choice per entry.
+    pub decide: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelFindingListDto {
+    pub items: Vec<SpecModelFindingDto>,
+    pub total: u32,
+}
+
+impl From<super::spec_model::finding::Finding> for SpecModelFindingDto {
+    fn from(f: super::spec_model::finding::Finding) -> Self {
+        Self {
+            fingerprint: f.fingerprint,
+            rule: f.rule,
+            severity: f.severity,
+            message: f.message,
+            sides: f
+                .sides
+                .into_iter()
+                .map(|s| SpecModelSideDto {
+                    path: s.path,
+                    line_start: s.line_start.and_then(|n| u32::try_from(n).ok()),
+                    line_end: s.line_end.and_then(|n| u32::try_from(n).ok()),
+                    quote: s.quote,
+                })
+                .collect(),
+            decide: f.decide,
+        }
+    }
+}
+
+/// Where a project's documents disagree, or refer to what is not there.
+async fn list_spec_model_findings(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecModelFindingListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let findings = service
+        .spec_model_references(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let items: Vec<SpecModelFindingDto> = findings.into_iter().map(Into::into).collect();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(SpecModelFindingListDto { items, total }))
+}
+
 // ── the Specs list, folded here rather than in a page ────────────────────────
 
 #[derive(Debug, serde::Deserialize)]
@@ -2782,6 +2859,25 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/findings")
+        .operation_id("studio_documents.list_spec_model_findings")
+        .summary("Where a project's documents disagree, or refer to what is not there")
+        .description(
+            "Read from the documents as they are written (docs/spec-domain-model.md). Today the              rules that need no model: a reference to an identifier, ADR, file or section the              project does not have (`reference.dangling`), and an ADR number two of the              project's ADR sets share, cited without a link from outside both              (`reference.ambiguous`). Every finding quotes each side, and its `fingerprint`              survives the lines moving. The list is read whole.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose documents to check")
+        .handler(list_spec_model_findings)
+        .json_response_with_schema::<SpecModelFindingListDto>(openapi, StatusCode::OK, "The findings")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/spec-pipeline")
