@@ -677,7 +677,9 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
    not. Keep it that way unless every label gets wrapped in an element. */
 .drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) nav button,
 .drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) .nav-section-title,
-.drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) .org-select-name {
+.drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) .org-select-name,
+.drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) .nav-level-title .nav-level-name,
+.drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) .nav-pin-empty {
   color: transparent;
 }
 .drawer:not(:hover):not(:focus-within):not([data-expanded="true"]) nav button .ico {
