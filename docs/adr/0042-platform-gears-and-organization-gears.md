@@ -136,6 +136,23 @@ gear a product uses is pinned to a version of its own:
 and each `use_gear` names its source and the version. Upgrading one gear in a
 product is a recorded decision, like any other product change.
 
+The engine already has the vocabulary for this (constructorfabric/gearbox,
+`docs/gdl.md`, "Sources" and `use_gear`):
+
+- `sources` is a list. Each entry is `source(id, at)`, where `at` is
+  `path(...)`, `git(url, tag?, rev?, branch?)` or `registry("crates.io",
+  prefix?)`. Every `use_gear` names its `source`.
+- `use_gear(..., version = ...)` exists for a registry source. On a `git` or
+  `path` source the version is the source's own `tag` or `rev`.
+- `source(..., crates = registry("crates.io"))` describes a checkout whose
+  crates are also published, so the build names exact versions.
+
+So a platform gear pinned to a release is either a `registry` source with a
+`version` on its `use_gear`, or a `git` source at that release's tag. An
+organization gear is a `git` source at a tag or commit. Today Studio writes
+only one source (`CORPUS_SOURCE_ID` in `product/gearbox.rs`); writing more is
+Studio's work, not the engine's.
+
 ### 6. Publishing to the platform is reviewed
 
 An organization gear reaches the platform only by publication: a request
@@ -166,12 +183,9 @@ The Gearbox engine no longer has one corpus per process:
   which version of each gear it is built from.
 - The platform's sources are configured once, so the hardcoded corpus URL and
   branch go away.
-- New dependencies:
-  - the Gearbox engine has to accept several sources and a version per
-    `use_gear`. To be confirmed in the engine; if it cannot, that is
-    gearbox work, and it comes first;
-  - a released version of a platform gear has to exist (crates.io or tags)
-    for a product to pin it.
+- New dependency: a released version of a platform gear has to exist
+  (crates.io or tags) for a product to pin it. The engine side, several
+  sources and a version per gear, already exists (§5).
 - Graph reads gain a second tenant (the root) for catalogue nodes. The PDP
   is not involved: the platform level is readable by every authenticated
   member, and the organization level by its members, as today.
@@ -195,13 +209,13 @@ The decision holds when, on the stand:
 
 ### Order of work
 
-1. Remove the corpus swap (`adopt_if_described`) and read the platform
+1. **Done in this PR.** Remove the corpus swap (`adopt_if_described`) and read the platform
    corpus from configuration. This is small and stands alone.
 2. Platform sources on the server at the root tenant, with a scheduled sync,
    and catalogue reads returning both levels.
 3. ADR-0041 P1–P3, which give the organization level its kept registry.
-4. Several sources and per-gear versions in `product.gdl`, after the engine
-   check.
+4. Several sources and per-gear versions in `product.gdl` (§5: the engine
+   supports both; `render_product_gdl` writes one source today).
 5. Overrides (§4).
 6. Publication with review (§6, ADR-0041 P4).
 

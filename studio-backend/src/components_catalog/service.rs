@@ -360,39 +360,13 @@ impl CatalogService {
     }
 
     /// What the Gearbox engine knows about each gear, keyed by crate name, as
-    /// profile fields — after following the catalogue's own gears repository
-    /// if it describes its gears, so the catalogue and the previews read one
-    /// corpus. `None` when previews are not configured or the engine failed;
-    /// a sync never fails because of it.
-    async fn gearbox_facts(
-        &self,
-        ctx: &SecurityContext,
-        sources: &SyncSources,
-        progress: &SyncReporter,
-    ) -> Option<BTreeMap<String, Value>> {
+    /// profile fields, from the platform corpus the deployment configures. A
+    /// sync reads it and never changes it: one organization's sources must
+    /// not repoint what every other one previews (ADR-0042 §7). `None` when
+    /// previews are not configured or the engine failed; a sync never fails
+    /// because of it.
+    async fn gearbox_facts(&self, progress: &SyncReporter) -> Option<BTreeMap<String, Value>> {
         let gearbox = self.gearbox.get()?;
-        for source in sources
-            .repos
-            .iter()
-            .filter(|s| RepoMode::parse(&s.mode) == RepoMode::Gears)
-        {
-            let Some(corpus) = self.corpus_source(ctx, source).await else {
-                continue;
-            };
-            progress.set(format!("checking {} for gear.gdl", source.repo));
-            let label = corpus.label.clone();
-            match gearbox.adopt_if_described(corpus).await {
-                Ok(true) => {
-                    tracing::info!(corpus = %label, "components-catalog: the gears repository describes its gears; previews follow it")
-                }
-                Ok(false) => {
-                    tracing::info!(repo = %label, kept = %gearbox.corpus_label(), "components-catalog: the gears repository has no gear.gdl yet; keeping the configured corpus")
-                }
-                Err(e) => {
-                    tracing::warn!(error = %format!("{e:#}"), repo = %label, "components-catalog: could not check the gears repository out for the engine")
-                }
-            }
-        }
         progress.set("asking the Gearbox engine about the gears…");
         match gearbox.facts().await {
             Ok((corpus, facts)) => {
@@ -807,7 +781,7 @@ impl CatalogService {
         // Only when this run rebuilt the profiles from a repository: a
         // crates.io-only run leaves every profile as it was, facts included.
         if !profile_nodes.is_empty()
-            && let Some(facts) = self.gearbox_facts(ctx, &sources, progress).await
+            && let Some(facts) = self.gearbox_facts(progress).await
         {
             for node in &mut profile_nodes {
                 let Some(prof) = node.value.as_object_mut() else {
