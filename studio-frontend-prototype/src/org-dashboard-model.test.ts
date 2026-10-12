@@ -59,14 +59,17 @@ describe("the organization's dashboard", () => {
   });
 
   it("says the same failure once, with its count", () => {
+    // The tail differs on every attempt; the failure does not.
+    const limit = "GitHub 403 Forbidden: API rate limit exceeded for user ID 301748190.";
     expect(
       groupFailures([
-        { task_type: "artifact.ingest", last_error: "rate limit" },
-        { task_type: "artifact.ingest", last_error: "rate limit" },
+        { task_type: "artifact.ingest", last_error: `${limit} request 1` },
+        { task_type: "artifact.ingest", last_error: `${limit} request 2` },
+        { task_type: "artifact.ingest", last_error: `${limit} request 3` },
         { task_type: "catalog.sync", last_error: null },
       ]),
     ).toEqual([
-      { task_type: "artifact.ingest", error: "rate limit", count: 2 },
+      { task_type: "artifact.ingest", error: `${limit} request 1`, count: 3 },
       { task_type: "catalog.sync", error: "failed", count: 1 },
     ]);
   });

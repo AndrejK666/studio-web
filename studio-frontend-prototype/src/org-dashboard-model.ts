@@ -86,18 +86,25 @@ export function recentlyActive(rows: readonly RollupRow[], limit = 5): RollupRow
 }
 
 /** Failed runs as one line per kind of failure: the same task failing the
- *  same way five times is one problem, said once with its count. */
+ *  same way five times is one problem, said once with its count. "The same
+ *  way" is the start of the message: its tail carries request ids and
+ *  numbers that differ on every attempt. */
 export function groupFailures<T extends { task_type: string; last_error?: string | null }>(
   runs: readonly T[],
 ): { task_type: string; error: string; count: number }[] {
   const out: { task_type: string; error: string; count: number }[] = [];
   for (const r of runs) {
     const error = (r.last_error ?? "failed").trim();
-    const same = out.find((g) => g.task_type === r.task_type && g.error === error);
+    const same = out.find((g) => g.task_type === r.task_type && failureKey(g.error) === failureKey(error));
     if (same) same.count += 1;
     else out.push({ task_type: r.task_type, error, count: 1 });
   }
   return out;
+}
+
+/** What two failures share when they are the same failure. */
+function failureKey(error: string): string {
+  return error.replace(/\d+/g, "#").slice(0, 60);
 }
 
 /** The registry's counts the dashboard shows: every entry, what waits for a
