@@ -818,6 +818,9 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
 .path-sep { color: var(--muted-foreground); font-size: 14px; }
 .path-bar .path-platform .org-select-name { font-weight: 500; color: var(--muted-foreground); }
 .path-bar .path-platform.on .org-select-name { font-weight: 600; color: inherit; }
+.path-bar .path-org { display: flex; align-items: center; gap: 2px; }
+.path-bar .path-chev { padding-left: 4px; padding-right: 4px; }
+.path-bar .org-select.on { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
 
 /* The path in the bar takes the product's ContextSwitcher treatment: no box of
    its own, a 36px hit area that tints on hover, and the name at the same

@@ -624,6 +624,14 @@ export const SURFACES: Surface[] = [
     gears: ["account-management", "studio-organizations", "studio-user"],
   },
   {
+    id: "organization-dashboard",
+    area: "organization",
+    title: "Organization dashboard",
+    does: "Open the organization from the path: its workspaces, people, repositories, specs, open pull requests, its own components and failed background work, with the projects that need attention.",
+    components: ["OrgDashboard"],
+    gears: ["studio-components-catalog", "studio-organizations", "studio-tasks", "studio-user"],
+  },
+  {
     id: "connections",
     area: "organization",
     title: "Connections",

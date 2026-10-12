@@ -114,6 +114,7 @@ import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
+import { OrgDashboard } from "./org-dashboard";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
 import { PullRequestsOnMe } from "./pull-requests-on-me";
@@ -499,6 +500,7 @@ type View =
   | "connectors"
   | "gears"
   | "platform"
+  | "org"
   | "reports"
   | "objects"
   | "views"
@@ -1810,6 +1812,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 setView("platform");
                 setActiveSpace(null);
               }}
+              orgOpen={view === "org" && !activeSpace}
+              onOpenOrg={() => {
+                setCrumb({});
+                setView("org");
+                setActiveSpace(null);
+              }}
               onPickOrg={(id) => {
                 setActiveOrgId(id);
                 setCrumb({});
@@ -2561,6 +2569,24 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             }}
           />
         )}
+        {view === "org" && orgAsSpace && (
+          <OrgDashboard
+            key={orgAsSpace.id}
+            token={token}
+            org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
+            workspaceIds={workspaces.filter((w) => w.orgId === orgAsSpace.id).map((w) => w.id)}
+            onOpen={(target) => {
+              setCrumb({});
+              setView(target);
+            }}
+            onOpenProject={(workspaceId, projectId, name) => {
+              setProjectLabel(name);
+              setCrumb({ projectId: workspaceId, nestedId: projectId });
+              setProjectTab("overview");
+              setView("projects");
+            }}
+          />
+        )}
         {view === "home" && (
           <HomeView
             token={token}
@@ -3136,6 +3162,8 @@ function PathBar({
   activeOrg,
   platformOpen,
   onOpenPlatform,
+  orgOpen,
+  onOpenOrg,
   onPickOrg,
   workspaces,
   currentWorkspaceId,
@@ -3151,6 +3179,10 @@ function PathBar({
   platformOpen: boolean;
   /** Open the platform level: the top of the path, above every organization. */
   onOpenPlatform: () => void;
+  /** Whether the organization's own dashboard is open. */
+  orgOpen: boolean;
+  /** Open the organization's dashboard: clicking its name in the path. */
+  onOpenOrg: () => void;
   onPickOrg: (id: string) => void;
   workspaces: { id: string; name: string }[];
   currentWorkspaceId?: string;
@@ -3184,18 +3216,31 @@ function PathBar({
       <span className="path-sep">›</span>
 
       {/* Organization */}
-      <div className="path-seg org-select-wrap">
+      <div className="path-seg org-select-wrap path-org">
+        {/* The name opens the organization's dashboard; the chevron, when
+            there is more than one organization, switches to another. */}
         <button
           type="button"
-          className="org-select"
-          disabled={orgs.length <= 1}
-          title={activeOrg?.name ?? "Organization"}
-          onClick={() => setOpen((o) => (o === "org" ? null : "org"))}
+          className={`org-select${orgOpen ? " on" : ""}`}
+          aria-current={orgOpen ? "page" : undefined}
+          disabled={!activeOrg}
+          title={activeOrg ? `${activeOrg.name}: the organization's dashboard` : "Organization"}
+          onClick={onOpenOrg}
         >
           <span className="account-avatar small">{initial(activeOrg?.name ?? "?")}</span>
           <span className="org-select-name">{activeOrg?.name ?? "Organization"}</span>
-          {orgs.length > 1 && <span className="chev">▾</span>}
         </button>
+        {orgs.length > 1 && (
+          <button
+            type="button"
+            className="org-select path-chev"
+            aria-label="Switch organization"
+            title="Switch organization"
+            onClick={() => setOpen((o) => (o === "org" ? null : "org"))}
+          >
+            <span className="chev">▾</span>
+          </button>
+        )}
         {open === "org" && orgs.length > 1 && (
           <div className="org-menu">
             {orgs.map((o) => (
