@@ -242,11 +242,16 @@ pub fn activity_feed(
 
 // ── one project's row ────────────────────────────────────────────────────────
 
-/// The severities a detector writes for something still wrong. The rest —
-/// `gate-passed`, `clean`, `analyzed` — are verdicts too, but nothing is left
-/// to do about them, and a row counting them would call a checked project
-/// busy.
-const OPEN_SEVERITIES: [&str; 3] = ["high", "gate-failed", "some"];
+/// The severities a detector writes for a verdict that FAILED. The rest are
+/// verdicts too, but nothing is left to do about them, and a row counting them
+/// would call a checked project busy.
+///
+/// `some` is not among them, although it reads like a warning: its only
+/// writer is traceability, for a document that cites no other one in its set,
+/// recorded with the gate passed and no items (`spec_quality/record.rs`).
+/// Counting it put a red "1 finding" on a document whose analysis shows nothing
+/// to fix.
+const FAILING_SEVERITIES: [&str; 2] = ["high", "gate-failed"];
 
 /// How many things one verdict says are wrong with its document.
 ///
@@ -268,7 +273,7 @@ pub fn placed_findings(verdict: &Value) -> u32 {
     if items > 0 {
         return u32::try_from(items).unwrap_or(u32::MAX);
     }
-    u32::from(field_str(verdict, "severity").is_some_and(|s| OPEN_SEVERITIES.contains(&s)))
+    u32::from(field_str(verdict, "severity").is_some_and(|s| FAILING_SEVERITIES.contains(&s)))
 }
 
 /// What a document's recorded verdicts say, for its row on the Specs list.
@@ -307,8 +312,9 @@ pub fn review_by_subject(findings: &[(String, Value)]) -> HashMap<String, Review
 /// sources, folded from the nodes those columns are about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectSignals {
-    /// Findings still to fix, counted by [`placed_findings`] — the same
-    /// number the Specs list shows for the project's documents.
+    /// Findings still to fix, counted by [`placed_findings`] — the Specs
+    /// list's rule, over every verdict in the project, including those on
+    /// documents that are gone: nothing retires a verdict with its document.
     pub open_findings: u32,
     /// Unresolved threads the project's repositories report: on documents and
     /// on pull requests under review. `None` when no repository could say —
@@ -781,7 +787,7 @@ mod tests {
             verdict("f", "analyzed", 1),
         ];
         let s = project_signals(&findings, &[], &[], &[], NOW, 7);
-        assert_eq!(s.open_findings, 3);
+        assert_eq!(s.open_findings, 2);
     }
 
     #[test]
@@ -810,7 +816,8 @@ mod tests {
         for (severity, n) in [
             ("high", 1),
             ("gate-failed", 1),
-            ("some", 1),
+            // Traceability's "cites nothing", recorded with the gate passed.
+            ("some", 0),
             ("gate-passed", 0),
             ("clean", 0),
         ] {

@@ -28,9 +28,11 @@ export function rowReview(
   if (row.state === "not_a_document") return { label: "Not a document", tone: MUTED };
   if (!row.type_key) return { label: "Needs type", tone: MUTED };
   if (!reviewsKnown) return { label: "—", tone: MUTED };
-  // Never checked, or Spec Quality refused the type: a refusal records no verdict.
-  if (!row.checked_at) return { label: "Check needed", tone: "var(--warning)" };
+  // Findings first: a verdict recorded before verdicts were dated counts but
+  // leaves `checked_at` null, and it is still something to fix.
   const n = row.findings ?? 0;
-  if (n === 0) return { label: "0 findings", tone: "var(--success)" };
-  return { label: `${n} finding${n === 1 ? "" : "s"}`, tone: "var(--destructive)" };
+  if (n > 0) return { label: `${n} finding${n === 1 ? "" : "s"}`, tone: "var(--destructive)" };
+  // No dated verdict from any detector.
+  if (!row.checked_at) return { label: "Check needed", tone: "var(--warning)" };
+  return { label: "0 findings", tone: "var(--success)" };
 }

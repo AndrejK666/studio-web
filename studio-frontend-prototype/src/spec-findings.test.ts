@@ -9,8 +9,11 @@ describe("rowReview", () => {
   });
 
   it("calls a typed document nobody checked a check needed, not clean", () => {
-    // Also how a type Spec Quality refused reads: a refusal records no verdict.
     expect(rowReview(typed)).toEqual({ label: "Check needed", tone: "var(--warning)" });
+  });
+
+  it("puts findings before the date: a verdict from before verdicts were dated still counts", () => {
+    expect(rowReview({ ...typed, checked_at: null, findings: 1 }).label).toBe("1 finding");
   });
 
   it("counts what the server counted", () => {

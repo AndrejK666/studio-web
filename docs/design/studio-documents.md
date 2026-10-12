@@ -273,7 +273,11 @@ same counts.
 The ingested-file list is optional: without the ingest gear the rows still
 carry authored documents and bindings, and say so through `files_known`;
 when the verdicts cannot be read, `reviews_known` is false and no row's review
-summary means "never checked".
+summary means "never checked"; when the repositories cannot be read,
+`repos_known` is false and an empty `repo_full_path` means unknown, not gone.
+The rollup's `open_findings` also counts verdicts on documents that are gone,
+since nothing retires a verdict with its document, so it can exceed the sum of
+the rows' `findings`.
 
 ##### Related components (by ID)
 

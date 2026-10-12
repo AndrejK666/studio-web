@@ -652,16 +652,17 @@ export interface SpecRow {
   updated_at: string;
   /** Instance id of the repo node this file came from. Empty for an authored row. */
   repo: string;
-  /** That repository's `full_path`; empty for an authored row and for a
-   *  repository the graph no longer holds. */
+  /** That repository's `full_path`; empty for an authored row, and for a
+   *  repository that is unknown (`files_known` / `repos_known` false) or gone. */
   repo_full_path: string;
-  /** The binding's confidence in its proposed type. */
+  /** The binding's confidence in its type: meaningful while `state` is
+   *  `detected`; `1.0` for a type a person chose. */
   confidence?: number | null;
-  /** When the newest verdict on this document was recorded; null when it was
-   *  never checked, or Spec Quality refused its type. */
+  /** RFC 3339 time of the newest verdict from ANY detector (set detectors a
+   *  sync runs included). Null: no dated verdict — read `findings` first. */
   checked_at?: string | null;
-  /** Findings placed in the text across every verdict, counted on the server
-   *  by the same rule as the projects table's `open_findings`. */
+  /** Findings placed in the text across every verdict; a failed verdict
+   *  (`high`, `gate-failed`) without items counts as one. */
   findings: number;
   /** Which queues this row is in. Decided by the server, because a second
    *  portal deciding it again is how two screens start disagreeing about what
@@ -2431,6 +2432,7 @@ export const api = {
       sources: {
         files_known: boolean;
         reviews_known: boolean;
+        repos_known: boolean;
         counts: { queue: SpecFilter; count: number }[];
       };
     }>(`/studio-documents/v1/spec-rows?project_id=${encodeURIComponent(projectId)}`, token),
