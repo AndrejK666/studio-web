@@ -107,6 +107,10 @@ import {
 /** The person's theme and language, among their other preferences. */
 const PREF_THEME = "app.theme";
 const PREF_LANGUAGE = "app.language";
+/** Whether the person shows the navigation rail at all: `shown` | `hidden`.
+ *  The rail holds only what they pinned; every level's own sections are the
+ *  band above the work area, so hiding it loses no destination. */
+const PREF_RAIL = "app.rail";
 import { ActivityView } from "./activity-view";
 import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
@@ -885,6 +889,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
     savePins(next);
   };
   const [menuOpen, setMenuOpen] = useState(false);
+  const [railPref] = usePreference(PREF_RAIL, "shown");
   /** Whether the Studio AI dock is open (368px) rather than railed (48px).
    *  Owned here because the shell grid sizes the track — see .shell-body. */
   const [aiOpen, setAiOpen] = useState(false);
@@ -1697,6 +1702,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         {/* Pins the rail open. It is not an open/close control any more — the
             rail is always there and opens on hover — so it reports pressed
             state rather than naming a destination. */}
+        {(railPref !== "hidden" || adminOpen) && (
         <button
           className="bar-burger"
           aria-label={menuOpen ? "Unpin global navigation" : "Pin global navigation open"}
@@ -1706,6 +1712,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         >
           <MenuIcon size={20} />
         </button>
+        )}
         {/* The product family hangs off the wordmark again.
             It was moved to the foot of the drawer on the reasoning that the
             portal is one door and the API docs and the IdP admin are others,
@@ -1958,7 +1965,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         /* The admin area is a settings sidebar, not transient navigation: it keeps
            its full 240px track, or its open panel would lie over the page it
            manages (and stay open over it while a nav button holds the focus). */
-        data-sidebar={menuOpen || adminOpen ? "open" : "rail"}
+        data-sidebar={
+          railPref === "hidden" && !adminOpen ? "none" : menuOpen || adminOpen ? "open" : "rail"
+        }
         /* "none" while a space is showing: the IDE is a whole application, and
            the product does not dock its own assistant beside somebody else's
            editor — that column belongs to Theia. */
@@ -2073,69 +2082,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 </>
               ) : (
                 <>
-                {/* The open level's sections. The path above the content
-                    picks the level; the rail lists what is in it. */}
-                <div className={`nav-section nav-section-level nav-level-${level}`} data-level={level}>
-                  <div className="nav-section-title nav-level-title">
-                    <span className="nav-level-kind">
-                      {level === "platform"
-                        ? "Platform"
-                        : level === "organization"
-                          ? "Organization"
-                          : level === "workspace"
-                            ? "Workspace"
-                            : "Project"}
-                    </span>
-                    <span className="nav-level-name">
-                      {level === "platform"
-                        ? "shared by every organization"
-                        : level === "organization"
-                          ? (activeOrg?.name ?? "")
-                          : level === "workspace"
-                            ? (orgWorkspaces.find((w) => w.id === crumb.projectId)?.name ?? "")
-                            : (projectLabel ?? "")}
-                    </span>
-                  </div>
-                  {level === "project"
-                    ? PROJECT_TABS.map((t) => (
-                        <button
-                          key={t.id}
-                          className={projectTab === t.id ? "active" : ""}
-                          aria-current={projectTab === t.id ? "page" : undefined}
-                          title={t.label}
-                          onClick={() => setProjectTab(t.id)}
-                        >
-                          <span className="ico"><NavIcon name={t.icon} /></span> {t.label}
-                        </button>
-                      ))
-                    : level === "workspace"
-                      ? WORKSPACE_TABS.map((t) => (
-                          <button
-                            key={t.id}
-                            className={workspaceTab === t.id ? "active" : ""}
-                            aria-current={workspaceTab === t.id ? "page" : undefined}
-                            title={t.hint}
-                            onClick={() => setWorkspaceTab(t.id)}
-                          >
-                            <span className="ico"><NavIcon name={t.icon} /></span> {t.label}
-                          </button>
-                        ))
-                      : LEVEL_NAV[level].map((n) => (
-                          <button
-                            key={n.id}
-                            className={view === n.id && !activeSpace ? "active" : ""}
-                            aria-current={view === n.id && !activeSpace ? "page" : undefined}
-                            title={n.label}
-                            onClick={() => {
-                              setCrumb({});
-                              setView(n.id);
-                              setActiveSpace(null); // portal navigation leaves the space
-                            }}
-                          >
-                            <span className="ico"><NavIcon name={n.icon} /></span> {n.label}
-                          </button>
-                        ))}
-                </div>
+                {/* Only what this person pinned. The open level's sections are
+                    the band above the work area, so the rail is theirs to
+                    fill -- or to hide, in the profile. */}
                 <PinnedSection
                   pins={pins}
                   setPins={setPinned}
@@ -2254,9 +2203,47 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           )}
         </nav>
       )}
-      {/* The open project's sections are listed in the rail too (it follows
-          the path); the band stays, because it is where the work area says
-          which section is on screen and where a section is pinned. */}
+      {/* Every level of the path has its sections as a band above the work
+          area -- the platform's and the organization's here, a workspace's and
+          a project's below. The rail is only what the person pinned. */}
+      {!adminOpen && !activeSpace && (level === "platform" || level === "organization") && (
+        <nav className="project-sections" aria-label={level === "platform" ? "Platform sections" : "Organization sections"}>
+          {LEVEL_NAV[level].map((n) => (
+            <button
+              key={n.id}
+              className={`psection${view === n.id ? " on" : ""}`}
+              aria-current={view === n.id ? "page" : undefined}
+              onClick={() => {
+                setCrumb({});
+                setView(n.id);
+              }}
+            >
+              <span className="ico" aria-hidden>
+                <NavIcon name={n.icon} />
+              </span>
+              {n.label}
+            </button>
+          ))}
+          {railPref !== "hidden" &&
+            (() => {
+              const pin: Pin = { kind: "view", id: view };
+              const already = isPinned(pins, pin);
+              return (
+                <button
+                  className={`psection psection-pin${already ? " on" : ""}`}
+                  aria-pressed={already}
+                  title={already ? "Unpin this section from the rail" : "Pin this section to the rail"}
+                  onClick={() => setPinned(togglePin(pins, pin))}
+                >
+                  <span className="ico" aria-hidden>
+                    {already ? "★" : "☆"}
+                  </span>
+                  {already ? "Pinned" : "Pin"}
+                </button>
+              );
+            })()}
+        </nav>
+      )}
       {/* The project's sections, as the product draws them: a 44px band across
           the top of the work area, not a list inside the navigation rail.
 
@@ -9758,6 +9745,7 @@ function ProfileView({
   // edits a draft and Save commits it.
   const [savedTheme, saveTheme] = usePreference(PREF_THEME, "light");
   const [savedLanguage, saveLanguage] = usePreference(PREF_LANGUAGE, "en");
+  const [rail, saveRail] = usePreference(PREF_RAIL, "shown");
   const [theme, setTheme] = useState(savedTheme);
   const [language, setLanguage] = useState(savedLanguage);
   const [saved, setSaved] = useState(false);
@@ -9861,6 +9849,18 @@ function ProfileView({
           <button className="primary">Save</button>
           {saved && <span className="hint">saved ✓</span>}
         </form>
+        <label className="pref-toggle">
+          <input
+            type="checkbox"
+            checked={rail !== "hidden"}
+            onChange={(e) => saveRail(e.target.checked ? "shown" : "hidden")}
+          />{" "}
+          Show the navigation rail on the left
+        </label>
+        <p className="hint">
+          The rail holds only what you pin (☆ Pin on a section, or + in the rail). Every level&apos;s
+          sections are always in the band above the page, so hiding the rail loses nothing.
+        </p>
         {error && <div className="error">{error}</div>}
       </div>
     </>

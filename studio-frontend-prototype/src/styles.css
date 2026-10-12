@@ -500,6 +500,10 @@ label.field input { display: block; width: 100%; margin-top: 6px; font-weight: 4
    Leaving it at 48px is what the first cut did, and the open rail then sat on
    top of 192px of content for as long as it stayed pinned. */
 .shell-body[data-sidebar="open"] { --nav-track: 240px; }
+/* The person turned the rail off (Profile): no track, no panel. */
+.shell-body[data-sidebar="none"] { --nav-track: 0px; }
+.shell-body[data-sidebar="none"] > .drawer { display: none; }
+.pref-toggle { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 13px; }
 .shell-body[data-ai="open"] { --ai-track: 368px; }
 .shell-body[data-ai="none"] { --ai-track: 0; }
 /* grid-column: 2 is NOT redundant, and leaving it to auto-placement is what
