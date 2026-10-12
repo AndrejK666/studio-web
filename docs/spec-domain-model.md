@@ -143,8 +143,12 @@ rebuild is resolved only when the text of one of its sides changed.
 
 ## A build
 
-One `documents.spec_model_build` run on studio-tasks, under the security context of
-the member who started it, in stages:
+One build, in this process, under the security context of the member who
+started it. Not a studio-tasks run: the queue worker acts as `studio-tasks`
+and never as the person who asked (`tasks/dispatch.rs`), and a model is
+reached only on a person's key. Losing a build to a restart costs little,
+because every document finished is kept by revision and the next build starts
+where this one stopped. Its stages:
 
 1. **Index** (no model). Lists the project's typed documents and their
    revisions; builds the reference index; runs the reference rules.
@@ -174,7 +178,7 @@ sequenceDiagram
     participant L as studio-llm-proxy
     participant G as studio-artifact-ingest
     P->>D: POST /spec-model/builds {project_id}
-    D-->>P: 202 task_run
+    D-->>P: 202 the build's state
     D->>D: index, reference rules
     loop each document with no extraction for its revision
         D->>L: complete (caller's key): facts with quotes and status
@@ -191,11 +195,23 @@ sequenceDiagram
 
 In the code, under `studio-backend/src/documents/spec_model/`: `index.rs`,
 `extract.rs`, `assemble.rs`, `rules.rs` and `judge.rs`, the first, third and
-fourth pure functions; `build_task.rs` for the run; the routes in the gear's
+fourth pure functions; `build.rs` for the run; the routes in the gear's
 `rest.rs`. The text is read through `artifact_ingest::port::RepoFileReader`, as
 classification already reads it.
 
-**Built so far:** stage 1. `index.rs` and `finding.rs`, served by
+**Built so far: stage 2.** `extract.rs` cuts a document at its top-level
+headings into pieces of at most 12,000 characters, numbers every line, and asks
+for the facts as JSON; `read_answer` keeps a fact only when its quote is in the
+text (markup and whitespace aside), within two lines of where the model said
+or else anywhere in the piece, and moves it to the lines it is really on.
+`build.rs` reads the documents not read at their revision, asks an unreadable
+piece once more, keeps a piece that fails twice as the document's `error` (read
+again on the next build), and stops when the caller has no key. Kept in
+`studio_spec_model_extractions` (`m0015`). `POST /spec-model/builds` starts it;
+`GET /spec-model` answers the facts of the current revisions, each document's
+state, and the build's progress as the replica answering knows it.
+
+**Stage 1.** `index.rs` and `finding.rs`, served by
 `GET /spec-model/findings?project_id=`, computed on read (it is cheap and needs
 no key). The reference rules, as built:
 - an identifier is checked only in a family (the first two segments, as in `cpt-…`) the project defines

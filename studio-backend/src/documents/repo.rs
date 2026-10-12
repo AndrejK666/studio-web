@@ -14,7 +14,9 @@ use toolkit_db::secure::{
 use toolkit_security::AccessScope;
 use uuid::Uuid;
 
-use super::entity::{analysis, capability, doc_type, document, document_binding, stage};
+use super::entity::{
+    analysis, capability, doc_type, document, document_binding, spec_extraction, stage,
+};
 
 /// UUIDv5 namespace for a document type's deterministic id — makes `(tenant,
 /// key)` the primary key and gives `upsert_type` an idempotent conflict target.
@@ -32,6 +34,22 @@ const ANALYSIS_NS: Uuid = Uuid::from_u128(0x5c93_a80f_6d17_4e22_ab44_7f95_2306_e
 /// And for an ingested file's binding to a type. Keying on `(tenant, project,
 /// node)` means re-classifying the same file updates one row instead of
 /// appending a second opinion about it.
+/// And for one extraction of a document revision.
+const EXTRACTION_NS: Uuid = Uuid::from_u128(0x41d7_0c2e_93b8_4a65_8e1f_d26c_05a9_7b33);
+
+/// The id of the extraction of `path` at `revision` by `extractor_version`.
+pub fn extraction_id(
+    project_id: Uuid,
+    path: &str,
+    revision: &str,
+    extractor_version: &str,
+) -> Uuid {
+    Uuid::new_v5(
+        &EXTRACTION_NS,
+        format!("{project_id}{path}{revision}{extractor_version}").as_bytes(),
+    )
+}
+
 const BINDING_NS: Uuid = Uuid::from_u128(0x2b41_e6c7_8d35_4f90_a7e2_5c18_93ab_f604);
 
 /// Which documents a list call wants.
@@ -278,6 +296,49 @@ impl DocumentsRepo {
                 analysis::Column::UpdatedAt,
             ])?;
         analysis::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    // ── the spec model's extractions ────────────────────────────────────────
+
+    /// Every extraction kept for a project, of any revision; the caller picks
+    /// the ones of the documents' current revisions.
+    pub async fn list_extractions(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<spec_extraction::Model>> {
+        let conn = self.db.conn()?;
+        let rows = spec_extraction::Entity::find()
+            .filter(spec_extraction::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
+    /// Keep one extraction; a second one of the same revision replaces it
+    /// (a retried document whose first attempt failed part-way).
+    pub async fn put_extraction(&self, model: spec_extraction::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let workspace_id = model.tenant_id;
+        let on_conflict =
+            SecureOnConflict::<spec_extraction::Entity>::columns([spec_extraction::Column::Id])
+                .update_columns([
+                    spec_extraction::Column::Facts,
+                    spec_extraction::Column::Dropped,
+                    spec_extraction::Column::Error,
+                    spec_extraction::Column::Provider,
+                    spec_extraction::Column::Model,
+                    spec_extraction::Column::CreatedAt,
+                ])?;
+        spec_extraction::Entity::insert(model.into_active_model())
             .secure()
             .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
             .on_conflict(on_conflict)

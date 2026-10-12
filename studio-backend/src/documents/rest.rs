@@ -1646,6 +1646,21 @@ impl Quality {
             })
     }
 
+    /// The model client, for reading documents into the spec model on the
+    /// caller's key.
+    fn models(&self) -> ApiResult<Arc<dyn crate::llm_proxy::port::ModelProviders>> {
+        self.hub
+            .get::<dyn crate::llm_proxy::port::ModelProviders>()
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "the domain model cannot be built in this deployment: \
+                         studio-llm-proxy is not part of it",
+                    )
+                    .create()
+            })
+    }
+
     /// The ingested files, for the Specs list.
     ///
     /// Absent is not fatal here and must not be: a project with no ingest gear
@@ -2107,6 +2122,232 @@ impl From<super::spec_model::finding::Finding> for SpecModelFindingDto {
             decide: f.decide,
         }
     }
+}
+
+/// Which project to build the model of.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelBuildRequest {
+    pub project_id: String,
+}
+
+/// A project's build, as the process serving it knows it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelBuildDto {
+    pub running: bool,
+    /// Documents this build reads.
+    pub documents: u32,
+    pub done: u32,
+    pub current: Option<String>,
+    /// Why it stopped, when it did not finish (no model key, most often).
+    pub error: Option<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+}
+
+impl From<super::spec_model::build::BuildState> for SpecModelBuildDto {
+    fn from(s: super::spec_model::build::BuildState) -> Self {
+        let at = |t: Option<time::OffsetDateTime>| {
+            t.and_then(|t| {
+                t.format(&time::format_description::well_known::Rfc3339)
+                    .ok()
+            })
+        };
+        Self {
+            running: s.running,
+            documents: u32::try_from(s.documents).unwrap_or(u32::MAX),
+            done: u32::try_from(s.done).unwrap_or(u32::MAX),
+            current: s.current,
+            error: s.error,
+            started_at: at(s.started_at),
+            finished_at: at(s.finished_at),
+        }
+    }
+}
+
+/// Where one document stands in the model.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelDocumentDto {
+    pub path: String,
+    pub revision: String,
+    /// `extracted`, `failed` (part-way; read again on the next build),
+    /// `stale` (only an older revision was read) or `pending`.
+    pub state: String,
+    pub facts: u32,
+    /// Facts the model gave that the text did not bear out.
+    pub dropped: u32,
+    pub error: Option<String>,
+}
+
+/// One fact, with the passage it rests on.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelFactDto {
+    /// `entity`, `attribute`, `relation`, `requirement`, `constraint`,
+    /// `lifecycle` or `decision`.
+    pub kind: String,
+    pub subject: String,
+    pub aspect: String,
+    pub value: String,
+    pub text: String,
+    /// `active`, `proposed`, `deferred`, `superseded`, `resolved` or
+    /// `evidence`.
+    pub status: String,
+    pub status_because: String,
+    pub source: SpecModelSideDto,
+}
+
+/// A project's domain model as read so far.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelDto {
+    pub build: SpecModelBuildDto,
+    pub documents: Vec<SpecModelDocumentDto>,
+    pub facts: Vec<SpecModelFactDto>,
+}
+
+/// The project's sources, the facts of their current revisions, and where
+/// each document stands.
+async fn spec_model_state(
+    service: &Arc<DocumentsService>,
+    ctx: &SecurityContext,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+) -> ApiResult<(
+    super::spec_model::Sources,
+    Vec<super::spec_model::extract::Fact>,
+    Vec<super::spec_model::Coverage>,
+)> {
+    let sources = service
+        .spec_model_sources(ctx, workspace_id, project_id, reader)
+        .await
+        .map_err(internal)?;
+    let rows = service
+        .spec_extractions(workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    let kept: Vec<super::spec_model::Kept<'_>> = rows
+        .iter()
+        .map(|r| super::spec_model::Kept {
+            path: &r.path,
+            revision: &r.revision,
+            extractor_version: &r.extractor_version,
+            facts: &r.facts,
+            dropped: r.dropped,
+            error: r.error.as_deref(),
+        })
+        .collect();
+    let (facts, coverage) = super::spec_model::current(&sources.documents, &kept);
+    Ok((sources, facts, coverage))
+}
+
+/// A project's domain model as read so far.
+async fn get_spec_model(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecModelDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let (_, facts, coverage) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    Ok(Json(SpecModelDto {
+        build: super::spec_model::build::state(project_id).into(),
+        documents: coverage
+            .into_iter()
+            .map(|c| SpecModelDocumentDto {
+                path: c.path,
+                revision: c.revision,
+                state: c.state.to_string(),
+                facts: count(c.facts),
+                dropped: count(c.dropped),
+                error: c.error,
+            })
+            .collect(),
+        facts: facts
+            .into_iter()
+            .map(|f| SpecModelFactDto {
+                kind: f.kind,
+                subject: f.subject,
+                aspect: f.aspect,
+                value: f.value,
+                text: f.text,
+                status: f.status,
+                status_because: f.status_because,
+                source: SpecModelSideDto {
+                    path: f.path,
+                    line_start: u32::try_from(f.line_start).ok(),
+                    line_end: u32::try_from(f.line_end).ok(),
+                    quote: Some(f.quote),
+                },
+            })
+            .collect(),
+    }))
+}
+
+/// Read every document of the project not yet read at its revision, on the
+/// caller's model key, in the background. A build already running for the
+/// project is answered with its state rather than started twice.
+async fn start_spec_model_build(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<SpecModelBuildRequest>,
+) -> ApiResult<(StatusCode, JsonBody<SpecModelBuildDto>)> {
+    use super::spec_model::build;
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let models = quality.models()?;
+    let (sources, _, coverage) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    let wanted: std::collections::BTreeSet<&str> =
+        super::spec_model::to_read(&coverage).into_iter().collect();
+    let pending: Vec<super::spec_model::SourceText> = sources
+        .documents
+        .iter()
+        .filter(|d| wanted.contains(d.path.as_str()))
+        .cloned()
+        .collect();
+    if !build::begin(project_id, pending.len()) {
+        return Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())));
+    }
+    tokio::spawn(async move {
+        for doc in pending {
+            build::update(project_id, |s| s.current = Some(doc.path.clone()));
+            let read = match build::read_document(
+                models.as_ref(),
+                &ctx,
+                &doc.path,
+                doc.doc_type.as_deref(),
+                &doc.text,
+            )
+            .await
+            {
+                Ok(read) => read,
+                Err(build::Stop(reason)) => {
+                    build::finish(project_id, Some(reason));
+                    return;
+                }
+            };
+            let revision = super::spec_model::extract::revision(&doc.text);
+            if let Err(error) = service
+                .put_spec_extraction(workspace_id, project_id, &doc.path, &revision, &read)
+                .await
+            {
+                tracing::warn!(%error, path = %doc.path, "spec-model: an extraction could not be kept");
+            }
+            build::update(project_id, |s| s.done += 1);
+        }
+        build::finish(project_id, None);
+    });
+    Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())))
 }
 
 /// Where a project's documents disagree, or refer to what is not there.
@@ -2859,6 +3100,54 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model")
+        .operation_id("studio_documents.get_spec_model")
+        .summary("A project's domain model, as read from its documents so far")
+        .description(
+            "The facts every document gave at its current revision — entities, attributes, \
+             relations, requirements, constraints, lifecycles and decisions — each with the \
+             passage it rests on and whether that passage is in force \
+             (docs/spec-domain-model.md). `documents` says where each document stands: \
+             extracted, failed part-way, stale (only an older revision was read) or pending. \
+             `build` is the project's build as the process answering knows it.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose model to read")
+        .handler(get_spec_model)
+        .json_response_with_schema::<SpecModelDto>(openapi, StatusCode::OK, "The model")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/builds")
+        .operation_id("studio_documents.start_spec_model_build")
+        .summary("Read a project's documents into its domain model, on your model key")
+        .description(
+            "Every document not yet read at its current revision is read by a model on the \
+             caller's own key (ADR-0039: Studio holds none), in the background; follow it on \
+             `GET /spec-model`. Not a studio-tasks run, because the queue worker cannot act as \
+             the caller. A build already running for the project is answered with its state. \
+             A document already read at its revision is never read again, so a build stopped \
+             part-way resumes where it stopped.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<SpecModelBuildRequest>(openapi, "The project")
+        .handler(start_spec_model_build)
+        .json_response_with_schema::<SpecModelBuildDto>(openapi, StatusCode::ACCEPTED, "The build")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/spec-model/findings")

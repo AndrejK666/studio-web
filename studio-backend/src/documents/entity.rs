@@ -170,6 +170,46 @@ pub mod analysis {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+/// What a model read out of one document revision (`spec_model::extract`).
+pub mod spec_extraction {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_spec_model_extractions")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// Deterministic v5 UUID of `(project, path, revision, extractor
+        /// version)`.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        /// Workspace tenant, as for the bindings.
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        pub path: String,
+        /// The text's hash (`extract::revision`).
+        pub revision: String,
+        pub extractor_version: String,
+        /// `Vec<extract::Fact>` as JSON.
+        pub facts: String,
+        /// Facts the model gave that the text did not bear out.
+        pub dropped: i32,
+        /// Why a piece could not be read; the facts of the other pieces are
+        /// kept, and the document is asked again on the next build.
+        pub error: Option<String>,
+        pub provider: String,
+        pub model: String,
+        pub created_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// A document instance.
 pub mod document {
     use sea_orm::entity::prelude::*;

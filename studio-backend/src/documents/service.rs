@@ -1526,20 +1526,18 @@ impl DocumentsService {
         Ok(quality::docs_for(&wanted, &by_path))
     }
 
-    /// The findings of a project's documents that need no model: references
-    /// to an identifier, ADR, file or section the project does not have, and
-    /// bare ADR numbers two of its ADR sets share (`docs/spec-domain-model.md`).
+    /// The project's documents as the spec model reads them, and every path
+    /// of its checkouts to resolve references against.
     ///
     /// The documents are the project's bindings that are documents at all,
-    /// guessed or confirmed, read as written; the tree they are resolved
-    /// against is every file of the project's checkouts.
-    pub async fn spec_model_references(
+    /// guessed or confirmed, read as written (`docs/spec-domain-model.md`).
+    pub async fn spec_model_sources(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
-    ) -> Result<Vec<super::spec_model::finding::Finding>> {
+    ) -> Result<super::spec_model::Sources> {
         let rows: Vec<DocumentBinding> = self
             .all_bindings(workspace_id, Some(project_id))
             .await?
@@ -1547,28 +1545,81 @@ impl DocumentsService {
             .filter(|row| row.state != BindingState::NotADocument)
             .collect();
         if rows.is_empty() {
-            return Ok(Vec::new());
+            return Ok(super::spec_model::Sources::default());
         }
         let tenants = checkout_tenants(
             rows.iter().map(|r| r.project_id),
             Some(project_id),
             workspace_id,
         );
-        let by_path = self.checkout_files(ctx, &tenants, reader).await;
-        let docs: Vec<super::spec_model::index::SourceDoc<'_>> = rows
-            .iter()
+        let mut by_path = self.checkout_files(ctx, &tenants, reader).await;
+        let tree = by_path.keys().cloned().collect();
+        let documents = rows
+            .into_iter()
             .filter_map(|row| {
                 by_path
-                    .get(&row.path)
-                    .map(|text| super::spec_model::index::SourceDoc {
-                        path: &row.path,
+                    .remove(&row.path)
+                    .map(|text| super::spec_model::SourceText {
+                        path: row.path,
                         text,
-                        doc_type: row.type_key.as_deref(),
+                        doc_type: row.type_key,
                     })
             })
             .collect();
-        let tree: std::collections::BTreeSet<String> = by_path.keys().cloned().collect();
-        Ok(super::spec_model::index::reference_findings(&docs, &tree).1)
+        Ok(super::spec_model::Sources { documents, tree })
+    }
+
+    /// The findings of a project's documents that need no model: references
+    /// to an identifier, ADR, file or section the project does not have, and
+    /// bare ADR numbers two of its ADR sets share.
+    pub async fn spec_model_references(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Result<Vec<super::spec_model::finding::Finding>> {
+        let sources = self
+            .spec_model_sources(ctx, workspace_id, project_id, reader)
+            .await?;
+        Ok(sources.reference_findings())
+    }
+
+    /// Every extraction kept for the project, of any revision.
+    pub async fn spec_extractions(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::entity::spec_extraction::Model>> {
+        self.repo.list_extractions(workspace_id, project_id).await
+    }
+
+    /// Keep what reading one document revision gave.
+    pub async fn put_spec_extraction(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        path: &str,
+        revision: &str,
+        read: &super::spec_model::build::Read,
+    ) -> Result<()> {
+        let version = super::spec_model::extract::EXTRACTOR_VERSION;
+        self.repo
+            .put_extraction(super::entity::spec_extraction::Model {
+                id: super::repo::extraction_id(project_id, path, revision, version),
+                tenant_id: workspace_id,
+                project_id,
+                path: path.to_string(),
+                revision: revision.to_string(),
+                extractor_version: version.to_string(),
+                facts: serde_json::to_string(&read.extraction.facts)?,
+                dropped: i32::try_from(read.extraction.dropped).unwrap_or(i32::MAX),
+                error: read.error.clone(),
+                provider: read.provider.clone(),
+                model: read.model.clone(),
+                created_at: OffsetDateTime::now_utc(),
+            })
+            .await
     }
 
     /// What each analysed document's result is recorded against, by the path

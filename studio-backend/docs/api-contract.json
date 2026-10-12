@@ -895,6 +895,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model",
+      "operation_id": "studio_documents.get_spec_model",
+      "tag": "StudioDocuments",
+      "summary": "A project's domain model, as read from its documents so far",
+      "authenticated": true,
+      "responses": [
+        "SpecModelDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model/findings",
       "operation_id": "studio_documents.list_spec_model_findings",
       "tag": "StudioDocuments",
@@ -2771,6 +2788,24 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/spec-model/builds",
+      "operation_id": "studio_documents.start_spec_model_build",
+      "tag": "StudioDocuments",
+      "summary": "Read a project's documents into its domain model, on your model key",
+      "authenticated": true,
+      "request": "SpecModelBuildRequest",
+      "responses": [
+        "SpecModelBuildDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
