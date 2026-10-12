@@ -210,6 +210,70 @@ pub mod spec_extraction {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+/// What the judge said about one candidate at its sides' revisions.
+pub mod spec_judgement {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_spec_model_judgements")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// Deterministic v5 UUID of `(project, fingerprint, revisions, judge
+        /// version)`.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        pub fingerprint: String,
+        /// The sides' document revisions, sorted and joined: a judgement is
+        /// about the text as it was.
+        pub revisions: String,
+        pub judge_version: String,
+        pub conflict: bool,
+        /// `finding::Finding` as JSON when `conflict`.
+        pub finding: Option<String>,
+        pub created_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// A member's ✓ or ✗ on a spec-model finding.
+pub mod spec_decision {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_spec_model_decisions")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// Deterministic v5 UUID of `(project, fingerprint)`: one decision per
+        /// finding, the latest.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        pub fingerprint: String,
+        /// `confirmed` (a real problem) or `dismissed` (not one).
+        pub decision: String,
+        pub decided_by: Uuid,
+        pub decided_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// A document instance.
 pub mod document {
     use sea_orm::entity::prelude::*;

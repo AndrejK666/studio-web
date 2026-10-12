@@ -199,7 +199,25 @@ fourth pure functions; `build.rs` for the run; the routes in the gear's
 `rest.rs`. The text is read through `artifact_ingest::port::RepoFileReader`, as
 classification already reads it.
 
-**Built so far: stage 2.** `extract.rs` cuts a document at its top-level
+**Built so far: stages 3 to 5, and ✓/✗.** `rules.rs` merges the facts by
+subject and aspect (case, articles, punctuation and a plural `s` folded) and
+proposes a candidate for each pair of different `active` values of one slot,
+not for each pair of passages, and a `stale.superseded` candidate where
+`active` text gives the very value another passage says was replaced; at most
+150 per build, the ones across documents first. `judge.rs` shows the judge
+both passages with 25 lines around each and the headings above, and keeps a
+finding only on a confirmed conflict that is not low-confidence; its edit only
+when the text it replaces is in the document it names. A judgement is kept per
+(fingerprint, the sides' revisions, judge version) in
+`studio_spec_model_judgements` (`m0016`), so a candidate is judged once until
+one of its documents changes. A finding the judge worded is fingerprinted by
+its passages alone. `POST /spec-model/findings/{fingerprint}/decision` keeps a
+member's `confirmed` or `dismissed` in `studio_spec_model_decisions`, and
+`GET /spec-model/findings` answers it with each finding. Not built yet:
+`contradiction.decision`, `reference.misattributed`, the record into
+`spec_finding` nodes, and the tab.
+
+**Stage 2.** `extract.rs` cuts a document at its top-level
 headings into pieces of at most 12,000 characters, numbers every line, and asks
 for the facts as JSON; `read_answer` keeps a fact only when its quote is in the
 text (markup and whitespace aside), within two lines of where the model said

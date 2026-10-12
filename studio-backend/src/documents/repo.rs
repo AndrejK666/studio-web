@@ -15,7 +15,8 @@ use toolkit_security::AccessScope;
 use uuid::Uuid;
 
 use super::entity::{
-    analysis, capability, doc_type, document, document_binding, spec_extraction, stage,
+    analysis, capability, doc_type, document, document_binding, spec_decision, spec_extraction,
+    spec_judgement, stage,
 };
 
 /// UUIDv5 namespace for a document type's deterministic id — makes `(tenant,
@@ -47,6 +48,31 @@ pub fn extraction_id(
     Uuid::new_v5(
         &EXTRACTION_NS,
         format!("{project_id}{path}{revision}{extractor_version}").as_bytes(),
+    )
+}
+
+/// And for a judgement of one candidate at its sides' revisions.
+const JUDGEMENT_NS: Uuid = Uuid::from_u128(0x93c5_2e71_0b4d_4f86_a1e9_6d38_c27f_5014);
+
+pub fn judgement_id(
+    project_id: Uuid,
+    fingerprint: &str,
+    revisions: &str,
+    judge_version: &str,
+) -> Uuid {
+    Uuid::new_v5(
+        &JUDGEMENT_NS,
+        format!("{project_id}\u{1f}{fingerprint}\u{1f}{revisions}\u{1f}{judge_version}").as_bytes(),
+    )
+}
+
+/// And for a member's decision on one finding.
+const SPEC_DECISION_NS: Uuid = Uuid::from_u128(0x6e08_d4a2_57c1_4b93_8f60_e1a7_3b29_c845);
+
+pub fn spec_decision_id(project_id: Uuid, fingerprint: &str) -> Uuid {
+    Uuid::new_v5(
+        &SPEC_DECISION_NS,
+        format!("{project_id}\u{1f}{fingerprint}").as_bytes(),
     )
 }
 
@@ -339,6 +365,77 @@ impl DocumentsRepo {
                     spec_extraction::Column::CreatedAt,
                 ])?;
         spec_extraction::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Every judgement kept for a project.
+    pub async fn list_judgements(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<spec_judgement::Model>> {
+        let conn = self.db.conn()?;
+        let rows = spec_judgement::Entity::find()
+            .filter(spec_judgement::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
+    pub async fn put_judgement(&self, model: spec_judgement::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let workspace_id = model.tenant_id;
+        let on_conflict =
+            SecureOnConflict::<spec_judgement::Entity>::columns([spec_judgement::Column::Id])
+                .update_columns([
+                    spec_judgement::Column::Conflict,
+                    spec_judgement::Column::Finding,
+                    spec_judgement::Column::CreatedAt,
+                ])?;
+        spec_judgement::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Every decision on a project's spec-model findings.
+    pub async fn list_spec_decisions(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<spec_decision::Model>> {
+        let conn = self.db.conn()?;
+        let rows = spec_decision::Entity::find()
+            .filter(spec_decision::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
+    /// Record a decision; a later one on the same finding replaces it.
+    pub async fn put_spec_decision(&self, model: spec_decision::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let workspace_id = model.tenant_id;
+        let on_conflict =
+            SecureOnConflict::<spec_decision::Entity>::columns([spec_decision::Column::Id])
+                .update_columns([
+                    spec_decision::Column::Decision,
+                    spec_decision::Column::DecidedBy,
+                    spec_decision::Column::DecidedAt,
+                ])?;
+        spec_decision::Entity::insert(model.into_active_model())
             .secure()
             .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
             .on_conflict(on_conflict)

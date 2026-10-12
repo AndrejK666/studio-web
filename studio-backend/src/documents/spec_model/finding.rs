@@ -1,10 +1,11 @@
 //! A problem found in a project's documents: the shape every rule answers
 //! with, and its fingerprint.
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// One passage a finding rests on.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Side {
     pub path: String,
     /// The first and last line, from 1. Absent when the side is a whole
@@ -41,7 +42,7 @@ impl Side {
 /// A finding, in the words the spec-findings pipeline uses
 /// (`docs/spec-findings.md`), with every side instead of an anchor and its
 /// related passages.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
     /// Stable across re-runs and line shifts: the rule, the message and every
     /// side's path and passage, never a line number.
@@ -54,6 +55,19 @@ pub struct Finding {
     /// The decision a person has to take when the documents cannot tell
     /// which side is right: one choice per entry. Empty when there is none.
     pub decide: Vec<String>,
+    /// The smallest edit that fixes it, when the documents show which side
+    /// is right.
+    #[serde(default)]
+    pub edit: Option<Edit>,
+}
+
+/// Replace `replace` with `with` in `path`; `replace` is checked to be in
+/// the document before an edit is offered.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Edit {
+    pub path: String,
+    pub replace: String,
+    pub with: String,
 }
 
 impl Finding {
@@ -66,6 +80,7 @@ impl Finding {
             message,
             sides,
             decide: Vec::new(),
+            edit: None,
         }
     }
 
@@ -74,6 +89,13 @@ impl Finding {
     /// finding.
     pub fn keyed_by_message(mut self) -> Self {
         self.fingerprint = fingerprint(&self.rule, &self.message, &[]);
+        self
+    }
+
+    /// Fingerprinted by its sides alone, for a finding a model worded: the
+    /// same two passages are the same finding however it is explained.
+    pub fn keyed_by_sides(mut self) -> Self {
+        self.fingerprint = fingerprint("", "", &self.sides);
         self
     }
 

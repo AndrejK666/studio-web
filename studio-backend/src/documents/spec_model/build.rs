@@ -26,6 +26,9 @@ pub struct BuildState {
     /// Documents this build has to read.
     pub documents: usize,
     pub done: usize,
+    /// Candidates this build sends to the judge, and how many it has.
+    pub candidates: usize,
+    pub judged: usize,
     pub current: Option<String>,
     /// Why the build stopped, when it did not finish: no key, most often.
     pub error: Option<String>,
@@ -144,6 +147,31 @@ pub async fn read_document(
         }
     }
     Ok(read)
+}
+
+/// Ask the judge about one candidate: `Ok(Ok(Some))` a confirmed finding,
+/// `Ok(Ok(None))` not a conflict, `Ok(Err)` an answer that could not be read
+/// twice (asked again on the next build), `Err(Stop)` no key.
+pub async fn judge_candidate(
+    models: &dyn ModelProviders,
+    ctx: &SecurityContext,
+    candidate: &super::rules::Candidate,
+    texts: &std::collections::BTreeMap<String, String>,
+) -> Result<Result<Option<super::finding::Finding>, String>, Stop> {
+    let text_of = |p: &str| texts.get(p).map(String::as_str);
+    let request = super::judge::request(candidate, text_of);
+    let mut last_error = String::new();
+    for _attempt in 0..2 {
+        match models.complete(ctx, &request).await {
+            Ok(answer) => match super::judge::read_answer(candidate, &answer.text, text_of) {
+                Ok(found) => return Ok(Ok(found)),
+                Err(e) => last_error = e,
+            },
+            Err(CompletionError::NoKey(message)) => return Err(Stop(message)),
+            Err(CompletionError::Failed(e)) => last_error = format!("{e:#}"),
+        }
+    }
+    Ok(Err(last_error))
 }
 
 #[cfg(test)]

@@ -1569,22 +1569,6 @@ impl DocumentsService {
         Ok(super::spec_model::Sources { documents, tree })
     }
 
-    /// The findings of a project's documents that need no model: references
-    /// to an identifier, ADR, file or section the project does not have, and
-    /// bare ADR numbers two of its ADR sets share.
-    pub async fn spec_model_references(
-        &self,
-        ctx: &SecurityContext,
-        workspace_id: Uuid,
-        project_id: Uuid,
-        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
-    ) -> Result<Vec<super::spec_model::finding::Finding>> {
-        let sources = self
-            .spec_model_sources(ctx, workspace_id, project_id, reader)
-            .await?;
-        Ok(sources.reference_findings())
-    }
-
     /// Every extraction kept for the project, of any revision.
     pub async fn spec_extractions(
         &self,
@@ -1620,6 +1604,73 @@ impl DocumentsService {
                 created_at: OffsetDateTime::now_utc(),
             })
             .await
+    }
+
+    /// Every judgement kept for the project.
+    pub async fn spec_judgements(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::entity::spec_judgement::Model>> {
+        self.repo.list_judgements(workspace_id, project_id).await
+    }
+
+    /// Keep what the judge said about one candidate at its sides' revisions.
+    pub async fn put_spec_judgement(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        fingerprint: &str,
+        revisions: &str,
+        finding: Option<&super::spec_model::finding::Finding>,
+    ) -> Result<()> {
+        let version = super::spec_model::judge::JUDGE_VERSION;
+        self.repo
+            .put_judgement(super::entity::spec_judgement::Model {
+                id: super::repo::judgement_id(project_id, fingerprint, revisions, version),
+                tenant_id: workspace_id,
+                project_id,
+                fingerprint: fingerprint.to_string(),
+                revisions: revisions.to_string(),
+                judge_version: version.to_string(),
+                conflict: finding.is_some(),
+                finding: finding.map(serde_json::to_string).transpose()?,
+                created_at: OffsetDateTime::now_utc(),
+            })
+            .await
+    }
+
+    /// Every member decision on the project's spec-model findings.
+    pub async fn spec_decisions(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::entity::spec_decision::Model>> {
+        self.repo
+            .list_spec_decisions(workspace_id, project_id)
+            .await
+    }
+
+    /// Record a member's ✓ (`confirmed`) or ✗ (`dismissed`) on a finding.
+    pub async fn put_spec_decision(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        fingerprint: &str,
+        decision: &str,
+    ) -> Result<super::entity::spec_decision::Model> {
+        let model = super::entity::spec_decision::Model {
+            id: super::repo::spec_decision_id(project_id, fingerprint),
+            tenant_id: workspace_id,
+            project_id,
+            fingerprint: fingerprint.to_string(),
+            decision: decision.to_string(),
+            decided_by: ctx.subject_id(),
+            decided_at: OffsetDateTime::now_utc(),
+        };
+        self.repo.put_spec_decision(model.clone()).await?;
+        Ok(model)
     }
 
     /// What each analysed document's result is recorded against, by the path

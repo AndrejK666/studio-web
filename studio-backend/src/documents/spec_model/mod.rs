@@ -4,7 +4,8 @@
 //! Built in stages: the reference index and its rules (`index.rs`), which
 //! need no model; the facts of each document revision, read by a model on the
 //! caller's key (`extract.rs`, run by `build.rs`); and the finding every rule
-//! answers with (`finding.rs`).
+//! answers with (`finding.rs`); the merged model's candidates (`rules.rs`)
+//! and the model call that confirms or drops each (`judge.rs`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,6 +13,8 @@ pub(crate) mod build;
 pub(crate) mod extract;
 pub(crate) mod finding;
 pub(crate) mod index;
+pub(crate) mod judge;
+pub(crate) mod rules;
 
 /// One document of the project, with its text.
 #[derive(Clone, Debug)]
@@ -126,5 +129,72 @@ pub fn to_read(coverage: &[Coverage]) -> Vec<&str> {
         .iter()
         .filter(|c| c.state != "extracted")
         .map(|c| c.path.as_str())
+        .collect()
+}
+
+/// Most candidates one build sends to the judge: each is a model call.
+pub const CANDIDATE_CAP: usize = 150;
+
+/// A candidate's key for its judgement: its fingerprint (its sides' paths
+/// and passages) and the revisions of the documents its sides are in. A
+/// judgement holds while neither document changes.
+pub fn judgement_key(
+    candidate: &rules::Candidate,
+    revision_of: &BTreeMap<String, String>,
+) -> (String, String) {
+    let fingerprint = finding::Finding::new("", "", String::new(), candidate.side_refs())
+        .keyed_by_sides()
+        .fingerprint;
+    let mut revisions: Vec<&str> = candidate
+        .sides
+        .iter()
+        .map(|f| revision_of.get(&f.path).map_or("", String::as_str))
+        .collect();
+    revisions.sort_unstable();
+    (fingerprint, revisions.join(","))
+}
+
+/// One kept judgement, as the findings read it.
+pub struct Judged<'a> {
+    pub fingerprint: &'a str,
+    pub revisions: &'a str,
+    pub judge_version: &'a str,
+    pub finding: Option<&'a str>,
+}
+
+/// The confirmed findings among today's candidates, and the candidates not
+/// judged yet at their revisions. A judgement of a revision that is gone, or
+/// by an older judge, answers nothing.
+pub fn judged(
+    candidates: &[rules::Candidate],
+    revision_of: &BTreeMap<String, String>,
+    kept: &[Judged<'_>],
+) -> (Vec<finding::Finding>, Vec<usize>) {
+    let mut findings = Vec::new();
+    let mut unjudged = Vec::new();
+    for (i, candidate) in candidates.iter().enumerate() {
+        let (fingerprint, revisions) = judgement_key(candidate, revision_of);
+        let hit = kept.iter().find(|k| {
+            k.fingerprint == fingerprint
+                && k.revisions == revisions
+                && k.judge_version == judge::JUDGE_VERSION
+        });
+        match hit {
+            Some(k) => {
+                if let Some(found) = k.finding.and_then(|f| serde_json::from_str(f).ok()) {
+                    findings.push(found);
+                }
+            }
+            None => unjudged.push(i),
+        }
+    }
+    (findings, unjudged)
+}
+
+/// Each document's current revision, by path.
+pub fn revisions(documents: &[SourceText]) -> BTreeMap<String, String> {
+    documents
+        .iter()
+        .map(|d| (d.path.clone(), extract::revision(&d.text)))
         .collect()
 }
