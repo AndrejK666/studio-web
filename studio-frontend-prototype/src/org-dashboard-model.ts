@@ -85,6 +85,21 @@ export function recentlyActive(rows: readonly RollupRow[], limit = 5): RollupRow
     .slice(0, limit);
 }
 
+/** Failed runs as one line per kind of failure: the same task failing the
+ *  same way five times is one problem, said once with its count. */
+export function groupFailures<T extends { task_type: string; last_error?: string | null }>(
+  runs: readonly T[],
+): { task_type: string; error: string; count: number }[] {
+  const out: { task_type: string; error: string; count: number }[] = [];
+  for (const r of runs) {
+    const error = (r.last_error ?? "failed").trim();
+    const same = out.find((g) => g.task_type === r.task_type && g.error === error);
+    if (same) same.count += 1;
+    else out.push({ task_type: r.task_type, error, count: 1 });
+  }
+  return out;
+}
+
 /** The registry's counts the dashboard shows: every entry, what waits for a
  *  decision (candidates and declared), and what the organization accepted. */
 export function registrySummary(states: readonly string[]): {

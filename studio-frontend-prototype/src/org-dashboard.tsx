@@ -11,6 +11,7 @@ import { api, type RollupRow, type TaskRun } from "./api";
 import { errText, relTime } from "./format";
 import {
   attentionLine,
+  groupFailures,
   needsAttention,
   orgTotals,
   recentlyActive,
@@ -57,7 +58,7 @@ export function OrgDashboard({
       .then((r) => live && setRegistry(r.items.map((e) => e.state)))
       .catch(() => live && setRegistry(null));
     api
-      .taskRuns(token, { state: "failed", limit: 5 })
+      .taskRuns(token, { state: "failed", limit: 20 })
       .then((r) => live && setFailed(r.items))
       .catch(() => live && setFailed(null));
     return () => {
@@ -112,19 +113,19 @@ export function OrgDashboard({
           <span className="stat-n">{totals ? n(totals.repos) : "…"}</span>
           <span className="stat-sub">attached to projects</span>
         </button>
-        <button className={`stat${totals?.specsFailing ? " danger" : ""}`} onClick={() => onOpen("projects")}>
+        <button className={`stat${totals?.specsFailing ? " tone-danger" : ""}`} onClick={() => onOpen("projects")}>
           <span className="stat-k">Specs</span>
           <span className="stat-n">{totals ? n(totals.specs) : "…"}</span>
           <span className="stat-sub">
             {totals?.specsFailing ? `${totals.specsFailing} failing` : totals?.openFindings ? `${totals.openFindings} open findings` : ""}
           </span>
         </button>
-        <button className={`stat${totals?.pullsOpen ? " warn" : ""}`} onClick={() => onOpen("projects")}>
+        <button className={`stat${totals?.pullsOpen ? " tone-warn" : ""}`} onClick={() => onOpen("projects")}>
           <span className="stat-k">Open pull requests</span>
           <span className="stat-n">{totals ? n(totals.pullsOpen) : "…"}</span>
           <span className="stat-sub">across projects</span>
         </button>
-        <button className={`stat${reg?.undecided ? " warn" : ""}`} onClick={() => onOpen("gears")}>
+        <button className={`stat${reg?.undecided ? " tone-warn" : ""}`} onClick={() => onOpen("gears")}>
           <span className="stat-k">Our components</span>
           <span className="stat-n">{reg ? reg.total : "—"}</span>
           <span className="stat-sub">{reg ? `${reg.registered} registered · ${reg.undecided} to decide` : ""}</span>
@@ -200,10 +201,13 @@ export function OrgDashboard({
               <p className="sub">No failed runs.</p>
             ) : (
               <ul className="org-dash-list">
-                {failed.map((t) => (
-                  <li key={t.id}>
-                    <code>{t.task_type}</code>
-                    <span className="sub">{(t.last_error ?? "failed").slice(0, 140)}</span>
+                {groupFailures(failed).slice(0, 5).map((g) => (
+                  <li key={`${g.task_type}|${g.error}`}>
+                    <code>
+                      {g.task_type}
+                      {g.count > 1 ? ` ×${g.count}` : ""}
+                    </code>
+                    <span className="sub">{g.error.slice(0, 140)}</span>
                   </li>
                 ))}
               </ul>
@@ -218,6 +222,8 @@ export function OrgDashboard({
 const ORG_DASH_CSS = `
 .org-dash .dash-context h1 { font-size:20px; font-weight:600; margin:0; }
 .org-dash .org-dash-level { font:600 11px/1 var(--mono, monospace); letter-spacing:.06em; text-transform:uppercase; padding:4px 8px; border-radius:6px; background:#dcfce7; color:#15803d; }
+.org-dash .stat.tone-danger .stat-n { color:var(--destructive); }
+.org-dash .stat.tone-warn .stat-n { color:var(--warning); }
 .org-dash .card-head h3 { margin:0; font-size:14px; }
 .org-dash .org-dash-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
 .org-dash .org-dash-list li { display:flex; flex-direction:column; gap:2px; min-width:0; }

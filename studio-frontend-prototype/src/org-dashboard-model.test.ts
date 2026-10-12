@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { RollupRow } from "./api";
 import {
   attentionLine,
+  groupFailures,
   needsAttention,
   orgTotals,
   recentlyActive,
@@ -55,6 +56,19 @@ describe("the organization's dashboard", () => {
 
   it("lists the newest activity first", () => {
     expect(recentlyActive(rows).map((r) => r.id)).toEqual(["busy", "quiet"]);
+  });
+
+  it("says the same failure once, with its count", () => {
+    expect(
+      groupFailures([
+        { task_type: "artifact.ingest", last_error: "rate limit" },
+        { task_type: "artifact.ingest", last_error: "rate limit" },
+        { task_type: "catalog.sync", last_error: null },
+      ]),
+    ).toEqual([
+      { task_type: "artifact.ingest", error: "rate limit", count: 2 },
+      { task_type: "catalog.sync", error: "failed", count: 1 },
+    ]);
   });
 
   it("counts what the registry waits on", () => {
