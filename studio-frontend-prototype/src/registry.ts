@@ -306,13 +306,11 @@ export function publishStatus(
 
 /** Whether the organization's request to the platform is still open: the
  *  newest of its request, the platform's publish and its decline is the
- *  request. */
+ *  request. `decisions` are newest first, as the server answers them. */
 export function publicationPending(decisions: readonly { action: string }[]): boolean {
   const answers = ["request_publication", "publish", "decline_publication"];
-  for (let i = decisions.length - 1; i >= 0; i--) {
-    if (answers.includes(decisions[i].action)) return decisions[i].action === "request_publication";
-  }
-  return false;
+  const newest = decisions.find((d) => answers.includes(d.action));
+  return newest?.action === "request_publication";
 }
 
 /** A publish's dry run in words: where the pull request goes and what it

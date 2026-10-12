@@ -327,11 +327,12 @@ describe("publishing, consumers and suggestions (ADR-0041 P4)", () => {
 });
 
 describe("asking the platform to take a gear", () => {
+  // Decisions arrive newest first, as the server answers them.
   it("is open while the newest of request, publish and decline is the request", () => {
     expect(publicationPending([])).toBe(false);
-    expect(publicationPending([{ action: "register" }, { action: "request_publication" }, { action: "edit" }])).toBe(true);
-    expect(publicationPending([{ action: "request_publication" }, { action: "decline_publication" }])).toBe(false);
-    expect(publicationPending([{ action: "request_publication" }, { action: "publish" }])).toBe(false);
-    expect(publicationPending([{ action: "decline_publication" }, { action: "request_publication" }])).toBe(true);
+    expect(publicationPending([{ action: "edit" }, { action: "request_publication" }, { action: "register" }])).toBe(true);
+    expect(publicationPending([{ action: "decline_publication" }, { action: "request_publication" }])).toBe(false);
+    expect(publicationPending([{ action: "publish" }, { action: "request_publication" }])).toBe(false);
+    expect(publicationPending([{ action: "request_publication" }, { action: "decline_publication" }, { action: "request_publication" }])).toBe(true);
   });
 });
