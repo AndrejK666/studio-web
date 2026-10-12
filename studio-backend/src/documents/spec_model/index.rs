@@ -10,7 +10,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::extract::Fact;
 use super::finding::{Finding, Side};
+use super::rules::Candidate;
 
 /// One document of the project, with its text.
 #[derive(Clone, Debug)]
@@ -253,7 +255,10 @@ fn adr_numbers(text: &str) -> Vec<(u32, String)> {
     let mut i = 0;
     while let Some(at) = text[i..].find("ADR").map(|p| p + i) {
         i = at + 3;
-        let word_start = at == 0 || !bytes[at - 1].is_ascii_alphanumeric();
+        // `ARCH-ADR-010` is a checklist item's id, not a citation: the
+        // number is an ADR's only when `ADR` starts a word of its own.
+        let word_start = at == 0
+            || !(bytes[at - 1].is_ascii_alphanumeric() || matches!(bytes[at - 1], b'-' | b'_'));
         let sep = bytes.get(at + 3).copied();
         if !word_start || !matches!(sep, Some(b'-' | b' ')) {
             continue;
@@ -282,6 +287,160 @@ fn common_dirs(path: &str, namespace: &str) -> usize {
         .zip(namespace.split('/'))
         .take_while(|(a, b)| *a == b)
         .count()
+}
+
+// ------------------------------------------------------ misattribution ----
+
+/// Most citations one build asks the judge about: each is a model call.
+pub const CITATION_CAP: usize = 50;
+
+/// Citations of an ADR whose own words share nothing with the record's title:
+/// the candidates for `reference.misattributed`, which the judge settles by
+/// reading the record's decision.
+///
+/// The filter is what keeps this to calls worth making. A citation that says
+/// nothing beyond the number ("see ADR-0003") states no purpose to be wrong
+/// about; one whose words meet the title's is very likely right. One
+/// candidate per citing document and record, and never a record citing
+/// itself.
+pub fn misattribution_candidates(docs: &[SourceDoc<'_>], cap: usize) -> Vec<Candidate> {
+    let index = build_index(docs);
+    if index.adrs.is_empty() {
+        return Vec::new();
+    }
+    let texts: BTreeMap<&str, &str> = docs.iter().map(|d| (d.path, d.text)).collect();
+    let mut seen: BTreeSet<(&str, &str)> = BTreeSet::new();
+    let mut out = Vec::new();
+    for doc in docs {
+        for line in prose_lines(doc.text) {
+            // A heading names, it does not cite for a purpose.
+            if mentions_a_former_name(line.text) || line.text.trim_start().starts_with('#') {
+                continue;
+            }
+            // A line citing two records cannot say which of its words are
+            // about which, so it states no purpose either can be wrong about.
+            let cited = cited_adrs(doc.path, line.text, &index);
+            if cited.len() != 1 {
+                continue;
+            }
+            for adr in cited {
+                if adr.path == doc.path || !seen.insert((doc.path, adr.path.as_str())) {
+                    continue;
+                }
+                let Some(title) = adr.title.as_deref() else {
+                    continue;
+                };
+                let said = content_words(&link_labels(line.text));
+                let titled = content_words(title);
+                if said.len() < 3 || titled.is_empty() || !said.is_disjoint(&titled) {
+                    continue;
+                }
+                let Some(record) = texts.get(adr.path.as_str()) else {
+                    continue;
+                };
+                out.push(misattribution(doc.path, &line, adr, record));
+                if out.len() >= cap {
+                    return out;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The ADRs one line cites: a bare number resolved to the nearest record set
+/// (an ambiguous one is `reference.ambiguous`'s, not this rule's), and a link
+/// to a record's file.
+fn cited_adrs<'i>(path: &str, text: &str, index: &'i ReferenceIndex) -> Vec<&'i Adr> {
+    let mut out: Vec<&Adr> = Vec::new();
+    for (number, _) in adr_numbers(&without_links(text)) {
+        let mut have: Vec<(usize, &Adr)> = index
+            .adrs_numbered(number)
+            .into_iter()
+            .map(|a| (common_dirs(path, &a.namespace), a))
+            .collect();
+        have.sort_by_key(|(closeness, _)| std::cmp::Reverse(*closeness));
+        match have.as_slice() {
+            [(_, only)] => out.push(*only),
+            [(a, first), (b, _), ..] if a > b => out.push(*first),
+            _ => {}
+        }
+    }
+    for target in link_targets(text) {
+        let file = target.split_once('#').map_or(target.as_str(), |(f, _)| f);
+        if file.is_empty() || file.contains("://") {
+            continue;
+        }
+        if let Some(to) = resolve(path, file)
+            && let Some(adr) = index.adrs.iter().find(|a| a.path == to)
+        {
+            out.push(adr);
+        }
+    }
+    let mut seen = BTreeSet::new();
+    out.retain(|a| seen.insert(a.path.as_str()));
+    out
+}
+
+/// A line's words that can say what something is about: lowercased, cut to
+/// their first five letters so `authorize` meets `authorization`, without
+/// short words, numbers, the word "ADR" and the commonest filler.
+fn content_words(text: &str) -> BTreeSet<String> {
+    const FILLER: [&str; 24] = [
+        "this", "that", "with", "from", "into", "which", "where", "when", "will", "must", "should",
+        "shall", "have", "been", "being", "were", "they", "their", "there", "also", "only", "each",
+        "every", "about",
+    ];
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 4 && !w.chars().all(|c| c.is_ascii_digit()))
+        .filter(|w| !w.starts_with("adr") && !FILLER.contains(w))
+        .map(|w| w.chars().take(5).collect())
+        .collect()
+}
+
+/// The candidate for one citation: the citing line, and the record at its
+/// title.
+fn misattribution(path: &str, line: &Line<'_>, adr: &Adr, record: &str) -> Candidate {
+    let (title_line, title_text) = record
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.starts_with("# "))
+        .map_or((1, adr.title.clone().unwrap_or_default()), |(i, l)| {
+            (i + 1, l.trim().to_string())
+        });
+    let citing = Fact {
+        kind: "reference".into(),
+        subject: adr.title.clone().unwrap_or_default(),
+        aspect: "what it is cited for".into(),
+        value: line.text.trim().to_string(),
+        text: line.text.trim().to_string(),
+        status: "active".into(),
+        status_because: String::new(),
+        path: path.to_string(),
+        line_start: line.number,
+        line_end: line.number,
+        quote: line.text.trim().to_string(),
+    };
+    let cited = Fact {
+        kind: "decision".into(),
+        subject: adr.title.clone().unwrap_or_default(),
+        aspect: "what it decides".into(),
+        value: adr.title.clone().unwrap_or_default(),
+        text: title_text.clone(),
+        status: adr.status.clone().unwrap_or_else(|| "active".into()),
+        status_because: String::new(),
+        path: adr.path.clone(),
+        line_start: title_line,
+        line_end: title_line,
+        quote: title_text,
+    };
+    Candidate {
+        rule: "reference.misattributed",
+        subject: adr.title.clone().unwrap_or_default(),
+        aspect: "what it is cited for".into(),
+        sides: [citing, cited],
+    }
 }
 
 // --------------------------------------------------------------- links ----

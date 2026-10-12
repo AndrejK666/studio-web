@@ -194,9 +194,9 @@ sequenceDiagram
 ```
 
 In the code, under `studio-backend/src/documents/spec_model/`: `index.rs`,
-`extract.rs`, `assemble.rs`, `rules.rs` and `judge.rs`, the first, third and
-fourth pure functions; `build.rs` for the run; the routes in the gear's
-`rest.rs`. The text is read through `artifact_ingest::port::RepoFileReader`, as
+`extract.rs`, `rules.rs` (assembly and candidates), `judge.rs` and
+`record.rs` (stage 6), all pure but for the model calls `build.rs` makes;
+`build.rs` for the run; the routes in the gear's `rest.rs`. The text is read through `artifact_ingest::port::RepoFileReader`, as
 classification already reads it.
 
 **Built so far: stages 3 to 5, and ✓/✗.** `rules.rs` merges the facts by
@@ -213,9 +213,26 @@ when the text it replaces is in the document it names. A judgement is kept per
 one of its documents changes. A finding the judge worded is fingerprinted by
 its passages alone. `POST /spec-model/findings/{fingerprint}/decision` keeps a
 member's `confirmed` or `dismissed` in `studio_spec_model_decisions`, and
-`GET /spec-model/findings` answers it with each finding. Not built yet:
-`contradiction.decision`, `reference.misattributed`, the record into
-`spec_finding` nodes, and the tab.
+`GET /spec-model/findings` answers it with each finding.
+
+**The last two rules and the record.** `contradiction.decision` is proposed
+where a pair of values has a decision on one side (the decision is side B,
+the text that answers to it side A), and where `active` text in another
+document gives the very value only a `proposed` decision gives.
+`reference.misattributed` needs no facts: `index.rs` takes each line that
+cites exactly one record (a bare number resolved to the nearest record set,
+or a link to the record's file), says at least three words of its own, and
+shares none of them with the record's title, at most 50 a build; the judge
+then sees the record's first lines and its Decision section, not its Context.
+On this repository's peer corpus that is 19 citations out of 267 documents,
+most of them connector documents citing an ADR number only another
+component's record set has. The judge's question names the rule's own
+suspicion (`JUDGE_VERSION` 2). At the end of a build, `record.rs` writes one
+`spec_finding` verdict per document under the detector `spec_model`: the
+findings whose first side is in it, the other sides as `related`, in the
+`/verdicts` shape; `clean` for a document with none, which clears what an
+earlier build recorded; a dismissed finding is left out. A ✓ or ✗ given
+after the build reaches the IDE at the next build.
 
 **Stage 2.** `extract.rs` cuts a document at its top-level
 headings into pieces of at most 12,000 characters, numbers every line, and asks

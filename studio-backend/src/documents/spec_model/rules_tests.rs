@@ -144,3 +144,94 @@ fn the_rule_follows_the_aspect() {
     f.aspect = "routing".into();
     assert_eq!(rule_for(&f), "contradiction.value");
 }
+
+fn decision(
+    path: &str,
+    line: usize,
+    subject: &str,
+    aspect: &str,
+    value: &str,
+    status: &str,
+) -> Fact {
+    Fact {
+        kind: "decision".into(),
+        ..fact(path, line, subject, aspect, value, status)
+    }
+}
+
+#[test]
+fn text_against_an_active_decision_is_a_decision_candidate_with_the_decision_second() {
+    let facts = [
+        decision(
+            "docs/adr/0035.md",
+            20,
+            "PDP",
+            "privilege mapping",
+            "the domain object",
+            "active",
+        ),
+        fact(
+            "docs/design.md",
+            88,
+            "pdp",
+            "privilege mapping",
+            "no privilege",
+            "active",
+        ),
+    ];
+    let found = candidates(&facts, 10);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].rule, "contradiction.decision");
+    assert_eq!(found[0].sides[0].path, "docs/design.md");
+    assert_eq!(found[0].sides[1].kind, "decision");
+}
+
+#[test]
+fn text_stating_a_proposed_decision_as_done_is_a_decision_candidate() {
+    let facts = [
+        decision(
+            "docs/adr/0040.md",
+            12,
+            "catalogue",
+            "publisher",
+            "a curator",
+            "proposed",
+        ),
+        fact(
+            "docs/prd.md",
+            300,
+            "Catalogue",
+            "publisher",
+            "a curator",
+            "active",
+        ),
+    ];
+    let found = candidates(&facts, 10);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].rule, "contradiction.decision");
+    assert_eq!(found[0].sides[0].path, "docs/prd.md");
+    assert_eq!(found[0].sides[1].status, "proposed");
+}
+
+#[test]
+fn a_proposed_decision_restated_in_its_own_record_is_no_candidate() {
+    let facts = [
+        decision(
+            "docs/adr/0040.md",
+            12,
+            "catalogue",
+            "publisher",
+            "a curator",
+            "proposed",
+        ),
+        fact(
+            "docs/adr/0040.md",
+            30,
+            "catalogue",
+            "publisher",
+            "a curator",
+            "active",
+        ),
+    ];
+    assert!(candidates(&facts, 10).is_empty());
+}

@@ -14,6 +14,7 @@ pub(crate) mod extract;
 pub(crate) mod finding;
 pub(crate) mod index;
 pub(crate) mod judge;
+pub(crate) mod record;
 pub(crate) mod rules;
 
 /// One document of the project, with its text.
@@ -22,6 +23,9 @@ pub struct SourceText {
     pub path: String,
     pub text: String,
     pub doc_type: Option<String>,
+    /// The file's node in the artifact graph, which its `spec_finding`
+    /// verdict is recorded on.
+    pub node: String,
 }
 
 /// What the model is read from: the project's documents, and every path of
@@ -34,17 +38,30 @@ pub struct Sources {
 
 impl Sources {
     pub fn reference_findings(&self) -> Vec<finding::Finding> {
-        let docs: Vec<index::SourceDoc<'_>> = self
-            .documents
-            .iter()
-            .map(|d| index::SourceDoc {
-                path: &d.path,
-                text: &d.text,
-                doc_type: d.doc_type.as_deref(),
-            })
-            .collect();
-        index::reference_findings(&docs, &self.tree).1
+        index::reference_findings(&source_docs(&self.documents), &self.tree).1
     }
+}
+
+fn source_docs(documents: &[SourceText]) -> Vec<index::SourceDoc<'_>> {
+    documents
+        .iter()
+        .map(|d| index::SourceDoc {
+            path: &d.path,
+            text: &d.text,
+            doc_type: d.doc_type.as_deref(),
+        })
+        .collect()
+}
+
+/// Every candidate for the judge: the rules' over the merged facts, and the
+/// citations of a decision record worth asking about, which need no facts.
+pub fn candidates(documents: &[SourceText], facts: &[extract::Fact]) -> Vec<rules::Candidate> {
+    let mut out = rules::candidates(facts, CANDIDATE_CAP);
+    out.extend(index::misattribution_candidates(
+        &source_docs(documents),
+        index::CITATION_CAP,
+    ));
+    out
 }
 
 /// Where one document stands in the model.
@@ -132,7 +149,9 @@ pub fn to_read(coverage: &[Coverage]) -> Vec<&str> {
         .collect()
 }
 
-/// Most candidates one build sends to the judge: each is a model call.
+/// Most candidates the rules over the facts send to the judge in one build:
+/// each is a model call. Citations have their own cap
+/// ([`index::CITATION_CAP`]).
 pub const CANDIDATE_CAP: usize = 150;
 
 /// A candidate's key for its judgement: its fingerprint (its sides' paths

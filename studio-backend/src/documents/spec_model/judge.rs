@@ -13,7 +13,7 @@ use super::rules::Candidate;
 use crate::llm_proxy::port::CompletionRequest;
 
 /// Bumped whenever the question or the reading changes.
-pub const JUDGE_VERSION: &str = "1";
+pub const JUDGE_VERSION: &str = "2";
 
 /// Lines shown around each side.
 const CONTEXT_LINES: usize = 25;
@@ -32,31 +32,39 @@ thing, both stated as in force.\n\n\
 Answer with one JSON object and nothing else:\n\
 {\"conflict\": true|false, \"rule\": \"contradiction.value\"|\"contradiction.cardinality\"|\
 \"contradiction.lifecycle\"|\"contradiction.access\"|\"contradiction.decision\"|\
-\"stale.superseded\", \"explanation\": \"one or two sentences: why both cannot hold\", \
+\"stale.superseded\"|\"reference.misattributed\", \"explanation\": \"one or two sentences: why both cannot hold\", \
 \"fix\": {\"kind\": \"edit\", \"path\": \"…\", \"replace\": \"exact text from that document\", \
 \"with\": \"…\"} or {\"kind\": \"decide\", \"options\": [\"…\", \"…\"]}, \
 \"confidence\": \"high\"|\"medium\"|\"low\"}\n\n\
 Propose an edit only when the documents themselves show which side is right (a later decision, \
 the side the other documents agree with); otherwise name the decision a person has to take. An \
-edit replaces as little as possible.";
+edit replaces as little as possible.\n\n\
+When the question is whether a passage cites the right decision record, it conflicts only when \
+what the passage says the record is for is not what the record decides (its title and its \
+Decision section): a citation for background, or for one consequence of the decision, is right. \
+The fix then names the record the passage means, when another one in view does.";
 
 /// The question for one candidate. `text_of` gives a document's text by path.
 pub fn request<'a>(
     candidate: &Candidate,
     text_of: impl Fn(&str) -> Option<&'a str>,
 ) -> CompletionRequest {
-    let mut prompt = format!(
-        "The check's reason: two statements about \"{}\" ({}) give different answers.\n",
-        candidate.subject, candidate.aspect
-    );
-    for (name, side) in ["A", "B"].iter().zip(&candidate.sides) {
+    let mut prompt = format!("The check's reason: {}\n", reason(candidate));
+    for (i, (name, side)) in ["A", "B"].iter().zip(&candidate.sides).enumerate() {
         prompt.push_str(&format!(
             "\nPassage {name}: `{}` lines {}-{}, extracted as {} ({}): \"{}\"\n",
             side.path, side.line_start, side.line_end, side.status, side.value, side.quote
         ));
         if let Some(text) = text_of(&side.path) {
-            prompt.push_str(&format!("Around it in `{}`:\n", side.path));
-            prompt.push_str(&context(text, side.line_start, side.line_end));
+            // The record a citation names is judged by its decision, wherever
+            // in the record that is, not by the lines around its title.
+            if i == 1 && candidate.rule == "reference.misattributed" {
+                prompt.push_str(&format!("The record `{}`:\n", side.path));
+                prompt.push_str(&decision_of(text));
+            } else {
+                prompt.push_str(&format!("Around it in `{}`:\n", side.path));
+                prompt.push_str(&context(text, side.line_start, side.line_end));
+            }
         }
     }
     CompletionRequest {
@@ -64,6 +72,59 @@ pub fn request<'a>(
         prompt,
         max_tokens: 1_500,
     }
+}
+
+/// What the check suspects, in the judge's words.
+fn reason(candidate: &Candidate) -> String {
+    match candidate.rule {
+        "reference.misattributed" => format!(
+            "passage A cites the decision record B (\"{}\") for something its words do not \
+             share with the record's title; check whether B decides what A cites it for.",
+            candidate.subject
+        ),
+        "contradiction.decision" => format!(
+            "passage A says something about \"{}\" ({}) that the decision in B settles \
+             differently, or treats as made a decision B only proposes.",
+            candidate.subject, candidate.aspect
+        ),
+        "stale.superseded" => format!(
+            "passage A, in force, describes \"{}\" ({}) the way B says was replaced.",
+            candidate.subject, candidate.aspect
+        ),
+        _ => format!(
+            "two statements about \"{}\" ({}) give different answers.",
+            candidate.subject, candidate.aspect
+        ),
+    }
+}
+
+/// A decision record's first lines (title, status) and its Decision
+/// section, numbered: what it decides, without its Context. The first lines
+/// only when it has no section of that name.
+fn decision_of(text: &str) -> String {
+    const HEAD: usize = 12;
+    const SECTION: usize = 50;
+    let lines: Vec<&str> = text.lines().collect();
+    let mut shown: Vec<usize> = (1..=HEAD.min(lines.len())).collect();
+    let decision = lines.iter().position(|l| {
+        let t = l.trim_start();
+        t.starts_with("##") && t.to_lowercase().contains("decision")
+    });
+    if let Some(at) = decision {
+        let from = (at + 1).max(HEAD + 1);
+        let to = (at + 1 + SECTION).min(lines.len());
+        shown.extend(from..=to);
+    }
+    let mut out = String::new();
+    let mut last = 0;
+    for n in shown {
+        if last != 0 && n != last + 1 {
+            out.push_str("…\n");
+        }
+        out.push_str(&format!("{n}| {}\n", lines[n - 1]));
+        last = n;
+    }
+    out
 }
 
 /// The lines around `start..=end`, numbered, plus the headings above them so
@@ -118,13 +179,14 @@ struct RawFix {
     options: Vec<String>,
 }
 
-const RULES: [&str; 6] = [
+const RULES: [&str; 7] = [
     "contradiction.value",
     "contradiction.cardinality",
     "contradiction.lifecycle",
     "contradiction.access",
     "contradiction.decision",
     "stale.superseded",
+    "reference.misattributed",
 ];
 
 /// What the judge said: `Ok(None)` when the passages do not conflict (or it
@@ -148,6 +210,12 @@ pub fn read_answer<'a>(
         .find(|r| **r == a.rule.trim())
         .copied()
         .unwrap_or(candidate.rule);
+    // A wrong citation stays one, whatever else the judge calls it.
+    let rule = if candidate.rule == "reference.misattributed" {
+        candidate.rule
+    } else {
+        rule
+    };
     let severity = if rule == "stale.superseded" || confidence != "high" {
         "medium"
     } else {

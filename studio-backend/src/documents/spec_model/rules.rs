@@ -68,6 +68,16 @@ fn value_key(value: &str) -> String {
         .join(" ")
 }
 
+/// Which rule a disagreement between two facts falls under: against a
+/// decision when either is one, else by the aspect.
+fn rule_for_pair(a: &Fact, b: &Fact) -> &'static str {
+    if a.kind == "decision" || b.kind == "decision" {
+        "contradiction.decision"
+    } else {
+        rule_for(a)
+    }
+}
+
 /// Which rule a disagreement about this kind of fact and aspect falls under.
 fn rule_for(fact: &Fact) -> &'static str {
     let aspect = fact.aspect.to_lowercase();
@@ -127,6 +137,7 @@ pub fn candidates(facts: &[Fact], cap: usize) -> Vec<Candidate> {
     for ((subject, aspect), group) in &groups {
         conflicts_in(subject, aspect, group, &mut out);
         stale_in(subject, aspect, group, &mut out);
+        taken_as_made_in(subject, aspect, group, &mut out);
     }
     out.sort_by_key(|c| c.sides[0].path == c.sides[1].path);
     out.truncate(cap);
@@ -146,8 +157,15 @@ fn conflicts_in(subject: &str, aspect: &str, group: &[&Fact], out: &mut Vec<Cand
             if same_place(a, b) {
                 continue;
             }
+            // The decision, when there is one, is side B: the text is what
+            // has to answer to it.
+            let (a, b) = if a.kind == "decision" && b.kind != "decision" {
+                (b, a)
+            } else {
+                (a, b)
+            };
             out.push(Candidate {
-                rule: rule_for(a),
+                rule: rule_for_pair(a, b),
                 subject: subject.to_string(),
                 aspect: aspect.to_string(),
                 sides: [(**a).clone(), (**b).clone()],
@@ -170,6 +188,32 @@ fn stale_in(subject: &str, aspect: &str, group: &[&Fact], out: &mut Vec<Candidat
                 subject: subject.to_string(),
                 aspect: aspect.to_string(),
                 sides: [(**still).clone(), (**gone).clone()],
+            });
+        }
+    }
+}
+
+/// `active` text stating as done what only a `proposed` decision says: the
+/// text treats a decision nobody has made as made. A proposed decision that
+/// shows signs of being built is already `active` (the extraction's status),
+/// so it never gets here.
+fn taken_as_made_in(subject: &str, aspect: &str, group: &[&Fact], out: &mut Vec<Candidate>) {
+    for proposed in group
+        .iter()
+        .filter(|f| f.kind == "decision" && f.status == "proposed")
+    {
+        let key = value_key(&proposed.value);
+        if let Some(taken) = group.iter().find(|f| {
+            f.kind != "decision"
+                && f.status == "active"
+                && f.path != proposed.path
+                && value_key(&f.value) == key
+        }) {
+            out.push(Candidate {
+                rule: "contradiction.decision",
+                subject: subject.to_string(),
+                aspect: aspect.to_string(),
+                sides: [(**taken).clone(), (**proposed).clone()],
             });
         }
     }

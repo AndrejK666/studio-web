@@ -1566,6 +1566,7 @@ impl DocumentsService {
                         path: row.path,
                         text,
                         doc_type: row.type_key,
+                        node: row.node_id,
                     })
             })
             .collect();

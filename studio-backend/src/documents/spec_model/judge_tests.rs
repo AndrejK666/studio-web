@@ -136,3 +136,55 @@ fn an_unknown_rule_keeps_the_candidates() {
     .unwrap();
     assert_eq!(f.rule, "contradiction.lifecycle");
 }
+
+const RECORD: &str = "# ADR-0039: Keys\n\n**Status**: Accepted\n\n## Context\n\nLong history the judge need not read.\n\n## Decision\n\nEvery model call uses the caller's key.\n";
+
+fn misattributed() -> Candidate {
+    let mut citing = side(
+        "design.md",
+        3,
+        "",
+        "As ADR-0039 decided, tables carry a tenant column.",
+    );
+    citing.kind = "reference".into();
+    let mut cited = side("adr/0039.md", 1, "Keys", "# ADR-0039: Keys");
+    cited.kind = "decision".into();
+    Candidate {
+        rule: "reference.misattributed",
+        subject: "ADR-0039: Keys".into(),
+        aspect: "what it is cited for".into(),
+        sides: [citing, cited],
+    }
+}
+
+#[test]
+fn a_citation_is_judged_against_the_records_decision_not_its_context() {
+    let req = request(&misattributed(), |p| (p == "adr/0039.md").then_some(RECORD));
+    assert!(req.prompt.contains("cites the decision record B"));
+    assert!(
+        req.prompt
+            .contains("Every model call uses the caller's key.")
+    );
+    assert!(req.prompt.contains("1| # ADR-0039: Keys"));
+}
+
+#[test]
+fn a_misattribution_stays_one_whatever_rule_the_judge_names() {
+    let answer = r#"{"conflict": true, "rule": "contradiction.value", "explanation": "ADR-0039 is about keys, not tenancy.", "fix": {"kind": "decide", "options": ["cite the tenancy record"]}, "confidence": "high"}"#;
+    let found = read_answer(&misattributed(), answer, |_| None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.rule, "reference.misattributed");
+    assert_eq!(found.severity, "high");
+}
+
+#[test]
+fn a_decision_record_without_a_decision_section_shows_its_first_lines() {
+    let text = (1..=30)
+        .map(|n| format!("line {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let shown = decision_of(&text);
+    assert!(shown.contains("12| line 12"));
+    assert!(!shown.contains("13| line 13"));
+}

@@ -2361,6 +2361,11 @@ async fn start_spec_model_build(
     if !build::begin(project_id, pending.len()) {
         return Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())));
     }
+    let findings_writer = quality.findings();
+    let sources_for_record = super::spec_model::Sources {
+        documents: sources.documents.clone(),
+        tree: sources.tree,
+    };
     let documents = sources.documents;
     tokio::spawn(async move {
         for doc in pending {
@@ -2399,6 +2404,17 @@ async fn start_spec_model_build(
         )
         .await
         .err();
+        if let Some(writer) = findings_writer {
+            record_spec_model_findings(
+                &service,
+                writer.as_ref(),
+                &ctx,
+                workspace_id,
+                project_id,
+                &sources_for_record,
+            )
+            .await;
+        }
         build::finish(project_id, reason);
     });
     Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())))
@@ -2430,7 +2446,7 @@ async fn judged_candidates(
         })
         .collect();
     let (facts, _) = sm::current(documents, &kept);
-    let candidates = sm::rules::candidates(&facts, sm::CANDIDATE_CAP);
+    let candidates = sm::candidates(documents, &facts);
     let judgements = service.spec_judgements(workspace_id, project_id).await?;
     let judged: Vec<sm::Judged<'_>> = judgements
         .iter()
@@ -2497,6 +2513,92 @@ async fn judge_new_candidates(
     Ok(())
 }
 
+/// Every finding of the project, references and judged alike, each with a
+/// member's decision on it when there is one.
+async fn spec_model_findings(
+    service: &DocumentsService,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    sources: &super::spec_model::Sources,
+) -> anyhow::Result<(
+    Vec<super::spec_model::finding::Finding>,
+    std::collections::BTreeMap<String, String>,
+)> {
+    let mut findings = sources.reference_findings();
+    let (_, judged, _) =
+        judged_candidates(service, workspace_id, project_id, &sources.documents).await?;
+    findings.extend(judged);
+    let decisions = service
+        .spec_decisions(workspace_id, project_id)
+        .await?
+        .into_iter()
+        .map(|d| (d.fingerprint, d.decision))
+        .collect();
+    Ok((findings, decisions))
+}
+
+/// The last stage of a build: every document's findings as its
+/// `spec_finding` verdict, so the Specs list counts them and the IDE places
+/// them in the text. Nothing to stop a build over: a failure is logged and
+/// the next build writes again.
+async fn record_spec_model_findings(
+    service: &DocumentsService,
+    writer: &dyn crate::artifact_ingest::port::SpecFindingWriter,
+    ctx: &SecurityContext,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    sources: &super::spec_model::Sources,
+) {
+    use super::spec_model::record;
+    let (findings, decisions) =
+        match spec_model_findings(service, workspace_id, project_id, sources).await {
+            Ok(read) => read,
+            Err(error) => {
+                tracing::warn!(%error, "spec-model: the findings could not be read to record");
+                return;
+            }
+        };
+    let dismissed: std::collections::BTreeSet<String> = decisions
+        .into_iter()
+        .filter(|(_, d)| d == "dismissed")
+        .map(|(f, _)| f)
+        .collect();
+    let paths: Vec<&str> = sources.documents.iter().map(|d| d.path.as_str()).collect();
+    let node_of: std::collections::BTreeMap<&str, &str> = sources
+        .documents
+        .iter()
+        .map(|d| (d.path.as_str(), d.node.as_str()))
+        .collect();
+    let verdicts: Vec<crate::artifact_ingest::port::QualityFinding> =
+        record::verdicts(&paths, &findings, &dismissed)
+            .into_iter()
+            .filter_map(|v| {
+                let node = node_of.get(v.path.as_str()).filter(|n| !n.is_empty())?;
+                Some(crate::artifact_ingest::port::QualityFinding {
+                    detector: record::DETECTOR.to_string(),
+                    subject: (*node).to_string(),
+                    path: Some(v.path),
+                    severity: Some(v.severity.to_string()),
+                    summary: Some(v.summary),
+                    score: None,
+                    details: v.details,
+                })
+            })
+            .collect();
+    if let Err(error) = writer
+        .write_spec_findings(
+            ctx,
+            &verdicts,
+            &[],
+            Some(&workspace_id.to_string()),
+            Some(&project_id.to_string()),
+        )
+        .await
+    {
+        tracing::warn!(%error, "spec-model: the findings could not be recorded");
+    }
+}
+
 /// Where a project's documents disagree, or refer to what is not there.
 async fn list_spec_model_findings(
     Extension(ctx): Extension<SecurityContext>,
@@ -2511,18 +2613,9 @@ async fn list_spec_model_findings(
         .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
         .await
         .map_err(internal)?;
-    let mut findings = sources.reference_findings();
-    let (_, judged, _) = judged_candidates(&service, workspace_id, project_id, &sources.documents)
+    let (findings, decisions) = spec_model_findings(&service, workspace_id, project_id, &sources)
         .await
         .map_err(internal)?;
-    findings.extend(judged);
-    let decisions: std::collections::BTreeMap<String, String> = service
-        .spec_decisions(workspace_id, project_id)
-        .await
-        .map_err(internal)?
-        .into_iter()
-        .map(|d| (d.fingerprint, d.decision))
-        .collect();
     let items: Vec<SpecModelFindingDto> = findings
         .into_iter()
         .map(|f| {
