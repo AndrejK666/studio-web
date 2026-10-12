@@ -1454,6 +1454,15 @@ impl DocumentClassifier for DocumentsService {
     ) -> Result<usize> {
         DocumentsService::forget_ingested(self, workspace_id, project_id, &node_ids).await
     }
+
+    async fn existing_documents(
+        &self,
+        _ctx: &SecurityContext,
+        workspace_id: Uuid,
+        ids: Vec<Uuid>,
+    ) -> Result<std::collections::HashSet<Uuid>> {
+        self.repo.existing_doc_ids(workspace_id, &ids).await
+    }
 }
 
 /// Which decision is being made, rather than a soup of optional flags the

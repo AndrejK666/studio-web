@@ -843,6 +843,24 @@ impl IngestService {
                 repo_full_path,
             )
             .await;
+        // Verdicts whose document went before verdicts went with it
+        // (studio-web#706). Best-effort, like the prune: the next sync tries
+        // again, and a verdict left over costs one count in the projects table.
+        match self
+            .sweep_orphan_verdicts(ctx, workspace_id, project_id)
+            .await
+        {
+            Ok(0) => {}
+            Ok(swept) => info!(
+                repo = repo_full_path,
+                swept, "studio-artifact-ingest: forgot verdicts whose document is gone"
+            ),
+            Err(e) => warn!(
+                error = %e,
+                repo = repo_full_path,
+                "studio-artifact-ingest: could not sweep verdicts whose document is gone; the next sync retries"
+            ),
+        }
 
         // PR → file (`modifies`): one API call per PR, best-effort, and only for
         // files we actually ingested so every edge endpoint exists in the graph.
@@ -1343,6 +1361,25 @@ impl IngestService {
             }
         }
 
+        // The verdicts on those files, before the files: they are found by
+        // the file's id, so a failure here keeps the files for the next sync
+        // to find them again by. Left behind, they kept counting in the
+        // projects table's `open_findings` for a document the Specs list no
+        // longer shows (studio-web#706).
+        if let Err(e) = self
+            .forget_findings_on(ctx, project_id.or(workspace_id), &gone)
+            .await
+        {
+            warn!(
+                error = %e,
+                repo = repo_full_path,
+                gone = gone.len(),
+                bindings,
+                "studio-artifact-ingest: could not forget the verdicts on deleted files;                  the files are kept for the next sync"
+            );
+            return 0;
+        }
+
         // Content first, and a failure here keeps the files. The other order
         // could strand it: a retired file is gone from every listing, so no
         // later sync would find it gone again and come back for its content,
@@ -1440,7 +1477,7 @@ impl IngestService {
     /// picks, everything synced from them, and the bindings of their files.
     ///
     /// In `prune_gone_files`' order and for its reasons: bindings first, then
-    /// file content, then the children, and the repository node last — each
+    /// the verdicts on the files, then file content, then the children, and the repository node last — each
     /// step is found again from the one after it, so a failure part-way leaves
     /// something the next prune still finds rather than an orphan nothing does.
     /// `delete_nodes` retires rather than deletes, so attaching the repository
@@ -1498,6 +1535,8 @@ impl IngestService {
                 .forget_ingested(ctx, workspace, project, node_ids)
                 .await?;
         }
+        self.forget_findings_on(ctx, project_id.or(workspace_id), &files)
+            .await?;
         self.graph.delete_nodes(ctx, &gone_contents(&files)).await?;
         let mut nodes = self.graph.delete_nodes(ctx, &files).await?;
         nodes += self.graph.delete_nodes(ctx, &others).await?;
@@ -1515,6 +1554,145 @@ impl IngestService {
             nodes,
             bindings,
         })
+    }
+
+    /// Forget the `spec_finding` verdicts recorded on `documents` in `scope`.
+    ///
+    /// A verdict is about one document (its `subject`), and nothing else
+    /// retires it: a document that leaves keeps its verdicts in the graph,
+    /// where the projects table's `open_findings` still counts them and the
+    /// Specs list, which has no row for them, does not (studio-web#706).
+    ///
+    /// One indexed read of the scope's verdicts, then the ones whose subject
+    /// is among `documents`. A sync with no scope stamps none on its nodes and
+    /// cannot be told apart from another one's, so nothing is forgotten.
+    async fn forget_findings_on(
+        &self,
+        ctx: &SecurityContext,
+        scope: Option<&str>,
+        documents: &[GtsNode],
+    ) -> anyhow::Result<usize> {
+        let subjects: Vec<String> = documents.iter().map(|n| n.instance_id.clone()).collect();
+        match scope {
+            Some(scope) => self.forget_findings(ctx, scope, &subjects).await,
+            None => Ok(0),
+        }
+    }
+
+    /// Forget the verdicts in this sync's scope whose document no longer
+    /// exists: verdicts did not go with their document until studio-web#706,
+    /// so a project synced before that still has them, counted in the
+    /// projects table's `open_findings` and listed nowhere.
+    ///
+    /// A verdict is about a file node or about `studio-doc:<id>`. A file
+    /// verdict is gone when no file node in the WORKSPACE has its id — the
+    /// whole workspace rather than the project, so a verdict is never judged
+    /// against fewer files than could hold its document. A Studio verdict is
+    /// gone when the documents gear says the document is not there; without
+    /// that gear, or without a workspace to ask it about, those are left alone.
+    /// A subject that is neither is not ours to judge and stays.
+    async fn sweep_orphan_verdicts(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+    ) -> anyhow::Result<usize> {
+        let Some(scope) = project_id.or(workspace_id) else {
+            return Ok(0);
+        };
+        let verdicts = self
+            .graph
+            .list_in_scope(ctx, Some("spec_finding"), scope)
+            .await?;
+        if verdicts.is_empty() {
+            return Ok(0);
+        }
+        let subject_of = |n: &GtsNode| -> Option<String> {
+            n.value
+                .get("subject")
+                .and_then(serde_json::Value::as_str)
+                .map(|s| s.trim().to_owned())
+        };
+
+        let files: HashSet<String> = self
+            .graph
+            .files_in_scope(ctx, workspace_id.unwrap_or(scope))
+            .await?
+            .into_iter()
+            .map(|f| f.node_id)
+            .collect();
+
+        // The Studio documents these verdicts name, and which of them exist.
+        let authored: Vec<Uuid> = verdicts
+            .iter()
+            .filter_map(subject_of)
+            .filter_map(|s| Uuid::parse_str(s.strip_prefix("studio-doc:")?).ok())
+            .collect();
+        let existing: Option<HashSet<Uuid>> = match (
+            self.classifier.as_ref(),
+            workspace_id.and_then(|w| Uuid::parse_str(w).ok()),
+        ) {
+            (Some(classifier), Some(workspace)) if !authored.is_empty() => Some(
+                classifier
+                    .existing_documents(ctx, workspace, authored)
+                    .await?,
+            ),
+            _ => None,
+        };
+
+        let doomed: Vec<GtsNode> = verdicts
+            .into_iter()
+            .filter(|n| {
+                let Some(subject) = subject_of(n) else {
+                    return false;
+                };
+                match subject.strip_prefix("studio-doc:") {
+                    Some(id) => match (&existing, Uuid::parse_str(id)) {
+                        (Some(existing), Ok(id)) => !existing.contains(&id),
+                        _ => false,
+                    },
+                    // A file verdict: its node is gone. A subject that is not
+                    // a node id of ours at all would read as gone too, which
+                    // is why only file-shaped subjects are judged: the
+                    // detectors only ever record on file nodes.
+                    None => Uuid::parse_str(&subject).is_ok() && !files.contains(&subject),
+                }
+            })
+            .collect();
+        if doomed.is_empty() {
+            return Ok(0);
+        }
+        self.graph.delete_nodes(ctx, &doomed).await
+    }
+
+    /// Forget every verdict whose `subject` is one of `subjects`, in `scope`.
+    /// Returns how many went. Idempotent, as `delete_nodes` is.
+    pub async fn forget_findings(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        subjects: &[String],
+    ) -> anyhow::Result<usize> {
+        if subjects.is_empty() {
+            return Ok(0);
+        }
+        let wanted: HashSet<&str> = subjects.iter().map(|s| s.trim()).collect();
+        let doomed: Vec<GtsNode> = self
+            .graph
+            .list_in_scope(ctx, Some("spec_finding"), scope)
+            .await?
+            .into_iter()
+            .filter(|n| {
+                n.value
+                    .get("subject")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|s| wanted.contains(s.trim()))
+            })
+            .collect();
+        if doomed.is_empty() {
+            return Ok(0);
+        }
+        self.graph.delete_nodes(ctx, &doomed).await
     }
 
     /// Tag a batch of freshly-built nodes with their tenant scope and upsert
@@ -2252,6 +2430,8 @@ mod prune_tests {
     #[derive(Default)]
     struct Forgetful {
         forgot: Mutex<Vec<(Option<Uuid>, Vec<String>)>>,
+        /// The Studio documents it says exist.
+        existing: Mutex<HashSet<Uuid>>,
     }
 
     #[async_trait]
@@ -2280,6 +2460,16 @@ mod prune_tests {
                 .expect("forgot")
                 .push((project_id, node_ids));
             Ok(n)
+        }
+
+        async fn existing_documents(
+            &self,
+            _ctx: &SecurityContext,
+            _workspace_id: Uuid,
+            ids: Vec<Uuid>,
+        ) -> anyhow::Result<HashSet<Uuid>> {
+            let existing = self.existing.lock().expect("existing");
+            Ok(ids.into_iter().filter(|id| existing.contains(id)).collect())
         }
     }
 
@@ -2582,6 +2772,213 @@ mod prune_tests {
         assert!(!left.contains(&older.0) && !left.contains(&older.1));
     }
 
+    /// A detector's verdict on `subject`, stored as a run in `project` would.
+    fn verdict_on(subject: &str, project: Option<&str>) -> GtsNode {
+        stamped(
+            gts::spec_finding_node(
+                "purpose",
+                subject,
+                None,
+                Some("high"),
+                None,
+                None,
+                json!({ "findings": [{ "id": "1" }] }),
+                "2026-10-01T00:00:00Z",
+            ),
+            project,
+        )
+    }
+
+    /// Whose verdicts are still in the graph.
+    async fn verdict_subjects(graph: &InMemoryGraphStore) -> HashSet<String> {
+        graph
+            .list(&ctx(), Some(gts::SPEC_FINDING_TYPE))
+            .await
+            .expect("list")
+            .iter()
+            .filter_map(|n| n.value.get("subject")?.as_str().map(str::to_owned))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_file_the_repository_no_longer_has_takes_its_verdicts_with_it() {
+        let (svc, graph, _) = service();
+        let mut nodes = Vec::new();
+        let (repo_id, file_id) = synced(&mut nodes, Some(PROJECT), "conn", "org/studio-web");
+        let (_, kept_file) = synced(&mut nodes, Some(PROJECT), "conn", "org/other");
+        nodes.push(verdict_on(&file_id, Some(PROJECT)));
+        nodes.push(verdict_on(&kept_file, Some(PROJECT)));
+        nodes.push(verdict_on("studio-doc:d1", Some(PROJECT)));
+        graph.upsert_nodes(&ctx(), &nodes).await.expect("upsert");
+
+        // A complete listing without README.md: the file is gone.
+        let pruned = svc
+            .prune_gone_files(
+                &ctx(),
+                &repo_id,
+                Some(&HashSet::new()),
+                Some(WS),
+                Some(PROJECT),
+                "org/studio-web",
+            )
+            .await;
+
+        assert_eq!(pruned, 1);
+        assert_eq!(
+            verdict_subjects(&graph).await,
+            HashSet::from([kept_file, "studio-doc:d1".to_owned()])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_detached_repository_takes_the_verdicts_on_its_files_with_it() {
+        let (svc, graph, _) = service();
+        let mut nodes = Vec::new();
+        let (_, gone_file) = synced(&mut nodes, Some(PROJECT), "conn", "org/studio-web");
+        let (_, kept_file) = synced(&mut nodes, Some(PROJECT), "conn", "org/other");
+        // The same repository in a sibling project, and its verdict, stay.
+        let (_, sibling_file) = synced(&mut nodes, Some(OTHER_PROJECT), "conn", "org/studio-web");
+        for (subject, project) in [
+            (&gone_file, PROJECT),
+            (&kept_file, PROJECT),
+            (&sibling_file, OTHER_PROJECT),
+        ] {
+            nodes.push(verdict_on(subject, Some(project)));
+        }
+        graph.upsert_nodes(&ctx(), &nodes).await.expect("upsert");
+
+        svc.prune_detached(
+            &ctx(),
+            Some(WS),
+            Some(PROJECT),
+            &[KeptRepo {
+                connector_id: "conn".into(),
+                repo_full_path: "org/other".into(),
+            }],
+        )
+        .await
+        .expect("prune");
+
+        assert_eq!(
+            verdict_subjects(&graph).await,
+            HashSet::from([kept_file, sibling_file])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_sync_sweeps_verdicts_whose_document_went_before_verdicts_went_with_it() {
+        let (svc, graph, classifier) = service();
+        let kept_doc = Uuid::new_v4();
+        let deleted_doc = Uuid::new_v4();
+        classifier
+            .existing
+            .lock()
+            .expect("existing")
+            .insert(kept_doc);
+        let mut nodes = Vec::new();
+        let (_, live_file) = synced(&mut nodes, Some(PROJECT), "conn", "org/studio-web");
+        // A file in a sibling project of the same workspace still holds its
+        // verdict: files are judged across the workspace.
+        let (_, sibling_file) = synced(&mut nodes, Some(OTHER_PROJECT), "conn", "org/studio-web");
+        let gone_file = Uuid::new_v4().to_string();
+        let kept = format!("studio-doc:{kept_doc}");
+        let deleted = format!("studio-doc:{deleted_doc}");
+        for subject in [
+            &live_file,
+            &sibling_file,
+            &gone_file,
+            &kept,
+            &deleted,
+            // Not a node id of ours: not ours to judge.
+            &"legacy-subject".to_owned(),
+        ] {
+            nodes.push(verdict_on(subject, Some(PROJECT)));
+        }
+        graph.upsert_nodes(&ctx(), &nodes).await.expect("upsert");
+
+        let swept = svc
+            .sweep_orphan_verdicts(&ctx(), Some(WS), Some(PROJECT))
+            .await
+            .expect("sweep");
+
+        assert_eq!(swept, 2);
+        assert_eq!(
+            verdict_subjects(&graph).await,
+            HashSet::from([live_file, sibling_file, kept, "legacy-subject".to_owned()])
+        );
+        // Nothing left to sweep the second time.
+        assert_eq!(
+            svc.sweep_orphan_verdicts(&ctx(), Some(WS), Some(PROJECT))
+                .await
+                .expect("again"),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn a_studio_verdict_nobody_can_vouch_for_is_left_alone() {
+        // No documents gear to ask: a Studio document's verdict stays, whether
+        // or not the document does.
+        let graph = Arc::new(InMemoryGraphStore::default());
+        let svc = IngestService::new(
+            Arc::new(NoSecrets),
+            HashMap::new(),
+            graph.clone(),
+            None,
+            None,
+            None,
+        );
+        let subject = format!("studio-doc:{}", Uuid::new_v4());
+        graph
+            .upsert_nodes(&ctx(), &[verdict_on(&subject, Some(PROJECT))])
+            .await
+            .expect("upsert");
+
+        let swept = svc
+            .sweep_orphan_verdicts(&ctx(), Some(WS), Some(PROJECT))
+            .await
+            .expect("sweep");
+
+        assert_eq!(swept, 0);
+        assert_eq!(verdict_subjects(&graph).await, HashSet::from([subject]));
+    }
+
+    #[tokio::test]
+    async fn a_deleted_studio_document_can_have_its_verdicts_forgotten_by_subject() {
+        use super::super::port::SpecFindingWriter;
+        let (svc, graph, _) = service();
+        graph
+            .upsert_nodes(
+                &ctx(),
+                &[
+                    verdict_on("studio-doc:d1", Some(PROJECT)),
+                    verdict_on("studio-doc:d2", Some(PROJECT)),
+                ],
+            )
+            .await
+            .expect("upsert");
+
+        // Recorded under the parent workspace, which is what the documents
+        // gear knows a document by.
+        let n = svc
+            .forget_spec_findings(&ctx(), WS, &["studio-doc:d1".to_owned()])
+            .await
+            .expect("forget");
+
+        assert_eq!(n, 1);
+        assert_eq!(
+            verdict_subjects(&graph).await,
+            HashSet::from(["studio-doc:d2".to_owned()])
+        );
+        // Again is nothing, not an error.
+        assert_eq!(
+            svc.forget_spec_findings(&ctx(), WS, &["studio-doc:d1".to_owned()])
+                .await
+                .expect("again"),
+            0
+        );
+    }
+
     #[tokio::test]
     async fn a_workspace_level_prune_never_reaches_into_its_projects() {
         let (svc, graph, _) = service();
@@ -2671,6 +3068,15 @@ impl super::port::SpecFindingWriter for IngestService {
     ) -> anyhow::Result<(usize, usize)> {
         self.upsert_quality(ctx, findings, duplicates, &[], workspace_id, project_id)
             .await
+    }
+
+    async fn forget_spec_findings(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        subjects: &[String],
+    ) -> anyhow::Result<usize> {
+        self.forget_findings(ctx, scope, subjects).await
     }
 }
 

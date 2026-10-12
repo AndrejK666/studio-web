@@ -220,6 +220,18 @@ pub trait SpecFindingWriter: Send + Sync + 'static {
         workspace_id: Option<&str>,
         project_id: Option<&str>,
     ) -> anyhow::Result<(usize, usize)>;
+
+    /// Forget every verdict recorded on `subjects` in `scope`, for the gear
+    /// whose document went: a verdict outliving its document kept counting in
+    /// the projects table's `open_findings` (studio-web#706). `subjects` are
+    /// what verdicts are keyed on — `studio-doc:<id>` for a document written
+    /// in Studio. Returns how many went; a subject with none is not an error.
+    async fn forget_spec_findings(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+        subjects: &[String],
+    ) -> anyhow::Result<usize>;
 }
 
 pub use super::service::MappingDecision;

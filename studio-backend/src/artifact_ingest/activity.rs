@@ -312,9 +312,9 @@ pub fn review_by_subject(findings: &[(String, Value)]) -> HashMap<String, Review
 /// sources, folded from the nodes those columns are about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectSignals {
-    /// Findings still to fix, counted by [`placed_findings`] — the Specs
-    /// list's rule, over every verdict in the project, including those on
-    /// documents that are gone: nothing retires a verdict with its document.
+    /// Findings still to fix, counted by [`placed_findings`] over every
+    /// verdict in the project — the Specs list's rows summed, since a verdict
+    /// now goes with its document (studio-web#706).
     pub open_findings: u32,
     /// Unresolved threads the project's repositories report: on documents and
     /// on pull requests under review. `None` when no repository could say —

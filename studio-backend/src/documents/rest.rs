@@ -1472,12 +1472,34 @@ async fn validate_document(
 async fn delete_document(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
     Path((workspace_id, id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<StatusCode> {
     service
         .authorize(&ctx, workspace_id)
         .await
         .map_err(no_tenant)?;
+    // Its verdicts first, and a failure keeps the document: the other order
+    // would leave verdicts nothing can find again, counted in the projects
+    // table's `open_findings` for a document no list shows (studio-web#706).
+    // Recorded under the parent workspace, which is the tenant here.
+    if let Some(findings) = quality.findings() {
+        findings
+            .forget_spec_findings(
+                &ctx,
+                &workspace_id.to_string(),
+                &[super::spec_rows::authored_subject(&id.to_string())],
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, %id, "studio-documents: verdicts not forgotten; document kept");
+                CanonicalError::service_unavailable()
+                    .with_detail(
+                        "the document's recorded verdicts could not be removed, so it was                          kept; try again",
+                    )
+                    .create()
+            })?;
+    }
     service
         .delete_document(workspace_id, id)
         .await
@@ -1633,6 +1655,14 @@ impl Quality {
     fn files(&self) -> Option<Arc<dyn crate::artifact_ingest::port::ArtifactFiles>> {
         self.hub
             .get::<dyn crate::artifact_ingest::port::ArtifactFiles>()
+            .ok()
+    }
+
+    /// The graph a document's verdicts are recorded in, to forget them with
+    /// the document. Absent where no ingest gear runs, and then there are none.
+    fn findings(&self) -> Option<Arc<dyn crate::artifact_ingest::port::SpecFindingWriter>> {
+        self.hub
+            .get::<dyn crate::artifact_ingest::port::SpecFindingWriter>()
             .ok()
     }
 
@@ -3441,7 +3471,10 @@ pub fn register_routes(
             .summary("Delete a document")
             .description(
                 "Deletes the document, and the quality verdicts recorded against it \
-             with it.",
+             with it — its gate verdicts and its `spec_finding` nodes in the \
+             artifact graph. The verdicts go first: when they cannot be removed \
+             the document is kept and the answer is 503, so a retry finishes the \
+             job rather than leaving verdicts nothing lists.",
             )
             .tag("StudioDocuments")
             .authenticated()
@@ -3453,6 +3486,7 @@ pub fn register_routes(
             .error_401(openapi)
             .error_403(openapi)
             .error_500(openapi)
+            .error_503(openapi)
             .register(router, openapi);
 
     router = OperationBuilder::put(

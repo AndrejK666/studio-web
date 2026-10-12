@@ -275,9 +275,11 @@ carry authored documents and bindings, and say so through `files_known`;
 when the verdicts cannot be read, `reviews_known` is false and no row's review
 summary means "never checked"; when the repositories cannot be read,
 `repos_known` is false and an empty `repo_full_path` means unknown, not gone.
-The rollup's `open_findings` also counts verdicts on documents that are gone,
-since nothing retires a verdict with its document, so it can exceed the sum of
-the rows' `findings`.
+The rollup's `open_findings` is the rows' `findings` summed because a
+document's `spec_finding` verdicts go with it: the sync's gone-files pass,
+`reconcile` and deleting a Studio document each forget them before the
+document, so a failure keeps the document for a retry. Verdicts orphaned
+before that are swept by each repository sync of the project.
 
 ##### Related components (by ID)
 

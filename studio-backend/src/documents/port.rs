@@ -80,6 +80,20 @@ pub trait DocumentClassifier: Send + Sync + 'static {
         project_id: Option<Uuid>,
         node_ids: Vec<String>,
     ) -> anyhow::Result<usize>;
+
+    /// Of `ids`, the documents written in Studio that still exist in
+    /// `workspace_id` — the tenant they are stored against, the parent
+    /// workspace for a project's document.
+    ///
+    /// For the walker sweeping verdicts whose document is gone: a verdict on
+    /// `studio-doc:<id>` is only removed when this says `id` is not here, so
+    /// an `Err` must leave every such verdict alone.
+    async fn existing_documents(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        ids: Vec<Uuid>,
+    ) -> anyhow::Result<std::collections::HashSet<Uuid>>;
 }
 
 /// How much a project has in it, as this gear counts it.

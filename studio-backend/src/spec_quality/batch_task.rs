@@ -619,6 +619,15 @@ mod tests {
             });
             Ok((findings.len(), duplicates.len()))
         }
+
+        async fn forget_spec_findings(
+            &self,
+            _ctx: &SecurityContext,
+            _scope: &str,
+            _subjects: &[String],
+        ) -> anyhow::Result<usize> {
+            Ok(0)
+        }
     }
 
     #[derive(Default)]

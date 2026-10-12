@@ -224,13 +224,12 @@ pub struct RollupDto {
     pub brief: Option<String>,
     /// Projects: findings placed in the text — the items of each verdict's
     /// `details.findings`, and one for a failed verdict (`high`,
-    /// `gate-failed`) recorded without items. The same rule as the Specs
-    /// list's per-row `findings`, but over every verdict recorded in the
-    /// project, including verdicts on documents that are gone (a file deleted
-    /// or renamed, a Studio document deleted, a repository disconnected):
-    /// nothing retires a verdict with its document yet. So it can exceed the
-    /// sum of the rows' `findings`, never fall below it. `findings` counts
-    /// every verdict.
+    /// `gate-failed`) recorded without items. The Specs list's per-row
+    /// `findings`, summed: a verdict goes with its document when a sync finds
+    /// the file gone, a repository is disconnected or a Studio document is
+    /// deleted, and a sync sweeps the ones left from before that was so. Until
+    /// a project's next sync those still count here, and only here.
+    /// `findings` counts every verdict.
     pub open_findings: Option<u32>,
     /// Projects: unresolved threads the repositories report, on documents and
     /// on pull requests under review. Null when no repository could say.

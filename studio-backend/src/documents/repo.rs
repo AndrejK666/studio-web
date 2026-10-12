@@ -424,6 +424,25 @@ impl DocumentsRepo {
         Ok(())
     }
 
+    /// Of `ids`, the documents that exist in this workspace tenant.
+    pub async fn existing_doc_ids(
+        &self,
+        workspace_id: Uuid,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashSet<Uuid>> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let conn = self.db.conn()?;
+        let rows = document::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .filter(Condition::all().add(document::Column::Id.is_in(ids.to_vec())))
+            .all(&conn)
+            .await?;
+        Ok(rows.into_iter().map(|r| r.id).collect())
+    }
+
     /// Delete a document within its workspace tenant scope.
     pub async fn delete_doc(&self, workspace_id: Uuid, id: Uuid) -> Result<bool> {
         let conn = self.db.conn()?;
