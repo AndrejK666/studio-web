@@ -2056,6 +2056,21 @@ pub struct SpecRowDto {
     pub updated_at: String,
     /// The repository the file was ingested from. Empty for an authored row.
     pub repo: String,
+    /// That repository's `full_path`. Empty for an authored row, and for a
+    /// repository the graph no longer holds.
+    pub repo_full_path: String,
+    /// The binding's confidence in its proposed type; null for an authored row
+    /// and when the classifier gave none.
+    pub confidence: Option<f64>,
+    /// When the newest Spec Quality verdict recorded for this document was
+    /// written. Null when it was never checked — which is also how a type
+    /// Spec Quality refused reads, since a refusal records no verdict.
+    pub checked_at: Option<String>,
+    /// Findings placed in the text, across all the document's verdicts: the
+    /// items of each verdict's `details.findings`, and one for a failing
+    /// verdict (`high`, `gate-failed`, `some`) recorded without items. The
+    /// projects table's `open_findings` is the same count summed.
+    pub findings: u32,
     /// Which queues this row is in, out of `not-scanned`, `needs-review`,
     /// `bound` and `not-documents`.
     ///
@@ -2085,6 +2100,9 @@ pub struct SpecRowsSourcesDto {
     /// nobody could ask, so `not-scanned` is empty for that reason rather than
     /// because the project has none — a distinction a screen must not collapse.
     pub files_known: bool,
+    /// Whether the recorded verdicts could be read. False means every row's
+    /// `checked_at` and `findings` are unknown rather than "never checked".
+    pub reviews_known: bool,
     pub counts: Vec<SpecCountDto>,
 }
 
@@ -2186,31 +2204,50 @@ async fn list_spec_rows(
 
     let (bindings, authored) = read_both(&service, workspace_id, project_id).await?;
 
-    // The never-classified files, and their provenance. Absent when no ingest
-    // gear is here, which costs one queue rather than the screen.
-    let (candidates, repos, files_known) = match quality.files() {
-        Some(files) => match files.list_files(&ctx, &project_id.to_string()).await {
-            Ok(found) => {
-                let repos: std::collections::HashMap<String, String> = found
-                    .iter()
-                    .map(|f| (f.node_id.clone(), f.repo.clone()))
-                    .collect();
-                let candidates: Vec<super::spec_rows::Candidate> = found
-                    .into_iter()
-                    .map(|f| super::spec_rows::Candidate {
-                        node_id: f.node_id,
-                        path: f.path,
-                    })
-                    .collect();
-                (candidates, repos, true)
+    // The never-classified files, their provenance and the recorded verdicts.
+    // Absent when no ingest gear is here, which costs one queue and the review
+    // columns rather than the screen.
+    let scope = project_id.to_string();
+    let mut known = super::spec_rows::Known::default();
+    let (candidates, files_known, reviews_known) = match quality.files() {
+        Some(files) => {
+            let (found, reviews, repo_paths) = tokio::join!(
+                files.list_files(&ctx, &scope),
+                files.reviews(&ctx, &scope),
+                files.repo_paths(&ctx, &scope),
+            );
+            // Without the paths a row still names its repository by id, as it
+            // did before they were carried; not worth failing the list over.
+            known.repo_paths = repo_paths.unwrap_or_default();
+            let reviews_known = match reviews {
+                Ok(r) => {
+                    known.reviews = r;
+                    true
+                }
+                Err(_) => false,
+            };
+            match found {
+                Ok(found) => {
+                    known.repos = found
+                        .iter()
+                        .map(|f| (f.node_id.clone(), f.repo.clone()))
+                        .collect();
+                    let candidates: Vec<super::spec_rows::Candidate> = found
+                        .into_iter()
+                        .map(|f| super::spec_rows::Candidate {
+                            node_id: f.node_id,
+                            path: f.path,
+                        })
+                        .collect();
+                    (candidates, true, reviews_known)
+                }
+                Err(_) => (Vec::new(), false, reviews_known),
             }
-            Err(_) => (Vec::new(), std::collections::HashMap::new(), false),
-        },
-        None => (Vec::new(), std::collections::HashMap::new(), false),
+        }
+        None => (Vec::new(), false, false),
     };
 
-    let repo_of = |node: &str| repos.get(node).cloned().unwrap_or_default();
-    let rows = super::spec_rows::rows(&bindings, &authored, &candidates, &repo_of);
+    let rows = super::spec_rows::rows(&bindings, &authored, &candidates, &known);
     let counts = super::spec_rows::counts(&rows)
         .into_iter()
         .map(|(queue, count)| SpecCountDto {
@@ -2237,6 +2274,10 @@ async fn list_spec_rows(
             conforms: r.conforms,
             updated_at: r.updated_at,
             repo: r.repo,
+            repo_full_path: r.repo_full_path,
+            confidence: r.confidence.map(f64::from),
+            checked_at: r.review.checked_at,
+            findings: r.review.findings,
         })
         .collect();
 
@@ -2245,6 +2286,7 @@ async fn list_spec_rows(
         items,
         sources: SpecRowsSourcesDto {
             files_known,
+            reviews_known,
             counts,
         },
     }))
@@ -2328,6 +2370,7 @@ async fn read_both(
             path: b.path,
             type_key: b.type_key,
             conforms: b.conforms,
+            confidence: b.confidence,
             updated_at: b.updated_at,
         })
         .collect();

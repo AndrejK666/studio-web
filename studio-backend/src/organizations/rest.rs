@@ -222,8 +222,10 @@ pub struct RollupDto {
     pub project_kind: Option<String>,
     /// Projects: what the project is for, in its owner's words.
     pub brief: Option<String>,
-    /// Projects: findings whose verdict is still something to fix
-    /// (`high`, `gate-failed`, `some`). `findings` counts every verdict.
+    /// Projects: findings placed in the text — the items of each verdict's
+    /// `details.findings`, and one for a failing verdict (`high`,
+    /// `gate-failed`, `some`) recorded without items. The Specs list's
+    /// per-row `findings`, summed. `findings` counts every verdict.
     pub open_findings: Option<u32>,
     /// Projects: unresolved threads the repositories report, on documents and
     /// on pull requests under review. Null when no repository could say.

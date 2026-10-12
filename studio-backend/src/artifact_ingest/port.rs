@@ -154,9 +154,29 @@ pub trait ArtifactFiles: Send + Sync + 'static {
         ctx: &toolkit_security::SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<IngestedFile>>;
+
+    /// Each document's recorded verdicts in `scope`, folded, keyed by the
+    /// verdict's `subject`: a file's node id, or `studio-doc:<id>` for a
+    /// document written in Studio. A document with no entry was never checked.
+    ///
+    /// Beside the files because the Specs list needs both, and paged every
+    /// `spec_finding` in the browser to fold this itself.
+    async fn reviews(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<std::collections::HashMap<String, ReviewSummary>>;
+
+    /// `repo node id -> full_path` for every repository in `scope`: what
+    /// [`IngestedFile::repo`] names, spelled the way a reader knows it.
+    async fn repo_paths(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<std::collections::HashMap<String, String>>;
 }
 
-pub use super::activity::ProjectSignals;
+pub use super::activity::{ProjectSignals, ReviewSummary};
 
 /// What a project's row in the projects table says about its review and its
 /// sources: open findings, open comments, pull requests over a window and the
