@@ -470,8 +470,10 @@ decision, `POST /registry/{name}/decisions`, checked against one table
 | `deprecate` | `registered`, `published` | `deprecated` | `replaced_by`: an existing live entry, optional |
 | `restore` | `rejected` | `declared`, or `candidate` when nothing declares it | — |
 | `restore` | `deprecated` | `registered` | clears `replaced_by` |
-| `publish` | `registered` | `registered` | opens a pull request into the platform's gear repository and records its `contribution` (see Publishing) |
-| `mark_published` | `registered` | `published` | `version`, optional; a platform administrator only |
+| `request_publication` | `registered` | `registered` | `version` and `reason`, optional; joins the platform's queue (see Publishing) |
+| `publish` | `registered` | `registered` | a platform curator, on an open request: opens a pull request into the platform's gear repository and records its `contribution` (see Publishing) |
+| `decline_publication` | `registered` | `registered` | `reason` required; a platform curator; the request leaves the queue |
+| `mark_published` | `registered` | `published` | `version`, optional; a platform curator only |
 | `merge` | any state but `merged` | `merged` | `merge_into`: an existing live entry |
 | `edit` | any | unchanged | `owner`, `kind`, `category`, `capabilities`, `description` |
 
@@ -573,8 +575,22 @@ repositories were not read again; only the signal's weight moves their
 score. A `candidate` entry whose occurrences changed takes its score and
 evidence from its best one, the one Declare it picks.
 
-**Publishing (P4, ADR-0042 §4).** `publish` on a `registered` entry gives
-the gear to the platform (`registry_publish.rs`). It reads the platform's
+**Publishing (P4, ADR-0042 §4).** Giving a gear to the platform is two
+people's decision (`registry_curation.rs`). An organization administrator
+asks: `request_publication` is recorded on the entry, and the request
+(organization, entry, version, reason, who, when) joins the platform's queue,
+kept in the root tenant's registry settings. A platform curator -- a platform
+administrator or a person in the platform's gear curators list
+(`platform-gear-curator`, named by a platform administrator) -- answers it
+from `GET /platform/publication-requests`: `publish`, or
+`decline_publication` with a reason, recorded on the organization's entry
+acting in that organization. Either answer, a `deprecate` or a `merge` takes
+the request out of the queue. `publish` without an open request is refused
+(400 `PUBLICATION_NOT_REQUESTED`); from anyone but a curator, 403
+`PLATFORM_CURATOR_REQUIRED`.
+
+`publish` on a `registered` entry gives the gear to the platform
+(`registry_publish.rs`). It reads the platform's
 catalogue sources in the root tenant and takes the first in mode `gears` as
 the platform's gear repository; without one it is refused (400
 `failed_precondition`, `PLATFORM_NO_GEAR_REPOSITORY`: "the platform has no
@@ -877,6 +893,9 @@ than one corpus are later phases.
 | `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it, `offset`/`limit` page it; `{items: RegistryEntryDto[], total}`, each entry with its occurrences | unstable |
 | `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences and its `decisions`, newest first; 404 when absent | unstable |
 | `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?, dry_run?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `mark_published`, `merge` or `edit`, checked against the lifecycle table and recorded with who made it (`by`, `by_name`). `publish` opens the contribution pull request (400 `failed_precondition` with no platform gear repository, nothing declaring the entry, a directory over 200 files / 2 MiB, or a repository read through a connection the organization only inherits, `CONNECTION_NOT_OWNED`; 503 without studio-product); with `dry_run: true` it writes and records nothing and answers `publish_preview` `{repo, base_branch, branch, path, files, skipped, title}` (a dry run is a publish's only; 400 otherwise); `mark_published` is a platform administrator's only. Answers the entry with its decisions, `contribution` and `consumers`. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
+| `GET` | `/platform/publication-requests` | The platform's queue: every organization's open `request_publication`, oldest first, `{items: [{organization_id, organization_name, name, version, reason, requested_by, requested_by_name, at}]}`. 403 `PLATFORM_CURATOR_REQUIRED` for anyone but a platform curator | unstable |
+| `POST` | `/platform/publication-requests/{organization_id}/{name}/decisions` | A curator's answer, `publish` (`dry_run` previews) or `decline_publication` (`reason`), recorded on the organization's entry; 404 without an open request; 400 for another action | unstable |
+| `GET` / `PUT` | `/platform/curators` | The platform's gear curators `{items: [{id, name}], may_manage}`; a curator reads, a platform administrator replaces (403 `PLATFORM_ADMIN_REQUIRED`) | unstable |
 | `POST` | `/registry/{name}/suggest` | A model's `{description, category, capabilities, at, model}` for the entry, on the caller's own key through studio-llm-proxy, capabilities bounded by the organization's vocabulary; stored as the entry's `suggestion`, never a state change. 403 for anyone but an organization administrator; 400 `failed_precondition` (`PROVIDER_KEY_REQUIRED`) without a model key; 503 when the model cannot be asked or answers no usable JSON, or without studio-llm-proxy | unstable |
 | `POST` | `/registry/{name}/declare` | Declare it, for a `candidate`: `{description?, capabilities?, category?, project_id?, dry_run?}` (all optional) → `{branch, pr_url, files, repo, path, dry_run, manifest}`: a pull request adding the module's manifest in its directory on `declare/<name>` — the engine's `gear.gdl` when the Gearbox engine is configured, else (and always inside a crate's `src/`) a `gear.toml`; `manifest` says which — recorded as a `declare` decision. 403 for anyone but an organization administrator; 400 `failed_precondition` for an entry that is not a candidate, or a repository read through a connection the organization only inherits (`CONNECTION_NOT_OWNED`); 503 without studio-product | unstable |
 | `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do. The organization's gear repository is one more row, keyed by the organization | unstable |

@@ -116,7 +116,9 @@ ADR-0041's `published` now means **contributed to the platform tier**:
 3. The publication is reviewed and approved by a platform administrator, or
    by a person holding the platform role for it (`platform-gear-curator`)
    (decided 2026-10-12). The pull request is the mechanism: the approval is
-   that role's, and the merge in `gears-rust` follows it.
+   that role's, and the merge in `gears-rust` follows it. *Built: an
+   organization requests publication, a curator answers it from the
+   platform's queue; see the catalogue design's Publishing.*
 4. The entry is `published` once the platform's sync finds it.
 
 A released version (crates.io, or a git tag) is recorded on the entry as it

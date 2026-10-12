@@ -516,6 +516,38 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/platform/curators",
+      "operation_id": "studio_components_catalog.list_gear_curators",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The platform's gear curators",
+      "authenticated": true,
+      "responses": [
+        "CuratorsDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/platform/publication-requests",
+      "operation_id": "studio_components_catalog.list_publication_requests",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Every organization's open requests to give a gear to the platform",
+      "authenticated": true,
+      "responses": [
+        "PublicationRequestsDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/platform/sources",
       "operation_id": "studio_components_catalog.list_platform_sources",
       "tag": "StudioComponentsCatalog",
@@ -2406,6 +2438,25 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/platform/publication-requests/{name}/decisions",
+      "operation_id": "studio_components_catalog.decide_publication_request",
+      "tag": "StudioComponentsCatalog",
+      "summary": "A platform curator publishes or declines an organization's request",
+      "authenticated": true,
+      "request": "RegistryDecisionRequest",
+      "responses": [
+        "RegistryEntryDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/platform/sync",
       "operation_id": "studio_components_catalog.sync_platform",
       "tag": "StudioComponentsCatalog",
@@ -3935,6 +3986,24 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-components-catalog/v1/platform/curators",
+      "operation_id": "studio_components_catalog.update_gear_curators",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Name the platform's gear curators",
+      "authenticated": true,
+      "request": "SetCuratorsRequest",
+      "responses": [
+        "CuratorsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "500"
       ]
     },

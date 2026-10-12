@@ -40,6 +40,7 @@ export const VIEW_PATHS = {
   connectors: "connections",
   gears: "components",
   platform: "platform",
+  publications: "publication-requests",
   org: "organization",
   reports: "reports",
   objects: "objects",

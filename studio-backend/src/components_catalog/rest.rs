@@ -1670,8 +1670,10 @@ pub struct RegistryDecisionDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct RegistryDecisionRequest {
-    /// `register`, `reject`, `deprecate`, `restore`, `publish`,
-    /// `mark_published`, `merge` or `edit`.
+    /// `register`, `reject`, `deprecate`, `restore`, `request_publication`,
+    /// `publish`, `decline_publication`, `mark_published`, `merge` or `edit`.
+    /// `publish`, `decline_publication` and `mark_published` are a platform
+    /// curator's; the rest an organization administrator's.
     pub action: String,
     /// Why. Required to reject; for `publish`, said in the pull request.
     pub reason: Option<String>,
@@ -1685,7 +1687,8 @@ pub struct RegistryDecisionRequest {
     pub replaced_by: Option<String>,
     /// For `merge`: the existing entry to fold this one into.
     pub merge_into: Option<String>,
-    /// For `mark_published`: the version the platform published.
+    /// For `request_publication`: the version asked for; for
+    /// `mark_published`: the version the platform published.
     pub version: Option<String>,
     /// For `publish` only: answer the target repository, branch, path and
     /// files in `publish_preview`, writing and recording nothing.
@@ -2522,13 +2525,47 @@ async fn decide_registry_entry(
     Path(name): Path<String>,
     Json(body): Json<RegistryDecisionRequest>,
 ) -> ApiResult<JsonBody<RegistryEntryDto>> {
-    if !may_decide(catalog.authority().as_deref(), &ctx).await {
+    let input = decision_input(body);
+    decide_as(&catalog, &ctx, &name, input).await.map(Json)
+}
+
+/// The platform's answers to a publication: a platform curator's, never an
+/// organization administrator's (ADR-0042 §4).
+fn is_curators_action(action: Option<super::registry_decisions::Action>) -> bool {
+    use super::registry_decisions::Action;
+    matches!(
+        action,
+        Some(Action::Publish | Action::DeclinePublication | Action::MarkPublished)
+    )
+}
+
+fn curator_refusal() -> CanonicalError {
+    StudioComponentsCatalogError::permission_denied()
+        .with_reason("PLATFORM_CURATOR_REQUIRED")
+        .create()
+}
+
+/// One decision about an entry of the organization `ctx` acts in, checked
+/// and made: the decisions route, and a curator's answer from the platform's
+/// queue (acting in the requesting organization).
+pub(super) async fn decide_as(
+    catalog: &Catalog,
+    ctx: &SecurityContext,
+    name: &str,
+    input: super::registry_decisions::DecisionInput,
+) -> ApiResult<RegistryEntryDto> {
+    use super::registry_decisions::Action;
+    let action = Action::parse(&input.action);
+    if is_curators_action(action) {
+        if !catalog.may_curate(ctx).await {
+            return Err(curator_refusal());
+        }
+    } else if !may_decide(catalog.authority().as_deref(), ctx).await {
         return Err(StudioComponentsCatalogError::permission_denied()
             .with_reason("REGISTRY_ADMIN_REQUIRED")
             .create());
     }
-    let input = decision_input(body);
-    let action = super::registry_decisions::Action::parse(&input.action);
+    let org = ctx.subject_tenant_id();
     if input.dry_run && action != Some(super::registry_decisions::Action::Publish) {
         return Err(StudioComponentsCatalogError::invalid_argument()
             .with_field_violation(
@@ -2538,28 +2575,106 @@ async fn decide_registry_entry(
             )
             .create());
     }
-    match action {
-        // Publishing opens a pull request into the platform (ADR-0042 §4).
-        Some(super::registry_decisions::Action::Publish) => {
-            return publish::publish(&catalog, &ctx, &name, &input).await;
+    // Publishing opens a pull request into the platform (ADR-0042 §4), and
+    // only on the organization's request.
+    if action == Some(Action::Publish) {
+        let requested = catalog
+            .service
+            .publication_request(ctx, org, name)
+            .await
+            .map_err(internal)?;
+        if requested.is_none() {
+            return Err(StudioComponentsCatalogError::failed_precondition()
+                .with_precondition_violation(
+                    format!("publication:{name}"),
+                    "the organization has not asked the platform to take this component: an \
+                     organization administrator requests publication first",
+                    "PUBLICATION_NOT_REQUESTED",
+                )
+                .create());
         }
-        // The platform says what it has: only its administrator marks it.
-        Some(super::registry_decisions::Action::MarkPublished)
-            if !may_run_platform(catalog.organizations().as_deref(), &ctx).await =>
+        let published = publish::publish(catalog, ctx, name, &input).await?.0;
+        if !input.dry_run
+            && let Err(e) = catalog
+                .service
+                .drop_publication_request(ctx, org, name)
+                .await
         {
-            return Err(platform_refusal());
+            tracing::warn!(error = %format!("{e:#}"), %org, entry = %name, "components-catalog: published, but the request stays in the platform's queue");
         }
-        _ => {}
+        return Ok(published);
     }
-    let by = catalog.decider(&ctx).await;
-    match catalog
+    let by = catalog.decider(ctx).await;
+    let (entry, decisions) = match catalog
         .service
-        .decide_registry(&ctx, &name, &input, &by)
+        .decide_registry(ctx, name, &input, &by)
         .await
     {
-        Ok((entry, decisions)) => Ok(Json(registry_entry_detail_dto(entry, decisions))),
-        Err(super::registry_decisions::DecideFailure::Refused(e)) => Err(decision_problem(e)),
-        Err(super::registry_decisions::DecideFailure::Failed(e)) => Err(internal(e)),
+        Ok(done) => done,
+        Err(super::registry_decisions::DecideFailure::Refused(e)) => {
+            return Err(decision_problem(e));
+        }
+        Err(super::registry_decisions::DecideFailure::Failed(e)) => return Err(internal(e)),
+    };
+    // The queue follows the decision: a request joins it, an answer leaves it.
+    let queued = match action {
+        Some(Action::RequestPublication) => {
+            let request = super::registry_curation::PublicationRequest {
+                organization_id: org,
+                organization_name: catalog.service.tenant_name(ctx, org).await,
+                name: entry.entry.name.clone(),
+                version: input
+                    .version
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned),
+                reason: input
+                    .reason
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned),
+                requested_by: by.id.clone(),
+                requested_by_name: by.name.clone(),
+                at: super::registry::now(),
+            };
+            catalog.service.put_publication_request(ctx, request).await
+        }
+        Some(Action::DeclinePublication | Action::Deprecate | Action::Merge) => catalog
+            .service
+            .drop_publication_request(ctx, org, &entry.entry.name)
+            .await
+            .map(|_| ()),
+        _ => Ok(()),
+    };
+    if let Err(e) = queued {
+        tracing::warn!(error = %format!("{e:#}"), %org, entry = %entry.entry.name, "components-catalog: the decision is recorded, but the platform's queue did not follow it");
+    }
+    Ok(registry_entry_detail_dto(entry, decisions))
+}
+
+impl Catalog {
+    /// May the caller answer publications -- publish, decline, mark published?
+    /// A platform administrator, or one of the platform's gear curators
+    /// (`platform-gear-curator`, `registry_curation.rs`).
+    pub(super) async fn may_curate(&self, ctx: &SecurityContext) -> bool {
+        if may_run_platform(self.organizations().as_deref(), ctx).await {
+            return true;
+        }
+        let me = self.decider(ctx).await;
+        match self.service.gear_curators(ctx).await {
+            Ok(curators) => super::registry_curation::is_curator(&curators, &me.id),
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), "components-catalog: the platform's gear curators could not be read; nobody but a platform administrator curates");
+                false
+            }
+        }
+    }
+
+    /// May the caller name the platform's gear curators? Its administrators.
+    pub(super) async fn may_run_the_platform(&self, ctx: &SecurityContext) -> bool {
+        may_run_platform(self.organizations().as_deref(), ctx).await
     }
 }
 
@@ -2795,6 +2910,9 @@ mod gear_repository;
 #[path = "registry_publish_rest.rs"]
 mod publish;
 
+#[path = "registry_curation_rest.rs"]
+mod curation;
+
 #[cfg(test)]
 #[path = "sources_rest_tests.rs"]
 mod sources_tests;
@@ -2805,6 +2923,7 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
     // segment either way.
     let router = gear_repository::register(router, openapi);
     let router = publish::register(router, openapi);
+    let router = curation::register(router, openapi);
     let router = OperationBuilder::get("/studio-components-catalog/v1/sources")
         .operation_id("studio_components_catalog.list_sources")
         .summary("The organization's catalogue sources, kept on the server")

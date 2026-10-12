@@ -30,7 +30,6 @@ import type {
   RegistryDeclareResult,
   RegistryEntry,
   RegistryProjectWalk,
-  RegistryPublishPreview,
   RegistrySuggestion,
 } from "./api";
 import { errText } from "./format";
@@ -57,7 +56,7 @@ import {
   isOrphaned,
   ownerLabel,
   projectsOf,
-  publishPreviewLines,
+  publicationPending,
   publishStatus,
   registryProjects,
   stateCounts,
@@ -796,8 +795,6 @@ function RegistryDecisions({
   const [category, setCategory] = useState(e.category ?? "");
   const [capabilities, setCapabilities] = useState(e.capabilities.join(", "));
   const [description, setDescription] = useState(e.description ?? "");
-  // A publish is previewed before it is opened: its dry run's answer.
-  const [preview, setPreview] = useState<RegistryPublishPreview | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -812,28 +809,12 @@ function RegistryDecisions({
 
   const targets = useMemo(() => decisionTargets(entries, e.name), [entries, e.name]);
   const decisions = detail?.decisions ?? [];
+  // Asked of the platform and not answered yet (ADR-0042 §4).
+  const requested = publicationPending(decisions);
 
   const open = (action: RegistryAction) => {
     setError(null);
-    setPreview(null);
     setForm(form === action ? null : action);
-  };
-
-  const previewPublish = async () => {
-    const input: RegistryDecisionInput = { action: "publish", dry_run: true };
-    if (reason.trim()) input.reason = reason.trim();
-    setBusy(true);
-    setError(null);
-    try {
-      const answer = await api.decideRegistry(token, e.name, input);
-      setPreview(answer.publish_preview ?? null);
-      if (!answer.publish_preview) setError("This backend cannot preview a publish yet.");
-    } catch (cause) {
-      setPreview(null);
-      setError(decisionRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
-    } finally {
-      setBusy(false);
-    }
   };
 
   const submit = async () => {
@@ -860,7 +841,7 @@ function RegistryDecisions({
     if (reason.trim()) input.reason = reason.trim();
     if (form === "deprecate" && target) input.replaced_by = target;
     if (form === "merge") input.merge_into = target;
-    if (form === "mark_published" && version.trim()) input.version = version.trim();
+    if ((form === "mark_published" || form === "request_publication") && version.trim()) input.version = version.trim();
     setBusy(true);
     setError(null);
     try {
@@ -869,7 +850,6 @@ function RegistryDecisions({
       setForm(null);
       setReason("");
       setTarget("");
-      setPreview(null);
       onDecided();
     } catch (cause) {
       setError(decisionRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
@@ -936,20 +916,27 @@ function RegistryDecisions({
         ? reason.trim() !== ""
         : form === "merge"
           ? target !== ""
-          : form === "publish"
-            ? preview !== null
-            : true;
+          : true;
 
   return (
     <div style={{ marginTop: 8, borderTop: "1px solid var(--border, rgba(0,0,0,0.1))", paddingTop: 6 }} data-registry-decisions>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <b>Decide</b>
-        {allowedActions(e.state, { platformAdmin: isPlatformAdmin }).map((a) => (
+        {allowedActions(e.state, {
+          curator: isPlatformAdmin,
+          publicationPending: requested || !!e.contribution,
+        }).map((a) => (
           <button key={a} type="button" className={form === a ? "primary" : ""} onClick={() => open(a)} disabled={busy}>
             {ACTION_LABEL[a]}
           </button>
         ))}
       </div>
+      {requested && !e.contribution && (
+        <div className="hint" data-registry-publication-requested>
+          Publication requested: waiting for a platform curator to publish it into the platform&apos;s gear repository,
+          or to decline it.
+        </div>
+      )}
       {form && (
         <div style={{ display: "grid", gap: 6, margin: "6px 0", maxWidth: 560 }}>
           {(form === "register" || form === "edit") && ownerFields}
@@ -990,31 +977,18 @@ function RegistryDecisions({
             </div>
           )}
           {form === "merge" && targetSelect("Merge into", true)}
-          {form === "publish" && (
-            <div className="hint" data-registry-publish-explain>
-              Opens a pull request into the platform&apos;s gear repository with this gear&apos;s files (at most 200
-              files, 2 MiB). The platform&apos;s maintainers review it; the entry is published once the platform&apos;s
-              catalogue has it.
-              {e.contribution?.pr_url && <> A pull request is already open: {e.contribution.pr_url}</>} Preview it
-              first: nothing is written until you publish.
-            </div>
-          )}
-          {form === "publish" && preview && (
-            <div className="hint" data-registry-publish-preview>
-              {publishPreviewLines(preview).map((line) => (
-                <div key={line}>{line}</div>
-              ))}
-              <details>
-                <summary>Files</summary>
-                <ul style={{ margin: "4px 0", paddingLeft: 18 }}>
-                  {preview.files.map((f) => (
-                    <li key={f}>
-                      <code>{f}</code>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </div>
+          {form === "request_publication" && (
+            <>
+              <div className="hint" data-registry-publication-explain>
+                Asks the platform to take this gear. A platform curator reviews the request, then opens a pull
+                request into the platform&apos;s gear repository with its files, or declines it with a reason. The entry
+                is published once the platform&apos;s catalogue has it.
+              </div>
+              <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <b>Version</b>
+                <input value={version} onChange={(ev) => setVersion(ev.target.value)} placeholder="optional, e.g. 1.0.0" aria-label="Version" />
+              </label>
+            </>
           )}
           {form === "mark_published" && (
             <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -1033,13 +1007,6 @@ function RegistryDecisions({
             />
           </label>
           <span>
-            {form === "publish" && (
-              <>
-                <button type="button" disabled={busy} onClick={() => void previewPublish()} data-registry-publish-preview-button>
-                  {busy && !preview ? "Previewing…" : preview ? "Preview again" : "Preview"}
-                </button>{" "}
-              </>
-            )}
             <button type="button" className="primary" disabled={busy || !ready} onClick={() => void submit()}>
               {busy ? "Saving…" : ACTION_LABEL[form].replace("…", "")}
             </button>{" "}

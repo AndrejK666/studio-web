@@ -627,6 +627,8 @@ async fn saving_the_exclusions_keeps_what_the_last_walk_saw() {
         last_walk: vec![walked(P1, "a", "read")],
         crates_io_keyword: None,
         gear_repository: None,
+        publication_requests: vec![],
+        gear_curators: vec![],
     };
     svc.sink
         .upsert(

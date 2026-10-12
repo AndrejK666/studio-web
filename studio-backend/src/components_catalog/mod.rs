@@ -19,6 +19,7 @@ mod quality;
 pub(crate) mod reference;
 mod registry;
 mod registry_consumers;
+mod registry_curation;
 mod registry_decisions;
 mod registry_declare;
 mod registry_publish;

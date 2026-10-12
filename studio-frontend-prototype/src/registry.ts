@@ -40,7 +40,17 @@ export const STATE_TONE: Record<string, string> = {
 };
 
 /** What a person can do to an entry (ADR-0041 P2). */
-export type RegistryAction = "register" | "reject" | "deprecate" | "restore" | "publish" | "mark_published" | "merge" | "edit";
+export type RegistryAction =
+  | "register"
+  | "reject"
+  | "deprecate"
+  | "restore"
+  | "request_publication"
+  | "publish"
+  | "decline_publication"
+  | "mark_published"
+  | "merge"
+  | "edit";
 
 /** The button for each action. */
 export const ACTION_LABEL: Record<RegistryAction, string> = {
@@ -48,7 +58,9 @@ export const ACTION_LABEL: Record<RegistryAction, string> = {
   reject: "Reject",
   deprecate: "Deprecate",
   restore: "Restore",
+  request_publication: "Request publication…",
   publish: "Publish to the platform…",
+  decline_publication: "Decline…",
   mark_published: "Mark published",
   merge: "Merge into…",
   edit: "Edit",
@@ -61,7 +73,9 @@ export const ACTION_DONE: Record<string, string> = {
   reject: "rejected",
   deprecate: "deprecated",
   restore: "restored",
+  request_publication: "asked the platform to take",
   publish: "opened a contribution to the platform for",
+  decline_publication: "declined publishing",
   mark_published: "marked published",
   published: "found it on the platform",
   merge: "merged",
@@ -71,16 +85,25 @@ export const ACTION_DONE: Record<string, string> = {
 /** The actions the server allows from a state, in the order the buttons
  *  show. The same table the backend enforces; a move outside it is refused
  *  there too. */
-export function allowedActions(state: string, opts: { platformAdmin?: boolean } = {}): RegistryAction[] {
+export function allowedActions(
+  state: string,
+  opts: { curator?: boolean; publicationPending?: boolean } = {},
+): RegistryAction[] {
   switch (state) {
     case "candidate":
     case "declared":
       return ["register", "reject", "merge", "edit"];
     case "registered":
-      // Only a platform administrator says by hand that the platform has it.
-      return opts.platformAdmin
-        ? ["publish", "mark_published", "deprecate", "merge", "edit"]
-        : ["publish", "deprecate", "merge", "edit"];
+      // Giving a gear to the platform is asked here and answered on the
+      // platform (ADR-0042 §4): an organization requests it once, and only a
+      // platform curator says by hand that the platform has it.
+      return [
+        ...(opts.publicationPending ? [] : (["request_publication"] as RegistryAction[])),
+        ...(opts.curator ? (["mark_published"] as RegistryAction[]) : []),
+        "deprecate",
+        "merge",
+        "edit",
+      ];
     case "published":
       return ["deprecate", "merge", "edit"];
     case "rejected":
@@ -266,7 +289,8 @@ export function walkLine(w: RegistryProjectWalk | undefined): { text: string; fa
  *  pull request to be merged, or published (with the platform's version). */
 export function publishStatus(
   e: Pick<RegistryEntry, "state" | "contribution" | "version">,
-): { kind: "pending" | "published"; label: string; prUrl: string | null } | null {
+  requested = false,
+): { kind: "requested" | "pending" | "published"; label: string; prUrl: string | null } | null {
   if (e.state === "published") {
     const label = e.version ? `Published (v${e.version.replace(/^v/, "")})` : "Published";
     return { kind: "published", label, prUrl: e.contribution?.pr_url ?? null };
@@ -274,7 +298,21 @@ export function publishStatus(
   if (e.state === "registered" && e.contribution) {
     return { kind: "pending", label: "Contribution PR opened", prUrl: e.contribution.pr_url ?? null };
   }
+  if (e.state === "registered" && requested) {
+    return { kind: "requested", label: "Publication requested", prUrl: null };
+  }
   return null;
+}
+
+/** Whether the organization's request to the platform is still open: the
+ *  newest of its request, the platform's publish and its decline is the
+ *  request. */
+export function publicationPending(decisions: readonly { action: string }[]): boolean {
+  const answers = ["request_publication", "publish", "decline_publication"];
+  for (let i = decisions.length - 1; i >= 0; i--) {
+    if (answers.includes(decisions[i].action)) return decisions[i].action === "request_publication";
+  }
+  return false;
 }
 
 /** A publish's dry run in words: where the pull request goes and what it

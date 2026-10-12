@@ -26,6 +26,7 @@ import {
   deprecationImpact,
   isOrphaned,
   publishPreviewLines,
+  publicationPending,
   publishStatus,
   suggestRefusal,
   suggestionEdit,
@@ -99,9 +100,10 @@ describe("decisions about an entry", () => {
   it("offers the moves the server allows from each state", () => {
     expect(allowedActions("declared")).toEqual(["register", "reject", "merge", "edit"]);
     expect(allowedActions("candidate")).toEqual(["register", "reject", "merge", "edit"]);
-    expect(allowedActions("registered")).toEqual(["publish", "deprecate", "merge", "edit"]);
-    expect(allowedActions("registered", { platformAdmin: true })).toEqual(["publish", "mark_published", "deprecate", "merge", "edit"]);
-    expect(allowedActions("published", { platformAdmin: true })).toEqual(["deprecate", "merge", "edit"]);
+    expect(allowedActions("registered")).toEqual(["request_publication", "deprecate", "merge", "edit"]);
+    expect(allowedActions("registered", { publicationPending: true })).toEqual(["deprecate", "merge", "edit"]);
+    expect(allowedActions("registered", { curator: true })).toEqual(["request_publication", "mark_published", "deprecate", "merge", "edit"]);
+    expect(allowedActions("published", { curator: true })).toEqual(["deprecate", "merge", "edit"]);
     expect(allowedActions("published")).toEqual(["deprecate", "merge", "edit"]);
     expect(allowedActions("rejected")).toEqual(["restore", "merge", "edit"]);
     expect(allowedActions("deprecated")).toEqual(["restore", "merge", "edit"]);
@@ -263,6 +265,7 @@ describe("publishing, consumers and suggestions (ADR-0041 P4)", () => {
 
   it("says a contribution is pending until the platform has it, then its version", () => {
     expect(publishStatus(entry("a", { state: "registered" }))).toBeNull();
+    expect(publishStatus(entry("a", { state: "registered" }), true)?.kind).toBe("requested");
     expect(publishStatus(entry("a", { state: "registered", contribution }))).toEqual({
       kind: "pending",
       label: "Contribution PR opened",
@@ -320,5 +323,15 @@ describe("publishing, consumers and suggestions (ADR-0041 P4)", () => {
     expect(suggestRefusal(403, "Forbidden")).toContain("Only an organization administrator");
     expect(suggestRefusal(503, "unreadable")).toContain("No suggestion this time");
     expect(ACTION_LABEL.mark_published).toBe("Mark published");
+  });
+});
+
+describe("asking the platform to take a gear", () => {
+  it("is open while the newest of request, publish and decline is the request", () => {
+    expect(publicationPending([])).toBe(false);
+    expect(publicationPending([{ action: "register" }, { action: "request_publication" }, { action: "edit" }])).toBe(true);
+    expect(publicationPending([{ action: "request_publication" }, { action: "decline_publication" }])).toBe(false);
+    expect(publicationPending([{ action: "request_publication" }, { action: "publish" }])).toBe(false);
+    expect(publicationPending([{ action: "decline_publication" }, { action: "request_publication" }])).toBe(true);
   });
 });

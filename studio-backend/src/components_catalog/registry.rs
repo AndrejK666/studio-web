@@ -1071,11 +1071,14 @@ struct SourceRecord {
     position: usize,
 }
 
-/// The organization's registry settings, as stored.
+/// The organization's registry settings, as stored. The platform's (root)
+/// tenant keeps two more lists in its own: the publication requests every
+/// organization made, and the platform's gear curators
+/// (`registry_curation.rs`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-struct SettingsRecord {
+pub(super) struct SettingsRecord {
     #[serde(default)]
-    organization_id: Option<Uuid>,
+    pub(super) organization_id: Option<Uuid>,
     #[serde(default)]
     excluded_project_ids: Vec<Uuid>,
     /// What the last walk saw of each project it read, so a person can tell
@@ -1091,6 +1094,13 @@ struct SettingsRecord {
     /// gear" writes by default, and a repository the walk reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gear_repository: Option<GearRepository>,
+    /// The root tenant only: what organizations asked the platform to take.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) publication_requests: Vec<super::registry_curation::PublicationRequest>,
+    /// The root tenant only: who may publish into the platform beside its
+    /// administrators (`platform-gear-curator`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) gear_curators: Vec<super::registry_curation::Curator>,
 }
 
 /// The organization's gear repository, as stored (ADR-0042 §2).
@@ -1596,7 +1606,7 @@ impl CatalogService {
         Ok(sources)
     }
 
-    async fn settings(&self, ctx: &SecurityContext) -> anyhow::Result<SettingsRecord> {
+    pub(super) async fn settings(&self, ctx: &SecurityContext) -> anyhow::Result<SettingsRecord> {
         let id = gts::registry_settings_instance_id(&ctx.subject_tenant_id().to_string());
         Ok(records::<SettingsRecord>(
             self.sink

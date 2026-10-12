@@ -119,6 +119,7 @@ import { gearParentDir, gearSlug } from "./scaffold";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
+import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
 import { PullRequestsOnMe } from "./pull-requests-on-me";
@@ -504,6 +505,7 @@ type View =
   | "connectors"
   | "gears"
   | "platform"
+  | "publications"
   | "org"
   | "reports"
   | "objects"
@@ -632,6 +634,8 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
   platform: [
     // The common set every organization builds on (ADR-0042).
     { id: "platform", icon: "layers", label: "Components" },
+    // What organizations ask the platform to take, answered by a curator.
+    { id: "publications", icon: "package", label: "Publication requests" },
     // How the deployment itself is doing.
     { id: "system", icon: "cog", label: "System" },
   ],
@@ -2560,6 +2564,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             }}
           />
         )}
+        {view === "publications" && <PublicationRequests token={token} orgId={orgAsSpace?.id} />}
         {view === "org" && orgAsSpace && (
           <OrgDashboard
             key={orgAsSpace.id}

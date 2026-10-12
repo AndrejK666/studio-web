@@ -481,6 +481,27 @@ export interface RegistryDecisionInput {
   dry_run?: boolean;
 }
 
+/** An organization's request that the platform take one of its gears
+ *  (ADR-0042 §4): the platform's queue, answered by a curator. */
+export interface PublicationRequest {
+  organization_id: string;
+  organization_name?: string | null;
+  /** The registry entry's name. */
+  name: string;
+  version?: string | null;
+  reason?: string | null;
+  requested_by: string;
+  requested_by_name?: string | null;
+  at: string;
+}
+
+/** A person who may publish into the platform beside its administrators
+ *  (`platform-gear-curator`). */
+export interface GearCurator {
+  id: string;
+  name?: string | null;
+}
+
 /** What a `publish` would write into the platform's gear repository: the
  *  answer of a dry run. */
 export interface RegistryPublishPreview {
@@ -4080,6 +4101,30 @@ export const api = {
     request<RegistryEntry>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/decisions`, token, {
       method: "POST",
       body: JSON.stringify(decision),
+    }),
+  /** The platform's queue of publication requests, every organization's.
+   *  A platform curator only: anyone else gets a 403 problem. */
+  publicationRequests: (token: string) =>
+    request<{ items: PublicationRequest[] }>("/studio-components-catalog/v1/platform/publication-requests", token),
+  /** A curator's answer to one request: `publish` (with `dry_run`, a
+   *  preview) or `decline_publication` with a reason. */
+  answerPublication: (
+    token: string,
+    organizationId: string,
+    name: string,
+    decision: RegistryDecisionInput,
+  ) =>
+    request<RegistryEntry>(
+      `/studio-components-catalog/v1/platform/publication-requests/${encodeURIComponent(name)}/decisions?organization_id=${encodeURIComponent(organizationId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(decision) },
+    ),
+  gearCurators: (token: string) =>
+    request<{ items: GearCurator[]; may_manage: boolean }>("/studio-components-catalog/v1/platform/curators", token),
+  saveGearCurators: (token: string, items: GearCurator[]) =>
+    request<{ items: GearCurator[]; may_manage: boolean }>("/studio-components-catalog/v1/platform/curators", token, {
+      method: "PUT",
+      body: JSON.stringify({ items }),
     }),
   /** A model's description, category and capabilities for an entry, on the
    *  caller's own key (ADR-0041 P4). Stored on the entry; never a state

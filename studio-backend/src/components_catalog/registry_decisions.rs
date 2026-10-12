@@ -11,10 +11,17 @@
 //! | `deprecate` | registered, published | deprecated (optionally `replaced_by`) |
 //! | `restore` | rejected | declared, or candidate when nothing declares it |
 //! | `restore` | deprecated | registered |
-//! | `publish` | registered | registered, with the `contribution` it opened (ADR-0042 §4, `registry_publish.rs`) |
-//! | `mark_published` | registered | published (optionally a `version`; a platform administrator) |
+//! | `request_publication` | registered | registered, asking the platform to take it (optionally a `version` and a `reason`) |
+//! | `publish` | registered | registered, with the `contribution` it opened (ADR-0042 §4, `registry_publish.rs`; a platform curator, on a request) |
+//! | `decline_publication` | registered | registered, the request turned down (needs a `reason`; a platform curator) |
+//! | `mark_published` | registered | published (optionally a `version`; a platform curator) |
 //! | `merge` | anything but merged | merged, folded into `merge_into` |
 //! | `edit` | any | unchanged: owner, kind, category, capabilities, description |
+//!
+//! Giving a gear to the platform is two people's decision (ADR-0042 §4): an
+//! organization administrator requests it, and a platform curator -- a
+//! platform administrator or one of the platform's gear curators
+//! (`registry_curation.rs`) -- publishes or declines it.
 //!
 //! The platform's sync moves a contributed entry to `published` itself, as
 //! a `published` decision by `platform-sync`, once the platform's catalogue
@@ -49,19 +56,23 @@ pub enum Action {
     Reject,
     Deprecate,
     Restore,
+    RequestPublication,
     Publish,
+    DeclinePublication,
     MarkPublished,
     Merge,
     Edit,
 }
 
 /// Every action, as the route spells it.
-pub const ACTIONS: [&str; 8] = [
+pub const ACTIONS: [&str; 10] = [
     "register",
     "reject",
     "deprecate",
     "restore",
+    "request_publication",
     "publish",
+    "decline_publication",
     "mark_published",
     "merge",
     "edit",
@@ -74,7 +85,9 @@ impl Action {
             "reject" => Self::Reject,
             "deprecate" => Self::Deprecate,
             "restore" => Self::Restore,
+            "request_publication" => Self::RequestPublication,
             "publish" => Self::Publish,
+            "decline_publication" => Self::DeclinePublication,
             "mark_published" => Self::MarkPublished,
             "merge" => Self::Merge,
             "edit" => Self::Edit,
@@ -88,7 +101,9 @@ impl Action {
             Self::Reject => "reject",
             Self::Deprecate => "deprecate",
             Self::Restore => "restore",
+            Self::RequestPublication => "request_publication",
             Self::Publish => "publish",
+            Self::DeclinePublication => "decline_publication",
             Self::MarkPublished => "mark_published",
             Self::Merge => "merge",
             Self::Edit => "edit",
@@ -112,6 +127,10 @@ pub fn transition(action: Action, from: &str, declared_somewhere: bool) -> Optio
         (Action::Restore, STATE_DEPRECATED) => Some(STATE_REGISTERED),
         // Publishing opens a contribution; the platform's sync, or a
         // platform administrator's `mark_published`, makes it `published`.
+        // Asking the platform, and its answer, leave the entry where it is.
+        (Action::RequestPublication | Action::DeclinePublication, STATE_REGISTERED) => {
+            Some(STATE_REGISTERED)
+        }
         (Action::Publish, STATE_REGISTERED) => Some(STATE_REGISTERED),
         (Action::MarkPublished, STATE_REGISTERED) => Some(STATE_PUBLISHED),
         (Action::Merge, s) if s != STATE_MERGED => Some(STATE_MERGED),
@@ -335,6 +354,17 @@ pub fn apply(
             })?;
             details["contribution"] = json!(contribution);
             next.contribution = Some(contribution);
+        }
+        Action::RequestPublication => {
+            details["version"] = json!(trimmed(&input.version));
+        }
+        Action::DeclinePublication => {
+            if trimmed(&input.reason).is_none() {
+                return Err(DecisionError::Invalid {
+                    field: "reason",
+                    message: "declining a publication says why".to_owned(),
+                });
+            }
         }
         Action::MarkPublished => {
             next.version = trimmed(&input.version);

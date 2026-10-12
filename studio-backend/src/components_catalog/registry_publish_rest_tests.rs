@@ -150,6 +150,202 @@ fn mark(version: Option<&str>) -> RegistryDecisionRequest {
     }
 }
 
+fn decision(action: &str, reason: Option<&str>) -> RegistryDecisionRequest {
+    let mut body = mark(None);
+    body.action = action.into();
+    body.reason = reason.map(str::to_owned);
+    body
+}
+
+/// The organization's administrator asks the platform to take `ledger`.
+async fn request(catalog: &Catalog) {
+    let mut body = decision("request_publication", Some("everyone needs a ledger"));
+    body.version = Some("1.0.0".into());
+    let _asked = decide_registry_entry(
+        OrgCtx(caller(ADMIN)),
+        Extension(catalog.clone()),
+        Path("ledger".to_owned()),
+        Json(body),
+    )
+    .await
+    .unwrap();
+}
+
+/// Not a member of the organization, and not a platform administrator: a
+/// person the platform named one of its gear curators.
+const CURATOR: u128 = 11;
+
+/// A caller acting from their own organization, elsewhere.
+fn outsider(id: u128) -> SecurityContext {
+    SecurityContext::builder()
+        .subject_id(Uuid::from_u128(id))
+        .subject_tenant_id(Uuid::from_u128(0xb0b))
+        .build()
+        .unwrap()
+}
+
+/// Giving a gear to the platform is asked by the organization and answered
+/// by the platform: an organization administrator cannot publish, and a
+/// curator cannot publish what nobody asked for.
+#[tokio::test]
+async fn the_organization_asks_and_only_a_platform_curator_publishes() {
+    let c = catalog(false);
+    registered(&c).await;
+    let mut publish = decision("publish", None);
+    publish.dry_run = Some(true);
+
+    let refused = decide_registry_entry(
+        OrgCtx(caller(ADMIN)),
+        Extension(c.clone()),
+        Path("ledger".to_owned()),
+        Json(publish),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status(refused), StatusCode::FORBIDDEN);
+    let mut publish = decision("publish", None);
+    publish.dry_run = Some(true);
+
+    let unasked = decide_registry_entry(
+        OrgCtx(caller(PLATFORM_ADMIN)),
+        Extension(c.clone()),
+        Path("ledger".to_owned()),
+        Json(publish),
+    )
+    .await
+    .unwrap_err();
+    let unasked = unasked.into_response();
+    assert_eq!(unasked.status(), StatusCode::BAD_REQUEST);
+
+    // The request is recorded on the entry and joins the platform's queue.
+    request(&c).await;
+    let queue = c
+        .service
+        .publication_requests(&caller(ADMIN))
+        .await
+        .unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].organization_id, ORG);
+    assert_eq!(queue[0].name, "ledger");
+    assert_eq!(queue[0].version.as_deref(), Some("1.0.0"));
+    assert_eq!(queue[0].reason.as_deref(), Some("everyone needs a ledger"));
+    assert_eq!(queue[0].requested_by, Uuid::from_u128(ADMIN).to_string());
+}
+
+/// The queue spans organizations and is a curator's: a named curator who is
+/// not a member of the organization reads it and declines a request, which
+/// is recorded on the organization's entry and leaves the queue.
+#[tokio::test]
+async fn a_curator_answers_the_queue_from_outside_the_organization() {
+    use super::super::curation::{
+        RequestingOrganization, decide_publication_request, list_curators,
+        list_publication_requests, update_curators,
+    };
+    let c = catalog(false);
+    registered(&c).await;
+    request(&c).await;
+
+    // Nobody named yet: an outsider is refused the queue and the list.
+    let refused = list_publication_requests(Extension(outsider(CURATOR)), Extension(c.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(status(refused), StatusCode::FORBIDDEN);
+    let refused = update_curators(
+        Extension(outsider(CURATOR)),
+        Extension(c.clone()),
+        Json(super::super::curation::SetCuratorsRequest {
+            items: vec![super::super::curation::CuratorDto {
+                id: Uuid::from_u128(CURATOR).to_string(),
+                name: None,
+            }],
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status(refused), StatusCode::FORBIDDEN);
+
+    // A platform administrator names the curator.
+    let Json(named) = update_curators(
+        Extension(outsider(PLATFORM_ADMIN)),
+        Extension(c.clone()),
+        Json(super::super::curation::SetCuratorsRequest {
+            items: vec![super::super::curation::CuratorDto {
+                id: Uuid::from_u128(CURATOR).to_string(),
+                name: Some("Grace".into()),
+            }],
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(named.total, 1);
+
+    let Json(queue) = list_publication_requests(Extension(outsider(CURATOR)), Extension(c.clone()))
+        .await
+        .unwrap();
+    assert_eq!(queue.total, 1);
+    let Json(curators) = list_curators(Extension(outsider(CURATOR)), Extension(c.clone()))
+        .await
+        .unwrap();
+    assert!(
+        !curators.may_manage,
+        "a curator reads the list, never changes it"
+    );
+
+    // Declining says why.
+    let empty = decide_publication_request(
+        Extension(outsider(CURATOR)),
+        Extension(c.clone()),
+        Path("ledger".to_owned()),
+        Query(RequestingOrganization {
+            organization_id: ORG,
+        }),
+        Json(decision("decline_publication", None)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status(empty), StatusCode::BAD_REQUEST);
+
+    let Json(declined) = decide_publication_request(
+        Extension(outsider(CURATOR)),
+        Extension(c.clone()),
+        Path("ledger".to_owned()),
+        Query(RequestingOrganization {
+            organization_id: ORG,
+        }),
+        Json(decision(
+            "decline_publication",
+            Some("too specific to one product"),
+        )),
+    )
+    .await
+    .unwrap();
+    assert_eq!(declined.state, STATE_REGISTERED);
+    let decisions = declined.decisions.expect("decisions");
+    assert_eq!(decisions[0].action, "decline_publication");
+    assert_eq!(decisions[0].by, Uuid::from_u128(CURATOR).to_string());
+    assert!(
+        c.service
+            .publication_requests(&caller(ADMIN))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // Nothing open any more: a second answer finds no request.
+    let gone = decide_publication_request(
+        Extension(outsider(CURATOR)),
+        Extension(c.clone()),
+        Path("ledger".to_owned()),
+        Query(RequestingOrganization {
+            organization_id: ORG,
+        }),
+        Json(decision("decline_publication", Some("again"))),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status(gone), StatusCode::NOT_FOUND);
+}
+
 /// studio-user's answer for the caller: a person with a name.
 struct People;
 
@@ -224,12 +420,13 @@ async fn only_a_publish_has_a_dry_run() {
 
     // A publish's dry run needs no writer: without studio-product it is
     // refused by the rules (here: the platform has no gear repository), not
-    // as unavailable.
+    // as unavailable. It is a curator's, on the organization's request.
+    request(&c).await;
     let mut preview = mark(None);
     preview.action = "publish".into();
     preview.dry_run = Some(true);
     let refused = decide_registry_entry(
-        OrgCtx(caller(ADMIN)),
+        OrgCtx(caller(PLATFORM_ADMIN)),
         Extension(c.clone()),
         Path("ledger".to_owned()),
         Json(preview),
@@ -278,10 +475,11 @@ async fn only_a_platform_administrator_marks_an_entry_published() {
 async fn publishing_without_studio_product_is_unavailable() {
     let c = catalog(false);
     registered(&c).await;
+    request(&c).await;
     let mut body = mark(None);
     body.action = "publish".into();
     let refused = decide_registry_entry(
-        OrgCtx(caller(ADMIN)),
+        OrgCtx(caller(PLATFORM_ADMIN)),
         Extension(c.clone()),
         Path("ledger".to_owned()),
         Json(body),
