@@ -1,3 +1,49 @@
+# 2026-10-13 — the project and its product (#716)
+
+What #716 and the deploys around it leave open (the design:
+`docs/project-and-product.md`, `docs/spec-domain-model.md`):
+
+- [ ] Put main's tip on Dev @andrejk666
+
+  Dev runs 60f35655 (helm revision 146). #709, #710, #712, #717, #720 and #722
+  are merged but not deployed: the runners were down and the push runs queued.
+  Dispatch "Deploy existing images" per component with `sha-<tip>` once the
+  images are published; backend and prototype go together.
+
+- [ ] Merge #716 and look at its views on real data @andrejk666
+
+  After the deploy, open the Domain model tab on Insight: Glossary, Work and
+  Against the code. Note the noise — subjects that should not be entries,
+  work linked by an id it only quotes, `product.missing` for a capability the
+  code has under another name — and tune the rules before anyone else reads
+  them.
+
+- [ ] The rules that need a model key @andrejk666
+
+  Each waits for a test key (an Anthropic key on the stand):
+
+  - `code.*`: entities and values the documents name, against the code's
+    identifiers, read through the glossary.
+  - Proposed work links: work that names no identifier gets a proposed
+    requirement, decided by a member like a finding. Projects without
+    `**ID**:` labels (plain `FR-12`) have no links until then.
+  - Goals, risks and open questions as facts of the domain model.
+
+- [ ] The rest of the project's words @andrejk666
+
+  - `writing.long_noun` (a stack of nouns in a requirement) is not built.
+  - The assistant's instructions do not carry the writing rules yet, so what
+    it writes into a document is not held to them.
+  - Writing hints show only in the Documents perspective (TipTap); the
+    Workbench perspective opens markdown in MDXEditor, which has none.
+
+- [ ] "Get protoc" on an installed Windows desktop @andrejk666
+
+  #717 fetches protoc 36.2 into `~/ConstructorStudio/tools` and hands Build and
+  Run `PROTOC`. Not yet tried in an installed desktop build on a machine
+  without protoc (the gbx-studio-web build needed `PROTOC` set by hand before
+  it). #718 was closed as its duplicate.
+
 # 2026-09-29 — desktop 0.3.0-beta.5
 
 What the release leaves open (its notes: `docs/desktop-release-notes.md`):
