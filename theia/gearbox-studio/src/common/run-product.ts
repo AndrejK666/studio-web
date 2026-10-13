@@ -19,6 +19,7 @@
 // per gear that needs one -- Postgres, as the cluster runs -- and Run uses the
 // copy. The generated file stays the engine's; the copy is Studio's.
 
+import { localRunCautions } from "./local-run-defaults";
 import type { ResolvedApplication } from "./generated/ResolvedApplication";
 import type { ResolvedProduct } from "./generated/ResolvedProduct";
 
@@ -85,6 +86,8 @@ export interface RunTarget {
   readonly dbGears: readonly string[];
   /** The REST address the product answers on, when it has a REST host. */
   readonly address: string | undefined;
+  /** Gears in it a local run cannot start with, and what to use instead (`LOCAL_RUN_CAUTIONS`). */
+  readonly cautions?: readonly string[];
 }
 
 /**
@@ -101,6 +104,7 @@ export function runTargetsOf(product: ResolvedProduct, hasDb: (gear: string) => 
       localConfig: `config/${app.name}.local.yaml`,
       dbGears: app.needs_db ? app.gears.filter(hasDb) : [],
       address: restAddressOf(app),
+      cautions: localRunCautions(app.gears),
     }));
 }
 

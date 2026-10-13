@@ -1,4 +1,4 @@
-import { LOCAL_ROOT_TENANT_ID, withLocalDefaults } from "./local-run-defaults";
+import { LOCAL_ROOT_TENANT_ID, localRunCautions, withLocalDefaults } from "./local-run-defaults";
 
 const GENERATED = `server:
   home_dir: ~/x
@@ -45,5 +45,14 @@ describe("what Run sets for a gear to start on this machine", () => {
 
   it("keeps Windows line endings", () => {
     expect(withLocalDefaults(GENERATED.replace(/\n/g, "\r\n")).text).not.toMatch(/[^\r]\n/);
+  });
+});
+
+describe("what Run warns about before a local run", () => {
+  it("names rg-tr-plugin, which cannot find the root tenant on a fresh start, and nothing else", () => {
+    const said = localRunCautions(["tenant-resolver", "rg-tr-plugin", "oagw"]);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/static-tr-plugin/);
+    expect(localRunCautions(["tenant-resolver", "static-tr-plugin"])).toEqual([]);
   });
 });

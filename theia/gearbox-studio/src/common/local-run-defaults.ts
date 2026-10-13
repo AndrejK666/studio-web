@@ -45,6 +45,24 @@ export const LOCAL_RUN_DEFAULTS: Readonly<Record<string, Readonly<Record<string,
 };
 
 /**
+ * Gears a local run cannot start with whatever is set, and what to use
+ * instead -- said beside Run, before a member waits for a build to find out.
+ * Interim like the table above, and for the same reason.
+ */
+export const LOCAL_RUN_CAUTIONS: Readonly<Record<string, string>> = {
+  // oagw's post-init asks the tenant resolver for the root; this plugin reads
+  // it from resource-group, which nothing has seeded at that point.
+  "rg-tr-plugin":
+    "rg-tr-plugin reads the root tenant from resource-group, which nothing fills before the product starts, " +
+    "so a local run stops at oagw (\"Failed to resolve root tenant\"). Use static-tr-plugin for tenant-resolver to run it here.",
+};
+
+/** What Run should say about the gears of one application, in the order they are listed. */
+export function localRunCautions(gears: readonly string[], cautions: Readonly<Record<string, string>> = LOCAL_RUN_CAUTIONS): string[] {
+  return gears.flatMap((gear) => (cautions[gear] !== undefined ? [cautions[gear] as string] : []));
+}
+
+/**
  * The generated configuration with `defaults` added to each gear's `config:`
  * block, a key at a time and only where the block does not set it already.
  * Text, on the shape the engine writes (`  <gear>:` then `    config: {}` or

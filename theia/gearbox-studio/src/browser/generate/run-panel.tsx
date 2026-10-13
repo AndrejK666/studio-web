@@ -100,6 +100,11 @@ export function RunPanel(props: RunPanelProps): React.ReactElement {
               </span>
             )}
           </div>
+          {chosen.cautions?.map((caution) => (
+            <p key={caution} className="gbx-inline-error" role="alert" data-run-caution>
+              {caution}
+            </p>
+          ))}
           {verdict.missing?.map((missing) => (
             <p key={missing.tool} className="gbx-generate-run-tool" data-run-missing={missing.tool}>
               {missing.reason}{" "}

@@ -147,6 +147,13 @@ describe("the Build and Run panel", () => {
     expect(onFetchProtoc).toHaveBeenCalled();
   });
 
+  it("warns before Build about a gear a local run cannot start with", async () => {
+    await draw({ chosen: { ...shop, cautions: ["rg-tr-plugin reads the root tenant from resource-group"] } });
+    expect(host.querySelector("[data-run-caution]")?.textContent).toMatch(/rg-tr-plugin/);
+    await draw({});
+    expect(host.querySelector("[data-run-caution]")).toBeNull();
+  });
+
   it("says nothing about a database for a product that needs none", async () => {
     await draw({ targets: [{ ...shop, dbGears: [] }], chosen: { ...shop, dbGears: [] } });
     expect(host.querySelector("[data-run-db]")).toBeNull();

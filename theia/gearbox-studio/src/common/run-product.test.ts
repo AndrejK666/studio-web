@@ -96,6 +96,7 @@ describe("what Run can start", () => {
       localConfig: "config/shop.local.yaml",
       dbGears: ["account-management", "bss-pricing", "resource-group", "types-registry"],
       address: "127.0.0.1:8087",
+      cautions: [],
     });
   });
 
