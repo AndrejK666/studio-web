@@ -499,7 +499,7 @@ export interface GearboxService {
    * the generated configuration plus a Postgres section for `dbGears`, and say
    * which configuration Run should use (relative to `outRoot`).
    */
-  writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[] }>;
+  writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[]; defaulted: string[] }>;
 
   /** Constructor Studio: start (or reuse) a local Postgres container and create the databases. */
   startLocalPostgres(product: string, databases: string[]): Promise<{ ok: boolean; message: string }>;

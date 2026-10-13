@@ -1010,7 +1010,7 @@ export class GearboxServiceImpl implements GearboxService {
     return portAnswers(LOCAL_POSTGRES.host, port);
   }
 
-  async writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[] }> {
+  async writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[]; defaulted: string[] }> {
     // Only inside a generated tree, and only an application's own file: the
     // frontend names both, and this writes to disk.
     const normalized = outRoot.replace(/\\/g, "/");

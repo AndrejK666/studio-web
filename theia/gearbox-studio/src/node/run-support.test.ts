@@ -151,7 +151,7 @@ describe("Studio's run configuration", () => {
 
   it("writes the copy beside the generated file and leaves the generated file alone", async () => {
     const result = await writeRunConfig(root, "shop", ["bss-pricing"], LOCAL_POSTGRES);
-    expect(result).toEqual({ config: "config/shop.local.yaml", missing: [] });
+    expect(result).toEqual({ config: "config/shop.local.yaml", missing: [], defaulted: [] });
     const local = fs.readFileSync(path.join(root, "config", "shop.local.yaml"), "utf8");
     expect(local).toMatch(/^# Written by Constructor Studio from config\/shop\.yaml/);
     expect(local).toContain('dbname: "bss_pricing"');
@@ -159,8 +159,15 @@ describe("Studio's run configuration", () => {
   });
 
   it("uses the generated file when nothing needs a database", async () => {
-    expect(await writeRunConfig(root, "shop", [], LOCAL_POSTGRES)).toEqual({ config: "config/shop.yaml", missing: [] });
+    expect(await writeRunConfig(root, "shop", [], LOCAL_POSTGRES)).toEqual({ config: "config/shop.yaml", missing: [], defaulted: [] });
     expect(fs.existsSync(path.join(root, "config", "shop.local.yaml"))).toBe(false);
+  });
+
+  it("writes the copy for a gear that needs a value set to start, database or not", async () => {
+    fs.writeFileSync(path.join(root, "config", "shop.yaml"), "server:\n  home_dir: ~/x\ngears:\n  graph-storage:\n    config: {}\n");
+    const result = await writeRunConfig(root, "shop", [], LOCAL_POSTGRES);
+    expect(result).toEqual({ config: "config/shop.local.yaml", missing: [], defaulted: ["graph-storage"] });
+    expect(fs.readFileSync(path.join(root, "config", "shop.local.yaml"), "utf8")).toContain('      embedding_provider: "fake"');
   });
 });
 

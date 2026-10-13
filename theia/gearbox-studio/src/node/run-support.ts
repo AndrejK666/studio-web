@@ -15,6 +15,7 @@ import * as net from "net";
 import * as os from "os";
 import * as path from "path";
 
+import { withLocalDefaults } from "../common/local-run-defaults";
 import {
   LOCAL_POSTGRES_PASSWORD,
   POSTGRES_IMAGE,
@@ -227,28 +228,31 @@ export function portAnswers(host: string, port: number, timeoutMs = 1500): Promi
 
 /**
  * Write `config/<app>.local.yaml` beside the generated configuration, with a
- * Postgres server and one database per gear in `dbGears`, and return its path
- * relative to the output root. Rewritten from the generated file every time, so
- * it follows the last Generate. Without a database to add, the generated file
- * is the one to use and its path is returned.
+ * Postgres server and one database per gear in `dbGears`, and what a gear
+ * needs set to start on this machine (`LOCAL_RUN_DEFAULTS`), and return its
+ * path relative to the output root. Rewritten from the generated file every
+ * time, so it follows the last Generate. With nothing to add, the generated
+ * file is the one to use and its path is returned.
  */
 export async function writeRunConfig(
   outRoot: string,
   app: string,
   dbGears: readonly string[],
   pg: PostgresTarget,
-): Promise<{ config: string; missing: string[] }> {
+): Promise<{ config: string; missing: string[]; defaulted: string[] }> {
   const generated = `config/${app}.yaml`;
-  if (dbGears.length === 0) return { config: generated, missing: [] };
   const text = await fs.promises.readFile(path.join(outRoot, generated), "utf8");
+  const withDb = dbGears.length === 0 ? undefined : withPostgres(text, dbGears, pg);
+  const defaults = withLocalDefaults(withDb?.text ?? text);
+  if (withDb === undefined && defaults.added.length === 0) return { config: generated, missing: [], defaulted: [] };
   const local = `config/${app}.local.yaml`;
-  const added = withPostgres(text, dbGears, pg);
   const header =
     `# Written by Constructor Studio from ${generated}, for Run: the same configuration plus the\n` +
-    `# database section generate leaves out (https://github.com/MikeFalcon77/gearbox/issues/4).\n` +
+    `# database section generate leaves out (https://github.com/MikeFalcon77/gearbox/issues/4)\n` +
+    `# and what ${defaults.added.length > 0 ? defaults.added.join(", ") : "a gear"} needs set to start on this machine.\n` +
     `# Rewritten on every Run; edit ${generated}'s product instead.\n`;
-  await fs.promises.writeFile(path.join(outRoot, local), header + (added?.text ?? text), "utf8");
-  return { config: local, missing: added?.missing ?? [] };
+  await fs.promises.writeFile(path.join(outRoot, local), header + defaults.text, "utf8");
+  return { config: local, missing: withDb?.missing ?? [], defaulted: defaults.added };
 }
 
 export interface LocalPostgresRequest {
