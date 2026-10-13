@@ -151,6 +151,62 @@ does.
 `code.*` candidate: a planned entity missing from the code is the plan, not a
 problem.
 
+## The project's words
+
+Every link above starts by matching a word in a document to something else: an
+entity to an identifier, a requirement to a capability, a passage to a fact.
+The fewer meanings a word has, the fewer of those matches are wrong.
+[ASD-STE100](https://www.asd-ste100.org/) (Simplified Technical English,
+Issue 9, 2025) is the standard that writes this down for technical documents:
+one word, one part of speech, one meaning; the organization's own technical
+names and verbs beside a dictionary of general words; a short list of writing
+rules. Studio takes the principle and the rules that can be stated in its own
+words, not the standard.
+
+**What is not taken.** The dictionary and the text of the rules are ASD's
+copyright, so Studio neither ships them nor claims conformance (the name is a
+trademark). An organization that holds the standard can add its approved words
+as its own data, read the same way as the project's glossary below.
+
+**The glossary is decided, not detected.** The domain model already tried
+`term.synonym_drift` and dropped it: every candidate in calibration was a
+deliberate rename between layers ([spec-domain-model](spec-domain-model.md#the-rule-catalogue)).
+So the glossary is not a rule that flags two names. It is the per-project alias
+table that page lists as later work, made from what the build already has:
+
+- each merged entity proposes its name and aliases as one glossary entry;
+- a member keeps the entry, renames the chosen name, or splits an alias that
+  means something else, with the same ✓/✗ as a finding;
+- a decided entry holds until a document that defines the entity changes.
+
+The glossary is then input, not output:
+
+- `code.entity_missing` matches an entity's identifiers through its decided
+  aliases, so a deliberate rename between the documents and the code is not a
+  finding;
+- `formula.mismatch` gets the table of what each quantity is called in each
+  layer, which it waited for;
+- the spec-to-gears mapping reads requirements with one name per entity.
+
+A drift rule may come back later, scoped to what the glossary decides: an alias a
+member split off, used again with the entity's meaning.
+
+**Writing rules are advice in the editor, not findings.** `constraint.vague`
+raised nothing that survived review, so the writing rules do not join the
+project's findings or its state. They are hints in the IDE's editor on a
+document's requirement sections, without a model:
+
+| Hint | When |
+|---|---|
+| `writing.long_sentence` | a requirement or a procedure step longer than 20 words, a description longer than 25 |
+| `writing.two_requirements` | one sentence with two requirement verbs ("shall … and shall …") |
+| `writing.no_actor` | a requirement in the passive voice with no agent ("the data is stored") |
+| `writing.long_noun` | a run of more than three nouns |
+
+A project can turn them off, and they never block a sync, a share or a merge:
+specs are read as written. The same rules, in Studio's words, go into the
+instructions of the assistant that writes and edits documents in a session.
+
 ## The project card
 
 One block at the top of the project page, every line derived and linked to
@@ -173,8 +229,10 @@ Each step is useful alone.
    `goal`, `risk` and `question`; the Domain model tab and the card show them.
 2. **`product.*` rules.** Built: `GET /studio-spec-mapping/v1/findings` and
    the tab's Against the code view.
-3. **The identifier index and `code.*` rules**, on the builder's key, as the
-   domain model's build is.
+3. **The project's glossary**, proposed from the merged entities and decided
+   by members; no model, no key. Then **the identifier index and `code.*`
+   rules** through it, on the builder's key, as the domain model's build is.
+   The writing hints and the assistant's instructions are independent of both.
 4. **Work links.** Issues and pull requests to requirements and gears, proposed
    and decided.
 5. **The project card.**
