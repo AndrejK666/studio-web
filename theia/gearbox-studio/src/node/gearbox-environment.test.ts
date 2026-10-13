@@ -2,7 +2,9 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { gearboxEnabled, productFiles } from "./gearbox-environment";
+import { pathToFileURL } from "url";
+
+import { folderOfWorkspaceUri, gearboxEnabled, productFiles } from "./gearbox-environment";
 
 function tree(files: readonly string[]): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "gbx-products-"));
@@ -70,5 +72,45 @@ describe("gearboxEnabled", () => {
     expect(gearboxEnabled({})).toBe(true);
     expect(gearboxEnabled({ STUDIO_GEARBOX_ENABLED: "1" })).toBe(true);
     expect(gearboxEnabled({ STUDIO_GEARBOX_ENABLED: "" })).toBe(true);
+  });
+});
+
+describe("folderOfWorkspaceUri", () => {
+  let root: string;
+  beforeEach(() => {
+    // The desktop's layout: every project's folder, and beside each the
+    // workspace file it opens as.
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "gbx-ws-"));
+    for (const project of ["Studio-web", "Test Worksoace - Gears-Rust"]) {
+      fs.mkdirSync(path.join(root, project));
+      fs.writeFileSync(
+        path.join(root, `${project}.theia-workspace`),
+        JSON.stringify({ folders: [{ path: project }], settings: {} }),
+      );
+    }
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  const uri = (p: string) => pathToFileURL(p).toString();
+
+  it("is the project's folder a desktop workspace file lists, not the folder of every project", () => {
+    expect(folderOfWorkspaceUri(uri(path.join(root, "Studio-web.theia-workspace")))).toBe(path.join(root, "Studio-web"));
+  });
+
+  it("is the folder itself for a folder", () => {
+    expect(folderOfWorkspaceUri(uri(path.join(root, "Studio-web")))).toBe(path.join(root, "Studio-web"));
+  });
+
+  it("is the one folder a file lists under another name, and beside it when several are listed", () => {
+    const one = path.join(root, "mine.code-workspace");
+    fs.writeFileSync(one, JSON.stringify({ folders: [{ path: "Studio-web" }] }));
+    expect(folderOfWorkspaceUri(uri(one))).toBe(path.join(root, "Studio-web"));
+    const several = path.join(root, "both.code-workspace");
+    fs.writeFileSync(several, JSON.stringify({ folders: [{ path: "Studio-web" }, { path: "Test Worksoace - Gears-Rust" }] }));
+    expect(folderOfWorkspaceUri(uri(several))).toBe(root);
+  });
+
+  it("is undefined off the local disk", () => {
+    expect(folderOfWorkspaceUri("http://example.com/x")).toBeUndefined();
+    expect(folderOfWorkspaceUri(undefined)).toBeUndefined();
   });
 });

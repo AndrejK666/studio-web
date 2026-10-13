@@ -50,8 +50,13 @@ export function workspaceDir(env: NodeJS.ProcessEnv = process.env, opened?: stri
 
 /**
  * The folder behind a workspace URI as Theia keeps it: a folder's `file://`
- * URI, or a `*.theia-workspace` / `*.code-workspace` file, whose folder is
- * the one beside it. Undefined for anything that is not a local path.
+ * URI, or a `*.theia-workspace` / `*.code-workspace` file, whose folder is the
+ * one it lists. Undefined for anything that is not a local path.
+ *
+ * Not the folder the file lies in: the desktop opens a project as
+ * `<project>.theia-workspace` beside the project's folder, in the folder that
+ * holds every project, so that one made every project a source root -- and a
+ * project named `Test Workspace - Gears-Rust` an id the engine refuses.
  */
 export function folderOfWorkspaceUri(uri: string | undefined): string | undefined {
   if (!uri?.startsWith("file:")) return undefined;
@@ -62,10 +67,33 @@ export function folderOfWorkspaceUri(uri: string | undefined): string | undefine
     return undefined;
   }
   try {
-    return fs.statSync(folder).isDirectory() ? folder : path.dirname(folder);
+    return fs.statSync(folder).isDirectory() ? folder : listedFolder(folder);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The folder a workspace file lists: the one named after the file, as the
+ * desktop names it, else its only folder. Beside the file when it lists
+ * several or cannot be read.
+ */
+function listedFolder(file: string): string {
+  const beside = path.dirname(file);
+  let folders: string[];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { folders?: { path?: unknown }[] };
+    folders = (parsed.folders ?? [])
+      .map((f) => f.path)
+      .filter((p): p is string => typeof p === "string" && p.trim() !== "")
+      .map((p) => path.resolve(beside, p));
+  } catch {
+    return beside;
+  }
+  const stem = path.basename(file, path.extname(file));
+  const named = folders.find((f) => path.basename(f) === stem);
+  if (named !== undefined) return named;
+  return folders.length === 1 ? (folders[0] as string) : beside;
 }
 
 /**
