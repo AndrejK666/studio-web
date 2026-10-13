@@ -33,6 +33,7 @@ import {
   dbNameOf,
   linkedGearsCommand,
   plainPath,
+  protocEnv,
   runCommand,
   runTargetsOf,
   toolchainVerdict,
@@ -127,6 +128,7 @@ export class GenerateWidget extends ReactWidget {
   protected runApp: string | undefined;
   protected postgres: PostgresState = "unknown";
   protected startingPostgres = false;
+  protected installingProtoc = false;
 
   protected selected: string | undefined;
   protected preview: GenerateFileResult | undefined;
@@ -168,7 +170,7 @@ export class GenerateWidget extends ReactWidget {
     try {
       this.toolchain = await this.service.buildToolchain();
     } catch {
-      this.toolchain = { cargo: undefined, msvcLinker: "n/a", docker: false, pgPasswordSet: false };
+      this.toolchain = { cargo: undefined, msvcLinker: "n/a", docker: false, pgPasswordSet: false, protoc: undefined };
     } finally {
       this.askingToolchain = false;
     }
@@ -211,13 +213,13 @@ export class GenerateWidget extends ReactWidget {
   protected async build(target: RunTarget): Promise<void> {
     const context = this.runContext();
     if (context === undefined) return;
-    await this.terminals.send("build", context.product, context.cwd, buildCommand(target));
+    await this.terminals.send("build", context.product, context.cwd, buildCommand(target), protocEnv(this.toolchain));
   }
 
   protected async linkedGears(target: RunTarget): Promise<void> {
     const context = this.runContext();
     if (context === undefined) return;
-    await this.terminals.send("build", context.product, context.cwd, linkedGearsCommand(target));
+    await this.terminals.send("build", context.product, context.cwd, linkedGearsCommand(target), protocEnv(this.toolchain));
   }
 
   protected async run(target: RunTarget): Promise<void> {
@@ -236,11 +238,29 @@ export class GenerateWidget extends ReactWidget {
     }
     // The local Postgres Studio starts has a known password; a member who runs
     // their own sets GEARS_PG_PASSWORD, and then the terminal inherits it.
-    const env: Record<string, string> =
-      target.dbGears.length > 0 && this.toolchain?.pgPasswordSet !== true
+    // `cargo run` builds first, so Run needs protoc as much as Build does.
+    const env: Record<string, string> = {
+      ...protocEnv(this.toolchain),
+      ...(target.dbGears.length > 0 && this.toolchain?.pgPasswordSet !== true
         ? { [LOCAL_POSTGRES.passwordEnv]: LOCAL_POSTGRES_PASSWORD }
-        : {};
+        : {}),
+    };
     await this.terminals.send("run", context.product, context.cwd, runCommand(target, config), env);
+  }
+
+  protected async installProtoc(): Promise<void> {
+    if (this.installingProtoc) return;
+    this.installingProtoc = true;
+    this.update();
+    try {
+      const result = await this.service.installProtoc();
+      if (result.ok) this.messages.info(result.message);
+      else this.messages.error(result.message);
+    } finally {
+      this.installingProtoc = false;
+      this.toolchain = undefined;
+      await this.askToolchain();
+    }
   }
 
   protected async startPostgres(target: RunTarget): Promise<void> {
@@ -275,6 +295,8 @@ export class GenerateWidget extends ReactWidget {
         postgres={this.postgres}
         docker={this.toolchain?.docker === true}
         startingPostgres={this.startingPostgres}
+        installingProtoc={this.installingProtoc}
+        onInstallProtoc={() => void this.installProtoc()}
         onChoose={(app) => {
           this.runApp = app;
           void this.probePostgres().then(() => this.update());

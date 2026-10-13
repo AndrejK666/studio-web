@@ -503,6 +503,11 @@ export interface GearboxService {
 
   /** Constructor Studio: start (or reuse) a local Postgres container and create the databases. */
   startLocalPostgres(product: string, databases: string[]): Promise<{ ok: boolean; message: string }>;
+  /**
+   * Download the pinned protoc release into Studio's tools folder, for a
+   * machine that has none; the Build and Run terminals then get it as `PROTOC`.
+   */
+  installProtoc(): Promise<{ ok: boolean; message: string }>;
 
   /**
    * Tell the engine an editor opened a `.gdl`, and what is in the buffer.

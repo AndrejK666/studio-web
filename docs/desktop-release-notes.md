@@ -11,6 +11,14 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
 ## Next
 
+### Building a product
+
+- **Build no longer stops at "Could not find `protoc`".** The system gears'
+  SDKs compile `.proto` files, and a machine without the Protocol Buffers
+  compiler failed half-way through the first build. When none is found, the
+  Build and Run panel offers **Install protoc**: it downloads the pinned
+  release into `~/ConstructorStudio/tools/`, and Build and Run use it.
+
 ### macOS
 
 - **A Mac build.** Every release now carries

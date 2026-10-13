@@ -51,11 +51,13 @@ describe("the Build and Run panel", () => {
       postgres: "answers",
       docker: true,
       startingPostgres: false,
+      installingProtoc: false,
       onChoose: () => undefined,
       onBuild: () => undefined,
       onRun: () => undefined,
       onLinkedGears: () => undefined,
       onStartPostgres: () => undefined,
+      onInstallProtoc: () => undefined,
       onOpen: () => undefined,
       ...over,
     };
@@ -93,6 +95,20 @@ describe("the Build and Run panel", () => {
     expect(onLinkedGears).toHaveBeenCalled();
     expect(onOpen).toHaveBeenCalledWith("http://127.0.0.1:8087");
     expect(host.querySelector("[data-run-address]")?.textContent).toContain("http://127.0.0.1:8087");
+  });
+
+  it("keeps Build offered without protoc, and offers to install it", async () => {
+    const onInstallProtoc = jest.fn();
+    await draw({ verdict: { ready: true, protocMissing: true }, onInstallProtoc });
+    expect(q("[data-run-build]")).not.toBeNull();
+    expect(host.querySelector("[data-run-protoc]")?.textContent).toContain("PROTOC");
+    await act(() => q("[data-run-install-protoc]")?.click());
+    expect(onInstallProtoc).toHaveBeenCalled();
+  });
+
+  it("says nothing about protoc when the build can reach one", async () => {
+    await draw({});
+    expect(host.querySelector("[data-run-protoc]")).toBeNull();
   });
 
   it("says which gears need a database and which configuration Run uses", async () => {

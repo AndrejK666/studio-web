@@ -64,7 +64,7 @@ import {
 import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
 import { closeSourcesList } from "./sources-list";
 import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
-import { buildToolchain, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
+import { buildToolchain, installProtoc, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
 import {
   LoadRecord,
   catalogueCacheFile,
@@ -1003,6 +1003,11 @@ export class GearboxServiceImpl implements GearboxService {
 
   async buildToolchain(): Promise<BuildToolchain> {
     return buildToolchain();
+  }
+
+  async installProtoc(): Promise<{ ok: boolean; message: string }> {
+    const { ok, message } = await installProtoc();
+    return { ok, message };
   }
 
   async localPortAnswers(port: number): Promise<boolean> {

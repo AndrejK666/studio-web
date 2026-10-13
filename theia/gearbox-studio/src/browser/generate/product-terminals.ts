@@ -20,6 +20,9 @@ export function productTerminalId(kind: ProductTerminalKind, product: string): s
 export class ProductTerminals {
   @inject(TerminalService) protected readonly terminals!: TerminalService;
 
+  /** The environment each terminal was opened with: a terminal's environment is fixed at its start. */
+  protected readonly opened = new Map<string, string>();
+
   /**
    * Type `command` into the product's `kind` terminal, opened in `cwd` with
    * `env` if it has to be created. Returns once the text is sent.
@@ -33,6 +36,13 @@ export class ProductTerminals {
   ): Promise<void> {
     const id = productTerminalId(kind, product);
     let terminal = this.terminals.getById(id);
+    // A terminal opened before protoc was installed lacks `PROTOC`, and nothing
+    // can add it to a running shell: open it again with what is needed now.
+    const wanted = JSON.stringify(Object.entries(env).sort(([a], [b]) => a.localeCompare(b)));
+    if (terminal !== undefined && !terminal.isDisposed && this.opened.has(id) && this.opened.get(id) !== wanted) {
+      terminal.dispose();
+      terminal = undefined;
+    }
     const reused = terminal !== undefined && !terminal.isDisposed;
     if (terminal === undefined || terminal.isDisposed) {
       terminal = await this.terminals.newTerminal({
@@ -43,6 +53,7 @@ export class ProductTerminals {
         destroyTermOnClose: true,
       });
       await terminal.start();
+      this.opened.set(id, wanted);
     }
     await this.terminals.open(terminal, { mode: "activate" });
     if (reused && kind === "run") terminal.sendText("\x03");

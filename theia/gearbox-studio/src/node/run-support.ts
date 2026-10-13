@@ -12,12 +12,17 @@
 import { execFile } from "child_process";
 import * as fs from "fs";
 import * as net from "net";
+import * as os from "os";
 import * as path from "path";
+import * as zlib from "zlib";
 
 import {
   LOCAL_POSTGRES_PASSWORD,
   POSTGRES_IMAGE,
+  PROTOC_VERSION,
   dbNameOf,
+  protocAsset,
+  protocUrl,
   withPostgres,
   type BuildToolchain,
   type PostgresTarget,
@@ -39,11 +44,12 @@ export const exec: Exec = (file, args, timeoutMs = 15000) =>
     });
   });
 
-/** cargo, the linker cargo will need, docker, and whether the password variable is set. */
+/** cargo, the linker cargo will need, docker, protoc, and whether the password variable is set. */
 export async function buildToolchain(
   run: Exec = exec,
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
 ): Promise<BuildToolchain> {
   const cargo = await run("cargo", ["--version"]);
   const docker = await run("docker", ["version", "--format", "{{.Server.Version}}"]);
@@ -60,7 +66,129 @@ export async function buildToolchain(
     msvcLinker,
     docker: docker.ok,
     pgPasswordSet: (env.GEARS_PG_PASSWORD ?? "") !== "",
+    protoc: await findProtoc(run, platform, env, home),
   };
+}
+
+/** Where Studio keeps the protoc it installs: beside the shared corpus, one folder per version. */
+export function protocHome(home: string = os.homedir()): string {
+  return path.join(home, "ConstructorStudio", "tools", `protoc-${PROTOC_VERSION}`);
+}
+
+function protocBinary(root: string, platform: NodeJS.Platform): string {
+  return path.join(root, "bin", platform === "win32" ? "protoc.exe" : "protoc");
+}
+
+/**
+ * The protoc a build would use, in prost-build's order: `PROTOC` when it names
+ * a file, then the PATH; then the copy Studio installed, which the terminals get
+ * as `PROTOC`, since it is on no PATH.
+ */
+async function findProtoc(
+  run: Exec,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  home: string,
+): Promise<string | undefined> {
+  const named = env.PROTOC ?? "";
+  if (named !== "" && fs.existsSync(named)) return named;
+  if ((await run("protoc", ["--version"])).ok) return "protoc";
+  const own = protocBinary(protocHome(home), platform);
+  return fs.existsSync(own) ? own : undefined;
+}
+
+/**
+ * Every file of a zip archive, by its path inside it. Enough of the format for
+ * a release archive -- stored or deflated entries, no encryption, no zip64 --
+ * so installing protoc needs no unzip program, which a Windows machine may not
+ * have and a container image often does not.
+ */
+export function unzip(archive: Buffer): Map<string, Buffer> {
+  const files = new Map<string, Buffer>();
+  // The end of central directory record: its signature, searched from the end
+  // past a comment of at most 64 KiB.
+  let end = -1;
+  for (let at = archive.length - 22; at >= Math.max(0, archive.length - 22 - 0xffff); at--) {
+    if (archive.readUInt32LE(at) === 0x06054b50) {
+      end = at;
+      break;
+    }
+  }
+  if (end < 0) throw new Error("not a zip archive");
+  const count = archive.readUInt16LE(end + 10);
+  let at = archive.readUInt32LE(end + 16);
+  for (let i = 0; i < count; i++) {
+    if (archive.readUInt32LE(at) !== 0x02014b50) throw new Error("a damaged zip directory");
+    const method = archive.readUInt16LE(at + 10);
+    const size = archive.readUInt32LE(at + 20);
+    const nameLength = archive.readUInt16LE(at + 28);
+    const extraLength = archive.readUInt16LE(at + 30);
+    const commentLength = archive.readUInt16LE(at + 32);
+    const local = archive.readUInt32LE(at + 42);
+    const name = archive.toString("utf8", at + 46, at + 46 + nameLength);
+    at += 46 + nameLength + extraLength + commentLength;
+    if (name.endsWith("/")) continue;
+    const dataAt = local + 30 + archive.readUInt16LE(local + 26) + archive.readUInt16LE(local + 28);
+    const data = archive.subarray(dataAt, dataAt + size);
+    if (method === 0) files.set(name, Buffer.from(data));
+    else if (method === 8) files.set(name, zlib.inflateRawSync(data));
+    else throw new Error(`${name}: compression method ${method} is not supported`);
+  }
+  return files;
+}
+
+export type Fetch = (url: string) => Promise<{ ok: boolean; status: number; arrayBuffer(): Promise<ArrayBuffer> }>;
+
+/**
+ * Download the pinned protoc release for this machine into `protocHome()`, with
+ * the well-known `.proto` files beside it (`include/`, which protoc finds
+ * relative to itself), and answer the binary's path. An archive entry that
+ * would land outside the folder is refused.
+ */
+export async function installProtoc(
+  fetchImpl: Fetch = (url) => fetch(url),
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  home: string = os.homedir(),
+): Promise<{ ok: boolean; message: string; path?: string }> {
+  const asset = protocAsset(platform, arch);
+  if (asset === undefined) {
+    return { ok: false, message: `protoc ${PROTOC_VERSION} has no release for ${platform} ${arch}; install it with the system's package manager.` };
+  }
+  const url = protocUrl(asset);
+  let archive: Buffer;
+  try {
+    const response = await fetchImpl(url);
+    if (!response.ok) return { ok: false, message: `${url} answered ${response.status}.` };
+    archive = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    return { ok: false, message: `${url} could not be downloaded: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  const root = protocHome(home);
+  let files: Map<string, Buffer>;
+  try {
+    files = unzip(archive);
+  } catch (error) {
+    return { ok: false, message: `${asset} could not be read: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  // Every entry is checked before anything is written, so a refused archive
+  // leaves nothing behind.
+  const writes: [string, Buffer][] = [];
+  for (const [name, data] of files) {
+    const target = path.resolve(root, name);
+    if (target === root || !target.startsWith(root + path.sep)) {
+      return { ok: false, message: `${asset} has an entry outside its folder (${name}); nothing was installed.` };
+    }
+    writes.push([target, data]);
+  }
+  for (const [target, data] of writes) {
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    await fs.promises.writeFile(target, data);
+  }
+  const binary = protocBinary(root, platform);
+  if (!fs.existsSync(binary)) return { ok: false, message: `${asset} holds no ${path.basename(binary)}.` };
+  if (platform !== "win32") await fs.promises.chmod(binary, 0o755);
+  return { ok: true, message: `protoc ${PROTOC_VERSION} is installed in ${root}; Build and Run use it.`, path: binary };
 }
 
 /**

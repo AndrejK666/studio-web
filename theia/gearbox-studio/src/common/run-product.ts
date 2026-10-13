@@ -186,12 +186,55 @@ export interface BuildToolchain {
   readonly docker: boolean;
   /** Whether the IDE's environment already sets the Postgres password variable. */
   readonly pgPasswordSet: boolean;
+  /**
+   * How the build reaches the Protocol Buffers compiler, which the gears' SDKs
+   * compile their `.proto` files with (prost-build): `"protoc"` when it is on
+   * the PATH, else the file the terminals get as `PROTOC`; `undefined` when
+   * there is none.
+   */
+  readonly protoc: string | undefined;
+}
+
+/**
+ * The protoc release Studio installs when the machine has none: pinned, so two
+ * machines build a product with the same compiler.
+ */
+export const PROTOC_VERSION = "36.2";
+
+/** The release asset for a platform and architecture, or `undefined` when there is none. */
+export function protocAsset(platform: string, arch: string): string | undefined {
+  const suffix =
+    platform === "win32" ? (arch === "x64" ? "win64" : arch === "ia32" ? "win32" : undefined)
+    : platform === "linux" ? (arch === "x64" ? "linux-x86_64" : arch === "arm64" ? "linux-aarch_64" : undefined)
+    : platform === "darwin" ? (arch === "arm64" ? "osx-aarch_64" : arch === "x64" ? "osx-x86_64" : undefined)
+    : undefined;
+  return suffix === undefined ? undefined : `protoc-${PROTOC_VERSION}-${suffix}.zip`;
+}
+
+export function protocUrl(asset: string): string {
+  return `https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${asset}`;
+}
+
+/**
+ * What the Build and Run terminals need in their environment for protoc: a
+ * found file as `PROTOC` (prost-build reads it before the PATH), nothing for one
+ * on the PATH or none at all.
+ */
+export function protocEnv(found: BuildToolchain | undefined): Record<string, string> {
+  const protoc = found?.protoc;
+  return protoc === undefined || protoc === "protoc" ? {} : { PROTOC: protoc };
 }
 
 export interface ToolchainVerdict {
   readonly ready: boolean;
   readonly reason?: string;
   readonly help?: { readonly label: string; readonly url: string };
+  /**
+   * Whether protoc is missing. Not a reason to withhold Build: a product whose
+   * gears compile no `.proto` builds without it, so the panel offers to install
+   * it instead.
+   */
+  readonly protocMissing?: boolean;
 }
 
 /** Whether Build and Run can be offered, and what to say when they cannot. */
@@ -214,5 +257,5 @@ export function toolchainVerdict(found: BuildToolchain): ToolchainVerdict {
       help: { label: "Visual Studio Build Tools", url: "https://visualstudio.microsoft.com/visual-cpp-build-tools/" },
     };
   }
-  return { ready: true };
+  return found.protoc === undefined ? { ready: true, protocMissing: true } : { ready: true };
 }

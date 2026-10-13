@@ -102,7 +102,11 @@ collab strip, Orca and the Explorer stay as they are.
   -- --config config/<app>.yaml run` in two named terminals per product, the
   REST address with Open, and the linked-gears check. Cargo missing, or the
   MSVC linker on Windows, is said with a link instead of a terminal error (the
-  session image has no Rust, so it says so there). A product whose gears need
+  session image has no Rust, so it says so there). No `protoc` in `PROTOC` or
+  on the PATH keeps Build offered and adds **Install protoc**: the pinned
+  release (`PROTOC_VERSION`) unpacked into `~/ConstructorStudio/tools/`
+  without an unzip program, which the terminals get as `PROTOC`; a terminal
+  opened before is opened again, since a shell's environment is fixed. A product whose gears need
   a database runs with `config/<app>.local.yaml`, the generated file plus a
   Postgres server (`127.0.0.1:5432`, user `postgres`, password from
   `GEARS_PG_PASSWORD`) and one database per gear; **Start a local Postgres**

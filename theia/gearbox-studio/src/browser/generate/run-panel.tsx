@@ -9,6 +9,7 @@ import React from "@theia/core/shared/react";
 
 import {
   LOCAL_POSTGRES,
+  PROTOC_VERSION,
   dbNameOf,
   urlOf,
   type RunTarget,
@@ -27,11 +28,13 @@ export interface RunPanelProps {
   readonly postgres: PostgresState;
   readonly docker: boolean;
   readonly startingPostgres: boolean;
+  readonly installingProtoc: boolean;
   readonly onChoose: (app: string) => void;
   readonly onBuild: () => void;
   readonly onRun: () => void;
   readonly onLinkedGears: () => void;
   readonly onStartPostgres: () => void;
+  readonly onInstallProtoc: () => void;
   readonly onOpen: (url: string) => void;
 }
 
@@ -94,10 +97,29 @@ export function RunPanel(props: RunPanelProps): React.ReactElement {
               </span>
             )}
           </div>
+          {verdict.protocMissing === true && <ProtocNote {...props} />}
           {chosen.dbGears.length > 0 && <DatabaseNote {...props} target={chosen} />}
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * protoc is missing. Build stays offered -- a product whose gears compile no
+ * `.proto` does not need it -- but the system gears' SDKs do, and without it the
+ * build stops half-way with prost-build's "Could not find `protoc`".
+ */
+function ProtocNote(props: RunPanelProps): React.ReactElement {
+  return (
+    <p className="gbx-generate-run-protoc" data-run-protoc="missing">
+      No <code>protoc</code> was found: not in <code>PROTOC</code>, not on the PATH. The gears&apos; SDKs compile their{" "}
+      <code>.proto</code> files with it, so most products stop half-way without it.{" "}
+      <button type="button" className="gbx-choice" data-run-install-protoc disabled={props.installingProtoc} onClick={props.onInstallProtoc}>
+        {props.installingProtoc ? "Installing protoc…" : `Install protoc ${PROTOC_VERSION}`}
+      </button>{" "}
+      downloads the official release into Studio&apos;s tools folder, and Build and Run use it.
+    </p>
   );
 }
 

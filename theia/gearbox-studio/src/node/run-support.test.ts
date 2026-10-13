@@ -2,7 +2,19 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { buildToolchain, startLocalPostgres, writeRunConfig, type Exec, type ExecResult } from "./run-support";
+import * as zlib from "zlib";
+
+import {
+  buildToolchain,
+  installProtoc,
+  protocHome,
+  startLocalPostgres,
+  unzip,
+  writeRunConfig,
+  type Exec,
+  type ExecResult,
+  type Fetch,
+} from "./run-support";
 import { LOCAL_POSTGRES } from "../common/run-product";
 
 const ok = (stdout = ""): ExecResult => ({ ok: true, stdout, stderr: "" });
@@ -27,7 +39,7 @@ function fakeExec(answers: Record<string, ExecResult | ExecResult[]>): Exec & { 
 describe("what the machine has for Build and Run", () => {
   it("finds cargo and docker on Linux, where no linker question arises", async () => {
     const found = await buildToolchain(fakeExec({ "cargo --version": ok("cargo 1.97.0 (x)\n"), docker: ok("29.8.1") }), "linux", {});
-    expect(found).toEqual({ cargo: "cargo 1.97.0 (x)", msvcLinker: "n/a", docker: true, pgPasswordSet: false });
+    expect(found).toEqual({ cargo: "cargo 1.97.0 (x)", msvcLinker: "n/a", docker: true, pgPasswordSet: false, protoc: undefined });
   });
 
   it("says cargo is missing when it does not answer", async () => {
@@ -141,5 +153,104 @@ describe("the local Postgres", () => {
       ok: false,
       message: "docker could not start postgres:18-alpine as gbx-pg-shop: Bind for 127.0.0.1:5432 failed: port is already allocated",
     });
+  });
+});
+
+/** A zip archive of `files`, deflated, as a release archive is laid out. */
+function zipOf(files: Record<string, string>): Buffer {
+  const locals: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+  for (const [name, text] of Object.entries(files)) {
+    const data = zlib.deflateRawSync(Buffer.from(text));
+    const nameBytes = Buffer.from(name);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(text.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0);
+    entry.writeUInt16LE(8, 10);
+    entry.writeUInt32LE(data.length, 20);
+    entry.writeUInt32LE(text.length, 24);
+    entry.writeUInt16LE(nameBytes.length, 28);
+    entry.writeUInt32LE(offset, 42);
+    locals.push(local, nameBytes, data);
+    central.push(entry, nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const dir = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(Object.keys(files).length, 8);
+  end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(dir.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, dir, end]);
+}
+
+const answering = (archive: Buffer, status = 200): Fetch => async () => ({
+  ok: status === 200,
+  status,
+  arrayBuffer: async () => archive.buffer.slice(archive.byteOffset, archive.byteOffset + archive.byteLength) as ArrayBuffer,
+});
+
+describe("protoc for the build", () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "gbx-home-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("takes PROTOC when it names a file, then the PATH, then Studio's copy", async () => {
+    const named = path.join(home, "protoc.exe");
+    fs.writeFileSync(named, "");
+    expect((await buildToolchain(fakeExec({}), "win32", { PROTOC: named }, home)).protoc).toBe(named);
+    expect((await buildToolchain(fakeExec({ "protoc --version": ok("libprotoc 36.2") }), "linux", {}, home)).protoc).toBe("protoc");
+    expect((await buildToolchain(fakeExec({}), "linux", { PROTOC: path.join(home, "gone") }, home)).protoc).toBeUndefined();
+    const own = path.join(protocHome(home), "bin", "protoc");
+    fs.mkdirSync(path.dirname(own), { recursive: true });
+    fs.writeFileSync(own, "");
+    expect((await buildToolchain(fakeExec({}), "linux", {}, home)).protoc).toBe(own);
+  });
+
+  it("reads a deflated zip without an unzip program", () => {
+    const files = unzip(zipOf({ "bin/protoc": "binary", "include/google/protobuf/any.proto": "syntax" }));
+    expect(files.get("bin/protoc")?.toString()).toBe("binary");
+    expect(files.get("include/google/protobuf/any.proto")?.toString()).toBe("syntax");
+  });
+
+  it("installs the release with its include folder, and the build then finds it", async () => {
+    const archive = zipOf({ "bin/protoc": "binary", "include/google/protobuf/any.proto": "syntax", "readme.txt": "r" });
+    const result = await installProtoc(answering(archive), "linux", "x64", home);
+    expect(result.ok).toBe(true);
+    expect(result.path).toBe(path.join(protocHome(home), "bin", "protoc"));
+    expect(fs.existsSync(path.join(protocHome(home), "include", "google", "protobuf", "any.proto"))).toBe(true);
+    expect((await buildToolchain(fakeExec({}), "linux", {}, home)).protoc).toBe(result.path);
+  });
+
+  it("refuses an archive entry that would land outside its folder", async () => {
+    const result = await installProtoc(answering(zipOf({ "../evil": "x", "bin/protoc": "b" })), "linux", "x64", home);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("outside");
+    expect(fs.existsSync(path.join(protocHome(home), "bin", "protoc"))).toBe(false);
+  });
+
+  it("says what the download answered, and installs nothing", async () => {
+    const result = await installProtoc(answering(Buffer.alloc(0), 404), "win32", "x64", home);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("404");
+  });
+
+  it("says when there is no release for the machine", async () => {
+    const result = await installProtoc(answering(Buffer.alloc(0)), "freebsd", "x64", home);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("no release");
   });
 });

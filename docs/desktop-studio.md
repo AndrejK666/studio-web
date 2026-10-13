@@ -183,6 +183,10 @@ configuration with a Postgres section whose password is `${GEARS_PG_PASSWORD}`
 container `gbx-pg-<product>` on `127.0.0.1:5432` with the local development
 password `gears`, the value the Run terminal gets when `GEARS_PG_PASSWORD` is
 unset; it holds the product's development data and nothing of Studio's.
+**Install protoc**, offered only when no `protoc` is in `PROTOC` or on the
+PATH, downloads the pinned release from the protobuf project's GitHub releases
+into `~/ConstructorStudio/tools/protoc-<version>/`; the Build and Run terminals
+then get it as `PROTOC`.
 
 One more, when the member opens an Orca agent's terminal: the IDE streams it
 over the Orca runtime's WebSocket, which takes a paired device. A session is
@@ -871,8 +875,10 @@ what is ported and how). What is particular to a member's machine:
   the product that was open before.
 - **Build and Run** after Generate need cargo and, on Windows, the MSVC linker
   of the Visual Studio Build Tools; the panel checks both and links to what is
-  missing. **Start a local Postgres** needs docker. What they write is listed
-  [above](#how-it-connects-and-what-it-never-holds).
+  missing. Most products also need `protoc`, which the system gears' SDKs
+  compile their `.proto` files with; without one the panel keeps Build offered
+  and offers **Install protoc**. **Start a local Postgres** needs docker. What
+  they write is listed [above](#how-it-connects-and-what-it-never-holds).
 
 ## Agent development (Orca)
 

@@ -5,6 +5,9 @@ import {
   dbNameOf,
   linkedGearsCommand,
   plainPath,
+  protocAsset,
+  protocEnv,
+  protocUrl,
   runCommand,
   runTargetsOf,
   toolchainVerdict,
@@ -185,7 +188,7 @@ describe("the database section generate leaves out", () => {
 });
 
 describe("whether Build and Run can be offered", () => {
-  const found = { cargo: "cargo 1.97.0", msvcLinker: "n/a" as const, docker: true, pgPasswordSet: false };
+  const found = { cargo: "cargo 1.97.0", msvcLinker: "n/a" as const, docker: true, pgPasswordSet: false, protoc: "protoc" };
 
   it("offers them with cargo and a linker", () => {
     expect(toolchainVerdict(found)).toEqual({ ready: true });
@@ -204,5 +207,32 @@ describe("whether Build and Run can be offered", () => {
     expect(verdict.ready).toBe(false);
     expect(verdict.reason).toMatch(/link\.exe/);
     expect(verdict.help?.url).toMatch(/visual-cpp-build-tools/);
+  });
+});
+
+describe("protoc", () => {
+  const found = { cargo: "cargo 1.97.0", msvcLinker: "n/a" as const, docker: true, pgPasswordSet: false, protoc: "protoc" };
+
+  it("still offers Build without it, and says it is missing", () => {
+    expect(toolchainVerdict({ ...found, protoc: undefined })).toEqual({ ready: true, protocMissing: true });
+  });
+
+  it("gives the terminals Studio's copy as PROTOC, and nothing for one on the PATH", () => {
+    expect(protocEnv({ ...found, protoc: "/home/me/ConstructorStudio/tools/protoc-36.2/bin/protoc" })).toEqual({
+      PROTOC: "/home/me/ConstructorStudio/tools/protoc-36.2/bin/protoc",
+    });
+    expect(protocEnv(found)).toEqual({});
+    expect(protocEnv({ ...found, protoc: undefined })).toEqual({});
+    expect(protocEnv(undefined)).toEqual({});
+  });
+
+  it("names the release asset for each machine it has one for", () => {
+    expect(protocAsset("win32", "x64")).toBe("protoc-36.2-win64.zip");
+    expect(protocAsset("linux", "arm64")).toBe("protoc-36.2-linux-aarch_64.zip");
+    expect(protocAsset("darwin", "arm64")).toBe("protoc-36.2-osx-aarch_64.zip");
+    expect(protocAsset("freebsd", "x64")).toBeUndefined();
+    expect(protocUrl("protoc-36.2-win64.zip")).toBe(
+      "https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-win64.zip",
+    );
   });
 });
