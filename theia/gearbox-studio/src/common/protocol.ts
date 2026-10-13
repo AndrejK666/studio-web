@@ -39,6 +39,7 @@ import type { InitializeResult } from "./generated/InitializeResult";
 import type { PendingGear } from "./generated/PendingGear";
 import type { ProgressParams } from "./generated/ProgressParams";
 import type { BuildToolchain } from "./run-product";
+import type { DeployInfo } from "./deploy-product";
 
 export const GEARBOX_SERVICE_PATH = "/services/gearbox";
 
@@ -253,6 +254,9 @@ export interface GearboxService {
    * onto its own branch of a shared repository.
    */
   fileOnBranch(branch: string, file: string): Promise<string | undefined>;
+
+  /** Constructor Studio: the branch a file is on, and the checkout its worktree belongs to, if it is in one. */
+  checkoutOfFile(file: string): Promise<{ branch: string; root: string; worktreeOf?: string } | undefined>;
 
   /**
    * Constructor Studio: a directory named `id` holding the git source `url` at
@@ -499,10 +503,23 @@ export interface GearboxService {
    * the generated configuration plus a Postgres section for `dbGears`, and say
    * which configuration Run should use (relative to `outRoot`).
    */
-  writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[] }>;
+  writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[]; defaulted: string[] }>;
 
   /** Constructor Studio: start (or reuse) a local Postgres container and create the databases. */
   startLocalPostgres(product: string, databases: string[]): Promise<{ ok: boolean; message: string }>;
+
+  /**
+   * Constructor Studio: create the missing databases in the Postgres already
+   * answering on the local port, when it is a docker container (another
+   * product's, or one the member started).
+   */
+  createLocalDatabases(databases: string[]): Promise<{ ok: boolean; message: string }>;
+
+  /** Constructor Studio: fetch protoc into Studio's tools folder, for gears whose SDKs compile .proto files. */
+  fetchProtoc(): Promise<{ ok: boolean; message: string }>;
+
+  /** Constructor Studio: what Deploy finds for a generated kubernetes tree -- images, chart, docker/helm/kubectl, kube contexts. */
+  deployInfo(outRoot: string): Promise<DeployInfo>;
 
   /**
    * Tell the engine an editor opened a `.gdl`, and what is in the buffer.

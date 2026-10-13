@@ -34,6 +34,28 @@ pub struct StudioProductError;
 /// `CONNECTION_NOT_OWNED` when its connection is not the organization's
 /// (`cpt-studio-constraint-connector-own-connections`), else 400 with `what`
 /// and the cause.
+/// Where a product description is saved: `(open_pr, onto_base)`. What the
+/// caller asked for, else what the repository's `share_mode` says -- the
+/// same rule the IDE's Share follows, so a desktop opening the project finds
+/// the description on the branch it checks out whenever the project commits
+/// there directly.
+pub(super) fn save_mode(
+    open_pr: Option<bool>,
+    onto_base: Option<bool>,
+    share: Option<crate::project_sources::ShareMode>,
+) -> (bool, bool) {
+    use crate::project_sources::ShareMode;
+    if open_pr.is_some() || onto_base.is_some() {
+        let open_pr = open_pr.unwrap_or(false);
+        return (open_pr, onto_base.unwrap_or(false) && !open_pr);
+    }
+    match share {
+        Some(ShareMode::Branch) => (false, true),
+        Some(ShareMode::PullRequest) => (true, false),
+        None => (false, false),
+    }
+}
+
 pub(super) fn write_problem(what: &str, e: &anyhow::Error) -> CanonicalError {
     use crate::connectors::sdk::ownership::{CONNECTION_NOT_OWNED, NotOwned};
     if let Some(refused) = e.downcast_ref::<NotOwned>() {
@@ -336,13 +358,17 @@ pub struct ProductPreviewRequest {
     pub gears: Vec<String>,
     /// `dev` (embedded), `local` (self-hosted) or `prod` (kubernetes). Default `dev`.
     pub profile: Option<String>,
-    /// Also commit `product.gdl` to the project's gear repo, on a new branch.
+    /// Also commit `product.gdl` to the project's repository. Where, when
+    /// neither `open_pr` nor `onto_base` says: as the project shares into
+    /// that repository (its source's `share_mode`) -- onto the base branch
+    /// for `branch`, onto a `product/…` branch with a pull request for
+    /// `pull_request`, and onto a `product/…` branch for a repository no
+    /// source names.
     pub write: Option<bool>,
-    /// With `write`, open a pull request too.
+    /// With `write`, onto a `product/…` branch with a pull request.
     pub open_pr: Option<bool>,
     /// With `write` and no `open_pr`, commit straight onto the repo's base
-    /// branch instead of a `product/…` branch. For a repository the product
-    /// owns outright; default false, because a connected repo can be shared.
+    /// branch instead of a `product/…` branch.
     pub onto_base: Option<bool>,
     /// How the product configures its gears: gear crate name -> {field: value}.
     /// Written into `product.gdl` and kept with the project's product.
@@ -1158,8 +1184,15 @@ async fn preview_product(
         // by a preview. `onto_base` is for a repository the product owns
         // outright: a session opens the base branch, so there the description
         // is in the IDE the moment "Open in IDE" lands.
-        let open_pr = body.open_pr.unwrap_or(false);
-        let onto_base = body.onto_base.unwrap_or(false) && !open_pr;
+        let share = if body.open_pr.is_none() && body.onto_base.is_none() {
+            product
+                .service
+                .write_share_mode(&ctx, &project_id.to_string())
+                .await
+        } else {
+            None
+        };
+        let (open_pr, onto_base) = save_mode(body.open_pr, body.onto_base, share);
         let branch = (!onto_base).then(|| {
             use sha2::Digest as _;
             let hash = sha2::Sha256::digest(preview.product_gdl.as_bytes());
@@ -1742,6 +1775,43 @@ fn register_legacy_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rout
         .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi)
+}
+
+#[cfg(test)]
+mod save_mode_tests {
+    use super::save_mode;
+    use crate::project_sources::ShareMode;
+
+    #[test]
+    fn the_repository_s_share_mode_decides_when_the_caller_does_not() {
+        assert_eq!(
+            save_mode(None, None, Some(ShareMode::Branch)),
+            (false, true)
+        );
+        assert_eq!(
+            save_mode(None, None, Some(ShareMode::PullRequest)),
+            (true, false)
+        );
+        // A repository no source names: its own branch, as before.
+        assert_eq!(save_mode(None, None, None), (false, false));
+    }
+
+    #[test]
+    fn what_the_caller_asked_for_wins() {
+        assert_eq!(
+            save_mode(Some(true), None, Some(ShareMode::Branch)),
+            (true, false)
+        );
+        assert_eq!(
+            save_mode(None, Some(true), Some(ShareMode::PullRequest)),
+            (false, true)
+        );
+        assert_eq!(save_mode(Some(true), Some(true), None), (true, false));
+        assert_eq!(
+            save_mode(Some(false), None, Some(ShareMode::Branch)),
+            (false, false)
+        );
+    }
 }
 
 #[cfg(test)]

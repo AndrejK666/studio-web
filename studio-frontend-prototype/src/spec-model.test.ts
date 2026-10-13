@@ -5,10 +5,18 @@ import {
   coverageCounts,
   entitiesOf,
   factsByKind,
+  mergeTargets,
   orderFindings,
+  orderProductFindings,
   relatedEntities,
+  ruleLabel,
   sideLabel,
   subjectKey,
+  type GlossaryEntry,
+  type WorkItem,
+  workLabel,
+  workState,
+  type ProductFinding,
   type SpecModelFact,
   type SpecModelFinding,
 } from "./spec-model";
@@ -53,6 +61,71 @@ describe("entitiesOf", () => {
 
   it("leaves out a subject that is only a decision", () => {
     expect(entitiesOf([fact("Use Postgres", "decision")])).toEqual([]);
+  });
+});
+
+describe("the glossary", () => {
+  const entry = (key: string, name: string, extra: Partial<GlossaryEntry> = {}): GlossaryEntry => ({
+    key,
+    name,
+    chosen: false,
+    spellings: [name],
+    aliases: [],
+    facts: 1,
+    documents: 1,
+    ...extra,
+  });
+
+  it("puts an alias's facts under its entry, by the entry's chosen name", () => {
+    const facts = [
+      fact("Tenant", "entity"),
+      fact("Organization", "attribute", "b.md"),
+      fact("Person", "relation", "a.md", { value: "one organization" }),
+    ];
+    const glossary = [
+      entry("tenant", "Workspace", { chosen: true, aliases: [{ key: "organization", name: "Organization" }] }),
+      entry("person", "Person"),
+    ];
+    const all = entitiesOf(facts, glossary);
+    const tenant = all.find((e) => e.key === "tenant")!;
+    expect(tenant.name).toBe("Workspace");
+    expect(tenant.facts).toHaveLength(2);
+    expect(tenant.documents).toBe(2);
+    expect(all.some((e) => e.key === "organization")).toBe(false);
+    // A relation naming the alias reaches the entry.
+    expect(relatedEntities(all.find((e) => e.key === "person")!, all)).toEqual(["tenant"]);
+  });
+
+  it("offers no merge for an entry that has aliases of its own, since an alias of an alias holds nothing", () => {
+    const a = entry("a", "A", { aliases: [{ key: "c", name: "C" }] });
+    const b = entry("b", "B");
+    expect(mergeTargets(a, [a, b])).toEqual([]);
+    expect(mergeTargets(b, [a, b]).map((e) => e.key)).toEqual(["a"]);
+  });
+});
+
+describe("work", () => {
+  const w = (extra: Partial<WorkItem>): WorkItem => ({
+    kind: "issue",
+    number: 12,
+    title: "t",
+    url: null,
+    state: "open",
+    merged: false,
+    sha: null,
+    ...extra,
+  });
+
+  it("names an issue, a pull request and a commit the way a list reads them", () => {
+    expect(workLabel(w({}))).toBe("Issue #12");
+    expect(workLabel(w({ kind: "pull_request", number: 7 }))).toBe("PR #7");
+    expect(workLabel(w({ kind: "commit", number: null, sha: "abc1234" }))).toBe("abc1234");
+  });
+
+  it("says merged before closed, and a commit is committed", () => {
+    expect(workState(w({ kind: "pull_request", state: "closed", merged: true }))).toBe("merged");
+    expect(workState(w({ state: "closed" }))).toBe("closed");
+    expect(workState(w({ kind: "commit" }))).toBe("committed");
   });
 });
 
@@ -130,5 +203,23 @@ describe("coverage and progress", () => {
     expect(sideLabel({ path: "a.md", line_start: 3, line_end: 5 })).toBe("a.md:3-5");
     expect(sideLabel({ path: "a.md", line_start: 3, line_end: 3 })).toBe("a.md:3");
     expect(sideLabel({ path: "a.md" })).toBe("a.md");
+  });
+});
+
+describe("product findings", () => {
+  const finding = (capability: string, severity: ProductFinding["severity"]): ProductFinding => ({
+    fingerprint: capability,
+    rule: "product.missing",
+    severity,
+    capability,
+    message: "",
+    sides: [],
+    candidates: [],
+  });
+
+  it("come high first, then by capability, and read as words", () => {
+    const ordered = orderProductFindings([finding("tenancy", "medium"), finding("storage", "high"), finding("auth", "high")]);
+    expect(ordered.map((f) => f.capability)).toEqual(["auth", "storage", "tenancy"]);
+    expect(ruleLabel("product.decided_not_built")).toBe("Decided, not built");
   });
 });

@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::entity::{
     analysis, capability, doc_type, document, document_binding, spec_decision, spec_extraction,
-    spec_judgement, stage,
+    spec_judgement, spec_term, stage,
 };
 
 /// UUIDv5 namespace for a document type's deterministic id — makes `(tenant,
@@ -73,6 +73,16 @@ pub fn spec_decision_id(project_id: Uuid, fingerprint: &str) -> Uuid {
     Uuid::new_v5(
         &SPEC_DECISION_NS,
         format!("{project_id}\u{1f}{fingerprint}").as_bytes(),
+    )
+}
+
+/// And for a member's decision on one glossary entry.
+const SPEC_TERM_NS: Uuid = Uuid::from_u128(0x91c3_5e7a_2b04_4d18_a6f9_0c2e_87d1_b453);
+
+pub fn spec_term_id(project_id: Uuid, term_key: &str) -> Uuid {
+    Uuid::new_v5(
+        &SPEC_TERM_NS,
+        format!("{project_id}\u{1f}{term_key}").as_bytes(),
     )
 }
 
@@ -400,6 +410,42 @@ impl DocumentsRepo {
                     spec_judgement::Column::CreatedAt,
                 ])?;
         spec_judgement::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Every decision on a project's glossary.
+    pub async fn list_spec_terms(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<spec_term::Model>> {
+        let conn = self.db.conn()?;
+        let rows = spec_term::Entity::find()
+            .filter(spec_term::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
+    /// Record a decision on a glossary entry; a later one replaces it.
+    pub async fn put_spec_term(&self, model: spec_term::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let workspace_id = model.tenant_id;
+        let on_conflict = SecureOnConflict::<spec_term::Entity>::columns([spec_term::Column::Id])
+            .update_columns([
+            spec_term::Column::Name,
+            spec_term::Column::AliasOf,
+            spec_term::Column::DecidedBy,
+            spec_term::Column::DecidedAt,
+        ])?;
+        spec_term::Entity::insert(model.into_active_model())
             .secure()
             .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
             .on_conflict(on_conflict)

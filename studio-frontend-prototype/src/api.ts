@@ -1,4 +1,4 @@
-import type { SpecModel, SpecModelBuild, SpecModelFinding } from "./spec-model";
+import type { GlossaryEntry, ProductFinding, SpecModel, SpecModelBuild, SpecModelFinding, WorkLinks } from "./spec-model";
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
@@ -2762,6 +2762,39 @@ export const api = {
       `/studio-documents/v1/spec-model/findings?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
+  /** What the project's documents ask for that its code is not made of
+   *  (docs/project-and-product.md). `repo` is null when there is no code to
+   *  compare. */
+  productFindings: (token: string, projectId: string) =>
+    request<{ repo: string | null; items: ProductFinding[]; total: number }>(
+      `/studio-spec-mapping/v1/findings?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** Which issues, pull requests and commits name an identifier the
+   *  project's documents define (docs/project-and-product.md, "The links"). */
+  workLinks: (token: string, projectId: string) =>
+    request<WorkLinks>(`/studio-documents/v1/spec-model/work?project_id=${encodeURIComponent(projectId)}`, token),
+  /** The project's glossary: what its documents name, under the names
+   *  members chose, with the aliases they merged. */
+  glossary: (token: string, projectId: string) =>
+    request<{ items: GlossaryEntry[]; total: number }>(
+      `/studio-documents/v1/spec-model/glossary?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** A member's decision on one glossary entry. It replaces the entry's last
+   *  one whole, so both fields go every time; null in both puts the entry back
+   *  as the documents propose it. */
+  decideGlossaryEntry: (
+    token: string,
+    projectId: string,
+    key: string,
+    decision: { name: string | null; alias_of: string | null },
+  ) =>
+    request<{ key: string; name: string | null; alias_of: string | null }>(
+      "/studio-documents/v1/spec-model/glossary/decisions",
+      token,
+      { method: "POST", body: JSON.stringify({ project_id: projectId, key, ...decision }) },
+    ),
   /** A member's ✓ (confirmed) or ✗ (dismissed) on one finding. */
   decideSpecModelFinding: (
     token: string,
@@ -4525,8 +4558,9 @@ export const api = {
   gearboxStatus: (token: string) =>
     request<GearboxStatus>(`/studio-product/v1/gearbox`, token),
   /** Compose a product.gdl from picked gears and resolve it with the Gearbox
-   *  engine. `write` also commits it to the project's gear repo — onto the
-   *  base branch, or onto a new branch with a pull request when `open_pr`. */
+   *  engine. `write` also commits it to the project's repository -- where its
+   *  source's share mode says (onto the base branch, or a `product/…` branch
+   *  with a pull request) unless `open_pr` / `onto_base` say otherwise. */
   previewProduct: (
     token: string,
     projectId: string,
@@ -4537,9 +4571,9 @@ export const api = {
       profile?: string;
       write?: boolean;
       open_pr?: boolean;
-      /** Commit onto the base branch; only for a repository the product owns. */
       /** The product's configuration of its gears (see GearConfig). */
       config?: GearConfig;
+      /** Commit onto the base branch, whatever the share mode. */
       onto_base?: boolean;
     },
   ) =>

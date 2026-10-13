@@ -1304,20 +1304,12 @@ function ProductCard({
   /** A fix was applied: preview again once the product has changed. */
   const recheck = useRef(false);
   const { gearbox, picks, profile, record } = product;
-  const [asPr, setAsPr] = useState(false);
   const [busy, setBusy] = useState<"preview" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ProductPreview | null>(null);
-  // A product project owns the repository its wizard created, so saving goes
-  // onto the base branch the IDE opens. Any other project's gear repo may be
-  // shared, and gets a `product/…` branch instead.
-  const [ownsRepo, setOwnsRepo] = useState(false);
-  useEffect(() => {
-    api
-      .projectConfig(token, projectId)
-      .then((c) => setOwnsRepo(c?.kind === "product"))
-      .catch(() => setOwnsRepo(false));
-  }, [token, projectId]);
+  // Where a save lands is the repository's: the backend follows its source's
+  // share mode (Sources tab) -- straight onto the branch the desktop checks
+  // out, or onto a `product/…` branch with a pull request.
   // The picks and profile the shown preview answers. Anything else and the
   // preview is about a different product, which the screen has to say.
   const [asked, setAsked] = useState<string | null>(null);
@@ -1337,7 +1329,7 @@ function ProductCard({
         gears: picks,
         profile,
         config: product.config,
-        ...(write ? { write: true, open_pr: asPr, onto_base: ownsRepo } : {}),
+        ...(write ? { write: true } : {}),
       });
       setPreview(result);
       setAsked(question);
@@ -1819,10 +1811,6 @@ function ProductCard({
               <button className="ghost" disabled={busy !== null || stale} onClick={() => void run(true)}>
                 {busy === "save" ? "Saving…" : "Save product.gdl to the repository"}
               </button>
-              <label style={{ fontSize: 12 }}>
-                <input type="checkbox" checked={asPr} onChange={(e) => setAsPr(e.target.checked)} /> as a pull
-                request
-              </label>
             </>
           )}
           {record?.written && (
@@ -1851,9 +1839,9 @@ function ProductCard({
               <code>{record.written.commit_sha.slice(0, 7)}</code>.
             </>
           )}{" "}
-          {ownsRepo
-            ? "The IDE opens the repository's sources from the Sources tab; if the project repository is not there yet, add it there first."
-            : "This project's gear repository may be shared, so the description went onto its own branch; the IDE shows it once that branch is merged or checked out."}
+          {record.written.branch.startsWith("product/")
+            ? "The repository takes changes as pull requests (Sources tab), so the description is on its own branch; the desktop Studio switches to it when it opens the product."
+            : "The desktop Studio opens it on the branch it checks out."}
         </p>
       )}
     </section>

@@ -1644,6 +1644,58 @@ impl DocumentsService {
             .await
     }
 
+    /// Every member decision on the project's glossary.
+    pub async fn spec_terms(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::entity::spec_term::Model>> {
+        self.repo.list_spec_terms(workspace_id, project_id).await
+    }
+
+    /// The project's glossary decisions, as the glossary reads them.
+    pub async fn glossary_choices(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::spec_model::glossary::Choice>> {
+        Ok(self
+            .spec_terms(workspace_id, project_id)
+            .await?
+            .into_iter()
+            .map(|t| super::spec_model::glossary::Choice {
+                key: t.term_key,
+                name: t.name,
+                alias_of: t.alias_of,
+            })
+            .collect())
+    }
+
+    /// Record a member's decision on one glossary entry: the name it goes by
+    /// and the entry it is another name of, either or neither.
+    pub async fn put_spec_term(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        term_key: &str,
+        name: Option<String>,
+        alias_of: Option<String>,
+    ) -> Result<super::entity::spec_term::Model> {
+        let model = super::entity::spec_term::Model {
+            id: super::repo::spec_term_id(project_id, term_key),
+            tenant_id: workspace_id,
+            project_id,
+            term_key: term_key.to_string(),
+            name,
+            alias_of,
+            decided_by: ctx.subject_id(),
+            decided_at: OffsetDateTime::now_utc(),
+        };
+        self.repo.put_spec_term(model.clone()).await?;
+        Ok(model)
+    }
+
     /// Every member decision on the project's spec-model findings.
     pub async fn spec_decisions(
         &self,

@@ -8,6 +8,8 @@
 // be: the per-machine copy "Bring the gears here" makes, under
 // `~/ConstructorStudio/corpus`. So the wizard offers that.
 
+import type { Location } from "../../common/generated/Location";
+import type { SourceDecl } from "../../common/generated/SourceDecl";
 import type { CorpusOrigin } from "../../common/protocol";
 
 /** The corpus copy on this machine, and the source id the engine names it by. */
@@ -88,4 +90,54 @@ export function corpusOffer(input: {
  */
 export function corpusSourceDecl(copy: CorpusCopy): { id: string; at: string } {
   return { id: copy.id, at: copy.path.replace(/\\/g, "/") };
+}
+
+/** A product source that reads an older copy of the corpus than the one Studio has. */
+export interface StaleCorpusSource {
+  readonly id: string;
+  /** The path the product declares. */
+  readonly at: string;
+  /** The copy Studio adopted for the same repository and source id. */
+  readonly current: string;
+  /** Twelve-hex commit prefixes, as the cache names its folders. */
+  readonly declaredCommit: string;
+  readonly currentCommit: string;
+  readonly declaredAt?: Location | null;
+}
+
+/** `<cache>/<host__owner__repo>/<commit12>/<id>`, the shared corpus cache's layout. */
+function cachedCopyOf(at: string): { repo: string; commit: string; id: string } | undefined {
+  const m = /\/corpus\/([^/]+)\/([0-9a-f]{12})\/([^/]+)\/?$/i.exec(at.replace(/\\/g, "/"));
+  return m ? { repo: (m[1] ?? "").toLowerCase(), commit: (m[2] ?? "").toLowerCase(), id: m[3] ?? "" } : undefined;
+}
+
+/**
+ * The first `path(...)` source that names a copy in the corpus cache at another
+ * commit than the copy Studio adopted for the same repository -- what New
+ * Product writes, and what an engine update leaves behind: a product made
+ * against the corpus of September kept reading it after the engine required
+ * descriptions only the corpus of October has, and the catalogue showed no gear
+ * at all. `undefined` when there is nothing to say.
+ */
+export function staleCorpusSource(
+  sources: Readonly<Record<string, SourceDecl>> | undefined,
+  copy: CorpusCopy | undefined,
+): StaleCorpusSource | undefined {
+  if (copy === undefined || sources === undefined) return undefined;
+  const now = cachedCopyOf(copy.path);
+  if (now === undefined) return undefined;
+  for (const [id, source] of Object.entries(sources)) {
+    if (source.kind !== "path") continue;
+    const then = cachedCopyOf(source.at);
+    if (then === undefined || then.repo !== now.repo || then.id !== now.id || then.commit === now.commit) continue;
+    return {
+      id,
+      at: source.at,
+      current: copy.path.replace(/\\/g, "/"),
+      declaredCommit: then.commit,
+      currentCommit: now.commit,
+      declaredAt: source.declared_at,
+    };
+  }
+  return undefined;
 }

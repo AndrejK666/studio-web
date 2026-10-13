@@ -297,6 +297,9 @@ Under `/studio-documents/v1`, beside the gear's other routes:
 | `GET` | `/spec-model?project_id=` | The assembled model: entities with their facts and sources, requirements, constraints, decisions; whether it is stale and which documents are not extracted yet |
 | `GET` | `/spec-model/findings?project_id=` | The findings with their sides, fix and decision, filterable by `rule` and `status` |
 | `POST` | `/spec-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
+| `GET` | `/spec-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
+| `POST` | `/spec-model/glossary/decisions` | Name an entry, or make it an alias of another; `201` with the decision |
+| `GET` | `/spec-model/work?project_id=` | The identifiers the documents define with a label, with the synced issues, pull requests and commits that name them ([the links](project-and-product.md#the-links)) |
 
 Every list answers `{items, total}`. A project the caller cannot reach answers
 404.
@@ -311,6 +314,9 @@ Every list answers `{items, total}`. A project the caller cannot reach answers
   `finding jsonb`, `created_at`; unique on the first four.
 - `studio_spec_model_decisions`: `project_id`, `fingerprint`, `decision`
   (`confirmed` or `dismissed`), `decided_by`, `decided_at`, `revisions`.
+- `studio_spec_model_terms`: `project_id`, `term_key` (a subject folded),
+  `name` (the chosen name, or null), `alias_of` (another entry's key, or
+  null), `decided_by`, `decided_at`; unique on the first two.
 
 The assembled model is not stored: it is computed from the extractions of the
 documents' current revisions, which is cheap and never stale.
@@ -412,7 +418,8 @@ a second from a checkout on a volume; from a Windows bind mount, reading the
 
 - Extraction on sync with an organization's key, once an organization can name
   a key for background work.
-- `formula.mismatch` and a per-project alias table.
+- `formula.mismatch`, now that the glossary is the per-project alias table it
+  waited for ([the project's words](project-and-product.md#the-projects-words)).
 - Edits applied from the tab (today a fix is a proposal, applied in the editor).
 - The model as input to the spec-to-gears mapping
   ([studio-spec-mapping](design/studio-spec-mapping.md)): entities and

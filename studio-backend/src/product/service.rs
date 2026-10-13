@@ -344,6 +344,26 @@ impl ProductService {
         target.ok_or_else(no_repo)
     }
 
+    /// How the project shares into the repository a product description is
+    /// written to: the `share_mode` of the project source that is that
+    /// repository. `None` when no source is -- a gear repository connected
+    /// beside the sources, or no repository at all.
+    pub async fn write_share_mode(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> Option<crate::project_sources::ShareMode> {
+        let target = self.write_target(ctx, project_id).await.ok()?;
+        let am = self.account_management.get()?;
+        let project = Uuid::parse_str(project_id).ok()?;
+        crate::project_sources::read(am.as_ref(), ctx, project)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .find(|s| s.full_path.trim().eq_ignore_ascii_case(target.repo.trim()))
+            .map(|s| s.share_mode)
+    }
+
     /// The gear repository connected to the project, as a write target.
     async fn project_gear_repo_target(
         &self,

@@ -59,7 +59,7 @@ the ClientHub.
 
 | Layer | Responsibility | Technology |
 |-------|---------------|------------|
-| REST | The plan, a project's needs, conformance, decisions | `OperationBuilder` routes in `rest.rs` |
+| REST | The plan, a project's needs, conformance and its findings, decisions | `OperationBuilder` routes in `rest.rs` |
 | Rules | Reading a specification; matching, ranking, profile | `reading.rs`, `plan.rs`, pure functions |
 | Ports | The data, read from the gears that own it | `SpecNeeds`, `ComponentCatalog`, `MappingDecisionStore` on the ClientHub |
 
@@ -261,10 +261,11 @@ changes.
 | `GET` | `/capabilities?project_id=` | What the project's documents need, with the documents saying so | unstable |
 | `GET` | `/requirements?project_id=` | The project's non-functional statements | unstable |
 | `POST` | `/conformance` | For a project's capabilities, which components its code depends on, what is unaccounted for, and what the engine says | unstable |
+| `GET` | `/findings?project_id=` | The same comparison read on the server, as findings on the documents that ask: `product.missing` and `product.decided_not_built` ([project and product](../project-and-product.md)) | unstable |
 | `POST` | `/decisions` | Confirm or reject one mapping; `201` with the decision | unstable |
 | `GET` | `/decisions?project_id=` | The project's decisions, newest first | unstable |
 
-The paths are under `/studio-spec-mapping/v1`. The plan and conformance read
+The paths are under `/studio-spec-mapping/v1`. The plan, conformance and findings read
 the catalogue of `?organization_id=` when one is named. Every list answers
 `{items, total}` and is read whole.
 

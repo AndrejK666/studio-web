@@ -574,9 +574,9 @@ export const SURFACES: Surface[] = [
     id: "project-domain-model",
     area: "project",
     title: "Domain model",
-    does: "The application the specs describe, read out of them fact by fact, and where they disagree about it.",
+    does: "The application the specs describe, read out of them fact by fact, where they disagree about it, and what they ask for that the code is not made of.",
     components: ["SpecModelTab"],
-    gears: ["studio-documents"],
+    gears: ["studio-documents", "studio-spec-mapping"],
   },
   {
     id: "project-components",
@@ -585,7 +585,6 @@ export const SURFACES: Surface[] = [
     does: "Pick the gears a product is built from, compare the spec with the code, install kits.",
     components: ["ProjectKits", "SuggestedComponents", "ProductCard", "GearConfigForm", "ProjectCandidate"],
     gears: [
-      "account-management",
       "studio-components-catalog",
       "studio-documents",
       "studio-kits",
