@@ -2999,6 +2999,142 @@ async fn list_spec_requirements(
     }))
 }
 
+/// How many other projects one `related` read compares against: each is a
+/// read of its documents from the checkout.
+const RELATED_PROJECTS_MAX: usize = 40;
+
+/// One requirement elsewhere in the organization that reads like one here.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RelatedRequirementDto {
+    /// The requirement in this project.
+    pub id: String,
+    pub defined_in: SpecModelSideDto,
+    pub text: String,
+    /// The other project.
+    pub other_project_id: String,
+    pub other_project_name: String,
+    pub other_workspace_name: String,
+    pub other_id: String,
+    pub other_defined_in: SpecModelSideDto,
+    pub other_text: String,
+    /// The share of meaningful words the two have in common, 0–1.
+    pub score: f64,
+    /// `same`, `overlap`, or `opposite` (one negates what the other requires).
+    pub relation: String,
+    pub shared: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RelatedRequirementListDto {
+    pub items: Vec<RelatedRequirementDto>,
+    pub total: u32,
+    /// Other projects compared.
+    pub projects: u32,
+    /// True when the organization had more projects than one read compares.
+    pub truncated: bool,
+}
+
+fn side_at(path: &str, line: usize) -> SpecModelSideDto {
+    let line = u32::try_from(line).ok();
+    SpecModelSideDto {
+        path: path.to_string(),
+        line_start: line,
+        line_end: line,
+        quote: None,
+    }
+}
+
+/// The requirements of the organization's other projects that read like
+/// this project's, or like their opposite.
+async fn list_related_requirements(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<RelatedRequirementListDto>> {
+    use super::spec_model::related::{Elsewhere, related};
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let here = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?
+        .requirements();
+    let organization = service
+        .parent_of(&ctx, workspace_id)
+        .await
+        .map_err(internal)?;
+    let projects = match (
+        organization,
+        quality
+            .hub
+            .get::<dyn crate::organizations::port::ProjectsOf>()
+            .ok(),
+    ) {
+        (Some(org), Some(tree)) => tree.projects_of(&ctx, org).await.map_err(internal)?,
+        _ => Vec::new(),
+    };
+    let others: Vec<_> = projects.into_iter().filter(|p| p.id != project_id).collect();
+    let truncated = others.len() > RELATED_PROJECTS_MAX;
+    let mut elsewhere = Vec::new();
+    let mut names = std::collections::BTreeMap::new();
+    let mut compared = 0usize;
+    for other in others.into_iter().take(RELATED_PROJECTS_MAX) {
+        // A project the caller cannot read is not compared, and not an error.
+        if service.authorize(&ctx, other.id).await.is_err() {
+            continue;
+        }
+        let Ok(sources) = service
+            .spec_model_sources(&ctx, other.workspace_id, other.id, reader.as_ref())
+            .await
+        else {
+            continue;
+        };
+        compared += 1;
+        names.insert(
+            other.id.to_string(),
+            (other.name.clone(), other.workspace_name.clone()),
+        );
+        elsewhere.extend(sources.requirements().into_iter().map(|r| Elsewhere {
+            project_id: other.id.to_string(),
+            requirement: r,
+        }));
+    }
+    let items: Vec<RelatedRequirementDto> = related(&here, &elsewhere)
+        .into_iter()
+        .map(|m| {
+            let (name, ws) = names
+                .get(&m.there.project_id)
+                .cloned()
+                .unwrap_or_default();
+            RelatedRequirementDto {
+                defined_in: side_at(&m.here.path, m.here.line),
+                id: m.here.id,
+                text: m.here.text,
+                other_defined_in: side_at(&m.there.requirement.path, m.there.requirement.line),
+                other_project_id: m.there.project_id,
+                other_project_name: name,
+                other_workspace_name: ws,
+                other_id: m.there.requirement.id,
+                other_text: m.there.requirement.text,
+                score: (m.score * 100.0).round() / 100.0,
+                relation: m.relation.as_str().to_string(),
+                shared: m.shared,
+            }
+        })
+        .collect();
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    Ok(Json(RelatedRequirementListDto {
+        total: count(items.len()),
+        items,
+        projects: count(compared),
+        truncated,
+    }))
+}
+
 /// The longest key or name a glossary decision takes: a subject is a few
 /// words, never a passage.
 const GLOSSARY_TEXT_MAX: usize = 200;
@@ -4608,6 +4744,34 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "The suggestions",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/related")
+        .operation_id("studio_documents.list_related_requirements")
+        .summary("Requirements of other projects that say the same as this project's, or the opposite")
+        .description(
+            "Compares every requirement this project's documents define with those of the \
+             organization's other projects the caller can read (at most 40 a call): pairs that \
+             share most of their meaningful words, as `same` or `overlap`, and `opposite` where \
+             one negates what the other requires. Candidates for a person to read, never a \
+             verdict: nothing is stored or raised (docs/spec-domain-model.md, \"Across \
+             projects\").",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose requirements to compare")
+        .handler(list_related_requirements)
+        .json_response_with_schema::<RelatedRequirementListDto>(
+            openapi,
+            StatusCode::OK,
+            "The pairs",
         )
         .error_400(openapi)
         .error_401(openapi)

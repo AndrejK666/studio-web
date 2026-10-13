@@ -7,6 +7,7 @@ import type {
   SpecModel,
   SpecModelBuild,
   SpecModelFinding,
+  RelatedRequirements,
   SpecRequirements,
   WorkLinks,
 } from "./spec-model";
@@ -2782,6 +2783,13 @@ export const api = {
   productFindings: (token: string, projectId: string) =>
     request<{ repo: string | null; items: ProductFinding[]; total: number }>(
       `/studio-spec-mapping/v1/findings?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** Requirements of the organization's other projects that read like this
+   *  project's, or like their opposite. */
+  relatedRequirements: (token: string, projectId: string) =>
+    request<RelatedRequirements>(
+      `/studio-documents/v1/spec-model/related?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
   /** Every requirement the project's documents define, with the basis its

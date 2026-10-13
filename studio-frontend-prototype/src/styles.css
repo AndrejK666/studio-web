@@ -2256,3 +2256,6 @@ ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
 /* Done / snooze on an inbox item (waiting-on-me-view.tsx). */
 .wo-marks { display: inline-flex; gap: 8px; margin-left: 8px; font-size: 12px; white-space: nowrap; }
 @media (max-width: 640px) { .wo-marks { margin-left: 0; } }
+.sm-rel-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 720px) { .sm-rel-pair { grid-template-columns: 1fr; } }
+.sm-rel-opposite { background: var(--warning-muted, var(--muted)); }

@@ -192,6 +192,43 @@ export function basisSummary(read: SpecRequirements): string {
   return parts.join("; ") + ".";
 }
 
+/** A requirement of another project that reads like one of this project's
+ *  (docs/spec-domain-model.md, "Across projects"). */
+export interface RelatedRequirement {
+  id: string;
+  defined_in: SpecModelSide;
+  text: string;
+  other_project_id: string;
+  other_project_name: string;
+  other_workspace_name: string;
+  other_id: string;
+  other_defined_in: SpecModelSide;
+  other_text: string;
+  score: number;
+  relation: "same" | "overlap" | "opposite";
+  shared: string[];
+}
+
+export interface RelatedRequirements {
+  items: RelatedRequirement[];
+  total: number;
+  projects: number;
+  truncated: boolean;
+}
+
+export const RELATION_LABEL: Record<RelatedRequirement["relation"], string> = {
+  opposite: "Says the opposite",
+  same: "Same requirement",
+  overlap: "Overlaps",
+};
+
+/** Opposites first (they are the ones to settle), then the same, then
+ *  overlaps; strongest first within each. */
+export function orderRelated(items: RelatedRequirement[]): RelatedRequirement[] {
+  const rank = { opposite: 0, same: 1, overlap: 2 } as const;
+  return [...items].sort((a, b) => rank[a.relation] - rank[b.relation] || b.score - a.score);
+}
+
 /** How a piece of work is named in a list: `#12`, `PR #7`, or a commit's sha. */
 export function workLabel(w: WorkItem): string {
   if (w.kind === "commit") return w.sha ?? "commit";

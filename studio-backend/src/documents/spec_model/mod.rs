@@ -16,6 +16,7 @@ pub(crate) mod glossary;
 pub(crate) mod index;
 pub(crate) mod judge;
 pub(crate) mod record;
+pub(crate) mod related;
 pub(crate) mod requirements;
 pub(crate) mod rules;
 pub(crate) mod work;

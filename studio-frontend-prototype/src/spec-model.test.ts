@@ -7,6 +7,7 @@ import {
   entitiesOf,
   factsByKind,
   filterRequirements,
+  orderRelated,
   mergeTargets,
   orderFindings,
   orderProductFindings,
@@ -23,7 +24,7 @@ import {
   type SpecModelFact,
   type SpecModelFinding,
 } from "./spec-model";
-import type { SpecRequirement } from "./spec-model";
+import type { RelatedRequirement, SpecRequirement } from "./spec-model";
 
 function fact(subject: string, kind: SpecModelFact["kind"], path = "a.md", extra: Partial<SpecModelFact> = {}): SpecModelFact {
   return {
@@ -274,5 +275,27 @@ describe("requirements and their basis", () => {
     expect(basisSummary({ items, total: 4, by_basis: { cited: 1, stated: 2, open_question: 1 }, synced: true })).toBe(
       "1 of 4 cite a source; 1 open question; 2 state no basis.",
     );
+  });
+});
+
+describe("requirements elsewhere", () => {
+  const side = { path: "prd.md", line_start: 1, line_end: 1, quote: null };
+  const rel = (id: string, relation: RelatedRequirement["relation"], score: number): RelatedRequirement => ({
+    id,
+    defined_in: side,
+    text: "",
+    other_project_id: "p",
+    other_project_name: "P",
+    other_workspace_name: "W",
+    other_id: "x",
+    other_defined_in: side,
+    other_text: "",
+    score,
+    relation,
+    shared: [],
+  });
+  it("puts opposites first, then the same, then overlaps, strongest first", () => {
+    const got = orderRelated([rel("a", "overlap", 0.6), rel("b", "same", 0.8), rel("c", "opposite", 0.5), rel("d", "same", 0.9)]);
+    expect(got.map((r) => r.id)).toEqual(["c", "d", "b", "a"]);
   });
 });

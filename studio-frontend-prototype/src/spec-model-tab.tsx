@@ -26,6 +26,8 @@ import {
   mergeTargets,
   orderFindings,
   orderProductFindings,
+  orderRelated,
+  RELATION_LABEL,
   relatedEntities,
   requirementKinds,
   ruleLabel,
@@ -34,6 +36,7 @@ import {
   type GlossaryEntry,
   type ProductFinding,
   type RequirementFilter,
+  type RelatedRequirements,
   type SpecModel,
   type SpecModelFact,
   type SpecModelFinding,
@@ -44,7 +47,7 @@ import {
   workState,
 } from "./spec-model";
 
-type View = "problems" | "requirements" | "entities" | "glossary" | "work" | "product" | "coverage";
+type View = "problems" | "requirements" | "elsewhere" | "entities" | "glossary" | "work" | "product" | "coverage";
 
 /** The product findings as read, or why they could not be. */
 type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
@@ -74,6 +77,7 @@ export function SpecModelTab({
   const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
   const [work, setWork] = useState<WorkLinks | { error: string } | null>(null);
   const [requirements, setRequirements] = useState<SpecRequirements | { error: string } | null>(null);
+  const [related, setRelated] = useState<RelatedRequirements | { error: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -134,6 +138,19 @@ export function SpecModelTab({
       live = false;
     };
   }, [token, projectId]);
+
+  // Read only when the view is opened: it reads every other project's documents.
+  useEffect(() => {
+    if (view !== "elsewhere" || related !== null) return;
+    let live = true;
+    api
+      .relatedRequirements(token, projectId)
+      .then((r) => live && setRelated(r))
+      .catch((e: unknown) => live && setRelated({ error: message(e) }));
+    return () => {
+      live = false;
+    };
+  }, [view, related, token, projectId]);
 
   // While a build runs, read again until it stops: the build is in the
   // backend's process, and nothing pushes its progress.
@@ -198,6 +215,13 @@ export function SpecModelTab({
             label="Requirements"
             count={requirements && "items" in requirements ? requirements.total : 0}
           />
+          <ViewChip
+            id="elsewhere"
+            view={view}
+            setView={setView}
+            label="Elsewhere"
+            count={related && "items" in related ? related.total : 0}
+          />
           <ViewChip id="entities" view={view} setView={setView} label="Entities" count={entities.length} />
           <ViewChip id="glossary" view={view} setView={setView} label="Glossary" count={glossary.length} />
           <ViewChip id="work" view={view} setView={setView} label="Work" count={work && "items" in work ? work.total : 0} />
@@ -236,6 +260,7 @@ export function SpecModelTab({
         <Problems findings={ordered} onDecide={decide} onOpenFile={onOpenFile} built={model.facts.length > 0} />
       )}
       {view === "requirements" && <Requirements read={requirements} onOpenFile={onOpenFile} />}
+      {view === "elsewhere" && <Elsewhere read={related} onOpenFile={onOpenFile} />}
       {model && view === "entities" && <Entities entities={entities} onOpenFile={onOpenFile} />}
       {model && view === "glossary" && <Glossary entries={glossary} onDecide={decideTerm} />}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
@@ -637,6 +662,65 @@ function Requirements({
         ))}
       </ul>
       {shown.length === 0 && <div className="empty">No requirement matches the filter.</div>}
+    </>
+  );
+}
+
+/** What other projects of the organization require that reads like this
+ *  project's requirements: the same, overlapping, or the opposite. A list of
+ *  candidates to read side by side; nothing is decided here. */
+function Elsewhere({
+  read,
+  onOpenFile,
+}: {
+  read: RelatedRequirements | { error: string } | null;
+  onOpenFile?: (path: string) => void;
+}) {
+  if (read === null) return <div className="empty">Comparing with the organization&apos;s other projects…</div>;
+  if ("error" in read) return <div className="error">{read.error}</div>;
+  if (read.items.length === 0) {
+    return (
+      <div className="empty">
+        {read.projects === 0
+          ? "There is no other project in this organization you can read, so there is nothing to compare with."
+          : `No requirement of the ${read.projects} other project${read.projects === 1 ? "" : "s"} reads like one of this project's.`}
+      </div>
+    );
+  }
+  return (
+    <>
+      <p className="hint">
+        Compared with {read.projects} other project{read.projects === 1 ? "" : "s"}
+        {read.truncated ? " (the first 40)" : ""}, by the words two statements share. Read both before deciding
+        anything: a pair here is a question, not a finding.
+      </p>
+      <ul className="rows sm-work">
+        {orderRelated(read.items).map((r, i) => (
+          <li key={i} className="sm-work-row">
+            <div className="sm-term-head">
+              <span className={`sm-status sm-rel-${r.relation}`}>{RELATION_LABEL[r.relation]}</span>
+              <span className="sm-status">{Math.round(r.score * 100)}%</span>
+            </div>
+            <div className="sm-rel-pair">
+              <div>
+                <code>{r.id}</code> <SideLink side={r.defined_in} onOpenFile={onOpenFile} />
+                <div className="sm-work-title">{r.text}</div>
+              </div>
+              <div>
+                <code>{r.other_id}</code>{" "}
+                <span className="sm-status">
+                  {r.other_workspace_name} / {r.other_project_name}
+                </span>{" "}
+                <span className="sm-work-title">
+                  {r.other_defined_in.path}:{r.other_defined_in.line_start}
+                </span>
+                <div className="sm-work-title">{r.other_text}</div>
+              </div>
+            </div>
+            <div className="sm-req-cites">Shared: {r.shared.join(", ")}</div>
+          </li>
+        ))}
+      </ul>
     </>
   );
 }
