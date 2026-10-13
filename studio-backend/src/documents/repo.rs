@@ -16,7 +16,7 @@ use toolkit_security::AccessScope;
 use uuid::Uuid;
 
 use super::entity::{
-    analysis, approval, capability, doc_type, document, document_binding, review_request,
+    analysis, approval, capability, decision, doc_type, document, document_binding, review_request,
     spec_decision, spec_extraction, spec_judgement, spec_term, stage,
 };
 
@@ -607,6 +607,35 @@ impl DocumentsRepo {
             .secure()
             .scope_with(&AccessScope::for_tenant(workspace_id))
             .order_by(approval::Column::DecidedAt, Order::Asc)
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
+    /// Record a decision. Insert only.
+    pub async fn insert_decision(&self, model: decision::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let scope = AccessScope::for_tenant(model.tenant_id);
+        decision::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&scope)?
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// A project's decisions, newest first.
+    pub async fn list_decisions(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<decision::Model>> {
+        let conn = self.db.conn()?;
+        let rows = decision::Entity::find()
+            .filter(decision::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .order_by(decision::Column::DecidedAt, Order::Desc)
             .all(&conn)
             .await?;
         Ok(rows)

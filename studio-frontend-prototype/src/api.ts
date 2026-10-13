@@ -1,5 +1,6 @@
 import type { DomainExpert, DomainQuestions } from "./domain-questions";
 import type { GearBrings } from "./gear-brings";
+import type { Decision, RemarkComment, Remarks, ReviewBrief } from "./remarks";
 import type { InboxMark } from "./waiting-on-me";
 import type { ReviewRequest, ReviewVerdict } from "./review-requests";
 import type {
@@ -2787,6 +2788,35 @@ export const api = {
       `/studio-spec-mapping/v1/findings?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
+  /** Every review thread on one document, read live from the pull requests that changed it. */
+  remarks: (token: string, projectId: string, path: string) =>
+    request<Remarks>(
+      `/studio-documents/v1/remarks?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`,
+      token,
+    ),
+  /** Answer a review thread; posted to the pull request. */
+  replyToRemark: (token: string, projectId: string, repo: string, threadId: string, body: string) =>
+    request<RemarkComment>("/studio-documents/v1/remarks/replies", token, {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, repo, thread_id: threadId, body }),
+    }),
+  /** Record a decision on the project's requirements. */
+  createDecision: (token: string, body: Record<string, unknown>) =>
+    request<Decision>("/studio-documents/v1/decisions", token, { method: "POST", body: JSON.stringify(body) }),
+  /** A project's decisions; one document's with `path`. */
+  decisions: (token: string, projectId: string, path?: string) =>
+    request<{ items: Decision[]; total: number }>(
+      `/studio-documents/v1/decisions?project_id=${encodeURIComponent(projectId)}${
+        path ? `&path=${encodeURIComponent(path)}` : ""
+      }`,
+      token,
+    ),
+  /** A brief of one document for its reviewers, on the caller's model key. */
+  reviewBrief: (token: string, projectId: string, path: string, baseRef?: string) =>
+    request<ReviewBrief>("/studio-documents/v1/review-brief", token, {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, path, base_ref: baseRef ?? null }),
+    }),
   /** What one document leaves out of the project's domain, and words it uses otherwise. */
   domainQuestions: (token: string, projectId: string, path: string) =>
     request<DomainQuestions>(

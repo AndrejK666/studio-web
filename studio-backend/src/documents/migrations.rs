@@ -37,6 +37,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0016::Migration),
             Box::new(m0017::Migration),
             Box::new(m0018::Migration),
+            Box::new(m0019::Migration),
         ]
     }
 }
@@ -1195,6 +1196,64 @@ CREATE TABLE IF NOT EXISTS studio_approvals (
             ] {
                 manager.get_connection().execute_unprepared(sql).await?;
             }
+            Ok(())
+        }
+    }
+}
+
+/// Decisions recorded on requirements (`remarks.rs`). Insert only, like an
+/// approval: a decision changed is a new decision.
+mod m0019 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0019_decisions"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_decisions (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    statement TEXT NOT NULL,
+    requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_url TEXT,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('review_thread', 'meeting', 'chat', 'other')),
+    path TEXT,
+    decided_by TEXT NOT NULL,
+    decided_by_name TEXT,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_decisions_project
+    ON studio_decisions (tenant_id, project_id, decided_at);",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_decisions;")
+                .await?;
             Ok(())
         }
     }

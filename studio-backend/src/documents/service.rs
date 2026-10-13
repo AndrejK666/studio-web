@@ -1837,6 +1837,59 @@ impl DocumentsService {
         })
     }
 
+    /// Record a decision on the project's requirements.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_decision(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        statement: &str,
+        requirements: Vec<String>,
+        source_url: Option<String>,
+        source_kind: &str,
+        path: Option<String>,
+        decided_by: (String, Option<String>),
+    ) -> Result<super::entity::decision::Model> {
+        let statement = statement.trim();
+        if statement.is_empty() || statement.chars().count() > 4_000 {
+            bail!("a decision is 1 to 4000 characters");
+        }
+        if !matches!(source_kind, "review_thread" | "meeting" | "chat" | "other") {
+            bail!("source_kind is review_thread, meeting, chat or other");
+        }
+        let mut requirements: Vec<String> = requirements
+            .into_iter()
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty())
+            .collect();
+        requirements.sort();
+        requirements.dedup();
+        let model = super::entity::decision::Model {
+            id: Uuid::new_v4(),
+            tenant_id: workspace_id,
+            project_id,
+            statement: statement.to_string(),
+            requirements: serde_json::to_value(&requirements)?,
+            source_url: source_url.filter(|u| !u.trim().is_empty()),
+            source_kind: source_kind.to_string(),
+            path: path.filter(|p| !p.trim().is_empty()),
+            decided_by: decided_by.0,
+            decided_by_name: decided_by.1,
+            decided_at: OffsetDateTime::now_utc(),
+        };
+        self.repo.insert_decision(model.clone()).await?;
+        Ok(model)
+    }
+
+    /// A project's decisions, newest first.
+    pub async fn decisions(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::entity::decision::Model>> {
+        self.repo.list_decisions(workspace_id, project_id).await
+    }
+
     /// The repositories the project records as its sources.
     pub async fn project_repositories(
         &self,

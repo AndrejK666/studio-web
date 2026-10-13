@@ -3224,6 +3224,514 @@ async fn list_domain_experts(
     }))
 }
 
+/// One comment of a review thread.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RemarkCommentDto {
+    pub author: Option<String>,
+    pub body: String,
+    pub url: Option<String>,
+    pub created_at: Option<String>,
+}
+
+/// One review thread on a document, from the repository host.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RemarkDto {
+    /// The host's thread id, for a reply.
+    pub thread_id: String,
+    /// `owner/repo`.
+    pub repo: String,
+    pub pull_number: i64,
+    pub pull_title: String,
+    pub pull_url: Option<String>,
+    /// `OPEN`, `CLOSED` or `MERGED`.
+    pub pull_state: String,
+    pub resolved: bool,
+    pub outdated: bool,
+    /// Unresolved in a pull request no longer open.
+    pub left_open: bool,
+    pub line: Option<i64>,
+    pub comments: Vec<RemarkCommentDto>,
+    /// Labelled identifiers its comments name.
+    pub requirements: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RemarkListDto {
+    pub items: Vec<RemarkDto>,
+    pub total: u32,
+    /// Threads left open after their pull request closed.
+    pub left_open: u32,
+    /// False when no repository connection could be asked.
+    pub reached: bool,
+}
+
+/// A reply to a review thread, sent to the host.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RemarkReplyRequest {
+    pub project_id: String,
+    /// `owner/repo`, as the remark names it.
+    pub repo: String,
+    pub thread_id: String,
+    pub body: String,
+}
+
+/// Record a decision.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct DecisionInput {
+    pub project_id: String,
+    pub statement: String,
+    /// Requirement identifiers it closes.
+    pub requirements: Option<Vec<String>>,
+    pub source_url: Option<String>,
+    /// `review_thread`, `meeting`, `chat` or `other`.
+    pub source_kind: String,
+    pub path: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DecisionDto {
+    pub id: String,
+    pub statement: String,
+    pub requirements: Vec<String>,
+    pub source_url: Option<String>,
+    pub source_kind: String,
+    pub path: Option<String>,
+    pub decided_by: String,
+    pub decided_by_name: Option<String>,
+    pub decided_at: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DecisionListDto {
+    pub items: Vec<DecisionDto>,
+    pub total: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct DecisionListQuery {
+    pub project_id: String,
+    /// Only the decisions that close this requirement.
+    pub requirement: Option<String>,
+    /// Only the decisions about this document.
+    pub path: Option<String>,
+}
+
+fn decision_dto(d: super::entity::decision::Model) -> DecisionDto {
+    DecisionDto {
+        id: d.id.to_string(),
+        statement: d.statement,
+        requirements: serde_json::from_value(d.requirements).unwrap_or_default(),
+        source_url: d.source_url,
+        source_kind: d.source_kind,
+        path: d.path,
+        decided_by: d.decided_by,
+        decided_by_name: d.decided_by_name,
+        decided_at: rfc3339(d.decided_at),
+    }
+}
+
+/// The project's repositories the caller's connections reach, with their
+/// driver and credentials.
+async fn reachable_repositories(
+    service: &DocumentsService,
+    quality: &Quality,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+) -> Vec<(
+    std::sync::Arc<dyn crate::connectors::sdk::ConnectorDriver>,
+    crate::connectors::sdk::ConnectionAuth,
+    String,
+    String,
+)> {
+    let Some(connectors) = crate::connectors::sdk::Connectors::new(quality.hub.clone()).get() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for source in service.project_repositories(ctx, project_id).await {
+        let Some(connection_id) = source.connection_id else {
+            continue;
+        };
+        let Some(tenant) = connectors.locate(ctx, project_id, connection_id).await else {
+            continue;
+        };
+        if let Ok((driver, auth, _)) = connectors.driver_and_auth(ctx, tenant, connection_id).await {
+            let branch = source
+                .branch
+                .clone()
+                .filter(|b| !b.trim().is_empty())
+                .unwrap_or_else(|| "main".to_string());
+            out.push((driver, auth, source.full_path.clone(), branch));
+        }
+    }
+    out
+}
+
+/// Every review thread on one document, from the pull requests that changed
+/// it and the open ones that change it.
+async fn list_remarks(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<DocumentScopeQuery>,
+) -> ApiResult<JsonBody<RemarkListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let _ = parent_workspace(&service, &ctx, project_id).await?;
+    let repos = reachable_repositories(&service, &quality, &ctx, project_id).await;
+    let reached = !repos.is_empty();
+    let mut items = Vec::new();
+    for (driver, auth, repo, branch) in repos {
+        let Some((owner, name)) = repo.split_once('/') else {
+            continue;
+        };
+        let answer = match driver
+            .graphql(
+                &auth,
+                &super::remarks::remarks_request(owner, name, &query.path, &branch),
+            )
+            .await
+        {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(error = %e, repo = %repo, "remarks: the host could not be asked");
+                continue;
+            }
+        };
+        let threads = match super::remarks::read_remarks(&answer, &query.path) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(error = %e, repo = %repo, "remarks: the host answered with an error");
+                continue;
+            }
+        };
+        for t in threads {
+            let text: String = t.comments.iter().map(|c| c.body.as_str()).collect::<Vec<_>>().join("\n");
+            items.push(RemarkDto {
+                requirements: super::remarks::identifiers_in(&text),
+                left_open: t.left_open(),
+                thread_id: t.id,
+                repo: repo.clone(),
+                pull_number: t.pull_number,
+                pull_title: t.pull_title,
+                pull_url: t.pull_url,
+                pull_state: t.pull_state,
+                resolved: t.resolved,
+                outdated: t.outdated,
+                line: t.line,
+                comments: t
+                    .comments
+                    .into_iter()
+                    .map(|c| RemarkCommentDto {
+                        author: c.author,
+                        body: c.body,
+                        url: c.url,
+                        created_at: c.created_at,
+                    })
+                    .collect(),
+            });
+        }
+    }
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let left_open = items.iter().filter(|r| r.left_open).count();
+    Ok(Json(RemarkListDto {
+        total: count(items.len()),
+        left_open: count(left_open),
+        items,
+        reached,
+    }))
+}
+
+/// Answer a review thread; the reply is posted to the host under the
+/// caller's connection.
+async fn create_remark_reply(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<RemarkReplyRequest>,
+) -> ApiResult<(StatusCode, JsonBody<RemarkCommentDto>)> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let _ = parent_workspace(&service, &ctx, project_id).await?;
+    let text = body.body.trim();
+    if text.is_empty() || text.chars().count() > 10_000 {
+        return Err(DocumentsError::invalid_argument()
+            .with_field_violation("body", "1 to 10000 characters".to_owned(), "INVALID")
+            .create());
+    }
+    let repos = reachable_repositories(&service, &quality, &ctx, project_id).await;
+    let Some((driver, auth, _, _)) = repos.into_iter().find(|(_, _, r, _)| *r == body.repo) else {
+        return Err(DocumentsError::not_found("no connection of this project reaches that repository")
+            .with_resource("repository")
+            .create());
+    };
+    let answer = driver
+        .graphql(&auth, &super::remarks::reply_request(&body.thread_id, text))
+        .await
+        .map_err(|e| {
+            CanonicalError::service_unavailable()
+                .with_detail(format!("the host could not be asked: {e:#}"))
+                .create()
+        })?;
+    let c = super::remarks::read_reply(&answer).map_err(|why| {
+        DocumentsError::invalid_argument()
+            .with_constraint(format!("the host refused the reply: {why}"))
+            .create()
+    })?;
+    Ok((
+        StatusCode::CREATED,
+        Json(RemarkCommentDto {
+            author: c.author,
+            body: c.body,
+            url: c.url,
+            created_at: c.created_at,
+        }),
+    ))
+}
+
+async fn create_decision(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<DecisionInput>,
+) -> ApiResult<(StatusCode, JsonBody<DecisionDto>)> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let me = quality.caller(&ctx).await?;
+    let saved = service
+        .record_decision(
+            workspace_id,
+            project_id,
+            &body.statement,
+            body.requirements.unwrap_or_default(),
+            body.source_url,
+            &body.source_kind,
+            body.path,
+            me,
+        )
+        .await
+        .map_err(invalid)?;
+    Ok((StatusCode::CREATED, Json(decision_dto(saved))))
+}
+
+async fn list_decisions(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<DecisionListQuery>,
+) -> ApiResult<JsonBody<DecisionListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let items: Vec<DecisionDto> = service
+        .decisions(workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(decision_dto)
+        .filter(|d| {
+            query
+                .requirement
+                .as_deref()
+                .is_none_or(|r| d.requirements.iter().any(|x| x == r))
+        })
+        .filter(|d| query.path.as_deref().is_none_or(|p| d.path.as_deref() == Some(p)))
+        .collect();
+    Ok(Json(DecisionListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+/// Ask for a review brief of one document.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReviewBriefRequest {
+    pub project_id: String,
+    /// The document, by its path in the checkout.
+    pub path: String,
+    /// The version to compare with: a commit sha or a branch. Absent: the
+    /// document as it was before its latest commit.
+    pub base_ref: Option<String>,
+}
+
+/// One requirement that differs from the base version.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BriefChangeDto {
+    pub id: String,
+    /// `added`, `removed` or `changed`.
+    pub kind: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+    /// True when what is required changed; false for rewording.
+    pub meaning: bool,
+    pub why: String,
+}
+
+/// A brief for the people reviewing a document.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewBriefDto {
+    pub path: String,
+    pub problem: String,
+    pub roles: Vec<String>,
+    pub scope: String,
+    pub out_of_scope: Vec<String>,
+    pub assumptions: Vec<String>,
+    pub open_decisions: Vec<String>,
+    /// The commit compared with, when one was found.
+    pub base_ref: Option<String>,
+    pub changes: Vec<BriefChangeDto>,
+    /// The provider and model that wrote the summary.
+    pub provider: String,
+    pub model: String,
+}
+
+/// The document's text at `base_ref`, or before its latest commit, through
+/// the project's repository connection. `None` when nothing reaches it.
+async fn base_text(
+    service: &DocumentsService,
+    quality: &Quality,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+    path: &str,
+    base_ref: Option<&str>,
+) -> Option<(String, String)> {
+    let connectors = crate::connectors::sdk::Connectors::new(quality.hub.clone()).get()?;
+    for source in service.project_repositories(ctx, project_id).await {
+        let Some(connection_id) = source.connection_id else {
+            continue;
+        };
+        let Some(tenant) = connectors.locate(ctx, project_id, connection_id).await else {
+            continue;
+        };
+        let open = |git_ref: Option<String>| {
+            let connectors = connectors.clone();
+            let repo = source.full_path.clone();
+            async move {
+                crate::connectors::sdk::Repository::open(
+                    &connectors,
+                    ctx,
+                    tenant,
+                    Some(connection_id),
+                    "github",
+                    &repo,
+                    git_ref.as_deref(),
+                )
+                .await
+                .ok()
+            }
+        };
+        let base = match base_ref {
+            Some(r) => r.to_string(),
+            None => {
+                let Some(head) = open(source.branch.clone()).await else {
+                    continue;
+                };
+                let Ok(history) = head.history(path, 2).await else {
+                    continue;
+                };
+                let Some(previous) = history.get(1) else {
+                    continue;
+                };
+                previous.sha.clone()
+            }
+        };
+        let Some(at_base) = open(Some(base.clone())).await else {
+            continue;
+        };
+        if let Ok(Some(file)) = at_base.read_file(path).await {
+            return Some((base, file.text));
+        }
+    }
+    None
+}
+
+/// A brief of one document for its reviewers, with what changed since a base
+/// version told apart as meaning or wording.
+async fn analyze_review_brief(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<ReviewBriefRequest>,
+) -> ApiResult<JsonBody<ReviewBriefDto>> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let models = quality.models()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let Some(doc) = sources.documents.iter().find(|d| d.path == body.path) else {
+        return Err(DocumentsError::not_found("no such document in this project")
+            .with_resource("document")
+            .create());
+    };
+    let base = base_text(
+        &service,
+        &quality,
+        &ctx,
+        project_id,
+        &doc.path,
+        body.base_ref.as_deref().map(str::trim).filter(|r| !r.is_empty()),
+    )
+    .await;
+    let changes = match &base {
+        Some((_, old)) => super::brief::changes(&doc.path, old, &doc.text),
+        None => Vec::new(),
+    };
+    let request = super::brief::request(&doc.path, doc.doc_type.as_deref(), &doc.text, &changes);
+    let answer = match models.complete(&ctx, &request).await {
+        Ok(a) => a,
+        Err(crate::llm_proxy::port::CompletionError::NoKey(message)) => {
+            return Err(DocumentsError::failed_precondition()
+                .with_precondition_violation("provider_key", message, "PROVIDER_KEY_REQUIRED")
+                .create());
+        }
+        Err(crate::llm_proxy::port::CompletionError::Failed(e)) => {
+            return Err(CanonicalError::service_unavailable()
+                .with_detail(format!("the model could not be asked: {e:#}"))
+                .create());
+        }
+    };
+    let brief = super::brief::read_answer(&answer.text, &changes).map_err(|why| {
+        CanonicalError::service_unavailable()
+            .with_detail(format!("the model's answer could not be read: {why}"))
+            .create()
+    })?;
+    let changes = changes
+        .into_iter()
+        .map(|c| {
+            let m = brief.changes.iter().find(|m| m.id == c.id);
+            BriefChangeDto {
+                meaning: m.is_none_or(|m| m.meaning),
+                why: m.map(|m| m.why.clone()).unwrap_or_default(),
+                id: c.id,
+                kind: c.kind,
+                before: c.before,
+                after: c.after,
+            }
+        })
+        .collect();
+    Ok(Json(ReviewBriefDto {
+        path: doc.path.clone(),
+        problem: brief.problem,
+        roles: brief.roles,
+        scope: brief.scope,
+        out_of_scope: brief.out_of_scope,
+        assumptions: brief.assumptions,
+        open_decisions: brief.open_decisions,
+        base_ref: base.map(|(r, _)| r),
+        changes,
+        provider: answer.provider,
+        model: answer.model,
+    }))
+}
+
 /// One requirement and every place that names it.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -5042,6 +5550,121 @@ pub fn register_routes(
             StatusCode::OK,
             "The suggestions",
         )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/remarks")
+        .operation_id("studio_documents.list_remarks")
+        .summary("Every review thread on a document, from the pull requests that changed it")
+        .description(
+            "Asks the repository host, through the project's connections, for the review \
+             threads on one document: in the pull requests its last twenty commits came from \
+             and in the open pull requests that change it. Unresolved threads of pull requests \
+             that are no longer open come first, marked `left_open`: the remarks a merge left \
+             behind. Each names the requirement identifiers its comments mention. Read live, \
+             stored nowhere; `reached: false` when no connection reaches a repository.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .query_param("path", true, "The document, by its path in the repository")
+        .handler(list_remarks)
+        .json_response_with_schema::<RemarkListDto>(openapi, StatusCode::OK, "The threads")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/remarks/replies")
+        .operation_id("studio_documents.create_remark_reply")
+        .summary("Answer a review thread; the reply is posted where the remark was made")
+        .description(
+            "Posts the reply to the thread on the repository host through the project's \
+             connection to that repository, so it appears in the pull request under that \
+             connection's account. Answers the comment as the host recorded it.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<RemarkReplyRequest>(openapi, "The thread and the reply")
+        .handler(create_remark_reply)
+        .json_response_with_schema::<RemarkCommentDto>(openapi, StatusCode::CREATED, "The reply")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/decisions")
+        .operation_id("studio_documents.create_decision")
+        .summary("Record a decision on a project's requirements, with where it was taken")
+        .description(
+            "What was decided, the requirement identifiers it closes, where it was taken (a \
+             review thread, a meeting, a chat) with a link, and the document it is about. \
+             Recorded as the caller and never edited: a changed decision is a new one, so the \
+             history stays readable.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<DecisionInput>(openapi, "The decision")
+        .handler(create_decision)
+        .json_response_with_schema::<DecisionDto>(openapi, StatusCode::CREATED, "The decision")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/decisions")
+        .operation_id("studio_documents.list_decisions")
+        .summary("A project's decisions, newest first")
+        .description(
+            "Every decision recorded on the project, newest first; `requirement` keeps those \
+             that close one requirement, `path` those about one document. The list is read \
+             whole.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .query_param("requirement", false, "A requirement identifier")
+        .query_param("path", false, "A document path")
+        .handler(list_decisions)
+        .json_response_with_schema::<DecisionListDto>(openapi, StatusCode::OK, "The decisions")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/review-brief")
+        .operation_id("studio_documents.analyze_review_brief")
+        .summary("A brief of one document for its reviewers, with changes of meaning told from rewording")
+        .description(
+            "Compares the document's labelled requirements with a base version (`base_ref`, or \
+             the document before its latest commit, read through the project's repository \
+             connection) to find which were added, removed or changed, then asks a model on \
+             the caller's own key (ADR-0039) for the problem, roles, scope, assumptions and \
+             open decisions, and whether each changed requirement changes what is required. \
+             Claims about changes the comparison did not find are dropped; an added or removed \
+             requirement always counts as meaning. Stores nothing; 400 \
+             `PROVIDER_KEY_REQUIRED` when the caller has no key.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ReviewBriefRequest>(openapi, "The document and the base to compare with")
+        .handler(analyze_review_brief)
+        .json_response_with_schema::<ReviewBriefDto>(openapi, StatusCode::OK, "The brief")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

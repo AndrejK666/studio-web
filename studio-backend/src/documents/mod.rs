@@ -14,6 +14,8 @@
 //! does for its project routes.
 
 mod approvals;
+mod brief;
+mod remarks;
 mod classify;
 mod entity;
 pub(crate) mod gts;

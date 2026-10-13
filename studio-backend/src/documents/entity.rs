@@ -494,3 +494,40 @@ pub mod approval {
 
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+/// A decision recorded on a project's requirements: what was decided, by
+/// whom, where it was taken (`remarks.rs`).
+pub mod decision {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_decisions")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        pub statement: String,
+        /// The requirement identifiers it closes, `["cpt-…"]`.
+        #[sea_orm(column_type = "JsonBinary")]
+        pub requirements: serde_json::Value,
+        /// Where it was taken: a review thread, a meeting note, a chat message.
+        pub source_url: Option<String>,
+        /// `review_thread`, `meeting`, `chat` or `other`.
+        pub source_kind: String,
+        /// The document it is about, when one.
+        pub path: Option<String>,
+        pub decided_by: String,
+        pub decided_by_name: Option<String>,
+        pub decided_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
