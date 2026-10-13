@@ -85,10 +85,50 @@ export function subjectKey(subject: string): string {
     .join(" ");
 }
 
+/** One name merged into a glossary entry. */
+export interface GlossaryAlias {
+  key: string;
+  name: string;
+}
+
+/** One entry of the project's glossary (docs/project-and-product.md, "The
+ *  project's words"): a thing the documents name, the name the project uses
+ *  for it, and the other names members merged into it. */
+export interface GlossaryEntry {
+  key: string;
+  name: string;
+  /** Whether a member chose `name`; else it is the most frequent spelling. */
+  chosen: boolean;
+  spellings: string[];
+  aliases: GlossaryAlias[];
+  facts: number;
+  documents: number;
+}
+
+/** Each key the glossary knows, its entry's and its aliases', to the entry it
+ *  belongs to. */
+export function glossaryIndex(entries: GlossaryEntry[]): Map<string, GlossaryEntry> {
+  const out = new Map<string, GlossaryEntry>();
+  for (const e of entries) {
+    out.set(e.key, e);
+    for (const a of e.aliases) out.set(a.key, e);
+  }
+  return out;
+}
+
+/** The entries another can be merged into: any but itself, and none while it
+ *  has aliases of its own, since an alias of an alias holds nothing. */
+export function mergeTargets(entry: GlossaryEntry, entries: GlossaryEntry[]): GlossaryEntry[] {
+  if (entry.aliases.length > 0) return [];
+  return entries.filter((e) => e.key !== entry.key).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export interface Entity {
   key: string;
-  /** The spelling the documents use most. */
+  /** The glossary's name, else the spelling the documents use most. */
   name: string;
+  /** Its own key and its aliases' keys. */
+  keys: string[];
   facts: SpecModelFact[];
   /** Documents that say something about it. */
   documents: number;
@@ -100,11 +140,13 @@ export interface Entity {
  *  first. Relations and attributes hang off their subject; a subject that is
  *  only ever a decision is left out, since a decision is not part of the
  *  application. */
-export function entitiesOf(facts: SpecModelFact[]): Entity[] {
+export function entitiesOf(facts: SpecModelFact[], glossary: GlossaryEntry[] = []): Entity[] {
+  const index = glossaryIndex(glossary);
   const byKey = new Map<string, { spellings: Map<string, number>; facts: SpecModelFact[] }>();
   for (const fact of facts) {
-    const key = subjectKey(fact.subject);
-    if (!key) continue;
+    const own = subjectKey(fact.subject);
+    if (!own) continue;
+    const key = index.get(own)?.key ?? own;
     const group = byKey.get(key) ?? { spellings: new Map<string, number>(), facts: [] as SpecModelFact[] };
     group.spellings.set(fact.subject, (group.spellings.get(fact.subject) ?? 0) + 1);
     group.facts.push(fact);
@@ -113,10 +155,13 @@ export function entitiesOf(facts: SpecModelFact[]): Entity[] {
   const out: Entity[] = [];
   for (const [key, group] of byKey) {
     if (group.facts.every((f) => f.kind === "decision")) continue;
-    const name = [...group.spellings.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+    const entry = index.get(key);
+    const name =
+      entry?.name ?? [...group.spellings.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
     out.push({
       key,
       name,
+      keys: [key, ...(entry?.aliases.map((a) => a.key) ?? [])],
       facts: group.facts,
       documents: new Set(group.facts.map((f) => f.source.path)).size,
       active: group.facts.filter((f) => f.status === "active").length,
@@ -147,13 +192,12 @@ export function factsByKind(facts: SpecModelFact[]): { kind: FactKind; facts: Sp
 /** The other entities an entity relates to, by the relation facts whose value
  *  names one of them. */
 export function relatedEntities(entity: Entity, all: Entity[]): string[] {
-  const keys = new Set(all.map((e) => e.key));
   const out = new Set<string>();
   for (const fact of entity.facts) {
     if (fact.kind !== "relation") continue;
     const target = subjectKey(fact.value);
-    for (const key of keys) {
-      if (key !== entity.key && target.includes(key)) out.add(key);
+    for (const other of all) {
+      if (other.key !== entity.key && other.keys.some((k) => target.includes(k))) out.add(other.key);
     }
   }
   return [...out];

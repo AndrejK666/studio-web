@@ -274,6 +274,39 @@ pub mod spec_decision {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+/// A member's decision on one entry of a project's glossary.
+pub mod spec_term {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_spec_model_terms")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// Deterministic v5 UUID of `(project, term_key)`: one decision per
+        /// entry, the latest.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        /// The entry's key: its subject folded (`rules::subject_key`).
+        pub term_key: String,
+        /// The name the project uses for it, when a member chose one.
+        pub name: Option<String>,
+        /// The key of the entry this one is another name of.
+        pub alias_of: Option<String>,
+        pub decided_by: Uuid,
+        pub decided_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// A document instance.
 pub mod document {
     use sea_orm::entity::prelude::*;

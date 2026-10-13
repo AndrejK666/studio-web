@@ -2162,6 +2162,64 @@ pub struct SpecModelDecisionDto {
     pub decided_at: String,
 }
 
+/// One name merged into a glossary entry.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GlossaryAliasDto {
+    pub key: String,
+    pub name: String,
+}
+
+/// One entry of a project's glossary.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GlossaryEntryDto {
+    /// The entry's subject, folded: what a decision names it by.
+    pub key: String,
+    /// The chosen name, or the spelling the documents use most.
+    pub name: String,
+    /// Whether a member chose `name`.
+    pub chosen: bool,
+    /// Every spelling of the entry and its aliases, most frequent first.
+    pub spellings: Vec<String>,
+    pub aliases: Vec<GlossaryAliasDto>,
+    pub facts: u32,
+    pub documents: u32,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GlossaryListDto {
+    pub items: Vec<GlossaryEntryDto>,
+    pub total: u32,
+}
+
+/// A member's decision on one glossary entry. It replaces the entry's last
+/// decision whole: send both fields, `null` for the one not decided.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct GlossaryDecisionRequest {
+    pub project_id: String,
+    /// The entry's `key`.
+    pub key: String,
+    /// The name the project uses for it; `null` goes back to the spelling the
+    /// documents use most.
+    pub name: Option<String>,
+    /// The `key` of the entry this one is another name of; `null` keeps it an
+    /// entry of its own.
+    pub alias_of: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GlossaryDecisionDto {
+    pub key: String,
+    pub name: Option<String>,
+    pub alias_of: Option<String>,
+    pub decided_by: String,
+    pub decided_at: String,
+}
+
 /// Which project to build the model of.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -2446,6 +2504,8 @@ async fn judged_candidates(
         })
         .collect();
     let (facts, _) = sm::current(documents, &kept);
+    let choices = service.glossary_choices(workspace_id, project_id).await?;
+    let facts = sm::glossary::apply(&facts, &choices);
     let candidates = sm::candidates(documents, &facts);
     let judgements = service.spec_judgements(workspace_id, project_id).await?;
     let judged: Vec<sm::Judged<'_>> = judgements
@@ -2632,6 +2692,111 @@ async fn list_spec_model_findings(
 
 /// Record a member's ✓ or ✗ on one finding. It holds for as long as the
 /// finding keeps its fingerprint, which a change to either passage ends.
+/// The project's glossary: the things its documents name, under the names
+/// members chose and with the aliases they merged.
+async fn get_glossary(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<GlossaryListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let (_, facts, _) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    let choices = service
+        .glossary_choices(workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let items: Vec<GlossaryEntryDto> = super::spec_model::glossary::entries(&facts, &choices)
+        .into_iter()
+        .map(|e| GlossaryEntryDto {
+            key: e.key,
+            name: e.name,
+            chosen: e.chosen,
+            spellings: e.spellings,
+            aliases: e
+                .aliases
+                .into_iter()
+                .map(|a| GlossaryAliasDto {
+                    key: a.key,
+                    name: a.name,
+                })
+                .collect(),
+            facts: count(e.facts),
+            documents: count(e.documents),
+        })
+        .collect();
+    Ok(Json(GlossaryListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+/// The longest key or name a glossary decision takes: a subject is a few
+/// words, never a passage.
+const GLOSSARY_TEXT_MAX: usize = 200;
+
+/// Record a member's decision on one glossary entry.
+async fn decide_glossary_entry(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Json(body): Json<GlossaryDecisionRequest>,
+) -> ApiResult<(StatusCode, JsonBody<GlossaryDecisionDto>)> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let invalid = |field: &str, why: &str| {
+        DocumentsError::invalid_argument()
+            .with_field_violation(field, why.to_owned(), "INVALID")
+            .create()
+    };
+    let key = body.key.trim();
+    if key.is_empty() || key.len() > GLOSSARY_TEXT_MAX {
+        return Err(invalid("key", "must be a glossary entry's key"));
+    }
+    let name = body
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned);
+    if name.as_ref().is_some_and(|n| n.len() > GLOSSARY_TEXT_MAX) {
+        return Err(invalid("name", "must be a name of at most 200 bytes"));
+    }
+    let alias_of = body
+        .alias_of
+        .as_deref()
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .map(str::to_owned);
+    match &alias_of {
+        Some(a) if a == key => return Err(invalid("alias_of", "must name another entry")),
+        Some(a) if a.len() > GLOSSARY_TEXT_MAX => {
+            return Err(invalid("alias_of", "must be a glossary entry's key"));
+        }
+        _ => {}
+    }
+    let saved = service
+        .put_spec_term(&ctx, workspace_id, project_id, key, name, alias_of)
+        .await
+        .map_err(internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(GlossaryDecisionDto {
+            key: saved.term_key,
+            name: saved.name,
+            alias_of: saved.alias_of,
+            decided_by: saved.decided_by.to_string(),
+            decided_at: saved
+                .decided_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+        }),
+    ))
+}
+
 async fn decide_spec_model_finding(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
@@ -3485,6 +3650,55 @@ pub fn register_routes(
             .error_404(openapi)
             .error_500(openapi)
             .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/glossary")
+        .operation_id("studio_documents.get_spec_model_glossary")
+        .summary("The project's glossary: what its documents name, and by which names")
+        .description(
+            "One entry per thing the documents name, proposed without a model from the facts' \
+             subjects: spellings that differ only in case, articles and plurals are one entry. \
+             Members decide the name an entry goes by and which entry is another name of which \
+             (`POST /spec-model/glossary/decisions`); facts about an alias count as facts about \
+             its entry when the rules look for disagreements. An alias whose entry the documents \
+             no longer name, or that is an alias itself, holds nothing \
+             (docs/project-and-product.md, \"The project's words\").",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose glossary to read")
+        .handler(get_glossary)
+        .json_response_with_schema::<GlossaryListDto>(openapi, StatusCode::OK, "The glossary")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/glossary/decisions")
+        .operation_id("studio_documents.decide_spec_model_glossary_entry")
+        .summary("Name a glossary entry, or make it another name of one")
+        .description(
+            "Replaces the entry's last decision whole. `name` is the name the project uses for \
+             it; `alias_of` is the key of the entry it is another name of. `null` in both puts \
+             the entry back as the documents propose it.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<GlossaryDecisionRequest>(openapi, "The project, the entry and the decision")
+        .handler(decide_glossary_entry)
+        .json_response_with_schema::<GlossaryDecisionDto>(
+            openapi,
+            StatusCode::CREATED,
+            "The decision",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/spec-model/findings")
         .operation_id("studio_documents.list_spec_model_findings")

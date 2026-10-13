@@ -168,25 +168,40 @@ copyright, so Studio neither ships them nor claims conformance (the name is a
 trademark). An organization that holds the standard can add its approved words
 as its own data, read the same way as the project's glossary below.
 
-**The glossary is decided, not detected.** The domain model already tried
-`term.synonym_drift` and dropped it: every candidate in calibration was a
+**The glossary is decided, not detected: built.** The domain model already
+tried `term.synonym_drift` and dropped it: every candidate in calibration was a
 deliberate rename between layers ([spec-domain-model](spec-domain-model.md#the-rule-catalogue)).
 So the glossary is not a rule that flags two names. It is the per-project alias
-table that page lists as later work, made from what the build already has:
+table that page listed as later work, made from what the build already has, with
+no model and no key (`documents/spec_model/glossary.rs`):
 
-- each merged entity proposes its name and aliases as one glossary entry;
-- a member keeps the entry, renames the chosen name, or splits an alias that
-  means something else, with the same ✓/✗ as a finding;
-- a decided entry holds until a document that defines the entity changes.
+- every subject of the facts is one entry, its spellings folded as the rules
+  fold them (case, articles, a plural `s`), named by the spelling the documents
+  use most; a subject only ever a decision is not an entry;
+- a member names an entry the way the project says it, or makes it an alias of
+  another entry when the documents call one thing by two names, and can split
+  it out again (`GET /studio-documents/v1/spec-model/glossary`, `POST
+  …/glossary/decisions`, the Domain model tab's **Glossary** view);
+- an alias is one level deep: an alias of an entry the documents no longer
+  name, or of an entry that is an alias itself, holds nothing, so undoing one
+  merge never moves a third entry.
+
+The facts have no aliases of their own (the extractor gives a subject, not its
+other names), so the entries a member merges are the only aliases there are.
 
 The glossary is then input, not output:
 
-- `code.entity_missing` matches an entity's identifiers through its decided
-  aliases, so a deliberate rename between the documents and the code is not a
-  finding;
+- built: the rules read the facts through it, so the facts about an alias are
+  facts about its entry, and two documents that disagree about one thing under
+  two names become a candidate; a candidate's fingerprint is unchanged, since it
+  rests on the passages, not the subject;
+- built: the Entities view shows an entry under its chosen name, with its
+  aliases' facts, and follows a relation that names an alias;
+- `code.entity_missing` will match an entity's identifiers through its aliases,
+  so a deliberate rename between the documents and the code is not a finding;
 - `formula.mismatch` gets the table of what each quantity is called in each
   layer, which it waited for;
-- the spec-to-gears mapping reads requirements with one name per entity.
+- the spec-to-gears mapping can read requirements with one name per entity.
 
 A drift rule may come back later, scoped to what the glossary decides: an alias a
 member split off, used again with the entity's meaning.
@@ -230,8 +245,9 @@ Each step is useful alone.
 2. **`product.*` rules.** Built: `GET /studio-spec-mapping/v1/findings` and
    the tab's Against the code view.
 3. **The project's glossary**, proposed from the merged entities and decided
-   by members; no model, no key. Then **the identifier index and `code.*`
-   rules** through it, on the builder's key, as the domain model's build is.
+   by members; no model, no key. Built. Then **the identifier index and
+   `code.*` rules** through it, on the builder's key, as the domain model's
+   build is.
    The writing hints and the assistant's instructions are independent of both.
 4. **Work links.** Issues and pull requests to requirements and gears, proposed
    and decided.

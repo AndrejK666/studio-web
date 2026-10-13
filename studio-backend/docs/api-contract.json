@@ -929,6 +929,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/glossary",
+      "operation_id": "studio_documents.get_spec_model_glossary",
+      "tag": "StudioDocuments",
+      "summary": "The project's glossary: what its documents name, and by which names",
+      "authenticated": true,
+      "responses": [
+        "GlossaryListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-pipeline",
       "operation_id": "studio_documents.list_spec_pipeline",
       "tag": "StudioDocuments",
@@ -2836,6 +2853,24 @@
       "request": "SpecModelDecisionRequest",
       "responses": [
         "SpecModelDecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/spec-model/glossary/decisions",
+      "operation_id": "studio_documents.decide_spec_model_glossary_entry",
+      "tag": "StudioDocuments",
+      "summary": "Name a glossary entry, or make it another name of one",
+      "authenticated": true,
+      "request": "GlossaryDecisionRequest",
+      "responses": [
+        "GlossaryDecisionDto"
       ],
       "errors": [
         "400",

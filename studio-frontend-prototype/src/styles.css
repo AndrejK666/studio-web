@@ -2190,6 +2190,12 @@ th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mar
 .sm-entity-card { margin-top: 0; }
 .sm-entity-card h2 { margin: 0 0 0.5rem; }
 .sm-related { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.sm-glossary { margin-top: 0.5rem; }
+ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
+.sm-term-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.sm-term-actions, .sm-term-rename { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sm-term-actions select { width: auto; max-width: min(20rem, 100%); }
+.sm-term-rename input { flex: 1 1 12rem; min-width: 0; }
 .sm-kind h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); margin: 1rem 0 0.25rem; }
 .sm-fact { padding: 6px 0; border-bottom: 1px solid var(--border); }
 .sm-inactive { opacity: 0.6; }

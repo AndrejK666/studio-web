@@ -5,12 +5,14 @@ import {
   coverageCounts,
   entitiesOf,
   factsByKind,
+  mergeTargets,
   orderFindings,
   orderProductFindings,
   relatedEntities,
   ruleLabel,
   sideLabel,
   subjectKey,
+  type GlossaryEntry,
   type ProductFinding,
   type SpecModelFact,
   type SpecModelFinding,
@@ -56,6 +58,46 @@ describe("entitiesOf", () => {
 
   it("leaves out a subject that is only a decision", () => {
     expect(entitiesOf([fact("Use Postgres", "decision")])).toEqual([]);
+  });
+});
+
+describe("the glossary", () => {
+  const entry = (key: string, name: string, extra: Partial<GlossaryEntry> = {}): GlossaryEntry => ({
+    key,
+    name,
+    chosen: false,
+    spellings: [name],
+    aliases: [],
+    facts: 1,
+    documents: 1,
+    ...extra,
+  });
+
+  it("puts an alias's facts under its entry, by the entry's chosen name", () => {
+    const facts = [
+      fact("Tenant", "entity"),
+      fact("Organization", "attribute", "b.md"),
+      fact("Person", "relation", "a.md", { value: "one organization" }),
+    ];
+    const glossary = [
+      entry("tenant", "Workspace", { chosen: true, aliases: [{ key: "organization", name: "Organization" }] }),
+      entry("person", "Person"),
+    ];
+    const all = entitiesOf(facts, glossary);
+    const tenant = all.find((e) => e.key === "tenant")!;
+    expect(tenant.name).toBe("Workspace");
+    expect(tenant.facts).toHaveLength(2);
+    expect(tenant.documents).toBe(2);
+    expect(all.some((e) => e.key === "organization")).toBe(false);
+    // A relation naming the alias reaches the entry.
+    expect(relatedEntities(all.find((e) => e.key === "person")!, all)).toEqual(["tenant"]);
+  });
+
+  it("offers no merge for an entry that has aliases of its own, since an alias of an alias holds nothing", () => {
+    const a = entry("a", "A", { aliases: [{ key: "c", name: "C" }] });
+    const b = entry("b", "B");
+    expect(mergeTargets(a, [a, b])).toEqual([]);
+    expect(mergeTargets(b, [a, b]).map((e) => e.key)).toEqual(["a"]);
   });
 });
 

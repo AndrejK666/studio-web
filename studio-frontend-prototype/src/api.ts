@@ -1,4 +1,4 @@
-import type { ProductFinding, SpecModel, SpecModelBuild, SpecModelFinding } from "./spec-model";
+import type { GlossaryEntry, ProductFinding, SpecModel, SpecModelBuild, SpecModelFinding } from "./spec-model";
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
@@ -2769,6 +2769,27 @@ export const api = {
     request<{ repo: string | null; items: ProductFinding[]; total: number }>(
       `/studio-spec-mapping/v1/findings?project_id=${encodeURIComponent(projectId)}`,
       token,
+    ),
+  /** The project's glossary: what its documents name, under the names
+   *  members chose, with the aliases they merged. */
+  glossary: (token: string, projectId: string) =>
+    request<{ items: GlossaryEntry[]; total: number }>(
+      `/studio-documents/v1/spec-model/glossary?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** A member's decision on one glossary entry. It replaces the entry's last
+   *  one whole, so both fields go every time; null in both puts the entry back
+   *  as the documents propose it. */
+  decideGlossaryEntry: (
+    token: string,
+    projectId: string,
+    key: string,
+    decision: { name: string | null; alias_of: string | null },
+  ) =>
+    request<{ key: string; name: string | null; alias_of: string | null }>(
+      "/studio-documents/v1/spec-model/glossary/decisions",
+      token,
+      { method: "POST", body: JSON.stringify({ project_id: projectId, key, ...decision }) },
     ),
   /** A member's ✓ (confirmed) or ✗ (dismissed) on one finding. */
   decideSpecModelFinding: (

@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) mod build;
 pub(crate) mod extract;
 pub(crate) mod finding;
+pub(crate) mod glossary;
 pub(crate) mod index;
 pub(crate) mod judge;
 pub(crate) mod record;
