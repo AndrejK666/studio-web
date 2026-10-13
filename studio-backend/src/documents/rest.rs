@@ -191,6 +191,9 @@ pub struct RequirementDto {
     /// Detectors that have not passed for this document: missing, pending or
     /// failed. Empty when the stage gates nothing, or when everything passed.
     pub analyses_outstanding: Vec<String>,
+    /// Required reviewers of the document's current review request who have
+    /// not approved it. Empty when nobody was asked to review it.
+    pub approvals_outstanding: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -614,6 +617,7 @@ impl From<StageStatus> for StageStatusDto {
                     present: r.present,
                     conforms: r.conforms,
                     analyses_outstanding: r.analyses_outstanding,
+                    approvals_outstanding: r.approvals_outstanding,
                 })
                 .collect(),
         }
