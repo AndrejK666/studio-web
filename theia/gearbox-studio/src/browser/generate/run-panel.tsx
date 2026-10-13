@@ -33,6 +33,12 @@ export interface RunPanelProps {
   readonly onLinkedGears: () => void;
   readonly onStartPostgres: () => void;
   readonly onOpen: (url: string) => void;
+  /** "Get protoc": Studio fetches it into its tools folder. */
+  readonly onFetchProtoc?: () => void;
+  readonly fetchingProtoc?: boolean;
+  /** Create the missing databases in the Postgres that already answers. */
+  readonly onCreateDatabases?: () => void;
+  readonly creatingDatabases?: boolean;
 }
 
 export function RunPanel(props: RunPanelProps): React.ReactElement {
@@ -94,6 +100,21 @@ export function RunPanel(props: RunPanelProps): React.ReactElement {
               </span>
             )}
           </div>
+          {verdict.missing?.map((missing) => (
+            <p key={missing.tool} className="gbx-generate-run-tool" data-run-missing={missing.tool}>
+              {missing.reason}{" "}
+              {missing.fetchable && props.onFetchProtoc !== undefined && (
+                <button type="button" className="gbx-choice" data-run-fetch-protoc disabled={props.fetchingProtoc} onClick={props.onFetchProtoc}>
+                  {props.fetchingProtoc ? "Getting protoc…" : "Get protoc"}
+                </button>
+              )}
+              {missing.help !== undefined && (
+                <a href={missing.help.url} target="_blank" rel="noreferrer">
+                  {missing.help.label}
+                </a>
+              )}
+            </p>
+          ))}
           {chosen.dbGears.length > 0 && <DatabaseNote {...props} target={chosen} />}
         </>
       )}
@@ -114,7 +135,14 @@ function DatabaseNote(props: RunPanelProps & { readonly target: RunTarget }): Re
         <code>{LOCAL_POSTGRES.passwordEnv}</code>) and the databases {names}.
       </p>
       {props.postgres === "answers" && (
-        <p data-run-db-state="answers">A Postgres answers on {where}; its databases {names} have to exist in it.</p>
+        <p data-run-db-state="answers">
+          A Postgres answers on {where}; its databases {names} have to exist in it.{" "}
+          {props.docker && props.onCreateDatabases !== undefined && (
+            <button type="button" className="gbx-choice" data-run-create-databases disabled={props.creatingDatabases} onClick={props.onCreateDatabases}>
+              {props.creatingDatabases ? "Creating…" : "Create the databases"}
+            </button>
+          )}
+        </p>
       )}
       {props.postgres === "none" &&
         (props.docker ? (

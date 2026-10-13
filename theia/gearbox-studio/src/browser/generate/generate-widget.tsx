@@ -127,6 +127,8 @@ export class GenerateWidget extends ReactWidget {
   protected runApp: string | undefined;
   protected postgres: PostgresState = "unknown";
   protected startingPostgres = false;
+  protected creatingDatabases = false;
+  protected fetchingProtoc = false;
 
   protected selected: string | undefined;
   protected preview: GenerateFileResult | undefined;
@@ -208,16 +210,32 @@ export class GenerateWidget extends ReactWidget {
     return { product, cwd: plainPath(plan.out_root) };
   }
 
+  /**
+   * The environment of both terminals, the same for Build and Run: the tools
+   * found off the PATH and the short target folder (`toolchain.env`) -- Run is
+   * `cargo run`, so a Run terminal without them rebuilds into another folder
+   * and fails where Build did not -- and the local Postgres password.
+   */
+  protected terminalEnv(target: RunTarget): Record<string, string> {
+    // The local Postgres Studio starts has a known password; a member who runs
+    // their own sets GEARS_PG_PASSWORD, and then the terminal inherits it.
+    const pg: Record<string, string> =
+      target.dbGears.length > 0 && this.toolchain?.pgPasswordSet !== true
+        ? { [LOCAL_POSTGRES.passwordEnv]: LOCAL_POSTGRES_PASSWORD }
+        : {};
+    return { ...(this.toolchain?.env ?? {}), ...pg };
+  }
+
   protected async build(target: RunTarget): Promise<void> {
     const context = this.runContext();
     if (context === undefined) return;
-    await this.terminals.send("build", context.product, context.cwd, buildCommand(target));
+    await this.terminals.send("build", context.product, context.cwd, buildCommand(target), this.terminalEnv(target));
   }
 
   protected async linkedGears(target: RunTarget): Promise<void> {
     const context = this.runContext();
     if (context === undefined) return;
-    await this.terminals.send("build", context.product, context.cwd, linkedGearsCommand(target));
+    await this.terminals.send("build", context.product, context.cwd, linkedGearsCommand(target), this.terminalEnv(target));
   }
 
   protected async run(target: RunTarget): Promise<void> {
@@ -234,13 +252,36 @@ export class GenerateWidget extends ReactWidget {
       this.messages.error(`The run configuration could not be written: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    // The local Postgres Studio starts has a known password; a member who runs
-    // their own sets GEARS_PG_PASSWORD, and then the terminal inherits it.
-    const env: Record<string, string> =
-      target.dbGears.length > 0 && this.toolchain?.pgPasswordSet !== true
-        ? { [LOCAL_POSTGRES.passwordEnv]: LOCAL_POSTGRES_PASSWORD }
-        : {};
-    await this.terminals.send("run", context.product, context.cwd, runCommand(target, config), env);
+    await this.terminals.send("run", context.product, context.cwd, runCommand(target, config), this.terminalEnv(target));
+  }
+
+  protected async createDatabases(target: RunTarget): Promise<void> {
+    if (this.creatingDatabases) return;
+    this.creatingDatabases = true;
+    this.update();
+    try {
+      const result = await this.service.createLocalDatabases(target.dbGears.map(dbNameOf));
+      if (result.ok) this.messages.info(result.message);
+      else this.messages.error(result.message);
+    } finally {
+      this.creatingDatabases = false;
+      this.update();
+    }
+  }
+
+  protected async fetchProtoc(): Promise<void> {
+    if (this.fetchingProtoc) return;
+    this.fetchingProtoc = true;
+    this.update();
+    try {
+      const result = await this.service.fetchProtoc();
+      if (result.ok) this.messages.info(result.message);
+      else this.messages.error(result.message);
+    } finally {
+      this.fetchingProtoc = false;
+      this.toolchain = undefined;
+      await this.askToolchain();
+    }
   }
 
   protected async startPostgres(target: RunTarget): Promise<void> {
@@ -284,6 +325,10 @@ export class GenerateWidget extends ReactWidget {
         onLinkedGears={() => chosen !== undefined && void this.linkedGears(chosen)}
         onStartPostgres={() => chosen !== undefined && void this.startPostgres(chosen)}
         onOpen={(url) => this.windows.openNewWindow(url, { external: true })}
+        onFetchProtoc={() => void this.fetchProtoc()}
+        fetchingProtoc={this.fetchingProtoc}
+        onCreateDatabases={() => chosen !== undefined && void this.createDatabases(chosen)}
+        creatingDatabases={this.creatingDatabases}
       />
     );
   }

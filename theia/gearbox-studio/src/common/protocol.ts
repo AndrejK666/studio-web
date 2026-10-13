@@ -505,6 +505,16 @@ export interface GearboxService {
   startLocalPostgres(product: string, databases: string[]): Promise<{ ok: boolean; message: string }>;
 
   /**
+   * Constructor Studio: create the missing databases in the Postgres already
+   * answering on the local port, when it is a docker container (another
+   * product's, or one the member started).
+   */
+  createLocalDatabases(databases: string[]): Promise<{ ok: boolean; message: string }>;
+
+  /** Constructor Studio: fetch protoc into Studio's tools folder, for gears whose SDKs compile .proto files. */
+  fetchProtoc(): Promise<{ ok: boolean; message: string }>;
+
+  /**
    * Tell the engine an editor opened a `.gdl`, and what is in the buffer.
    *
    * The three document methods are LSP notifications, so they answer nothing:

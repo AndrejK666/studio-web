@@ -7,6 +7,8 @@ import {
   plainPath,
   runCommand,
   runTargetsOf,
+  PROTOC_VERSION,
+  protocAsset,
   toolchainVerdict,
   urlOf,
   withPostgres,
@@ -185,7 +187,7 @@ describe("the database section generate leaves out", () => {
 });
 
 describe("whether Build and Run can be offered", () => {
-  const found = { cargo: "cargo 1.97.0", msvcLinker: "n/a" as const, docker: true, pgPasswordSet: false };
+  const found = { cargo: "cargo 1.97.0", msvcLinker: "n/a" as const, docker: true, pgPasswordSet: false, cmake: "path", protoc: "path" };
 
   it("offers them with cargo and a linker", () => {
     expect(toolchainVerdict(found)).toEqual({ ready: true });
@@ -197,6 +199,21 @@ describe("whether Build and Run can be offered", () => {
     expect(verdict.ready).toBe(false);
     expect(verdict.reason).toMatch(/cargo/);
     expect(verdict.help?.url).toBe("https://rustup.rs");
+  });
+
+  it("offers Build without cmake or protoc, and says which some gears need", () => {
+    const verdict = toolchainVerdict({ ...found, cmake: undefined, protoc: undefined });
+    expect(verdict.ready).toBe(true);
+    expect(verdict.missing?.map((m) => m.tool)).toEqual(["cmake", "protoc"]);
+    expect(verdict.missing?.find((m) => m.tool === "protoc")?.fetchable).toBe(true);
+    expect(verdict.missing?.find((m) => m.tool === "cmake")?.fetchable).toBe(false);
+  });
+
+  it("knows the protoc release for each machine protobuf builds one for", () => {
+    expect(protocAsset("win32", "x64")).toBe(`protoc-${PROTOC_VERSION}-win64.zip`);
+    expect(protocAsset("darwin", "arm64")).toBe(`protoc-${PROTOC_VERSION}-osx-aarch_64.zip`);
+    expect(protocAsset("linux", "x64")).toBe(`protoc-${PROTOC_VERSION}-linux-x86_64.zip`);
+    expect(protocAsset("win32", "arm64")).toBeUndefined();
   });
 
   it("says the MSVC linker is missing on Windows", () => {
