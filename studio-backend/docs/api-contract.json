@@ -929,6 +929,40 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/glossary",
+      "operation_id": "studio_documents.get_spec_model_glossary",
+      "tag": "StudioDocuments",
+      "summary": "The project's glossary: what its documents name, and by which names",
+      "authenticated": true,
+      "responses": [
+        "GlossaryListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/spec-model/work",
+      "operation_id": "studio_documents.list_spec_model_work",
+      "tag": "StudioDocuments",
+      "summary": "Which issues, pull requests and commits name what the documents define",
+      "authenticated": true,
+      "responses": [
+        "WorkLinkListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-pipeline",
       "operation_id": "studio_documents.list_spec_pipeline",
       "tag": "StudioDocuments",
@@ -1903,6 +1937,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-spec-mapping/v1/findings",
+      "operation_id": "studio_spec_mapping.list_product_findings",
+      "tag": "StudioSpecMapping",
+      "summary": "What a project's documents ask for that its code is not made of",
+      "authenticated": true,
+      "responses": [
+        "ProductFindingListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-spec-mapping/v1/plan",
       "operation_id": "studio_spec_mapping.get_project_plan",
       "tag": "StudioSpecMapping",
@@ -2819,6 +2870,24 @@
       "request": "SpecModelDecisionRequest",
       "responses": [
         "SpecModelDecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/spec-model/glossary/decisions",
+      "operation_id": "studio_documents.decide_spec_model_glossary_entry",
+      "tag": "StudioDocuments",
+      "summary": "Name a glossary entry, or make it another name of one",
+      "authenticated": true,
+      "request": "GlossaryDecisionRequest",
+      "responses": [
+        "GlossaryDecisionDto"
       ],
       "errors": [
         "400",

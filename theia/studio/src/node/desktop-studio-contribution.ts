@@ -731,6 +731,11 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             const helper = helperCommand(process.execPath, desktopGitHelper());
             // --progress: git reports only to a terminal otherwise, and this is a pipe.
             const args = ['clone', '--progress', '-c', 'credential.helper=', '-c', `credential.helper=${helper}`];
+            // Windows: kept in the clone's config too, so the IDE's Git and a
+            // worktree for a product's branch write past MAX_PATH as well.
+            if (process.platform === 'win32') {
+                args.push('-c', 'core.longpaths=true');
+            }
             if (source.branch) {
                 args.push('--branch', source.branch);
             }

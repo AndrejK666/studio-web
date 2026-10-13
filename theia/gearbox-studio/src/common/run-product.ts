@@ -19,6 +19,7 @@
 // per gear that needs one -- Postgres, as the cluster runs -- and Run uses the
 // copy. The generated file stays the engine's; the copy is Studio's.
 
+import { localRunCautions } from "./local-run-defaults";
 import type { ResolvedApplication } from "./generated/ResolvedApplication";
 import type { ResolvedProduct } from "./generated/ResolvedProduct";
 
@@ -45,7 +46,33 @@ export const LOCAL_POSTGRES: PostgresTarget = {
  */
 export const LOCAL_POSTGRES_PASSWORD = "gears";
 
-export const POSTGRES_IMAGE = "postgres:18-alpine";
+/**
+ * pgvector on PostgreSQL 18. `graph-storage` creates the `vector` extension in
+ * its first migration, which the plain image does not ship ("extension
+ * \"vector\" is not available"); its SQL/PGQ property graph wants 19, and below
+ * that it skips the DDL and traverses without it.
+ */
+export const POSTGRES_IMAGE = "pgvector/pgvector:pg18";
+
+/** The protoc release Studio fetches when the machine has none (prost-build needs it). */
+export const PROTOC_VERSION = "36.2";
+
+/** The release asset for this machine, or `undefined` where protobuf publishes none. */
+export function protocAsset(platform: string, arch: string): string | undefined {
+  const target =
+    platform === "win32" && arch === "x64"
+      ? "win64"
+      : platform === "linux" && arch === "x64"
+        ? "linux-x86_64"
+        : platform === "linux" && arch === "arm64"
+          ? "linux-aarch_64"
+          : platform === "darwin" && arch === "arm64"
+            ? "osx-aarch_64"
+            : platform === "darwin" && arch === "x64"
+              ? "osx-x86_64"
+              : undefined;
+  return target === undefined ? undefined : `protoc-${PROTOC_VERSION}-${target}.zip`;
+}
 
 /** One host application of a generated product, as Build and Run see it. */
 export interface RunTarget {
@@ -59,6 +86,8 @@ export interface RunTarget {
   readonly dbGears: readonly string[];
   /** The REST address the product answers on, when it has a REST host. */
   readonly address: string | undefined;
+  /** Gears in it a local run cannot start with, and what to use instead (`LOCAL_RUN_CAUTIONS`). */
+  readonly cautions?: readonly string[];
 }
 
 /**
@@ -75,6 +104,7 @@ export function runTargetsOf(product: ResolvedProduct, hasDb: (gear: string) => 
       localConfig: `config/${app.name}.local.yaml`,
       dbGears: app.needs_db ? app.gears.filter(hasDb) : [],
       address: restAddressOf(app),
+      cautions: localRunCautions(app.gears),
     }));
 }
 
@@ -186,12 +216,38 @@ export interface BuildToolchain {
   readonly docker: boolean;
   /** Whether the IDE's environment already sets the Postgres password variable. */
   readonly pgPasswordSet: boolean;
+  /**
+   * cmake, which crates such as `libz-ng-sys` build their C with: `"path"` when
+   * it is on the PATH, else the absolute path of the copy Visual Studio's C++
+   * workload installs off the PATH, else `undefined`.
+   */
+  readonly cmake?: string;
+  /** protoc, which gRPC SDKs' `prost-build` runs: `"path"`, an absolute path (PROTOC, or Studio's copy), else `undefined`. */
+  readonly protoc?: string;
+  /**
+   * What the Build and Run terminals get on top of the IDE's environment, the
+   * same for both: `CMAKE` / `PROTOC` for copies off the PATH, and on Windows a
+   * short `CARGO_TARGET_DIR` -- under a project's checkout the build tree
+   * passes MAX_PATH and MSBuild, which cmake drives, cannot write there.
+   */
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+/** A tool some gears need to build, and what to do about it missing. */
+export interface MissingTool {
+  readonly tool: "cmake" | "protoc";
+  readonly reason: string;
+  /** Studio can fetch it itself ("Get protoc"). */
+  readonly fetchable: boolean;
+  readonly help?: { readonly label: string; readonly url: string };
 }
 
 export interface ToolchainVerdict {
   readonly ready: boolean;
   readonly reason?: string;
   readonly help?: { readonly label: string; readonly url: string };
+  /** Tools only some gears need: Build is offered, and these are said beside it. */
+  readonly missing?: readonly MissingTool[];
 }
 
 /** Whether Build and Run can be offered, and what to say when they cannot. */
@@ -214,5 +270,23 @@ export function toolchainVerdict(found: BuildToolchain): ToolchainVerdict {
       help: { label: "Visual Studio Build Tools", url: "https://visualstudio.microsoft.com/visual-cpp-build-tools/" },
     };
   }
-  return { ready: true };
+  const missing: MissingTool[] = [];
+  if (found.cmake === undefined) {
+    missing.push({
+      tool: "cmake",
+      reason:
+        "cmake is not on this machine. Gears that compress or encrypt (libz-ng-sys, aws-lc-sys) build C code with it; " +
+        "install CMake, or Visual Studio's \"C++ CMake tools for Windows\" component, then reopen this view.",
+      fetchable: false,
+      help: { label: "cmake.org", url: "https://cmake.org/download/" },
+    });
+  }
+  if (found.protoc === undefined) {
+    missing.push({
+      tool: "protoc",
+      reason: "protoc is not on this machine. Gears with a gRPC SDK compile their .proto files with it.",
+      fetchable: true,
+    });
+  }
+  return missing.length > 0 ? { ready: true, missing } : { ready: true };
 }

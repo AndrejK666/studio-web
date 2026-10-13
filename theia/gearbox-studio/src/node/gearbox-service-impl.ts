@@ -64,7 +64,9 @@ import {
 import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
 import { closeSourcesList } from "./sources-list";
 import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
-import { buildToolchain, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
+import type { DeployInfo } from "../common/deploy-product";
+import { deployInfo } from "./deploy-support";
+import { buildToolchain, containerOnPort, fetchProtoc, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
 import {
   LoadRecord,
   catalogueCacheFile,
@@ -1014,7 +1016,7 @@ export class GearboxServiceImpl implements GearboxService {
     return portAnswers(LOCAL_POSTGRES.host, port);
   }
 
-  async writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[] }> {
+  async writeRunConfig(outRoot: string, app: string, dbGears: string[]): Promise<{ config: string; missing: string[]; defaulted: string[] }> {
     // Only inside a generated tree, and only an application's own file: the
     // frontend names both, and this writes to disk.
     const normalized = outRoot.replace(/\\/g, "/");
@@ -1035,6 +1037,36 @@ export class GearboxServiceImpl implements GearboxService {
     const result = await startLocalPostgres({ container: `gbx-pg-${id}`, port: LOCAL_POSTGRES.port, databases });
     this.logger.info(`gearbox: local Postgres for ${product}: ${result.message}`);
     return result;
+  }
+
+  async createLocalDatabases(databases: string[]): Promise<{ ok: boolean; message: string }> {
+    if (databases.some((db) => !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(db))) {
+      return { ok: false, message: "refusing a database name that is not an identifier" };
+    }
+    const container = await containerOnPort(LOCAL_POSTGRES.port);
+    if (container === undefined) {
+      return {
+        ok: false,
+        message: `The Postgres on ${LOCAL_POSTGRES.host}:${LOCAL_POSTGRES.port} is not a docker container Studio can reach; create ${databases.join(", ")} in it yourself.`,
+      };
+    }
+    const result = await startLocalPostgres({ container, port: LOCAL_POSTGRES.port, databases });
+    this.logger.info(`gearbox: databases in ${container}: ${result.message}`);
+    return result;
+  }
+
+  async deployInfo(outRoot: string): Promise<DeployInfo> {
+    // Only a generated tree: the frontend names it, and this reads from disk.
+    if (!/\/\.gearbox\//.test(outRoot.replace(/\\/g, "/"))) {
+      throw new Error(`refusing to read a deploy plan outside a generated tree: ${outRoot}`);
+    }
+    return deployInfo(outRoot);
+  }
+
+  async fetchProtoc(): Promise<{ ok: boolean; message: string }> {
+    const result = await fetchProtoc();
+    this.logger.info(`gearbox: ${result.message}`);
+    return { ok: result.ok, message: result.message };
   }
 
   /**

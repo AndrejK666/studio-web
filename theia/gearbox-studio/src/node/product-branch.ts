@@ -61,8 +61,11 @@ function checkoutsOf(workspace: string): string[] {
     .filter((dir) => fs.existsSync(path.join(dir, ".git")));
 }
 
+/** Windows: a project's checkout holds paths past MAX_PATH, which git refuses without this ("Filename too long"). */
+const LONG_PATHS = process.platform === "win32" ? ["-c", "core.longpaths=true"] : [];
+
 async function run(args: string[]): Promise<string> {
-  const { stdout } = await git("git", args, { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 });
+  const { stdout } = await git("git", [...LONG_PATHS, ...args], { timeout: 60_000, maxBuffer: 4 * 1024 * 1024 });
   return stdout.trim();
 }
 

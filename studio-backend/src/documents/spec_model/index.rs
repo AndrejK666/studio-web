@@ -50,6 +50,23 @@ impl ReferenceIndex {
     }
 }
 
+/// The identifiers the documents define with a label (`**ID**: \`x\``), and
+/// where: the requirements, components and decisions work can name. Anchors
+/// are left out: `how-it-works` is a heading, and it turns up in any URL.
+pub fn labelled_ids(docs: &[SourceDoc<'_>]) -> BTreeMap<String, Vec<Side>> {
+    let mut out: BTreeMap<String, Vec<Side>> = BTreeMap::new();
+    for doc in docs {
+        for line in prose_lines(doc.text) {
+            if let Some(id) = defined_id(line.text) {
+                out.entry(id)
+                    .or_default()
+                    .push(Side::at(doc.path, line.number, line.text));
+            }
+        }
+    }
+    out
+}
+
 /// Build the index and run the reference rules.
 ///
 /// `tree` is every path the project's repositories hold (documents or not),

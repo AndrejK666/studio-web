@@ -120,6 +120,7 @@ const studioQuality = require('./studio-quality');
 const qualityView = require('./quality-view');
 const qualityMeasures = require('./quality-measures');
 const { qualityMarksExtension, refreshQualityMarks } = require('./quality-marks');
+const { writingHintsExtension, refreshWritingHints } = require('./writing-hints');
 const { linkCardExtension, refreshLinkCards } = require('./link-card-marks');
 const qualityMove = require('./quality-move');
 const { previewBase } = require('./preview-url');
@@ -754,6 +755,12 @@ function buildExtensions(widget) {
          * not asked for it.
          */
         linkCardExtension(() => (widget && widget.linkCardKinds ? widget.linkCardKinds() : false)),
+        /*
+         * Writing hints in requirement sentences, on the same callback shape:
+         * the Project page's switch reaches an open document without the
+         * plugin knowing the settings file exists.
+         */
+        writingHintsExtension(() => (widget && widget.writingHintsOn ? widget.writingHintsOn() : false)),
         ...TABLE_EXTENSIONS
     ];
 }
@@ -1473,6 +1480,7 @@ class MarkdownEditorWidget extends Widget {
              * this document is open. The plugin asks per transaction, and a
              * document nobody is typing in produces none — so it is nudged. */
             refreshLinkCards(this.editor);
+            refreshWritingHints(this.editor);
             if (!fileTypeSettings.authoringModesForFile(this.uri) && this.mode !== 'rich') { this.setMode('rich'); }
             else { this.renderSegmented(); }
             /*
@@ -6109,6 +6117,11 @@ class MarkdownEditorWidget extends Widget {
      */
     linkCardKinds() {
         return fileTypeSettings.linkCardsForFile(this.uri);
+    }
+
+    /** Whether this document's project shows writing hints; read fresh, like linkCardKinds. */
+    writingHintsOn() {
+        return !!this.uri && fileTypeSettings.writingHintsForFile(this.uri);
     }
 
     qualityRanges() {

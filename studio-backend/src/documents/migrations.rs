@@ -35,6 +35,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0014::Migration),
             Box::new(m0015::Migration),
             Box::new(m0016::Migration),
+            Box::new(m0017::Migration),
         ]
     }
 }
@@ -1055,6 +1056,63 @@ CREATE TABLE IF NOT EXISTS studio_spec_model_decisions (
             ] {
                 manager.get_connection().execute_unprepared(sql).await?;
             }
+            Ok(())
+        }
+    }
+}
+
+/// What members decided about a project's glossary: the name an entry goes
+/// by, and which entry is another name of which
+/// (`docs/project-and-product.md`, "The project's words").
+mod m0017 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0017_spec_model_terms"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_spec_model_terms (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    term_key TEXT NOT NULL,
+    name TEXT,
+    alias_of TEXT,
+    decided_by UUID NOT NULL,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (project_id, term_key)
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_spec_model_terms_project
+    ON studio_spec_model_terms (tenant_id, project_id);",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_spec_model_terms;")
+                .await?;
             Ok(())
         }
     }

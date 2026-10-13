@@ -289,6 +289,11 @@ class ProjectPageWidget extends Widget {
             'title="Cards for recognised links in this project">Link cards off</button>' +
             '        <span class="studio-settings-note" data-page-link-cards-note></span>' +
             '      </div>' +
+            '      <div class="studio-settings-row">' +
+            '        <button class="studio-switch" data-act="toggle-writing-hints" aria-pressed="true" ' +
+            'title="Hints on how requirements are written in this project">Writing hints on</button>' +
+            '        <span class="studio-settings-note" data-page-writing-hints-note></span>' +
+            '      </div>' +
             '    </section>' +
             '  </div>' +
             '</div>';
@@ -311,6 +316,8 @@ class ProjectPageWidget extends Widget {
         this.gearFlowEl = this.node.querySelector('[data-act="toggle-gear-flow"]');
         this.linkCardsEl = this.node.querySelector('[data-act="toggle-link-cards"]');
         this.linkCardsNoteEl = this.node.querySelector('[data-page-link-cards-note]');
+        this.writingHintsEl = this.node.querySelector('[data-act="toggle-writing-hints"]');
+        this.writingHintsNoteEl = this.node.querySelector('[data-page-writing-hints-note]');
         this.gearFlowNoteEl = this.node.querySelector('[data-page-gear-flow-note]');
         this.identityEl = this.node.querySelector('[data-act="display-name"]');
         this.identityAvatarEl = this.node.querySelector('[data-page-identity-avatar]');
@@ -677,10 +684,13 @@ class ProjectPageWidget extends Widget {
             ? fileTypeSettings.qualitySignalsFor(root.resource)
             : feature === 'link-cards'
                 ? !!fileTypeSettings.linkCardsFor(root.resource)
-                : fileTypeSettings.gearFlowFor(root.resource);
+                : feature === 'writing-hints'
+                    ? fileTypeSettings.writingHintsFor(root.resource)
+                    : fileTypeSettings.gearFlowFor(root.resource);
         try {
             if (feature === 'quality') { await fileTypeSettings.setQualitySignals(root.resource, !on); }
             else if (feature === 'link-cards') { await fileTypeSettings.setLinkCards(root.resource, !on); }
+            else if (feature === 'writing-hints') { await fileTypeSettings.setWritingHints(root.resource, !on); }
             else { await fileTypeSettings.setGearFlow(root.resource, !on); }
         } catch (e) {
             console.error('[studio] could not persist the ' + feature + ' feature setting', e);
@@ -732,6 +742,18 @@ class ProjectPageWidget extends Widget {
                   'repository — read from the address itself. Nothing is fetched and the link stays editable.'
                 : 'Off. Links are shown exactly as written, which is also what happens to any link this ' +
                   'does not recognise.';
+        }
+
+        const hints = root ? fileTypeSettings.writingHintsFor(root.resource) : true;
+        if (this.writingHintsEl) {
+            this.writingHintsEl.textContent = hints ? 'Writing hints on' : 'Writing hints off';
+            this.writingHintsEl.setAttribute('aria-pressed', String(hints));
+        }
+        if (this.writingHintsNoteEl) {
+            this.writingHintsNoteEl.textContent = hints
+                ? 'A requirement longer than 20 words, two requirements in one sentence, or a passive one that ' +
+                  'names no actor gets a dotted underline that says why. Advice only: nothing is recorded or blocked.'
+                : 'Off. Requirements are shown as written, without hints.';
         }
     }
 
@@ -805,6 +827,8 @@ class ProjectPageWidget extends Widget {
             void this.toggleFeature('gear-flow');
         } else if (act === 'toggle-link-cards') {
             void this.toggleFeature('link-cards');
+        } else if (act === 'toggle-writing-hints') {
+            void this.toggleFeature('writing-hints');
         }
     }
 }

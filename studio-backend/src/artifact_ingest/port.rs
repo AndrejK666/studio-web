@@ -236,6 +236,40 @@ pub trait ProjectSignalSource: Send + Sync + 'static {
 
 pub use super::service::{QualityFinding, QualityLink};
 
+/// One piece of a project's work, as the sync keeps it: an issue, a pull
+/// request or a commit, with the text a person wrote on it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkItem {
+    /// `issue`, `pull_request` or `commit`.
+    pub kind: String,
+    /// The issue's or pull request's number; `None` for a commit.
+    pub number: Option<i64>,
+    /// The title, or a commit's subject line.
+    pub title: String,
+    /// The body, or a commit's whole message. Empty when the sync dropped an
+    /// oversized body.
+    pub text: String,
+    pub url: Option<String>,
+    /// `open` or `closed` for an issue or pull request.
+    pub state: Option<String>,
+    pub merged: bool,
+    /// A commit's short sha.
+    pub sha: Option<String>,
+}
+
+/// A project's issues, pull requests and commits, for the gear that links
+/// them to what the documents require (`docs/project-and-product.md`, "The
+/// links"). Three indexed reads in scope, as [`ProjectSignalSource`] makes.
+#[async_trait]
+pub trait ProjectWork: Send + Sync + 'static {
+    /// The work in `scope` (a project's tenant id), in no particular order.
+    async fn project_work(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<WorkItem>>;
+}
+
 /// Writes spec-quality findings into the artifact graph.
 ///
 /// The REST `POST /quality` writes the same nodes for a caller that parsed a

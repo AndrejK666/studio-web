@@ -78,6 +78,7 @@ const { SearchWidget, SEARCH_CSS, SEARCH_WIDGET_ID } = require('./search-view');
 const { QUALITY_CSS } = require('./quality-view');
 const { MEASURES_CSS } = require('./quality-measures');
 const { QUALITY_MARKS_CSS } = require('./quality-marks');
+const { WRITING_HINTS_CSS } = require('./writing-hints');
 const { LINK_CARD_CSS } = require('./link-card-marks');
 const { QualityProjectWidget, QUALITY_PROJECT_CSS, QUALITY_PROJECT_WIDGET_ID } = require('./quality-project-view');
 const { CollaborationWidget, COLLAB_CSS, COLLAB_WIDGET_ID } = require('./collab-view');
@@ -1606,7 +1607,7 @@ class ProductChromeContribution {
              * the rail's own CSS must land after EDITOR_CSS's .studio-rail-*
              * geometry it builds on.
              */
-            QUALITY_MARKS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS + COLLAB_CSS + COLLAB_STRIP_CSS +
+            QUALITY_MARKS_CSS + WRITING_HINTS_CSS + QUALITY_CSS + MEASURES_CSS + QUALITY_PROJECT_CSS + COLLAB_CSS + COLLAB_STRIP_CSS +
             LINK_CARD_CSS +
             /* The flow's one surface: the rail's column. */
             FLOW_RAIL_CSS;

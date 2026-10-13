@@ -12,10 +12,12 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) mod build;
 pub(crate) mod extract;
 pub(crate) mod finding;
+pub(crate) mod glossary;
 pub(crate) mod index;
 pub(crate) mod judge;
 pub(crate) mod record;
 pub(crate) mod rules;
+pub(crate) mod work;
 
 /// One document of the project, with its text.
 #[derive(Clone, Debug)]
@@ -39,6 +41,11 @@ pub struct Sources {
 impl Sources {
     pub fn reference_findings(&self) -> Vec<finding::Finding> {
         index::reference_findings(&source_docs(&self.documents), &self.tree).1
+    }
+
+    /// The identifiers the documents define with a label, and where.
+    pub fn labelled_ids(&self) -> BTreeMap<String, Vec<finding::Side>> {
+        index::labelled_ids(&source_docs(&self.documents))
     }
 }
 
