@@ -206,21 +206,30 @@ The glossary is then input, not output:
 A drift rule may come back later, scoped to what the glossary decides: an alias a
 member split off, used again with the entity's meaning.
 
-**Writing rules are advice in the editor, not findings.** `constraint.vague`
-raised nothing that survived review, so the writing rules do not join the
-project's findings or its state. They are hints in the IDE's editor on a
-document's requirement sections, without a model:
+**Writing rules are advice in the editor, not findings: built.**
+`constraint.vague` raised nothing that survived review, so the writing rules do
+not join the project's findings or its state. They are hints in the IDE's
+document editor, without a model (`theia/product-ext/src/browser/writing-hints.js`),
+on the sentences that state a requirement (shall, must, should, "is required
+to"); descriptions, headings and code are left alone:
 
 | Hint | When |
 |---|---|
-| `writing.long_sentence` | a requirement or a procedure step longer than 20 words, a description longer than 25 |
-| `writing.two_requirements` | one sentence with two requirement verbs ("shall … and shall …") |
-| `writing.no_actor` | a requirement in the passive voice with no agent ("the data is stored") |
-| `writing.long_noun` | a run of more than three nouns |
+| `writing.long_sentence` | a requirement longer than 20 words |
+| `writing.two_requirements` | one sentence with two requirement verbs ("must retry and must give up"); the second is marked |
+| `writing.no_actor` | a passive requirement that names no actor ("shall be stored", with no "by …") |
 
-A project can turn them off, and they never block a sync, a share or a merge:
-specs are read as written. The same rules, in Studio's words, go into the
-instructions of the assistant that writes and edits documents in a session.
+Each is a dotted underline whose tooltip says why, drawn as a decoration, so
+nothing reaches the file. They are on unless the project turns them off on the
+Project page (`writingHints: false` in `.studio/settings.json`), and they never
+block a sync, a share or a merge: specs are read as written. They show in the
+documents mode's editor, the one the portal opens a document in and the
+Quality rail lives in; the workbench's Markdown editor has none.
+
+Not built: `writing.long_noun` (a run of more than three nouns), because telling
+a noun from a verb needs a part-of-speech reading and a guess underlines
+ordinary prose; and the same rules in the instructions of the assistant that
+writes documents in a session.
 
 ## The project card
 
@@ -248,7 +257,7 @@ Each step is useful alone.
    by members; no model, no key. Built. Then **the identifier index and
    `code.*` rules** through it, on the builder's key, as the domain model's
    build is.
-   The writing hints and the assistant's instructions are independent of both.
+   The writing hints (built) and the assistant's instructions are independent of both.
 4. **Work links.** Issues and pull requests to requirements and gears, proposed
    and decided.
 5. **The project card.**

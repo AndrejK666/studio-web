@@ -227,6 +227,28 @@ class FileTypeSettings {
         await this.writeRoot(rootUri, { gearFlow: !!enabled });
     }
 
+    /*
+     * Writing hints in requirement sentences (writing-hints.js). ON unless the
+     * project says `writingHints: false`: they are quiet, never a finding and
+     * never a gate, and advice nobody knows to switch on is advice nobody gets.
+     * A project setting like its neighbours, so two people reading one PRD see
+     * the same hints.
+     */
+    writingHintsFor(rootUri) {
+        const raw = rootUri && this.rawByRoot.get(rootUri.toString());
+        return !(raw && raw.writingHints === false);
+    }
+
+    writingHintsForFile(uri) {
+        const key = this.rootOf(uri);
+        const raw = key && this.rawByRoot.get(key);
+        return !(raw && raw.writingHints === false);
+    }
+
+    async setWritingHints(rootUri, enabled) {
+        await this.writeRoot(rootUri, { writingHints: !!enabled });
+    }
+
     /** Gear-flow policy for the root that owns `uri`. */
     gearFlowForFile(uri) {
         const key = this.rootOf(uri);
