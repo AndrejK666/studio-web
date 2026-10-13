@@ -6,7 +6,7 @@
 // sides of that one file. Putting every file on the plan would drag
 // `Cargo.lock` (~100k) across for a preview nobody asked to read.
 
-import { codicon, ReactWidget } from "@theia/core/lib/browser";
+import { codicon, ConfirmDialog, ReactWidget } from "@theia/core/lib/browser";
 import { WindowService } from "@theia/core/lib/browser/window/window-service";
 import { CommandService } from "@theia/core/lib/common/command";
 import { MessageService } from "@theia/core/lib/common/message-service";
@@ -41,6 +41,8 @@ import {
 } from "../../common/run-product";
 import { ProductTerminals } from "./product-terminals";
 import { RunPanel, type PostgresState } from "./run-panel";
+import { DeployPanel } from "./deploy-panel";
+import { deployCommands, type DeployInfo } from "../../common/deploy-product";
 
 const ACTION_ICON: Record<FileAction, string> = {
   create: "new-file",
@@ -128,6 +130,10 @@ export class GenerateWidget extends ReactWidget {
   protected postgres: PostgresState = "unknown";
   protected startingPostgres = false;
   protected creatingDatabases = false;
+  /** Constructor Studio: Deploy, for a kubernetes profile -- see `deploy-panel.tsx`. */
+  protected deploy: DeployInfo | undefined;
+  protected deployFor: string | undefined;
+  protected kubeContext: string | undefined;
   protected fetchingProtoc = false;
 
   protected selected: string | undefined;
@@ -300,10 +306,98 @@ export class GenerateWidget extends ReactWidget {
     }
   }
 
+  /** The kubernetes settings of the resolution on screen, when its profile is one. */
+  protected kubernetes(): { namespace?: string | null; image_registry?: string | null } | undefined {
+    return this.product.current.resolution?.product?.kubernetes ?? undefined;
+  }
+
+  protected async askDeploy(outRoot: string): Promise<void> {
+    if (this.deployFor === outRoot) return;
+    this.deployFor = outRoot;
+    this.deploy = undefined;
+    try {
+      this.deploy = await this.service.deployInfo(outRoot);
+      this.kubeContext ??= this.deploy.currentContext ?? this.deploy.contexts[0];
+    } catch (error) {
+      this.messages.error(`Deploy could not read the generated tree: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    this.update();
+  }
+
+  protected deployCommandsFor(kubeContext?: string): ReturnType<typeof deployCommands> | undefined {
+    const context = this.runContext();
+    const deploy = this.deploy;
+    if (context === undefined || deploy?.script === undefined || deploy.chart === undefined) return undefined;
+    const kubernetes = this.kubernetes();
+    return deployCommands({
+      outRoot: context.cwd,
+      script: deploy.script,
+      chart: deploy.chart,
+      release: context.product,
+      namespace: kubernetes?.namespace ?? undefined,
+      registry: kubernetes?.image_registry ?? undefined,
+      ...(kubeContext !== undefined ? { kubeContext } : {}),
+    });
+  }
+
+  /** One step into the Deploy terminal: several commands run one after another, stopping at the first that fails. */
+  protected async sendDeploy(commands: readonly string[]): Promise<void> {
+    const context = this.runContext();
+    if (context === undefined || commands.length === 0) return;
+    await this.terminals.send("deploy", context.product, context.cwd, commands.join(" && "), { DOCKER_BUILDKIT: "1" });
+  }
+
+  protected async confirmDeploy(): Promise<void> {
+    const kubeContext = this.kubeContext;
+    const commands = this.deployCommandsFor(kubeContext);
+    if (kubeContext === undefined || commands?.install === undefined) return;
+    const namespace = this.kubernetes()?.namespace ?? "the chart's namespace";
+    const ok = await new ConfirmDialog({
+      title: "Deploy to a cluster?",
+      msg: `helm upgrade --install ${this.runContext()?.product ?? ""} into ${namespace} on ${kubeContext}. This changes that cluster.`,
+      ok: "Deploy",
+    }).open();
+    if (ok === true) await this.sendDeploy([commands.install]);
+  }
+
+  protected renderDeploy(generated: boolean): React.ReactNode {
+    const context = this.runContext();
+    if (generated && context !== undefined) void this.askDeploy(context.cwd);
+    const kubernetes = this.kubernetes();
+    const deploy = this.deploy;
+    return (
+      <DeployPanel
+        generated={generated}
+        ready={deploy === undefined ? undefined : true}
+        images={deploy?.script?.images ?? []}
+        chart={deploy?.chart}
+        registry={kubernetes?.image_registry ?? undefined}
+        namespace={kubernetes?.namespace ?? undefined}
+        docker={deploy?.docker === true}
+        helm={deploy?.helm}
+        contexts={deploy?.contexts ?? []}
+        context={this.kubeContext}
+        onContext={(next) => {
+          this.kubeContext = next;
+          this.update();
+        }}
+        onBuildImages={() => void this.sendDeploy(this.deployCommandsFor()?.build ?? [])}
+        onPush={() => void this.sendDeploy(this.deployCommandsFor()?.push ?? [])}
+        onTemplate={() => {
+          const template = this.deployCommandsFor()?.template;
+          if (template !== undefined) void this.sendDeploy([template]);
+        }}
+        onDeploy={() => void this.confirmDeploy()}
+      />
+    );
+  }
+
   protected renderRun(plans: readonly FilePlan[]): React.ReactNode {
     const gen = this.generate.current;
     const generated =
       gen.written !== undefined || (plans.length > 0 && plans.every((plan) => plan.action === "unchanged" || plan.action === "kept"));
+    // A kubernetes profile runs in a cluster, not on this machine.
+    if (this.kubernetes() !== undefined) return this.renderDeploy(generated);
     if (generated && this.toolchain === undefined) void this.askToolchain();
     const targets = this.runTargets();
     const chosen = this.chosenTarget(targets);

@@ -64,6 +64,8 @@ import {
 import { EngineHandle, spawnEngine } from "./gearbox-engine-process";
 import { closeSourcesList } from "./sources-list";
 import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
+import type { DeployInfo } from "../common/deploy-product";
+import { deployInfo } from "./deploy-support";
 import { buildToolchain, containerOnPort, fetchProtoc, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
 import {
   LoadRecord,
@@ -1047,6 +1049,14 @@ export class GearboxServiceImpl implements GearboxService {
     const result = await startLocalPostgres({ container, port: LOCAL_POSTGRES.port, databases });
     this.logger.info(`gearbox: databases in ${container}: ${result.message}`);
     return result;
+  }
+
+  async deployInfo(outRoot: string): Promise<DeployInfo> {
+    // Only a generated tree: the frontend names it, and this reads from disk.
+    if (!/\/\.gearbox\//.test(outRoot.replace(/\\/g, "/"))) {
+      throw new Error(`refusing to read a deploy plan outside a generated tree: ${outRoot}`);
+    }
+    return deployInfo(outRoot);
   }
 
   async fetchProtoc(): Promise<{ ok: boolean; message: string }> {

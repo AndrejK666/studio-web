@@ -9,7 +9,7 @@ import { FileUri } from "@theia/core/lib/common/file-uri";
 import { inject, injectable } from "@theia/core/shared/inversify";
 import { TerminalService } from "@theia/terminal/lib/browser/base/terminal-service";
 
-export type ProductTerminalKind = "build" | "run";
+export type ProductTerminalKind = "build" | "run" | "deploy";
 
 /** The widget id of a product's terminal: stable, so the next press finds it. */
 export function productTerminalId(kind: ProductTerminalKind, product: string): string {
@@ -46,7 +46,7 @@ export class ProductTerminals {
     if (terminal === undefined || terminal.isDisposed) {
       terminal = await this.terminals.newTerminal({
         id,
-        title: `${kind === "build" ? "Build" : "Run"} ${product}`,
+        title: `${kind === "build" ? "Build" : kind === "run" ? "Run" : "Deploy"} ${product}`,
         cwd: FileUri.create(cwd),
         env,
         destroyTermOnClose: true,

@@ -39,6 +39,7 @@ import type { InitializeResult } from "./generated/InitializeResult";
 import type { PendingGear } from "./generated/PendingGear";
 import type { ProgressParams } from "./generated/ProgressParams";
 import type { BuildToolchain } from "./run-product";
+import type { DeployInfo } from "./deploy-product";
 
 export const GEARBOX_SERVICE_PATH = "/services/gearbox";
 
@@ -513,6 +514,9 @@ export interface GearboxService {
 
   /** Constructor Studio: fetch protoc into Studio's tools folder, for gears whose SDKs compile .proto files. */
   fetchProtoc(): Promise<{ ok: boolean; message: string }>;
+
+  /** Constructor Studio: what Deploy finds for a generated kubernetes tree -- images, chart, docker/helm/kubectl, kube contexts. */
+  deployInfo(outRoot: string): Promise<DeployInfo>;
 
   /**
    * Tell the engine an editor opened a `.gdl`, and what is in the buffer.
