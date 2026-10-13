@@ -25,7 +25,8 @@ import type { ResolvedBinding } from "../../common/generated/ResolvedBinding";
 import type { ResolvedApplication } from "../../common/generated/ResolvedApplication";
 import type { ResolvedClusterBinding } from "../../common/generated/ResolvedClusterBinding";
 import type { ResolvedProduct } from "../../common/generated/ResolvedProduct";
-import type { ProductRef } from "../../common/protocol";
+import { GearboxService, type ProductRef } from "../../common/protocol";
+import { staleCorpusSource, type CorpusCopy } from "../create/corpus-source";
 import {
   DiagnosticsList,
   errorsIn,
@@ -113,6 +114,11 @@ export class ProductWidget extends ReactWidget {
   @inject(PendingCreateGear) protected readonly pendingGear!: PendingCreateGear;
   // Constructor Studio: Apply needs the engine, and the strip says so.
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
+  @inject(GearboxService) protected readonly gearbox!: GearboxService;
+
+  /** Constructor Studio: the corpus copy Studio adopted, asked once per open product. */
+  protected corpusCopy: CorpusCopy | undefined;
+  protected corpusCopyFor: string | undefined;
 
   /**
    * Constructor Studio: Recent products, for the empty state. Held rather than
@@ -413,6 +419,50 @@ export class ProductWidget extends ReactWidget {
     );
   }
 
+  /**
+   * Constructor Studio: a product reading an older copy of the corpus than the
+   * one Studio has, said where the product is: its gears load from there, and
+   * after an engine update a stale corpus is why none of them does. The engine
+   * cannot repoint a source yet (`remove_source` refuses one a gear reads), so
+   * this names the one line to change and opens it, rather than rewriting the
+   * description behind the engine (constructorfabric/gearbox#8).
+   */
+  protected renderStaleCorpus(): React.ReactNode {
+    const state = this.store.current;
+    const path = state.open?.path;
+    if (path !== undefined && this.corpusCopyFor !== path) {
+      this.corpusCopyFor = path;
+      void this.gearbox.corpusCopy().then(
+        (copy) => {
+          this.corpusCopy = copy;
+          this.update();
+        },
+        () => undefined,
+      );
+    }
+    const stale = staleCorpusSource(state.intent?.sources, this.corpusCopy);
+    if (stale === undefined) return null;
+    const declaredAt = stale.declaredAt;
+    return (
+      <div className="gbx-stale-corpus" role="status" data-stale-corpus={stale.id}>
+        <p>
+          This product reads <code>{stale.id}</code> from an older copy of the corpus (
+          <code>{stale.declaredCommit}</code>); Studio has <code>{stale.currentCommit}</code>. Gears described for
+          another engine may not load. Change the source&apos;s path in the description to{" "}
+          <code data-stale-corpus-current>{stale.current}</code>.
+        </p>
+        {declaredAt ? (
+          <button type="button" className="gbx-choice" data-stale-corpus-open onClick={() => void this.reveals.revealLocation(declaredAt)}>
+            Open the source line
+          </button>
+        ) : null}{" "}
+        <button type="button" className="gbx-choice" data-stale-corpus-copy onClick={() => void navigator.clipboard?.writeText(stale.current)}>
+          Copy the path
+        </button>
+      </div>
+    );
+  }
+
   /** Generate, by command that opens rather than toggles -- see `SHOW_GENERATE`. */
   protected showGenerate(): void {
     void this.commands.executeCommand(SHOW_GENERATE.id);
@@ -561,6 +611,7 @@ export class ProductWidget extends ReactWidget {
           <span className="gbx-id">{intent?.id}</span>
         </div>
 
+        {this.renderStaleCorpus()}
         {this.renderStatusStrip()}
 
         <div className="gbx-product-actions">

@@ -90,6 +90,13 @@ export function Composition({ state, descriptors, selection, select, add, remove
           return <div className="gbx-composition-connection" key={entryIndex} data-plugin-host={host.gear} data-plugin-index={entryIndex} data-plugin-id={p.gear} data-plugin-active={active}>
             <button type="button" aria-pressed={selected} className={`gbx-choice ${selected ? "gbx-choice-on" : ""}`} onClick={() => select({ kind: "plugin", host: host.gear, id: p.gear, entryIndex, path: openPath })}>{p.gear}</button>
             <small>Profiles: {p.profiles?.join(", ") || "All profiles"}{!active ? " · inactive here" : ""}</small>
+            {/* Beside the plugin, not only in its settings: the gear's own
+                Remove is the one in reach, and it takes the host and every
+                plugin with it -- a person dropping one plugin found that out
+                only after the description lost two gears. */}
+            <button type="button" className="gbx-composition-remove-plugin" data-remove-plugin={`${host.gear}:${entryIndex}`}
+              aria-label={`Remove ${p.gear} from ${host.gear}`} title={`Remove ${p.gear} from ${host.gear}; ${host.gear} stays`}
+              onClick={() => remove(host.gear, entryIndex)}>Remove</button>
           </div>;
         });
         const chosen = selection?.kind === "gear" && selection.id === host.gear;
@@ -133,7 +140,9 @@ export function Composition({ state, descriptors, selection, select, add, remove
                 dropping that would make the id a worse control than the row. */}
             <GearLink state={state} id={host.gear} reveals={reveals} select={select} />
             </span>
-            <button type="button" aria-label={`Remove ${host.gear} from product`} onClick={() => remove(host.gear)}>Remove</button>
+            <button type="button" aria-label={`Remove ${host.gear} from product`}
+              title={(host.plugins ?? []).length > 0 ? `Remove ${host.gear} and its plugins (${(host.plugins ?? []).map(p => p.gear).join(", ")}); remove one plugin with the Remove beside it` : `Remove ${host.gear} from the product`}
+              onClick={() => remove(host.gear)}>Remove</button>
           </div>
           {!shut && <>
             {!d && <small>Descriptor unavailable or still loading. This gear remains in your product.</small>}

@@ -1,4 +1,5 @@
-import { corpusOffer, corpusSourceDecl } from "./corpus-source";
+import type { SourceDecl } from "../../common/generated/SourceDecl";
+import { corpusOffer, corpusSourceDecl, staleCorpusSource } from "./corpus-source";
 
 const COPY = {
   id: "gears-rust",
@@ -81,5 +82,28 @@ describe("the corpus as a New Product source", () => {
       id: "gears-rust",
       at: "C:/Users/me/ConstructorStudio/corpus/github.com__o__gears-rust/0123456789ab/gears-rust",
     });
+  });
+});
+
+describe("a product reading an older copy of the corpus", () => {
+  const OLD = "C:/Users/me/ConstructorStudio/corpus/github.com__o__gears-rust/52ba6948963e/gears-rust";
+  const at = (path: string): SourceDecl => ({ kind: "path", at: path }) as SourceDecl;
+
+  it("is noticed when the product names another commit's copy of the same repository", () => {
+    const stale = staleCorpusSource({ "gears-rust": at(OLD) }, COPY);
+    expect(stale).toMatchObject({
+      id: "gears-rust",
+      declaredCommit: "52ba6948963e",
+      currentCommit: "0123456789ab",
+      current: "C:/Users/me/ConstructorStudio/corpus/github.com__o__gears-rust/0123456789ab/gears-rust",
+    });
+  });
+
+  it("is not noticed for the current copy, another repository, a checkout, or a git source", () => {
+    expect(staleCorpusSource({ "gears-rust": at(COPY.path) }, COPY)).toBeUndefined();
+    expect(staleCorpusSource({ "gears-rust": at(OLD.replace("gears-rust/52b", "other/52b")) }, COPY)).toBeUndefined();
+    expect(staleCorpusSource({ "gears-rust": at("../../gears-rust") }, COPY)).toBeUndefined();
+    expect(staleCorpusSource({ "gears-rust": { kind: "git", url: "https://github.com/o/gears-rust.git", rev: "52ba6948" } as SourceDecl }, COPY)).toBeUndefined();
+    expect(staleCorpusSource({ "gears-rust": at(OLD) }, undefined)).toBeUndefined();
   });
 });
