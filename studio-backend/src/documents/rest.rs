@@ -2543,6 +2543,8 @@ async fn start_spec_model_build(
     let sources_for_record = super::spec_model::Sources {
         documents: sources.documents.clone(),
         tree: sources.tree,
+        // Recording findings needs no code files.
+        files: Vec::new(),
     };
     let documents = sources.documents;
     tokio::spawn(async move {
@@ -2996,6 +2998,301 @@ async fn list_spec_requirements(
         items,
         by_basis,
         synced,
+    }))
+}
+
+/// One question for a document's author: an entity the project's other
+/// documents relate to what this one speaks of, and this one never names.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DomainQuestionDto {
+    pub entity: String,
+    /// The entities the document does mention that it is related to.
+    pub because_of: Vec<String>,
+    pub facts: u32,
+    pub documents: Vec<String>,
+    /// One passage that relates them.
+    pub example: Option<SpecModelSideDto>,
+}
+
+/// A word the document uses for a thing the project named otherwise.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct TermDriftDto {
+    pub used: String,
+    pub project_name: String,
+    pub line: u32,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DomainQuestionListDto {
+    pub items: Vec<DomainQuestionDto>,
+    pub total: u32,
+    pub drift: Vec<TermDriftDto>,
+    /// False when the model has not been built: no facts, no questions.
+    pub built: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct DocumentScopeQuery {
+    pub project_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SubjectScopeQuery {
+    pub project_id: String,
+    pub subject: String,
+}
+
+/// One person who changed the documents that describe an entity.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DomainExpertDto {
+    /// The account's login, or the commit author's name when it has none.
+    pub person: String,
+    pub commits: u32,
+    /// The documents they changed, of those describing the entity.
+    pub documents: Vec<String>,
+    /// RFC 3339, their latest change to one of them.
+    pub last_change: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DomainExpertListDto {
+    pub items: Vec<DomainExpertDto>,
+    pub total: u32,
+    /// The documents read for it, most facts first.
+    pub documents: Vec<String>,
+}
+
+/// Questions for one document: what it leaves out of the domain the project
+/// describes, and the words it uses where the project named things otherwise.
+async fn list_domain_questions(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<DocumentScopeQuery>,
+) -> ApiResult<JsonBody<DomainQuestionListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let (sources, facts, _) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    let Some(doc) = sources.documents.iter().find(|d| d.path == query.path) else {
+        return Err(DocumentsError::not_found("no such document in this project")
+            .with_resource("document")
+            .create());
+    };
+    let choices = service
+        .glossary_choices(workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    let entries = super::spec_model::glossary::entries(&facts, &choices);
+    let (questions, drifts) =
+        super::spec_model::questions::questions(&doc.path, &doc.text, &entries, &facts);
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let items: Vec<DomainQuestionDto> = questions
+        .into_iter()
+        .map(|q| DomainQuestionDto {
+            entity: q.entity,
+            because_of: q.because_of,
+            facts: count(q.facts),
+            documents: q.documents,
+            example: q.example.map(|(path, line, quote)| SpecModelSideDto {
+                quote: Some(quote),
+                ..side_at(&path, line)
+            }),
+        })
+        .collect();
+    Ok(Json(DomainQuestionListDto {
+        total: count(items.len()),
+        items,
+        drift: drifts
+            .into_iter()
+            .map(|d| TermDriftDto {
+                used: d.used,
+                project_name: d.project_name,
+                line: count(d.line),
+            })
+            .collect(),
+        built: !facts.is_empty(),
+    }))
+}
+
+/// How many documents about an entity are asked about who changed them, and
+/// how many commits of each are read.
+const EXPERT_DOCUMENTS: usize = 3;
+const EXPERT_COMMITS: u32 = 30;
+
+fn is_bot_author(a: &str) -> bool {
+    let a = a.to_ascii_lowercase();
+    a.ends_with("[bot]") || a.ends_with("-bot") || a == "github-actions" || a.contains("dependabot")
+}
+
+/// Whom to ask about an entity: the people who changed the documents that
+/// describe it most, from the repository's history.
+async fn list_domain_experts(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SubjectScopeQuery>,
+) -> ApiResult<JsonBody<DomainExpertListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let (_, facts, _) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    let key = super::spec_model::rules::subject_key(&query.subject);
+    let mut per_doc: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for f in facts
+        .iter()
+        .filter(|f| super::spec_model::rules::subject_key(&f.subject) == key)
+    {
+        *per_doc.entry(f.path.clone()).or_default() += 1;
+    }
+    let mut documents: Vec<(String, usize)> = per_doc.into_iter().collect();
+    documents.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    documents.truncate(EXPERT_DOCUMENTS);
+    let documents: Vec<String> = documents.into_iter().map(|(p, _)| p).collect();
+
+    // person -> (commits, documents, latest)
+    let mut people: std::collections::BTreeMap<
+        String,
+        (u32, std::collections::BTreeSet<String>, Option<String>),
+    > = std::collections::BTreeMap::new();
+    if let Some(connectors) = crate::connectors::sdk::Connectors::new(quality.hub.clone()).get() {
+        for source in service.project_repositories(&ctx, project_id).await {
+            let Some(connection_id) = source.connection_id else {
+                continue;
+            };
+            let Some(tenant) = connectors.locate(&ctx, project_id, connection_id).await else {
+                continue;
+            };
+            let Ok(repo) = crate::connectors::sdk::Repository::open(
+                &connectors,
+                &ctx,
+                tenant,
+                Some(connection_id),
+                "github",
+                &source.full_path,
+                source.branch.as_deref(),
+            )
+            .await
+            else {
+                continue;
+            };
+            for path in &documents {
+                let Ok(commits) = repo.history(path, EXPERT_COMMITS).await else {
+                    continue;
+                };
+                for c in commits {
+                    let Some(who) = c.author.clone().or(c.author_name.clone()) else {
+                        continue;
+                    };
+                    if is_bot_author(&who) {
+                        continue;
+                    }
+                    let entry = people.entry(who).or_default();
+                    entry.0 += 1;
+                    entry.1.insert(path.clone());
+                    let at = c.committed_at.or(c.created_at);
+                    if at > entry.2 {
+                        entry.2 = at;
+                    }
+                }
+            }
+        }
+    }
+    let mut items: Vec<DomainExpertDto> = people
+        .into_iter()
+        .map(|(person, (commits, docs, last))| DomainExpertDto {
+            person,
+            commits,
+            documents: docs.into_iter().collect(),
+            last_change: last,
+        })
+        .collect();
+    items.sort_by(|a, b| b.commits.cmp(&a.commits).then(b.last_change.cmp(&a.last_change)));
+    items.truncate(5);
+    Ok(Json(DomainExpertListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        documents,
+    }))
+}
+
+/// One requirement and every place that names it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RequirementTraceDto {
+    pub id: String,
+    pub defined_in: SpecModelSideDto,
+    pub title: Option<String>,
+    pub text: String,
+    /// Other documents, and other places in its own, that refer to it.
+    pub documents: Vec<SpecModelSideDto>,
+    /// Code that names it, tests left out.
+    pub code: Vec<SpecModelSideDto>,
+    /// Tests that name it, told from code by their path.
+    pub tests: Vec<SpecModelSideDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RequirementTraceListDto {
+    pub items: Vec<RequirementTraceDto>,
+    pub total: u32,
+    /// Requirements some code names.
+    pub implemented: u32,
+    /// Requirements some test names.
+    pub tested: u32,
+    /// Code and test files read.
+    pub files: u32,
+}
+
+/// Every requirement of the project with the documents, code and tests that
+/// name it.
+async fn list_requirement_trace(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<RequirementTraceListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let traced = sources.trace();
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let sides = |c: Vec<super::spec_model::trace::Cited>| -> Vec<SpecModelSideDto> {
+        c.into_iter().map(|x| side_at(&x.path, x.line)).collect()
+    };
+    let implemented = traced.iter().filter(|t| !t.code.is_empty()).count();
+    let tested = traced.iter().filter(|t| !t.tests.is_empty()).count();
+    let items: Vec<RequirementTraceDto> = traced
+        .into_iter()
+        .map(|t| RequirementTraceDto {
+            defined_in: side_at(&t.requirement.path, t.requirement.line),
+            id: t.requirement.id,
+            title: t.requirement.title,
+            text: t.requirement.text,
+            documents: sides(t.documents),
+            code: sides(t.code),
+            tests: sides(t.tests),
+        })
+        .collect();
+    Ok(Json(RequirementTraceListDto {
+        total: count(items.len()),
+        items,
+        implemented: count(implemented),
+        tested: count(tested),
+        files: count(sources.files.len()),
     }))
 }
 
@@ -4744,6 +5041,90 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "The suggestions",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/questions")
+        .operation_id("studio_documents.list_domain_questions")
+        .summary("What a document leaves out of the project's domain, and words it uses otherwise")
+        .description(
+            "For one document of the project: the entities the project's other documents relate \
+             to an entity this one names, which this one never mentions (the ledger a billing \
+             PRD forgot), strongest first, at most 15; and every merged alias it uses where the \
+             project chose another name. Computed from the facts already extracted: before the \
+             model is built (`built: false`) there are none (docs/spec-domain-model.md, \
+             \"Questions while writing\").",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .query_param("path", true, "The document, by its path in the checkout")
+        .handler(list_domain_questions)
+        .json_response_with_schema::<DomainQuestionListDto>(
+            openapi,
+            StatusCode::OK,
+            "The questions",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/experts")
+        .operation_id("studio_documents.list_domain_experts")
+        .summary("Whom to ask about an entity: who changed the documents that describe it")
+        .description(
+            "Finds the three documents of the project with the most facts about the entity and \
+             reads their history through the project's repository connection: the people who \
+             changed them, most commits first, at most five, bots left out. Empty when the \
+             model has not been built or no connection reaches the repository.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .query_param("subject", true, "The entity, as the glossary names it")
+        .handler(list_domain_experts)
+        .json_response_with_schema::<DomainExpertListDto>(
+            openapi,
+            StatusCode::OK,
+            "The people",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/trace")
+        .operation_id("studio_documents.list_requirement_trace")
+        .summary("Where each requirement is named: other documents, code, tests")
+        .description(
+            "Every requirement the project's documents define, with the documents that refer \
+             to it and the code and test files of its checkouts that name its identifier as a \
+             whole token (a test is told from code by its path). Mechanical, computed on every \
+             call: what is not named is not traced. `implemented` and `tested` count the \
+             requirements some code or some test names (docs/spec-domain-model.md, \"From \
+             requirement to code and test\").",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose requirements to trace")
+        .handler(list_requirement_trace)
+        .json_response_with_schema::<RequirementTraceListDto>(
+            openapi,
+            StatusCode::OK,
+            "The traces",
         )
         .error_400(openapi)
         .error_401(openapi)

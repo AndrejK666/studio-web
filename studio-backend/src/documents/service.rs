@@ -1826,7 +1826,26 @@ impl DocumentsService {
                     })
             })
             .collect();
-        Ok(super::spec_model::Sources { documents, tree })
+        let files = by_path
+            .into_iter()
+            .filter_map(|(path, text)| text.map(|t| (path, t)))
+            .collect();
+        Ok(super::spec_model::Sources {
+            documents,
+            tree,
+            files,
+        })
+    }
+
+    /// The repositories the project records as its sources.
+    pub async fn project_repositories(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> Vec<crate::project_sources::ProjectSource> {
+        crate::project_sources::read(self.account_management.as_ref(), ctx, project_id)
+            .await
+            .unwrap_or_default()
     }
 
     /// Every extraction kept for the project, of any revision.

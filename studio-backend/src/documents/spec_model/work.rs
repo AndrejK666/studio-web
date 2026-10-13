@@ -61,7 +61,7 @@ pub fn link(ids: &BTreeMap<String, Vec<Side>>, work: &[WorkItem]) -> (Vec<Linked
 /// Whether `text` (lower-cased) names `id` as a whole token: no letter, digit,
 /// `-` or `_` on either side, so `cpt-x-fr-1` is not found inside
 /// `cpt-x-fr-12` or `cpt-x-fr-1-draft`.
-fn names(text: &str, id: &str) -> bool {
+pub(super) fn names(text: &str, id: &str) -> bool {
     let id = id.to_ascii_lowercase();
     let part = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
     let mut from = 0;

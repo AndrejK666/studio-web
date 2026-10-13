@@ -30,6 +30,7 @@ import {
   RELATION_LABEL,
   relatedEntities,
   requirementKinds,
+  traceGaps,
   ruleLabel,
   sideLabel,
   type Entity,
@@ -37,6 +38,8 @@ import {
   type ProductFinding,
   type RequirementFilter,
   type RelatedRequirements,
+  type RequirementTraces,
+  type TraceGap,
   type SpecModel,
   type SpecModelFact,
   type SpecModelFinding,
@@ -47,7 +50,7 @@ import {
   workState,
 } from "./spec-model";
 
-type View = "problems" | "requirements" | "elsewhere" | "entities" | "glossary" | "work" | "product" | "coverage";
+type View = "problems" | "requirements" | "trace" | "elsewhere" | "entities" | "glossary" | "work" | "product" | "coverage";
 
 /** The product findings as read, or why they could not be. */
 type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
@@ -78,6 +81,7 @@ export function SpecModelTab({
   const [work, setWork] = useState<WorkLinks | { error: string } | null>(null);
   const [requirements, setRequirements] = useState<SpecRequirements | { error: string } | null>(null);
   const [related, setRelated] = useState<RelatedRequirements | { error: string } | null>(null);
+  const [traces, setTraces] = useState<RequirementTraces | { error: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -138,6 +142,19 @@ export function SpecModelTab({
       live = false;
     };
   }, [token, projectId]);
+
+  // Read when the view is opened: it reads every code file of the checkouts.
+  useEffect(() => {
+    if (view !== "trace" || traces !== null) return;
+    let live = true;
+    api
+      .requirementTrace(token, projectId)
+      .then((r) => live && setTraces(r))
+      .catch((e: unknown) => live && setTraces({ error: message(e) }));
+    return () => {
+      live = false;
+    };
+  }, [view, traces, token, projectId]);
 
   // Read only when the view is opened: it reads every other project's documents.
   useEffect(() => {
@@ -216,6 +233,13 @@ export function SpecModelTab({
             count={requirements && "items" in requirements ? requirements.total : 0}
           />
           <ViewChip
+            id="trace"
+            view={view}
+            setView={setView}
+            label="Trace"
+            count={traces && "items" in traces ? traces.implemented : 0}
+          />
+          <ViewChip
             id="elsewhere"
             view={view}
             setView={setView}
@@ -261,6 +285,7 @@ export function SpecModelTab({
       )}
       {view === "requirements" && <Requirements read={requirements} onOpenFile={onOpenFile} />}
       {view === "elsewhere" && <Elsewhere read={related} onOpenFile={onOpenFile} />}
+      {view === "trace" && <Trace read={traces} onOpenFile={onOpenFile} />}
       {model && view === "entities" && <Entities entities={entities} onOpenFile={onOpenFile} />}
       {model && view === "glossary" && <Glossary entries={glossary} onDecide={decideTerm} />}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
@@ -662,6 +687,70 @@ function Requirements({
         ))}
       </ul>
       {shown.length === 0 && <div className="empty">No requirement matches the filter.</div>}
+    </>
+  );
+}
+
+/** Each requirement with the documents, code and tests that name its
+ *  identifier: what is implemented, what is tested, what nothing names. */
+function Trace({
+  read,
+  onOpenFile,
+}: {
+  read: RequirementTraces | { error: string } | null;
+  onOpenFile?: (path: string) => void;
+}) {
+  const [gap, setGap] = useState<TraceGap>("all");
+  if (read === null) return <div className="empty">Reading the code and tests of the checkouts…</div>;
+  if ("error" in read) return <div className="error">{read.error}</div>;
+  if (read.total === 0) {
+    return <div className="empty">The documents define no identifiers with a label, so there is nothing to trace.</div>;
+  }
+  const shown = traceGaps(read.items, gap);
+  const places = (label: string, sides: SpecModelSide[]) =>
+    sides.length > 0 && (
+      <div className="sm-req-cites">
+        {label}:{" "}
+        {sides.map((s, i) => (
+          <SideLink key={i} side={s} onOpenFile={onOpenFile} />
+        ))}
+      </div>
+    );
+  return (
+    <>
+      <p className="hint">
+        {read.implemented} of {read.total} requirements are named in code, {read.tested} in tests, across {read.files}{" "}
+        files read. A file is counted when it names the identifier itself; what is not named is not traced.
+      </p>
+      <div className="sm-req-filters">
+        <select aria-label="Gap" value={gap} onChange={(e) => setGap(e.target.value as TraceGap)}>
+          <option value="all">All requirements</option>
+          <option value="no-code">Not named in code</option>
+          <option value="no-test">Not named in a test</option>
+          <option value="untraced">Named nowhere</option>
+        </select>
+      </div>
+      <ul className="rows sm-work">
+        {shown.map((t) => (
+          <li key={`${t.id}@${t.defined_in.path}`} className="sm-work-row">
+            <div className="sm-term-head">
+              <code>{t.id}</code>
+              <span className={t.code.length ? "sm-status sm-basis-cited" : "sm-status"}>
+                {t.code.length ? `${t.code.length} in code` : "no code"}
+              </span>
+              <span className={t.tests.length ? "sm-status sm-basis-cited" : "sm-status"}>
+                {t.tests.length ? `${t.tests.length} in tests` : "no test"}
+              </span>
+              <SideLink side={t.defined_in} onOpenFile={onOpenFile} />
+            </div>
+            {t.title && <div className="sm-req-title">{t.title}</div>}
+            {places("Documents", t.documents)}
+            {places("Code", t.code)}
+            {places("Tests", t.tests)}
+          </li>
+        ))}
+      </ul>
+      {shown.length === 0 && <div className="empty">No requirement has this gap.</div>}
     </>
   );
 }

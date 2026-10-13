@@ -51,6 +51,7 @@ import {
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
 import { rowReview, withDecisions, type FindingDecision } from "./spec-findings";
 import { ReviewPanel } from "./review-panel";
+import { DomainQuestionsPanel } from "./domain-questions-panel";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
@@ -1845,6 +1846,7 @@ function IngestedDocumentsView({
                     }}
                     onChanged={() => void reload()}
                   />
+                  <DomainQuestionsPanel token={token} projectId={projectTenantId} path={selected.path} />
                   {/* What the Analysis view used to be for, asked of this one
                       file: its findings land in the Analysis card beside. */}
                   <div className="ing-send">

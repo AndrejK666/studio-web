@@ -2259,3 +2259,11 @@ ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
 .sm-rel-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 720px) { .sm-rel-pair { grid-template-columns: 1fr; } }
 .sm-rel-opposite { background: var(--warning-muted, var(--muted)); }
+
+/* Domain questions under a document (domain-questions-panel.tsx). */
+.dq-panel { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+.dq-title { font-weight: 600; }
+.dq-q { display: flex; flex-direction: column; gap: 2px; }
+.dq-muted { color: var(--muted-foreground); }
+.dq-experts { margin: 2px 0 0; padding-left: 16px; }
+.dq-drift { color: var(--warning); }

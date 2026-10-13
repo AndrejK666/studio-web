@@ -1,3 +1,4 @@
+import type { DomainExpert, DomainQuestions } from "./domain-questions";
 import type { GearBrings } from "./gear-brings";
 import type { InboxMark } from "./waiting-on-me";
 import type { ReviewRequest, ReviewVerdict } from "./review-requests";
@@ -8,6 +9,7 @@ import type {
   SpecModelBuild,
   SpecModelFinding,
   RelatedRequirements,
+  RequirementTraces,
   SpecRequirements,
   WorkLinks,
 } from "./spec-model";
@@ -2783,6 +2785,24 @@ export const api = {
   productFindings: (token: string, projectId: string) =>
     request<{ repo: string | null; items: ProductFinding[]; total: number }>(
       `/studio-spec-mapping/v1/findings?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** What one document leaves out of the project's domain, and words it uses otherwise. */
+  domainQuestions: (token: string, projectId: string, path: string) =>
+    request<DomainQuestions>(
+      `/studio-documents/v1/spec-model/questions?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`,
+      token,
+    ),
+  /** Who changed the documents that describe an entity. */
+  domainExperts: (token: string, projectId: string, subject: string) =>
+    request<{ items: DomainExpert[]; total: number; documents: string[] }>(
+      `/studio-documents/v1/spec-model/experts?project_id=${encodeURIComponent(projectId)}&subject=${encodeURIComponent(subject)}`,
+      token,
+    ),
+  /** Every requirement with the documents, code and tests that name it. */
+  requirementTrace: (token: string, projectId: string) =>
+    request<RequirementTraces>(
+      `/studio-documents/v1/spec-model/trace?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
   /** Requirements of the organization's other projects that read like this

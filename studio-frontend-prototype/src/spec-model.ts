@@ -192,6 +192,42 @@ export function basisSummary(read: SpecRequirements): string {
   return parts.join("; ") + ".";
 }
 
+/** One requirement and every place that names it (docs/spec-domain-model.md,
+ *  "From requirement to code and test"). */
+export interface RequirementTrace {
+  id: string;
+  defined_in: SpecModelSide;
+  title: string | null;
+  text: string;
+  documents: SpecModelSide[];
+  code: SpecModelSide[];
+  tests: SpecModelSide[];
+}
+
+export interface RequirementTraces {
+  items: RequirementTrace[];
+  total: number;
+  implemented: number;
+  tested: number;
+  files: number;
+}
+
+export type TraceGap = "all" | "no-code" | "no-test" | "untraced";
+
+/** The traces a gap filter keeps: no code, no test, or named nowhere at all. */
+export function traceGaps(items: RequirementTrace[], gap: TraceGap): RequirementTrace[] {
+  switch (gap) {
+    case "no-code":
+      return items.filter((t) => t.code.length === 0);
+    case "no-test":
+      return items.filter((t) => t.tests.length === 0);
+    case "untraced":
+      return items.filter((t) => t.code.length === 0 && t.tests.length === 0 && t.documents.length === 0);
+    default:
+      return items;
+  }
+}
+
 /** A requirement of another project that reads like one of this project's
  *  (docs/spec-domain-model.md, "Across projects"). */
 export interface RelatedRequirement {

@@ -13,6 +13,7 @@ import {
   orderProductFindings,
   relatedEntities,
   requirementKinds,
+  traceGaps,
   ruleLabel,
   sideLabel,
   subjectKey,
@@ -24,7 +25,7 @@ import {
   type SpecModelFact,
   type SpecModelFinding,
 } from "./spec-model";
-import type { RelatedRequirement, SpecRequirement } from "./spec-model";
+import type { RelatedRequirement, RequirementTrace, SpecRequirement } from "./spec-model";
 
 function fact(subject: string, kind: SpecModelFact["kind"], path = "a.md", extra: Partial<SpecModelFact> = {}): SpecModelFact {
   return {
@@ -297,5 +298,25 @@ describe("requirements elsewhere", () => {
   it("puts opposites first, then the same, then overlaps, strongest first", () => {
     const got = orderRelated([rel("a", "overlap", 0.6), rel("b", "same", 0.8), rel("c", "opposite", 0.5), rel("d", "same", 0.9)]);
     expect(got.map((r) => r.id)).toEqual(["c", "d", "b", "a"]);
+  });
+});
+
+describe("requirement traces", () => {
+  const side = { path: "x", line_start: 1, line_end: 1, quote: null };
+  const tr = (id: string, docs: number, code: number, tests: number): RequirementTrace => ({
+    id,
+    defined_in: side,
+    title: null,
+    text: "",
+    documents: Array(docs).fill(side),
+    code: Array(code).fill(side),
+    tests: Array(tests).fill(side),
+  });
+  const items = [tr("a", 1, 1, 1), tr("b", 1, 1, 0), tr("c", 0, 0, 0), tr("d", 1, 0, 0)];
+  it("keeps the gaps a filter asks for", () => {
+    expect(traceGaps(items, "no-code").map((t) => t.id)).toEqual(["c", "d"]);
+    expect(traceGaps(items, "no-test").map((t) => t.id)).toEqual(["b", "c", "d"]);
+    expect(traceGaps(items, "untraced").map((t) => t.id)).toEqual(["c"]);
+    expect(traceGaps(items, "all")).toHaveLength(4);
   });
 });

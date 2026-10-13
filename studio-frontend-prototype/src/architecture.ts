@@ -560,6 +560,7 @@ export const SURFACES: Surface[] = [
       "DocumentsTab",
       "IngestedDocumentsView",
       "ReviewPanel",
+      "DomainQuestionsPanel",
       "SpecQuality",
       "SqStatusChip",
       "PublishModal",
