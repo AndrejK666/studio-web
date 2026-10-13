@@ -80,7 +80,9 @@ server {
     # the root. The proxied prefixes are left out: /cf/ and /studio/ are the
     # backend's and the IDE's, whatever their paths contain. try_files moves
     # $uri to /assets/…, so the cache map above still marks them immutable.
-    location ~ ^/(?!cf/|studio/|prototype/)(?:.+/)?(assets/[^/]+|env\.js)$ {
+    # The product mark and the favicons are public/ files referenced the same
+    # way: without them here, the header's mark broke on every nested address.
+    location ~ ^/(?!cf/|studio/|prototype/)(?:.+/)?(assets/[^/]+|env\.js|constructor-symbol\.svg|favicon\.(?:ico|png))$ {
         add_header Cache-Control $frontend_cache_control always;
         try_files /$1 =404;
     }
