@@ -585,7 +585,6 @@ export const SURFACES: Surface[] = [
     does: "Pick the gears a product is built from, compare the spec with the code, install kits.",
     components: ["ProjectKits", "SuggestedComponents", "ProductCard", "GearConfigForm", "ProjectCandidate"],
     gears: [
-      "account-management",
       "studio-components-catalog",
       "studio-documents",
       "studio-kits",

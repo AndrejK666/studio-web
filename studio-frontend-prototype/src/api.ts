@@ -4525,8 +4525,9 @@ export const api = {
   gearboxStatus: (token: string) =>
     request<GearboxStatus>(`/studio-product/v1/gearbox`, token),
   /** Compose a product.gdl from picked gears and resolve it with the Gearbox
-   *  engine. `write` also commits it to the project's gear repo — onto the
-   *  base branch, or onto a new branch with a pull request when `open_pr`. */
+   *  engine. `write` also commits it to the project's repository -- where its
+   *  source's share mode says (onto the base branch, or a `product/…` branch
+   *  with a pull request) unless `open_pr` / `onto_base` say otherwise. */
   previewProduct: (
     token: string,
     projectId: string,
@@ -4537,9 +4538,9 @@ export const api = {
       profile?: string;
       write?: boolean;
       open_pr?: boolean;
-      /** Commit onto the base branch; only for a repository the product owns. */
       /** The product's configuration of its gears (see GearConfig). */
       config?: GearConfig;
+      /** Commit onto the base branch, whatever the share mode. */
       onto_base?: boolean;
     },
   ) =>
