@@ -2137,9 +2137,11 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
     window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT));
     throw new ApiError(401, { title: "Not signed in", detail: "No access token in this session" });
   }
+  // A JSON content type only with a body: the server reads an empty body
+  // labelled JSON as malformed JSON and answers 400.
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
+    ...(init?.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...((init?.headers as Record<string, string> | undefined) ?? {}),
   };
   if (import.meta.env.DEV) {

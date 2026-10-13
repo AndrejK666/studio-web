@@ -30,6 +30,18 @@ describe("background work client", () => {
     return fetchMock;
   }
 
+  it("labels a request JSON only when it carries a body", async () => {
+    // "Read the projects now" posts no body; labelled JSON, the server read
+    // the empty body as malformed JSON and answered 400.
+    const fetchMock = jsonMock({ run_id: "r-1", status: "queued" });
+    await api.syncComponents("token");
+    const bare = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(bare["Content-Type"]).toBeUndefined();
+    await api.syncComponents("token", { crates_io: null, repositories: [] });
+    const sent = fetchMock.mock.calls[1][1]?.headers as Record<string, string>;
+    expect(sent["Content-Type"]).toBe("application/json");
+  });
+
   it("asks for every run when nothing is filtered", async () => {
     const fetchMock = jsonMock({ items: [] });
     await api.taskRuns("token");
