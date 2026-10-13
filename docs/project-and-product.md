@@ -103,14 +103,33 @@ holds until either end changes.
 ## Documents against the product
 
 The domain model compares documents with each other. The next step compares
-them with what the repositories hold. The pipeline is the same: candidates
-without a model, a model judging each one with both sides in view, findings in
-the `/verdicts` shape on the document side, ✓/✗ by members. The new rules:
+them with what the repositories hold, at two depths.
+
+**Capabilities against the crates: built.** studio-spec-mapping already
+compared a project's capabilities with the crates its code depends on
+(`POST /conformance`, shown in the Components tab). `GET
+/studio-spec-mapping/v1/findings?project_id=` reads the same comparison on
+the server and answers it as findings on the documents that ask, with the
+requirement or front matter that asks. It needs no model and no key. The Domain
+model tab shows them under **Against the code**.
+
+| Rule | When | Severity |
+|---|---|---|
+| `product.missing` | a capability the documents need, not non-functional, and no component the code depends on (or the project's own gear) fills it | `high` when a confirmed document declares it, `medium` when it is only read from requirements' words |
+| `product.decided_not_built` | the newest decision on a gear for a capability is a confirmation, its document has not changed since, and the code does not depend on the gear | `high`; it says what the code depends on instead, and replaces `product.missing` for that capability |
+
+The code is the project's gear repository or its first GitHub source with
+Cargo manifests, as `/conformance` reads it, and the gears the project's
+repositories declare. `product.gdl` is not read: it says what the product is
+meant to be made of, which is intent, and ADR-0037 leaves open whether it or
+the `project_product` node is its truth.
+
+**Entities and values against the code: next.** The same pipeline as the
+domain model: candidates without a model, a model judging each one with both
+sides in view, findings on the document side, ✓/✗ by members.
 
 | Rule | Candidate (no model) | Judged |
 |---|---|---|
-| `product.unmapped` | a requirement in force with no capability mapped, or mapped to no gear | no, mechanical |
-| `product.gear_missing` | a decided mapping names a gear the project's `product.gdl` does not include | no, mechanical |
 | `code.entity_missing` | an `active` entity whose name and aliases match no identifier in the project's code | yes: the passage and the closest identifiers |
 | `code.value` | an `active` attribute, cardinality, lifecycle or limit, and the code definitions of its entity | yes: the passage against the code excerpt |
 
@@ -148,12 +167,12 @@ where it comes from:
 
 ## Order of work
 
-Each step is one pull request and is useful alone.
+Each step is useful alone.
 
 1. **Goals, risks and open questions as facts.** The extractor gains the kinds
    `goal`, `risk` and `question`; the Domain model tab and the card show them.
-2. **`product.*` rules.** Mechanical, from the mapping decisions and
-   `project_product`; needs no model and no key.
+2. **`product.*` rules.** Built: `GET /studio-spec-mapping/v1/findings` and
+   the tab's Against the code view.
 3. **The identifier index and `code.*` rules**, on the builder's key, as the
    domain model's build is.
 4. **Work links.** Issues and pull requests to requirements and gears, proposed

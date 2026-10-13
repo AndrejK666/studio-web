@@ -1,10 +1,12 @@
 // The project's Domain model tab: what its documents say the application is,
 // and where they disagree about it (docs/spec-domain-model.md).
 //
-// Three views over one read. Problems first, because that is what a person
-// acts on; Entities is the model itself, every fact with the passage it rests
-// on; Coverage says which documents have been read, and is where a build
-// starts. A build runs on the viewer's own model key, so the button says so.
+// Problems first, because that is what a person acts on; Entities is the
+// model itself, every fact with the passage it rests on; Against the code is
+// what the documents ask for that the code is not made of
+// (docs/project-and-product.md); Coverage says which documents have been
+// read, and is where a build starts. A build runs on the viewer's own model
+// key, so the button says so.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
@@ -15,17 +17,22 @@ import {
   entitiesOf,
   factsByKind,
   orderFindings,
+  orderProductFindings,
   relatedEntities,
   ruleLabel,
   sideLabel,
   type Entity,
+  type ProductFinding,
   type SpecModel,
   type SpecModelFact,
   type SpecModelFinding,
   type SpecModelSide,
 } from "./spec-model";
 
-type View = "problems" | "entities" | "coverage";
+type View = "problems" | "entities" | "product" | "coverage";
+
+/** The product findings as read, or why they could not be. */
+type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
 
 const POLL_MS = 3000;
 
@@ -48,6 +55,7 @@ export function SpecModelTab({
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("problems");
   const [starting, setStarting] = useState(false);
+  const [product, setProduct] = useState<ProductRead | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -66,6 +74,19 @@ export function SpecModelTab({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // A separate read: the comparison with the code needs the catalogue and a
+  // repository, and its absence must not hide the documents' own problems.
+  useEffect(() => {
+    let live = true;
+    api
+      .productFindings(token, projectId)
+      .then((r) => live && setProduct({ repo: r.repo, items: orderProductFindings(r.items) }))
+      .catch((e: unknown) => live && setProduct({ error: message(e) }));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
 
   // While a build runs, read again until it stops: the build is in the
   // backend's process, and nothing pushes its progress.
@@ -116,6 +137,13 @@ export function SpecModelTab({
           <ViewChip id="problems" view={view} setView={setView} label="Problems" count={open} />
           <ViewChip id="entities" view={view} setView={setView} label="Entities" count={entities.length} />
           <ViewChip
+            id="product"
+            view={view}
+            setView={setView}
+            label="Against the code"
+            count={product && "items" in product ? product.items.length : 0}
+          />
+          <ViewChip
             id="coverage"
             view={view}
             setView={setView}
@@ -143,6 +171,7 @@ export function SpecModelTab({
         <Problems findings={ordered} onDecide={decide} onOpenFile={onOpenFile} built={model.facts.length > 0} />
       )}
       {model && view === "entities" && <Entities entities={entities} onOpenFile={onOpenFile} />}
+      {view === "product" && <AgainstTheCode read={product} onOpenFile={onOpenFile} />}
       {model && view === "coverage" && <Coverage model={model} />}
     </>
   );
@@ -273,6 +302,63 @@ function Problems({
               </ul>
             </div>
           )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AgainstTheCode({
+  read,
+  onOpenFile,
+}: {
+  read: ProductRead | null;
+  onOpenFile?: (path: string) => void;
+}) {
+  if (!read) return <div className="empty">Loading…</div>;
+  if ("error" in read) return <div className="error">{read.error}</div>;
+  if (!read.repo) {
+    return (
+      <div className="empty">
+        No code to compare: the project has no gear repository and no GitHub source whose Cargo
+        manifests could be read.
+      </div>
+    );
+  }
+  if (read.items.length === 0) {
+    return (
+      <div className="empty">
+        Every capability the documents ask for is filled by a gear in <code>{read.repo}</code>.
+      </div>
+    );
+  }
+  return (
+    <div className="sm-findings">
+      <p className="hint">
+        The documents against the crates <code>{read.repo}</code> depends on and the gears it declares.
+        A decision about which gear fills a capability is taken in the project&apos;s Components tab.
+      </p>
+      {read.items.map((f) => (
+        <div key={f.fingerprint} className={`card sm-finding sm-${f.severity}`}>
+          <div className="card-head">
+            <div>
+              <span className={`sm-sev sm-sev-${f.severity}`}>{f.severity}</span>{" "}
+              <strong>{ruleLabel(f.rule)}</strong> <code>{f.capability}</code>
+            </div>
+          </div>
+          <p className="sm-message">
+            <Prose text={f.message} />
+          </p>
+          <div className={f.sides.length === 2 ? "sm-sides sm-two" : "sm-sides"}>
+            {f.sides.slice(0, 6).map((s, i) => (
+              <SideLink
+                key={i}
+                side={{ path: s.path, quote: s.quote }}
+                onOpenFile={s.kind === "file" ? onOpenFile : undefined}
+              />
+            ))}
+            {f.sides.length > 6 && <div className="hint">and {f.sides.length - 6} more documents</div>}
+          </div>
         </div>
       ))}
     </div>

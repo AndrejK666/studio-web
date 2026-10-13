@@ -2157,7 +2157,8 @@ th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mar
 
 /* ── Domain model tab (spec-model-tab.tsx) ───────────────────────────────── */
 .sm-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 0.5rem; }
-.sm-views { display: flex; gap: 6px; }
+.sm-views { display: flex; gap: 6px; flex-wrap: wrap; }
+.sm-views .chip { white-space: nowrap; }
 .sm-build { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .sm-build button { white-space: nowrap; flex-shrink: 0; }
 .sm-build-line { font-size: 13px; color: var(--muted-foreground); }

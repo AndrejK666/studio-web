@@ -17,6 +17,7 @@
 
 mod local;
 pub(crate) mod plan;
+mod product;
 pub(crate) mod reading;
 mod rest;
 pub mod sdk;

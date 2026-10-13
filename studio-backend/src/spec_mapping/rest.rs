@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use super::local;
 use super::plan::{self, PastDecision, Vocabulary};
+use super::product;
 use crate::artifact_ingest::port::{MappingDecision, MappingDecisionStore};
 use crate::components_catalog::port::ComponentCatalog;
 use crate::documents::port::{Capability, CapabilitySource, DeclaredCapability, SpecNeeds};
@@ -364,6 +365,53 @@ pub struct ConformanceDto {
     /// it would have to add for them to resolve, and what cannot run. Empty
     /// when the engine is not configured or has nothing to say.
     pub gearbox: Vec<EngineChangeDto>,
+}
+
+// ── The documents against the product ─────────────────────────────────────
+
+/// A document a product finding sits on.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProductSideDto {
+    /// `file` (a bound repository file) or `document` (held by Studio).
+    pub kind: String,
+    /// A file's repository path, or a Studio document's title.
+    pub path: String,
+    /// What in it asks: the first requirement that implies the capability, or
+    /// its front matter.
+    pub quote: String,
+}
+
+/// Something the documents ask for that the code is not made of.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProductFindingDto {
+    /// Stable while the capability and the gear are the same.
+    pub fingerprint: String,
+    /// `product.missing` or `product.decided_not_built`.
+    pub rule: String,
+    /// `high` or `medium`: medium when every document asking was only read
+    /// from its requirements' words.
+    pub severity: String,
+    pub capability: String,
+    /// The confirmed gear the code does not depend on.
+    pub gear: Option<String>,
+    pub message: String,
+    pub sides: Vec<ProductSideDto>,
+    /// What the code depends on instead, or what could fill the capability.
+    pub candidates: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProductFindingListDto {
+    /// The repository whose manifests were read; null when the project has no
+    /// code to compare, and then `items` is empty.
+    pub repo: Option<String>,
+    pub items: Vec<ProductFindingDto>,
+    /// Every finding is in `items`: one per capability at most, and one per
+    /// confirmed gear.
+    pub total: u32,
 }
 
 // ── What the specifications need ──────────────────────────────────────────
@@ -737,18 +785,27 @@ fn past_decisions(recorded: &[(String, Value)], needs: &[DeclaredCapability]) ->
     decisions.into_iter().map(|(_, d)| d).collect()
 }
 
-/// `GET /plan?project_id=`: everything read on the server.
-async fn get_project_plan(
-    Extension(ctx): Extension<SecurityContext>,
-    OrgCtx(org): OrgCtx,
-    Extension(ports): Extension<Ports>,
-    Query(q): Query<ProjectQuery>,
-) -> ApiResult<JsonBody<MappingPlanDto>> {
-    let project_id = parse_project(&q.project_id)?;
+/// What a project's plan is computed from, all read on the server.
+struct ProjectReading {
+    vocabulary: Vec<Capability>,
+    needs: Vec<DeclaredCapability>,
+    statements: Vec<String>,
+    rules: Vocabulary,
+    rows: Vec<plan::PlanRow>,
+    in_repo: BTreeMap<String, String>,
+    registry_states: local::RegistryStates,
+}
+
+async fn read_project(
+    ctx: &SecurityContext,
+    org: &SecurityContext,
+    ports: &Ports,
+    project_id: Uuid,
+) -> ApiResult<ProjectReading> {
     let docs = ports.documents()?;
-    let workspace_id = project_workspace(&docs, &ctx, project_id).await?;
+    let workspace_id = project_workspace(&docs, ctx, project_id).await?;
     let (vocabulary, (needs, requirements)) = tokio::try_join!(
-        docs.vocabulary(&ctx, workspace_id),
+        docs.vocabulary(ctx, workspace_id),
         docs.needs(workspace_id, project_id),
     )
     .map_err(internal)?;
@@ -756,7 +813,7 @@ async fn get_project_plan(
     // still stands.
     let recorded = match ports.decisions() {
         Ok(store) => store
-            .list_decisions(&ctx, &project_id.to_string())
+            .list_decisions(ctx, &project_id.to_string())
             .await
             .unwrap_or_else(|e| {
                 tracing::warn!(error = %format!("{e:#}"), "spec-mapping: decisions unreadable");
@@ -765,15 +822,42 @@ async fn get_project_plan(
         Err(_) => Vec::new(),
     };
     let catalog = ports.catalog()?;
-    let (mut components, mut profiles) = catalog.components(&org).await.map_err(internal)?;
+    let (mut components, mut profiles) = catalog.components(org).await.map_err(internal)?;
     let registry = ports.registry();
     let (own, registry_states) =
-        local::project_gears(catalog.as_ref(), registry.as_deref(), &org, project_id).await;
+        local::project_gears(catalog.as_ref(), registry.as_deref(), org, project_id).await;
     let in_repo = local::with_project_gears(&mut components, &mut profiles, own);
     let keys: Vec<String> = needs.iter().map(|c| c.key.clone()).collect();
     let rules = vocabulary_of(&vocabulary, past_decisions(&recorded, &needs));
     let rows = plan::plan(&keys, &components, &profiles, &rules);
-    let statements: Vec<String> = requirements.into_iter().map(|r| r.text).collect();
+    Ok(ProjectReading {
+        vocabulary,
+        needs,
+        statements: requirements.into_iter().map(|r| r.text).collect(),
+        rules,
+        rows,
+        in_repo,
+        registry_states,
+    })
+}
+
+/// `GET /plan?project_id=`: everything read on the server.
+async fn get_project_plan(
+    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(org): OrgCtx,
+    Extension(ports): Extension<Ports>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<MappingPlanDto>> {
+    let project_id = parse_project(&q.project_id)?;
+    let ProjectReading {
+        vocabulary,
+        needs,
+        statements,
+        rules,
+        rows,
+        in_repo,
+        registry_states,
+    } = read_project(&ctx, &org, &ports, project_id).await?;
     let mut dto = plan_dto(rows, &rules, plan::deployment_profile(&statements));
     local::mark_in_repo(
         dto.items.iter_mut().flat_map(|r| r.candidates.iter_mut()),
@@ -799,6 +883,68 @@ async fn get_project_plan(
             .collect();
     }
     Ok(Json(dto))
+}
+
+/// `GET /findings?project_id=`: the documents against the code.
+async fn list_product_findings(
+    Extension(ctx): Extension<SecurityContext>,
+    OrgCtx(org): OrgCtx,
+    Extension(ports): Extension<Ports>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<ProductFindingListDto>> {
+    let project_id = parse_project(&q.project_id)?;
+    let reading = read_project(&ctx, &org, &ports, project_id).await?;
+    let code = ports
+        .catalog()?
+        .project_dependencies(&org, &project_id.to_string())
+        .await
+        .map_err(internal)?;
+    // No code to read is not a finding about every capability: it says so
+    // once and lists none.
+    let Some((repo, deps)) = code else {
+        return Ok(Json(ProductFindingListDto {
+            repo: None,
+            items: Vec::new(),
+            total: 0,
+        }));
+    };
+    // The project's own gears are in its code by definition.
+    let in_code: std::collections::BTreeSet<String> = deps
+        .into_iter()
+        .chain(reading.in_repo.into_keys())
+        .collect();
+    let items: Vec<ProductFindingDto> = product::findings(
+        &reading.needs,
+        &reading.rows,
+        &in_code,
+        &reading.rules.decisions,
+    )
+    .into_iter()
+    .map(|f| ProductFindingDto {
+        fingerprint: f.fingerprint,
+        rule: f.rule,
+        severity: f.severity,
+        capability: f.capability,
+        gear: f.gear,
+        message: f.message,
+        sides: f
+            .sides
+            .into_iter()
+            .map(|s| ProductSideDto {
+                kind: s.kind,
+                path: s.path,
+                quote: s.quote,
+            })
+            .collect(),
+        candidates: f.candidates,
+    })
+    .collect();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(ProductFindingListDto {
+        repo: Some(repo),
+        items,
+        total,
+    }))
 }
 
 /// `GET /capabilities?project_id=`.
@@ -1093,6 +1239,33 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, ports: Por
         .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(get_project_plan)
         .json_response_with_schema::<MappingPlanDto>(openapi, StatusCode::OK, "The plan")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-spec-mapping/v1/findings")
+        .operation_id("studio_spec_mapping.list_product_findings")
+        .summary("What a project's documents ask for that its code is not made of")
+        .description(
+            "The project's plan against the crates its code depends on and the gears its \
+             repositories declare. `product.missing`: a capability the documents need that no \
+             component in the code fills, with what could fill it. \
+             `product.decided_not_built`: a gear a member confirmed for a capability that the \
+             code does not depend on, with what it depends on instead. A FINDING SITS ON THE \
+             DOCUMENTS THAT ASK, each with the requirement or front matter that asks. \
+             Non-functional capabilities are answered by the deployment profile and raise none; \
+             a decision whose document changed since raises none until it is decided again. \
+             `repo` is null and `items` empty when the project has no code to compare.",
+        )
+        .tag("StudioSpecMapping")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .handler(list_product_findings)
+        .json_response_with_schema::<ProductFindingListDto>(openapi, StatusCode::OK, "The findings")
+        .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)

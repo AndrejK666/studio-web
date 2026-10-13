@@ -33,6 +33,8 @@ This README is what you need to work in the directory.
 - `local.rs` — the project's own gears beside the catalogue's: one candidate
   per gear (the catalogue's entry when it has one), labelled `origin: project`
   with its `path` in the repository.
+- `product.rs` — the documents against the code: `product.missing` and
+  `product.decided_not_built`, pure over a plan's rows and the code's crates.
 - `rest.rs` — the routes, and the assembly of a project's plan from the ports.
 
 ## Working here

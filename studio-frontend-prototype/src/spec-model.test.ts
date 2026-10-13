@@ -6,9 +6,12 @@ import {
   entitiesOf,
   factsByKind,
   orderFindings,
+  orderProductFindings,
   relatedEntities,
+  ruleLabel,
   sideLabel,
   subjectKey,
+  type ProductFinding,
   type SpecModelFact,
   type SpecModelFinding,
 } from "./spec-model";
@@ -130,5 +133,23 @@ describe("coverage and progress", () => {
     expect(sideLabel({ path: "a.md", line_start: 3, line_end: 5 })).toBe("a.md:3-5");
     expect(sideLabel({ path: "a.md", line_start: 3, line_end: 3 })).toBe("a.md:3");
     expect(sideLabel({ path: "a.md" })).toBe("a.md");
+  });
+});
+
+describe("product findings", () => {
+  const finding = (capability: string, severity: ProductFinding["severity"]): ProductFinding => ({
+    fingerprint: capability,
+    rule: "product.missing",
+    severity,
+    capability,
+    message: "",
+    sides: [],
+    candidates: [],
+  });
+
+  it("come high first, then by capability, and read as words", () => {
+    const ordered = orderProductFindings([finding("tenancy", "medium"), finding("storage", "high"), finding("auth", "high")]);
+    expect(ordered.map((f) => f.capability)).toEqual(["auth", "storage", "tenancy"]);
+    expect(ruleLabel("product.decided_not_built")).toBe("Decided, not built");
   });
 });

@@ -1,4 +1,4 @@
-import type { SpecModel, SpecModelBuild, SpecModelFinding } from "./spec-model";
+import type { ProductFinding, SpecModel, SpecModelBuild, SpecModelFinding } from "./spec-model";
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
@@ -2760,6 +2760,14 @@ export const api = {
   specModelFindings: (token: string, projectId: string) =>
     request<{ items: SpecModelFinding[]; total: number }>(
       `/studio-documents/v1/spec-model/findings?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** What the project's documents ask for that its code is not made of
+   *  (docs/project-and-product.md). `repo` is null when there is no code to
+   *  compare. */
+  productFindings: (token: string, projectId: string) =>
+    request<{ repo: string | null; items: ProductFinding[]; total: number }>(
+      `/studio-spec-mapping/v1/findings?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
   /** A member's ✓ (confirmed) or ✗ (dismissed) on one finding. */

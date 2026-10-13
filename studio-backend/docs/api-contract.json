@@ -1903,6 +1903,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-spec-mapping/v1/findings",
+      "operation_id": "studio_spec_mapping.list_product_findings",
+      "tag": "StudioSpecMapping",
+      "summary": "What a project's documents ask for that its code is not made of",
+      "authenticated": true,
+      "responses": [
+        "ProductFindingListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-spec-mapping/v1/plan",
       "operation_id": "studio_spec_mapping.get_project_plan",
       "tag": "StudioSpecMapping",

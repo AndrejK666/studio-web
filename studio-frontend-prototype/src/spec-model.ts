@@ -189,8 +189,36 @@ export function ruleLabel(rule: string): string {
     "reference.dangling": "Refers to nothing",
     "reference.ambiguous": "Ambiguous reference",
     "reference.misattributed": "Wrong record cited",
+    "product.missing": "Not in the code",
+    "product.decided_not_built": "Decided, not built",
   };
   return labels[rule] ?? rule;
+}
+
+/** A document a product finding sits on (`GET /studio-spec-mapping/v1/findings`). */
+export interface ProductSide {
+  /** `file`: a repository path; `document`: a Studio document's title. */
+  kind: "file" | "document";
+  path: string;
+  quote: string;
+}
+
+/** What the project's documents ask for that its code is not made of. */
+export interface ProductFinding {
+  fingerprint: string;
+  rule: "product.missing" | "product.decided_not_built";
+  severity: "high" | "medium";
+  capability: string;
+  gear?: string | null;
+  message: string;
+  sides: ProductSide[];
+  candidates: string[];
+}
+
+/** Product findings high first, then by capability. */
+export function orderProductFindings(findings: ProductFinding[]): ProductFinding[] {
+  const rank = (f: ProductFinding) => (f.severity === "high" ? 0 : 1);
+  return [...findings].sort((a, b) => rank(a) - rank(b) || a.capability.localeCompare(b.capability));
 }
 
 /** How many documents are in each state. */
