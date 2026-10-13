@@ -3,7 +3,8 @@ import { createSlice, type ReducerPayload } from '@gears-frontx/react';
 export type ProjectSection =
   | 'overview'
   | 'artifacts'
-  | 'findings'
+  | 'specs'
+  | 'sources'
   | 'activity'
   | 'timeline'
   | 'team'
@@ -15,7 +16,8 @@ export const DEFAULT_PROJECT_SECTION: ProjectSection = 'overview';
 export const PROJECT_SECTIONS: readonly ProjectSection[] = [
   'overview',
   'artifacts',
-  'findings',
+  'specs',
+  'sources',
   'activity',
   'timeline',
   'team',

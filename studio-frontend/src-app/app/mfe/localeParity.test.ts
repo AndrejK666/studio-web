@@ -8,7 +8,8 @@
  *
  * Here with the shell's other checks across MFEs rather than in mfe-shared,
  * which every MFE depends on and which depends on none. The MFEs are found, not
- * listed: every package with screens, but the `_`-prefixed template and fixture.
+ * listed: every package with screens, but the `_`-prefixed template and fixture,
+ * and every `i18n` folder under its screens, a section's own included.
  * Only `ru`: the other locales are English copies.
  */
 
@@ -29,8 +30,9 @@ const screens = readdirSync(PACKAGES)
   .map((mfe) => path.join(PACKAGES, mfe, 'src', 'screens'))
   .filter((root) => existsSync(root))
   .flatMap((root) =>
-    readdirSync(root)
-      .map((screen) => path.join(root, screen, 'i18n'))
+    readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .filter((entry) => path.basename(entry) === 'i18n')
+      .map((entry) => path.join(root, entry))
       .filter((dir) => existsSync(path.join(dir, 'en.json')))
   )
   .map((dir) => ({ name: path.relative(PACKAGES, dir), dir }))

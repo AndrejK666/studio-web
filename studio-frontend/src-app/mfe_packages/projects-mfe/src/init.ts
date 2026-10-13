@@ -15,6 +15,7 @@ import {
   queryCacheShared,
 } from '@gears-frontx/react';
 import { navSlice } from './slices/navSlice';
+import { specsFilterSlice } from './slices/specsFilterSlice';
 import { createWizardSlice } from './slices/createSlice';
 import { workspaceCreateSlice } from './slices/workspaceSlice';
 import { artifactSyncSlice } from './slices/artifactSyncSlice';
@@ -55,6 +56,7 @@ const mfeApp = createFrontX()
 
 // Register slices with effects (needs store from build())
 registerSlice(navSlice);
+registerSlice(specsFilterSlice);
 // The wizard's effect takes the app as well as the dispatch: it reads the
 // workspace's projects for the announcement and drops the list screen's cached
 // page, and both live on the app-bound QueryClient.

@@ -48,6 +48,10 @@ vi.mock('./slices/navSlice', () => ({
   navSlice: { name: 'projects/nav' },
 }));
 
+vi.mock('./slices/specsFilterSlice', () => ({
+  specsFilterSlice: { name: 'projects/specsFilter' },
+}));
+
 vi.mock('./slices/createSlice', () => ({
   createWizardSlice: { name: 'projects/create' },
 }));
@@ -111,6 +115,7 @@ describe('projects-mfe init', () => {
     // No effects initializer: this MFE has no local intents left to turn into
     // `projects/nav` — the shell's properties are what write it.
     expect(registerSlice).toHaveBeenCalledWith({ name: 'projects/nav' });
+    expect(registerSlice).toHaveBeenCalledWith({ name: 'projects/specsFilter' });
     // The wizard's slice must exist before the overlay entry mounts, and that
     // entry does not run this module a second time. Its effect carries the two
     // writes, so it is registered on the same schedule. It is wrapped, because

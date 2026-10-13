@@ -3,3 +3,13 @@
 .empty {
   margin-inline: auto;
 }
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.skeletonBlock {
+  height: var(--space-8);
+}

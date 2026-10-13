@@ -3,8 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { FrontXProvider, createFrontXApp, i18nRegistry } from '@gears-frontx/react';
 import {
   PROJECT_LIST_NAMESPACE,
+  SOURCES_NAMESPACE,
+  SPECS_NAMESPACE,
   useProjectListScreenTranslations,
   useProjectListText,
+  useSourcesSectionTranslations,
+  useSourcesText,
+  useSpecsSectionTranslations,
+  useSpecsText,
 } from './i18n';
 
 /**
@@ -27,16 +33,28 @@ const Screen: React.FC = () => {
   );
 };
 
-async function mount() {
+/** The two sections whose dictionaries live in their own folders. */
+const Sections: React.FC = () => {
+  const specs = useSpecsSectionTranslations();
+  const sources = useSourcesSectionTranslations();
+  const specsText = useSpecsText();
+  const sourcesText = useSourcesText();
+  return (
+    <>
+      <span data-testid="specs">{specs.isLoaded ? specsText('placeholder') : ''}</span>
+      <span data-testid="sources">{sources.isLoaded ? sourcesText('placeholder') : ''}</span>
+    </>
+  );
+};
+
+async function mount(node: React.ReactElement = <Screen />) {
   createFrontXApp({});
   const { mfeApp } = await import('./init');
   await act(async () => {
     await i18nRegistry.setLanguage('en' as never);
   });
   render(
-    <FrontXProvider app={mfeApp}>
-      <Screen />
-    </FrontXProvider>
+    <FrontXProvider app={mfeApp}>{node}</FrontXProvider>
   );
 }
 
@@ -46,6 +64,8 @@ describe('screen translation split', () => {
     // namespace the reading hook prefixes, and the framework builds the former
     // out of sight — this is the one place the two are compared.
     expect(PROJECT_LIST_NAMESPACE).toBe('screen.projects.list');
+    expect(SPECS_NAMESPACE).toBe('screen.projects.specs');
+    expect(SOURCES_NAMESPACE).toBe('screen.projects.sources');
   });
 
   it('lets a child read the screen dictionary with no `t` passed to it', async () => {
@@ -57,5 +77,12 @@ describe('screen translation split', () => {
     expect(screen.getByTestId('error').textContent).toBe('none');
     // Child never received a prop; it resolved 'title' through the registry.
     expect(screen.getByTestId('child').textContent).toBe('Projects');
+  });
+
+  it("loads the Specs and Sources sections' own dictionaries", async () => {
+    await mount(<Sections />);
+
+    await waitFor(() => expect(screen.getByTestId('specs').textContent).toBe('The specs list is being built.'));
+    expect(screen.getByTestId('sources').textContent).toBe('The sources list is being built.');
   });
 });

@@ -707,16 +707,16 @@ the artifact reaches the frame in #323.
 
 ## 6. Acceptance Criteria
 
-- [ ] At the organization level the header names the organization and the tabs read Workspaces, People, Connections, Kits and Settings; Findings, Artifacts and the other project sections are absent from them.
+- [ ] At the organization level the header names the organization and the tabs read Workspaces, People, Connections, Kits and Settings; Artifacts, Specs and the other project sections are absent from them.
 - [ ] A fresh session, and an empty address, open the organization on Workspaces; a link with `section=overview` opens Workspaces with a console warning.
 - [ ] Choosing a workspace in the path or on the Workspaces screen shows that workspace's projects under a header naming the workspace, with the organization above it, and a row holding the one tab Projects.
 - [ ] Projects is not a tab of the organization level anywhere in the product.
-- [ ] Opening a project shows the project's tabs — Overview, Artifacts, Findings, Activity, Timeline, Team, and Settings last — the header names the project, and the path gains the project slot.
+- [ ] Opening a project shows the project's tabs — Overview, Artifacts, Specs, Sources, Activity, Timeline, Team, and Settings last — the header names the project, and the path gains the project slot.
 - [ ] "Back to projects" in the project's header shows the workspace's projects list.
 - [ ] The level's name in the header is the page's only `h1`; the section's title below the tabs is an `h2`.
 - [ ] The header, the tabs and the section's title start on one vertical line on every level.
 - [ ] On a window too narrow for the project's tabs, the row wraps to a second line and no tab is hidden.
-- [ ] Switching between two sections of the same project does not remount the screen: a filter set on Artifacts is still set after visiting Findings and coming back.
+- [ ] Switching between two sections of the same project does not remount the screen: a filter set on Artifacts is still set after visiting Specs and coming back.
 - [ ] Switching between two items of the same MFE at the organization level behaves the same way, with no remount.
 - [ ] Switching to an item of a different MFE mounts it, and the previous screen is unmounted.
 - [ ] After the projects MFE moves the section by itself, the active tab is the section that is on screen, not the one last clicked.

@@ -24,12 +24,14 @@ import {
   gtsPlugin,
   type MfeEntryMF,
   type Extension,
+  type ScreenExtension,
 } from '@gears-frontx/react';
 // Not re-exported by @gears-frontx/react — this is the contract check
 // `registerExtension` runs after the type-system register succeeds.
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- a test reaching the check itself, not app code
 import { validateContract } from '@gears-frontx/mfes';
 import { SHELL_SCHEMAS } from './schemas';
+import { resolveLevelMenu } from './screenLevels';
 import {
   STUDIO_ACTION_ARTIFACT_OPEN,
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
@@ -310,6 +312,20 @@ describe('generated MFE manifest', () => {
       expect(workspace.map((ext) => ext.presentation?.label)).toEqual(['Projects']);
     });
 
+    it("draws the project's tabs in the design's order, Specs and Sources after Artifacts", () => {
+      const tabs = resolveLevelMenu(screens as ScreenExtension[], 'project');
+      expect(tabs.map((ext) => ext.presentation.label)).toEqual([
+        'Overview',
+        'Artifacts',
+        'Specs',
+        'Sources',
+        'Activity',
+        'Timeline',
+        'Team',
+        'Settings',
+      ]);
+    });
+
     it('declares the project sections on the entry they are sections of', () => {
       // The editor is a project-level screen too, but hidden: no tab.
       const project = screens.filter(
@@ -318,7 +334,7 @@ describe('generated MFE manifest', () => {
       const workspaceEntry = screens.find((ext) => ext.presentation?.level === 'workspace')?.entry;
 
       // One entry for every tab: that is what lets the shell relay a
-      // section instead of mounting seven screens.
+      // section instead of mounting eight screens.
       expect(new Set(project.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
       // And each item carries the token the MFE understands for it.
       expect(project.filter((ext) => !ext.presentation?.section)).toEqual([]);

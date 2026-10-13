@@ -149,7 +149,7 @@ have and the choice changes the code:
   count in the header climbs from the same data, and one moving number is enough
   for the first cut. Each repository's state, phase and counts are kept in the
   store; showing them, with Cancel and Retry, belongs to the project's Sources
-  tab, which a later change adds.
+  tab, which exists since #683 and gets its rows with #685–#688.
 - **A run is watched on the event stream, not polled.** Every `studio-tasks`
   run publishes its transitions as `task.*` events on the tenant's
   `studio-events` stream ([D2](../api-conventions.md#d-long-running-work)), and
@@ -415,7 +415,7 @@ than fought: the kit reveals a label with `display: none`, so it appears at once
 where the prototype fades it in, and reproducing the fade would mean targeting
 the kit's own hashed class names.
 
-The sections are the seven the navigation state already declares. Only the
+The sections are the eight the navigation state already declares. Only the
 section changes; the open project does not, so widening the rail never re-reads
 anything.
 
@@ -677,7 +677,7 @@ never the shared fetch cache.
 - [ ] `p1` - **ID**: `cpt-studiofrontend-dod-project-artifacts-run-control`
 
 Not implemented in this feature: the store and the effects hold everything below,
-and the project's Sources tab, added by a later change, shows it. Until then the
+and the project's Sources tab shows it once its rows land (#685–#688). Until then the
 Artifacts section reports only the repositories that did not come through, as
 before.
 

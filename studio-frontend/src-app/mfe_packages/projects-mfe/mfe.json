@@ -106,7 +106,7 @@
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.main.v1",
       "presentation": {
         "label": "Artifacts",
-        "icon": "lucide:file-text",
+        "icon": "lucide:files",
         "route": "/projects/artifacts",
         "order": 20,
         "level": "project",
@@ -114,16 +114,29 @@
       }
     },
     {
-      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.projects.sections.findings.v1",
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.projects.sections.specs.v1",
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.main.v1",
       "presentation": {
-        "label": "Findings",
-        "icon": "lucide:clipboard-check",
-        "route": "/projects/findings",
+        "label": "Specs",
+        "icon": "lucide:file-text",
+        "route": "/projects/specs",
         "order": 30,
         "level": "project",
-        "section": "findings"
+        "section": "specs"
+      }
+    },
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.projects.sections.sources.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.main.v1",
+      "presentation": {
+        "label": "Sources",
+        "icon": "lucide:plug",
+        "route": "/projects/sources",
+        "order": 35,
+        "level": "project",
+        "section": "sources"
       }
     },
     {
@@ -132,7 +145,7 @@
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.main.v1",
       "presentation": {
         "label": "Activity",
-        "icon": "lucide:rotate-ccw",
+        "icon": "lucide:history",
         "route": "/projects/activity",
         "order": 40,
         "level": "project",

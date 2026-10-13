@@ -16,6 +16,8 @@ import { NAV_SLICE_KEY, landOnFirstImport } from '../../slices/navSlice';
 import { announceSection } from '../../actions/projectsActions';
 import { PlaceholderSection } from './sections/PlaceholderSection';
 import { ArtifactsSection } from './sections/ArtifactsSection';
+import { SpecsSection } from './sections/specs/SpecsSection';
+import { SourcesSection } from './sections/sources/SourcesSection';
 import styles from './ProjectScreen.module.css';
 
 interface ImportWatchProps {
@@ -100,6 +102,10 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
     switch (section) {
       case 'artifacts':
         return <ArtifactsSection projectId={projectId} />;
+      case 'specs':
+        return <SpecsSection />;
+      case 'sources':
+        return <SourcesSection />;
       default:
         return <PlaceholderSection title={t(`section_${section}`)} note={t('no_source_yet')} />;
     }

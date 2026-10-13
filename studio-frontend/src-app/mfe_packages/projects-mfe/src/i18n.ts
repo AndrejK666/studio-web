@@ -18,11 +18,15 @@ const LIST_SCREEN = 'list';
 const PROJECT_SCREEN = 'project';
 const CREATE_SCREEN = 'create';
 const WORKSPACE_SCREEN = 'workspace';
+const SPECS_SCREEN = 'specs';
+const SOURCES_SCREEN = 'sources';
 
 export const PROJECT_LIST_NAMESPACE = `screen.${SCREENSET}.${LIST_SCREEN}`;
 export const PROJECT_NAMESPACE = `screen.${SCREENSET}.${PROJECT_SCREEN}`;
 export const PROJECT_CREATE_NAMESPACE = `screen.${SCREENSET}.${CREATE_SCREEN}`;
 export const WORKSPACE_CREATE_NAMESPACE = `screen.${SCREENSET}.${WORKSPACE_SCREEN}`;
+export const SPECS_NAMESPACE = `screen.${SCREENSET}.${SPECS_SCREEN}`;
+export const SOURCES_NAMESPACE = `screen.${SCREENSET}.${SOURCES_SCREEN}`;
 
 type ModuleMap = TranslationModules;
 
@@ -31,12 +35,16 @@ const listModules = import.meta.glob('./screens/project-list/i18n/*.json') as Mo
 const projectModules = import.meta.glob('./screens/project/i18n/*.json') as ModuleMap;
 const createModules = import.meta.glob('./screens/project-create/i18n/*.json') as ModuleMap;
 const workspaceModules = import.meta.glob('./screens/workspace-create/i18n/*.json') as ModuleMap;
+const specsModules = import.meta.glob('./screens/project/sections/specs/i18n/*.json') as ModuleMap;
+const sourcesModules = import.meta.glob('./screens/project/sections/sources/i18n/*.json') as ModuleMap;
 
 
 const loadListTranslations = loadScreenTranslations(listModules, './screens/project-list/i18n');
 const loadProjectTranslations = loadScreenTranslations(projectModules, './screens/project/i18n');
 const loadCreateTranslations = loadScreenTranslations(createModules, './screens/project-create/i18n');
 const loadWorkspaceTranslations = loadScreenTranslations(workspaceModules, './screens/workspace-create/i18n');
+const loadSpecsTranslations = loadScreenTranslations(specsModules, './screens/project/sections/specs/i18n');
+const loadSourcesTranslations = loadScreenTranslations(sourcesModules, './screens/project/sections/sources/i18n');
 
 /** Loads the list screen's dictionary. One call, in `ProjectListScreen`. */
 export function useProjectListScreenTranslations(): UseScreenTranslationsReturn {
@@ -63,7 +71,19 @@ export function useWorkspaceCreateScreenTranslations(): UseScreenTranslationsRet
   return useScreenTranslations(SCREENSET, WORKSPACE_SCREEN, loadWorkspaceTranslations);
 }
 
+/** Loads the Specs section's dictionary. One call, in `SpecsSection`. */
+export function useSpecsSectionTranslations(): UseScreenTranslationsReturn {
+  return useScreenTranslations(SCREENSET, SPECS_SCREEN, loadSpecsTranslations);
+}
+
+/** Loads the Sources section's dictionary. One call, in `SourcesSection`. */
+export function useSourcesSectionTranslations(): UseScreenTranslationsReturn {
+  return useScreenTranslations(SCREENSET, SOURCES_SCREEN, loadSourcesTranslations);
+}
+
 export const useProjectListText = createText(PROJECT_LIST_NAMESPACE);
 export const useProjectText = createText(PROJECT_NAMESPACE);
 export const useProjectCreateText = createText(PROJECT_CREATE_NAMESPACE);
 export const useWorkspaceCreateText = createText(WORKSPACE_CREATE_NAMESPACE);
+export const useSpecsText = createText(SPECS_NAMESPACE);
+export const useSourcesText = createText(SOURCES_NAMESPACE);

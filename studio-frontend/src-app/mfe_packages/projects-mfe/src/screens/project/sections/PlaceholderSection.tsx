@@ -1,5 +1,5 @@
 import React from 'react';
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@gears-frontx/ui-kit';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle, Skeleton } from '@gears-frontx/ui-kit';
 import styles from './PlaceholderSection.module.css';
 
 export const PlaceholderSection: React.FC<{ title: string; note: string }> = ({ title, note }) => (
@@ -12,3 +12,12 @@ export const PlaceholderSection: React.FC<{ title: string; note: string }> = ({ 
 );
 
 PlaceholderSection.displayName = 'PlaceholderSection';
+
+export const PlaceholderSkeleton: React.FC = () => (
+  <div className={styles.skeleton}>
+    <Skeleton className={styles.skeletonBlock} />
+    <Skeleton className={styles.skeletonBlock} />
+  </div>
+);
+
+PlaceholderSkeleton.displayName = 'PlaceholderSkeleton';
