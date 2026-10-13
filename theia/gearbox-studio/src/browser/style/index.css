@@ -1298,6 +1298,7 @@
 .gbx-composition-slot h4 { margin: 6px 0; overflow-wrap: anywhere; }
 .gbx-composition-connection { display: flex; flex-direction: column; align-items: flex-start; margin: 8px 0; }
 /* One plugin's own Remove, small: the host's Remove takes every plugin with it. */
+.gbx-product-checkout { font-size: 12px; opacity: 0.85; margin: 2px 0 6px; }
 .gbx-stale-corpus { border-left: 3px solid var(--theia-editorWarning-foreground, #b58900); padding: 4px 8px; margin: 6px 0; }
 .gbx-stale-corpus p { margin: 0 0 4px; }
 .gbx-composition-remove-plugin { font-size: 11px; padding: 0 6px; margin-top: 2px; }

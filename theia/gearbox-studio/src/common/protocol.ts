@@ -254,6 +254,9 @@ export interface GearboxService {
    */
   fileOnBranch(branch: string, file: string): Promise<string | undefined>;
 
+  /** Constructor Studio: the branch a file is on, and the checkout its worktree belongs to, if it is in one. */
+  checkoutOfFile(file: string): Promise<{ branch: string; root: string; worktreeOf?: string } | undefined>;
+
   /**
    * Constructor Studio: a directory named `id` holding the git source `url` at
    * `ref`. A workspace checkout that already is that commit, else the commit in

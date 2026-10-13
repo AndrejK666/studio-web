@@ -150,3 +150,32 @@ export async function fileOnBranch(
   }
   return undefined;
 }
+
+/** Where a file is checked out: the branch, and the main checkout when the file is in a worktree beside it. */
+export interface FileCheckout {
+  readonly branch: string;
+  /** The working tree the file is in. */
+  readonly root: string;
+  /** The main checkout, when `root` is a linked worktree of it. */
+  readonly worktreeOf?: string;
+}
+
+/**
+ * The branch `file` is on, and whether it is in a linked worktree -- the
+ * product brought in beside a checkout that could not be switched. The IDE's
+ * Git status shows the main checkout's branch, which is not this one.
+ * `undefined` outside a git working tree.
+ */
+export async function checkoutOfFile(file: string): Promise<FileCheckout | undefined> {
+  const dir = path.dirname(file);
+  try {
+    const root = await run(["-C", dir, "rev-parse", "--show-toplevel"]);
+    const branch = (await run(["-C", dir, "branch", "--show-current"])) || "(detached)";
+    const gitDir = path.resolve(dir, await run(["-C", dir, "rev-parse", "--git-dir"]));
+    const common = path.resolve(dir, await run(["-C", dir, "rev-parse", "--git-common-dir"]));
+    const linked = path.normalize(gitDir) !== path.normalize(common);
+    return linked ? { branch, root, worktreeOf: path.dirname(common) } : { branch, root };
+  } catch {
+    return undefined;
+  }
+}

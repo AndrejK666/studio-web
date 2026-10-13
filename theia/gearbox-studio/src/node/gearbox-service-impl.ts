@@ -49,7 +49,7 @@ import type { ResolveResult } from "../common/generated/ResolveResult";
 import type { ValidateResult } from "../common/generated/ValidateResult";
 import type { ProgressParams } from "../common/generated/ProgressParams";
 import { GearboxClient, GearboxService, ProductRef, method } from "../common/protocol";
-import { fileOnBranch } from "./product-branch";
+import { checkoutOfFile, fileOnBranch } from "./product-branch";
 import { cachedCorpora, corpusCacheRoot, corpusRelay, materializeGitSource, materializeSharedCorpus } from "./git-sources";
 import {
   enginePath,
@@ -588,6 +588,10 @@ export class GearboxServiceImpl implements GearboxService {
   async listProducts(): Promise<ProductRef[]> {
     const root = this.defaultWorkspace();
     return productFiles(root).map((candidate) => ({ path: candidate, label: path.relative(root, candidate) }));
+  }
+
+  async checkoutOfFile(file: string): Promise<{ branch: string; root: string; worktreeOf?: string } | undefined> {
+    return path.isAbsolute(file) ? checkoutOfFile(file) : undefined;
   }
 
   async fileOnBranch(branch: string, file: string): Promise<string | undefined> {

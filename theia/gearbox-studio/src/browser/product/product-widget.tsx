@@ -119,6 +119,8 @@ export class ProductWidget extends ReactWidget {
   /** Constructor Studio: the corpus copy Studio adopted, asked once per open product. */
   protected corpusCopy: CorpusCopy | undefined;
   protected corpusCopyFor: string | undefined;
+  /** Constructor Studio: the branch the open description is on, asked once per open product. */
+  protected checkout: { branch: string; root: string; worktreeOf?: string } | undefined;
 
   /**
    * Constructor Studio: Recent products, for the empty state. Held rather than
@@ -439,6 +441,14 @@ export class ProductWidget extends ReactWidget {
         },
         () => undefined,
       );
+      this.checkout = undefined;
+      void this.gearbox.checkoutOfFile(path).then(
+        (checkout) => {
+          this.checkout = checkout;
+          this.update();
+        },
+        () => undefined,
+      );
     }
     const stale = staleCorpusSource(state.intent?.sources, this.corpusCopy);
     if (stale === undefined) return null;
@@ -459,6 +469,31 @@ export class ProductWidget extends ReactWidget {
         <button type="button" className="gbx-choice" data-stale-corpus-copy onClick={() => void navigator.clipboard?.writeText(stale.current)}>
           Copy the path
         </button>
+      </div>
+    );
+  }
+
+  /**
+   * Constructor Studio: which branch the open description is on. The status
+   * bar shows the branch of the checkout the IDE's Git selects; a product the
+   * portal saved on its own branch is brought into a worktree beside a
+   * checkout that has uncommitted work, and then the two differ -- the bar
+   * said `main*` while the product came from `product/…`.
+   */
+  protected renderCheckout(): React.ReactNode {
+    const checkout = this.checkout;
+    if (checkout === undefined) return null;
+    const base = (p: string) => p.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? p;
+    return (
+      <div className="gbx-product-checkout" data-product-branch={checkout.branch}>
+        on branch <code>{checkout.branch}</code>
+        {checkout.worktreeOf !== undefined && (
+          <>
+            {" "}
+            in <code data-product-worktree>{base(checkout.root)}</code>, a worktree beside{" "}
+            <code>{base(checkout.worktreeOf)}</code> -- the status bar shows {base(checkout.worktreeOf)}&apos;s own branch
+          </>
+        )}
       </div>
     );
   }
@@ -611,6 +646,7 @@ export class ProductWidget extends ReactWidget {
           <span className="gbx-id">{intent?.id}</span>
         </div>
 
+        {this.renderCheckout()}
         {this.renderStaleCorpus()}
         {this.renderStatusStrip()}
 

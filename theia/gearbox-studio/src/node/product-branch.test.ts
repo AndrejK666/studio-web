@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { fileOnBranch, worktreeDirName } from "./product-branch";
+import { checkoutOfFile, fileOnBranch, worktreeDirName } from "./product-branch";
 
 const BRANCH = "product/studioweb-77a0da49";
 
@@ -75,6 +75,19 @@ describe("a product saved on its own branch", () => {
     expect(file).toBe(path.join(checkout, "product.gdl"));
     expect(fs.existsSync(besides)).toBe(false);
     expect(sh(checkout, "branch", "--show-current")).toBe(BRANCH);
+  });
+
+  it("says which branch a file is on, and which checkout its worktree is beside", async () => {
+    fs.writeFileSync(path.join(checkout, "README.md"), "edited");
+    const file = await fileOnBranch(workspace, BRANCH, "product.gdl", { inPlace: true });
+    const there = await checkoutOfFile(file as string);
+    expect(there?.branch).toBe(BRANCH);
+    // One spelling of a path for both sides: Windows hands out 8.3 short names.
+    expect(fs.realpathSync.native(there?.worktreeOf as string)).toBe(fs.realpathSync.native(checkout));
+    const main = await checkoutOfFile(path.join(checkout, "README.md"));
+    expect(main?.branch).toBe("main");
+    expect(main?.worktreeOf).toBeUndefined();
+    expect(await checkoutOfFile(path.join(scratch, "nowhere.gdl"))).toBeUndefined();
   });
 
   it("leaves a desktop's checkout with uncommitted work alone", async () => {
