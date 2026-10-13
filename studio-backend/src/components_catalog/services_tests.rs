@@ -24,7 +24,10 @@ fn services_are_found_by_their_manifests_and_gears_are_left_to_the_registry() {
     ]);
     let gears: BTreeSet<String> = ["gears/audit".to_string()].into();
     let found = detect("acme/platform", &files, &gears);
-    let dirs: Vec<(&str, &str)> = found.iter().map(|f| (f.dir.as_str(), f.kind.as_str())).collect();
+    let dirs: Vec<(&str, &str)> = found
+        .iter()
+        .map(|f| (f.dir.as_str(), f.kind.as_str()))
+        .collect();
     assert_eq!(
         dirs,
         [
@@ -43,7 +46,11 @@ fn services_are_found_by_their_manifests_and_gears_are_left_to_the_registry() {
 
 #[test]
 fn the_root_is_a_component_named_after_the_repository() {
-    let found = detect("acme/tool", &paths(&["pyproject.toml", "tests/test_x.py"]), &BTreeSet::new());
+    let found = detect(
+        "acme/tool",
+        &paths(&["pyproject.toml", "tests/test_x.py"]),
+        &BTreeSet::new(),
+    );
     assert_eq!(found[0].name, "tool");
     assert_eq!(found[0].kind, "python");
     assert!(found[0].has_tests);
@@ -60,7 +67,11 @@ fn readiness_says_why() {
         has_contract: true,
     });
     assert_eq!(ready.signal, "ready");
-    assert!(ready.reasons.contains(&"4 people have changed it".to_string()));
+    assert!(
+        ready
+            .reasons
+            .contains(&"4 people have changed it".to_string())
+    );
 
     let busy = readiness(&Facts {
         days_since_change: Some(400),
@@ -71,8 +82,16 @@ fn readiness_says_why() {
         has_contract: true,
     });
     assert_eq!(busy.signal, "caution");
-    assert!(busy.reasons.iter().any(|r| r.contains("5 open pull requests")));
-    assert!(busy.reasons.iter().any(|r| r.contains("unchanged for 400 days")));
+    assert!(
+        busy.reasons
+            .iter()
+            .any(|r| r.contains("5 open pull requests"))
+    );
+    assert!(
+        busy.reasons
+            .iter()
+            .any(|r| r.contains("unchanged for 400 days"))
+    );
     assert!(busy.reasons.iter().any(|r| r.contains("one person")));
 
     let untested = readiness(&Facts {

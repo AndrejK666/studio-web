@@ -22,14 +22,22 @@ pub const PER_REQUIREMENT: usize = 3;
 
 /// Words that carry no meaning of their own in a requirement.
 const STOP: [&str; 44] = [
-    "the", "and", "for", "with", "that", "this", "are", "was", "were", "has", "have", "had",
-    "its", "into", "from", "when", "then", "than", "each", "every", "any", "all", "can", "may",
-    "must", "shall", "should", "will", "would", "system", "user", "users", "able", "also",
-    "only", "such", "which", "who", "whom", "their", "there", "these", "those", "via",
+    "the", "and", "for", "with", "that", "this", "are", "was", "were", "has", "have", "had", "its",
+    "into", "from", "when", "then", "than", "each", "every", "any", "all", "can", "may", "must",
+    "shall", "should", "will", "would", "system", "user", "users", "able", "also", "only", "such",
+    "which", "who", "whom", "their", "there", "these", "those", "via",
 ];
 
 /// Words that turn a requirement into its opposite.
-const NEGATIONS: [&str; 7] = ["not", "never", "no", "without", "cannot", "forbidden", "prohibited"];
+const NEGATIONS: [&str; 7] = [
+    "not",
+    "never",
+    "no",
+    "without",
+    "cannot",
+    "forbidden",
+    "prohibited",
+];
 
 /// A requirement of another project, with the project it belongs to.
 #[derive(Clone, Debug)]

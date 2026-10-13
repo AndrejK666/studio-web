@@ -70,7 +70,8 @@ fn file_of(path: &str) -> &str {
 }
 
 fn skipped(path: &str) -> bool {
-    path.split('/').any(|seg| SKIP.contains(&seg) || (seg.starts_with('.') && seg.len() > 1))
+    path.split('/')
+        .any(|seg| SKIP.contains(&seg) || (seg.starts_with('.') && seg.len() > 1))
 }
 
 fn manifest_kind(file: &str) -> Option<&'static str> {
@@ -117,7 +118,10 @@ pub fn detect(repo: &str, paths: &[String], gear_dirs: &BTreeSet<String>) -> Vec
         if let Some(kind) = manifest_kind(file_of(p)) {
             let dir = dir_of(p).to_string();
             if !under_gear(&dir) {
-                by_dir.entry(dir).or_default().push((file_of(p).to_string(), kind));
+                by_dir
+                    .entry(dir)
+                    .or_default()
+                    .push((file_of(p).to_string(), kind));
             }
         }
     }
@@ -132,7 +136,11 @@ pub fn detect(repo: &str, paths: &[String], gear_dirs: &BTreeSet<String>) -> Vec
                 .or(manifests.first())
                 .map(|(_, k)| (*k).to_string())
                 .unwrap_or_default();
-            let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+            let prefix = if dir.is_empty() {
+                String::new()
+            } else {
+                format!("{dir}/")
+            };
             let inside: Vec<&String> = paths
                 .iter()
                 .filter(|p| p.starts_with(&prefix) && !skipped(p))
@@ -152,14 +160,19 @@ pub fn detect(repo: &str, paths: &[String], gear_dirs: &BTreeSet<String>) -> Vec
                     .map(|p| (*p).clone())
                     .collect(),
                 has_tests: inside.iter().any(|p| is_test(p)),
-                has_readme: inside
-                    .iter()
-                    .any(|p| dir_of(p) == dir && file_of(p).to_ascii_lowercase().starts_with("readme")),
+                has_readme: inside.iter().any(|p| {
+                    dir_of(p) == dir && file_of(p).to_ascii_lowercase().starts_with("readme")
+                }),
                 dir,
             }
         })
         .collect();
-    found.sort_by_key(|f| (f.dir.matches('/').count() + usize::from(!f.dir.is_empty()), f.dir.clone()));
+    found.sort_by_key(|f| {
+        (
+            f.dir.matches('/').count() + usize::from(!f.dir.is_empty()),
+            f.dir.clone(),
+        )
+    });
     found.truncate(MAX_PER_REPO);
     found
 }

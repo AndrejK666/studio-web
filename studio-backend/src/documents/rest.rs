@@ -3029,9 +3029,15 @@ pub struct TermDriftDto {
 pub struct DomainQuestionListDto {
     pub items: Vec<DomainQuestionDto>,
     pub total: u32,
-    pub drift: Vec<TermDriftDto>,
     /// False when the model has not been built: no facts, no questions.
     pub built: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct TermDriftListDto {
+    pub items: Vec<TermDriftDto>,
+    pub total: u32,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -3064,8 +3070,8 @@ pub struct DomainExpertDto {
 pub struct DomainExpertListDto {
     pub items: Vec<DomainExpertDto>,
     pub total: u32,
-    /// The documents read for it, most facts first.
-    pub documents: Vec<String>,
+    /// How many documents about the entity were read.
+    pub documents_read: u32,
 }
 
 /// Questions for one document: what it leaves out of the domain the project
@@ -3082,16 +3088,18 @@ async fn list_domain_questions(
     let (sources, facts, _) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
     let Some(doc) = sources.documents.iter().find(|d| d.path == query.path) else {
-        return Err(DocumentsError::not_found("no such document in this project")
-            .with_resource("document")
-            .create());
+        return Err(
+            DocumentsError::not_found("no such document in this project")
+                .with_resource("document")
+                .create(),
+        );
     };
     let choices = service
         .glossary_choices(workspace_id, project_id)
         .await
         .map_err(internal)?;
     let entries = super::spec_model::glossary::entries(&facts, &choices);
-    let (questions, drifts) =
+    let (questions, _) =
         super::spec_model::questions::questions(&doc.path, &doc.text, &entries, &facts);
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let items: Vec<DomainQuestionDto> = questions
@@ -3110,15 +3118,48 @@ async fn list_domain_questions(
     Ok(Json(DomainQuestionListDto {
         total: count(items.len()),
         items,
-        drift: drifts
-            .into_iter()
-            .map(|d| TermDriftDto {
-                used: d.used,
-                project_name: d.project_name,
-                line: count(d.line),
-            })
-            .collect(),
         built: !facts.is_empty(),
+    }))
+}
+
+/// The words one document uses for things the project named otherwise.
+async fn list_term_drift(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<DocumentScopeQuery>,
+) -> ApiResult<JsonBody<TermDriftListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let (sources, facts, _) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    let Some(doc) = sources.documents.iter().find(|d| d.path == query.path) else {
+        return Err(
+            DocumentsError::not_found("no such document in this project")
+                .with_resource("document")
+                .create(),
+        );
+    };
+    let choices = service
+        .glossary_choices(workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    let entries = super::spec_model::glossary::entries(&facts, &choices);
+    let (_, drifts) =
+        super::spec_model::questions::questions(&doc.path, &doc.text, &entries, &facts);
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let items: Vec<TermDriftDto> = drifts
+        .into_iter()
+        .map(|d| TermDriftDto {
+            used: d.used,
+            project_name: d.project_name,
+            line: count(d.line),
+        })
+        .collect();
+    Ok(Json(TermDriftListDto {
+        total: count(items.len()),
+        items,
     }))
 }
 
@@ -3215,12 +3256,16 @@ async fn list_domain_experts(
             last_change: last,
         })
         .collect();
-    items.sort_by(|a, b| b.commits.cmp(&a.commits).then(b.last_change.cmp(&a.last_change)));
+    items.sort_by(|a, b| {
+        b.commits
+            .cmp(&a.commits)
+            .then(b.last_change.cmp(&a.last_change))
+    });
     items.truncate(5);
     Ok(Json(DomainExpertListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
-        documents,
+        documents_read: u32::try_from(documents.len()).unwrap_or(u32::MAX),
     }))
 }
 
@@ -3350,7 +3395,8 @@ async fn reachable_repositories(
     String,
     String,
 )> {
-    let Some(connectors) = crate::connectors::sdk::Connectors::new(quality.hub.clone()).get() else {
+    let Some(connectors) = crate::connectors::sdk::Connectors::new(quality.hub.clone()).get()
+    else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -3361,7 +3407,8 @@ async fn reachable_repositories(
         let Some(tenant) = connectors.locate(ctx, project_id, connection_id).await else {
             continue;
         };
-        if let Ok((driver, auth, _)) = connectors.driver_and_auth(ctx, tenant, connection_id).await {
+        if let Ok((driver, auth, _)) = connectors.driver_and_auth(ctx, tenant, connection_id).await
+        {
             let branch = source
                 .branch
                 .clone()
@@ -3411,7 +3458,12 @@ async fn list_remarks(
             }
         };
         for t in threads {
-            let text: String = t.comments.iter().map(|c| c.body.as_str()).collect::<Vec<_>>().join("\n");
+            let text: String = t
+                .comments
+                .iter()
+                .map(|c| c.body.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
             items.push(RemarkDto {
                 requirements: super::remarks::identifiers_in(&text),
                 left_open: t.left_open(),
@@ -3465,9 +3517,11 @@ async fn create_remark_reply(
     }
     let repos = reachable_repositories(&service, &quality, &ctx, project_id).await;
     let Some((driver, auth, _, _)) = repos.into_iter().find(|(_, _, r, _)| *r == body.repo) else {
-        return Err(DocumentsError::not_found("no connection of this project reaches that repository")
-            .with_resource("repository")
-            .create());
+        return Err(DocumentsError::not_found(
+            "no connection of this project reaches that repository",
+        )
+        .with_resource("repository")
+        .create());
     };
     let answer = driver
         .graphql(&auth, &super::remarks::reply_request(&body.thread_id, text))
@@ -3537,7 +3591,12 @@ async fn list_decisions(
                 .as_deref()
                 .is_none_or(|r| d.requirements.iter().any(|x| x == r))
         })
-        .filter(|d| query.path.as_deref().is_none_or(|p| d.path.as_deref() == Some(p)))
+        .filter(|d| {
+            query
+                .path
+                .as_deref()
+                .is_none_or(|p| d.path.as_deref() == Some(p))
+        })
         .collect();
     Ok(Json(DecisionListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
@@ -3644,7 +3703,8 @@ async fn run_pull_request_checks(
                     continue;
                 };
                 // The version in the pull request, not the one on the branch.
-                if let Ok(Some(file)) = driver.read_file(&auth, &repo, path, Some(&pull.head)).await {
+                if let Ok(Some(file)) = driver.read_file(&auth, &repo, path, Some(&pull.head)).await
+                {
                     changed.push((path.clone(), ty, file.text));
                 }
             }
@@ -3659,7 +3719,10 @@ async fn run_pull_request_checks(
                     description: outcome.description.clone(),
                     target_url: None,
                 };
-                match driver.set_commit_status(&auth, &repo, &pull.head, &status).await {
+                match driver
+                    .set_commit_status(&auth, &repo, &pull.head, &status)
+                    .await
+                {
                     Ok(()) => (true, None),
                     Err(e) => (false, Some(format!("{e:#}"))),
                 }
@@ -3820,9 +3883,11 @@ async fn analyze_review_brief(
         .await
         .map_err(internal)?;
     let Some(doc) = sources.documents.iter().find(|d| d.path == body.path) else {
-        return Err(DocumentsError::not_found("no such document in this project")
-            .with_resource("document")
-            .create());
+        return Err(
+            DocumentsError::not_found("no such document in this project")
+                .with_resource("document")
+                .create(),
+        );
     };
     let base = base_text(
         &service,
@@ -3830,7 +3895,10 @@ async fn analyze_review_brief(
         &ctx,
         project_id,
         &doc.path,
-        body.base_ref.as_deref().map(str::trim).filter(|r| !r.is_empty()),
+        body.base_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty()),
     )
     .await;
     let changes = match &base {
@@ -4035,7 +4103,10 @@ async fn list_related_requirements(
         (Some(org), Some(tree)) => tree.projects_of(&ctx, org).await.map_err(internal)?,
         _ => Vec::new(),
     };
-    let others: Vec<_> = projects.into_iter().filter(|p| p.id != project_id).collect();
+    let others: Vec<_> = projects
+        .into_iter()
+        .filter(|p| p.id != project_id)
+        .collect();
     let truncated = others.len() > RELATED_PROJECTS_MAX;
     let mut elsewhere = Vec::new();
     let mut names = std::collections::BTreeMap::new();
@@ -4064,10 +4135,7 @@ async fn list_related_requirements(
     let items: Vec<RelatedRequirementDto> = related(&here, &elsewhere)
         .into_iter()
         .map(|m| {
-            let (name, ws) = names
-                .get(&m.there.project_id)
-                .cloned()
-                .unwrap_or_default();
+            let (name, ws) = names.get(&m.there.project_id).cloned().unwrap_or_default();
             RelatedRequirementDto {
                 defined_in: side_at(&m.here.path, m.here.line),
                 id: m.here.id,
@@ -5712,7 +5780,9 @@ pub fn register_routes(
 
     router = OperationBuilder::post("/studio-documents/v1/pull-request-checks")
         .operation_id("studio_documents.run_pull_request_checks")
-        .summary("Check the documents each open pull request changes, and say it on the pull request")
+        .summary(
+            "Check the documents each open pull request changes, and say it on the pull request",
+        )
         .description(
             "For every open pull request of the project's repositories that changes a document \
              of a known type (a settled binding), checks the version in the pull request \
@@ -5726,11 +5796,7 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .json_request::<PullRequestChecksRequest>(openapi, "The project, and whether to publish")
         .handler(run_pull_request_checks)
-        .json_response_with_schema::<PullRequestCheckListDto>(
-            openapi,
-            StatusCode::OK,
-            "The checks",
-        )
+        .json_response_with_schema::<PullRequestCheckListDto>(openapi, StatusCode::OK, "The checks")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -5858,10 +5924,9 @@ pub fn register_routes(
         .description(
             "For one document of the project: the entities the project's other documents relate \
              to an entity this one names, which this one never mentions (the ledger a billing \
-             PRD forgot), strongest first, at most 15; and every merged alias it uses where the \
-             project chose another name. Computed from the facts already extracted: before the \
-             model is built (`built: false`) there are none (docs/spec-domain-model.md, \
-             \"Questions while writing\").",
+             PRD forgot), strongest first, at most 15. Computed from the facts already \
+             extracted: before the model is built (`built: false`) there are none \
+             (docs/spec-domain-model.md, \"Questions while writing\").",
         )
         .tag("StudioDocuments")
         .authenticated()
@@ -5874,6 +5939,28 @@ pub fn register_routes(
             StatusCode::OK,
             "The questions",
         )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/term-drift")
+        .operation_id("studio_documents.list_term_drift")
+        .summary("The words a document uses for things the project named otherwise")
+        .description(
+            "Every glossary alias members merged into an entry that one document still uses, \
+             with the name the project chose and the line. From the glossary decisions and \
+             the facts already extracted.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .query_param("path", true, "The document, by its path in the checkout")
+        .handler(list_term_drift)
+        .json_response_with_schema::<TermDriftListDto>(openapi, StatusCode::OK, "The words")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -5896,11 +5983,7 @@ pub fn register_routes(
         .query_param("project_id", true, "The project")
         .query_param("subject", true, "The entity, as the glossary names it")
         .handler(list_domain_experts)
-        .json_response_with_schema::<DomainExpertListDto>(
-            openapi,
-            StatusCode::OK,
-            "The people",
-        )
+        .json_response_with_schema::<DomainExpertListDto>(openapi, StatusCode::OK, "The people")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -5922,13 +6005,13 @@ pub fn register_routes(
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
-        .query_param("project_id", true, "The project whose requirements to trace")
-        .handler(list_requirement_trace)
-        .json_response_with_schema::<RequirementTraceListDto>(
-            openapi,
-            StatusCode::OK,
-            "The traces",
+        .query_param(
+            "project_id",
+            true,
+            "The project whose requirements to trace",
         )
+        .handler(list_requirement_trace)
+        .json_response_with_schema::<RequirementTraceListDto>(openapi, StatusCode::OK, "The traces")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -5938,7 +6021,9 @@ pub fn register_routes(
 
     router = OperationBuilder::get("/studio-documents/v1/spec-model/related")
         .operation_id("studio_documents.list_related_requirements")
-        .summary("Requirements of other projects that say the same as this project's, or the opposite")
+        .summary(
+            "Requirements of other projects that say the same as this project's, or the opposite",
+        )
         .description(
             "Compares every requirement this project's documents define with those of the \
              organization's other projects the caller can read (at most 40 a call): pairs that \
@@ -5950,7 +6035,11 @@ pub fn register_routes(
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
-        .query_param("project_id", true, "The project whose requirements to compare")
+        .query_param(
+            "project_id",
+            true,
+            "The project whose requirements to compare",
+        )
         .handler(list_related_requirements)
         .json_response_with_schema::<RelatedRequirementListDto>(
             openapi,

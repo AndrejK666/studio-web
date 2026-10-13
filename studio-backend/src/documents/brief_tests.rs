@@ -31,7 +31,10 @@ The system signs reports.
 #[test]
 fn changes_are_computed_from_the_labelled_requirements() {
     let got = changes("prd.md", OLD, NEW);
-    let kinds: Vec<(&str, &str)> = got.iter().map(|c| (c.id.as_str(), c.kind.as_str())).collect();
+    let kinds: Vec<(&str, &str)> = got
+        .iter()
+        .map(|c| (c.id.as_str(), c.kind.as_str()))
+        .collect();
     assert_eq!(
         kinds,
         [
@@ -60,10 +63,22 @@ fn the_answer_is_read_and_held_to_the_computed_changes() {
     assert_eq!(brief.problem, "Reports");
     assert_eq!(brief.open_decisions, ["Is 50 MB enough?"]);
     let by_id = |id: &str| brief.changes.iter().find(|c| c.id == id).cloned();
-    assert!(by_id("cpt-invented").is_none(), "no claim about what was not found");
-    assert!(!by_id("cpt-app-fr-limit").expect("limit").meaning, "the model's reading of a reworded line stands");
-    assert!(by_id("cpt-app-fr-new").expect("new").meaning, "an added requirement always changes what is required");
-    assert!(by_id("cpt-app-fr-gone").expect("gone").meaning, "a skipped change counts as meaning");
+    assert!(
+        by_id("cpt-invented").is_none(),
+        "no claim about what was not found"
+    );
+    assert!(
+        !by_id("cpt-app-fr-limit").expect("limit").meaning,
+        "the model's reading of a reworded line stands"
+    );
+    assert!(
+        by_id("cpt-app-fr-new").expect("new").meaning,
+        "an added requirement always changes what is required"
+    );
+    assert!(
+        by_id("cpt-app-fr-gone").expect("gone").meaning,
+        "a skipped change counts as meaning"
+    );
 }
 
 #[test]

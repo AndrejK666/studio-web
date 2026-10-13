@@ -48,10 +48,18 @@ fn a_missing_required_section_fails_and_says_which() {
         ("docs/adr/0003.md".to_string(), &ty, filled(&ty)),
     ]);
     assert_eq!(out.state, "failure");
-    assert!(out.description.starts_with("1 of 2 document(s)"), "{}", out.description);
+    assert!(
+        out.description.starts_with("1 of 2 document(s)"),
+        "{}",
+        out.description
+    );
     assert!(out.description.contains("0002.md"));
     assert!(out.description.chars().count() <= 140);
-    assert!(out.files[0].issues.iter().any(|i| i.contains(&required)), "{:?}", out.files[0].issues);
+    assert!(
+        out.files[0].issues.iter().any(|i| i.contains(&required)),
+        "{:?}",
+        out.files[0].issues
+    );
 }
 
 #[test]

@@ -107,14 +107,22 @@ pub fn questions(
             continue;
         };
         *fact_count.entry(a).or_default() += 1;
-        *docs_of.entry(a).or_default().entry(f.path.clone()).or_default() += 1;
+        *docs_of
+            .entry(a)
+            .or_default()
+            .entry(f.path.clone())
+            .or_default() += 1;
         let said = format!("{} {}", f.value, f.text).to_lowercase();
         for (b, e) in entries.iter().enumerate() {
             if b == a || !e.spellings.iter().any(|s| mentions(&said, s).is_some()) {
                 continue;
             }
             let example = (f.path.clone(), f.line_start, f.quote.clone());
-            links.entry(a).or_default().entry(b).or_insert(example.clone());
+            links
+                .entry(a)
+                .or_default()
+                .entry(b)
+                .or_insert(example.clone());
             links.entry(b).or_default().entry(a).or_insert(example);
         }
     }
@@ -125,8 +133,10 @@ pub fn questions(
         .filter(|(i, _)| !mentioned.contains(i))
         .filter_map(|(i, e)| {
             let related = links.get(&i)?;
-            let because: Vec<(&usize, &(String, usize, String))> =
-                related.iter().filter(|(m, _)| mentioned.contains(m)).collect();
+            let because: Vec<(&usize, &(String, usize, String))> = related
+                .iter()
+                .filter(|(m, _)| mentioned.contains(m))
+                .collect();
             if because.is_empty() {
                 return None;
             }
@@ -137,7 +147,10 @@ pub fn questions(
             documents.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
             Some(Question {
                 entity: e.name.clone(),
-                because_of: because.iter().map(|(m, _)| entries[**m].name.clone()).collect(),
+                because_of: because
+                    .iter()
+                    .map(|(m, _)| entries[**m].name.clone())
+                    .collect(),
                 facts: fact_count.get(&i).copied().unwrap_or(0),
                 documents: documents.into_iter().map(|(p, _)| p).collect(),
                 example: because.first().map(|(_, ex)| (*ex).clone()),
@@ -156,7 +169,10 @@ pub fn questions(
     // A merged alias used in the document, where the project chose a name.
     let mut drifts = Vec::new();
     for e in entries.iter().filter(|e| !e.aliases.is_empty()) {
-        if e.aliases.iter().any(|a| a.name.eq_ignore_ascii_case(&e.name)) {
+        if e.aliases
+            .iter()
+            .any(|a| a.name.eq_ignore_ascii_case(&e.name))
+        {
             continue;
         }
         for a in &e.aliases {

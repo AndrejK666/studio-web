@@ -53,11 +53,21 @@ fn an_entity_the_model_relates_to_a_mentioned_one_is_asked_about() {
         entry("Webhook", &[]),
     ];
     let facts = [
-        fact("design.md", "Ledger", "every invoice", "The ledger records every invoice."),
+        fact(
+            "design.md",
+            "Ledger",
+            "every invoice",
+            "The ledger records every invoice.",
+        ),
         fact("design.md", "Ledger", "", "The ledger is append-only."),
         fact("adr/0003.md", "Webhook", "", "Webhooks retry three times."),
         // The document's own facts do not count as the project's knowledge.
-        fact("prd.md", "Invoice", "webhook", "An invoice triggers a webhook."),
+        fact(
+            "prd.md",
+            "Invoice",
+            "webhook",
+            "An invoice triggers a webhook.",
+        ),
     ];
     let (qs, _) = questions("prd.md", PRD, &entries, &facts);
     assert_eq!(qs.len(), 1, "{qs:?}");
@@ -65,7 +75,10 @@ fn an_entity_the_model_relates_to_a_mentioned_one_is_asked_about() {
     assert_eq!(qs[0].because_of, ["Invoice"]);
     assert_eq!(qs[0].facts, 2);
     assert_eq!(qs[0].documents, ["design.md"]);
-    assert_eq!(qs[0].example.as_ref().map(|e| e.0.as_str()), Some("design.md"));
+    assert_eq!(
+        qs[0].example.as_ref().map(|e| e.0.as_str()),
+        Some("design.md")
+    );
 }
 
 #[test]
@@ -86,5 +99,8 @@ fn a_merged_alias_in_the_document_is_drift() {
 fn mentions_are_whole_words() {
     assert!(mentions("the ledgers and the ledger", "ledger").is_some());
     assert!(mentions("ledgerless", "ledger").is_none());
-    assert!(mentions("an ox", "ox").is_none(), "too short to mean anything");
+    assert!(
+        mentions("an ox", "ox").is_none(),
+        "too short to mean anything"
+    );
 }

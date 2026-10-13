@@ -36,7 +36,11 @@ fn the_same_requirement_in_another_project_is_found() {
             "b-fr-9",
             "The system MUST keep deleted tenants in a recycle bin for 30 days after deletion.",
         ),
-        there("p3", "c-fr-1", "The portal shows a reserved area as reserved."),
+        there(
+            "p3",
+            "c-fr-1",
+            "The portal shows a reserved area as reserved.",
+        ),
     ];
     let found = related(&here, &elsewhere);
     assert_eq!(found.len(), 1);
@@ -47,7 +51,10 @@ fn the_same_requirement_in_another_project_is_found() {
 
 #[test]
 fn one_negating_the_other_reads_as_opposite() {
-    let here = [req("a-fr-2", "Audit records MUST be kept in the platform audit log.")];
+    let here = [req(
+        "a-fr-2",
+        "Audit records MUST be kept in the platform audit log.",
+    )];
     let elsewhere = [there(
         "p2",
         "b-fr-3",
@@ -69,7 +76,11 @@ fn a_partial_overlap_is_shown_as_such_and_weak_ones_are_not() {
             "b-fr-4",
             "Workflow engine runs playbooks for remediation alerts with retries.",
         ),
-        there("p3", "c-fr-5", "Workflow diagrams render in the review view."),
+        there(
+            "p3",
+            "c-fr-5",
+            "Workflow diagrams render in the review view.",
+        ),
     ];
     let found = related(&here, &elsewhere);
     assert_eq!(found.len(), 1);
@@ -85,7 +96,10 @@ fn short_statements_are_not_compared() {
 
 #[test]
 fn at_most_three_matches_per_requirement_strongest_first() {
-    let here = [req("a", "Export monthly billing reports as signed PDF files nightly")];
+    let here = [req(
+        "a",
+        "Export monthly billing reports as signed PDF files nightly",
+    )];
     let elsewhere: Vec<Elsewhere> = (0..5)
         .map(|i| {
             there(

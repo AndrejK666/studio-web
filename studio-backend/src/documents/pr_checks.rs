@@ -57,7 +57,11 @@ pub fn read_open_pulls(answer: &Value) -> Result<Vec<OpenPull>, String> {
         .filter_map(|p| {
             Some(OpenPull {
                 number: p.get("number")?.as_i64()?,
-                title: p.get("title").and_then(Value::as_str).unwrap_or_default().to_string(),
+                title: p
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
                 url: p.get("url").and_then(Value::as_str).map(str::to_string),
                 head: p.get("headRefOid")?.as_str()?.to_string(),
                 files: p
@@ -65,7 +69,9 @@ pub fn read_open_pulls(answer: &Value) -> Result<Vec<OpenPull>, String> {
                     .and_then(Value::as_array)
                     .map(|f| {
                         f.iter()
-                            .filter_map(|x| x.get("path").and_then(Value::as_str).map(str::to_string))
+                            .filter_map(|x| {
+                                x.get("path").and_then(Value::as_str).map(str::to_string)
+                            })
                             .collect()
                     })
                     .unwrap_or_default(),

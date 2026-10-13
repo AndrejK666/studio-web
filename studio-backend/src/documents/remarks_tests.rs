@@ -17,12 +17,21 @@ fn threads_on_the_document_come_from_its_history_and_its_open_pull_requests() {
         3,
         "MERGED",
         json!([
-            thread("t1", "docs/prd.md", false, "Should this be 50 MB? cpt-app-fr-limit"),
+            thread(
+                "t1",
+                "docs/prd.md",
+                false,
+                "Should this be 50 MB? cpt-app-fr-limit"
+            ),
             thread("t2", "docs/prd.md", true, "typo"),
             thread("t3", "src/lib.rs", false, "not ours"),
         ]),
     );
-    let mut open = pr(9, "OPEN", json!([thread("t4", "docs/prd.md", false, "rename the role")]));
+    let mut open = pr(
+        9,
+        "OPEN",
+        json!([thread("t4", "docs/prd.md", false, "rename the role")]),
+    );
     open["files"] = json!({ "nodes": [ { "path": "docs/prd.md" } ] });
     let mut elsewhere = pr(10, "OPEN", json!([thread("t5", "docs/prd.md", false, "x")]));
     elsewhere["files"] = json!({ "nodes": [ { "path": "README.md" } ] });

@@ -335,6 +335,41 @@ calibration, and a requirement with no stated basis is not wrong, only
 unsupported on the page. The list also carries how much synced work names each
 identifier, so "defined and never worked on" is one filter away.
 
+## Across projects
+
+`related.rs`, served by `GET /spec-model/related` (issue #733; interview
+problem 1.2, eighteen people in six companies). The rules above find
+disagreements inside one project. This compares every requirement of the
+project with those of the organization's other projects the caller can read
+(at most 40 a call): a pair that shares most of its meaningful words is `same`
+(three quarters or more) or `overlap` (from 45%), and `opposite` when one of
+them negates what the other requires ("must not", "never", "without").
+Deterministic and stored nowhere: a list of pairs to read side by side, never a
+finding. A model judge can stand behind it the way it stands behind the rules.
+
+## From requirement to code and test
+
+`trace.rs`, served by `GET /spec-model/trace` (issue #738). For every
+requirement: the other documents that refer to it, and the code and test files
+of the project's checkouts that name its identifier as a whole token, a test
+told from code by its path (`tests/`, `_test.go`, `.spec.ts`, …). What is not
+named is not traced; the view's filters are the gaps: not in code, not in a
+test, named nowhere. Read with `GET /spec-model/work` (issues, pull requests,
+commits), it is the impact of changing a requirement.
+
+## Questions while writing
+
+`questions.rs`, served by `GET /spec-model/questions?path=`,
+`GET /spec-model/term-drift?path=` and `GET /spec-model/experts?subject=`
+(issue #737; interview problem 1.3). For one
+document: the glossary entries the project's other documents relate to an
+entry this document names (a fact about one whose value or passage names the
+other), which this document never mentions — the ledger a billing PRD forgot —
+strongest first, at most 15; and every merged alias it uses where the project
+chose another name. From the facts already extracted, so only after a build.
+Whom to ask about an entity: the people who changed the three documents with
+the most facts about it, from the repository history, bots left out.
+
 ## Tables
 
 - `studio_spec_model_extractions`: `project_id`, `path`, `revision`,

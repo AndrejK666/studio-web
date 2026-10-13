@@ -37,9 +37,12 @@ const PER_KIND: usize = 20;
 pub fn is_test_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     let name = lower.rsplit('/').next().unwrap_or(&lower);
-    let in_test_dir = lower
-        .split('/')
-        .any(|d| matches!(d, "test" | "tests" | "__tests__" | "spec" | "e2e" | "testdata"));
+    let in_test_dir = lower.split('/').any(|d| {
+        matches!(
+            d,
+            "test" | "tests" | "__tests__" | "spec" | "e2e" | "testdata"
+        )
+    });
     in_test_dir
         || name.ends_with("_test.rs")
         || name.ends_with("_tests.rs")
@@ -99,7 +102,11 @@ pub fn trace(
                     };
                     first_line_naming(&text, &r.id).map(|line| Cited {
                         path: d.path.to_string(),
-                        line: if d.path == r.path && line >= r.line { line + 1 } else { line },
+                        line: if d.path == r.path && line >= r.line {
+                            line + 1
+                        } else {
+                            line
+                        },
                     })
                 })
                 .collect();

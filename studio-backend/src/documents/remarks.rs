@@ -99,7 +99,12 @@ fn str_at<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
     v.get(key).and_then(Value::as_str)
 }
 
-fn threads_of(pr: &Value, path: &str, out: &mut Vec<Thread>, seen: &mut std::collections::BTreeSet<String>) {
+fn threads_of(
+    pr: &Value,
+    path: &str,
+    out: &mut Vec<Thread>,
+    seen: &mut std::collections::BTreeSet<String>,
+) {
     let number = pr.get("number").and_then(Value::as_i64).unwrap_or_default();
     let nodes = pr
         .pointer("/reviewThreads/nodes")
@@ -123,7 +128,10 @@ fn threads_of(pr: &Value, path: &str, out: &mut Vec<Thread>, seen: &mut std::col
             .unwrap_or_default()
             .iter()
             .map(|c| Comment {
-                author: c.pointer("/author/login").and_then(Value::as_str).map(str::to_string),
+                author: c
+                    .pointer("/author/login")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 body: str_at(c, "body").unwrap_or_default().to_string(),
                 url: str_at(c, "url").map(str::to_string),
                 created_at: str_at(c, "createdAt").map(str::to_string),
@@ -135,8 +143,14 @@ fn threads_of(pr: &Value, path: &str, out: &mut Vec<Thread>, seen: &mut std::col
             pull_title: str_at(pr, "title").unwrap_or_default().to_string(),
             pull_url: str_at(pr, "url").map(str::to_string),
             pull_state: str_at(pr, "state").unwrap_or("OPEN").to_string(),
-            resolved: t.get("isResolved").and_then(Value::as_bool).unwrap_or(false),
-            outdated: t.get("isOutdated").and_then(Value::as_bool).unwrap_or(false),
+            resolved: t
+                .get("isResolved")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            outdated: t
+                .get("isOutdated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             line: t.get("line").and_then(Value::as_i64),
             comments,
         });
@@ -188,7 +202,9 @@ pub fn read_remarks(answer: &Value, path: &str) -> Result<Vec<Thread>, String> {
             (false, false) => 1,
             _ => 2,
         };
-        rank(a).cmp(&rank(b)).then(b.pull_number.cmp(&a.pull_number))
+        rank(a)
+            .cmp(&rank(b))
+            .then(b.pull_number.cmp(&a.pull_number))
     });
     Ok(out)
 }
@@ -202,7 +218,10 @@ pub fn read_reply(answer: &Value) -> Result<Comment, String> {
         .pointer("/data/addPullRequestReviewThreadReply/comment")
         .ok_or("the host did not return the reply")?;
     Ok(Comment {
-        author: c.pointer("/author/login").and_then(Value::as_str).map(str::to_string),
+        author: c
+            .pointer("/author/login")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         body: str_at(c, "body").unwrap_or_default().to_string(),
         url: str_at(c, "url").map(str::to_string),
         created_at: str_at(c, "createdAt").map(str::to_string),
@@ -219,7 +238,9 @@ pub fn identifiers_in(text: &str) -> Vec<String> {
             let parts: Vec<&str> = w.split('-').collect();
             parts.len() >= 3
                 && parts.iter().all(|p| {
-                    !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                    !p.is_empty()
+                        && p.chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
                 })
                 && parts[0].chars().all(|c| c.is_ascii_lowercase())
         })

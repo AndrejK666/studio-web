@@ -21,7 +21,6 @@ export interface TermDrift {
 export interface DomainQuestions {
   items: DomainQuestion[];
   total: number;
-  drift: TermDrift[];
   built: boolean;
 }
 

@@ -321,6 +321,11 @@ before that are swept by each repository sync of the project.
 | `GET` | `/review-requests/reviewer-suggestions?project_id=&subject_id=&type_key=` | Whom to ask, from who was asked before | unstable |
 | `GET` | `/spec-model/requirements?project_id=` | The requirements the documents define and the basis each states ([spec-domain-model.md](../spec-domain-model.md#requirements-and-their-basis)) | unstable |
 | `GET` | `/spec-model/decisions?project_id=` | Every ✓/✗ on the project's findings, the model's and Spec Quality's | unstable |
+| `GET` | `/spec-model/related`, `/spec-model/trace`, `/spec-model/questions`, `/spec-model/term-drift`, `/spec-model/experts` | Requirements of other projects alike or opposite; requirement → documents, code, tests; what a document leaves out of the domain and whom to ask ([spec-domain-model.md](../spec-domain-model.md)) | unstable |
+| `POST` | `/review-brief` | A brief of one document for its reviewers | unstable |
+| `GET` `POST` | `/remarks`, `/remarks/replies` | Review threads on a document from its pull requests; a reply to one | unstable |
+| `GET` `POST` | `/decisions` | Decisions recorded on requirements | unstable |
+| `POST` | `/pull-request-checks` | Check the documents open pull requests change; set a commit status | unstable |
 
 A quality request may carry at most 20 inline documents of 256 KiB each and
 1 MiB in total (`quality.rs`).
@@ -344,6 +349,34 @@ marked `overdue` and leads the reviewer's inbox.
 
 A finding a member dismissed (✗) is not counted on the Specs list: `spec-rows`
 passes the dismissed fingerprints to `ArtifactFiles::reviews` (issue #729).
+
+**Review briefs** (`brief.rs`, `POST /review-brief`, issue #736). Which
+requirements were added, removed or reworded since a base version (`base_ref`,
+or the document before its latest commit, read through the project's
+repository connection) is computed from the labelled requirements of both
+versions. A model on the caller's key (ADR-0039) writes the problem, roles,
+scope, assumptions and open decisions, and says for each computed change
+whether it changes what is required. A claim about a change the comparison did
+not find is dropped; an added or removed requirement always counts as meaning.
+Nothing is stored.
+
+**Remarks and decisions** (`remarks.rs`, issue #735). `GET /remarks` asks the
+repository host, in one GraphQL query per repository, for the review threads on
+a document in the pull requests its last twenty commits came from and in the
+open pull requests that change it; unresolved threads of pull requests no
+longer open are `left_open`: what a merge left behind. A reply
+(`POST /remarks/replies`) is posted to the thread through the project's
+connection. A decision (`POST /decisions`, table `studio_decisions`) records
+what was decided, the requirement identifiers it closes, where it was taken
+and by whom; insert only.
+
+**Checks on pull requests** (`pr_checks.rs`, `POST /pull-request-checks`,
+issue #734). Every open pull request of the project's repositories that changes
+a settled document is checked, on the version in the pull request, against its
+type's template, and the result is set as a `studio/documents` commit status on
+the head commit (`ConnectorDriver::set_commit_status`). A commit status, not a
+check run, because a personal token can set one. The run is asked for by a
+member; a webhook that runs it on every push is the next step.
 
 In process the gear publishes four ports on the ClientHub (`port.rs`):
 `DocumentClassifier` and `BindingNames` for the ingest gear,
@@ -641,6 +674,28 @@ deletes one.
 **PK**: `id`
 
 **Additional info**: Index on `(tenant_id, project_id, subject_id)`.
+
+#### Table: `studio_decisions`
+
+**ID**: `cpt-studio-dbtable-decisions`
+
+**Schema**:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | |
+| `tenant_id` | UUID | the workspace tenant |
+| `project_id` | UUID | |
+| `statement` | TEXT | what was decided, 1–4000 characters |
+| `requirements` | JSONB | the requirement identifiers it closes |
+| `source_url`, `source_kind` | TEXT | where it was taken: `review_thread`, `meeting`, `chat` or `other` |
+| `path` | TEXT | the document it is about, when one |
+| `decided_by`, `decided_by_name` | TEXT | the canonical person |
+| `decided_at` | TIMESTAMPTZ | |
+
+**PK**: `id`
+
+**Additional info**: Insert only. Index on `(tenant_id, project_id, decided_at)`.
 
 #### Table: `studio_approvals`
 

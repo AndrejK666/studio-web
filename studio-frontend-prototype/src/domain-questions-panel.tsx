@@ -4,10 +4,11 @@
 
 import { useEffect, useState } from "react";
 import { api } from "./api";
-import { expertLine, questionSentence, type DomainExpert, type DomainQuestions } from "./domain-questions";
+import { expertLine, questionSentence, type DomainExpert, type DomainQuestions, type TermDrift } from "./domain-questions";
 
 export function DomainQuestionsPanel({ token, projectId, path }: { token: string; projectId: string; path: string }) {
   const [read, setRead] = useState<DomainQuestions | { error: string } | null>(null);
+  const [drift, setDrift] = useState<TermDrift[]>([]);
   const [experts, setExperts] = useState<Record<string, DomainExpert[] | "loading" | { error: string }>>({});
 
   useEffect(() => {
@@ -17,6 +18,10 @@ export function DomainQuestionsPanel({ token, projectId, path }: { token: string
       .domainQuestions(token, projectId, path)
       .then((r) => live && setRead(r))
       .catch((e: unknown) => live && setRead({ error: e instanceof Error ? e.message : String(e) }));
+    api
+      .termDrift(token, projectId, path)
+      .then((r) => live && setDrift(r.items))
+      .catch(() => live && setDrift([]));
     return () => {
       live = false;
     };
@@ -41,7 +46,7 @@ export function DomainQuestionsPanel({ token, projectId, path }: { token: string
       </div>
     );
   }
-  if (read.items.length === 0 && read.drift.length === 0) return null;
+  if (read.items.length === 0 && drift.length === 0) return null;
   return (
     <div className="dq-panel">
       <div className="dq-title">Domain questions</div>
@@ -76,9 +81,9 @@ export function DomainQuestionsPanel({ token, projectId, path }: { token: string
           </div>
         );
       })}
-      {read.drift.length > 0 && (
+      {drift.length > 0 && (
         <div className="dq-drift">
-          {read.drift.map((d, i) => (
+          {drift.map((d, i) => (
             <div key={i}>
               Line {d.line}: “{d.used}” — the project calls it <b>{d.project_name}</b>.
             </div>

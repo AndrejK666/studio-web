@@ -579,6 +579,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/project-components",
+      "operation_id": "studio_components_catalog.list_project_components",
+      "tag": "StudioComponentsCatalog",
+      "summary": "The services and applications in a project's repositories beyond its gears",
+      "authenticated": true,
+      "responses": [
+        "ProjectComponentListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/reference",
       "operation_id": "studio_components_catalog.list_component_reference",
       "tag": "StudioComponentsCatalog",
@@ -813,6 +829,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/decisions",
+      "operation_id": "studio_documents.list_decisions",
+      "tag": "StudioDocuments",
+      "summary": "A project's decisions, newest first",
+      "authenticated": true,
+      "responses": [
+        "DecisionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/document-bindings/{id}/text",
       "operation_id": "studio_documents.get_binding_text",
       "tag": "StudioDocuments",
@@ -873,6 +906,23 @@
       "errors": [
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/remarks",
+      "operation_id": "studio_documents.list_remarks",
+      "tag": "StudioDocuments",
+      "summary": "Every review thread on a document, from the pull requests that changed it",
+      "authenticated": true,
+      "responses": [
+        "RemarkListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -963,6 +1013,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/experts",
+      "operation_id": "studio_documents.list_domain_experts",
+      "tag": "StudioDocuments",
+      "summary": "Whom to ask about an entity: who changed the documents that describe it",
+      "authenticated": true,
+      "responses": [
+        "DomainExpertListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model/findings",
       "operation_id": "studio_documents.list_spec_model_findings",
       "tag": "StudioDocuments",
@@ -997,6 +1064,40 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/questions",
+      "operation_id": "studio_documents.list_domain_questions",
+      "tag": "StudioDocuments",
+      "summary": "What a document leaves out of the project's domain, and words it uses otherwise",
+      "authenticated": true,
+      "responses": [
+        "DomainQuestionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/spec-model/related",
+      "operation_id": "studio_documents.list_related_requirements",
+      "tag": "StudioDocuments",
+      "summary": "Requirements of other projects that say the same as this project's, or the opposite",
+      "authenticated": true,
+      "responses": [
+        "RelatedRequirementListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model/requirements",
       "operation_id": "studio_documents.list_spec_model_requirements",
       "tag": "StudioDocuments",
@@ -1004,6 +1105,40 @@
       "authenticated": true,
       "responses": [
         "SpecRequirementListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/spec-model/term-drift",
+      "operation_id": "studio_documents.list_term_drift",
+      "tag": "StudioDocuments",
+      "summary": "The words a document uses for things the project named otherwise",
+      "authenticated": true,
+      "responses": [
+        "TermDriftListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/spec-model/trace",
+      "operation_id": "studio_documents.list_requirement_trace",
+      "tag": "StudioDocuments",
+      "summary": "Where each requirement is named: other documents, code, tests",
+      "authenticated": true,
+      "responses": [
+        "RequirementTraceListDto"
       ],
       "errors": [
         "400",
@@ -2873,6 +3008,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/decisions",
+      "operation_id": "studio_documents.create_decision",
+      "tag": "StudioDocuments",
+      "summary": "Record a decision on a project's requirements, with where it was taken",
+      "authenticated": true,
+      "request": "DecisionInput",
+      "responses": [
+        "DecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/organizations/{organization_id}/capabilities",
       "operation_id": "studio_documents.upsert_organization_capability",
       "tag": "StudioDocuments",
@@ -2922,6 +3075,60 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/pull-request-checks",
+      "operation_id": "studio_documents.run_pull_request_checks",
+      "tag": "StudioDocuments",
+      "summary": "Check the documents each open pull request changes, and say it on the pull request",
+      "authenticated": true,
+      "request": "PullRequestChecksRequest",
+      "responses": [
+        "PullRequestCheckListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/remarks/replies",
+      "operation_id": "studio_documents.create_remark_reply",
+      "tag": "StudioDocuments",
+      "summary": "Answer a review thread; the reply is posted where the remark was made",
+      "authenticated": true,
+      "request": "RemarkReplyRequest",
+      "responses": [
+        "RemarkCommentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/review-brief",
+      "operation_id": "studio_documents.analyze_review_brief",
+      "tag": "StudioDocuments",
+      "summary": "A brief of one document for its reviewers, with changes of meaning told from rewording",
+      "authenticated": true,
+      "request": "ReviewBriefRequest",
+      "responses": [
+        "ReviewBriefDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },

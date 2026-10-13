@@ -1,4 +1,4 @@
-import type { DomainExpert, DomainQuestions } from "./domain-questions";
+import type { DomainExpert, DomainQuestions, TermDrift } from "./domain-questions";
 import type { GearBrings } from "./gear-brings";
 import type { ProjectComponent, PullRequestChecks } from "./project-checks";
 import type { Decision, RemarkComment, Remarks, ReviewBrief } from "./remarks";
@@ -2836,9 +2836,15 @@ export const api = {
       `/studio-documents/v1/spec-model/questions?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`,
       token,
     ),
+  /** The words one document uses for things the project named otherwise. */
+  termDrift: (token: string, projectId: string, path: string) =>
+    request<{ items: TermDrift[]; total: number }>(
+      `/studio-documents/v1/spec-model/term-drift?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`,
+      token,
+    ),
   /** Who changed the documents that describe an entity. */
   domainExperts: (token: string, projectId: string, subject: string) =>
-    request<{ items: DomainExpert[]; total: number; documents: string[] }>(
+    request<{ items: DomainExpert[]; total: number; documents_read: number }>(
       `/studio-documents/v1/spec-model/experts?project_id=${encodeURIComponent(projectId)}&subject=${encodeURIComponent(subject)}`,
       token,
     ),

@@ -540,7 +540,11 @@ async fn list_project_components(
     let mut items = Vec::new();
     let mut repos_read = 0u32;
     let mut history_left = COMPONENT_HISTORY_MAX;
-    for source in catalog.service.source_repos(&ctx, &project.to_string()).await {
+    for source in catalog
+        .service
+        .source_repos(&ctx, &project.to_string())
+        .await
+    {
         let branch = (!source.branch.trim().is_empty()).then(|| source.branch.clone());
         let Ok(repo) = crate::connectors::sdk::Repository::open(
             &connectors,
@@ -559,20 +563,29 @@ async fn list_project_components(
             continue;
         };
         repos_read += 1;
-        let paths: Vec<String> = tree.files.into_iter().filter(|f| !f.is_dir).map(|f| f.path).collect();
+        let paths: Vec<String> = tree
+            .files
+            .into_iter()
+            .filter(|f| !f.is_dir)
+            .map(|f| f.path)
+            .collect();
         let gear_dirs: std::collections::BTreeSet<String> = paths
             .iter()
             .filter(|p| p.ends_with("gear.gdl") || p.ends_with("gear.toml"))
-            .map(|p| p.rsplit_once('/').map_or(String::new(), |(d, _)| d.to_string()))
+            .map(|p| {
+                p.rsplit_once('/')
+                    .map_or(String::new(), |(d, _)| d.to_string())
+            })
             .collect();
         let found = detect(&source.repo, &paths, &gear_dirs);
         // Open pull requests, once per repository: which files each changes.
-        let open_files: Vec<Vec<String>> = match (
-            source.repo.split_once('/'),
-            source.connection_id,
-        ) {
+        let open_files: Vec<Vec<String>> = match (source.repo.split_once('/'), source.connection_id)
+        {
             (Some((owner, name)), Some(connection_id)) => {
-                match connectors.driver_and_auth(&ctx, source.tenant, connection_id).await {
+                match connectors
+                    .driver_and_auth(&ctx, source.tenant, connection_id)
+                    .await
+                {
                     Ok((driver, auth, _)) => driver
                         .graphql(
                             &auth,
@@ -592,7 +605,9 @@ async fn list_project_components(
                                 .and_then(serde_json::Value::as_array)
                                 .map(|f| {
                                     f.iter()
-                                        .filter_map(|x| x.get("path").and_then(serde_json::Value::as_str))
+                                        .filter_map(|x| {
+                                            x.get("path").and_then(serde_json::Value::as_str)
+                                        })
                                         .map(str::to_string)
                                         .collect()
                                 })
@@ -605,7 +620,11 @@ async fn list_project_components(
             _ => Vec::new(),
         };
         for f in found {
-            let prefix = if f.dir.is_empty() { String::new() } else { format!("{}/", f.dir) };
+            let prefix = if f.dir.is_empty() {
+                String::new()
+            } else {
+                format!("{}/", f.dir)
+            };
             let open_pulls = open_files
                 .iter()
                 .filter(|files| files.iter().any(|p| p.starts_with(&prefix)))
@@ -616,9 +635,15 @@ async fn list_project_components(
                     .history(if f.dir.is_empty() { "." } else { &f.dir }, 30)
                     .await
                     .unwrap_or_default();
-                let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+                let mut counts: std::collections::BTreeMap<String, usize> =
+                    std::collections::BTreeMap::new();
                 for c in &commits {
-                    if let Some(who) = c.author.clone().or(c.author_name.clone()).filter(|w| !bot(w)) {
+                    if let Some(who) = c
+                        .author
+                        .clone()
+                        .or(c.author_name.clone())
+                        .filter(|w| !bot(w))
+                    {
                         *counts.entry(who).or_default() += 1;
                     }
                 }

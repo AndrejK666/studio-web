@@ -53,7 +53,10 @@ fn a_requirement_is_traced_to_documents_code_and_tests_by_its_id() {
         .expect("export");
     let paths = |c: &[Cited]| c.iter().map(|x| x.path.clone()).collect::<Vec<_>>();
     assert_eq!(paths(&export.documents), ["prd.md", "design.md"]);
-    assert_eq!(export.documents[0].line, 9, "the mention, not the definition");
+    assert_eq!(
+        export.documents[0].line, 9,
+        "the mention, not the definition"
+    );
     assert_eq!(paths(&export.code), ["src/export.rs"]);
     assert_eq!(paths(&export.tests), ["src/export_tests.rs"]);
     assert_eq!(export.tests[0].line, 2);

@@ -115,7 +115,12 @@ pub struct ChangeMeaning {
 pub const TEXT_MAX: usize = 60_000;
 
 /// The request for a brief of `text`, with the computed `changes`.
-pub fn request(path: &str, doc_type: Option<&str>, text: &str, changes: &[Change]) -> CompletionRequest {
+pub fn request(
+    path: &str,
+    doc_type: Option<&str>,
+    text: &str,
+    changes: &[Change],
+) -> CompletionRequest {
     let clipped: String = text.chars().take(TEXT_MAX).collect();
     let changes_json = serde_json::to_string_pretty(changes).unwrap_or_else(|_| "[]".into());
     CompletionRequest {
