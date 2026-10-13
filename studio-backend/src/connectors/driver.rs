@@ -53,6 +53,10 @@ pub enum ConnectorCategory {
     /// Chat platform — Studio posts messages into it. Nothing is read back:
     /// the credential is an egress, not a source.
     Notification,
+    /// A Kubernetes cluster products are deployed into (ADR-0043). Nothing to
+    /// browse: an organization's environments name it, and only the server
+    /// uses its credential.
+    Cluster,
 }
 
 impl ConnectorCategory {
@@ -61,6 +65,7 @@ impl ConnectorCategory {
             Self::SourceCode => "source_code",
             Self::Ai => "ai",
             Self::Notification => "notification",
+            Self::Cluster => "cluster",
         }
     }
 }
@@ -431,6 +436,7 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             ConnectorCategory::SourceCode => "Personal Access Token (PAT)",
             ConnectorCategory::Ai => "API Key",
             ConnectorCategory::Notification => "Bot Token",
+            ConnectorCategory::Cluster => "Service-account token",
         }
     }
 

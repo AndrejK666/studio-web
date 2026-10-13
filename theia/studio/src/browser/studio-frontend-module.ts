@@ -50,6 +50,7 @@ import { AnalyzeApplicationShellProvider, AnalyzeFrontendController } from './an
 import { GEARBOX_REMOTE_CATALOGUE, loadRemoteGearCatalogue, remoteGearCatalogueChanged } from './gearbox-remote-catalogue';
 import { AnalyzeContribution } from './analyze-contribution';
 import { AnalyzeStudioClient } from './analyze-studio-client';
+import { DeployEnvironments, GEARBOX_DEPLOY_ENVIRONMENTS } from './gearbox-deploy-environments';
 import { AnalyzeWidget } from './analyze-widget';
 import { AuditFrontendController } from './audit-controller';
 import { OperationsWidget } from './operations-widget';
@@ -231,6 +232,11 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
         load: () => loadRemoteGearCatalogue(),
         onDidChange: (listener: () => void) => remoteGearCatalogueChanged.event(listener),
     });
+    // Deploy lists the organization's environments for the product's project (ADR-0043).
+    bind(GEARBOX_DEPLOY_ENVIRONMENTS).toDynamicValue(ctx => {
+        const client = ctx.container.get(AnalyzeStudioClient);
+        return new DeployEnvironments(roots => client.scope(roots));
+    }).inSingletonScope();
     bind(WorkspaceGraphService).toDynamicValue(ctx => {
         const provider = ctx.container.get(WebSocketConnectionProvider);
         return provider.createProxy<WorkspaceGraphService>(

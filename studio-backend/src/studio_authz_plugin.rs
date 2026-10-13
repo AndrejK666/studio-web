@@ -687,6 +687,28 @@ fn is_access_config_write(request: &EvaluationRequest) -> bool {
             .is_some_and(|type_id| type_id == ACCESS_METADATA_TYPE)
 }
 
+/// Metadata documents only their gear writes: it checks who may change them,
+/// then writes as the service. The generic metadata route answers a write
+/// with the tenant clamp -- "you are a member" -- so without this a member
+/// could unprotect a production environment, or forge a deployment record,
+/// by writing the document directly (ADR-0043).
+const GEAR_HELD_METADATA: [&str; 2] = [
+    crate::environments::ENVIRONMENTS_METADATA_TYPE,
+    crate::environments::DEPLOYMENTS_METADATA_TYPE,
+];
+
+/// Is this a caller's own write to a document only its gear writes?
+fn is_gear_held_write(request: &EvaluationRequest) -> bool {
+    is_mutating_metadata_action(&request.action.name)
+        && family_of(request.resource.resource_type.as_str()) == family_of(ACCESS_METADATA_TYPE)
+        && request
+            .resource
+            .properties
+            .get(AM_TYPE_ID_PROPERTY)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|type_id| GEAR_HELD_METADATA.contains(&type_id))
+}
+
 /// The tenant that OWNS the resource under decision, as the PEP declared it.
 ///
 /// Deliberately not [`Service::tenant_of`], which answers with the tenant the
@@ -764,6 +786,12 @@ impl Plan {
         // platform / service caller is never role-gated — anti-lockout backstop.
         if request.context.token_scopes.iter().any(|s| s == "*") {
             return Self::Clamp(tid);
+        }
+
+        // After the service backstop, so the gear's own write goes through;
+        // before the guard, which would answer it with the clamp.
+        if is_gear_held_write(request) {
+            return Self::Deny;
         }
 
         // Before the guard, and deliberately: the one metadata document whose
@@ -1283,6 +1311,35 @@ mod tests {
                 "{action} lost the recursion guard"
             );
         }
+    }
+
+    /// Environments and deployment records are written by their gear alone:
+    /// a member's write is refused, the gear's (a service token) goes
+    /// through, and reading them stays a member's right.
+    #[test]
+    fn environments_and_deployments_are_written_by_their_gear_alone() {
+        for type_id in GEAR_HELD_METADATA {
+            for action in ["write", "delete"] {
+                assert_eq!(
+                    Plan::for_request(&metadata_request(action, type_id, Some(ORG))),
+                    Plan::Deny,
+                    "a member's {action} of {type_id} was let through"
+                );
+            }
+            assert_eq!(
+                Plan::for_request(&metadata_request("read", type_id, Some(ORG))),
+                Plan::Clamp(TENANT)
+            );
+            let mut service = metadata_request("write", type_id, Some(ORG));
+            service.context.token_scopes = vec!["*".to_owned()];
+            assert_eq!(Plan::for_request(&service), Plan::Clamp(TENANT));
+        }
+        // Bindings are a project's own setting, which its members change.
+        let bindings = crate::environments::BINDINGS_METADATA_TYPE;
+        assert_eq!(
+            Plan::for_request(&metadata_request("write", bindings, Some(ORG))),
+            Plan::Clamp(TENANT)
+        );
     }
 
     /// The barrier is for one document, not for tenant metadata at large.

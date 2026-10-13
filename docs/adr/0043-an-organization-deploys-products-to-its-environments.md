@@ -175,6 +175,14 @@ The desktop's Deploy panel from the 2026-10-13 walk-through (#717) is the
 phase-0 stand-in: the member's own kube contexts, every step a visible
 command, and nothing recorded.
 
+**Where it is built.** Phases 1 to 3 are the gear `studio-environments`
+(`studio-backend/src/environments/`, its README lists the routes) and the
+`kubernetes` connection kind (`connectors/kubernetes.rs`). The portal has the
+organization's Environments section and an Environments block on a
+project's product card; the desktop's Deploy lists the environments above
+the kube contexts and asks the server to deploy into them. Phase 4 waits for
+the engine.
+
 ## Traceability
 
 - **PRD**: [PRD](../prd/constructor-studio.md)

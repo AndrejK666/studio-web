@@ -17,6 +17,7 @@ import {
   type ProjectRepository,
   type StudioKit,
 } from "./api";
+import { ProjectEnvironments } from "./environments-screen";
 import { When, useConfirm } from "./data-table";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
@@ -1844,6 +1845,10 @@ function ProductCard({
             : "The desktop Studio opens it on the branch it checks out."}
         </p>
       )}
+      <ProjectEnvironments token={token} projectId={projectId} profiles={KUBERNETES_PROFILES} />
     </section>
   );
 }
+
+/** The product's kubernetes profiles: the ones an environment can take. */
+const KUBERNETES_PROFILES: readonly string[] = PRODUCT_PROFILES.filter((p) => p.label.includes("Kubernetes")).map((p) => p.id);

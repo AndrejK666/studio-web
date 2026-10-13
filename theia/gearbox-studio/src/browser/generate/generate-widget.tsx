@@ -11,7 +11,7 @@ import { WindowService } from "@theia/core/lib/browser/window/window-service";
 import { CommandService } from "@theia/core/lib/common/command";
 import { MessageService } from "@theia/core/lib/common/message-service";
 import type { Message } from "@theia/core/shared/@lumino/messaging";
-import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
+import { inject, injectable, optional, postConstruct } from "@theia/core/shared/inversify";
 import React from "@theia/core/shared/react";
 import * as monaco from "@theia/monaco-editor-core";
 
@@ -25,7 +25,7 @@ import { SelectionService } from "../shell/selection-service";
 import { ProductStore } from "../product-store";
 import { SHOW_PRODUCT } from "../shell/session-command-ids";
 import { GenerateService } from "./generate-service";
-import { GearboxService } from "../../common/protocol";
+import { DeployEnvironmentsSource, GearboxService } from "../../common/protocol";
 import {
   LOCAL_POSTGRES,
   LOCAL_POSTGRES_PASSWORD,
@@ -42,7 +42,16 @@ import {
 import { ProductTerminals } from "./product-terminals";
 import { RunPanel, type PostgresState } from "./run-panel";
 import { DeployPanel } from "./deploy-panel";
-import { deployCommands, type DeployInfo } from "../../common/deploy-product";
+import {
+  defaultTarget,
+  deployAnswer,
+  deployCommands,
+  deployRequest,
+  targetEnvironment,
+  type DeployInfo,
+  type DeployTarget,
+  type DeployTargets,
+} from "../../common/deploy-product";
 
 const ACTION_ICON: Record<FileAction, string> = {
   create: "new-file",
@@ -123,6 +132,9 @@ export class GenerateWidget extends ReactWidget {
   @inject(ProductTerminals) protected readonly terminals!: ProductTerminals;
   @inject(WindowService) protected readonly windows!: WindowService;
   @inject(MessageService) protected readonly messages!: MessageService;
+  // Constructor Studio: the organization's environments (ADR-0043); absent
+  // in Gearbox Studio proper, where Deploy offers the kube contexts alone.
+  @inject(DeployEnvironmentsSource) @optional() protected readonly environments?: DeployEnvironmentsSource;
 
   protected toolchain: BuildToolchain | undefined;
   protected askingToolchain = false;
@@ -133,7 +145,10 @@ export class GenerateWidget extends ReactWidget {
   /** Constructor Studio: Deploy, for a kubernetes profile -- see `deploy-panel.tsx`. */
   protected deploy: DeployInfo | undefined;
   protected deployFor: string | undefined;
-  protected kubeContext: string | undefined;
+  protected deployTargets: DeployTargets | undefined;
+  protected deployTarget: DeployTarget | undefined;
+  protected requestingDeploy = false;
+  protected deployNote: string | undefined;
   protected fetchingProtoc = false;
 
   protected selected: string | undefined;
@@ -317,25 +332,42 @@ export class GenerateWidget extends ReactWidget {
     this.deploy = undefined;
     try {
       this.deploy = await this.service.deployInfo(outRoot);
-      this.kubeContext ??= this.deploy.currentContext ?? this.deploy.contexts[0];
     } catch (error) {
       this.messages.error(`Deploy could not read the generated tree: ${error instanceof Error ? error.message : String(error)}`);
     }
+    const file = this.product.current.open?.path;
+    if (this.environments !== undefined && file !== undefined) {
+      try {
+        this.deployTargets = await this.environments.targets(file);
+      } catch {
+        // Signed out, or a Studio from before environments: the kube contexts remain.
+        this.deployTargets = undefined;
+      }
+    }
+    this.deployTarget ??= defaultTarget(this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
     this.update();
+  }
+
+  /** The registry and namespace Deploy uses: the chosen environment's, else the profile's. */
+  protected deployPlace(): { namespace: string | undefined; registry: string | undefined } {
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    if (environment !== undefined) return { namespace: environment.namespace, registry: environment.registry || undefined };
+    const kubernetes = this.kubernetes();
+    return { namespace: kubernetes?.namespace ?? undefined, registry: kubernetes?.image_registry ?? undefined };
   }
 
   protected deployCommandsFor(kubeContext?: string): ReturnType<typeof deployCommands> | undefined {
     const context = this.runContext();
     const deploy = this.deploy;
     if (context === undefined || deploy?.script === undefined || deploy.chart === undefined) return undefined;
-    const kubernetes = this.kubernetes();
+    const place = this.deployPlace();
     return deployCommands({
       outRoot: context.cwd,
       script: deploy.script,
       chart: deploy.chart,
       release: context.product,
-      namespace: kubernetes?.namespace ?? undefined,
-      registry: kubernetes?.image_registry ?? undefined,
+      namespace: place.namespace,
+      registry: place.registry,
       ...(kubeContext !== undefined ? { kubeContext } : {}),
     });
   }
@@ -348,10 +380,12 @@ export class GenerateWidget extends ReactWidget {
   }
 
   protected async confirmDeploy(): Promise<void> {
-    const kubeContext = this.kubeContext;
+    const target = this.deployTarget;
+    if (target?.kind === "environment") return this.requestServerDeploy();
+    const kubeContext = target?.kind === "context" ? target.name : undefined;
     const commands = this.deployCommandsFor(kubeContext);
     if (kubeContext === undefined || commands?.install === undefined) return;
-    const namespace = this.kubernetes()?.namespace ?? "the chart's namespace";
+    const namespace = this.deployPlace().namespace ?? "the chart's namespace";
     const ok = await new ConfirmDialog({
       title: "Deploy to a cluster?",
       msg: `helm upgrade --install ${this.runContext()?.product ?? ""} into ${namespace} on ${kubeContext}. This changes that cluster.`,
@@ -360,10 +394,58 @@ export class GenerateWidget extends ReactWidget {
     if (ok === true) await this.sendDeploy([commands.install]);
   }
 
+  /**
+   * Deploy into an organization's environment: the server installs the chart
+   * with the environment's connection. Asks first, packs the chart here and
+   * sends it with the images Generate built -- pushed beforehand.
+   */
+  protected async requestServerDeploy(): Promise<void> {
+    const context = this.runContext();
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    const deploy = this.deploy;
+    const source = this.environments;
+    if (context === undefined || environment === undefined || deploy?.script === undefined || deploy.chart === undefined || source === undefined || this.deployTargets === undefined) return;
+    const ok = await new ConfirmDialog({
+      title: `Deploy to ${environment.name}?`,
+      msg:
+        `The Studio server installs ${context.product} into ${environment.namespace} on ${environment.name}, ` +
+        `pulling the images from ${environment.registry || "where they were built"} -- push them first.` +
+        (environment.protected ? " An organization administrator approves it before it runs." : ""),
+      ok: "Deploy",
+    }).open();
+    if (ok !== true) return;
+    this.requestingDeploy = true;
+    this.deployNote = undefined;
+    this.update();
+    try {
+      const chart = await this.service.packChart(context.cwd, deploy.chart);
+      const file = this.product.current.open?.path;
+      const commit = file !== undefined ? await this.service.headCommitOf(file) : undefined;
+      const answer = await source.requestDeploy(
+        this.deployTargets.projectId,
+        deployRequest({
+          environment,
+          profile: this.product.current.profile ?? "",
+          product: context.product,
+          ...(commit !== undefined ? { commit } : {}),
+          script: deploy.script,
+          chart,
+        }),
+      );
+      this.deployNote = deployAnswer(answer.state, answer.environment_name, answer.namespace);
+    } catch (error) {
+      this.deployNote = undefined;
+      this.messages.error(`The Studio server did not take the deploy: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.requestingDeploy = false;
+      this.update();
+    }
+  }
+
   protected renderDeploy(generated: boolean): React.ReactNode {
     const context = this.runContext();
     if (generated && context !== undefined) void this.askDeploy(context.cwd);
-    const kubernetes = this.kubernetes();
+    const place = this.deployPlace();
     const deploy = this.deploy;
     return (
       <DeployPanel
@@ -371,16 +453,20 @@ export class GenerateWidget extends ReactWidget {
         ready={deploy === undefined ? undefined : true}
         images={deploy?.script?.images ?? []}
         chart={deploy?.chart}
-        registry={kubernetes?.image_registry ?? undefined}
-        namespace={kubernetes?.namespace ?? undefined}
+        registry={place.registry}
+        namespace={place.namespace}
         docker={deploy?.docker === true}
         helm={deploy?.helm}
+        environments={this.deployTargets?.environments ?? []}
         contexts={deploy?.contexts ?? []}
-        context={this.kubeContext}
-        onContext={(next) => {
-          this.kubeContext = next;
+        target={this.deployTarget}
+        onTarget={(next) => {
+          this.deployTarget = next;
+          this.deployNote = undefined;
           this.update();
         }}
+        requesting={this.requestingDeploy}
+        {...(this.deployNote !== undefined ? { note: this.deployNote } : {})}
         onBuildImages={() => void this.sendDeploy(this.deployCommandsFor()?.build ?? [])}
         onPush={() => void this.sendDeploy(this.deployCommandsFor()?.push ?? [])}
         onTemplate={() => {

@@ -84,6 +84,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && tar xzf /tmp/onnxruntime.tgz -C /opt/onnxruntime --strip-components=1 \
  && rm /tmp/onnxruntime.tgz
 
+# Helm, for deploys to an organization's environments (environments/deploy.rs,
+# ADR-0043): the server installs a product's generated chart with the
+# environment's connection, so a member's machine never holds a cluster
+# credential. Pinned with the checksum get.helm.sh publishes next to it.
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS helm
+ARG HELM_VERSION=v3.18.4
+ARG HELM_SHA256=f8180838c23d7c7d797b208861fecb591d9ce1690d8704ed1e4cb8e2add966c1
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -sSL --fail -o /tmp/helm.tgz "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
+ && echo "${HELM_SHA256}  /tmp/helm.tgz" | sha256sum --check \
+ && tar xzf /tmp/helm.tgz -C /tmp linux-amd64/helm \
+ && install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm \
+ && rm -rf /tmp/helm.tgz /tmp/linux-amd64
+
 # The Gearbox engine, for product previews (product/gearbox.rs).
 # Same repository and commit as the session image's language server
 # (theia/Dockerfile, `gearbox` stage): the portal and the IDE must say the
@@ -119,6 +134,7 @@ ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 WORKDIR /app
 COPY --from=build /studio-backend /app/studio-backend
 COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
+COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 COPY studio-backend/config/ /app/config/
 COPY studio-backend/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 # Fresh-DB seeder entrypoint used only by the `backend-bootstrap` compose

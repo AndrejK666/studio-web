@@ -44,6 +44,7 @@ mod graph_sync;
 #[cfg(feature = "graph")]
 mod graph_sync_task;
 pub(crate) mod gts;
+mod kubernetes; // a cluster an organization deploys into (ADR-0043)
 mod notify;
 mod ownership;
 mod plugin;
@@ -77,7 +78,7 @@ use service::ConnectorService;
 /// Every driver instance id the assembly knows how to look for. Resolution is
 /// by GTS id through ClientHub, so an id whose plugin gear is not linked
 /// simply yields no driver.
-const KNOWN_DRIVERS: [&str; 11] = [
+const KNOWN_DRIVERS: [&str; 12] = [
     gts::GITLAB_INSTANCE_ID,
     gts::GITHUB_INSTANCE_ID,
     gts::BITBUCKET_INSTANCE_ID,
@@ -89,6 +90,7 @@ const KNOWN_DRIVERS: [&str; 11] = [
     gts::ZULIP_WEBHOOK_INSTANCE_ID,
     gts::DISCORD_INSTANCE_ID,
     gts::DISCORD_WEBHOOK_INSTANCE_ID,
+    gts::KUBERNETES_INSTANCE_ID,
 ];
 
 /// ClientHub key under which the notification sender is published for other

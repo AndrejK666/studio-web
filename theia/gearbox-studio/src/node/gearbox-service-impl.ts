@@ -66,7 +66,8 @@ import { closeSourcesList } from "./sources-list";
 import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
 import type { DeployInfo } from "../common/deploy-product";
 import { deployInfo } from "./deploy-support";
-import { buildToolchain, containerOnPort, fetchProtoc, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
+import { packChart } from "./chart-package";
+import { buildToolchain, containerOnPort, exec, fetchProtoc, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
 import {
   LoadRecord,
   catalogueCacheFile,
@@ -1053,6 +1054,23 @@ export class GearboxServiceImpl implements GearboxService {
     const result = await startLocalPostgres({ container, port: LOCAL_POSTGRES.port, databases });
     this.logger.info(`gearbox: databases in ${container}: ${result.message}`);
     return result;
+  }
+
+  async packChart(outRoot: string, chart: string): Promise<string> {
+    // The same fence as deployInfo, and the chart must be inside the tree.
+    const tree = path.resolve(outRoot);
+    const dir = path.resolve(tree, chart);
+    if (!/\/\.gearbox\//.test(tree.replace(/\\/g, "/")) || !dir.startsWith(tree + path.sep)) {
+      throw new Error(`refusing to pack a chart outside a generated tree: ${dir}`);
+    }
+    return packChart(dir).toString("base64");
+  }
+
+  async headCommitOf(file: string): Promise<string | undefined> {
+    if (!path.isAbsolute(file)) return undefined;
+    const result = await exec("git", ["-C", path.dirname(file), "rev-parse", "HEAD"]);
+    const commit = result.stdout.trim();
+    return result.ok && /^[0-9a-f]{40}$/.test(commit) ? commit : undefined;
   }
 
   async deployInfo(outRoot: string): Promise<DeployInfo> {

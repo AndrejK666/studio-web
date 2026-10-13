@@ -101,6 +101,7 @@ export const DOMAINS: Domain[] = [
       "studio-components-catalog",
       "studio-kits",
       "studio-domain-model",
+      "studio-environments",
     ],
   },
   {
@@ -432,6 +433,7 @@ export const COMPONENT_GEAR: Record<string, string> = {
   "studio-connector": "studio-connector",
   "studio-documents": "studio-documents",
   "studio-domain-model": "studio-domain-model",
+  "studio-environments": "studio-environments",
   "studio-events": "studio-events",
   "studio-git": "studio-git",
   "studio-identity": "studio-identity-directory",
@@ -583,10 +585,11 @@ export const SURFACES: Surface[] = [
     area: "project",
     title: "Components and kits",
     does: "Pick the gears a product is built from, compare the spec with the code, install kits.",
-    components: ["ProjectKits", "SuggestedComponents", "ProductCard", "GearConfigForm", "ProjectCandidate"],
+    components: ["ProjectKits", "SuggestedComponents", "ProductCard", "GearConfigForm", "ProjectCandidate", "ProjectEnvironments", "StatusButton"],
     gears: [
       "studio-components-catalog",
       "studio-documents",
+      "studio-environments",
       "studio-kits",
       "studio-product",
       "studio-spec-mapping",
@@ -645,6 +648,14 @@ export const SURFACES: Surface[] = [
     does: "Open the organization from the path: its workspaces, people, repositories, specs, open pull requests, its own components and failed background work, with the projects that need attention.",
     components: ["OrgDashboard"],
     gears: ["studio-components-catalog", "studio-organizations", "studio-tasks", "studio-user"],
+  },
+  {
+    id: "environments",
+    area: "organization",
+    title: "Environments",
+    does: "Declare where the organization's products run -- a cluster connection, a registry, a namespace per project, approval for protected ones -- approve deploys, and see what runs where.",
+    components: ["OrgEnvironments", "EnvironmentForm"],
+    gears: ["account-management", "studio-connector", "studio-environments"],
   },
   {
     id: "connections",
@@ -773,6 +784,7 @@ export const SURFACES: Surface[] = [
     gears: [
       "account-management",
       "studio-components-catalog",
+      "studio-environments",
       "studio-git",
       "studio-kits",
       "studio-product",

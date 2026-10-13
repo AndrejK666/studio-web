@@ -27,6 +27,7 @@ pub use super::driver::{
     PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList, RemoteIssue,
     RemotePullRequest,
 };
+pub use super::kubernetes::ClusterAccess;
 pub use super::repository::{Repository, create_repository};
 pub use super::service::{ConnectorService, check_owned, connection_by_id, holder_of_row};
 

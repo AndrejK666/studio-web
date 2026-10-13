@@ -38,6 +38,7 @@ export const VIEW_PATHS = {
   chats: "chats",
   files: "files",
   connectors: "connections",
+  environments: "environments",
   gears: "components",
   platform: "platform",
   publications: "publication-requests",

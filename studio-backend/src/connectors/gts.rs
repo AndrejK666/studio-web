@@ -36,6 +36,9 @@ pub const ZULIP_WEBHOOK_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf
 pub const DISCORD_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.discord_connector.v1";
 pub const DISCORD_WEBHOOK_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.discord_webhook_connector.v1";
 
+/// A Kubernetes cluster an organization's environments deploy into (ADR-0043).
+pub const KUBERNETES_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.kubernetes_connector.v1";
+
 /// Tenant-metadata schema holding the connection catalogue of one tenant.
 /// Connections are configuration, not secrets: the token lives in credstore
 /// and only its reference is stored here.

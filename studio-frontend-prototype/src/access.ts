@@ -82,6 +82,8 @@ const PRIVILEGE_LABELS: Record<string, { group: string; label: string }> = {
   "domain.model": { group: "Domain model", label: "Change the domain model" },
 
   "component.registry": { group: "Components", label: "Decide about the component registry" },
+
+  "environment.manage": { group: "Environments", label: "Manage environments and approve deploys" },
 };
 
 /** Name one privilege id for the screen.

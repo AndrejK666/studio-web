@@ -308,12 +308,16 @@ fail to compile: `github-connector-plugin`, `gitlab-connector-plugin`,
 `openai-connector-plugin`, `slack-connector-plugin`,
 `slack-webhook-connector-plugin`, `zulip-connector-plugin`,
 `zulip-webhook-connector-plugin`, `discord-connector-plugin`,
-`discord-webhook-connector-plugin`. Each registers its instance (vendor
+`discord-webhook-connector-plugin`, `kubernetes-connector-plugin`. Each registers its instance (vendor
 `constructorfabric`, priority 100 by default) and publishes its
 `ConnectorDriver`. A profile that does not declare the connector contract
 skips the scoped registration instead of failing the boot. Model providers
 have no account endpoint, so their `test()` lists models and reports what the
-key can reach. The three chat drivers share rendering in `notify.rs`.
+key can reach. The three chat drivers share rendering in `notify.rs`. The Kubernetes driver
+(`kubernetes.rs`) is a cluster an organization's environments deploy into
+(ADR-0043): its credential is a service-account token or a kubeconfig with
+inline data only, and `ClusterAccess` is what `studio-environments` reaches the
+cluster with.
 
 ##### Responsibility boundaries
 

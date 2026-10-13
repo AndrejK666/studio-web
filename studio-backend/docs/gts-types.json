@@ -91,6 +91,10 @@
     {
       "gear": "studio-connector",
       "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.discord_webhook_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.kubernetes_connector.v1"
     }
   ],
   "schemas": [

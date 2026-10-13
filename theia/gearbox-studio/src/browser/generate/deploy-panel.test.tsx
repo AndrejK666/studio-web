@@ -42,9 +42,10 @@ describe("the Deploy panel", () => {
       namespace: "shop",
       docker: true,
       helm: "v4.2.3",
+      environments: [],
       contexts: ["kind-local", "dev"],
-      context: "kind-local",
-      onContext: () => undefined,
+      target: { kind: "context", name: "kind-local" },
+      onTarget: () => undefined,
       onBuildImages: () => undefined,
       onPush: () => undefined,
       onTemplate: () => undefined,
@@ -73,8 +74,7 @@ describe("the Deploy panel", () => {
     const onBuildImages = jest.fn();
     const onTemplate = jest.fn();
     const onDeploy = jest.fn();
-    const onContext = jest.fn();
-    await draw({ onBuildImages, onTemplate, onDeploy, onContext });
+    await draw({ onBuildImages, onTemplate, onDeploy });
     expect(q("[data-deploy-push]")?.disabled).toBe(true);
     expect(host.querySelector("[data-deploy-images]")?.textContent).toMatch(/stay in this machine's Docker/);
     await act(() => q("[data-deploy-build]")?.click());
@@ -96,5 +96,35 @@ describe("the Deploy panel", () => {
     expect(host.querySelector("[data-deploy-missing=helm]")).not.toBeNull();
     expect(q("[data-deploy-install]")?.disabled).toBe(true);
     expect(q("[data-deploy-template]")?.disabled).toBe(true);
+  });
+
+  it("lists the organization's environments above the kube contexts and deploys there without helm", async () => {
+    const onTarget = jest.fn();
+    const onDeploy = jest.fn();
+    const prod = { id: "e-prod", name: "prod", namespace: "shop-prod", registry: "ghcr.io/acme", protected: true };
+    await draw({ environments: [prod], target: { kind: "environment", id: "e-prod" }, helm: undefined, registry: "ghcr.io/acme", onTarget, onDeploy });
+    const groups = [...host.querySelectorAll("[data-deploy-target] optgroup")].map((g) => g.getAttribute("label"));
+    expect(groups).toEqual(["The organization's environments", "Kube contexts on this machine"]);
+    expect(host.querySelector("[data-deploy-environment=prod]")?.textContent).toMatch(/approves it first/);
+    expect(host.querySelector("[data-deploy-missing=helm]")).toBeNull();
+    expect(q("[data-deploy-install]")?.disabled).toBe(false);
+    await act(() => q("[data-deploy-install]")?.click());
+    expect(onDeploy).toHaveBeenCalled();
+
+    const select = host.querySelector<HTMLSelectElement>("[data-deploy-target]");
+    await act(() => {
+      if (select) {
+        select.value = "ctx:dev";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    expect(onTarget).toHaveBeenCalledWith({ kind: "context", name: "dev" });
+  });
+
+  it("says what the server answered, and does not ask twice at once", async () => {
+    const prod = { id: "e-prod", name: "prod", namespace: "shop-prod", registry: "", protected: false };
+    await draw({ environments: [prod], target: { kind: "environment", id: "e-prod" }, requesting: true, note: "queued" });
+    expect(q("[data-deploy-install]")?.disabled).toBe(true);
+    expect(host.querySelector("[data-deploy-note]")?.textContent).toBe("queued");
   });
 });

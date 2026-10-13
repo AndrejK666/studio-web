@@ -140,3 +140,106 @@ export function deployCommands(input: DeployInput): {
         ].join(" ");
   return { build, push, template, install };
 }
+
+// ---------------------------------------------------------------------------
+// The organization's environments (ADR-0043)
+//
+// Deploy lists the environments the product's project may deploy to above
+// the member's own kube contexts. Choosing one takes its namespace and image
+// registry instead of the profile's, and Deploy then asks the Studio server
+// to install the chart with the environment's connection: no cluster
+// credential is needed, or used, on this machine.
+// ---------------------------------------------------------------------------
+
+/** One environment the project may deploy to, as Deploy needs it. */
+export interface StudioEnvironment {
+  readonly id: string;
+  readonly name: string;
+  /** The project's namespace there. */
+  readonly namespace: string;
+  /** Registry prefix; empty for the images as generated. */
+  readonly registry: string;
+  /** A deploy waits for an organization administrator's approval. */
+  readonly protected: boolean;
+}
+
+/** Where the open product can be deployed, from the Studio server. */
+export interface DeployTargets {
+  readonly projectId: string;
+  readonly environments: readonly StudioEnvironment[];
+  /** profile id -> environment id, as the project bound them. */
+  readonly bound: Readonly<Record<string, string>>;
+}
+
+/** What Deploy aims at: one of the organization's environments, or a kube context of this machine. */
+export type DeployTarget = { readonly kind: "environment"; readonly id: string } | { readonly kind: "context"; readonly name: string };
+
+/** The `<select>` value of a target, and back. */
+export function targetValue(target: DeployTarget): string {
+  return target.kind === "environment" ? `env:${target.id}` : `ctx:${target.name}`;
+}
+export function parseTarget(value: string): DeployTarget | undefined {
+  if (value.startsWith("env:")) return { kind: "environment", id: value.slice(4) };
+  if (value.startsWith("ctx:")) return { kind: "context", name: value.slice(4) };
+  return undefined;
+}
+
+/**
+ * The target Deploy starts on: the environment the project bound this profile
+ * to, else the first environment, else the current kube context.
+ */
+export function defaultTarget(
+  targets: DeployTargets | undefined,
+  profile: string | undefined,
+  contexts: readonly string[],
+  currentContext: string | undefined,
+): DeployTarget | undefined {
+  const envs = targets?.environments ?? [];
+  const bound = profile !== undefined ? targets?.bound[profile] : undefined;
+  const env = envs.find((e) => e.id === bound) ?? envs[0];
+  if (env !== undefined) return { kind: "environment", id: env.id };
+  const context = currentContext ?? contexts[0];
+  return context !== undefined ? { kind: "context", name: context } : undefined;
+}
+
+/** The environment a target names, when it names one. */
+export function targetEnvironment(targets: DeployTargets | undefined, target: DeployTarget | undefined): StudioEnvironment | undefined {
+  return target?.kind === "environment" ? targets?.environments.find((e) => e.id === target.id) : undefined;
+}
+
+/** What the server is asked: `POST /studio-environments/v1/deployments?project_id=`. */
+export interface DeployRequestBody {
+  readonly environment_id: string;
+  readonly profile: string;
+  readonly product: string;
+  readonly commit?: string;
+  readonly images: readonly { readonly app: string; readonly image: string }[];
+  /** The chart, packaged (`.tgz`), base64. */
+  readonly chart: string;
+}
+
+export function deployRequest(input: {
+  readonly environment: StudioEnvironment;
+  readonly profile: string;
+  readonly product: string;
+  readonly commit?: string;
+  readonly script: BuildScript;
+  readonly chart: string;
+}): DeployRequestBody {
+  return {
+    environment_id: input.environment.id,
+    profile: input.profile,
+    product: input.product,
+    ...(input.commit !== undefined && /^[0-9a-f]{7,64}$/.test(input.commit) ? { commit: input.commit } : {}),
+    // As generated: the server puts the environment's registry in front.
+    images: input.script.images.map((i) => ({ app: i.app, image: i.image })),
+    chart: input.chart,
+  };
+}
+
+/** What the server answered, as Deploy says it. */
+export function deployAnswer(state: string, environment: string, namespace: string): string {
+  return state === "awaiting_approval"
+    ? `The deploy to ${environment} waits for an organization administrator's approval (Studio, organization → Environments).`
+    : `The Studio server is deploying into ${environment} (namespace ${namespace}); the organization's Environments page shows how it went.`;
+}

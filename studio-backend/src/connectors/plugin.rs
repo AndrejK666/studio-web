@@ -403,3 +403,31 @@ mod discord_webhook_plugin {
         }
     }
 }
+
+mod kubernetes_plugin {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use toolkit::Gear;
+    use toolkit::context::GearCtx;
+
+    use super::super::driver::ConnectorDriver;
+    use super::super::gts::KUBERNETES_INSTANCE_ID;
+    use super::super::kubernetes::KubernetesDriver;
+    use super::{ConnectorPluginConfig, register_driver};
+
+    // No `http_client()`: a cluster is reached through kube's own client,
+    // built per call from the connection's CA and credential.
+    #[toolkit::gear(name = "kubernetes-connector-plugin", deps = [types_registry])]
+    #[derive(Default)]
+    pub struct KubernetesConnectorPlugin {}
+
+    #[async_trait]
+    impl Gear for KubernetesConnectorPlugin {
+        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
+            let driver: Arc<dyn ConnectorDriver> = Arc::new(KubernetesDriver);
+            register_driver(ctx, KUBERNETES_INSTANCE_ID, &cfg, driver).await
+        }
+    }
+}

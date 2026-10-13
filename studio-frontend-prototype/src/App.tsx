@@ -120,6 +120,7 @@ import { gearParentDir, gearSlug } from "./scaffold";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
+import { OrgEnvironments } from "./environments-screen";
 import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
@@ -504,6 +505,7 @@ type View =
   | "chats"
   | "files"
   | "connectors"
+  | "environments"
   | "gears"
   | "platform"
   | "publications"
@@ -646,6 +648,8 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     { id: "people", icon: "users", label: "People" },
     // Owned by the organization and inherited by every project in it.
     { id: "connectors", icon: "plug", label: "Connections" },
+    // Where its products run: clusters, registries, approvals (ADR-0043).
+    { id: "environments", icon: "layers", label: "Environments" },
     // What its projects build: the registry, candidates, its gear repository.
     { id: "gears", icon: "package", label: "Our components" },
     // Every report the Studio draws, configured once for the organization.
@@ -2566,6 +2570,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "publications" && <PublicationRequests token={token} orgId={orgAsSpace?.id} />}
+        {view === "environments" && orgAsSpace && (
+          <OrgEnvironments
+            key={orgAsSpace.id}
+            token={token}
+            org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
+            workspaceIds={workspaces.filter((w) => w.orgId === orgAsSpace.id).map((w) => w.id)}
+          />
+        )}
         {view === "org" && orgAsSpace && (
           <OrgDashboard
             key={orgAsSpace.id}
@@ -6849,6 +6861,14 @@ const CATEGORIES: { key: string; title: string; blurb: string }[] = [
       "Where Studio tells people what happened: Slack, Zulip or Discord. A bot token reaches " +
       "every channel it was invited to; an incoming webhook posts to the one channel its URL " +
       "was created for.",
+  },
+  {
+    key: "cluster",
+    title: "Clusters",
+    blurb:
+      "Kubernetes clusters the organization's environments deploy into: the API server and a " +
+      "service-account token, or a kubeconfig with the cluster's CA. Only the server uses it -- " +
+      "connect it for the organization, not personally.",
   },
 ];
 

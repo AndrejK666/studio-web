@@ -1219,6 +1219,97 @@ export interface Connection {
   created_at_epoch_secs: number;
 }
 
+/* ── studio-environments: where an organization's products run (ADR-0043) ── */
+
+/** One place an organization's products run: a cluster reached through a
+ *  `kubernetes` connection, a registry, a namespace per project. */
+export interface DeployEnvironment {
+  id: string;
+  name: string;
+  description: string;
+  /** The organization's `kubernetes` connection. */
+  connection_id: string;
+  /** Image registry prefix (`ghcr.io/acme`); empty: images as generated. */
+  registry: string;
+  /** `{project}-{environment}` by default. */
+  namespace_pattern: string;
+  database: "none" | "shared";
+  /** A deploy waits for an organization administrator's approval. */
+  protected: boolean;
+  /** The projects that may deploy here; absent: all of them. */
+  projects?: string[] | null;
+  updated_by: string;
+  updated_at: string;
+}
+
+/** What an administrator sends for an environment. */
+export interface DeployEnvironmentInput {
+  name: string;
+  description: string;
+  connection_id: string;
+  registry: string;
+  namespace_pattern?: string;
+  database: "none" | "shared";
+  protected: boolean;
+  projects?: string[] | null;
+}
+
+/** A project's product profile bound to an environment. */
+export interface EnvironmentBinding {
+  profile: string;
+  environment_id: string;
+}
+
+/** Where a project's product can be deployed. */
+export interface ProjectTargets {
+  organization_id: string;
+  project_name: string;
+  environments: { environment: DeployEnvironment; namespace: string }[];
+  bindings: EnvironmentBinding[];
+}
+
+export type DeploymentState =
+  | "awaiting_approval"
+  | "declined"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+/** One deploy: asked for, decided, run -- the record of what runs where. */
+export interface Deployment {
+  id: string;
+  project_id: string;
+  project_name: string;
+  environment_id: string;
+  environment_name: string;
+  profile: string;
+  product: string;
+  commit?: string | null;
+  lock_hash?: string | null;
+  images: { app: string; image: string }[];
+  namespace: string;
+  chart_sha256: string;
+  state: DeploymentState;
+  run_id?: string | null;
+  requested_by: string;
+  requested_by_name: string;
+  requested_at: string;
+  decided_by?: string | null;
+  decided_by_name?: string | null;
+  decided_at?: string | null;
+  reason?: string | null;
+  outcome?: string | null;
+}
+
+/** A release as its cluster reports it now. */
+export interface DeploymentStatus {
+  deployment: Deployment;
+  workloads: { name: string; ready: number; desired: number; images: string[] }[];
+  hosts: string[];
+}
+
 /** How a document binding's type was decided. */
 export type DocDetectionSource = "front_matter" | "heuristic" | "spec_quality" | "manual";
 
@@ -3319,6 +3410,69 @@ export const api = {
       throw e;
     }
   },
+
+  /* ── studio-environments (ADR-0043) ── */
+
+  /** The organization's deployment environments, and whether the caller may change them. */
+  environments: (token: string, org: string) =>
+    request<{ items: DeployEnvironment[]; total: number; may_manage: boolean }>(
+      `/studio-environments/v1/environments?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+  createEnvironment: (token: string, org: string, body: DeployEnvironmentInput) =>
+    request<DeployEnvironment>(`/studio-environments/v1/environments?organization_id=${encodeURIComponent(org)}`, token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateEnvironment: (token: string, org: string, id: string, body: DeployEnvironmentInput) =>
+    request<DeployEnvironment>(
+      `/studio-environments/v1/environments/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(org)}`,
+      token,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  deleteEnvironment: (token: string, org: string, id: string) =>
+    request<void>(
+      `/studio-environments/v1/environments/${encodeURIComponent(id)}?organization_id=${encodeURIComponent(org)}`,
+      token,
+      { method: "DELETE" },
+    ),
+  /** Reach the environment's cluster with its connection; nothing is changed there. */
+  testEnvironment: (token: string, org: string, id: string) =>
+    request<{ message: string }>(
+      `/studio-environments/v1/environments/${encodeURIComponent(id)}/test?organization_id=${encodeURIComponent(org)}`,
+      token,
+      { method: "POST" },
+    ),
+  /** Where a project's product can be deployed, and its profile bindings. */
+  projectTargets: (token: string, projectId: string) =>
+    request<ProjectTargets>(`/studio-environments/v1/targets?project_id=${encodeURIComponent(projectId)}`, token),
+  saveBindings: (token: string, projectId: string, items: EnvironmentBinding[]) =>
+    request<{ items: EnvironmentBinding[]; total: number }>(
+      `/studio-environments/v1/bindings?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "PUT", body: JSON.stringify({ items }) },
+    ),
+  /** What runs where: an organization's deployments, or one project's. */
+  deployments: (token: string, params: { org?: string; project?: string; environment?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.org) qs.set("organization_id", params.org);
+    if (params.project) qs.set("project_id", params.project);
+    if (params.environment) qs.set("environment_id", params.environment);
+    return request<{ items: Deployment[]; total: number }>(`/studio-environments/v1/deployments?${qs}`, token);
+  },
+  /** Approve or decline a deploy to a protected environment. */
+  decideDeployment: (token: string, org: string, id: string, action: "approve" | "decline", reason?: string) =>
+    request<Deployment>(
+      `/studio-environments/v1/deployments/${encodeURIComponent(id)}/decisions?organization_id=${encodeURIComponent(org)}`,
+      token,
+      { method: "POST", body: JSON.stringify({ action, ...(reason ? { reason } : {}) }) },
+    ),
+  /** The release's workloads and hosts, read from its cluster now. */
+  deploymentStatus: (token: string, org: string, id: string) =>
+    request<DeploymentStatus>(
+      `/studio-environments/v1/deployments/${encodeURIComponent(id)}/status?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
 
   /* ── studio-connector ── */
 

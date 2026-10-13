@@ -249,6 +249,38 @@ gears:
             - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.environment.list.v1~"
+          # An organization's deployment environments (ADR-0043): cluster
+          # connection, registry, namespace pattern, protection. Written only by
+          # studio-environments (the PDP refuses anybody else's write), on the
+          # organization; not inherited, the gear reads the organization's own row.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio deployment environments of an organization (free-form until gears issue #4)"
+          type: "object"
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.environment.bindings.v1~"
+          # A project's product profiles bound to its organization's environments.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio profile-to-environment bindings of a project (free-form until gears issue #4)"
+          type: "object"
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.environment.deployments.v1~"
+          # What runs where: an organization's deployment records. Written only by
+          # studio-environments, so a record cannot be forged through the generic
+          # metadata route.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio deployment records of an organization (free-form until gears issue #4)"
+          type: "object"
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~"
           # Project attributes on the project tenant: {mode, stages[], status,
           # source}. Free-form for the same gears issue #4 reason as the settings

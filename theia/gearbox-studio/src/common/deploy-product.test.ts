@@ -1,4 +1,15 @@
-import { deployCommands, parseBuildScript, registryImage, splitImage } from "./deploy-product";
+import {
+  defaultTarget,
+  deployAnswer,
+  deployCommands,
+  deployRequest,
+  parseBuildScript,
+  parseTarget,
+  registryImage,
+  splitImage,
+  targetEnvironment,
+  targetValue,
+} from "./deploy-product";
 
 // What gearbox 0.1.0 writes for a kubernetes profile (the shape, trimmed).
 const BUILD_SH = `#!/bin/sh
@@ -85,5 +96,46 @@ describe("the Deploy commands", () => {
 
   it("offers no install without a kube context", () => {
     expect(deployCommands({ ...base, registry: undefined }).install).toBeUndefined();
+  });
+});
+
+describe("the organization's environments", () => {
+  const prod = { id: "e-prod", name: "prod", namespace: "studio-web-prod", registry: "ghcr.io/acme", protected: true };
+  const stage = { id: "e-stage", name: "stage", namespace: "studio-web-stage", registry: "", protected: false };
+  const targets = { projectId: "p", environments: [stage, prod], bound: { prod: "e-prod" } };
+
+  it("start on the environment the profile is bound to, then the first, then a kube context", () => {
+    expect(defaultTarget(targets, "prod", ["kind"], undefined)).toEqual({ kind: "environment", id: "e-prod" });
+    expect(defaultTarget(targets, "other", ["kind"], undefined)).toEqual({ kind: "environment", id: "e-stage" });
+    expect(defaultTarget(undefined, "prod", ["kind", "dd"], "dd")).toEqual({ kind: "context", name: "dd" });
+    expect(defaultTarget(undefined, "prod", [], undefined)).toBeUndefined();
+  });
+
+  it("round-trip through the select's value", () => {
+    for (const t of [{ kind: "environment", id: "e1" }, { kind: "context", name: "kind-kind" }] as const) {
+      expect(parseTarget(targetValue(t))).toEqual(t);
+    }
+    expect(parseTarget("junk")).toBeUndefined();
+    expect(targetEnvironment(targets, { kind: "environment", id: "e-prod" })).toBe(prod);
+    expect(targetEnvironment(targets, { kind: "context", name: "x" })).toBeUndefined();
+  });
+
+  it("are asked for with the images as generated and only a real commit", () => {
+    const script = { contextFromDocker: "..", images: [{ app: "api", image: "studio-web/api:0.1.0" }] };
+    const body = deployRequest({ environment: prod, profile: "prod", product: "studio-web", commit: "ea964f9", script, chart: "H4sI" });
+    expect(body).toEqual({
+      environment_id: "e-prod",
+      profile: "prod",
+      product: "studio-web",
+      commit: "ea964f9",
+      images: [{ app: "api", image: "studio-web/api:0.1.0" }],
+      chart: "H4sI",
+    });
+    expect(deployRequest({ environment: prod, profile: "prod", product: "p", commit: "main", script, chart: "" }).commit).toBeUndefined();
+  });
+
+  it("say whether the deploy waits for an approval", () => {
+    expect(deployAnswer("awaiting_approval", "prod", "ns")).toMatch(/approval/);
+    expect(deployAnswer("queued", "stage", "ns")).toMatch(/deploying into stage/);
   });
 });

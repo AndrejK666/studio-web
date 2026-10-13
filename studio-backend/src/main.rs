@@ -15,6 +15,7 @@ mod credstore_pg; // persistent credstore value store (issue #66)
 mod database_bootstrap; // config-discovered PostgreSQL provisioning + migrations
 mod documents; // document management: types + templates + section-checklist validation
 mod domain_model; // store the Studio domain model as GTS types in the graph; create/extend objects
+mod environments; // studio-environments: an organization's deployment environments and deploys (ADR-0043)
 mod git_proxy; // studio-git: the Git remote a desktop session clones from (ADR-0027)
 mod graph_error; // a gear refusal said in full: CanonicalError plus its field violations
 mod gts_audit; // `gts-audit`: diff the live registries against that inventory (ADR-0013)

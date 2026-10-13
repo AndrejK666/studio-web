@@ -1,12 +1,18 @@
 // Constructor Studio: Deploy, under Generate's Apply, for a kubernetes
 // profile -- in place of Build and Run, which start a process on this
 // machine. Drawn from plain props, like the Run panel; the rules are in
-// `common/deploy-product.ts`. Every step is a command typed into the Deploy
-// terminal, and the one that reaches a cluster asks first.
+// `common/deploy-product.ts`.
+//
+// Two kinds of target, in one list. The organization's environments come
+// first (ADR-0043): Deploy there asks the Studio server, which installs the
+// chart with the environment's connection, so no cluster credential is
+// needed here. Below them, the kube contexts of this machine -- a member's
+// own cluster -- where every step is a command typed into the Deploy terminal
+// and the one that reaches the cluster asks first.
 
 import React from "@theia/core/shared/react";
 
-import type { DeployImage } from "../../common/deploy-product";
+import { parseTarget, targetValue, type DeployImage, type DeployTarget, type StudioEnvironment } from "../../common/deploy-product";
 
 export interface DeployPanelProps {
   /** Whether the generated tree is on disk (applied, or nothing left to write). */
@@ -15,13 +21,20 @@ export interface DeployPanelProps {
   readonly ready: boolean | undefined;
   readonly images: readonly DeployImage[];
   readonly chart: string | undefined;
+  /** The registry and namespace of the chosen target: the environment's, or the profile's. */
   readonly registry: string | undefined;
   readonly namespace: string | undefined;
   readonly docker: boolean;
   readonly helm: string | undefined;
+  /** The organization's environments the project may deploy to. */
+  readonly environments: readonly StudioEnvironment[];
   readonly contexts: readonly string[];
-  readonly context: string | undefined;
-  readonly onContext: (context: string) => void;
+  readonly target: DeployTarget | undefined;
+  readonly onTarget: (target: DeployTarget) => void;
+  /** A deploy request is on its way to the server. */
+  readonly requesting?: boolean;
+  /** What the server said about the last deploy asked of it. */
+  readonly note?: string;
   readonly onBuildImages: () => void;
   readonly onPush: () => void;
   readonly onTemplate: () => void;
@@ -29,7 +42,11 @@ export interface DeployPanelProps {
 }
 
 export function DeployPanel(props: DeployPanelProps): React.ReactElement {
-  const { images } = props;
+  const { images, target } = props;
+  const environment = target?.kind === "environment" ? props.environments.find((e) => e.id === target.id) : undefined;
+  const nothing = props.environments.length === 0 && props.contexts.length === 0;
+  // The server packs nothing and needs no helm here; a kube context does.
+  const canDeploy = environment !== undefined ? props.requesting !== true : target?.kind === "context" && props.helm !== undefined;
   return (
     <div className="gbx-generate-run" data-generate-deploy>
       <div className="gbx-group-label">Deploy</div>
@@ -47,6 +64,41 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
         </p>
       ) : (
         <>
+          <div className="gbx-generate-actions">
+            <label>
+              Deploy to{" "}
+              <select
+                data-deploy-target
+                value={target !== undefined ? targetValue(target) : ""}
+                onChange={(e) => {
+                  const next = parseTarget(e.target.value);
+                  if (next !== undefined) props.onTarget(next);
+                }}
+                disabled={nothing}
+              >
+                {nothing && <option value="">no environment and no kube context</option>}
+                {props.environments.length > 0 && (
+                  <optgroup label="The organization's environments">
+                    {props.environments.map((e) => (
+                      <option key={e.id} value={targetValue({ kind: "environment", id: e.id })}>
+                        {e.name}
+                        {e.protected ? " (needs approval)" : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {props.contexts.length > 0 && (
+                  <optgroup label="Kube contexts on this machine">
+                    {props.contexts.map((c) => (
+                      <option key={c} value={targetValue({ kind: "context", name: c })}>
+                        {c}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </label>
+          </div>
           <p data-deploy-images>
             Images: {images.map((image) => <code key={image.app}>{image.image}</code>).reduce<React.ReactNode[]>((all, one, i) => (i === 0 ? [one] : [...all, ", ", one]), [])}
             {props.registry ? (
@@ -55,7 +107,7 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
                 pushed to <code>{props.registry}</code>
               </>
             ) : (
-              <> -- no image_registry in the profile, so they stay in this machine&apos;s Docker, which only a cluster sharing it can pull from</>
+              <> -- no image registry, so they stay in this machine&apos;s Docker, which only a cluster sharing it can pull from</>
             )}
             . Chart <code>{props.chart}</code>
             {props.namespace ? (
@@ -66,14 +118,21 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
             ) : null}
             .
           </p>
+          {environment !== undefined && (
+            <p className="gbx-waiting" data-deploy-environment={environment.name}>
+              Build and push the images here, then Deploy asks the Studio server to install the chart into {environment.name} with
+              the organization&apos;s connection -- no cluster credentials are needed on this machine.
+              {environment.protected ? " An organization administrator approves it first." : ""}
+            </p>
+          )}
           {!props.docker && (
             <p className="gbx-inline-error" data-deploy-missing="docker">
               docker does not answer on this machine: the images cannot be built here.
             </p>
           )}
-          {props.helm === undefined && (
+          {props.helm === undefined && environment === undefined && (
             <p className="gbx-inline-error" data-deploy-missing="helm">
-              helm is not on this machine: install Helm to preview the manifests and deploy.{" "}
+              helm is not on this machine: install Helm to preview the manifests and deploy to a kube context.{" "}
               <a href="https://helm.sh/docs/intro/install/" target="_blank" rel="noreferrer">
                 helm.sh
               </a>
@@ -84,30 +143,22 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
               Build images
             </button>
             <button type="button" className="gbx-choice" data-deploy-push disabled={!props.docker || !props.registry} onClick={props.onPush}
-              title={props.registry ? `docker push to ${props.registry}` : "Set image_registry on the profile to push"}>
+              title={props.registry ? `docker push to ${props.registry}` : "No image registry: set one on the environment or the profile to push"}>
               Push
             </button>
             <button type="button" className="gbx-choice" data-deploy-template disabled={props.helm === undefined} onClick={props.onTemplate}>
               Preview manifests
             </button>
-          </div>
-          <div className="gbx-generate-actions">
-            <label>
-              Kube context{" "}
-              <select data-deploy-context value={props.context ?? ""} onChange={(e) => props.onContext(e.target.value)} disabled={props.contexts.length === 0}>
-                {props.contexts.length === 0 && <option value="">kubectl knows no context</option>}
-                {props.contexts.map((context) => (
-                  <option key={context} value={context}>
-                    {context}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button type="button" className="gbx-start-primary" data-deploy-install disabled={props.helm === undefined || props.context === undefined}
-              onClick={props.onDeploy} title="helm upgrade --install into the chosen cluster; asks first">
-              Deploy
+            <button type="button" className="gbx-start-primary" data-deploy-install disabled={!canDeploy} onClick={props.onDeploy}
+              title={environment !== undefined ? "Ask the Studio server to deploy; asks first" : "helm upgrade --install into the chosen cluster; asks first"}>
+              {props.requesting === true ? "Asking the server…" : "Deploy"}
             </button>
           </div>
+          {props.note !== undefined && (
+            <p className="gbx-waiting" data-deploy-note>
+              {props.note}
+            </p>
+          )}
         </>
       )}
     </div>

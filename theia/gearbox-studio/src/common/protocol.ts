@@ -39,7 +39,7 @@ import type { InitializeResult } from "./generated/InitializeResult";
 import type { PendingGear } from "./generated/PendingGear";
 import type { ProgressParams } from "./generated/ProgressParams";
 import type { BuildToolchain } from "./run-product";
-import type { DeployInfo } from "./deploy-product";
+import type { DeployInfo, DeployRequestBody, DeployTargets } from "./deploy-product";
 
 export const GEARBOX_SERVICE_PATH = "/services/gearbox";
 
@@ -522,6 +522,16 @@ export interface GearboxService {
   deployInfo(outRoot: string): Promise<DeployInfo>;
 
   /**
+   * Constructor Studio: the generated chart (`<outRoot>/<chart>`) packaged as
+   * a `.tgz`, base64 -- what a deploy to an organization's environment sends
+   * the Studio server (ADR-0043).
+   */
+  packChart(outRoot: string, chart: string): Promise<string>;
+
+  /** Constructor Studio: the commit checked out where `file` is, when it is in a git checkout. */
+  headCommitOf(file: string): Promise<string | undefined>;
+
+  /**
    * Tell the engine an editor opened a `.gdl`, and what is in the buffer.
    *
    * The three document methods are LSP notifications, so they answer nothing:
@@ -698,6 +708,21 @@ export interface CatalogueState {
  * this one.
  */
 export const RemoteCatalogueSource = Symbol.for("gearbox-studio.RemoteCatalogueSource");
+
+/**
+ * Constructor Studio: the organization's deployment environments the open
+ * product's project may deploy to, and the server that deploys into them
+ * (ADR-0043). Bound by the Studio extension, which knows the project a folder
+ * was opened for and holds the member's API token; absent in Gearbox Studio
+ * proper, where Deploy offers the kube contexts alone.
+ */
+export const DeployEnvironmentsSource = Symbol.for("gearbox-studio.DeployEnvironmentsSource");
+export interface DeployEnvironmentsSource {
+  /** For the project `file` (a product.gdl) belongs to; undefined when it is none of Studio's, or signed out. */
+  targets(file: string): Promise<DeployTargets | undefined>;
+  /** Ask the server to deploy; rejects with the server's own words. */
+  requestDeploy(projectId: string, body: DeployRequestBody): Promise<{ readonly state: string; readonly environment_name: string; readonly namespace: string }>;
+}
 export interface RemoteCatalogueSource {
   /**
    * Undefined when the backend has no corpus to offer. Rejects, saying why,

@@ -164,6 +164,20 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-environments/v1/environments/{environment_id}",
+      "operation_id": "studio_environments.delete_environment",
+      "tag": "",
+      "summary": "Remove a deployment environment",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-kits/v1/projects/{project_id}/installations/{kit_slug}",
       "operation_id": "studio_kits.remove_installation",
       "tag": "StudioKits",
@@ -1311,6 +1325,71 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/deployments",
+      "operation_id": "studio_environments.list_deployments",
+      "tag": "",
+      "summary": "What runs where: an organization's deployments",
+      "authenticated": true,
+      "responses": [
+        "DeploymentListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/deployments/{deployment_id}/status",
+      "operation_id": "studio_environments.get_deployment_status",
+      "tag": "",
+      "summary": "A deployed release as its cluster reports it now",
+      "authenticated": true,
+      "responses": [
+        "DeploymentStatusDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/environments",
+      "operation_id": "studio_environments.list_environments",
+      "tag": "",
+      "summary": "List an organization's deployment environments",
+      "authenticated": true,
+      "responses": [
+        "EnvironmentListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/targets",
+      "operation_id": "studio_environments.get_project_targets",
+      "tag": "",
+      "summary": "Where a project's product can be deployed",
+      "authenticated": true,
+      "responses": [
+        "ProjectTargetsDto"
+      ],
+      "errors": [
+        "401",
+        "404",
         "500"
       ]
     },
@@ -3183,6 +3262,80 @@
     },
     {
       "method": "POST",
+      "path": "/studio-environments/v1/deployments",
+      "operation_id": "studio_environments.create_deployment",
+      "tag": "",
+      "summary": "Ask to deploy a project's product into an environment",
+      "authenticated": true,
+      "request": "CreateDeploymentRequest",
+      "responses": [
+        "DeploymentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/deployments/{deployment_id}/decisions",
+      "operation_id": "studio_environments.decide_deployment",
+      "tag": "",
+      "summary": "Approve or decline a deploy to a protected environment",
+      "authenticated": true,
+      "request": "DeploymentDecisionRequest",
+      "responses": [
+        "DeploymentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/environments",
+      "operation_id": "studio_environments.create_environment",
+      "tag": "",
+      "summary": "Add a deployment environment",
+      "authenticated": true,
+      "request": "EnvironmentRequest",
+      "responses": [
+        "EnvironmentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/environments/{environment_id}/test",
+      "operation_id": "studio_environments.test_environment",
+      "tag": "",
+      "summary": "Reach an environment's cluster",
+      "authenticated": true,
+      "responses": [
+        "EnvironmentTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-receive-pack",
       "operation_id": "studio_git.push_pack",
       "tag": "StudioGit",
@@ -4302,6 +4455,43 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/bindings",
+      "operation_id": "studio_environments.update_bindings",
+      "tag": "",
+      "summary": "Bind a project's product profiles to environments",
+      "authenticated": true,
+      "request": "BindingsRequest",
+      "responses": [
+        "BindingListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-environments/v1/environments/{environment_id}",
+      "operation_id": "studio_environments.update_environment",
+      "tag": "",
+      "summary": "Change a deployment environment",
+      "authenticated": true,
+      "request": "EnvironmentRequest",
+      "responses": [
+        "EnvironmentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
