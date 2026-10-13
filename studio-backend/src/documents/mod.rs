@@ -15,6 +15,7 @@
 
 mod approvals;
 mod brief;
+mod pr_checks;
 mod remarks;
 mod classify;
 mod entity;

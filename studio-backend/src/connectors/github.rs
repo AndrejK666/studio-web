@@ -983,6 +983,16 @@ impl ConnectorDriver for GitHubDriver {
         Ok(res.json().await?)
     }
 
+    async fn set_commit_status(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        sha: &str,
+        status: &super::driver::CommitStatus,
+    ) -> anyhow::Result<()> {
+        super::github_write::set_commit_status(self, auth, repo_full_path, sha, status).await
+    }
+
     async fn commit_files(
         &self,
         auth: &ConnectionAuth,

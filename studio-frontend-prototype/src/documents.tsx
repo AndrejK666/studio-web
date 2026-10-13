@@ -53,6 +53,7 @@ import { rowReview, withDecisions, type FindingDecision } from "./spec-findings"
 import { ReviewPanel } from "./review-panel";
 import { DomainQuestionsPanel } from "./domain-questions-panel";
 import { BriefPanel, RemarksPanel } from "./remarks-panel";
+import { PullRequestChecksPanel } from "./project-checks-view";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
@@ -1277,6 +1278,7 @@ function IngestedDocumentsView({
       {err && <div className="error">{err}</div>}
 
       <JourneyPanel stages={stages} types={types} onSeed={setSeeding} />
+      <PullRequestChecksPanel token={token} projectId={projectTenantId} />
 
       {seeding && (
         <SeedModal

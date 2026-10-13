@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BringsWithIt } from "./gear-brings-view";
+import { BeyondGears } from "./project-checks-view";
 import {
   api,
   matchReason,
@@ -315,6 +316,7 @@ export function ProjectKits({
         code={code}
         onFlow={setFlow}
       />
+      <BeyondGears token={token} projectId={projectId} />
       {product.composing && (
         <ProductCard
           token={token}

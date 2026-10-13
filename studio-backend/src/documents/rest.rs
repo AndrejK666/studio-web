@@ -3545,6 +3545,159 @@ async fn list_decisions(
     }))
 }
 
+/// Check the project's open pull requests.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PullRequestChecksRequest {
+    pub project_id: String,
+    /// Set a commit status on each checked pull request's head. False: only
+    /// answer what the statuses would say.
+    pub publish: Option<bool>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PullRequestFileCheckDto {
+    pub path: String,
+    pub type_key: String,
+    pub conforms: bool,
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PullRequestCheckDto {
+    pub repo: String,
+    pub number: i64,
+    pub title: String,
+    pub url: Option<String>,
+    pub head: String,
+    /// `success` or `failure`.
+    pub state: String,
+    pub description: String,
+    pub files: Vec<PullRequestFileCheckDto>,
+    /// The status was set on the host.
+    pub published: bool,
+    /// Why it could not be, when it could not.
+    pub publish_error: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PullRequestCheckListDto {
+    pub items: Vec<PullRequestCheckDto>,
+    pub total: u32,
+    /// Open pull requests read, documents or not.
+    pub pulls: u32,
+    pub reached: bool,
+}
+
+/// Run the project's document checks on its open pull requests that change a
+/// document of a known type, and say the result on each as a commit status.
+async fn run_pull_request_checks(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<PullRequestChecksRequest>,
+) -> ApiResult<JsonBody<PullRequestCheckListDto>> {
+    use super::pr_checks::{STATUS_CONTEXT, check, open_pulls_request, read_open_pulls};
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let publish = body.publish.unwrap_or(true);
+    let types = service
+        .list_types(&ctx, workspace_id)
+        .await
+        .map_err(internal)?;
+    // Which path is which type: the project's settled bindings.
+    let typed: std::collections::BTreeMap<String, String> = service
+        .project_bindings(workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    let repos = reachable_repositories(&service, &quality, &ctx, project_id).await;
+    let reached = !repos.is_empty();
+    let mut items = Vec::new();
+    let mut pulls_read = 0usize;
+    for (driver, auth, repo, _) in repos {
+        let Some((owner, name)) = repo.split_once('/') else {
+            continue;
+        };
+        let pulls = match driver
+            .graphql(&auth, &open_pulls_request(owner, name))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|a| read_open_pulls(&a))
+        {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, repo = %repo, "pr checks: open pull requests unreadable");
+                continue;
+            }
+        };
+        pulls_read += pulls.len();
+        for pull in pulls {
+            let mut changed = Vec::new();
+            for path in &pull.files {
+                let Some(ty) = typed
+                    .get(path)
+                    .and_then(|key| types.iter().find(|t| &t.key == key))
+                else {
+                    continue;
+                };
+                // The version in the pull request, not the one on the branch.
+                if let Ok(Some(file)) = driver.read_file(&auth, &repo, path, Some(&pull.head)).await {
+                    changed.push((path.clone(), ty, file.text));
+                }
+            }
+            if changed.is_empty() {
+                continue;
+            }
+            let outcome = check(&changed);
+            let (published, publish_error) = if publish {
+                let status = crate::connectors::sdk::CommitStatus {
+                    state: outcome.state.to_string(),
+                    context: STATUS_CONTEXT.to_string(),
+                    description: outcome.description.clone(),
+                    target_url: None,
+                };
+                match driver.set_commit_status(&auth, &repo, &pull.head, &status).await {
+                    Ok(()) => (true, None),
+                    Err(e) => (false, Some(format!("{e:#}"))),
+                }
+            } else {
+                (false, None)
+            };
+            items.push(PullRequestCheckDto {
+                repo: repo.clone(),
+                number: pull.number,
+                title: pull.title,
+                url: pull.url,
+                head: pull.head,
+                state: outcome.state.to_string(),
+                description: outcome.description,
+                files: outcome
+                    .files
+                    .into_iter()
+                    .map(|f| PullRequestFileCheckDto {
+                        path: f.path,
+                        type_key: f.type_key,
+                        conforms: f.conforms,
+                        issues: f.issues,
+                    })
+                    .collect(),
+                published,
+                publish_error,
+            });
+        }
+    }
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    Ok(Json(PullRequestCheckListDto {
+        total: count(items.len()),
+        items,
+        pulls: count(pulls_read),
+        reached,
+    }))
+}
+
 /// Ask for a review brief of one document.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -5555,6 +5708,33 @@ pub fn register_routes(
         .error_404(openapi)
         .error_500(openapi)
         .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/pull-request-checks")
+        .operation_id("studio_documents.run_pull_request_checks")
+        .summary("Check the documents each open pull request changes, and say it on the pull request")
+        .description(
+            "For every open pull request of the project's repositories that changes a document \
+             of a known type (a settled binding), checks the version in the pull request \
+             against its type's template (required sections, their length, front matter) and \
+             sets a `studio/documents` commit status on the head commit, unless `publish` is \
+             false. One shared check for every repository instead of one per team. Answers \
+             what each status says, and why one could not be set.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<PullRequestChecksRequest>(openapi, "The project, and whether to publish")
+        .handler(run_pull_request_checks)
+        .json_response_with_schema::<PullRequestCheckListDto>(
+            openapi,
+            StatusCode::OK,
+            "The checks",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/remarks")

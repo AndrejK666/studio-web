@@ -1,5 +1,6 @@
 import type { DomainExpert, DomainQuestions } from "./domain-questions";
 import type { GearBrings } from "./gear-brings";
+import type { ProjectComponent, PullRequestChecks } from "./project-checks";
 import type { Decision, RemarkComment, Remarks, ReviewBrief } from "./remarks";
 import type { InboxMark } from "./waiting-on-me";
 import type { ReviewRequest, ReviewVerdict } from "./review-requests";
@@ -2786,6 +2787,18 @@ export const api = {
   productFindings: (token: string, projectId: string) =>
     request<{ repo: string | null; items: ProductFinding[]; total: number }>(
       `/studio-spec-mapping/v1/findings?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
+  /** Check the documents each open pull request changes; set statuses unless `publish` is false. */
+  runPullRequestChecks: (token: string, projectId: string, publish: boolean) =>
+    request<PullRequestChecks>("/studio-documents/v1/pull-request-checks", token, {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, publish }),
+    }),
+  /** The services and applications of a project's repositories beyond its gears. */
+  projectComponents: (token: string, projectId: string) =>
+    request<{ items: ProjectComponent[]; total: number; repos: number }>(
+      `/studio-components-catalog/v1/project-components?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
   /** Every review thread on one document, read live from the pull requests that changed it. */

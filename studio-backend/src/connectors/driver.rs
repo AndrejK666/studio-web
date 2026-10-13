@@ -282,6 +282,15 @@ pub struct RemoteComment {
     pub updated_at: Option<String>,
 }
 
+/// A commit status to set: what a check says on a pull request's head.
+#[derive(Debug, Clone)]
+pub struct CommitStatus {
+    pub state: String,
+    pub context: String,
+    pub description: String,
+    pub target_url: Option<String>,
+}
+
 /// One commit in a repository.
 #[derive(Debug, Clone)]
 pub struct RemoteCommit {
@@ -795,6 +804,24 @@ pub trait ConnectorDriver: Send + Sync + 'static {
     /// the answer rather than a conflict. Returns the commit `branch` points
     /// at. Defaulted to an error: writing is a capability a connection may
     /// lack.
+    /// Set a commit status on `sha`: `state` is `success`, `failure`,
+    /// `pending` or `error`; `context` names the check, `description` is at
+    /// most 140 characters. Defaulted to an error: not every host has
+    /// statuses, and not every connection may write them.
+    async fn set_commit_status(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        sha: &str,
+        status: &CommitStatus,
+    ) -> anyhow::Result<()> {
+        let _ = (auth, repo_full_path, sha, status);
+        Err(anyhow::anyhow!(
+            "{} cannot set commit statuses through this connection",
+            self.display_name()
+        ))
+    }
+
     async fn commit_files(
         &self,
         auth: &ConnectionAuth,

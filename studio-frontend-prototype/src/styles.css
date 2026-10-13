@@ -2267,3 +2267,9 @@ ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
 .dq-muted { color: var(--muted-foreground); }
 .dq-experts { margin: 2px 0 0; padding-left: 16px; }
 .dq-drift { color: var(--warning); }
+
+/* Checks on pull requests and components beyond gears (project-checks-view.tsx). */
+.pc-panel { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+.pc-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.pc-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.pc-err { color: var(--destructive); }

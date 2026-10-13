@@ -31,6 +31,7 @@ mod rest;
 pub(crate) mod roadmap;
 pub mod sdk;
 mod service;
+mod services;
 mod sync_task;
 mod taxonomy;
 mod tiers;

@@ -195,6 +195,31 @@ pub(super) async fn create_repository(
     })
 }
 
+/// `POST /repos/{repo}/statuses/{sha}`.
+pub(super) async fn set_commit_status(
+    gh: &GitHubDriver,
+    auth: &ConnectionAuth,
+    repo_full_path: &str,
+    sha: &str,
+    status: &super::driver::CommitStatus,
+) -> Result<()> {
+    let body = serde_json::json!({
+        "state": status.state,
+        "context": status.context,
+        "description": status.description.chars().take(140).collect::<String>(),
+        "target_url": status.target_url,
+    });
+    let _: serde_json::Value = send_json(
+        gh,
+        auth,
+        reqwest::Method::POST,
+        &format!("/repos/{repo_full_path}/statuses/{sha}"),
+        body,
+    )
+    .await?;
+    Ok(())
+}
+
 async fn get_json<T: for<'de> Deserialize<'de>>(
     gh: &GitHubDriver,
     auth: &ConnectionAuth,

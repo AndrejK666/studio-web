@@ -22,6 +22,7 @@ use toolkit::client_hub::ClientHub;
 pub(crate) use super::clone as git_checkout;
 #[cfg(test)]
 pub use super::driver::RemoteReview;
+pub use super::driver::CommitStatus;
 pub use super::driver::{
     ConnectionAuth, ConnectorDriver, CreatedRepository, FileToWrite, NotifyMessage,
     PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList, RemoteIssue,

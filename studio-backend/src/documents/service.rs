@@ -1890,6 +1890,21 @@ impl DocumentsService {
         self.repo.list_decisions(workspace_id, project_id).await
     }
 
+    /// The project's settled documents, path → type: what a check judges.
+    pub async fn project_bindings(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<std::collections::BTreeMap<String, String>> {
+        Ok(self
+            .all_bindings(workspace_id, Some(project_id))
+            .await?
+            .into_iter()
+            .filter(|b| matches!(b.state, BindingState::Confirmed | BindingState::Manual))
+            .filter_map(|b| b.type_key.map(|t| (b.path, t)))
+            .collect())
+    }
+
     /// The repositories the project records as its sources.
     pub async fn project_repositories(
         &self,
