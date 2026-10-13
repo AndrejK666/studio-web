@@ -103,7 +103,13 @@ describe("ApiError", () => {
   it("has no problem when the failure never reached the assembly", () => {
     const e = new ApiError(502, "<html>bad gateway</html>");
     expect(e.problem).toBeUndefined();
-    expect(errText(e)).toBe("HTTP 502");
+    expect(errText(e)).toMatch(/^HTTP 502 · Studio did not answer -- it may be restarting/);
+  });
+
+  it("says Studio did not answer for a bare 503 or 504, and nothing more for other bare statuses", () => {
+    expect(errText(new ApiError(503, ""))).toMatch(/^HTTP 503 · Studio did not answer/);
+    expect(errText(new ApiError(504, "upstream timed out"))).toMatch(/^HTTP 504 · Studio did not answer/);
+    expect(errText(new ApiError(404, "<html>not found</html>"))).toBe("HTTP 404");
   });
 });
 

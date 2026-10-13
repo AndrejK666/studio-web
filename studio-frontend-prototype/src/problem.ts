@@ -240,10 +240,19 @@ function saidBeyondDetail(problem: Problem, detail: string | undefined): string[
  * the reader does will fix — on those the id is the whole of what makes a report
  * actionable, and on the others it is noise in front of an answer.
  */
+/** Statuses a gateway in front of Studio answers with when Studio itself does not. */
+const GATEWAY_STATUSES = new Set([502, 503, 504]);
+
 export function errText(e: unknown): string {
   const problem = problemOf(e);
   if (!problem) {
     const status = (e as { status?: number } | null)?.status;
+    // A gateway's answer, not Studio's: every answer the backend gives is a
+    // problem document. Right after a deploy the new backend is still taking
+    // over, and a bare "HTTP 503" read like a fault in what was asked for.
+    if (status !== undefined && GATEWAY_STATUSES.has(status)) {
+      return `HTTP ${status} · Studio did not answer -- it may be restarting after a deploy; try again in a minute`;
+    }
     return status ? `HTTP ${status}` : String(e);
   }
 

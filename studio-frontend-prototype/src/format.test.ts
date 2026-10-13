@@ -39,7 +39,7 @@ describe("errText", () => {
   });
 
   it("keeps working for a body with nothing in it", () => {
-    expect(errText(problem(503, undefined))).toBe("HTTP 503");
+    expect(errText(problem(503, undefined))).toMatch(/^HTTP 503 · Studio did not answer/);
     expect(errText(new Error("network down"))).toBe("Error: network down");
   });
 
