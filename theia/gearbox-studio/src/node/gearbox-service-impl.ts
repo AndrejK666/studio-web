@@ -592,7 +592,10 @@ export class GearboxServiceImpl implements GearboxService {
 
   async fileOnBranch(branch: string, file: string): Promise<string | undefined> {
     try {
-      return await fileOnBranch(this.defaultWorkspace(), branch, file);
+      // A desktop's checkout is one person's: switch it, rather than hold the
+      // branch in a worktree beside it that keeps them from switching to it.
+      const desktop = !!(process.env.STUDIO_DESKTOP_ENVIRONMENTS?.trim() || process.env.STUDIO_DESKTOP_URL?.trim());
+      return await fileOnBranch(this.defaultWorkspace(), branch, file, { inPlace: desktop });
     } catch (error) {
       this.logger.warn(`gearbox: could not bring ${branch} into the workspace: ${String(error)}`);
       return undefined;

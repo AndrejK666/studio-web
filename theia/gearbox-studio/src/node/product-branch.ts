@@ -10,6 +10,11 @@
 // the workspace, and a checkout moving under an open editor is the kind of
 // surprise nobody asked for. Beside it, too, because a description names its
 // gears from `../gears-rust`, and a sibling of the corpus keeps that true.
+//
+// The desktop is the exception: its checkout is one person's, and a worktree
+// beside it holds the branch, so git then refuses to switch the checkout to
+// it -- the person could not move onto the branch the product is on. There
+// the checkout itself is switched, when nothing in it is left uncommitted.
 
 import { execFile } from "child_process";
 import * as fs from "fs";
@@ -61,35 +66,85 @@ async function run(args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/** `origin`'s `branch` into its remote-tracking ref; `false` when origin has none. */
+function fetchBranch(checkout: string, branch: string): Promise<boolean> {
+  return run(["-C", checkout, "fetch", "--quiet", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`])
+    .then(() => true)
+    .catch(() => false);
+}
+
+/** Nothing uncommitted: switching away loses nothing. */
+async function isClean(dir: string): Promise<boolean> {
+  return (await run(["-C", dir, "status", "--porcelain"]).catch(() => "?")) === "";
+}
+
+async function hasLocalBranch(checkout: string, branch: string): Promise<boolean> {
+  return run(["-C", checkout, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])
+    .then(() => true)
+    .catch(() => false);
+}
+
+/**
+ * The desktop's way: the checkout itself onto `branch`, once it is fetched. A
+ * worktree an earlier open left beside it is taken away first when nothing in
+ * it is uncommitted, since it holds the branch. `false` when the checkout
+ * cannot be switched without losing work -- the caller brings the branch in
+ * beside it instead.
+ */
+async function switchCheckout(checkout: string, target: string, branch: string): Promise<boolean> {
+  if (!(await isClean(checkout))) return false;
+  if (fs.existsSync(target)) {
+    if (!(await isClean(target))) return false;
+    await run(["-C", checkout, "worktree", "remove", target]);
+  }
+  if (await hasLocalBranch(checkout, branch)) {
+    await run(["-C", checkout, "switch", "--quiet", branch]);
+    // Catch up with what the portal saved since; a branch that diverged stays as it is.
+    await run(["-C", checkout, "merge", "--ff-only", "--quiet", `origin/${branch}`]).catch(() => undefined);
+  } else {
+    await run(["-C", checkout, "switch", "--quiet", "--track", "-c", branch, `origin/${branch}`]);
+  }
+  return true;
+}
+
+export interface FileOnBranchOptions {
+  /** Switch the checkout itself rather than bring the branch in beside it:
+   *  the desktop's checkout is one person's. */
+  readonly inPlace?: boolean;
+}
+
 /**
  * The absolute path of `file` as it is on `branch`, bringing the branch into
  * the workspace first when no checkout has it. `undefined` when no checkout's
  * `origin` has that branch, or the file is not on it.
  */
-export async function fileOnBranch(workspace: string, branch: string, file: string): Promise<string | undefined> {
+export async function fileOnBranch(
+  workspace: string,
+  branch: string,
+  file: string,
+  options: FileOnBranchOptions = {},
+): Promise<string | undefined> {
   if (!isSafeBranch(branch) || !isSafeRelative(file)) return undefined;
   for (const checkout of checkoutsOf(workspace)) {
     // Already there: a person switched to it, or an earlier open brought it in.
     const current = await run(["-C", checkout, "branch", "--show-current"]).catch(() => "");
     if (current === branch && fs.existsSync(path.join(checkout, file))) return path.join(checkout, file);
     const target = path.join(workspace, worktreeDirName(path.basename(checkout), branch));
+    if (options.inPlace) {
+      const fetched = await fetchBranch(checkout, branch);
+      if (!fetched) continue;
+      if (await switchCheckout(checkout, target, branch)) {
+        if (fs.existsSync(path.join(checkout, file))) return path.join(checkout, file);
+        continue;
+      }
+    }
     if (fs.existsSync(target)) {
       // Brought in before: catch up with what the portal saved since.
       await run(["-C", target, "pull", "--ff-only", "--quiet"]).catch(() => undefined);
       if (fs.existsSync(path.join(target, file))) return path.join(target, file);
       continue;
     }
-    const fetched = await run([
-      "-C",
-      checkout,
-      "fetch",
-      "--quiet",
-      "origin",
-      `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
-    ])
-      .then(() => true)
-      .catch(() => false);
-    if (!fetched) continue;
+    if (!(await fetchBranch(checkout, branch))) continue;
     await run(["-C", checkout, "worktree", "add", "--quiet", "--track", "-B", branch, target, `origin/${branch}`]);
     if (fs.existsSync(path.join(target, file))) return path.join(target, file);
   }

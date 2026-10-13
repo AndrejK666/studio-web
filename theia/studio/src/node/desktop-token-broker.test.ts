@@ -59,3 +59,34 @@ describe('desktop token broker', () => {
         expect(await askHelper(env, 'protocol=https\nhost=studio.example.com\n\n')).toBe('');
     });
 });
+
+describe('a desktop token broker started before anyone signs in', () => {
+    // What the backend opens at its start, for the plugin host to inherit.
+    let host = 'studio.example.com';
+    let signedIn = false;
+    let broker: TokenBroker;
+
+    beforeEach(async () => {
+        host = 'studio.example.com';
+        signedIn = false;
+        broker = await startTokenBroker(() => host,
+            () => signedIn ? Promise.resolve('token') : Promise.reject(new Error('not signed in to Studio')));
+    });
+    afterEach(() => broker.close());
+
+    it('answers once the member signs in, at the address handed out before', async () => {
+        const env = { ...process.env, [CREDENTIALS_ENV]: broker.address };
+        const request = 'protocol=https\nhost=studio.example.com\n\n';
+        expect(await askHelper(env, request)).toBe('');
+        signedIn = true;
+        expect(await askHelper(env, request)).toBe('username=studio\npassword=token\n');
+    });
+
+    it('answers for the Studio the member switched to, and no other', async () => {
+        signedIn = true;
+        host = 'studio.other.example';
+        const env = { ...process.env, [CREDENTIALS_ENV]: broker.address };
+        expect(await askHelper(env, 'protocol=https\nhost=studio.example.com\n\n')).toBe('');
+        expect(await askHelper(env, 'protocol=https\nhost=studio.other.example\n\n')).toBe('username=studio\npassword=token\n');
+    });
+});

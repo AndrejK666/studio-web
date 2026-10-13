@@ -21,7 +21,7 @@ import type { DesktopGitBrought, DesktopGitPush, DesktopGitRepository, DesktopGi
  *
  * Credentials are git's own business here: a clone's config names the token
  * broker's helper (never a token), and the backend's environment carries the
- * broker's address once signed in.
+ * broker's address from its start (it answers once signed in).
  */
 
 /** One git run: its exit code and what it printed. */

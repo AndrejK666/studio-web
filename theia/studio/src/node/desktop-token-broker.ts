@@ -13,6 +13,12 @@ import * as http from 'http';
  * time `git` needs one. The token lives in this process's memory only; what a
  * repository's `.git/config` names is the helper, and the environment carries
  * a secret that is worthless once this process exits.
+ *
+ * The broker is up from the backend's start, before anyone signs in: a child
+ * inherits the environment it was started with, and the plugin host starts
+ * with the window. A broker started at sign-in was one `vscode.git` never
+ * heard of, so its fetches asked the member for a user name and password.
+ * Until then, and after a sign-out, it answers that nobody is signed in.
  */
 export const CREDENTIALS_ENV = 'STUDIO_DESKTOP_CREDENTIALS';
 
@@ -24,10 +30,11 @@ export interface TokenBroker {
 
 /**
  * Serve `token()` to whoever presents the secret. `host` is the Studio host the
- * helper may answer for; it is handed back so the helper can refuse every
- * other host without knowing anything itself.
+ * helper may answer for -- asked each time, since the member may switch
+ * Studios; it is handed back so the helper can refuse every other host without
+ * knowing anything itself.
  */
-export async function startTokenBroker(host: string, token: () => Promise<string>): Promise<TokenBroker> {
+export async function startTokenBroker(host: string | (() => string), token: () => Promise<string>): Promise<TokenBroker> {
     const secret = crypto.randomBytes(32).toString('hex');
     const server = http.createServer(async (req, res) => {
         const presented = req.headers.authorization === `Bearer ${secret}`;
@@ -38,7 +45,7 @@ export async function startTokenBroker(host: string, token: () => Promise<string
         try {
             const value = await token();
             res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-                .end(JSON.stringify({ host, token: value }));
+                .end(JSON.stringify({ host: typeof host === 'function' ? host() : host, token: value }));
         } catch (error) {
             res.writeHead(503, { 'Content-Type': 'application/json' })
                 .end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));

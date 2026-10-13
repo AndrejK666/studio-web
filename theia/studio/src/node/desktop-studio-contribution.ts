@@ -574,11 +574,36 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         });
     }
 
-    onStart(): void {
+    async onStart(): Promise<void> {
+        if (this.config) {
+            // Before any window, so the plugin host and vscode.git inherit it.
+            await this.openBroker();
+        }
         // Signing in is the person's move, from the Studio view — except where
         // a deployment asks for it at launch.
         if (this.config && process.env.STUDIO_DESKTOP_AUTO_SIGN_IN === '1') {
             this.ready = this.start(this.config);
+        }
+    }
+
+    /**
+     * The token broker, and its address in this process's environment for
+     * everything started from here on. Once per process: it answers with the
+     * signed-in member's token for the Studio connected to at the time, and
+     * refuses while nobody is signed in.
+     */
+    protected async openBroker(): Promise<void> {
+        if (this.broker) {
+            return;
+        }
+        try {
+            this.broker = await startTokenBroker(
+                () => (this.config ? new URL(this.config.studioUrl).host : ''),
+                () => (this.session ? this.session.accessToken() : Promise.reject(new Error('not signed in to Studio'))),
+            );
+            process.env[CREDENTIALS_ENV] = this.broker.address;
+        } catch (error) {
+            console.error(`[studio-desktop] the git token broker could not start: ${error}`);
         }
     }
 
@@ -589,7 +614,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         if (target) {
             void this.leases.endAll(target);
         }
-        this.broker?.close();
+        void this.broker?.close();
     }
 
     /** Forget the token and stop handing it to git. */
@@ -599,10 +624,9 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             await this.leases.endAll(target);
         }
         this.leases.forget();
+        // The broker stays: it refuses from now on, and whatever inherited its
+        // address gets the next member's token without a restart.
         this.session = undefined;
-        await this.broker?.close();
-        this.broker = undefined;
-        delete process.env[CREDENTIALS_ENV];
         delete process.env[GIT_BASE_ENV];
         delete process.env[GIT_HELPER_ENV];
         this.status = this.describe('signed-out');
@@ -635,10 +659,8 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             return;
         }
         this.session = new DesktopSession(config.issuer, config.clientId, tokens);
-        const session = this.session;
-        this.broker = await startTokenBroker(new URL(config.studioUrl).host, () => session.accessToken());
-        // Inherited by the plugin host, vscode.git, terminals and agents.
-        process.env[CREDENTIALS_ENV] = this.broker.address;
+        // Opened at start already, unless this run became a desktop Studio since.
+        await this.openBroker();
         // And where Studio's own Git remotes are, with the helper that signs
         // them: for a clone this contribution does not start itself -- the gear
         // corpus, which gearbox-studio brings once per machine.
