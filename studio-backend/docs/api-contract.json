@@ -946,6 +946,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/work",
+      "operation_id": "studio_documents.list_spec_model_work",
+      "tag": "StudioDocuments",
+      "summary": "Which issues, pull requests and commits name what the documents define",
+      "authenticated": true,
+      "responses": [
+        "WorkLinkListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-pipeline",
       "operation_id": "studio_documents.list_spec_pipeline",
       "tag": "StudioDocuments",

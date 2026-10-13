@@ -2182,6 +2182,48 @@ impl super::port::ArtifactCounter for IngestService {
     }
 }
 
+/// A project's work, from the same scoped reads: one indexed query per kind.
+#[async_trait::async_trait]
+impl super::port::ProjectWork for IngestService {
+    async fn project_work(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<super::port::WorkItem>> {
+        let mut out = Vec::new();
+        for kind in ["issue", "pull_request", "commit"] {
+            for node in self.list_in_scope(ctx, Some(kind), scope).await? {
+                out.push(work_item(kind, &node.value));
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// One issue, pull request or commit payload as a [`super::port::WorkItem`].
+/// Every field is read defensively: a payload from an older sync may lack any
+/// of them.
+fn work_item(kind: &str, v: &serde_json::Value) -> super::port::WorkItem {
+    let text = |key: &str| {
+        v.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    super::port::WorkItem {
+        kind: kind.to_string(),
+        number: v.get("number").and_then(serde_json::Value::as_i64),
+        title: text("title").unwrap_or_default(),
+        text: text(if kind == "commit" { "message" } else { "body" }).unwrap_or_default(),
+        url: text("url"),
+        state: text("state"),
+        merged: v
+            .get("merged")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        sha: text("short_sha"),
+    }
+}
+
 /// A project's row, folded from the same scoped reads the Sources table and
 /// the Activity feed make — one indexed query each.
 #[async_trait::async_trait]

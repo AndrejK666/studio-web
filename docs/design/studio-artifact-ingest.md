@@ -323,10 +323,12 @@ and unscoped listings.
 
 Without a connector driver linked the routes stay mounted and answer 503 with
 the reason. In process the gear
-publishes six ports on the ClientHub (`port.rs`): `RepoFileReader` (a
+publishes seven ports on the ClientHub (`port.rs`): `RepoFileReader` (a
 checkout's text files), `ArtifactFiles` (a scope's file nodes),
 `ArtifactCounter` and `ProjectSignalSource` (portfolio and projects-table
-rollups), `SpecFindingWriter` (where a Spec Quality run records findings), and
+rollups), `ProjectWork` (a scope's issues, pull requests and commits with their
+text, which the documents gear links to the identifiers its documents define),
+`SpecFindingWriter` (where a Spec Quality run records findings), and
 `MappingDecisionStore` (where `cpt-studio-component-spec-mapping` keeps a
 member's mapping decisions).
 

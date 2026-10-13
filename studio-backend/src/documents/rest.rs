@@ -1646,6 +1646,14 @@ impl Quality {
             })
     }
 
+    /// The project's issues, pull requests and commits, from the artifact
+    /// sync; `None` in a deployment without it.
+    fn work(&self) -> Option<Arc<dyn crate::artifact_ingest::port::ProjectWork>> {
+        self.hub
+            .get::<dyn crate::artifact_ingest::port::ProjectWork>()
+            .ok()
+    }
+
     /// The model client, for reading documents into the spec model on the
     /// caller's key.
     fn models(&self) -> ApiResult<Arc<dyn crate::llm_proxy::port::ModelProviders>> {
@@ -2220,6 +2228,49 @@ pub struct GlossaryDecisionDto {
     pub decided_at: String,
 }
 
+/// One issue, pull request or commit that names an identifier.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct WorkItemDto {
+    /// `issue`, `pull_request` or `commit`.
+    pub kind: String,
+    pub number: Option<i64>,
+    pub title: String,
+    pub url: Option<String>,
+    /// `open` or `closed`, for an issue or pull request.
+    pub state: Option<String>,
+    pub merged: bool,
+    /// A commit's short sha.
+    pub sha: Option<String>,
+}
+
+/// An identifier the documents define, and the work that names it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct WorkLinkDto {
+    pub id: String,
+    /// The first place a document defines it.
+    pub defined_in: SpecModelSideDto,
+    pub work: Vec<WorkItemDto>,
+}
+
+/// The work against the documents.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct WorkLinkListDto {
+    /// Only the identifiers some work names, in the identifiers' order.
+    pub items: Vec<WorkLinkDto>,
+    pub total: u32,
+    /// Identifiers the documents define with a label.
+    pub identifiers: u32,
+    /// Issues, pull requests and commits read.
+    pub work: u32,
+    /// Of those, the ones that name no identifier.
+    pub unlinked: u32,
+    /// False when this deployment has no artifact sync to read work from.
+    pub synced: bool,
+}
+
 /// Which project to build the model of.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -2732,6 +2783,83 @@ async fn get_glossary(
     Ok(Json(GlossaryListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
+    }))
+}
+
+/// Which issues, pull requests and commits name an identifier the project's
+/// documents define. Read whole on every call: no model, nothing stored.
+async fn list_work_links(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<WorkLinkListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let ids = sources.labelled_ids();
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let Some(source) = quality.work() else {
+        return Ok(Json(WorkLinkListDto {
+            items: Vec::new(),
+            total: 0,
+            identifiers: count(ids.len()),
+            work: 0,
+            unlinked: 0,
+            synced: false,
+        }));
+    };
+    let work = source
+        .project_work(&ctx, &project_id.to_string())
+        .await
+        .map_err(internal)?;
+    let (linked, unlinked) = super::spec_model::work::link(&ids, &work);
+    let items: Vec<WorkLinkDto> = linked
+        .into_iter()
+        .map(|l| {
+            let first = l
+                .defined
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| super::spec_model::finding::Side::file("", None));
+            WorkLinkDto {
+                id: l.id,
+                defined_in: SpecModelSideDto {
+                    path: first.path,
+                    line_start: first.line_start.and_then(|n| u32::try_from(n).ok()),
+                    line_end: first.line_end.and_then(|n| u32::try_from(n).ok()),
+                    quote: first.quote,
+                },
+                work: l
+                    .work
+                    .into_iter()
+                    .map(|i| {
+                        let w = &work[i];
+                        WorkItemDto {
+                            kind: w.kind.clone(),
+                            number: w.number,
+                            title: w.title.clone(),
+                            url: w.url.clone(),
+                            state: w.state.clone(),
+                            merged: w.merged,
+                            sha: w.sha.clone(),
+                        }
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+    Ok(Json(WorkLinkListDto {
+        total: count(items.len()),
+        items,
+        identifiers: count(ids.len()),
+        work: count(work.len()),
+        unlinked: count(unlinked),
+        synced: true,
     }))
 }
 
@@ -3698,6 +3826,29 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/work")
+        .operation_id("studio_documents.list_spec_model_work")
+        .summary("Which issues, pull requests and commits name what the documents define")
+        .description(
+            "Every identifier a project's documents define with a label (`**ID**: `x``: a \
+             requirement, a component, a decision), with the synced issues, pull requests and \
+             commits whose title or text names it as a whole token. Mechanical: no model \
+             proposes a link (docs/project-and-product.md, \"The links\"). `unlinked` counts the \
+             work that names none; `synced` is false where nothing syncs work.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose work to link")
+        .handler(list_work_links)
+        .json_response_with_schema::<WorkLinkListDto>(openapi, StatusCode::OK, "The links")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/spec-model/findings")

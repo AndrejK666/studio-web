@@ -1,4 +1,4 @@
-import type { GlossaryEntry, ProductFinding, SpecModel, SpecModelBuild, SpecModelFinding } from "./spec-model";
+import type { GlossaryEntry, ProductFinding, SpecModel, SpecModelBuild, SpecModelFinding, WorkLinks } from "./spec-model";
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
@@ -2770,6 +2770,10 @@ export const api = {
       `/studio-spec-mapping/v1/findings?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
+  /** Which issues, pull requests and commits name an identifier the
+   *  project's documents define (docs/project-and-product.md, "The links"). */
+  workLinks: (token: string, projectId: string) =>
+    request<WorkLinks>(`/studio-documents/v1/spec-model/work?project_id=${encodeURIComponent(projectId)}`, token),
   /** The project's glossary: what its documents name, under the names
    *  members chose, with the aliases they merged. */
   glossary: (token: string, projectId: string) =>

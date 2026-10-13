@@ -13,6 +13,9 @@ import {
   sideLabel,
   subjectKey,
   type GlossaryEntry,
+  type WorkItem,
+  workLabel,
+  workState,
   type ProductFinding,
   type SpecModelFact,
   type SpecModelFinding,
@@ -98,6 +101,31 @@ describe("the glossary", () => {
     const b = entry("b", "B");
     expect(mergeTargets(a, [a, b])).toEqual([]);
     expect(mergeTargets(b, [a, b]).map((e) => e.key)).toEqual(["a"]);
+  });
+});
+
+describe("work", () => {
+  const w = (extra: Partial<WorkItem>): WorkItem => ({
+    kind: "issue",
+    number: 12,
+    title: "t",
+    url: null,
+    state: "open",
+    merged: false,
+    sha: null,
+    ...extra,
+  });
+
+  it("names an issue, a pull request and a commit the way a list reads them", () => {
+    expect(workLabel(w({}))).toBe("Issue #12");
+    expect(workLabel(w({ kind: "pull_request", number: 7 }))).toBe("PR #7");
+    expect(workLabel(w({ kind: "commit", number: null, sha: "abc1234" }))).toBe("abc1234");
+  });
+
+  it("says merged before closed, and a commit is committed", () => {
+    expect(workState(w({ kind: "pull_request", state: "closed", merged: true }))).toBe("merged");
+    expect(workState(w({ state: "closed" }))).toBe("closed");
+    expect(workState(w({ kind: "commit" }))).toBe("committed");
   });
 });
 

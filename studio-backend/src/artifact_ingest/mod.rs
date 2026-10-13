@@ -273,6 +273,10 @@ impl RestApiCapability for StudioArtifactIngestGear {
             // The projects table's review and source columns, likewise.
             ctx.client_hub()
                 .register::<dyn port::ProjectSignalSource>(service.clone());
+            // A project's issues, pull requests and commits, for the documents
+            // gear to link to the requirements they name.
+            ctx.client_hub()
+                .register::<dyn port::ProjectWork>(service.clone());
             // The ingested files, for the gear that decides what each one is.
             ctx.client_hub()
                 .register::<dyn port::ArtifactFiles>(service.clone());

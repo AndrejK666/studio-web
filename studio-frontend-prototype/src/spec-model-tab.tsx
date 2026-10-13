@@ -4,7 +4,8 @@
 // Problems first, because that is what a person acts on; Entities is the
 // model itself, every fact with the passage it rests on; Glossary is the names
 // the project uses for its things, decided by members, which Entities and the
-// rules read through; Against the code is
+// rules read through; Work is the issues, pull requests and commits that name
+// what the documents define; Against the code is
 // what the documents ask for that the code is not made of
 // (docs/project-and-product.md); Coverage says which documents have been
 // read, and is where a build starts. A build runs on the viewer's own model
@@ -31,9 +32,12 @@ import {
   type SpecModelFact,
   type SpecModelFinding,
   type SpecModelSide,
+  type WorkLinks,
+  workLabel,
+  workState,
 } from "./spec-model";
 
-type View = "problems" | "entities" | "glossary" | "product" | "coverage";
+type View = "problems" | "entities" | "glossary" | "work" | "product" | "coverage";
 
 /** The product findings as read, or why they could not be. */
 type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
@@ -61,6 +65,7 @@ export function SpecModelTab({
   const [starting, setStarting] = useState(false);
   const [product, setProduct] = useState<ProductRead | null>(null);
   const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
+  const [work, setWork] = useState<WorkLinks | { error: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -91,6 +96,19 @@ export function SpecModelTab({
       .productFindings(token, projectId)
       .then((r) => live && setProduct({ repo: r.repo, items: orderProductFindings(r.items) }))
       .catch((e: unknown) => live && setProduct({ error: message(e) }));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
+
+  // Its own read, like the comparison with the code: no synced work must not
+  // hide the documents' own problems.
+  useEffect(() => {
+    let live = true;
+    api
+      .workLinks(token, projectId)
+      .then((r) => live && setWork(r))
+      .catch((e: unknown) => live && setWork({ error: message(e) }));
     return () => {
       live = false;
     };
@@ -154,6 +172,7 @@ export function SpecModelTab({
           <ViewChip id="problems" view={view} setView={setView} label="Problems" count={open} />
           <ViewChip id="entities" view={view} setView={setView} label="Entities" count={entities.length} />
           <ViewChip id="glossary" view={view} setView={setView} label="Glossary" count={glossary.length} />
+          <ViewChip id="work" view={view} setView={setView} label="Work" count={work && "items" in work ? work.total : 0} />
           <ViewChip
             id="product"
             view={view}
@@ -190,6 +209,7 @@ export function SpecModelTab({
       )}
       {model && view === "entities" && <Entities entities={entities} onOpenFile={onOpenFile} />}
       {model && view === "glossary" && <Glossary entries={glossary} onDecide={decideTerm} />}
+      {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
       {view === "product" && <AgainstTheCode read={product} onOpenFile={onOpenFile} />}
       {model && view === "coverage" && <Coverage model={model} />}
     </>
@@ -435,6 +455,63 @@ function Entities({ entities, onOpenFile }: { entities: Entity[]; onOpenFile?: (
         </div>
       )}
     </div>
+  );
+}
+
+/** The issues, pull requests and commits that name an identifier the
+ *  documents define, by identifier. A link is made only by the work naming
+ *  the identifier; nothing is guessed. */
+function Work({
+  read,
+  onOpenFile,
+}: {
+  read: WorkLinks | { error: string } | null;
+  onOpenFile?: (path: string) => void;
+}) {
+  if (read === null) return <div className="empty">Loading…</div>;
+  if ("error" in read) return <div className="error">{read.error}</div>;
+  if (!read.synced) {
+    return <div className="empty">Nothing syncs this deployment&apos;s issues and pull requests, so there is no work to link.</div>;
+  }
+  const summary = `${read.identifiers} identifier${read.identifiers === 1 ? "" : "s"} defined in the documents; ${read.total} named by work. ${read.unlinked} of ${read.work} issues, pull requests and commits name none.`;
+  if (read.items.length === 0) {
+    return (
+      <div className="empty">
+        {read.identifiers === 0
+          ? "The documents define no identifiers with a label (**ID**: `…`), so there is nothing for work to name."
+          : `No issue, pull request or commit names one of the ${read.identifiers} identifiers the documents define.`}
+      </div>
+    );
+  }
+  return (
+    <>
+      <p className="hint">{summary} A piece of work is linked when its title, text or commit message names the identifier.</p>
+      <ul className="rows sm-work">
+        {read.items.map((l) => (
+          <li key={l.id} className="sm-work-row">
+            <div className="sm-term-head">
+              <code>{l.id}</code>
+              <SideLink side={l.defined_in} onOpenFile={onOpenFile} />
+            </div>
+            <ul className="sm-work-items">
+              {l.work.map((w, i) => (
+                <li key={i}>
+                  {w.url ? (
+                    <a href={w.url} target="_blank" rel="noreferrer">
+                      {workLabel(w)}
+                    </a>
+                  ) : (
+                    <span>{workLabel(w)}</span>
+                  )}{" "}
+                  <span className="sm-work-title">{w.title}</span>{" "}
+                  {workState(w) && <span className="sm-status">{workState(w)}</span>}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

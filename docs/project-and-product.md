@@ -93,12 +93,25 @@ goal ─▶ requirement ─▶ capability ─▶ gear ─▶ part of the product
 | goal → requirement | the requirement's text or traceability cites the goal; else a model proposes it and a member decides | a fact relation in the domain model |
 | requirement → capability → gear | the spec-to-gears mapping and its decisions ([studio-spec-mapping](design/studio-spec-mapping.md)) | `mapping_decision`, gaining `decides_for` and `about` edges (ADR-0037, steps 3 and 5) |
 | gear → product | the gear is in the project's `product.gdl` | `project_product` `includes` edges (ADR-0037, step 9) |
-| work → requirement | an issue or pull request names a requirement id, or a model proposes one from its title and a member decides | an edge from the `issue` or `pull_request` node |
+| work → requirement | an issue, pull request or commit names a requirement id (built, below), or a model proposes one from its title and a member decides | read on every call for now; an edge from the `issue` or `pull_request` node once links are decided |
 | work → part of the product | the paths a pull request changes fall inside a gear's crate | an edge from the `pull_request` node to the gear |
 
 Every link either comes mechanically from what is written, or is proposed and
 decided by a member with the same ✓/✗ the domain model uses. A decided link
 holds until either end changes.
+
+**Work → requirement, the mechanical half: built.** `GET
+/studio-documents/v1/spec-model/work?project_id=` takes every identifier the
+documents define with an `**ID**:` label (requirements, components,
+decisions), and the synced issues, pull requests and commits, through
+`artifact_ingest::port::ProjectWork` (three indexed reads in scope), and links
+the work whose title, text or commit message names an identifier as a whole
+token. Heading anchors are not identifiers here: `how-it-works` turns up in any
+URL. Nothing is stored, so a link appears and goes with the text. The Domain
+model tab shows them under **Work**, with how much work names nothing. A
+project whose requirements carry no labelled identifier gets no links; the
+proposed links, for work that names nothing, are the model's half and still to
+come.
 
 ## Documents against the product
 
@@ -259,7 +272,7 @@ Each step is useful alone.
    build is.
    The writing hints (built) and the assistant's instructions are independent of both.
 4. **Work links.** Issues and pull requests to requirements and gears, proposed
-   and decided.
+   and decided. The mechanical half (work that names an identifier) is built.
 5. **The project card.**
 6. **Writing intent from the portal.** Adding a goal or a risk writes it into the
    project's document.

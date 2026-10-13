@@ -85,6 +85,47 @@ export function subjectKey(subject: string): string {
     .join(" ");
 }
 
+/** An issue, pull request or commit that names an identifier. */
+export interface WorkItem {
+  kind: "issue" | "pull_request" | "commit";
+  number: number | null;
+  title: string;
+  url: string | null;
+  state: string | null;
+  merged: boolean;
+  sha: string | null;
+}
+
+/** An identifier the documents define, and the work that names it. */
+export interface WorkLink {
+  id: string;
+  defined_in: SpecModelSide;
+  work: WorkItem[];
+}
+
+export interface WorkLinks {
+  items: WorkLink[];
+  total: number;
+  identifiers: number;
+  work: number;
+  unlinked: number;
+  synced: boolean;
+}
+
+/** How a piece of work is named in a list: `#12`, `PR #7`, or a commit's sha. */
+export function workLabel(w: WorkItem): string {
+  if (w.kind === "commit") return w.sha ?? "commit";
+  const n = w.number === null ? "" : ` #${w.number}`;
+  return w.kind === "pull_request" ? `PR${n}` : `Issue${n}`;
+}
+
+/** Where a piece of work stands: merged, open or closed; a commit is in. */
+export function workState(w: WorkItem): string {
+  if (w.kind === "commit") return "committed";
+  if (w.merged) return "merged";
+  return w.state ?? "";
+}
+
 /** One name merged into a glossary entry. */
 export interface GlossaryAlias {
   key: string;
