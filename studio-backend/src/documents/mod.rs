@@ -13,6 +13,7 @@
 //! project tenant is authorized through account-management, as `studio-kits`
 //! does for its project routes.
 
+mod approvals;
 mod classify;
 mod entity;
 pub(crate) mod gts;

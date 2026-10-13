@@ -895,6 +895,40 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/review-requests",
+      "operation_id": "studio_documents.list_review_requests",
+      "tag": "StudioDocuments",
+      "summary": "A project's or a workspace's review requests, with every verdict given",
+      "authenticated": true,
+      "responses": [
+        "ReviewRequestListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/review-requests/reviewer-suggestions",
+      "operation_id": "studio_documents.list_reviewer_suggestions",
+      "tag": "StudioDocuments",
+      "summary": "Whom to ask to review a document, from who was asked before",
+      "authenticated": true,
+      "responses": [
+        "ReviewerSuggestionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model",
       "operation_id": "studio_documents.get_spec_model",
       "tag": "StudioDocuments",
@@ -902,6 +936,23 @@
       "authenticated": true,
       "responses": [
         "SpecModelDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/spec-model/decisions",
+      "operation_id": "studio_documents.list_spec_model_decisions",
+      "tag": "StudioDocuments",
+      "summary": "Every ✓ and ✗ members gave on a project's findings",
+      "authenticated": true,
+      "responses": [
+        "SpecModelDecisionListDto"
       ],
       "errors": [
         "400",
@@ -936,6 +987,23 @@
       "authenticated": true,
       "responses": [
         "GlossaryListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/spec-model/requirements",
+      "operation_id": "studio_documents.list_spec_model_requirements",
+      "tag": "StudioDocuments",
+      "summary": "The requirements a project's documents define, and what each rests on",
+      "authenticated": true,
+      "responses": [
+        "SpecRequirementListDto"
       ],
       "errors": [
         "400",
@@ -2200,6 +2268,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-user/v1/me/inbox-marks",
+      "operation_id": "studio_user.list_my_inbox_marks",
+      "tag": "StudioUser",
+      "summary": "What the caller marked done or snoozed in their inbox",
+      "authenticated": true,
+      "responses": [
+        "InboxMarkListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-user/v1/me/invitations",
       "operation_id": "studio_user.my_invitations",
       "tag": "StudioUser",
@@ -2839,6 +2922,60 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/review-requests",
+      "operation_id": "studio_documents.create_review_request",
+      "tag": "StudioDocuments",
+      "summary": "Ask people to review one version of a document",
+      "authenticated": true,
+      "request": "ReviewRequestInput",
+      "responses": [
+        "ReviewRequestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/review-requests/{request_id}/approvals",
+      "operation_id": "studio_documents.create_review_approval",
+      "tag": "StudioDocuments",
+      "summary": "Give a verdict on a review request you were asked to review",
+      "authenticated": true,
+      "request": "ReviewVerdictInput",
+      "responses": [
+        "ApprovalDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/review-requests/{request_id}/cancel",
+      "operation_id": "studio_documents.cancel_review_request",
+      "tag": "StudioDocuments",
+      "summary": "Withdraw a review request you asked for",
+      "authenticated": true,
+      "request": "ReviewCancelInput",
+      "responses": [
+        "ReviewRequestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -3508,6 +3645,23 @@
       "request": "SendNoteRequest",
       "responses": [
         "SendNoteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/gearbox/brings",
+      "operation_id": "studio_product.query_gear_brings",
+      "tag": "StudioProduct",
+      "summary": "What adding one gear would bring into a product with it",
+      "authenticated": true,
+      "request": "GearBringsRequest",
+      "responses": [
+        "GearBringsDto"
       ],
       "errors": [
         "400",
@@ -4459,6 +4613,23 @@
       "request": "UploadAvatarRequest",
       "responses": [
         "UserProfileDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-user/v1/me/inbox-marks",
+      "operation_id": "studio_user.upsert_my_inbox_mark",
+      "tag": "StudioUser",
+      "summary": "Mark one inbox item done, snooze it, or open it again",
+      "authenticated": true,
+      "request": "InboxMarkRequest",
+      "responses": [
+        "InboxMarkDto"
       ],
       "errors": [
         "400",

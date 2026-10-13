@@ -16,6 +16,7 @@ is [`studio-frontend/docs/studio-events.md`](../studio-frontend/docs/studio-even
 | --- | --- | --- |
 | `task_run` | the run id | `GET /studio-tasks/v1/runs/{id}` |
 | `workspace` | the workspace (root project) id | `GET /studio-theia/v1/workspaces/{id}/status` |
+| `review_request` | the review request id | `GET /studio-documents/v1/review-requests?project_id=` |
 
 ## `task_run` — background work
 
@@ -47,6 +48,20 @@ alone would tell a client the run had just lost its summary.
 `task.progress` is as frequent as a handler reports — several a second for a
 busy import. A consumer that reloads on it coalesces (300 ms is what the
 prototype's run list uses).
+
+## `review_request` — reviews of a project's documents
+
+Published by `studio-documents` (`source: "studio-documents"`) when somebody asks
+for a review, gives a verdict, or withdraws a request. The tenant is the
+caller's, so everybody in the organization who is listening hears it; a client
+keeps only what concerns its person (`reviewers`, `requested_by`) and reads
+`GET /studio-documents/v1/review-requests` again — the event is a prompt (E5).
+
+| `kind` | When | Payload |
+| --- | --- | --- |
+| `review_request.created` | a review was asked for | the request: `id`, `project_id`, `subject_id`, `title`, `state`, `requested_by`, `reviewers` (person ids), `outstanding`, `due_at` |
+| `review_request.decided` | a reviewer gave a verdict | the same, as the request stands after it |
+| `review_request.cancelled` | the person who asked withdrew it | the same |
 
 ## `workspace` — the IDE bridge
 

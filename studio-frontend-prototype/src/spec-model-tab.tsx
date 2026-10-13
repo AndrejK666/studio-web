@@ -14,30 +14,37 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import {
+  BASIS_LABEL,
+  BASIS_ORDER,
+  basisSummary,
   buildLine,
   codeSpans,
   coverageCounts,
   entitiesOf,
   factsByKind,
+  filterRequirements,
   mergeTargets,
   orderFindings,
   orderProductFindings,
   relatedEntities,
+  requirementKinds,
   ruleLabel,
   sideLabel,
   type Entity,
   type GlossaryEntry,
   type ProductFinding,
+  type RequirementFilter,
   type SpecModel,
   type SpecModelFact,
   type SpecModelFinding,
   type SpecModelSide,
+  type SpecRequirements,
   type WorkLinks,
   workLabel,
   workState,
 } from "./spec-model";
 
-type View = "problems" | "entities" | "glossary" | "work" | "product" | "coverage";
+type View = "problems" | "requirements" | "entities" | "glossary" | "work" | "product" | "coverage";
 
 /** The product findings as read, or why they could not be. */
 type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
@@ -66,6 +73,7 @@ export function SpecModelTab({
   const [product, setProduct] = useState<ProductRead | null>(null);
   const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
   const [work, setWork] = useState<WorkLinks | { error: string } | null>(null);
+  const [requirements, setRequirements] = useState<SpecRequirements | { error: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -109,6 +117,19 @@ export function SpecModelTab({
       .workLinks(token, projectId)
       .then((r) => live && setWork(r))
       .catch((e: unknown) => live && setWork({ error: message(e) }));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
+
+  // Read without a model and without a key: what the documents define and
+  // what each states it rests on.
+  useEffect(() => {
+    let live = true;
+    api
+      .specRequirements(token, projectId)
+      .then((r) => live && setRequirements(r))
+      .catch((e: unknown) => live && setRequirements({ error: message(e) }));
     return () => {
       live = false;
     };
@@ -170,6 +191,13 @@ export function SpecModelTab({
       <div className="sm-bar">
         <div className="sm-views" role="tablist">
           <ViewChip id="problems" view={view} setView={setView} label="Problems" count={open} />
+          <ViewChip
+            id="requirements"
+            view={view}
+            setView={setView}
+            label="Requirements"
+            count={requirements && "items" in requirements ? requirements.total : 0}
+          />
           <ViewChip id="entities" view={view} setView={setView} label="Entities" count={entities.length} />
           <ViewChip id="glossary" view={view} setView={setView} label="Glossary" count={glossary.length} />
           <ViewChip id="work" view={view} setView={setView} label="Work" count={work && "items" in work ? work.total : 0} />
@@ -207,6 +235,7 @@ export function SpecModelTab({
       {model && view === "problems" && (
         <Problems findings={ordered} onDecide={decide} onOpenFile={onOpenFile} built={model.facts.length > 0} />
       )}
+      {view === "requirements" && <Requirements read={requirements} onOpenFile={onOpenFile} />}
       {model && view === "entities" && <Entities entities={entities} onOpenFile={onOpenFile} />}
       {model && view === "glossary" && <Glossary entries={glossary} onDecide={decideTerm} />}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
@@ -511,6 +540,103 @@ function Work({
           </li>
         ))}
       </ul>
+    </>
+  );
+}
+
+/** What the documents define, and what each requirement states it rests on:
+ *  a source it cites, a reason, or the words that make it an assumption or an
+ *  open question. Shown, never raised as a problem. */
+function Requirements({
+  read,
+  onOpenFile,
+}: {
+  read: SpecRequirements | { error: string } | null;
+  onOpenFile?: (path: string) => void;
+}) {
+  const [filter, setFilter] = useState<RequirementFilter>({ basis: "all", kind: "all", text: "", noWork: false });
+  if (read === null) return <div className="empty">Loading…</div>;
+  if ("error" in read) return <div className="error">{read.error}</div>;
+  if (read.total === 0) {
+    return (
+      <div className="empty">
+        The documents define no identifiers with a label (**ID**: `…`), so there are no requirements to list.
+      </div>
+    );
+  }
+  const kinds = requirementKinds(read.items);
+  const shown = filterRequirements(read.items, filter);
+  return (
+    <>
+      <p className="hint">
+        {basisSummary(read)} Read from each requirement&apos;s own block as written; nothing is asked of the
+        documents.
+      </p>
+      <div className="sm-req-filters">
+        <select
+          aria-label="Basis"
+          value={filter.basis}
+          onChange={(e) => setFilter({ ...filter, basis: e.target.value as RequirementFilter["basis"] })}
+        >
+          <option value="all">Any basis</option>
+          {BASIS_ORDER.map((b) => (
+            <option key={b} value={b}>
+              {BASIS_LABEL[b]} ({read.by_basis[b] ?? 0})
+            </option>
+          ))}
+        </select>
+        {kinds.length > 1 && (
+          <select aria-label="Kind" value={filter.kind} onChange={(e) => setFilter({ ...filter, kind: e.target.value })}>
+            <option value="all">Any kind</option>
+            {kinds.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+        )}
+        {read.synced && (
+          <label className="sm-req-nowork">
+            <input
+              type="checkbox"
+              checked={filter.noWork}
+              onChange={(e) => setFilter({ ...filter, noWork: e.target.checked })}
+            />{" "}
+            No work yet
+          </label>
+        )}
+        <input
+          type="search"
+          placeholder="Filter by id, title or text"
+          value={filter.text}
+          onChange={(e) => setFilter({ ...filter, text: e.target.value })}
+        />
+      </div>
+      <ul className="rows sm-work">
+        {shown.map((r) => (
+          <li key={`${r.id}@${r.defined_in.path}:${r.defined_in.line_start}`} className="sm-work-row">
+            <div className="sm-term-head">
+              <code>{r.id}</code>
+              {r.priority && <span className="sm-status">{r.priority}</span>}
+              <span className={`sm-status sm-basis-${r.basis}`} title={r.because ? `Because of “${r.because}”` : undefined}>
+                {BASIS_LABEL[r.basis]}
+              </span>
+              {read.synced && <span className="sm-status">{r.work === 0 ? "no work" : `${r.work} work`}</span>}
+              <SideLink side={r.defined_in} onOpenFile={onOpenFile} />
+            </div>
+            {r.title && <div className="sm-req-title">{r.title}</div>}
+            {r.text && <div className="sm-work-title">{r.text}</div>}
+            {r.cites.length > 0 && (
+              <div className="sm-req-cites">
+                Cites: {r.cites.map((c, i) => (
+                  <code key={i}>{c}</code>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {shown.length === 0 && <div className="empty">No requirement matches the filter.</div>}
     </>
   );
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BringsWithIt } from "./gear-brings-view";
 import {
   api,
   matchReason,
@@ -592,6 +593,8 @@ function SuggestedComponents({
   const [scaffoldFor, setScaffoldFor] = useState<PlanRow | null>(null);
   /** Rows showing every candidate, not just the recommended one and the picks. */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  /** The candidate whose "brings with it" is open, and under which capability. */
+  const [bringing, setBringing] = useState<{ capability: string; name: string } | null>(null);
   const toggleWhy = (capability: string, candidate?: string) =>
     setWhyOpen((current) => {
       const next = { ...current };
@@ -957,6 +960,23 @@ function SuggestedComponents({
                               {c.decision?.needs_review && (
                                 <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, opacity: 0.6 }}>REVIEW</span>
                               )}
+                              {pickable && !picked && (
+                                <button
+                                  type="button"
+                                  title="What adding it would bring into the product with it"
+                                  aria-expanded={bringing?.name === c.name && bringing.capability === row.capability}
+                                  onClick={() =>
+                                    setBringing((b) =>
+                                      b?.name === c.name && b.capability === row.capability
+                                        ? null
+                                        : { capability: row.capability, name: c.name },
+                                    )
+                                  }
+                                  style={{ ...chipToggleStyle, marginLeft: 6, padding: "0 2px" }}
+                                >
+                                  ⇣
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 title="Why this gear is offered for this capability"
@@ -977,6 +997,15 @@ function SuggestedComponents({
                             </span>
                           );
                         })}
+                        {bringing && bringing.capability === row.capability && (
+                          <BringsWithIt
+                            token={token}
+                            picks={product.picks}
+                            config={product.config}
+                            candidate={bringing.name}
+                            onClose={() => setBringing(null)}
+                          />
+                        )}
                         {(hidden > 0 || expanded[row.capability]) && (
                           <button
                             type="button"

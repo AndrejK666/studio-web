@@ -16,6 +16,7 @@ pub(crate) mod glossary;
 pub(crate) mod index;
 pub(crate) mod judge;
 pub(crate) mod record;
+pub(crate) mod requirements;
 pub(crate) mod rules;
 pub(crate) mod work;
 
@@ -46,6 +47,11 @@ impl Sources {
     /// The identifiers the documents define with a label, and where.
     pub fn labelled_ids(&self) -> BTreeMap<String, Vec<finding::Side>> {
         index::labelled_ids(&source_docs(&self.documents))
+    }
+
+    /// Every requirement the documents define, with the basis it states.
+    pub fn requirements(&self) -> Vec<requirements::Requirement> {
+        requirements::requirements(&source_docs(&self.documents))
     }
 }
 

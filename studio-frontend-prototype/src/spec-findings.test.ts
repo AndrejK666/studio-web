@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rowReview } from "./spec-findings";
+import { rowReview, withDecisions } from "./spec-findings";
 
 const typed = { type_key: "adr", state: "confirmed" as const, checked_at: null, findings: 0 };
 
@@ -34,5 +34,18 @@ describe("rowReview", () => {
 
   it("does not review a file decided not to be a document", () => {
     expect(rowReview({ ...typed, state: "not_a_document" }).label).toBe("Not a document");
+  });
+});
+
+describe("withDecisions", () => {
+  const items = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  it("folds the dismissed apart and puts confirmed first", () => {
+    const { open, dismissed } = withDecisions(items, { b: "confirmed", c: "dismissed" });
+    expect(open.map((i) => i.id)).toEqual(["b", "a"]);
+    expect(open[0].decision).toBe("confirmed");
+    expect(dismissed.map((i) => i.id)).toEqual(["c"]);
+  });
+  it("keeps the order when nothing is decided", () => {
+    expect(withDecisions(items, {}).open.map((i) => i.id)).toEqual(["a", "b", "c"]);
   });
 });

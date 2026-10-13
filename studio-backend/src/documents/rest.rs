@@ -1633,6 +1633,23 @@ pub struct Quality {
 }
 
 impl Quality {
+    /// The caller as a canonical person, with their name (ADR-0025).
+    async fn caller(&self, ctx: &SecurityContext) -> ApiResult<(String, Option<String>)> {
+        let people = self
+            .hub
+            .get_scoped::<dyn crate::user_profile::PersonResolver>(
+                &toolkit::client_hub::ClientScope::gts_id(
+                    crate::user_profile::IDENTITY_INSTANCE_ID,
+                ),
+            )
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail("studio-user is not available, so nobody can be told apart")
+                    .create()
+            })?;
+        people.resolve_caller_named(ctx).await.map_err(internal)
+    }
+
     fn reader(&self) -> ApiResult<Arc<dyn crate::artifact_ingest::port::RepoFileReader>> {
         self.hub
             .get::<dyn crate::artifact_ingest::port::RepoFileReader>()
@@ -2170,6 +2187,14 @@ pub struct SpecModelDecisionDto {
     pub decided_at: String,
 }
 
+/// Every ✓/✗ members gave on a project's findings.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelDecisionListDto {
+    pub items: Vec<SpecModelDecisionDto>,
+    pub total: u32,
+}
+
 /// One name merged into a glossary entry.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -2268,6 +2293,46 @@ pub struct WorkLinkListDto {
     /// Of those, the ones that name no identifier.
     pub unlinked: u32,
     /// False when this deployment has no artifact sync to read work from.
+    pub synced: bool,
+}
+
+/// One requirement a project's documents define, and what it states it
+/// rests on (docs/spec-domain-model.md, "Requirements and their basis").
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecRequirementDto {
+    pub id: String,
+    /// Where it is defined: the label's line.
+    pub defined_in: SpecModelSideDto,
+    /// The nearest heading above the label.
+    pub title: Option<String>,
+    /// The statement, without its labelled list items; clipped.
+    pub text: String,
+    /// The identifier's segment after its family (`fr` in `cpt-x-fr-y`).
+    pub kind: Option<String>,
+    /// `p1`…`p9`, when the label's line gives one.
+    pub priority: Option<String>,
+    /// The label line's checkbox, when it has one.
+    pub done: Option<bool>,
+    /// `open_question`, `assumption`, `cited`, `reasoned` or `stated`.
+    pub basis: String,
+    /// What it cites, as written.
+    pub cites: Vec<String>,
+    /// The words that made it an assumption or an open question.
+    pub because: Option<String>,
+    /// Synced issues, pull requests and commits that name it.
+    pub work: u32,
+}
+
+/// A project's requirements, in document order.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecRequirementListDto {
+    pub items: Vec<SpecRequirementDto>,
+    pub total: u32,
+    /// How many items have each basis, keyed by basis.
+    pub by_basis: std::collections::BTreeMap<String, u32>,
+    /// False when this deployment has no artifact sync, so `work` is 0.
     pub synced: bool,
 }
 
@@ -2863,6 +2928,73 @@ async fn list_work_links(
     }))
 }
 
+/// Every requirement the project's documents define, with the basis it
+/// states and how much work names it.
+async fn list_spec_requirements(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecRequirementListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let requirements = sources.requirements();
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let mut work_per_id: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    let synced = match quality.work() {
+        Some(source) => {
+            let work = source
+                .project_work(&ctx, &project_id.to_string())
+                .await
+                .map_err(internal)?;
+            let (linked, _) = super::spec_model::work::link(&sources.labelled_ids(), &work);
+            for l in linked {
+                work_per_id.insert(l.id, l.work.len());
+            }
+            true
+        }
+        None => false,
+    };
+    let mut by_basis: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    let items: Vec<SpecRequirementDto> = requirements
+        .into_iter()
+        .map(|r| {
+            *by_basis.entry(r.basis.as_str().to_string()).or_default() += 1;
+            let line = u32::try_from(r.line).ok();
+            SpecRequirementDto {
+                work: count(work_per_id.get(&r.id).copied().unwrap_or(0)),
+                defined_in: SpecModelSideDto {
+                    path: r.path,
+                    line_start: line,
+                    line_end: line,
+                    quote: None,
+                },
+                id: r.id,
+                title: r.title,
+                text: r.text,
+                kind: r.kind,
+                priority: r.priority,
+                done: r.done,
+                basis: r.basis.as_str().to_string(),
+                cites: r.cites,
+                because: r.because,
+            }
+        })
+        .collect();
+    Ok(Json(SpecRequirementListDto {
+        total: count(items.len()),
+        items,
+        by_basis,
+        synced,
+    }))
+}
+
 /// The longest key or name a glossary decision takes: a subject is a few
 /// words, never a passage.
 const GLOSSARY_TEXT_MAX: usize = 200;
@@ -2970,6 +3102,494 @@ async fn decide_spec_model_finding(
                 .unwrap_or_default(),
         }),
     ))
+}
+
+/// Every decision members recorded on the project's findings, of the model
+/// and of the Spec Quality detectors alike: both are keyed by fingerprint.
+async fn list_spec_model_decisions(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecModelDecisionListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let items: Vec<SpecModelDecisionDto> = service
+        .spec_decisions(workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|d| SpecModelDecisionDto {
+            fingerprint: d.fingerprint,
+            decision: d.decision,
+            decided_by: d.decided_by.to_string(),
+            decided_at: d
+                .decided_at
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+        })
+        .collect();
+    Ok(Json(SpecModelDecisionListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+// ── review requests and approvals ────────────────────────────────────────────
+
+/// One person to ask, as a request names them.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReviewerInput {
+    /// Canonical person id.
+    pub person: String,
+    pub name: Option<String>,
+    /// Defaults to true: the request is not approved until they approve.
+    pub required: Option<bool>,
+}
+
+/// Ask for a review of one version of one document.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReviewRequestInput {
+    pub project_id: String,
+    /// `document` (written in Studio) or `binding` (a repository file).
+    pub subject_kind: String,
+    pub subject_id: String,
+    pub type_key: Option<String>,
+    pub title: String,
+    /// The version asked about: a commit sha or a revision.
+    pub version: String,
+    pub reviewers: Vec<ReviewerInput>,
+    /// RFC 3339.
+    pub due_at: Option<String>,
+}
+
+/// A reviewer's verdict on a request.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReviewVerdictInput {
+    pub project_id: String,
+    /// `approved` or `changes_requested`.
+    pub verdict: String,
+    pub note: Option<String>,
+}
+
+/// Which request to cancel.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ReviewCancelInput {
+    pub project_id: String,
+}
+
+/// One reviewer of a request, and where they stand.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewerDto {
+    pub person: String,
+    pub name: Option<String>,
+    pub required: bool,
+    /// Their latest verdict, when they gave one.
+    pub verdict: Option<String>,
+}
+
+/// One verdict, as it was recorded. Never edited.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ApprovalDto {
+    pub id: String,
+    pub request_id: String,
+    pub version: String,
+    pub approver: String,
+    pub approver_name: Option<String>,
+    pub verdict: String,
+    pub note: Option<String>,
+    /// The detectors that had passed on the document when it was given.
+    pub checks: Vec<String>,
+    pub decided_at: String,
+}
+
+/// A review request with everyone it asks and every verdict given.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewRequestDto {
+    pub id: String,
+    pub project_id: String,
+    pub subject_kind: String,
+    pub subject_id: String,
+    pub type_key: Option<String>,
+    pub title: String,
+    pub version: String,
+    pub requested_by: String,
+    pub requested_by_name: Option<String>,
+    pub reviewers: Vec<ReviewerDto>,
+    pub due_at: Option<String>,
+    /// `open`, `approved`, `superseded` or `withdrawn`.
+    pub state: String,
+    /// Past its due date with a required reviewer still awaited.
+    pub overdue: bool,
+    /// The required reviewers who have not approved, by name.
+    pub outstanding: Vec<String>,
+    pub created_at: String,
+    pub verdicts: Vec<ApprovalDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewRequestListDto {
+    pub items: Vec<ReviewRequestDto>,
+    pub total: u32,
+}
+
+/// A reviewer worth asking, from who was asked before.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewerSuggestionDto {
+    pub person: String,
+    pub name: Option<String>,
+    /// Whether they were required the last time they were asked.
+    pub required: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewerSuggestionListDto {
+    pub items: Vec<ReviewerSuggestionDto>,
+    pub total: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ReviewListQuery {
+    /// One project's requests; or
+    pub project_id: Option<String>,
+    /// every project's in this workspace.
+    pub workspace_id: Option<String>,
+    /// One document's requests.
+    pub subject_id: Option<String>,
+    /// `me`: only open requests that still wait for the caller's verdict.
+    pub waiting_on: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ReviewerSuggestionQuery {
+    pub project_id: String,
+    pub subject_id: String,
+    pub type_key: Option<String>,
+}
+
+fn rfc3339(t: time::OffsetDateTime) -> String {
+    t.format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default()
+}
+
+fn parse_uuid_field(field: &str, raw: &str) -> ApiResult<Uuid> {
+    Uuid::parse_str(raw.trim()).map_err(|_| {
+        DocumentsError::invalid_argument()
+            .with_field_violation(field, "must be a UUID".to_owned(), "INVALID")
+            .create()
+    })
+}
+
+/// Tell the caller's organization a review request changed, so an inbox or a
+/// stage on screen reads it again (`docs/events-catalog.md`, rule E5: the
+/// event is a prompt, `GET /review-requests` is the truth).
+fn announce_review(quality: &Quality, ctx: &SecurityContext, kind: &str, dto: &ReviewRequestDto) {
+    let Ok(events) = quality
+        .hub
+        .get::<dyn crate::studio_events::StudioEventPublisher>()
+    else {
+        return;
+    };
+    events.publish(
+        crate::studio_events::StudioEvent::new(
+            ctx.subject_tenant_id(),
+            kind,
+            "review_request",
+            dto.id.clone(),
+            "studio-documents",
+        )
+        .with_payload(serde_json::json!({
+            "id": dto.id,
+            "project_id": dto.project_id,
+            "subject_id": dto.subject_id,
+            "title": dto.title,
+            "state": dto.state,
+            "requested_by": dto.requested_by,
+            "reviewers": dto.reviewers.iter().map(|r| r.person.clone()).collect::<Vec<_>>(),
+            "outstanding": dto.outstanding,
+            "due_at": dto.due_at,
+        })),
+    );
+}
+
+fn approval_dto(a: &super::entity::approval::Model) -> ApprovalDto {
+    ApprovalDto {
+        id: a.id.to_string(),
+        request_id: a.request_id.to_string(),
+        version: a.version.clone(),
+        approver: a.approver.clone(),
+        approver_name: a.approver_name.clone(),
+        verdict: a.verdict.clone(),
+        note: a.note.clone(),
+        checks: serde_json::from_value(a.checks.clone()).unwrap_or_default(),
+        decided_at: rfc3339(a.decided_at),
+    }
+}
+
+fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> ReviewRequestDto {
+    let r = &review.request;
+    let reviewers = review.reviewers();
+    let facts = review.verdict_facts();
+    let latest = |person: &str| {
+        review
+            .verdicts
+            .iter()
+            .filter(|v| v.approver == person)
+            .max_by_key(|v| v.decided_at)
+            .map(|v| v.verdict.clone())
+    };
+    let open = r.state == "open";
+    ReviewRequestDto {
+        id: r.id.to_string(),
+        project_id: r.project_id.to_string(),
+        subject_kind: r.subject_kind.clone(),
+        subject_id: r.subject_id.to_string(),
+        type_key: r.type_key.clone(),
+        title: r.title.clone(),
+        version: r.version.clone(),
+        requested_by: r.requested_by.clone(),
+        requested_by_name: r.requested_by_name.clone(),
+        overdue: open && super::approvals::overdue(r.due_at, &reviewers, &facts, now),
+        outstanding: if open {
+            super::approvals::outstanding(&reviewers, &facts)
+                .into_iter()
+                .map(|x| x.name.clone().unwrap_or_else(|| x.person.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        },
+        reviewers: reviewers
+            .iter()
+            .map(|x| ReviewerDto {
+                verdict: latest(&x.person),
+                person: x.person.clone(),
+                name: x.name.clone(),
+                required: x.required,
+            })
+            .collect(),
+        due_at: r.due_at.map(rfc3339),
+        state: r.state.clone(),
+        created_at: rfc3339(r.created_at),
+        verdicts: review.verdicts.iter().map(approval_dto).collect(),
+    }
+}
+
+/// Ask people to review one version of a document.
+async fn create_review_request(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<ReviewRequestInput>,
+) -> ApiResult<(StatusCode, JsonBody<ReviewRequestDto>)> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let subject_id = parse_uuid_field("subject_id", &body.subject_id)?;
+    let due_at = match body
+        .due_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+    {
+        Some(d) => Some(
+            time::OffsetDateTime::parse(d, &time::format_description::well_known::Rfc3339)
+                .map_err(|_| {
+                    DocumentsError::invalid_argument()
+                        .with_field_violation("due_at", "must be RFC 3339".to_owned(), "INVALID")
+                        .create()
+                })?,
+        ),
+        None => None,
+    };
+    let requester = quality.caller(&ctx).await?;
+    let ask = super::service::ReviewAsk {
+        subject_kind: body.subject_kind,
+        subject_id,
+        type_key: body.type_key,
+        title: body.title,
+        version: body.version,
+        reviewers: body
+            .reviewers
+            .into_iter()
+            .map(|r| super::approvals::Reviewer {
+                person: r.person.trim().to_string(),
+                name: r.name,
+                required: r.required.unwrap_or(true),
+            })
+            .collect(),
+        due_at,
+    };
+    let review = service
+        .request_review(workspace_id, project_id, ask, requester)
+        .await
+        .map_err(invalid)?;
+    let dto = review_dto(&review, time::OffsetDateTime::now_utc());
+    announce_review(&quality, &ctx, "review_request.created", &dto);
+    Ok((StatusCode::CREATED, Json(dto)))
+}
+
+/// A project's (or a workspace's) review requests, newest first.
+async fn list_review_requests(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<ReviewListQuery>,
+) -> ApiResult<JsonBody<ReviewRequestListDto>> {
+    let reviews = match (query.project_id.as_deref(), query.workspace_id.as_deref()) {
+        (Some(p), _) => {
+            let project_id = parse_project_id(p)?;
+            let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+            let subject = match query.subject_id.as_deref() {
+                Some(s) => Some(parse_uuid_field("subject_id", s)?),
+                None => None,
+            };
+            service
+                .reviews_with_verdicts(workspace_id, project_id, subject)
+                .await
+                .map_err(internal)?
+        }
+        (None, Some(w)) => {
+            let workspace_id = parse_uuid_field("workspace_id", w)?;
+            service
+                .authorize(&ctx, workspace_id)
+                .await
+                .map_err(no_tenant)?;
+            service
+                .workspace_reviews(workspace_id)
+                .await
+                .map_err(internal)?
+        }
+        (None, None) => {
+            return Err(DocumentsError::invalid_argument()
+                .with_field_violation(
+                    "project_id",
+                    "name a project_id or a workspace_id".to_owned(),
+                    "REQUIRED",
+                )
+                .create());
+        }
+    };
+    let reviews = match query.waiting_on.as_deref() {
+        None => reviews,
+        Some("me") => {
+            let (me, _) = quality.caller(&ctx).await?;
+            reviews
+                .into_iter()
+                .filter(|r| r.request.state == "open")
+                .filter(|r| {
+                    let reviewers = r.reviewers();
+                    super::approvals::awaiting(&reviewers, &r.verdict_facts())
+                        .iter()
+                        .any(|x| x.person == me)
+                })
+                .collect()
+        }
+        Some(_) => {
+            return Err(DocumentsError::invalid_argument()
+                .with_field_violation("waiting_on", "only `me` is supported".to_owned(), "INVALID")
+                .create());
+        }
+    };
+    let now = time::OffsetDateTime::now_utc();
+    let items: Vec<ReviewRequestDto> = reviews.iter().map(|r| review_dto(r, now)).collect();
+    Ok(Json(ReviewRequestListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+/// Record the caller's verdict on a request they were asked to review.
+async fn create_review_approval(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path(request_id): Path<String>,
+    Json(body): Json<ReviewVerdictInput>,
+) -> ApiResult<(StatusCode, JsonBody<ApprovalDto>)> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let request_id = parse_uuid_field("request_id", &request_id)?;
+    let approver = quality.caller(&ctx).await?;
+    let (review, approval) = service
+        .give_verdict(workspace_id, request_id, approver, &body.verdict, body.note)
+        .await
+        .map_err(invalid)?
+        .ok_or_else(|| {
+            DocumentsError::not_found("no such review request in this project")
+                .with_resource("review_request")
+                .create()
+        })?;
+    let dto = review_dto(&review, time::OffsetDateTime::now_utc());
+    announce_review(&quality, &ctx, "review_request.decided", &dto);
+    Ok((StatusCode::CREATED, Json(approval_dto(&approval))))
+}
+
+/// Withdraw an open request the caller asked for.
+async fn cancel_review_request(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path(request_id): Path<String>,
+    Json(body): Json<ReviewCancelInput>,
+) -> ApiResult<JsonBody<ReviewRequestDto>> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let request_id = parse_uuid_field("request_id", &request_id)?;
+    let (me, _) = quality.caller(&ctx).await?;
+    let review = service
+        .withdraw_review(workspace_id, request_id, &me)
+        .await
+        .map_err(invalid)?
+        .ok_or_else(|| {
+            DocumentsError::not_found("no such review request in this project")
+                .with_resource("review_request")
+                .create()
+        })?;
+    let dto = review_dto(&review, time::OffsetDateTime::now_utc());
+    announce_review(&quality, &ctx, "review_request.cancelled", &dto);
+    Ok(Json(dto))
+}
+
+/// Whom to ask about a document, from who was asked before in the project.
+async fn list_reviewer_suggestions(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<ReviewerSuggestionQuery>,
+) -> ApiResult<JsonBody<ReviewerSuggestionListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let subject_id = parse_uuid_field("subject_id", &query.subject_id)?;
+    let (me, _) = quality.caller(&ctx).await?;
+    let items: Vec<ReviewerSuggestionDto> = service
+        .suggest_reviewers(
+            workspace_id,
+            project_id,
+            subject_id,
+            query.type_key.as_deref(),
+            &me,
+        )
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|r| ReviewerSuggestionDto {
+            person: r.person,
+            name: r.name,
+            required: r.required,
+        })
+        .collect();
+    Ok(Json(ReviewerSuggestionListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
 }
 
 // ── the Specs list, folded here rather than in a page ────────────────────────
@@ -3183,11 +3803,20 @@ async fn list_spec_rows(
     // columns rather than the screen.
     let scope = project_id.to_string();
     let mut known = super::spec_rows::Known::default();
+    // A finding a member dismissed (✗) is not counted against its document.
+    let dismissed: std::collections::BTreeSet<String> = service
+        .spec_decisions(workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .filter(|d| d.decision == "dismissed")
+        .map(|d| d.fingerprint)
+        .collect();
     let (candidates, files_known, reviews_known, repos_known) = match quality.files() {
         Some(files) => {
             let (found, reviews, repo_paths) = tokio::join!(
                 files.list_files(&ctx, &scope),
-                files.reviews(&ctx, &scope),
+                files.reviews(&ctx, &scope, &dismissed),
                 files.repo_paths(&ctx, &scope),
             );
             // Each read degrades one part of the answer, and the response says
@@ -3753,6 +4382,31 @@ pub fn register_routes(
         .error_503(openapi)
         .register(router, openapi);
 
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/decisions")
+        .operation_id("studio_documents.list_spec_model_decisions")
+        .summary("Every ✓ and ✗ members gave on a project's findings")
+        .description(
+            "The decisions recorded with `POST /spec-model/findings/{fingerprint}/decision`, for \
+             the model's findings and the Spec Quality detectors' alike, since both are keyed by \
+             their fingerprint. A `dismissed` finding is not counted on the Specs list. The list \
+             is read whole.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose decisions to read")
+        .handler(list_spec_model_decisions)
+        .json_response_with_schema::<SpecModelDecisionListDto>(
+            openapi,
+            StatusCode::OK,
+            "The decisions",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     router =
         OperationBuilder::post("/studio-documents/v1/spec-model/findings/{fingerprint}/decision")
             .operation_id("studio_documents.decide_spec_model_finding")
@@ -3826,6 +4480,166 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/review-requests")
+        .operation_id("studio_documents.create_review_request")
+        .summary("Ask people to review one version of a document")
+        .description(
+            "Names the document (`document` written in Studio, or `binding` for a repository \
+             file), the version asked about, the reviewers (required unless `required: false`) \
+             and an optional due date. An earlier open request on the same document becomes \
+             `superseded`. While a required reviewer has not approved, the document's stage is \
+             not complete (`stage-status`, `approvals_outstanding`).",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ReviewRequestInput>(
+            openapi,
+            "The document, version, reviewers and due date",
+        )
+        .handler(create_review_request)
+        .json_response_with_schema::<ReviewRequestDto>(openapi, StatusCode::CREATED, "The request")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/review-requests")
+        .operation_id("studio_documents.list_review_requests")
+        .summary("A project's or a workspace's review requests, with every verdict given")
+        .description(
+            "Newest first, each with its reviewers and where each stands, the verdicts as \
+             recorded, the required reviewers still awaited (`outstanding`) and whether it is \
+             past its due date (`overdue`). `project_id` (optionally narrowed by `subject_id`) \
+             or `workspace_id`; `waiting_on=me` keeps the open requests that still wait for the \
+             caller's verdict. The list is read whole.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", false, "One project's requests")
+        .query_param("workspace_id", false, "Every project's in the workspace")
+        .query_param("subject_id", false, "One document's requests")
+        .query_param(
+            "waiting_on",
+            false,
+            "`me`: only the requests awaiting the caller",
+        )
+        .handler(list_review_requests)
+        .json_response_with_schema::<ReviewRequestListDto>(openapi, StatusCode::OK, "The requests")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/review-requests/{request_id}/approvals")
+        .operation_id("studio_documents.create_review_approval")
+        .summary("Give a verdict on a review request you were asked to review")
+        .description(
+            "Records `approved` or `changes_requested` from the caller, who must be one of the \
+             request's reviewers, against the version the request names, with the detectors \
+             that had passed on the document at that moment. A verdict is never edited: a \
+             later one is another record, and the latest counts. When every required reviewer \
+             has approved, the request becomes `approved`.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("request_id", "The review request")
+        .json_request::<ReviewVerdictInput>(openapi, "The project, verdict and note")
+        .handler(create_review_approval)
+        .json_response_with_schema::<ApprovalDto>(openapi, StatusCode::CREATED, "The verdict")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/review-requests/{request_id}/cancel")
+        .operation_id("studio_documents.cancel_review_request")
+        .summary("Withdraw a review request you asked for")
+        .description(
+            "Only the person who asked can withdraw it. An open request becomes `withdrawn` and \
+             stops holding the document's stage; one already approved or superseded is \
+             answered as it is. The verdicts given stay on record.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("request_id", "The review request")
+        .json_request::<ReviewCancelInput>(openapi, "The project")
+        .handler(cancel_review_request)
+        .json_response_with_schema::<ReviewRequestDto>(openapi, StatusCode::OK, "The request")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/review-requests/reviewer-suggestions")
+        .operation_id("studio_documents.list_reviewer_suggestions")
+        .summary("Whom to ask to review a document, from who was asked before")
+        .description(
+            "The reviewers of earlier requests on this document first, then of documents of \
+             its type in the project, each ranked by how often they were asked, never the \
+             caller; `required` as it was the last time. Empty for a project nobody reviewed \
+             in yet.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .query_param("subject_id", true, "The document")
+        .query_param("type_key", false, "The document's type")
+        .handler(list_reviewer_suggestions)
+        .json_response_with_schema::<ReviewerSuggestionListDto>(
+            openapi,
+            StatusCode::OK,
+            "The suggestions",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/requirements")
+        .operation_id("studio_documents.list_spec_model_requirements")
+        .summary("The requirements a project's documents define, and what each rests on")
+        .description(
+            "Every identifier a project's documents define with a label (`**ID**: `x``), with \
+             its statement, heading, priority and checkbox, and the basis its own block states: \
+             `cited` (a link, an ADR, an issue or pull request, another document's identifier, \
+             a labelled source), `reasoned` (a rationale and no citation), `assumption` or \
+             `open_question` (the words that make it so are in `because`), or `stated` (nothing \
+             about where it comes from). Read as written, computed on every call and never \
+             stored; no finding is raised. `work` counts the synced issues, pull requests and \
+             commits that name the identifier (docs/spec-domain-model.md).",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose requirements to read")
+        .handler(list_spec_requirements)
+        .json_response_with_schema::<SpecRequirementListDto>(
+            openapi,
+            StatusCode::OK,
+            "The requirements",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/spec-model/work")

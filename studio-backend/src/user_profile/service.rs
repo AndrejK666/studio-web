@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use account_management_sdk::AccountManagementClient;
 use anyhow::{Result, anyhow};
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
@@ -219,6 +220,48 @@ pub const MAX_UI_PREFERENCE_VALUE: usize = 128;
 
 /// Why a preferences map was refused. Returned as a sentence, because it goes
 /// straight to a 400 and the caller is a developer reading a log.
+/// A person's mark on one inbox item (`entity::inbox_mark`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InboxMark {
+    /// What the portal calls the item: `review:<request id>`, `pr:<id>@<updated>`.
+    pub item_key: String,
+    /// `done`, `snoozed`, or `open` when just cleared.
+    pub state: String,
+    pub until: Option<OffsetDateTime>,
+    pub updated_at: OffsetDateTime,
+}
+
+/// How many marks a person keeps; the oldest go first.
+pub const MAX_INBOX_MARKS: usize = 1000;
+/// The longest item key: an id or two and a timestamp.
+pub const MAX_INBOX_KEY: usize = 200;
+
+/// Refuse a mark that is not one: an empty or oversized key, an unknown
+/// state, a snooze without a future `until`.
+pub fn check_inbox_mark(
+    item_key: &str,
+    state: &str,
+    until: Option<OffsetDateTime>,
+    now: OffsetDateTime,
+) -> Result<(), String> {
+    if item_key.trim().is_empty() || item_key.len() > MAX_INBOX_KEY {
+        return Err(format!(
+            "an inbox item key is 1 to {MAX_INBOX_KEY} characters"
+        ));
+    }
+    if item_key.chars().any(char::is_control) {
+        return Err("an inbox item key has no control characters".to_owned());
+    }
+    match state {
+        "done" | "open" => Ok(()),
+        "snoozed" => match until {
+            Some(u) if u > now => Ok(()),
+            _ => Err("a snooze needs an `until` in the future".to_owned()),
+        },
+        _ => Err("state is `done`, `snoozed` or `open`".to_owned()),
+    }
+}
+
 pub fn check_ui_preferences(prefs: &UiPreferences) -> Result<(), String> {
     if prefs.len() > MAX_UI_PREFERENCES {
         return Err(format!(
@@ -1004,6 +1047,42 @@ impl IdentityService {
         profile.updated_at_epoch_ms = now_ms();
         self.store.upsert_user(&profile).await?;
         Ok(profile)
+    }
+
+    /// This person's marks on their inbox items, newest first. A snooze that
+    /// has run out is left out: the item is back.
+    pub async fn inbox_marks(&self, user_id: &str) -> Result<Vec<InboxMark>> {
+        let now = OffsetDateTime::now_utc();
+        Ok(self
+            .store
+            .inbox_marks_of(user_id)
+            .await?
+            .into_iter()
+            .filter(|m| m.state != "snoozed" || m.until.is_some_and(|u| u > now))
+            .collect())
+    }
+
+    /// Mark one item `done`, `snoozed` until a time, or `open` again (which
+    /// clears the mark).
+    pub async fn set_inbox_mark(
+        &self,
+        user_id: &str,
+        item_key: &str,
+        state: &str,
+        until: Option<OffsetDateTime>,
+    ) -> Result<InboxMark> {
+        check_inbox_mark(item_key, state, until, OffsetDateTime::now_utc())
+            .map_err(|why| anyhow!("{why}"))?;
+        let mark = (state != "open").then_some((state, until));
+        self.store
+            .set_inbox_mark(user_id, item_key, mark, MAX_INBOX_MARKS)
+            .await?;
+        Ok(InboxMark {
+            item_key: item_key.to_owned(),
+            state: state.to_owned(),
+            until: until.filter(|_| state == "snoozed"),
+            updated_at: OffsetDateTime::now_utc(),
+        })
     }
 
     /// What this person has chosen about how Studio looks to them.
@@ -2971,6 +3050,21 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
             .collect()
+    }
+
+    #[test]
+    fn an_inbox_mark_is_checked_before_it_is_kept() {
+        let now = OffsetDateTime::from_unix_timestamp(1_791_885_600).expect("instant");
+        let later = now + time::Duration::hours(1);
+        assert!(check_inbox_mark("review:1", "done", None, now).is_ok());
+        assert!(check_inbox_mark("review:1", "open", None, now).is_ok());
+        assert!(check_inbox_mark("review:1", "snoozed", Some(later), now).is_ok());
+        assert!(check_inbox_mark("review:1", "snoozed", Some(now), now).is_err());
+        assert!(check_inbox_mark("review:1", "snoozed", None, now).is_err());
+        assert!(check_inbox_mark("review:1", "read", None, now).is_err());
+        assert!(check_inbox_mark(" ", "done", None, now).is_err());
+        assert!(check_inbox_mark(&"k".repeat(MAX_INBOX_KEY + 1), "done", None, now).is_err());
+        assert!(check_inbox_mark("a\nb", "done", None, now).is_err());
     }
 
     #[test]

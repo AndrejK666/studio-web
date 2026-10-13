@@ -300,9 +300,40 @@ Under `/studio-documents/v1`, beside the gear's other routes:
 | `GET` | `/spec-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
 | `POST` | `/spec-model/glossary/decisions` | Name an entry, or make it an alias of another; `201` with the decision |
 | `GET` | `/spec-model/work?project_id=` | The identifiers the documents define with a label, with the synced issues, pull requests and commits that name them ([the links](project-and-product.md#the-links)) |
+| `GET` | `/spec-model/requirements?project_id=` | Every labelled requirement with its statement and the basis its block states ([below](#requirements-and-their-basis)) |
+| `GET` | `/spec-model/decisions?project_id=` | Every ✓/✗ recorded on the project's findings, the model's and the Spec Quality detectors' alike |
 
 Every list answers `{items, total}`. A project the caller cannot reach answers
 404.
+
+## Requirements and their basis
+
+`requirements.rs`, served by `GET /spec-model/requirements` and shown in the
+Domain model tab's Requirements view. Asked for by the September 2026
+interviews (problem 1.4: "the model invents content", raised by ten people in
+five companies, High at all three scored companies): a reader wants to see
+which requirements rest on something and which do not.
+
+A requirement is whatever the documents define with a label, read as written.
+Its **block** is the lines after the label up to the next heading or label.
+Its **basis** is what that block itself states, strongest doubt first:
+
+- `open_question`: "TBD", "open question", "to be decided", or a sentence of
+  the statement ending in `?`;
+- `assumption`: "assum…", "presum…", "hypothes…", "we believe",
+  "unconfirmed";
+- `cited`: a link, an ADR, an issue or pull request (`#12`), a labelled
+  source (`**Source**:`, `**Evidence**:`), or an identifier another document
+  defines (one the same document defines, like its own actors, is not a
+  source);
+- `reasoned`: a rationale (`**Rationale**:`, `**Why**:`) and no citation;
+- `stated`: nothing about where it comes from.
+
+The words that made it an assumption or an open question are kept as
+`because`. Nothing here is a finding: `requirement.orphan` did not survive
+calibration, and a requirement with no stated basis is not wrong, only
+unsupported on the page. The list also carries how much synced work names each
+identifier, so "defined and never worked on" is one filter away.
 
 ## Tables
 

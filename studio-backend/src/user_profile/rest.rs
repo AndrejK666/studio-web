@@ -814,6 +814,103 @@ async fn update_me(
     Ok(Json(profile_dto(&service, updated).await?))
 }
 
+/// One mark on an inbox item.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InboxMarkDto {
+    pub item_key: String,
+    /// `done`, `snoozed`, or `open` when the mark was just cleared.
+    pub state: String,
+    /// When a snooze ends, RFC 3339.
+    pub until: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InboxMarkListDto {
+    pub items: Vec<InboxMarkDto>,
+    pub total: u32,
+}
+
+/// Mark one inbox item.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct InboxMarkRequest {
+    /// What the portal calls the item, e.g. `review:<request id>`.
+    pub item_key: String,
+    /// `done`, `snoozed` (with `until`), or `open` to clear the mark.
+    pub state: String,
+    /// RFC 3339; required for `snoozed`.
+    pub until: Option<String>,
+}
+
+fn inbox_mark_dto(m: super::service::InboxMark) -> InboxMarkDto {
+    let fmt = |t: time::OffsetDateTime| {
+        t.format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default()
+    };
+    InboxMarkDto {
+        item_key: m.item_key,
+        state: m.state,
+        until: m.until.map(fmt),
+        updated_at: fmt(m.updated_at),
+    }
+}
+
+async fn list_my_inbox_marks(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+) -> ApiResult<JsonBody<InboxMarkListDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let items: Vec<InboxMarkDto> = service
+        .inbox_marks(&user_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(inbox_mark_dto)
+        .collect();
+    Ok(Json(InboxMarkListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+async fn upsert_my_inbox_mark(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Json(req): Json<InboxMarkRequest>,
+) -> ApiResult<JsonBody<InboxMarkDto>> {
+    let service = configured(service)?;
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let until = match req
+        .until
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
+        Some(u) => Some(
+            time::OffsetDateTime::parse(u, &time::format_description::well_known::Rfc3339)
+                .map_err(|_| invalid(anyhow::anyhow!("`until` must be RFC 3339")))?,
+        ),
+        None => None,
+    };
+    if let Err(why) = super::service::check_inbox_mark(
+        &req.item_key,
+        &req.state,
+        until,
+        time::OffsetDateTime::now_utc(),
+    ) {
+        return Err(invalid(anyhow::anyhow!("{why}")));
+    }
+    let mark = service
+        .set_inbox_mark(&user_id, &req.item_key, &req.state, until)
+        .await
+        .map_err(internal)?;
+    Ok(Json(inbox_mark_dto(mark)))
+}
+
 async fn get_my_ui_preferences(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
@@ -1491,6 +1588,47 @@ pub fn register_routes(
         .json_request::<UpdateProfileRequest>(openapi, "Profile fields to change")
         .handler(update_me)
         .json_response_with_schema::<UserProfileDto>(openapi, StatusCode::OK, "The updated profile")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::get("/studio-user/v1/me/inbox-marks")
+        .operation_id("studio_user.list_my_inbox_marks")
+        .summary("What the caller marked done or snoozed in their inbox")
+        .description(
+            "The caller's marks, newest first. The inbox items themselves are read from \
+             their facts each time (review requests and pull requests waiting on the \
+             caller); a mark is the only part that is the person's to keep. A snooze that \
+             has run out is left out, so the item is back. At most 1000 are kept, the \
+             oldest dropped first.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(list_my_inbox_marks)
+        .json_response_with_schema::<InboxMarkListDto>(openapi, StatusCode::OK, "The marks")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::put("/studio-user/v1/me/inbox-marks")
+        .operation_id("studio_user.upsert_my_inbox_mark")
+        .summary("Mark one inbox item done, snooze it, or open it again")
+        .description(
+            "`done` hides the item until its fact changes (the portal keys a pull request \
+             with when it was last updated, so new activity is a new item); `snoozed` hides \
+             it until `until`; `open` clears the mark. The key is the portal's name for the \
+             item, at most 200 characters.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<InboxMarkRequest>(openapi, "The item and its mark")
+        .handler(upsert_my_inbox_mark)
+        .json_response_with_schema::<InboxMarkDto>(openapi, StatusCode::OK, "The mark as now kept")
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

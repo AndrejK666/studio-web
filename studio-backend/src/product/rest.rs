@@ -272,6 +272,53 @@ pub struct CompleteProductRequest {
     pub config: Option<Value>,
 }
 
+/// A product's gears and one candidate to weigh before adding it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct GearBringsRequest {
+    /// The product's gears now, by crate name or engine id.
+    pub gears: Vec<String>,
+    /// The gear being considered.
+    pub candidate: String,
+    /// The product's configuration so far (gear crate name -> {field: value}).
+    pub config: Option<Value>,
+}
+
+/// One gear the candidate would add, and why.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BroughtGearDto {
+    /// Crate name.
+    pub gear: String,
+    pub reason: String,
+    /// It keeps its own database.
+    pub database: bool,
+}
+
+/// A contract the product would then get from two gears.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ContractOverlapDto {
+    pub contract: String,
+    /// Crate names already in the product that provide it.
+    pub already: Vec<String>,
+    /// Crate names the candidate brings that provide it too.
+    pub brought: Vec<String>,
+}
+
+/// What adding a candidate would bring with it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearBringsDto {
+    /// False when no `gear.gdl` in the corpus describes the candidate.
+    pub described: bool,
+    /// What is new to the product, the candidate first.
+    pub brought: Vec<BroughtGearDto>,
+    pub overlaps: Vec<ContractOverlapDto>,
+    /// Further changes completion would make with the candidate in.
+    pub changes: Vec<ProductChangeDto>,
+}
+
 /// One change completion made, and why.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -916,6 +963,57 @@ async fn complete_product(
             })
             .collect(),
         config: serde_json::to_value(&completion.config).unwrap_or(Value::Null),
+    }))
+}
+
+async fn gear_brings(
+    Extension(product): Extension<Product>,
+    Json(body): Json<GearBringsRequest>,
+) -> ApiResult<JsonBody<GearBringsDto>> {
+    let invalid = |why: String| {
+        StudioProductError::invalid_argument()
+            .with_constraint(why)
+            .create()
+    };
+    if body.candidate.trim().is_empty() {
+        return Err(invalid("`candidate` names no gear".to_string()));
+    }
+    let config = super::gearbox::gear_config_from(body.config.as_ref())
+        .map_err(|e| invalid(format!("{e:#}")))?;
+    let b = product
+        .gearbox()?
+        .brings(&body.gears, &body.candidate, &config)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(GearBringsDto {
+        described: b.described,
+        brought: b
+            .brought
+            .into_iter()
+            .map(|g| BroughtGearDto {
+                gear: g.gear,
+                reason: g.reason,
+                database: g.database,
+            })
+            .collect(),
+        overlaps: b
+            .overlaps
+            .into_iter()
+            .map(|o| ContractOverlapDto {
+                contract: o.contract,
+                already: o.already,
+                brought: o.brought,
+            })
+            .collect(),
+        changes: b
+            .changes
+            .into_iter()
+            .map(|c| ProductChangeDto {
+                gear: c.gear,
+                added: c.added,
+                reason: c.reason,
+            })
+            .collect(),
     }))
 }
 
@@ -1569,6 +1667,28 @@ pub fn register_routes(
         .handler(complete_product)
         .json_request::<CompleteProductRequest>(openapi, "Picked gears")
         .json_response_with_schema::<CompleteProductDto>(openapi, StatusCode::OK, "Completed picks")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-product/v1/gearbox/brings")
+        .operation_id("studio_product.query_gear_brings")
+        .summary("What adding one gear would bring into a product with it")
+        .description(
+            "From the gear catalogue alone: the gears the candidate would add (the \
+             ones it must share a binary with, the host a plugin runs under, what \
+             completion adds for it), each with why and whether it keeps its own \
+             database, and every contract the product would then get from two gears \
+             — the second audit store a certified platform cannot keep. Ask it before \
+             adding a gear. Writes nothing; the engine still resolves the product.",
+        )
+        .tag("StudioProduct")
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(gear_brings)
+        .json_request::<GearBringsRequest>(openapi, "The product's gears and the candidate")
+        .json_response_with_schema::<GearBringsDto>(openapi, StatusCode::OK, "What it brings")
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

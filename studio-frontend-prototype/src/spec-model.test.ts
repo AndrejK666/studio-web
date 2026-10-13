@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  basisSummary,
   buildLine,
   codeSpans,
   coverageCounts,
   entitiesOf,
   factsByKind,
+  filterRequirements,
   mergeTargets,
   orderFindings,
   orderProductFindings,
   relatedEntities,
+  requirementKinds,
   ruleLabel,
   sideLabel,
   subjectKey,
@@ -20,6 +23,7 @@ import {
   type SpecModelFact,
   type SpecModelFinding,
 } from "./spec-model";
+import type { SpecRequirement } from "./spec-model";
 
 function fact(subject: string, kind: SpecModelFact["kind"], path = "a.md", extra: Partial<SpecModelFact> = {}): SpecModelFact {
   return {
@@ -221,5 +225,54 @@ describe("product findings", () => {
     const ordered = orderProductFindings([finding("tenancy", "medium"), finding("storage", "high"), finding("auth", "high")]);
     expect(ordered.map((f) => f.capability)).toEqual(["auth", "storage", "tenancy"]);
     expect(ruleLabel("product.decided_not_built")).toBe("Decided, not built");
+  });
+});
+
+describe("requirements and their basis", () => {
+  const req = (id: string, basis: SpecRequirement["basis"], extra: Partial<SpecRequirement> = {}): SpecRequirement => ({
+    id,
+    defined_in: { path: "prd.md", line_start: 1, line_end: 1, quote: null },
+    title: null,
+    text: `${id} text`,
+    kind: "fr",
+    priority: null,
+    done: null,
+    basis,
+    cites: [],
+    because: null,
+    work: 0,
+    ...extra,
+  });
+  const items = [
+    req("cpt-a-fr-1", "cited", { work: 2 }),
+    req("cpt-a-fr-2", "stated"),
+    req("cpt-a-actor-x", "stated", { kind: "actor" }),
+    req("cpt-a-fr-3", "open_question", { title: "Upload limit" }),
+  ];
+  const all = { basis: "all", kind: "all", text: "", noWork: false } as const;
+
+  it("puts doubt first, then keeps document order", () => {
+    expect(filterRequirements(items, all).map((r) => r.id)).toEqual([
+      "cpt-a-fr-3",
+      "cpt-a-fr-2",
+      "cpt-a-actor-x",
+      "cpt-a-fr-1",
+    ]);
+  });
+
+  it("filters by basis, kind, text in the title, and work", () => {
+    expect(filterRequirements(items, { ...all, basis: "stated", kind: "fr" }).map((r) => r.id)).toEqual(["cpt-a-fr-2"]);
+    expect(filterRequirements(items, { ...all, text: "upload" }).map((r) => r.id)).toEqual(["cpt-a-fr-3"]);
+    expect(filterRequirements(items, { ...all, noWork: true })).toHaveLength(3);
+  });
+
+  it("lists kinds most common first", () => {
+    expect(requirementKinds(items)).toEqual(["fr", "actor"]);
+  });
+
+  it("summarises the basis counts", () => {
+    expect(basisSummary({ items, total: 4, by_basis: { cited: 1, stated: 2, open_question: 1 }, synced: true })).toBe(
+      "1 of 4 cite a source; 1 open question; 2 state no basis.",
+    );
   });
 });

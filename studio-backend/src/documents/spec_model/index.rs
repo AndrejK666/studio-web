@@ -266,7 +266,7 @@ fn check_adr_citations(
 }
 
 /// `(number, as written)` for every `ADR-nnnn` / `ADR nnnn` in `text`.
-fn adr_numbers(text: &str) -> Vec<(u32, String)> {
+pub(super) fn adr_numbers(text: &str) -> Vec<(u32, String)> {
     let mut out = Vec::new();
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -522,7 +522,7 @@ fn check_links(
 }
 
 /// Every `](target)` on a line, the target as written.
-fn link_targets(text: &str) -> Vec<String> {
+pub(super) fn link_targets(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(at) = rest.find("](") {
@@ -694,7 +694,7 @@ fn anchor_ids(text: &str) -> Vec<String> {
 const DEFINING_LABELS: [&str; 2] = ["ID:", "Contract:"];
 
 /// An identifier this line defines: `**ID**: \`x\`` in any of its spellings.
-fn defined_id(text: &str) -> Option<String> {
+pub(super) fn defined_id(text: &str) -> Option<String> {
     let plain: String = text.chars().filter(|c| *c != '*').collect();
     let (at, label) = DEFINING_LABELS
         .iter()
@@ -711,7 +711,7 @@ fn defined_id(text: &str) -> Option<String> {
 
 /// `word-word-word…`: lower case, at least three segments. Plain words with
 /// hyphens are rarely back-ticked; identifiers almost always are.
-fn is_id_shaped(s: &str) -> bool {
+pub(super) fn is_id_shaped(s: &str) -> bool {
     let segments: Vec<&str> = s.split('-').collect();
     segments.len() >= 3
         && segments.iter().all(|seg| {

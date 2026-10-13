@@ -502,9 +502,16 @@ export const SURFACES: Surface[] = [
     id: "home",
     area: "portal",
     title: "Home",
-    does: "See your projects, running IDE sessions and the pull requests waiting on you at a glance.",
-    components: ["HomeView", "PullRequestsOnMe"],
-    gears: ["gear-orchestrator", "studio-artifact-ingest", "studio-session"],
+    does: "See your projects, running IDE sessions, and everything waiting on you — reviews asked of you and pull requests whose next step is yours — at a glance.",
+    components: ["HomeView", "WaitingOnYou"],
+    gears: [
+      "gear-orchestrator",
+      "studio-artifact-ingest",
+      "studio-documents",
+      "studio-events",
+      "studio-session",
+      "studio-user",
+    ],
   },
   {
     id: "workspaces",
@@ -552,6 +559,7 @@ export const SURFACES: Surface[] = [
     components: [
       "DocumentsTab",
       "IngestedDocumentsView",
+      "ReviewPanel",
       "SpecQuality",
       "SqStatusChip",
       "PublishModal",
@@ -568,6 +576,7 @@ export const SURFACES: Surface[] = [
       "studio-product",
       "studio-spec-mapping",
       "studio-spec-quality",
+      "studio-user",
     ],
   },
   {
@@ -583,7 +592,7 @@ export const SURFACES: Surface[] = [
     area: "project",
     title: "Components and kits",
     does: "Pick the gears a product is built from, compare the spec with the code, install kits.",
-    components: ["ProjectKits", "SuggestedComponents", "ProductCard", "GearConfigForm", "ProjectCandidate"],
+    components: ["ProjectKits", "SuggestedComponents", "BringsWithIt", "ProductCard", "GearConfigForm", "ProjectCandidate"],
     gears: [
       "studio-components-catalog",
       "studio-documents",

@@ -414,3 +414,83 @@ pub mod document_binding {
 
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+/// A request to review one version of one document (`approvals.rs`).
+pub mod review_request {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_review_requests")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        /// The workspace.
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        /// `document` (written in Studio) or `binding` (a repository file).
+        pub subject_kind: String,
+        pub subject_id: Uuid,
+        pub type_key: Option<String>,
+        pub title: String,
+        /// The version asked about: a commit sha, a revision, as the caller
+        /// names it.
+        pub version: String,
+        /// Canonical person id.
+        pub requested_by: String,
+        pub requested_by_name: Option<String>,
+        /// `[{person, name, required}]`.
+        #[sea_orm(column_type = "JsonBinary")]
+        pub reviewers: serde_json::Value,
+        pub due_at: Option<OffsetDateTime>,
+        /// `open`, `approved`, `superseded` (a later request on the same
+        /// document) or `withdrawn`.
+        pub state: String,
+        pub created_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// One verdict on a review request. Inserted, never updated.
+pub mod approval {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_approvals")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        pub request_id: Uuid,
+        pub subject_id: Uuid,
+        pub version: String,
+        /// Canonical person id.
+        pub approver: String,
+        pub approver_name: Option<String>,
+        /// `approved` or `changes_requested`.
+        pub verdict: String,
+        pub note: Option<String>,
+        /// The detectors that had passed on the document when the verdict
+        /// was given.
+        #[sea_orm(column_type = "JsonBinary")]
+        pub checks: serde_json::Value,
+        pub decided_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}

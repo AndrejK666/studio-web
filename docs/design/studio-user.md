@@ -301,6 +301,7 @@ is configured.
 | `PUT` `DELETE` | `/me/avatar` | Store the caller's photo (PNG, JPEG, WebP or GIF, at most 1 MiB, base64), or remove it | experimental |
 | `GET` | `/avatars/{user_id}/{digest}` | One version of a stored photo. Anonymous: an `<img>` sends no token, and the digest is learned only from a profile the caller may read | experimental |
 | `GET` `PUT` | `/me/ui-preferences` | Remembered UI choices, replaced whole | stable |
+| `GET` `PUT` | `/me/inbox-marks` | What the caller marked done or snoozed in their inbox; the items themselves are read from their facts each time (issue #730). At most 1000, the oldest dropped; table `identity_inbox_mark` | unstable |
 | `GET` | `/me/logins`, `/me/memberships` | What binds to the caller | stable |
 | `DELETE` | `/me/memberships/{org_id}` | Leave an organization | stable |
 | `GET` `POST` | `/me/aliases` | List, or claim an identity (attributes nothing yet) | stable |

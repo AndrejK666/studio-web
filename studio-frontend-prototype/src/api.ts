@@ -1,4 +1,15 @@
-import type { GlossaryEntry, ProductFinding, SpecModel, SpecModelBuild, SpecModelFinding, WorkLinks } from "./spec-model";
+import type { GearBrings } from "./gear-brings";
+import type { InboxMark } from "./waiting-on-me";
+import type { ReviewRequest, ReviewVerdict } from "./review-requests";
+import type {
+  GlossaryEntry,
+  ProductFinding,
+  SpecModel,
+  SpecModelBuild,
+  SpecModelFinding,
+  SpecRequirements,
+  WorkLinks,
+} from "./spec-model";
 import { parseProblem, type Problem } from "./problem";
 import type { ComponentSnapshot } from "./field-trend";
 import type { RoadmapReport } from "./roadmap-report";
@@ -1322,6 +1333,9 @@ export interface StageRequirement {
   /** Detectors the stage gates on that have not passed: missing, pending or
    *  failed. Empty when the stage gates nothing, or everything passed. */
   analyses_outstanding: string[];
+  /** Required reviewers of the document's current review request who have
+   *  not approved it. Absent from a backend from before reviews. */
+  approvals_outstanding?: string[];
 }
 
 /** Where a project stands against one stage of its workspace's journey. */
@@ -2770,6 +2784,13 @@ export const api = {
       `/studio-spec-mapping/v1/findings?project_id=${encodeURIComponent(projectId)}`,
       token,
     ),
+  /** Every requirement the project's documents define, with the basis its
+   *  own block states (docs/spec-domain-model.md). */
+  specRequirements: (token: string, projectId: string) =>
+    request<SpecRequirements>(
+      `/studio-documents/v1/spec-model/requirements?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
   /** Which issues, pull requests and commits name an identifier the
    *  project's documents define (docs/project-and-product.md, "The links"). */
   workLinks: (token: string, projectId: string) =>
@@ -2796,6 +2817,57 @@ export const api = {
       { method: "POST", body: JSON.stringify({ project_id: projectId, key, ...decision }) },
     ),
   /** A member's ✓ (confirmed) or ✗ (dismissed) on one finding. */
+  /** A project's review requests, newest first; one document's with `subjectId`. */
+  reviewRequests: (token: string, projectId: string, subjectId?: string) =>
+    request<{ items: ReviewRequest[]; total: number }>(
+      `/studio-documents/v1/review-requests?project_id=${encodeURIComponent(projectId)}${
+        subjectId ? `&subject_id=${encodeURIComponent(subjectId)}` : ""
+      }`,
+      token,
+    ),
+  /** The open review requests of a workspace that still wait for the caller. */
+  reviewRequestsWaitingOnMe: (token: string, workspaceId: string) =>
+    request<{ items: ReviewRequest[]; total: number }>(
+      `/studio-documents/v1/review-requests?workspace_id=${encodeURIComponent(workspaceId)}&waiting_on=me`,
+      token,
+    ),
+  createReviewRequest: (token: string, body: Record<string, unknown>) =>
+    request<ReviewRequest>("/studio-documents/v1/review-requests", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  createReviewApproval: (
+    token: string,
+    projectId: string,
+    requestId: string,
+    verdict: "approved" | "changes_requested",
+    note: string | null,
+  ) =>
+    request<ReviewVerdict>(
+      `/studio-documents/v1/review-requests/${encodeURIComponent(requestId)}/approvals`,
+      token,
+      { method: "POST", body: JSON.stringify({ project_id: projectId, verdict, note }) },
+    ),
+  cancelReviewRequest: (token: string, projectId: string, requestId: string) =>
+    request<ReviewRequest>(`/studio-documents/v1/review-requests/${encodeURIComponent(requestId)}/cancel`, token, {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId }),
+    }),
+  /** Whom to ask about a document, from who was asked before in the project. */
+  reviewerSuggestions: (token: string, projectId: string, subjectId: string, typeKey?: string | null) =>
+    request<{ items: { person: string; name?: string | null; required: boolean }[]; total: number }>(
+      `/studio-documents/v1/review-requests/reviewer-suggestions?project_id=${encodeURIComponent(projectId)}&subject_id=${encodeURIComponent(subjectId)}${
+        typeKey ? `&type_key=${encodeURIComponent(typeKey)}` : ""
+      }`,
+      token,
+    ),
+  /** Every ✓/✗ members gave on the project's findings, the model's and the
+   *  Spec Quality detectors' alike (both keyed by fingerprint). */
+  specFindingDecisions: (token: string, projectId: string) =>
+    request<{
+      items: { fingerprint: string; decision: "confirmed" | "dismissed"; decided_by: string; decided_at: string }[];
+      total: number;
+    }>(`/studio-documents/v1/spec-model/decisions?project_id=${encodeURIComponent(projectId)}`, token),
   decideSpecModelFinding: (
     token: string,
     projectId: string,
@@ -3139,6 +3211,16 @@ export const api = {
    *  read it; addresses and sign-ins stay with `orgMembers` (ADR-0036). */
   myColleagues: (token: string) =>
     requestAllPages<Colleague>("/studio-user/v1/me/colleagues", token, "items"),
+
+  /** What the caller marked done or snoozed in their inbox (studio-user). */
+  inboxMarks: async (token: string): Promise<InboxMark[]> =>
+    (await request<{ items: InboxMark[]; total: number }>("/studio-user/v1/me/inbox-marks", token)).items,
+  /** Mark one inbox item done, snooze it until a time, or open it again. */
+  markInboxItem: (token: string, itemKey: string, state: "done" | "snoozed" | "open", until: string | null) =>
+    request<InboxMark>("/studio-user/v1/me/inbox-marks", token, {
+      method: "PUT",
+      body: JSON.stringify({ item_key: itemKey, state, until }),
+    }),
 
   /** Store the caller's photo: PNG, JPEG, WebP or GIF, at most 1 MiB. */
   uploadMyAvatar: (token: string, contentType: string, base64: string) =>
@@ -4545,6 +4627,13 @@ export const api = {
       token,
       { method: "POST", body: JSON.stringify({ gears, config: config ?? {} }) },
     ),
+  /** What adding one gear would bring into the product: the gears that come
+   *  along and why, and contracts the product would get twice. Writes nothing. */
+  gearBrings: (token: string, gears: string[], candidate: string, config?: GearConfig) =>
+    request<GearBrings>(`/studio-product/v1/gearbox/brings`, token, {
+      method: "POST",
+      body: JSON.stringify({ gears, candidate, config: config ?? {} }),
+    }),
   /** Each named gear's config fields as its gear.gdl declares them: required,
    *  default, and `derived` for what generation writes. Names as the picks
    *  spell them; a gear the corpus does not describe comes back without `id`. */

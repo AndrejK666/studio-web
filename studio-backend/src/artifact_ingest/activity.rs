@@ -35,7 +35,7 @@
 //! pulled is its own node with its own `created_at`.
 
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// A day, in milliseconds.
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -265,13 +265,29 @@ const FAILING_SEVERITIES: [&str; 2] = ["high", "gate-failed"];
 /// counted its own way they disagreed about the same project.
 #[must_use]
 pub fn placed_findings(verdict: &Value) -> u32 {
+    placed_findings_except(verdict, &BTreeSet::new())
+}
+
+/// [`placed_findings`] without the findings a member marked as not a problem
+/// (✗), by their `id` (the finding's fingerprint). A verdict whose every
+/// placed finding was dismissed counts nothing, even when its severity fails:
+/// the severity was the detector's summary of those findings.
+#[must_use]
+pub fn placed_findings_except(verdict: &Value, dismissed: &BTreeSet<String>) -> u32 {
     let items = verdict
         .get("details")
         .and_then(|d| d.get("findings"))
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    if items > 0 {
-        return u32::try_from(items).unwrap_or(u32::MAX);
+        .and_then(Value::as_array);
+    if let Some(items) = items.filter(|i| !i.is_empty()) {
+        let kept = items
+            .iter()
+            .filter(|f| {
+                f.get("id")
+                    .and_then(Value::as_str)
+                    .is_none_or(|id| !dismissed.contains(id))
+            })
+            .count();
+        return u32::try_from(kept).unwrap_or(u32::MAX);
     }
     u32::from(field_str(verdict, "severity").is_some_and(|s| FAILING_SEVERITIES.contains(&s)))
 }
@@ -289,15 +305,27 @@ pub struct ReviewSummary {
 
 /// Every document's verdicts folded into its summary, keyed by `subject`: a
 /// file's node id, or `studio-doc:<id>` for a document written in Studio.
+#[cfg(test)]
 #[must_use]
 pub fn review_by_subject(findings: &[(String, Value)]) -> HashMap<String, ReviewSummary> {
+    review_by_subject_except(findings, &BTreeSet::new())
+}
+
+/// [`review_by_subject`], leaving out the findings members dismissed.
+#[must_use]
+pub fn review_by_subject_except(
+    findings: &[(String, Value)],
+    dismissed: &BTreeSet<String>,
+) -> HashMap<String, ReviewSummary> {
     let mut out: HashMap<String, (ReviewSummary, Option<i64>)> = HashMap::new();
     for (_, f) in findings {
         let Some(subject) = field_str(f, "subject") else {
             continue;
         };
         let (summary, newest) = out.entry(subject.trim().to_owned()).or_default();
-        summary.findings = summary.findings.saturating_add(placed_findings(f));
+        summary.findings = summary
+            .findings
+            .saturating_add(placed_findings_except(f, dismissed));
         if let Some(at) = instant(f, "recorded_at")
             && newest.is_none_or(|n| at > n)
         {
@@ -850,6 +878,18 @@ mod tests {
         assert_eq!(by["studio-doc:d1"].findings, 0);
         assert!(by["studio-doc:d1"].checked_at.is_some());
         assert!(!by.contains_key("n2"));
+    }
+
+    #[test]
+    fn a_dismissed_finding_is_not_counted_and_all_dismissed_is_clean() {
+        let verdict = json!({ "subject": "n1", "severity": "high",
+            "details": { "findings": [{ "id": "a" }, { "id": "b" }] } });
+        let one: BTreeSet<String> = ["a".to_owned()].into();
+        assert_eq!(placed_findings_except(&verdict, &one), 1);
+        let both: BTreeSet<String> = ["a".to_owned(), "b".to_owned()].into();
+        assert_eq!(placed_findings_except(&verdict, &both), 0);
+        let by = review_by_subject_except(&[("f".to_owned(), verdict)], &both);
+        assert_eq!(by["n1"].findings, 0);
     }
 
     #[test]
