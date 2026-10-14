@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LevelBadge, LevelMark, OrgMark } from "./level-marks";
+import { LevelBadge, LevelMark, LogoControl, OrgMark } from "./level-marks";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
 import { URL_CHANGE_EVENT } from "./list-state";
 import type { FormEvent, ReactNode } from "react";
@@ -9070,6 +9070,17 @@ function OrganizationsView({
               >
                 ⧉
               </button>
+            </li>
+            <li>
+              <OrgMark token={token} orgId={selected.id} name={selected.name} />
+              <div className="grow">
+                <div className="sub">Logo</div>
+                <div className="name hint" style={{ margin: 0 }}>
+                  Shown beside the name in the path bar and the organization switcher. PNG, JPEG, WebP or GIF, at most
+                  256 KiB.
+                </div>
+              </div>
+              <LogoControl token={token} orgId={selected.id} />
             </li>
             <li>
               <div className="grow">
