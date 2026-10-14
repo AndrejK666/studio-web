@@ -11,6 +11,7 @@
 //! that those three are written by one operation, in an order that can be
 //! resumed (see `service`).
 
+pub mod logo;
 pub mod port;
 mod rest;
 pub mod rollups;

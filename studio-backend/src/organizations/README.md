@@ -12,7 +12,8 @@ This README is what you need to work in the directory.
 ## In the assembly
 
 - Gear `studio-organizations`, capabilities `[rest]`, deps
-  `account_management`. Owns no storage.
+  `account_management`. Owns no database; the one thing it keeps is the
+  organization's logo (below).
 - Config section `gears.studio-organizations`: `self_service` (default
   `true`). `false` refuses creation with `SELF_SERVICE_DISABLED`; set it with
   `studio-user`'s `on_first_login` in an installation inside one company.
@@ -29,6 +30,15 @@ This README is what you need to work in the directory.
   the rollups' walk (`rollups::children_of`, every page), and a listing that
   fails is an error there, not an empty organization. No other gear walks
   the tenant tree itself.
+
+- The organization's logo ([`logo.rs`](logo.rs)): `GET`, `PUT` and `DELETE
+  /studio-organizations/v1/organizations/{org_id}/logo`. One account-management
+  metadata row on the organization (`cf.studio.organization.logo.v1~`, declared
+  in every `config/*.yaml`), base64 PNG, JPEG, WebP or GIF of at most 256 KiB,
+  checked as a photo is (`user_profile::check_avatar`). Read as the caller;
+  written as this gear's service after `OrgAuthority::may_administer(…,
+  "access.manage")`, and the PDP refuses anybody else's write of the row
+  (`studio_authz_plugin::GEAR_HELD_METADATA`).
 
 ## Working here
 

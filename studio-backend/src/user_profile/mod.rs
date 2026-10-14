@@ -152,6 +152,10 @@ mod uuid_text {
 /// or the lookup misses the row.
 pub use service::normalize_key;
 
+/// Whether bytes are an image of the kind they claim (PNG, JPEG, WebP, GIF).
+/// Exported for an organization's logo, which is checked as a photo is.
+pub use service::check_avatar;
+
 /// What emptying an organization took with it ([`MembershipEvictor`]).
 /// Exported because the interface hands it out: a consumer names it from here,
 /// never from this gear's `service` module.

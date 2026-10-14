@@ -5,6 +5,7 @@
  * registry and the background runs -- and every tile opens the place its
  * number comes from. Rules: `org-dashboard-model.ts`. */
 
+import { LevelBadge, LogoControl, OrgMark } from "./level-marks";
 import { useEffect, useMemo, useState } from "react";
 
 import { api, type RollupRow, type TaskRun } from "./api";
@@ -90,11 +91,13 @@ export function OrgDashboard({
     <div className="dash org-dash" data-org-dashboard>
       <style>{ORG_DASH_CSS}</style>
       <div className="dash-context">
-        <span className="org-dash-level">Organization</span>
+        <LevelBadge level="organization" />
+        <OrgMark token={token} orgId={org.id} name={org.name} />
         <h1>{org.name}</h1>
         <span className="sub">
           Between the platform and its workspaces: its projects, people and own components.
         </span>
+        <LogoControl token={token} orgId={org.id} />
       </div>
 
       <div className="dash-stats">
@@ -221,7 +224,6 @@ export function OrgDashboard({
 
 const ORG_DASH_CSS = `
 .org-dash .dash-context h1 { font-size:20px; font-weight:600; margin:0; }
-.org-dash .org-dash-level { font:600 11px/1 var(--mono, monospace); letter-spacing:.06em; text-transform:uppercase; padding:4px 8px; border-radius:6px; background:#dcfce7; color:#15803d; }
 .org-dash .stat.tone-danger .stat-n { color:var(--destructive); }
 .org-dash .stat.tone-warn .stat-n { color:var(--warning); }
 .org-dash .card-head h3 { margin:0; font-size:14px; }

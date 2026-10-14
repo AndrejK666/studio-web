@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LevelBadge, LevelMark, OrgMark } from "./level-marks";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
 import { URL_CHANGE_EVENT } from "./list-state";
 import type { FormEvent, ReactNode } from "react";
@@ -1507,8 +1508,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   }, [token, viewer]);
 
   // Resolved AFTER home/orgs state exists (declaration order matters).
+  // One current organization: the admin picker and the path bar's switcher
+  // both set it, and a page opened from a link names it (activeOrgId). Before,
+  // the switcher changed only activeOrgId and every organization page kept
+  // showing the first organization.
   const adminOrg =
-    orgs.find((o) => o.id === adminOrgId) ??
+    orgs.find((o) => o.id === (adminOrgId ?? activeOrgId)) ??
     (home?.tenant_type === TENANT_TYPES.organization ? (home as Tenant) : orgs[0]) ??
     null;
 
@@ -1794,6 +1799,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         <div className="bar-context">
           {!adminOpen && (
             <PathBar
+              token={token}
               orgs={orgOptions}
               activeOrg={activeOrg}
               platformOpen={PLATFORM_VIEWS.has(view) && !activeSpace}
@@ -1810,6 +1816,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               }}
               onPickOrg={(id) => {
                 setActiveOrgId(id);
+                setAdminOrgId(id);
                 setCrumb({});
                 setView("projects");
                 setActiveSpace(null);
@@ -2026,6 +2033,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                             key={o.id}
                             onClick={() => {
                               setAdminOrgId(o.id);
+                              setActiveOrgId(o.id);
                               setAdminOrgMenu(false);
                             }}
                           >
@@ -2452,7 +2460,10 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 orgs={orgs}
                 workspaces={workspaces}
                 selectedId={adminOrg?.id ?? null}
-                onSelect={(id) => setAdminOrgId(id)}
+                onSelect={(id) => {
+                  setAdminOrgId(id);
+                  setActiveOrgId(id);
+                }}
                 onMembers={(id) => openAdmin("people", id)}
                 query={filters.query}
               />
@@ -3167,7 +3178,8 @@ interface Crumb {
  *  outside the sidebar, so the whole path can be re-picked in one place. The
  *  project level uses the same mechanic as the workspace level: pick one to open
  *  it, "All projects" returns to the workspace's project list. */
-function PathBar({
+export function PathBar({
+  token,
   orgs,
   activeOrg,
   platformOpen,
@@ -3183,6 +3195,7 @@ function PathBar({
   currentProjectName,
   onPickProject,
 }: {
+  token: string;
   orgs: { id: string; name: string }[];
   activeOrg: { id: string; name: string } | null;
   /** Whether the platform level itself is open (its common components). */
@@ -3218,8 +3231,11 @@ function PathBar({
           title="The platform: the components every organization shares"
           onClick={onOpenPlatform}
         >
-          <span className="account-avatar small">P</span>
-          <span className="org-select-name">Platform</span>
+          <LevelMark level="platform" name="Platform" />
+          <span className="path-text">
+            <span className="path-level">Platform</span>
+            <span className="org-select-name">Platform</span>
+          </span>
         </button>
       </div>
 
@@ -3237,8 +3253,11 @@ function PathBar({
           title={activeOrg ? `${activeOrg.name}: the organization's dashboard` : "Organization"}
           onClick={onOpenOrg}
         >
-          <span className="account-avatar small">{initial(activeOrg?.name ?? "?")}</span>
-          <span className="org-select-name">{activeOrg?.name ?? "Organization"}</span>
+          <OrgMark token={token} orgId={activeOrg?.id} name={activeOrg?.name ?? "?"} />
+          <span className="path-text">
+            <span className="path-level">Organization</span>
+            <span className="org-select-name">{activeOrg?.name ?? "Organization"}</span>
+          </span>
         </button>
         {orgs.length > 1 && (
           <button
@@ -3263,7 +3282,7 @@ function PathBar({
                   setOpen(null);
                 }}
               >
-                <span className="account-avatar small">{initial(o.name)}</span>
+                <OrgMark token={token} orgId={o.id} name={o.name} />
                 {o.name}
               </button>
             ))}
@@ -3281,8 +3300,11 @@ function PathBar({
           title={currentWs?.name ?? "All workspaces"}
           onClick={() => setOpen((o) => (o === "ws" ? null : "ws"))}
         >
-          <span className="account-avatar small">{currentWs ? initial(currentWs.name) : "▤"}</span>
-          <span className="org-select-name">{currentWs?.name ?? "All workspaces"}</span>
+          <LevelMark level="workspace" name={currentWs ? currentWs.name : "▤"} />
+          <span className="path-text">
+            <span className="path-level">Workspace</span>
+            <span className="org-select-name">{currentWs?.name ?? "All workspaces"}</span>
+          </span>
           <span className="chev">▾</span>
         </button>
         {open === "ws" && (
@@ -3327,10 +3349,11 @@ function PathBar({
               title={currentProjectName ?? "All projects"}
               onClick={() => setOpen((o) => (o === "proj" ? null : "proj"))}
             >
-              <span className="account-avatar small">
-                {currentProjectName ? initial(currentProjectName) : "▦"}
+              <LevelMark level="project" name={currentProjectName ?? "▦"} />
+              <span className="path-text">
+                <span className="path-level">Project</span>
+                <span className="org-select-name">{currentProjectName ?? "All projects"}</span>
               </span>
-              <span className="org-select-name">{currentProjectName ?? "All projects"}</span>
               <span className="chev">▾</span>
             </button>
             {open === "proj" && (
@@ -3528,9 +3551,12 @@ function WorkspaceHeader({
   return (
     <div className="topbar">
       <div>
-        <h1>{workspace.name}</h1>
+        <div className="level-head">
+          <LevelBadge level="workspace" />
+          <h1>{workspace.name}</h1>
+        </div>
         <p className="subtitle" style={{ margin: 0 }}>
-          workspace · <code>{workspace.id.slice(0, 8)}…</code>
+          <code>{workspace.id.slice(0, 8)}…</code>
         </p>
       </div>
       {actions}

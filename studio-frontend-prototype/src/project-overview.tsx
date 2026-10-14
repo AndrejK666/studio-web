@@ -21,6 +21,7 @@
  * gear that does not answer is named rather than shown as a confident zero.
  */
 
+import { LevelBadge } from "./level-marks";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import type {
@@ -477,6 +478,8 @@ export function ProjectOverview({
           the reader twice what they could already see, and buried the part only
           it knows — kind, status, automation level — behind that. */}
       <div className="dash-context">
+        <LevelBadge level="project" />
+        <h1 className="level-title">{project.name}</h1>
         {config?.kind && <span className="badge info">{config.kind.replace("_", " ")}</span>}
         {config?.status && (
           <span

@@ -2429,3 +2429,39 @@ div.dm-block { padding-left: 0; }
 .dm-steps li { position: relative; display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 0; }
 .dm-steps li::before { content: ""; position: absolute; left: -26px; top: 4px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--warning, #d97706); background: var(--card); }
 .dm-steps li.on::before { border-color: var(--success, #16a34a); background: var(--success, #16a34a); }
+/* Where a page sits (level-marks.tsx): one colour per level, the same on a
+   page's badge and on its mark in the path bar. */
+:root {
+  --level-platform-bg: #e2e8f0; --level-platform-fg: #334155;
+  --level-organization-bg: #dcfce7; --level-organization-fg: #15803d;
+  --level-workspace-bg: #dbeafe; --level-workspace-fg: #1d4ed8;
+  --level-project-bg: #ede9fe; --level-project-fg: #6d28d9;
+}
+:root[data-theme="dark"] {
+  --level-platform-bg: #334155; --level-platform-fg: #e2e8f0;
+  --level-organization-bg: #14532d; --level-organization-fg: #bbf7d0;
+  --level-workspace-bg: #1e3a8a; --level-workspace-fg: #bfdbfe;
+  --level-project-bg: #4c1d95; --level-project-fg: #ddd6fe;
+}
+.level-badge { font: 600 11px/1 var(--font-mono, monospace); letter-spacing: .06em; text-transform: uppercase; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
+.level-badge.level-platform { background: var(--level-platform-bg); color: var(--level-platform-fg); }
+.level-badge.level-organization { background: var(--level-organization-bg); color: var(--level-organization-fg); }
+.level-badge.level-workspace { background: var(--level-workspace-bg); color: var(--level-workspace-fg); }
+.level-badge.level-project { background: var(--level-project-bg); color: var(--level-project-fg); }
+/* The mark's shape says the level too: a platform square, an organization
+   rounded square, a workspace pill, a project circle. */
+.level-mark { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px; font-size: 11px; font-weight: 700; border-radius: 6px; }
+.level-mark.level-platform { background: var(--level-platform-fg); color: var(--level-platform-bg); border-radius: 3px; }
+.level-mark.level-organization { background: var(--level-organization-fg); color: #fff; border-radius: 6px; }
+.level-mark.level-workspace { background: var(--level-workspace-fg); color: #fff; border-radius: 8px; width: 26px; }
+.level-mark.level-project { background: var(--level-project-fg); color: #fff; border-radius: 50%; }
+.level-mark.has-logo { background: #fff; object-fit: contain; border: 1px solid var(--border); padding: 1px; }
+.path-text { display: inline-flex; flex-direction: column; align-items: flex-start; line-height: 1.15; min-width: 0; }
+.path-level { font-size: 9.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted-foreground); }
+.path-bar .org-menu .level-mark { margin-right: 6px; }
+.level-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.level-head h1 { margin: 0; }
+.dash-context .level-title { font-size: 20px; font-weight: 600; margin: 0; }
+.dash-context .level-mark { width: 28px; height: 28px; font-size: 13px; }
+.logo-control { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+.error-inline { color: var(--destructive); font-size: 12.5px; }
