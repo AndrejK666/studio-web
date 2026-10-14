@@ -126,7 +126,7 @@ export function OrgDashboard({
           <span className="stat-sub">across projects</span>
         </button>
         <button className={`stat${reg?.undecided ? " tone-warn" : ""}`} onClick={() => onOpen("gears")}>
-          <span className="stat-k">Our components</span>
+          <span className="stat-k">Components</span>
           <span className="stat-n">{reg ? reg.total : "—"}</span>
           <span className="stat-sub">{reg ? `${reg.registered} registered · ${reg.undecided} to decide` : ""}</span>
         </button>
@@ -174,7 +174,7 @@ export function OrgDashboard({
             <ul className="org-dash-list">
               <li>
                 <button type="button" className="ghost org-dash-link" onClick={() => onOpen("gears")}>
-                  Our components
+                  Components
                 </button>
                 <span className="sub">
                   {reg
