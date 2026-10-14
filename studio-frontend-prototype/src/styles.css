@@ -2273,3 +2273,60 @@ ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
 .pc-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
 .pc-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .pc-err { color: var(--destructive); }
+
+/* The product map (product-configurator-view.tsx): parts | subsystems | the selected part. */
+.pm { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.pm-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); font-size: 13px; }
+.pm-status ul { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; }
+.pm-status li button { border: none; background: none; padding: 0; color: var(--primary); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; font: inherit; }
+.pm-pill { font-weight: 600; padding: 2px 10px; border-radius: 999px; background: var(--muted); }
+.pm-pill.ok { background: color-mix(in srgb, var(--success, #16a34a) 15%, transparent); color: var(--success, #16a34a); }
+.pm-pill.todo { background: color-mix(in srgb, var(--warning, #d97706) 15%, transparent); color: var(--warning, #b45309); }
+.pm-summary { color: var(--muted-foreground); margin-left: auto; }
+.pm-work { display: grid; grid-template-columns: 250px minmax(0, 1fr) 290px; gap: 10px; align-items: start; }
+@media (max-width: 1200px) { .pm-work { grid-template-columns: 230px minmax(0, 1fr); } .pm-inspector { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .pm-work { grid-template-columns: minmax(0, 1fr); } }
+.pm-box { border: 1px solid var(--border); border-radius: var(--radius-md, 8px); padding: 10px; background: var(--card); min-width: 0; }
+.pm-h { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-foreground); margin: 0 0 6px; }
+.pm-palette { display: flex; flex-direction: column; gap: 8px; max-height: 640px; overflow: auto; }
+.pm-palette input[type="search"] { width: 100%; }
+.pm-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.pm-chip { border: 1px solid var(--border); background: transparent; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; cursor: pointer; }
+.pm-chip[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); background: var(--accent); }
+.pm-offer { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 2px 6px; align-items: start; cursor: grab; font-size: 12.5px; }
+.pm-offer:hover { border-color: var(--primary); }
+.pm-offer p { grid-column: 2 / 4; margin: 0; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
+.pm-cog { color: var(--primary); flex: none; }
+.pm-zones { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.pm-zones.over .pm-zone.target { border-color: var(--primary); background: var(--accent); }
+.pm-zone { border: 1.5px dashed var(--border); border-radius: 10px; padding: 8px; background: var(--muted); display: flex; flex-direction: column; gap: 6px; min-height: 90px; }
+.pm-zone header { display: flex; gap: 6px; align-items: baseline; font-size: 12.5px; }
+.pm-zone header span { color: var(--muted-foreground); }
+.pm-zone .pm-hint { margin: auto 0; text-align: center; color: var(--muted-foreground); font-size: 12px; }
+.pm-tile { position: relative; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 2px 8px; text-align: left; width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px 7px 7px; background: var(--card); color: inherit; font: inherit; cursor: pointer; }
+.pm-tile:hover { border-color: var(--primary); }
+.pm-tile.selected { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 35%, transparent); }
+.pm-tile.auto { border-style: dashed; background: transparent; cursor: default; }
+.pm-tile.auto .pm-cog { color: var(--studio-icon-subtle); }
+.pm-tile b { font-size: 13px; }
+.pm-tile small { color: var(--muted-foreground); font-size: 11.5px; overflow-wrap: anywhere; }
+.pm-tile .pm-cog { grid-row: 1 / 3; }
+.pm-flag { position: absolute; top: 6px; right: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--warning, #d97706); }
+.pm-sockets { grid-column: 2; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.pm-socket { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 999px; padding: 0 7px 0 4px; font-size: 11px; background: var(--muted); }
+.pm-socket i { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); }
+.pm-socket.empty i { background: transparent; border: 2px solid var(--warning, #d97706); }
+.pm-inspector { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.pm-inspector h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; }
+.pm-inspector section { display: flex; flex-direction: column; gap: 4px; }
+.pm-why { background: var(--accent); border-radius: 8px; padding: 6px 9px; }
+.pm-choice { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 1px 8px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; cursor: pointer; }
+.pm-choice:has(input:checked) { border-color: var(--primary); background: var(--accent); }
+.pm-choice input { margin: 3px 0 0; }
+.pm-choice em { font-style: normal; font-size: 11px; color: var(--success, #16a34a); margin-left: 6px; }
+.pm-choice small { grid-column: 2; color: var(--muted-foreground); }
+.pm-facts { margin: 0; padding-left: 16px; color: var(--muted-foreground); }
+.pm-link { border: none; background: none; padding: 0; color: var(--primary); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.pm-inspector [data-config-field], .pm-inspector form { flex-wrap: wrap; }
+.pm-inspector [data-config-field] input, .pm-inspector form input, .pm-inspector form select { width: 100% !important; min-width: 0; }
+.pm-inspector [data-config-field] code { min-width: 0 !important; }

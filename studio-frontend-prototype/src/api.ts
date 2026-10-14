@@ -1,5 +1,6 @@
 import type { DomainExpert, DomainQuestions, TermDrift } from "./domain-questions";
 import type { GearBrings } from "./gear-brings";
+import type { GearCatalogue } from "./product-configurator";
 import type { ProjectComponent, PullRequestChecks } from "./project-checks";
 import type { Decision, RemarkComment, Remarks, ReviewBrief } from "./remarks";
 import type { InboxMark } from "./waiting-on-me";
@@ -4922,6 +4923,13 @@ export const api = {
       `/studio-product/v1/gearbox/config-schema`,
       token,
       { method: "POST", body: JSON.stringify({ gears }) },
+    ),
+  /** The gear corpus's catalogue as the Gearbox engine reads it: every gear
+   *  with its name, category, extension points and config schema. */
+  gearboxCatalogue: (token: string) =>
+    request<{ catalogue: GearCatalogue; corpus_ref: string; corpus_commit?: string | null }>(
+      `/studio-product/v1/gearbox/catalogue`,
+      token,
     ),
   /** Whether product previews can run, and against which gear corpus. */
   gearboxStatus: (token: string) =>
