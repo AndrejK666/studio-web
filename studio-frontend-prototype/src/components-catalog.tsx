@@ -983,12 +983,12 @@ export function ComponentsCatalog({
               >
                 {platformLevel ? "Platform" : orgName ? `Organization · ${orgName}` : "Organization"}
               </span>
-              <h1>{platformLevel ? "Platform components" : "Our components"}</h1>
+              <h1>{platformLevel ? "Platform components" : "Components"}</h1>
               <span className="asof">
                 {tiers[tier]} · {filledFrom ? filledFrom.replace(/ \+ /g, " · ") : "not synced yet"}
               </span>
               {!platformLevel && (
-                <span className="chips" role="tablist" aria-label="Our components" style={{ margin: "0 0 0 12px" }}>
+                <span className="chips" role="tablist" aria-label="Components" style={{ margin: "0 0 0 12px" }}>
                   <button type="button" role="tab" aria-selected={pane === "registry"} className={`chip ${pane === "registry" ? "on" : ""}`} onClick={() => setPane("registry")}>
                     Registry
                   </button>

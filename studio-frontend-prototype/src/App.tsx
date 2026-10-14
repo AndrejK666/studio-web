@@ -651,7 +651,7 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     // Where its products run: clusters, registries, approvals (ADR-0043).
     { id: "environments", icon: "layers", label: "Environments" },
     // What its projects build: the registry, candidates, its gear repository.
-    { id: "gears", icon: "package", label: "Our components" },
+    { id: "gears", icon: "package", label: "Components" },
     // Every report the Studio draws, configured once for the organization.
     { id: "reports", icon: "activity", label: "Reports" },
     // The type catalogue, and the lists of its objects people save.
