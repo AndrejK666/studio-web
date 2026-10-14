@@ -1785,8 +1785,11 @@ impl DocumentsService {
     /// The project's documents as the spec model reads them, and every path
     /// of its checkouts to resolve references against.
     ///
-    /// The documents are the project's bindings that are documents at all,
-    /// guessed or confirmed, read as written (`docs/spec-domain-model.md`).
+    /// The documents are the project's documentation: the bindings whose type
+    /// a person settled in the Specs tab (its Bound queue), read as written
+    /// (`docs/spec-domain-model.md`). A file a detector only guessed at --
+    /// an agent's prompt, a tool's reference page -- is not read until
+    /// somebody types it there.
     pub async fn spec_model_sources(
         &self,
         ctx: &SecurityContext,
@@ -1798,7 +1801,7 @@ impl DocumentsService {
             .all_bindings(workspace_id, Some(project_id))
             .await?
             .into_iter()
-            .filter(|row| row.state != BindingState::NotADocument)
+            .filter(|row| row.state.is_typed())
             .collect();
         if rows.is_empty() {
             return Ok(super::spec_model::Sources::default());
@@ -3624,6 +3627,18 @@ mod tests {
         // Conforms, but only because the classifier guessed so.
         assert_eq!(settle(Detected, guess, Some(true)), Detected);
         assert_eq!(settle(Unknown, None, None), Unknown);
+    }
+
+    /// The domain model reads the project's documentation: what the Specs
+    /// tab lists as Bound, never a detector's guess waiting in Needs review.
+    #[test]
+    fn the_domain_model_reads_only_documents_whose_type_a_person_settled() {
+        use BindingState::*;
+        assert!(Confirmed.is_typed());
+        assert!(Manual.is_typed());
+        for guess in [Detected, Unknown, NotADocument] {
+            assert!(!guess.is_typed(), "{guess:?}");
+        }
     }
 
     fn bound(type_key: &str, state: BindingState, conforms: Option<bool>) -> DocumentBinding {

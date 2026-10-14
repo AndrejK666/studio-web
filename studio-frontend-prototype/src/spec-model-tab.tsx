@@ -1,56 +1,47 @@
 // The project's Domain model tab: what its documents say the application is,
 // and where they disagree about it (docs/spec-domain-model.md).
 //
-// Problems first, because that is what a person acts on; Entities is the
-// model itself, every fact with the passage it rests on; Glossary is the names
-// the project uses for its things, decided by members, which Entities and the
-// rules read through; Work is the issues, pull requests and commits that name
-// what the documents define; Against the code is
-// what the documents ask for that the code is not made of
-// (docs/project-and-product.md); Coverage says which documents have been
-// read, and is where a build starts. A build runs on the viewer's own model
-// key, so the button says so.
+// Three views, each one person's question (domain-model-screens.tsx):
+// - To resolve: can we build from these documents? Everything to decide,
+//   most blocking first: the documents' problems, open questions,
+//   assumptions, and buildable requirements that state no basis.
+// - Model map: what is this application? The entities as a graph of how they
+//   connect, each with every fact and the passage it rests on.
+// - Requirements: where does this come from, how far did it get? Each
+//   requirement followed from its passage to its code and tests.
+// Under More, as before: Glossary (the names the project uses, decided by
+// members), Work (issues, pull requests and commits naming what the
+// documents define), Against the code (docs/project-and-product.md),
+// Elsewhere (other projects' requirements) and Documents (which have been
+// read). A build runs on the viewer's own model key, so the button says so.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
+import { ModelMapView, Prose, RequirementsView, ResolveView, SideLink } from "./domain-model-screens";
 import {
-  BASIS_LABEL,
-  BASIS_ORDER,
-  basisSummary,
   buildLine,
-  codeSpans,
   coverageCounts,
   entitiesOf,
-  factsByKind,
-  filterRequirements,
   mergeTargets,
   orderFindings,
   orderProductFindings,
   orderRelated,
   RELATION_LABEL,
-  relatedEntities,
-  requirementKinds,
-  traceGaps,
   ruleLabel,
-  sideLabel,
-  type Entity,
   type GlossaryEntry,
   type ProductFinding,
-  type RequirementFilter,
   type RelatedRequirements,
   type RequirementTraces,
-  type TraceGap,
   type SpecModel,
-  type SpecModelFact,
   type SpecModelFinding,
-  type SpecModelSide,
   type SpecRequirements,
   type WorkLinks,
   workLabel,
   workState,
 } from "./spec-model";
 
-type View = "problems" | "requirements" | "trace" | "elsewhere" | "entities" | "glossary" | "work" | "product" | "coverage";
+/** The three questions first; the rest stays a click away under More. */
+type View = "resolve" | "map" | "reqs" | "glossary" | "work" | "product" | "elsewhere" | "coverage";
 
 /** The product findings as read, or why they could not be. */
 type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
@@ -74,7 +65,9 @@ export function SpecModelTab({
   const [model, setModel] = useState<SpecModel | null>(null);
   const [findings, setFindings] = useState<SpecModelFinding[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<View>("problems");
+  const [view, setView] = useState<View>("resolve");
+  /** The requirement followed in the Requirements view. */
+  const [traced, setTraced] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [product, setProduct] = useState<ProductRead | null>(null);
   const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
@@ -145,7 +138,7 @@ export function SpecModelTab({
 
   // Read when the view is opened: it reads every code file of the checkouts.
   useEffect(() => {
-    if (view !== "trace" || traces !== null) return;
+    if (view !== "reqs" || traces !== null) return;
     let live = true;
     api
       .requirementTrace(token, projectId)
@@ -223,52 +216,23 @@ export function SpecModelTab({
       </p>
 
       <div className="sm-bar">
-        <div className="sm-views" role="tablist">
-          <ViewChip id="problems" view={view} setView={setView} label="Problems" count={open} />
-          <ViewChip
-            id="requirements"
+        <div className="sm-views dm-views" role="tablist">
+          <ViewTab id="resolve" view={view} setView={setView} label="To resolve" count={open} why="can we build from these documents?" />
+          <ViewTab id="map" view={view} setView={setView} label="Model map" count={entities.length} why="what is this application?" />
+          <ViewTab
+            id="reqs"
             view={view}
             setView={setView}
             label="Requirements"
             count={requirements && "items" in requirements ? requirements.total : 0}
-          />
-          <ViewChip
-            id="trace"
-            view={view}
-            setView={setView}
-            label="Trace"
-            count={traces && "items" in traces ? traces.implemented : 0}
-          />
-          <ViewChip
-            id="elsewhere"
-            view={view}
-            setView={setView}
-            label="Elsewhere"
-            count={related && "items" in related ? related.total : 0}
-          />
-          <ViewChip id="entities" view={view} setView={setView} label="Entities" count={entities.length} />
-          <ViewChip id="glossary" view={view} setView={setView} label="Glossary" count={glossary.length} />
-          <ViewChip id="work" view={view} setView={setView} label="Work" count={work && "items" in work ? work.total : 0} />
-          <ViewChip
-            id="product"
-            view={view}
-            setView={setView}
-            label="Against the code"
-            count={product && "items" in product ? product.items.length : 0}
-          />
-          <ViewChip
-            id="coverage"
-            view={view}
-            setView={setView}
-            label="Documents"
-            count={model?.documents.length ?? 0}
+            why="where does it come from, how far did it get?"
           />
         </div>
         <div className="sm-build">
           {line && <span className={model?.build.error ? "sm-build-line sm-err" : "sm-build-line"}>{line}</span>}
           <button
             className="primary"
-            disabled={running || starting}
+            disabled={running || starting || model?.documents.length === 0}
             onClick={() => void startBuild()}
             title="Reads every document not yet read at its current revision, on your own model key"
           >
@@ -277,21 +241,83 @@ export function SpecModelTab({
         </div>
       </div>
 
+      <div className="dm-more" role="tablist" aria-label="More">
+        <span className="hint">More:</span>
+        <ViewChip id="glossary" view={view} setView={setView} label="Glossary" count={glossary.length} />
+        <ViewChip id="work" view={view} setView={setView} label="Work" count={work && "items" in work ? work.total : 0} />
+        <ViewChip
+          id="product"
+          view={view}
+          setView={setView}
+          label="Against the code"
+          count={product && "items" in product ? product.items.length : 0}
+        />
+        <ViewChip
+          id="elsewhere"
+          view={view}
+          setView={setView}
+          label="Elsewhere"
+          count={related && "items" in related ? related.total : 0}
+        />
+        <ViewChip id="coverage" view={view} setView={setView} label="Documents" count={model?.documents.length ?? 0} />
+      </div>
+
       {error && <div className="error">{error}</div>}
       {!model && !error && <div className="empty">Loading…</div>}
-
-      {model && view === "problems" && (
-        <Problems findings={ordered} onDecide={decide} onOpenFile={onOpenFile} built={model.facts.length > 0} />
+      {model && model.documents.length === 0 && (
+        <div className="hint" data-no-documentation>
+          The domain model is read from the project&apos;s documentation: the documents whose type was settled in the Specs tab
+          (its Bound list). None are yet. Type the documents there first, then build the model.
+        </div>
       )}
-      {view === "requirements" && <Requirements read={requirements} onOpenFile={onOpenFile} />}
+
+      {model && view === "resolve" && (
+        <ResolveView
+          findings={ordered}
+          requirements={requirements && "items" in requirements ? requirements : null}
+          onDecide={decide}
+          onTrace={(id) => {
+            setTraced(id);
+            setView("reqs");
+          }}
+          onOpenFile={onOpenFile}
+          built={model.facts.length > 0}
+        />
+      )}
+      {model && view === "map" && <ModelMapView entities={entities} onOpenFile={onOpenFile} />}
+      {view === "reqs" && (
+        <RequirementsView read={requirements} traces={traces} work={work} selected={traced} onSelect={setTraced} onOpenFile={onOpenFile} />
+      )}
       {view === "elsewhere" && <Elsewhere read={related} onOpenFile={onOpenFile} />}
-      {view === "trace" && <Trace read={traces} onOpenFile={onOpenFile} />}
-      {model && view === "entities" && <Entities entities={entities} onOpenFile={onOpenFile} />}
       {model && view === "glossary" && <Glossary entries={glossary} onDecide={decideTerm} />}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
       {view === "product" && <AgainstTheCode read={product} onOpenFile={onOpenFile} />}
       {model && view === "coverage" && <Coverage model={model} />}
     </>
+  );
+}
+
+function ViewTab({
+  id,
+  view,
+  setView,
+  label,
+  count,
+  why,
+}: {
+  id: View;
+  view: View;
+  setView: (v: View) => void;
+  label: string;
+  count: number;
+  /** The question the view answers. */
+  why: string;
+}) {
+  return (
+    <button role="tab" aria-selected={view === id} className={view === id ? "dm-tab on" : "dm-tab"} onClick={() => setView(id)}>
+      <b>{label}</b> <span className="chip-n">{count}</span>
+      <span className="dm-why">{why}</span>
+    </button>
   );
 }
 
@@ -318,111 +344,6 @@ function ViewChip({
       {label}
       <span className="chip-n">{count}</span>
     </button>
-  );
-}
-
-/** Text the backend wrote with backticked names, the names set as code. */
-function Prose({ text }: { text: string }) {
-  return (
-    <>
-      {codeSpans(text).map((s, i) => (s.code ? <code key={i}>{s.text}</code> : s.text))}
-    </>
-  );
-}
-
-function SideLink({ side, onOpenFile }: { side: SpecModelSide; onOpenFile?: (path: string) => void }) {
-  return (
-    <div className="sm-side">
-      <button
-        className="sm-side-path"
-        disabled={!onOpenFile}
-        onClick={() => onOpenFile?.(side.path)}
-        title="Open in the editor"
-      >
-        {sideLabel(side)}
-      </button>
-      {side.quote && <blockquote className="sm-quote">{side.quote}</blockquote>}
-    </div>
-  );
-}
-
-function Problems({
-  findings,
-  onDecide,
-  onOpenFile,
-  built,
-}: {
-  findings: SpecModelFinding[];
-  onDecide: (f: SpecModelFinding, d: "confirmed" | "dismissed") => void;
-  onOpenFile?: (path: string) => void;
-  built: boolean;
-}) {
-  if (findings.length === 0) {
-    return (
-      <div className="empty">
-        {built
-          ? "No disagreements found, and every reference resolves."
-          : "Every reference resolves. Build the model to look for disagreements between documents."}
-      </div>
-    );
-  }
-  return (
-    <div className="sm-findings">
-      {findings.map((f) => (
-        <div key={f.fingerprint} className={`card sm-finding sm-${f.severity}${f.decision === "dismissed" ? " sm-dismissed" : ""}`}>
-          <div className="card-head">
-            <div>
-              <span className={`sm-sev sm-sev-${f.severity}`}>{f.severity}</span>{" "}
-              <strong>{ruleLabel(f.rule)}</strong>
-            </div>
-            <div className="sm-decide">
-              <button
-                className={f.decision === "confirmed" ? "chip on" : "chip"}
-                onClick={() => onDecide(f, "confirmed")}
-                title="A real problem"
-              >
-                ✓
-              </button>
-              <button
-                className={f.decision === "dismissed" ? "chip on" : "chip"}
-                onClick={() => onDecide(f, "dismissed")}
-                title="Not a problem"
-              >
-                ✗
-              </button>
-            </div>
-          </div>
-          <p className="sm-message">
-            <Prose text={f.message} />
-          </p>
-          <div className={f.sides.length === 2 ? "sm-sides sm-two" : "sm-sides"}>
-            {f.sides.slice(0, 6).map((s, i) => (
-              <SideLink key={i} side={s} onOpenFile={onOpenFile} />
-            ))}
-            {f.sides.length > 6 && <div className="hint">and {f.sides.length - 6} more places</div>}
-          </div>
-          {f.edit && (
-            <div className="sm-fix">
-              <span className="hint">Fix in {f.edit.path}:</span>
-              <del>{f.edit.replace}</del>
-              <ins>{f.edit.with}</ins>
-            </div>
-          )}
-          {!f.edit && f.decide.length > 0 && (
-            <div className="sm-fix">
-              <span className="hint">Needs a decision:</span>
-              <ul>
-                {f.decide.map((o) => (
-                  <li key={o}>
-                    <Prose text={o} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -483,60 +404,6 @@ function AgainstTheCode({
   );
 }
 
-function Entities({ entities, onOpenFile }: { entities: Entity[]; onOpenFile?: (path: string) => void }) {
-  const [filter, setFilter] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
-  const shown = entities.filter((e) => e.name.toLowerCase().includes(filter.trim().toLowerCase()));
-  const current = entities.find((e) => e.key === selected) ?? shown[0];
-  if (entities.length === 0) {
-    return <div className="empty">Nothing read yet. Build the model to read the documents.</div>;
-  }
-  return (
-    <div className="sm-entities">
-      <div className="sm-entity-list">
-        <input placeholder="Filter entities" value={filter} onChange={(e) => setFilter(e.target.value)} />
-        <ul className="rows">
-          {shown.map((e) => (
-            <li
-              key={e.key}
-              className={current?.key === e.key ? "sm-entity on" : "sm-entity"}
-              onClick={() => setSelected(e.key)}
-            >
-              <span>{e.name}</span>
-              <span className="hint">
-                {e.facts.length} · {e.documents} doc{e.documents === 1 ? "" : "s"}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
-      {current && (
-        <div className="card sm-entity-card">
-          <h2>{current.name}</h2>
-          {relatedEntities(current, entities).length > 0 && (
-            <div className="sm-related">
-              Relates to:{" "}
-              {relatedEntities(current, entities).map((k) => (
-                <button key={k} className="chip" onClick={() => setSelected(k)}>
-                  {entities.find((e) => e.key === k)?.name ?? k}
-                </button>
-              ))}
-            </div>
-          )}
-          {factsByKind(current.facts).map((g) => (
-            <section key={g.kind} className="sm-kind">
-              <h3>{g.kind}</h3>
-              {g.facts.map((f, i) => (
-                <FactRow key={i} fact={f} onOpenFile={onOpenFile} />
-              ))}
-            </section>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** The issues, pull requests and commits that name an identifier the
  *  documents define, by identifier. A link is made only by the work naming
  *  the identifier; nothing is guessed. */
@@ -590,167 +457,6 @@ function Work({
           </li>
         ))}
       </ul>
-    </>
-  );
-}
-
-/** What the documents define, and what each requirement states it rests on:
- *  a source it cites, a reason, or the words that make it an assumption or an
- *  open question. Shown, never raised as a problem. */
-function Requirements({
-  read,
-  onOpenFile,
-}: {
-  read: SpecRequirements | { error: string } | null;
-  onOpenFile?: (path: string) => void;
-}) {
-  const [filter, setFilter] = useState<RequirementFilter>({ basis: "all", kind: "all", text: "", noWork: false });
-  if (read === null) return <div className="empty">Loading…</div>;
-  if ("error" in read) return <div className="error">{read.error}</div>;
-  if (read.total === 0) {
-    return (
-      <div className="empty">
-        The documents define no identifiers with a label (**ID**: `…`), so there are no requirements to list.
-      </div>
-    );
-  }
-  const kinds = requirementKinds(read.items);
-  const shown = filterRequirements(read.items, filter);
-  return (
-    <>
-      <p className="hint">
-        {basisSummary(read)} Read from each requirement&apos;s own block as written; nothing is asked of the
-        documents.
-      </p>
-      <div className="sm-req-filters">
-        <select
-          aria-label="Basis"
-          value={filter.basis}
-          onChange={(e) => setFilter({ ...filter, basis: e.target.value as RequirementFilter["basis"] })}
-        >
-          <option value="all">Any basis</option>
-          {BASIS_ORDER.map((b) => (
-            <option key={b} value={b}>
-              {BASIS_LABEL[b]} ({read.by_basis[b] ?? 0})
-            </option>
-          ))}
-        </select>
-        {kinds.length > 1 && (
-          <select aria-label="Kind" value={filter.kind} onChange={(e) => setFilter({ ...filter, kind: e.target.value })}>
-            <option value="all">Any kind</option>
-            {kinds.map((k) => (
-              <option key={k} value={k}>
-                {k}
-              </option>
-            ))}
-          </select>
-        )}
-        {read.synced && (
-          <label className="sm-req-nowork">
-            <input
-              type="checkbox"
-              checked={filter.noWork}
-              onChange={(e) => setFilter({ ...filter, noWork: e.target.checked })}
-            />{" "}
-            No work yet
-          </label>
-        )}
-        <input
-          type="search"
-          placeholder="Filter by id, title or text"
-          value={filter.text}
-          onChange={(e) => setFilter({ ...filter, text: e.target.value })}
-        />
-      </div>
-      <ul className="rows sm-work">
-        {shown.map((r) => (
-          <li key={`${r.id}@${r.defined_in.path}:${r.defined_in.line_start}`} className="sm-work-row">
-            <div className="sm-term-head">
-              <code>{r.id}</code>
-              {r.priority && <span className="sm-status">{r.priority}</span>}
-              <span className={`sm-status sm-basis-${r.basis}`} title={r.because ? `Because of “${r.because}”` : undefined}>
-                {BASIS_LABEL[r.basis]}
-              </span>
-              {read.synced && <span className="sm-status">{r.work === 0 ? "no work" : `${r.work} work`}</span>}
-              <SideLink side={r.defined_in} onOpenFile={onOpenFile} />
-            </div>
-            {r.title && <div className="sm-req-title">{r.title}</div>}
-            {r.text && <div className="sm-work-title">{r.text}</div>}
-            {r.cites.length > 0 && (
-              <div className="sm-req-cites">
-                Cites: {r.cites.map((c, i) => (
-                  <code key={i}>{c}</code>
-                ))}
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
-      {shown.length === 0 && <div className="empty">No requirement matches the filter.</div>}
-    </>
-  );
-}
-
-/** Each requirement with the documents, code and tests that name its
- *  identifier: what is implemented, what is tested, what nothing names. */
-function Trace({
-  read,
-  onOpenFile,
-}: {
-  read: RequirementTraces | { error: string } | null;
-  onOpenFile?: (path: string) => void;
-}) {
-  const [gap, setGap] = useState<TraceGap>("all");
-  if (read === null) return <div className="empty">Reading the code and tests of the checkouts…</div>;
-  if ("error" in read) return <div className="error">{read.error}</div>;
-  if (read.total === 0) {
-    return <div className="empty">The documents define no identifiers with a label, so there is nothing to trace.</div>;
-  }
-  const shown = traceGaps(read.items, gap);
-  const places = (label: string, sides: SpecModelSide[]) =>
-    sides.length > 0 && (
-      <div className="sm-req-cites">
-        {label}:{" "}
-        {sides.map((s, i) => (
-          <SideLink key={i} side={s} onOpenFile={onOpenFile} />
-        ))}
-      </div>
-    );
-  return (
-    <>
-      <p className="hint">
-        {read.implemented} of {read.total} requirements are named in code, {read.tested} in tests, across {read.files}{" "}
-        files read. A file is counted when it names the identifier itself; what is not named is not traced.
-      </p>
-      <div className="sm-req-filters">
-        <select aria-label="Gap" value={gap} onChange={(e) => setGap(e.target.value as TraceGap)}>
-          <option value="all">All requirements</option>
-          <option value="no-code">Not named in code</option>
-          <option value="no-test">Not named in a test</option>
-          <option value="untraced">Named nowhere</option>
-        </select>
-      </div>
-      <ul className="rows sm-work">
-        {shown.map((t) => (
-          <li key={`${t.id}@${t.defined_in.path}`} className="sm-work-row">
-            <div className="sm-term-head">
-              <code>{t.id}</code>
-              <span className={t.code.length ? "sm-status sm-basis-cited" : "sm-status"}>
-                {t.code.length ? `${t.code.length} in code` : "no code"}
-              </span>
-              <span className={t.tests.length ? "sm-status sm-basis-cited" : "sm-status"}>
-                {t.tests.length ? `${t.tests.length} in tests` : "no test"}
-              </span>
-              <SideLink side={t.defined_in} onOpenFile={onOpenFile} />
-            </div>
-            {t.title && <div className="sm-req-title">{t.title}</div>}
-            {places("Documents", t.documents)}
-            {places("Code", t.code)}
-            {places("Tests", t.tests)}
-          </li>
-        ))}
-      </ul>
-      {shown.length === 0 && <div className="empty">No requirement has this gap.</div>}
     </>
   );
 }
@@ -931,25 +637,6 @@ function Glossary({
         })}
       </ul>
     </>
-  );
-}
-
-function FactRow({ fact, onOpenFile }: { fact: SpecModelFact; onOpenFile?: (path: string) => void }) {
-  const inactive = fact.status !== "active";
-  return (
-    <div className={inactive ? "sm-fact sm-inactive" : "sm-fact"}>
-      <div>
-        {fact.aspect && <span className="sm-aspect">{fact.aspect}: </span>}
-        {fact.value ? <strong>{fact.value}</strong> : fact.text}
-        {inactive && (
-          <span className="sm-status" title={fact.status_because}>
-            {fact.status}
-          </span>
-        )}
-      </div>
-      {fact.value && fact.text && <div className="hint">{fact.text}</div>}
-      <SideLink side={fact.source} onOpenFile={onOpenFile} />
-    </div>
   );
 }
 
