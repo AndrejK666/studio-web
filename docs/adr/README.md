@@ -56,6 +56,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0041](0041-an-organization-registry-of-its-components.md) | An organization keeps a registry of the components its projects build | proposed | 2026-10-09 |
 | [0042](0042-platform-and-organization-component-tiers.md) | Components come in two tiers, the platform's and the organization's | proposed | 2026-10-09 |
 | [0043](0043-an-organization-deploys-products-to-its-environments.md) | An organization's products run in its environments | proposed | 2026-10-13 |
+| [0045](0045-a-project-keeps-a-record-of-its-builds.md) | A project keeps a record of its product's builds; the portal manages them and does not build | proposed | 2026-10-14 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
