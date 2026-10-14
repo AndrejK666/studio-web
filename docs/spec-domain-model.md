@@ -114,7 +114,11 @@ rebuild is resolved only when the text of one of its sides changed.
 
 - **Source document**: a typed document of the project (repository binding or
   Studio document), with its kind (`spec` or `evidence`), its path and its
-  content revision, as the documents index already holds it.
+  content revision, as the documents index already holds it. Typed means a
+  person settled the type in the Specs tab -- confirmed a proposal or chose
+  one, the Bound queue. A file a detector only guessed at waits in Needs
+  review and is not read: the Specs tab decides what the project's
+  documentation is, and the model is read from that.
 - **Reference index**: every identifier the project's documents define and
   where (a requirement or component id, a heading anchor, an ADR); every
   reference to one; every link. ADRs are indexed with their **namespace** (the

@@ -738,6 +738,14 @@ pub enum BindingState {
 }
 
 impl BindingState {
+    /// Whether a person settled the file's type: confirmed a proposal or
+    /// chose one. The Specs tab's Bound queue, and the project's
+    /// documentation -- what its domain model is read from. A detector's
+    /// guess (`Detected`, `Unknown`) waits in Needs review until then.
+    pub fn is_typed(self) -> bool {
+        matches!(self, BindingState::Confirmed | BindingState::Manual)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             BindingState::Detected => "detected",
