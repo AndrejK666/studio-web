@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 246,
+  "open_violations": 249,
   "operations": [
     {
       "method": "DELETE",
@@ -196,6 +196,21 @@
       "operation_id": "studio_organizations.delete_organization",
       "tag": "StudioOrganizations",
       "summary": "Delete an organization",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-organizations/v1/organizations/{org_id}/logo",
+      "operation_id": "studio_organizations.delete_organization_logo",
+      "tag": "StudioOrganizations",
+      "summary": "Remove an organization's logo",
       "authenticated": true,
       "errors": [
         "400",
@@ -1862,6 +1877,23 @@
       ],
       "errors": [
         "401"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-organizations/v1/organizations/{org_id}/logo",
+      "operation_id": "studio_organizations.get_organization_logo",
+      "tag": "StudioOrganizations",
+      "summary": "An organization's logo",
+      "authenticated": true,
+      "responses": [
+        "OrganizationLogoDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
       ]
     },
     {
@@ -4865,6 +4897,25 @@
       "request": "EnvironmentRequest",
       "responses": [
         "EnvironmentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-organizations/v1/organizations/{org_id}/logo",
+      "operation_id": "studio_organizations.upsert_organization_logo",
+      "tag": "StudioOrganizations",
+      "summary": "Set an organization's logo",
+      "authenticated": true,
+      "request": "UpsertOrganizationLogoRequest",
+      "responses": [
+        "OrganizationLogoDto"
       ],
       "errors": [
         "400",
