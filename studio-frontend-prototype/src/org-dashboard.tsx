@@ -5,7 +5,7 @@
  * registry and the background runs -- and every tile opens the place its
  * number comes from. Rules: `org-dashboard-model.ts`. */
 
-import { LevelBadge, LogoControl, OrgMark } from "./level-marks";
+import { LevelBadge, OrgMark } from "./level-marks";
 import { useEffect, useMemo, useState } from "react";
 
 import { api, type RollupRow, type TaskRun } from "./api";
@@ -97,7 +97,6 @@ export function OrgDashboard({
         <span className="sub">
           Between the platform and its workspaces: its projects, people and own components.
         </span>
-        <LogoControl token={token} orgId={org.id} />
       </div>
 
       <div className="dash-stats">

@@ -677,8 +677,8 @@ export const SURFACES: Surface[] = [
     id: "organization-dashboard",
     area: "organization",
     title: "Organization dashboard",
-    does: "Open the organization from the path: its workspaces, people, repositories, specs, open pull requests, its own components and failed background work, with the projects that need attention; set its logo.",
-    components: ["OrgDashboard", "LogoControl"],
+    does: "Open the organization from the path: its workspaces, people, repositories, specs, open pull requests, its own components and failed background work, with the projects that need attention.",
+    components: ["OrgDashboard"],
     gears: ["studio-components-catalog", "studio-organizations", "studio-tasks", "studio-user"],
   },
   {
@@ -749,7 +749,7 @@ export const SURFACES: Surface[] = [
     id: "admin",
     area: "admin",
     title: "Organizations, members and access",
-    does: "Manage organizations, members and their identities, roles, integrations and secrets.",
+    does: "Manage organizations and their logos, members and their identities, roles, integrations and secrets.",
     components: [
       "OrganizationsView",
       "AccessView",
@@ -758,6 +758,7 @@ export const SURFACES: Surface[] = [
       "IdentityDirectory",
       "OrganizationsTable",
       "MemberIdentitiesPanel",
+      "LogoControl",
     ],
     gears: [
       "account-management",

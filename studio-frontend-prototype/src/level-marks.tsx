@@ -39,7 +39,8 @@ export function OrgMark({ token, orgId, name }: { token: string; orgId: string |
   return <LevelMark level="organization" name={name} logo={logo} />;
 }
 
-/** Set or remove an organization's logo, on its overview. The backend says
+/** Set or remove an organization's logo, in the admin area's organization
+ *  card. The backend says
  *  who may; anybody else is told so. */
 export function LogoControl({ token, orgId }: { token: string; orgId: string }) {
   const logo = useOrgLogo(token, orgId);
