@@ -10,7 +10,8 @@ use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, CreatedRepository,
     DriverIdentity, FileToWrite, OpenedPullRequest, PullRequestThreads, RemoteComment,
     RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText, RemoteIssue, RemotePullRequest,
-    RemoteRepo, RemoteReview, RemoteWorkflowRun, RepoTree, RepoTreeEntry, WrittenFile,
+    RemoteRepo, RemoteReview, RemoteWorkflow, RemoteWorkflowRun, RepoTree, RepoTreeEntry,
+    WrittenFile,
 };
 
 pub struct GitHubDriver {
@@ -215,6 +216,20 @@ impl From<GitHubCommit> for RemoteCommit {
             committed_at,
         }
     }
+}
+
+/// `/repos/{path}/actions/workflows`.
+#[derive(Deserialize)]
+struct GitHubWorkflows {
+    #[serde(default)]
+    workflows: Vec<GitHubWorkflow>,
+}
+
+#[derive(Deserialize)]
+struct GitHubWorkflow {
+    id: i64,
+    #[serde(default)]
+    state: Option<String>,
 }
 
 /// `/repos/{path}/actions/runs`.
@@ -917,15 +932,49 @@ impl ConnectorDriver for GitHubDriver {
         Ok(commits.into_iter().map(RemoteCommit::from).collect())
     }
 
+    async fn list_workflows(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+    ) -> anyhow::Result<Vec<RemoteWorkflow>> {
+        let url = format!(
+            "{}/repos/{repo_full_path}/actions/workflows?per_page=100",
+            auth.root()
+        );
+        let res = self.request(&url, auth).send().await?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let listed: GitHubWorkflows = res.json().await?;
+        Ok(listed
+            .workflows
+            .into_iter()
+            .map(|w| RemoteWorkflow {
+                id: w.id,
+                state: w.state,
+            })
+            .collect())
+    }
+
     async fn list_workflow_runs(
         &self,
         auth: &ConnectionAuth,
         repo_full_path: &str,
+        workflow: Option<i64>,
         page: u32,
         per_page: u32,
     ) -> anyhow::Result<Vec<RemoteWorkflowRun>> {
+        let runs = match workflow {
+            Some(id) => format!("actions/workflows/{id}/runs"),
+            None => "actions/runs".to_owned(),
+        };
         let url = format!(
-            "{}/repos/{repo_full_path}/actions/runs?per_page={}&page={}",
+            "{}/repos/{repo_full_path}/{runs}?per_page={}&page={}",
             auth.root(),
             per_page.clamp(1, 100),
             page.max(1),

@@ -10,6 +10,7 @@ import {
   buildDuration,
   buildsHeadline,
   buildsOf,
+  ciReadFailures,
   statusTone,
   workflowsOf,
 } from "./builds";
@@ -24,6 +25,20 @@ export function ProjectBuilds({ token, projectId }: { token: string; projectId: 
   const [error, setError] = useState<string | null>(null);
   const [workflow, setWorkflow] = useState<string>("");
   const [branch, setBranch] = useState<string>("");
+  const [failures, setFailures] = useState<{ repo: string; error: string }[]>([]);
+
+  // The repositories say whether their CI could be read at all: no runs and
+  // "could not read the runs" are different answers.
+  useEffect(() => {
+    let live = true;
+    api
+      .listArtifactNodes(token, "repo", projectId, undefined, 200)
+      .then((page) => live && setFailures(ciReadFailures(page.nodes ?? [])))
+      .catch(() => live && setFailures([]));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
 
   useEffect(() => {
     let live = true;
@@ -56,6 +71,12 @@ export function ProjectBuilds({ token, projectId }: { token: string; projectId: 
         IDE do. This reads the CI runs of the project&apos;s repositories on every sync.
       </p>
       {error && <div className="error">{error}</div>}
+      {failures.map((f) => (
+        <div key={f.repo} className="error" data-builds-ci-error>
+          Studio could not read the CI runs of {f.repo}: {f.error}. The connection may lack read access to the
+          repository&apos;s Actions.
+        </div>
+      ))}
       {!error && runs === null && <div className="empty">Loading…</div>}
       {runs && runs.length === 0 && (
         <div className="empty" data-builds-empty>
@@ -67,11 +88,22 @@ export function ProjectBuilds({ token, projectId }: { token: string; projectId: 
         <section className="card">
           <div className="card-head" style={{ flexWrap: "wrap", gap: 8 }}>
             <div>
-              <h2 data-builds-headline>{buildsHeadline(runs, chosen || null)}</h2>
-              <p className="subtitle">Newest first. A run links to its page in CI.</p>
+              <h2 data-builds-headline>{buildsHeadline(runs, chosen || null, branch || null)}</h2>
+              <p className="subtitle">
+                Newest first. A run links to its page in CI. Which workflow builds the product is not set yet, so this
+                speaks of the one you pick.
+              </p>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <select aria-label="Workflow" value={chosen} onChange={(e) => setWorkflow(e.target.value)}>
+              <select
+                aria-label="Workflow"
+                value={chosen}
+                onChange={(e) => {
+                  setWorkflow(e.target.value);
+                  // The branch picked may not exist in the other workflow.
+                  setBranch("");
+                }}
+              >
                 {workflows.map((w) => (
                   <option key={w.name} value={w.name}>
                     {w.name} ({w.runs})

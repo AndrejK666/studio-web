@@ -1835,6 +1835,8 @@ impl Gearbox {
         let workdir = self.cfg.workdir.clone();
         let s = source.clone();
         tokio::task::spawn_blocking(move || {
+            // An empty ref is the repository's default branch.
+            let git_ref = Some(s.git_ref.as_str()).filter(|r| !r.trim().is_empty());
             crate::connectors::sdk::git_checkout::clone_or_update(
                 &workdir,
                 &s.key,
@@ -1842,7 +1844,7 @@ impl Gearbox {
                 &s.url,
                 &s.username,
                 &s.token,
-                Some(&s.git_ref),
+                git_ref,
             )
             .map(|c| c.dir)
         })

@@ -43,6 +43,8 @@ const MAX_COMMITS: usize = 20_000;
 /// CI runs read per repository, newest first (ADR-0045): three pages. Runs
 /// are read again every sync, so this bounds every sync, not only the first.
 const MAX_RUN_PAGES: u32 = 3;
+/// Workflows whose runs are read, one page of 100 each.
+const MAX_WORKFLOWS: usize = 20;
 /// How many open pull requests the review-thread query walks.
 ///
 /// Not a flood guard — the query stores nothing per pull request beyond one
@@ -1085,55 +1087,87 @@ impl IngestService {
             "studio-artifact-ingest: pulled comments and commits"
         );
 
-        // CI runs (ADR-0045): the newest few hundred, whatever `since` says --
-        // a run that was in progress at the last sync has finished since, and
-        // only reading it again says so. Best effort: a token that cannot
-        // read Actions loses the runs, not the sync.
+        // CI runs (ADR-0045): the newest of each workflow, whatever `since`
+        // says -- a run that was in progress at the last sync has finished
+        // since, and only reading it again says so. Per workflow, so a busy
+        // workflow cannot push the one that builds the product out of the
+        // window; repository-wide when the workflows cannot be listed. Best
+        // effort: a token that cannot read Actions loses the runs, not the
+        // sync, and the repository node says so.
         progress.set("pulling CI runs…");
         let mut runs = 0usize;
-        for page in 1..=MAX_RUN_PAGES {
-            let batch = match driver
-                .list_workflow_runs(&auth, repo_full_path, page, PER_PAGE)
-                .await
-            {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        repo = repo_full_path,
-                        "studio-artifact-ingest: CI run listing failed — skipping CI runs"
-                    );
+        let mut ci_error: Option<String> = None;
+        let reads: Vec<(Option<i64>, u32)> = match driver
+            .list_workflows(&auth, repo_full_path)
+            .await
+        {
+            Ok(workflows) if !workflows.is_empty() => workflows
+                .iter()
+                .filter(|w| w.state.as_deref().is_none_or(|s| s == "active"))
+                .take(MAX_WORKFLOWS)
+                .map(|w| (Some(w.id), 1))
+                .collect(),
+            Ok(_) => vec![(None, MAX_RUN_PAGES)],
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: workflow listing failed — reading runs repository-wide"
+                );
+                vec![(None, MAX_RUN_PAGES)]
+            }
+        };
+        'reads: for (workflow, pages) in reads {
+            for page in 1..=pages {
+                let batch = match driver
+                    .list_workflow_runs(&auth, repo_full_path, workflow, page, PER_PAGE)
+                    .await
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = repo_full_path,
+                            "studio-artifact-ingest: CI run listing failed — skipping CI runs"
+                        );
+                        ci_error = Some(format!("{e:#}").chars().take(300).collect());
+                        break 'reads;
+                    }
+                };
+                if batch.is_empty() {
                     break;
                 }
-            };
-            if batch.is_empty() {
-                break;
+                runs += batch.len();
+                for r in batch {
+                    let author = r.actor.clone();
+                    let node = gts::workflow_run_node(
+                        source_scope,
+                        &repo_id,
+                        connector_id,
+                        repo_full_path,
+                        r,
+                    );
+                    let run_id = node.instance_id.clone();
+                    edges.push(gts::artifact_of_edge(&run_id, &repo_id));
+                    author_edge(&mut edges, &mut users, &run_id, author.as_deref());
+                    nodes.push(node);
+                }
+                self.flush_and_report(
+                    ctx,
+                    progress,
+                    &mut nodes,
+                    &mut flushed,
+                    workspace_id,
+                    project_id,
+                    "pulling CI runs…",
+                    issues,
+                    pull_requests,
+                    files,
+                    comments,
+                    commits,
+                )
+                .await?;
             }
-            runs += batch.len();
-            for r in batch {
-                let author = r.actor.clone();
-                let node =
-                    gts::workflow_run_node(source_scope, &repo_id, connector_id, repo_full_path, r);
-                let run_id = node.instance_id.clone();
-                edges.push(gts::artifact_of_edge(&run_id, &repo_id));
-                author_edge(&mut edges, &mut users, &run_id, author.as_deref());
-                nodes.push(node);
-            }
-            self.flush_and_report(
-                ctx,
-                progress,
-                &mut nodes,
-                &mut flushed,
-                workspace_id,
-                project_id,
-                "pulling CI runs…",
-                issues,
-                pull_requests,
-                files,
-                comments,
-                commits,
-            )
-            .await?;
         }
         tracing::info!(
             repo = repo_full_path,
@@ -1184,6 +1218,8 @@ impl IngestService {
                 commits,
                 open_review_threads,
                 open_document_threads,
+                ci_runs: ci_error.is_none().then_some(runs),
+                ci_error,
             },
             &threads.waiting,
         ));

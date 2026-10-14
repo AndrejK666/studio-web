@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import type { ArtifactNode } from "./api";
-import { buildDuration, buildStatus, buildsHeadline, buildsOf, latestFinished, mainBranch, workflowsOf } from "./builds";
+import {
+  buildDuration,
+  buildStatus,
+  buildsHeadline,
+  buildsOf,
+  ciReadFailures,
+  latestFinished,
+  mainBranch,
+  workflowsOf,
+} from "./builds";
 
 const node = (id: string, v: Record<string, unknown>): ArtifactNode => ({
   type_id: "gts.cf.studio.artifact.workflow_run.v1~",
@@ -25,6 +34,8 @@ describe("builds", () => {
     expect(buildStatus("completed", "cancelled")).toBe("cancelled");
     expect(buildStatus("completed", "skipped")).toBe("skipped");
     expect(buildStatus("completed", "timed_out")).toBe("failed");
+    expect(buildStatus(null, null)).toBe("unknown");
+    expect(buildStatus("completed", null)).toBe("unknown");
   });
 
   it("orders runs newest first and counts workflows, most runs first", () => {
@@ -39,25 +50,31 @@ describe("builds", () => {
   it("answers whether main builds from its newest finished run", () => {
     expect(mainBranch(runs)).toBe("main");
     expect(latestFinished(runs, "main")?.id).toBe("a");
-    expect(buildsHeadline(runs, "Delivery")).toBe("main does not build: Delivery failed on aaaaaaa.");
-    expect(buildsHeadline(runs, "Docs")).toBe("main builds: Docs passed on ddddddd.");
+    expect(buildsHeadline(runs, "Delivery")).toBe("Delivery on main: failed at aaaaaaa.");
+    expect(buildsHeadline(runs, "Docs")).toBe("Docs on main: passed at ddddddd.");
+    expect(buildsHeadline(runs, "Delivery", "feat/x")).toBe("Delivery on feat/x: passed at ccccccc.");
+    expect(buildsHeadline(runs, "Docs", "feat/x")).toBe("1 run; none finished on feat/x yet.");
     expect(buildsHeadline([], null)).toBe("No CI runs yet.");
     expect(mainBranch(buildsOf([node("x", { branch: "dev" }), node("y", { branch: "dev" }), node("z", { branch: "x" })]))).toBe("dev");
   });
 
   it("says how long a run took, or has been running", () => {
+    expect(buildDuration({ status: "passed", startedAt: "2026-10-14T08:00:00Z", updatedAt: "2026-10-14T08:06:10Z" })).toBe("6 min");
+    expect(buildDuration({ status: "failed", startedAt: "2026-10-14T08:00:00Z", updatedAt: "2026-10-14T08:00:40Z" })).toBe("40 s");
     expect(
-      buildDuration({ status: "passed", startedAt: "2026-10-14T08:00:00Z", createdAt: null, updatedAt: "2026-10-14T08:06:10Z" }),
-    ).toBe("6 min");
-    expect(
-      buildDuration({ status: "failed", startedAt: "2026-10-14T08:00:00Z", createdAt: null, updatedAt: "2026-10-14T08:00:40Z" }),
-    ).toBe("40 s");
-    expect(
-      buildDuration(
-        { status: "running", startedAt: "2026-10-14T08:00:00Z", createdAt: null, updatedAt: null },
-        Date.parse("2026-10-14T09:05:00Z"),
-      ),
+      buildDuration({ status: "running", startedAt: "2026-10-14T08:00:00Z", updatedAt: null }, Date.parse("2026-10-14T09:05:00Z")),
     ).toBe("1 h 5 min");
-    expect(buildDuration({ status: "queued", startedAt: null, createdAt: null, updatedAt: null })).toBeNull();
+    // Time in the queue is not build time.
+    expect(buildDuration({ status: "queued", startedAt: "2026-10-14T08:00:00Z", updatedAt: null })).toBeNull();
+    expect(buildDuration({ status: "passed", startedAt: null, updatedAt: "2026-10-14T08:06:10Z" })).toBeNull();
+  });
+
+  it("names the repositories whose CI could not be read", () => {
+    expect(
+      ciReadFailures([
+        node("r1", { full_path: "o/a", ci_error: "GitHub 403 Forbidden" }),
+        node("r2", { full_path: "o/b", ci_runs: 12 }),
+      ]),
+    ).toEqual([{ repo: "o/a", error: "GitHub 403 Forbidden" }]);
   });
 });

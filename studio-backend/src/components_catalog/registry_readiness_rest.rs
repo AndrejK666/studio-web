@@ -150,6 +150,13 @@ fn readiness_problem(e: ReadinessFailure) -> CanonicalError {
             "the component's repository is read through no known connection".to_owned(),
             "REGISTRY_CONNECTION_UNKNOWN",
         ),
+        ReadinessFailure::NotOwnConnection(tenant) => precondition(
+            format!("connection:{tenant}"),
+            "the component is read through a connection the organization only inherits; \
+             its code is not the organization's to read"
+                .to_owned(),
+            "CONNECTION_NOT_OWNED",
+        ),
         ReadinessFailure::Gone(path) => precondition(
             path.clone(),
             format!("nothing is at `{path}` in the repository any more; read the projects again"),

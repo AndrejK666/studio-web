@@ -319,6 +319,23 @@ fn super_inside_an_inline_module_climbs_out_of_it_first() {
 }
 
 #[test]
+fn a_crate_named_only_by_path_is_a_dependency_and_a_local_module_is_not() {
+    let mut files = clean();
+    files[2] = (
+        "app/src/billing/sdk.rs",
+        "#[async_trait::async_trait]\npub trait T {}\nfn f() { serde_json::json!({}); helpers::x(); }\npub struct Invoice;\n",
+    );
+    let r = run(&files, "app/src/billing");
+    let names: Vec<_> = r.dependencies.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["async_trait", "serde", "serde_json"],
+        "helpers is not in the manifest"
+    );
+    assert!(check(&r, CHECK_DEPENDENCIES).ok);
+}
+
+#[test]
 fn manifest_dependencies_read_every_spelling() {
     let deps = manifest_dependencies(
         "[dependencies]\nserde = \"1\"\ntokio.workspace = true\n[dependencies.async-trait]\nversion = \"0.1\"\n[dev-dependencies]\nrstest = \"0.18\"\n[package]\nname = \"x\"\n",

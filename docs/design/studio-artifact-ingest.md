@@ -158,9 +158,11 @@ in every config profile, because the default 1,000 truncates a 400-seed chunk.
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-artifact-ingest-bounds`
 
-Per sync: 10,000 files, 20,000 comments, 20,000 commits, the newest 300 CI
-runs (read again every sync, so a run that was in progress shows how it
-ended), 50 pages of 100 per API channel, and review threads of at most 200 open pull requests. Nodes and
+Per sync: 10,000 files, 20,000 comments, 20,000 commits, the newest 100 CI
+runs of each of up to 20 active workflows (300 repository-wide when the
+workflows cannot be listed; read again every sync, so a run that was in
+progress shows how it ended; a failed read is kept on the repository node as
+`ci_error`, beside `ci_runs`), 50 pages of 100 per API channel, and review threads of at most 200 open pull requests. Nodes and
 edges are flushed 1,000 per call (edges went from 5,000 after a large ingest
 took part in an OOM kill, studio-web#561), and a process runs one ingest at a
 time while other task types proceed. A comment thread beyond the file cap is

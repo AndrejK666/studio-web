@@ -26,17 +26,19 @@ export interface BuildRun {
   updatedAt: string | null;
 }
 
-export type BuildStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "skipped";
+export type BuildStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "skipped" | "unknown";
 
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
 
 /** A run's status in a build's words, from the provider's `status` and
- *  `conclusion`. A run that has not finished is `running` or `queued`. */
+ *  `conclusion`. A run that has not finished is `running` or `queued`; one
+ *  the provider said nothing about is `unknown`, never `failed`. */
 export function buildStatus(status: string | null, conclusion: string | null): BuildStatus {
   if (status && status !== "completed") {
     return status === "in_progress" ? "running" : "queued";
   }
+  if (!conclusion) return "unknown";
   switch (conclusion) {
     case "success":
       return "passed";
@@ -98,17 +100,22 @@ export function mainBranch(runs: readonly BuildRun[]): string | null {
   return best;
 }
 
-/** The newest finished run on `branch`: what "does it build" answers. */
+/** The newest finished run on `branch`. */
 export function latestFinished(runs: readonly BuildRun[], branch: string | null): BuildRun | null {
-  return runs.find((r) => r.branch === branch && r.status !== "queued" && r.status !== "running") ?? null;
+  return (
+    runs.find(
+      (r) => r.branch === branch && r.status !== "queued" && r.status !== "running" && r.status !== "unknown",
+    ) ?? null
+  );
 }
 
 /** How long a run took, or has been running: `6 min`, `40 s`, `1 h 5 min`.
- *  Null when it has not started. */
-export function buildDuration(r: Pick<BuildRun, "startedAt" | "createdAt" | "updatedAt" | "status">, now = Date.now()): string | null {
-  const start = Date.parse(r.startedAt ?? r.createdAt ?? "");
+ *  Null until it starts: time in the queue is not build time. */
+export function buildDuration(r: Pick<BuildRun, "startedAt" | "updatedAt" | "status">, now = Date.now()): string | null {
+  if (r.status === "queued") return null;
+  const start = Date.parse(r.startedAt ?? "");
   if (Number.isNaN(start)) return null;
-  const live = r.status === "running" || r.status === "queued";
+  const live = r.status === "running";
   const end = live ? now : Date.parse(r.updatedAt ?? "");
   if (Number.isNaN(end) || end < start) return null;
   const s = Math.round((end - start) / 1000);
@@ -118,22 +125,28 @@ export function buildDuration(r: Pick<BuildRun, "startedAt" | "createdAt" | "upd
   return `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
-/** The line above the table: what the newest build of the main branch says. */
-export function buildsHeadline(runs: readonly BuildRun[], workflow: string | null): string {
+/** The line above the table: how the selected workflow's newest finished
+ *  run went on the selected branch (the main branch when none is). It
+ *  speaks of that workflow only -- which workflow builds the product is not
+ *  known yet, so it never says the product "builds". */
+export function buildsHeadline(runs: readonly BuildRun[], workflow: string | null, branch: string | null = null): string {
   const shown = workflow ? runs.filter((r) => r.workflow === workflow) : runs;
   if (shown.length === 0) return "No CI runs yet.";
-  const branch = mainBranch(shown);
-  const last = latestFinished(shown, branch);
-  if (!branch || !last) return `${shown.length} run${shown.length === 1 ? "" : "s"}; none finished on a main branch yet.`;
-  const what = workflow ? workflow : last.workflow;
-  switch (last.status) {
-    case "passed":
-      return `${branch} builds: ${what} passed on ${last.shortSha}.`;
-    case "failed":
-      return `${branch} does not build: ${what} failed on ${last.shortSha}.`;
-    default:
-      return `${branch}: the last ${what} run on ${last.shortSha} was ${last.status}.`;
-  }
+  const on = branch || mainBranch(shown);
+  const last = latestFinished(shown, on);
+  if (!on || !last) return `${shown.length} run${shown.length === 1 ? "" : "s"}; none finished on ${on ?? "a main branch"} yet.`;
+  const what = workflow ?? last.workflow;
+  return `${what} on ${on}: ${last.status} at ${last.shortSha}.`;
+}
+
+/** What the repositories' sync says about reading their CI: the ones whose
+ *  runs could not be read, and why. */
+export function ciReadFailures(repos: readonly ArtifactNode[]): { repo: string; error: string }[] {
+  return repos.flatMap((n) => {
+    const error = str(n.value.ci_error);
+    if (!error) return [];
+    return [{ repo: str(n.value.full_path) ?? str(n.value.name) ?? n.instance_id, error }];
+  });
 }
 
 /** The badge tone for a status, in the portal's badge classes. */
@@ -146,6 +159,8 @@ export function statusTone(s: BuildStatus): string {
     case "running":
     case "queued":
       return "info";
+    case "unknown":
+      return "neutral";
     default:
       return "neutral";
   }

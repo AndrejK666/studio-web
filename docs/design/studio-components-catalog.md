@@ -655,7 +655,9 @@ repository, nor a project out of scope. Deprecating answers the entry with
 its consumers, and the page says which projects will see it deprecated.
 
 **Readiness to leave the project.** `GET /registry/{name}/readiness`
-(same rule as decisions, `component.registry`: it quotes the project's code)
+(same rule as decisions, `component.registry`: it quotes the project's code,
+and only through a connection the organization owns -- an occurrence read
+through an inherited platform connection is refused, `CONNECTION_NOT_OWNED`)
 says whether an entry could become a crate of its own -- the check that
 comes before Extract in the gear-extraction ADR (ADR-0044, proposed in #747)
 -- in `registry_readiness.rs`. It reads the occurrence that declares the

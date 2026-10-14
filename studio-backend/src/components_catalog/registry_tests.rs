@@ -935,6 +935,16 @@ fn the_organizations_registered_gears_from_elsewhere_are_offered_with_where_they
             "registered",
             vec![(Some(insight), "Insight", "src/guess", true)],
         ),
+        // A registered kit is the organization's, and not part of a product.
+        {
+            let mut kit = org_entry(
+                "release-kit",
+                "registered",
+                vec![(Some(insight), "Insight", "kits/release", false)],
+            );
+            kit.entry.kind = "kit".into();
+            kit
+        },
     ];
     let (nodes, profiles, places) =
         crate::components_catalog::port::organization_gears_of(&entries, here);

@@ -227,7 +227,8 @@ organization. A project the caller cannot reach answers 404.
   declare itself, read at the place that declares it (the gear repository
   first, then by project; a detector's finding is not a declaration). A
   `declared` entry is a project's until a person registers it, so it is not
-  offered elsewhere. A name the project has stays the project's, and a name
+  offered elsewhere, and neither is a FrontX package or a kit: a product is
+  composed of gears. A name the project has stays the project's, and a name
   the platform's catalogue has stays the platform's.
 - **Decision**: (document, section, capability, gear) → `confirmed` or
   `rejected`, with who, when, the step, the gear version and the document

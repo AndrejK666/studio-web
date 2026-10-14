@@ -463,6 +463,11 @@ pub fn organization_gears_of(
         if state != STATE_REGISTERED && state != STATE_PUBLISHED {
             continue;
         }
+        // A product is composed of gears: a registered FrontX package or kit
+        // is the organization's, and not a product candidate.
+        if matches!(entry.entry.kind.as_str(), "package" | "frontx" | "kit") {
+            continue;
+        }
         let declared_here = entry
             .occurrences
             .iter()
@@ -473,7 +478,7 @@ pub fn organization_gears_of(
         let Some(occ) = entry
             .occurrences
             .iter()
-            .filter(|o| !o.detected())
+            .filter(|o| !o.detected() && !matches!(o.declared_in.as_str(), "package" | "kit"))
             .min_by(|a, b| {
                 b.in_organization()
                     .cmp(&a.in_organization())

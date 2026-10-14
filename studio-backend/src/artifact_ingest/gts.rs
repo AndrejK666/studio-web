@@ -469,7 +469,7 @@ pub fn repo_node(
 /// What a completed sync pulled for one repository — recorded on the repo node
 /// so a reader can tell a never-synced source from a synced one without
 /// counting its children.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RepoSyncStats {
     pub issues: usize,
     pub pull_requests: usize,
@@ -492,6 +492,11 @@ pub struct RepoSyncStats {
     /// neighbour: a repository listed through a connector's tree API has no
     /// sidecars in hand, and `0` would claim it has none.
     pub open_document_threads: Option<usize>,
+    /// CI runs read (ADR-0045); `None` when they could not be read, and then
+    /// `ci_error` says why -- so the Builds tab tells "this repository has no
+    /// runs" from "Studio could not read its runs".
+    pub ci_runs: Option<usize>,
+    pub ci_error: Option<String>,
 }
 
 /// The repository node re-stated once a sync has finished: same instance id as
@@ -520,6 +525,12 @@ pub fn repo_synced_node(
         }
         if let Some(open) = stats.open_document_threads {
             obj.insert("open_document_threads".to_string(), json!(open));
+        }
+        if let Some(runs) = stats.ci_runs {
+            obj.insert("ci_runs".to_string(), json!(runs));
+        }
+        if let Some(error) = &stats.ci_error {
+            obj.insert("ci_error".to_string(), json!(error));
         }
         /*
          * Who those threads are waiting on, so a portal can answer "does this

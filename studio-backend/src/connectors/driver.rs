@@ -344,6 +344,15 @@ pub struct RemoteWorkflowRun {
     pub updated_at: Option<String>,
 }
 
+/// One CI workflow of a repository: what the sync reads its runs by. Its
+/// name comes with every run.
+#[derive(Debug, Clone, Default)]
+pub struct RemoteWorkflow {
+    pub id: i64,
+    /// `active`, or why it does not run (`disabled_manually`, …).
+    pub state: Option<String>,
+}
+
 /// A repository tree read at a ref, for the knowledge-graph sync.
 #[derive(Debug, Clone)]
 pub struct RepoTree {
@@ -587,16 +596,29 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         Ok(Vec::new())
     }
 
-    /// CI runs in one repository, newest first: `page` of `per_page` (1-based).
+    /// The CI workflows of one repository. Defaulted to empty so a driver
+    /// without CI lists none.
+    async fn list_workflows(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+    ) -> anyhow::Result<Vec<RemoteWorkflow>> {
+        let _ = (auth, repo_full_path);
+        Ok(Vec::new())
+    }
+
+    /// CI runs in one repository, newest first: `page` of `per_page`
+    /// (1-based), of one workflow when `workflow` names its id, else of all.
     /// Defaulted to empty so a driver without CI contributes no runs.
     async fn list_workflow_runs(
         &self,
         auth: &ConnectionAuth,
         repo_full_path: &str,
+        workflow: Option<i64>,
         page: u32,
         per_page: u32,
     ) -> anyhow::Result<Vec<RemoteWorkflowRun>> {
-        let _ = (auth, repo_full_path, page, per_page);
+        let _ = (auth, repo_full_path, workflow, page, per_page);
         Ok(Vec::new())
     }
 

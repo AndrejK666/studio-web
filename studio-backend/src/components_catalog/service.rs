@@ -484,7 +484,10 @@ impl CatalogService {
             git_ref: occ.git_ref.clone().unwrap_or_default(),
             mode: "gears".into(),
         };
-        let corpus = self.corpus_source(ctx, &source).await?;
+        let mut corpus = self.corpus_source(ctx, &source).await?;
+        // No ref is the repository's default branch, as the API reads it --
+        // not `main`, which `corpus_source` assumes for a catalogue source.
+        corpus.git_ref = source.git_ref.trim().to_owned();
         match gearbox.checkout(&corpus).await {
             Ok(dir) => Some(dir),
             Err(e) => {

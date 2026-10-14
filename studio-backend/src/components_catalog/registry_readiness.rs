@@ -762,6 +762,30 @@ fn test_file(path: &str) -> bool {
     name == "tests.rs" || name.ends_with("_tests.rs") || path.contains("/tests/")
 }
 
+/// Every `name::` that starts a path in `code`: not preceded by an
+/// identifier character or `:`, lower-case, and not one of [`NOT_CRATES`].
+fn qualified_roots(code: &str) -> BTreeSet<String> {
+    let b = code.as_bytes();
+    let mut out = BTreeSet::new();
+    let mut from = 0;
+    while let Some(at) = code[from..].find("::") {
+        let end = from + at;
+        from = end + 2;
+        let mut start = end;
+        while start > 0 && (b[start - 1].is_ascii_alphanumeric() || b[start - 1] == b'_') {
+            start -= 1;
+        }
+        if start == end || (start > 0 && b[start - 1] == b':') {
+            continue;
+        }
+        let name = &code[start..end];
+        if name.starts_with(|c: char| c.is_ascii_lowercase()) && !NOT_CRATES.contains(&name) {
+            out.insert(name.to_owned());
+        }
+    }
+    out
+}
+
 /// The first segment of every `use` path and `extern crate` in `code`.
 fn used_roots(code: &str) -> BTreeMap<String, (usize, String)> {
     let mut out = BTreeMap::new();
@@ -1116,6 +1140,21 @@ pub fn assess(
                 });
             }
         }
+        // A crate named only by path (`tracing::warn!`, `#[async_trait::async_trait]`)
+        // is a dependency too. Only names the manifest lists count here: a
+        // bare `x::` may be a local module.
+        for file in &unit.files {
+            let Some(c) = code.get(file.as_str()) else {
+                continue;
+            };
+            for root in qualified_roots(c) {
+                if manifest.contains_key(&root) && !own.contains(&root) {
+                    roots
+                        .entry(root)
+                        .or_insert_with(|| (file.clone(), 0, String::new()));
+                }
+            }
+        }
         let mut unknown = Vec::new();
         for (root, (file, line, text)) in roots {
             if NOT_CRATES.contains(&root.as_str())
@@ -1191,6 +1230,9 @@ pub enum ReadinessFailure {
     NoOccurrence,
     /// The occurrence names no tenant to read it through.
     NoConnection,
+    /// The occurrence is read through a connection the organization only
+    /// inherits (the platform's): its code is not the organization's to read.
+    NotOwnConnection(uuid::Uuid),
     /// The listing holds nothing at the occurrence's path any more.
     Gone(String),
     Read(anyhow::Error),
@@ -1290,8 +1332,16 @@ impl super::service::CatalogService {
         let occ = occurrence_to_check(&entry.occurrences)
             .ok_or(ReadinessFailure::NoOccurrence)?
             .clone();
-        if occ.tenant.is_none() {
+        let Some(tenant) = occ.tenant else {
             return Err(ReadinessFailure::NoConnection);
+        };
+        // As Publish: the code is read only through the organization's own
+        // connection, never one it inherits from the platform.
+        if !self
+            .connection_is_organizations(ctx, tenant, occ.project_id)
+            .await
+        {
+            return Err(ReadinessFailure::NotOwnConnection(tenant));
         }
         Ok(occ)
     }
