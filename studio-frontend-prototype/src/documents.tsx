@@ -49,7 +49,11 @@ import {
   useSpecQualityCapabilities,
 } from "./spec-quality";
 import { useStudioBridge, type StudioTarget } from "./studio-bridge";
-import { rowReview } from "./spec-findings";
+import { rowReview, withDecisions, type FindingDecision } from "./spec-findings";
+import { ReviewPanel } from "./review-panel";
+import { DomainQuestionsPanel } from "./domain-questions-panel";
+import { BriefPanel, RemarksPanel } from "./remarks-panel";
+import { PullRequestChecksPanel } from "./project-checks-view";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
@@ -325,7 +329,15 @@ function withFile(only: DocBinding | undefined, bound: DocBinding[]): DocBinding
 
 
 /** One thing a detector found, where it is, and why it says so. */
-function FindingLine({ item }: { item: SpecFindingItem }) {
+function FindingLine({
+  item,
+  decision,
+  onDecide,
+}: {
+  item: SpecFindingItem;
+  decision?: FindingDecision;
+  onDecide?: (decision: FindingDecision) => void;
+}) {
   const a = item.anchor;
   const where = a
     ? [
@@ -371,6 +383,24 @@ function FindingLine({ item }: { item: SpecFindingItem }) {
           {item.related
             .map((r) => `${basename(r.path)}${r.anchor.line_start != null ? ` line ${r.anchor.line_start}` : ""}`)
             .join(", ")}
+        </div>
+      )}
+      {onDecide && (
+        <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+          <button
+            className={decision === "confirmed" ? "chip on" : "chip"}
+            title="A real problem: keep it on the list"
+            onClick={() => onDecide("confirmed")}
+          >
+            ✓ Real
+          </button>
+          <button
+            className={decision === "dismissed" ? "chip on" : "chip"}
+            title="Not a problem: fold it away and stop counting it"
+            onClick={() => onDecide("dismissed")}
+          >
+            ✗ Not a problem
+          </button>
         </div>
       )}
     </li>
@@ -433,6 +463,8 @@ function IngestedDocumentsView({
   const [err, setErr] = useState<string | null>(null);
   /** Detector verdicts read back from the graph, keyed by document node id. */
   const [findings, setFindings] = useState<Record<string, SpecFinding[]>>({});
+  /** Members' ✓/✗ on those findings, by fingerprint. */
+  const [decisions, setDecisions] = useState<Record<string, FindingDecision>>({});
   const [view, setView] = useViewMode("specs.view");
   /** The list itself, folded by studio-documents.
    *
@@ -459,6 +491,17 @@ function IngestedDocumentsView({
     [types],
   );
 
+
+  /** Keep a ✓ or ✗; a dismissed finding then folds away here, and the Specs
+   *  list stops counting it once it is read again. */
+  const decideFinding = async (fingerprint: string, decision: FindingDecision) => {
+    try {
+      await api.decideSpecModelFinding(token, projectTenantId, fingerprint, decision);
+      setDecisions((all) => ({ ...all, [fingerprint]: decision }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const reload = useCallback(async () => {
     setErr(null);
@@ -504,6 +547,12 @@ function IngestedDocumentsView({
     // column is the row's own `checked_at` and `findings`, counted on the
     // server by the rule the projects table uses.
     try {
+      // Decisions first: a backend from before them answers 404, and the
+      // findings still show, undecided.
+      const decided = await api
+        .specFindingDecisions(token, projectTenantId)
+        .catch(() => ({ items: [] as { fingerprint: string; decision: FindingDecision }[] }));
+      setDecisions(Object.fromEntries(decided.items.map((d) => [d.fingerprint, d.decision])));
       const found = await api.listSpecFindings(token, projectTenantId);
       const byNode: Record<string, SpecFinding[]> = {};
       for (const f of found) (byNode[f.subject] ??= []).push(f);
@@ -1229,6 +1278,7 @@ function IngestedDocumentsView({
       {err && <div className="error">{err}</div>}
 
       <JourneyPanel stages={stages} types={types} onSeed={setSeeding} />
+      <PullRequestChecksPanel token={token} projectId={projectTenantId} />
 
       {seeding && (
         <SeedModal
@@ -1702,13 +1752,41 @@ function IngestedDocumentsView({
                           {f.summary && (
                             <div style={{ opacity: 0.7, marginTop: 2 }}>{f.summary}</div>
                           )}
-                          {findingItems(f).length > 0 && (
-                            <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0" }}>
-                              {findingItems(f).map((item) => (
-                                <FindingLine key={item.id} item={item} />
-                              ))}
-                            </ul>
-                          )}
+                          {findingItems(f).length > 0 &&
+                            (() => {
+                              const { open, dismissed } = withDecisions(findingItems(f), decisions);
+                              return (
+                                <>
+                                  <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0" }}>
+                                    {open.map((item) => (
+                                      <FindingLine
+                                        key={item.id}
+                                        item={item}
+                                        decision={item.decision}
+                                        onDecide={(d) => void decideFinding(item.id, d)}
+                                      />
+                                    ))}
+                                  </ul>
+                                  {dismissed.length > 0 && (
+                                    <details style={{ marginTop: 4 }}>
+                                      <summary style={{ opacity: 0.7 }}>
+                                        {dismissed.length} marked not a problem
+                                      </summary>
+                                      <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0", opacity: 0.6 }}>
+                                        {dismissed.map((item) => (
+                                          <FindingLine
+                                            key={item.id}
+                                            item={item}
+                                            decision="dismissed"
+                                            onDecide={(d) => void decideFinding(item.id, d)}
+                                          />
+                                        ))}
+                                      </ul>
+                                    </details>
+                                  )}
+                                </>
+                              );
+                            })()}
                         </div>
                       ))}
                     </div>
@@ -1759,6 +1837,21 @@ function IngestedDocumentsView({
                   >
                     Edit in the IDE →
                   </button>
+                  <ReviewPanel
+                    token={token}
+                    projectId={projectTenantId}
+                    subject={{
+                      kind: "binding",
+                      id: selected.id,
+                      title: basename(selected.path),
+                      typeKey: selected.type_key ?? null,
+                      version: selected.content_sha,
+                    }}
+                    onChanged={() => void reload()}
+                  />
+                  <BriefPanel token={token} projectId={projectTenantId} path={selected.path} />
+                  <RemarksPanel token={token} projectId={projectTenantId} path={selected.path} />
+                  <DomainQuestionsPanel token={token} projectId={projectTenantId} path={selected.path} />
                   {/* What the Analysis view used to be for, asked of this one
                       file: its findings land in the Analysis card beside. */}
                   <div className="ing-send">
@@ -2211,12 +2304,14 @@ function JourneyPanel({
                         ? "Present, but it does not pass its type's checklist"
                         : r.analyses_outstanding.length > 0
                           ? `Waiting on ${r.analyses_outstanding.join(", ")}`
-                          : "Present, conforming, and past every gate"
+                          : (r.approvals_outstanding ?? []).length > 0
+                            ? `Waiting for approval from ${(r.approvals_outstanding ?? []).join(", ")}`
+                            : "Present, conforming, and past every gate"
                   }
                   style={
                     !r.present
                       ? { background: "var(--warning-soft)", color: "var(--warning)" }
-                      : !r.conforms || r.analyses_outstanding.length > 0
+                      : !r.conforms || r.analyses_outstanding.length > 0 || (r.approvals_outstanding ?? []).length > 0
                         ? { background: "var(--info-soft)", color: "var(--info)" }
                         : { background: "var(--success-soft)", color: "var(--success)" }
                   }
@@ -2224,6 +2319,9 @@ function JourneyPanel({
                   {typeName(r.type_key)}
                   {r.present && r.analyses_outstanding.length > 0 && (
                     <> · {r.analyses_outstanding.join(", ")}</>
+                  )}
+                  {r.present && (r.approvals_outstanding ?? []).length > 0 && (
+                    <> · awaiting {(r.approvals_outstanding ?? []).join(", ")}</>
                   )}
                 </span>
               ))}

@@ -112,6 +112,159 @@ export interface WorkLinks {
   synced: boolean;
 }
 
+/** What a requirement's own block states it rests on, strongest doubt first
+ *  (docs/spec-domain-model.md, "Requirements and their basis"). */
+export type RequirementBasis = "open_question" | "assumption" | "cited" | "reasoned" | "stated";
+
+export const BASIS_ORDER: RequirementBasis[] = ["open_question", "assumption", "stated", "reasoned", "cited"];
+
+export const BASIS_LABEL: Record<RequirementBasis, string> = {
+  open_question: "Open question",
+  assumption: "Assumption",
+  stated: "No basis stated",
+  reasoned: "Reason only",
+  cited: "Cites a source",
+};
+
+/** One requirement a project's documents define. */
+export interface SpecRequirement {
+  id: string;
+  defined_in: SpecModelSide;
+  title: string | null;
+  text: string;
+  kind: string | null;
+  priority: string | null;
+  done: boolean | null;
+  basis: RequirementBasis;
+  cites: string[];
+  because: string | null;
+  work: number;
+}
+
+export interface SpecRequirements {
+  items: SpecRequirement[];
+  total: number;
+  by_basis: Partial<Record<RequirementBasis, number>>;
+  synced: boolean;
+}
+
+export interface RequirementFilter {
+  basis: RequirementBasis | "all";
+  kind: string | "all";
+  text: string;
+  /** Only the ones no issue, pull request or commit names yet. */
+  noWork: boolean;
+}
+
+/** The kinds the project's identifiers use, most common first. */
+export function requirementKinds(items: SpecRequirement[]): string[] {
+  const counts = new Map<string, number>();
+  for (const r of items) if (r.kind) counts.set(r.kind, (counts.get(r.kind) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k]) => k);
+}
+
+/** The requirements a filter keeps, doubt first and then in document order. */
+export function filterRequirements(items: SpecRequirement[], f: RequirementFilter): SpecRequirement[] {
+  const needle = f.text.trim().toLowerCase();
+  return items
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => f.basis === "all" || r.basis === f.basis)
+    .filter(({ r }) => f.kind === "all" || r.kind === f.kind)
+    .filter(({ r }) => !f.noWork || r.work === 0)
+    .filter(
+      ({ r }) =>
+        !needle ||
+        r.id.toLowerCase().includes(needle) ||
+        r.text.toLowerCase().includes(needle) ||
+        (r.title ?? "").toLowerCase().includes(needle),
+    )
+    .sort((a, b) => BASIS_ORDER.indexOf(a.r.basis) - BASIS_ORDER.indexOf(b.r.basis) || a.i - b.i)
+    .map(({ r }) => r);
+}
+
+/** "12 of 40 cite a source; 3 open questions, 5 assumptions." */
+export function basisSummary(read: SpecRequirements): string {
+  const n = (b: RequirementBasis) => read.by_basis[b] ?? 0;
+  const parts = [`${n("cited")} of ${read.total} cite a source`];
+  if (n("open_question")) parts.push(`${n("open_question")} open question${n("open_question") === 1 ? "" : "s"}`);
+  if (n("assumption")) parts.push(`${n("assumption")} assumption${n("assumption") === 1 ? "" : "s"}`);
+  if (n("stated")) parts.push(`${n("stated")} state no basis`);
+  return parts.join("; ") + ".";
+}
+
+/** One requirement and every place that names it (docs/spec-domain-model.md,
+ *  "From requirement to code and test"). */
+export interface RequirementTrace {
+  id: string;
+  defined_in: SpecModelSide;
+  title: string | null;
+  text: string;
+  documents: SpecModelSide[];
+  code: SpecModelSide[];
+  tests: SpecModelSide[];
+}
+
+export interface RequirementTraces {
+  items: RequirementTrace[];
+  total: number;
+  implemented: number;
+  tested: number;
+  files: number;
+}
+
+export type TraceGap = "all" | "no-code" | "no-test" | "untraced";
+
+/** The traces a gap filter keeps: no code, no test, or named nowhere at all. */
+export function traceGaps(items: RequirementTrace[], gap: TraceGap): RequirementTrace[] {
+  switch (gap) {
+    case "no-code":
+      return items.filter((t) => t.code.length === 0);
+    case "no-test":
+      return items.filter((t) => t.tests.length === 0);
+    case "untraced":
+      return items.filter((t) => t.code.length === 0 && t.tests.length === 0 && t.documents.length === 0);
+    default:
+      return items;
+  }
+}
+
+/** A requirement of another project that reads like one of this project's
+ *  (docs/spec-domain-model.md, "Across projects"). */
+export interface RelatedRequirement {
+  id: string;
+  defined_in: SpecModelSide;
+  text: string;
+  other_project_id: string;
+  other_project_name: string;
+  other_workspace_name: string;
+  other_id: string;
+  other_defined_in: SpecModelSide;
+  other_text: string;
+  score: number;
+  relation: "same" | "overlap" | "opposite";
+  shared: string[];
+}
+
+export interface RelatedRequirements {
+  items: RelatedRequirement[];
+  total: number;
+  projects: number;
+  truncated: boolean;
+}
+
+export const RELATION_LABEL: Record<RelatedRequirement["relation"], string> = {
+  opposite: "Says the opposite",
+  same: "Same requirement",
+  overlap: "Overlaps",
+};
+
+/** Opposites first (they are the ones to settle), then the same, then
+ *  overlaps; strongest first within each. */
+export function orderRelated(items: RelatedRequirement[]): RelatedRequirement[] {
+  const rank = { opposite: 0, same: 1, overlap: 2 } as const;
+  return [...items].sort((a, b) => rank[a.relation] - rank[b.relation] || b.score - a.score);
+}
+
 /** How a piece of work is named in a list: `#12`, `PR #7`, or a commit's sha. */
 export function workLabel(w: WorkItem): string {
   if (w.kind === "commit") return w.sha ?? "commit";

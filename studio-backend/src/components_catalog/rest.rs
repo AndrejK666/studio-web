@@ -460,6 +460,240 @@ fn to_dtos(nodes: Vec<super::gts::GtsNode>) -> Vec<CatalogNodeDto> {
 /// a component" in this file. It is a judgement about an organization's model,
 /// so it belongs to the organization: the list is every node of every type it
 /// marked on the Objects page.
+/// One component of a project's repositories that is not a gear.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectComponentDto {
+    /// `owner/repo`.
+    pub repo: String,
+    /// Repo-relative directory; empty for the root.
+    pub dir: String,
+    pub name: String,
+    /// `go`, `python`, `java`, `node`, `rust`, `helm`, `container`, …
+    pub kind: String,
+    pub manifests: Vec<String>,
+    pub contracts: Vec<String>,
+    pub has_tests: bool,
+    pub has_readme: bool,
+    /// The people who changed it most, from the history read; first is the
+    /// likeliest owner.
+    pub owners: Vec<String>,
+    pub last_change: Option<String>,
+    pub open_pulls: u32,
+    /// `ready`, `caution` or `not_ready`.
+    pub readiness: String,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectComponentListDto {
+    pub items: Vec<ProjectComponentDto>,
+    pub total: u32,
+    /// Repositories read.
+    pub repos: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ProjectScopeQuery {
+    pub project_id: String,
+}
+
+/// How many components one call reads the history of.
+const COMPONENT_HISTORY_MAX: usize = 25;
+
+const OPEN_PULL_FILES_QUERY: &str = r#"
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: 50) { nodes { files(first: 100) { nodes { path } } } }
+  }
+}
+"#;
+
+fn bot(login: &str) -> bool {
+    let a = login.to_ascii_lowercase();
+    a.ends_with("[bot]") || a.ends_with("-bot") || a == "github-actions" || a.contains("dependabot")
+}
+
+/// The services and applications a project's repositories hold beyond its
+/// gears, each with who changed it, what is open against it, and whether it
+/// is ready to be taken.
+async fn list_project_components(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    Query(query): Query<ProjectScopeQuery>,
+) -> ApiResult<JsonBody<ProjectComponentListDto>> {
+    use super::services::{Facts, detect, readiness};
+    let project = uuid::Uuid::parse_str(query.project_id.trim()).map_err(|_| {
+        StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation("project_id", "must be a UUID".to_owned(), "INVALID")
+            .create()
+    })?;
+    let Some(connectors) = catalog.service.connector_service() else {
+        return Ok(Json(ProjectComponentListDto {
+            items: Vec::new(),
+            total: 0,
+            repos: 0,
+        }));
+    };
+    let now = time::OffsetDateTime::now_utc();
+    let mut items = Vec::new();
+    let mut repos_read = 0u32;
+    let mut history_left = COMPONENT_HISTORY_MAX;
+    for source in catalog
+        .service
+        .source_repos(&ctx, &project.to_string())
+        .await
+    {
+        let branch = (!source.branch.trim().is_empty()).then(|| source.branch.clone());
+        let Ok(repo) = crate::connectors::sdk::Repository::open(
+            &connectors,
+            &ctx,
+            source.tenant,
+            source.connection_id,
+            "github",
+            &source.repo,
+            branch.as_deref(),
+        )
+        .await
+        else {
+            continue;
+        };
+        let Ok(tree) = repo.tree().await else {
+            continue;
+        };
+        repos_read += 1;
+        let paths: Vec<String> = tree
+            .files
+            .into_iter()
+            .filter(|f| !f.is_dir)
+            .map(|f| f.path)
+            .collect();
+        let gear_dirs: std::collections::BTreeSet<String> = paths
+            .iter()
+            .filter(|p| p.ends_with("gear.gdl") || p.ends_with("gear.toml"))
+            .map(|p| {
+                p.rsplit_once('/')
+                    .map_or(String::new(), |(d, _)| d.to_string())
+            })
+            .collect();
+        let found = detect(&source.repo, &paths, &gear_dirs);
+        // Open pull requests, once per repository: which files each changes.
+        let open_files: Vec<Vec<String>> = match (source.repo.split_once('/'), source.connection_id)
+        {
+            (Some((owner, name)), Some(connection_id)) => {
+                match connectors
+                    .driver_and_auth(&ctx, source.tenant, connection_id)
+                    .await
+                {
+                    Ok((driver, auth, _)) => driver
+                        .graphql(
+                            &auth,
+                            &serde_json::json!({
+                                "query": OPEN_PULL_FILES_QUERY,
+                                "variables": { "owner": owner, "name": name },
+                            }),
+                        )
+                        .await
+                        .ok()
+                        .and_then(|a| a.pointer("/data/repository/pullRequests/nodes").cloned())
+                        .and_then(|n| n.as_array().cloned())
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|pr| {
+                            pr.pointer("/files/nodes")
+                                .and_then(serde_json::Value::as_array)
+                                .map(|f| {
+                                    f.iter()
+                                        .filter_map(|x| {
+                                            x.get("path").and_then(serde_json::Value::as_str)
+                                        })
+                                        .map(str::to_string)
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        })
+                        .collect(),
+                    Err(_) => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        };
+        for f in found {
+            let prefix = if f.dir.is_empty() {
+                String::new()
+            } else {
+                format!("{}/", f.dir)
+            };
+            let open_pulls = open_files
+                .iter()
+                .filter(|files| files.iter().any(|p| p.starts_with(&prefix)))
+                .count();
+            let (owners, last_change) = if history_left > 0 {
+                history_left -= 1;
+                let commits = repo
+                    .history(if f.dir.is_empty() { "." } else { &f.dir }, 30)
+                    .await
+                    .unwrap_or_default();
+                let mut counts: std::collections::BTreeMap<String, usize> =
+                    std::collections::BTreeMap::new();
+                for c in &commits {
+                    if let Some(who) = c
+                        .author
+                        .clone()
+                        .or(c.author_name.clone())
+                        .filter(|w| !bot(w))
+                    {
+                        *counts.entry(who).or_default() += 1;
+                    }
+                }
+                let mut owners: Vec<(String, usize)> = counts.into_iter().collect();
+                owners.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                let last = commits
+                    .iter()
+                    .filter_map(|c| c.committed_at.clone().or(c.created_at.clone()))
+                    .max();
+                (owners.into_iter().map(|(w, _)| w).collect::<Vec<_>>(), last)
+            } else {
+                (Vec::new(), None)
+            };
+            let days = last_change.as_deref().and_then(|t| {
+                time::OffsetDateTime::parse(t, &time::format_description::well_known::Rfc3339)
+                    .ok()
+                    .map(|at| (now - at).whole_days())
+            });
+            let r = readiness(&Facts {
+                days_since_change: days,
+                authors: owners.len(),
+                open_pulls,
+                has_tests: f.has_tests,
+                has_readme: f.has_readme,
+                has_contract: !f.contracts.is_empty(),
+            });
+            items.push(ProjectComponentDto {
+                repo: source.repo.clone(),
+                dir: f.dir,
+                name: f.name,
+                kind: f.kind,
+                manifests: f.manifests,
+                contracts: f.contracts,
+                has_tests: f.has_tests,
+                has_readme: f.has_readme,
+                owners: owners.into_iter().take(3).collect(),
+                last_change,
+                open_pulls: u32::try_from(open_pulls).unwrap_or(u32::MAX),
+                readiness: r.signal.to_string(),
+                reasons: r.reasons,
+            });
+        }
+    }
+    Ok(Json(ProjectComponentListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        repos: repos_read,
+    }))
+}
+
 async fn list_gears(
     OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
@@ -3414,6 +3648,34 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "The reference",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-components-catalog/v1/project-components")
+        .operation_id("studio_components_catalog.list_project_components")
+        .summary("The services and applications in a project's repositories beyond its gears")
+        .description(
+            "Reads the project's repositories through its connections and finds every \
+             component a build tool declares that is not a gear (go.mod, pyproject.toml, \
+             pom.xml, package.json, Cargo.toml, Dockerfile, Helm chart), with its contract \
+             files, tests and README, the people who changed it most (from the history, not \
+             typed in), its open pull requests, and a `ready` / `caution` / `not_ready` \
+             signal with every reason (issue #739). History is read for at most 25 \
+             components a call.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .query_param("project_id", true, "The project")
+        .handler(list_project_components)
+        .json_response_with_schema::<ProjectComponentListDto>(
+            openapi,
+            StatusCode::OK,
+            "The components",
         )
         .error_400(openapi)
         .error_401(openapi)

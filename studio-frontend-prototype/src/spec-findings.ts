@@ -36,3 +36,24 @@ export function rowReview(
   if (!row.checked_at) return { label: "Check needed", tone: "var(--warning)" };
   return { label: "0 findings", tone: "var(--success)" };
 }
+
+/** A member's ✓ (a real problem) or ✗ (not one) on a finding, by fingerprint. */
+export type FindingDecision = "confirmed" | "dismissed";
+
+/** A detector's findings with the decisions members gave: the ones still to
+ *  act on first (confirmed before undecided, the detector's order kept), and
+ *  the dismissed ones apart, so they can be shown folded rather than lost. */
+export function withDecisions<T extends { id: string }>(
+  items: T[],
+  decisions: Record<string, FindingDecision>,
+): { open: (T & { decision?: FindingDecision })[]; dismissed: T[] } {
+  const open: (T & { decision?: FindingDecision })[] = [];
+  const dismissed: T[] = [];
+  for (const item of items) {
+    const d = decisions[item.id];
+    if (d === "dismissed") dismissed.push(item);
+    else open.push(d ? { ...item, decision: d } : item);
+  }
+  open.sort((a, b) => Number(b.decision === "confirmed") - Number(a.decision === "confirmed"));
+  return { open, dismissed };
+}

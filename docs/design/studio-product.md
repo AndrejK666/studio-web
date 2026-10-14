@@ -336,6 +336,7 @@ which calls this engine; moving it here is a follow-up.
 | `GET` | `/gearbox/extension-points` | The hosts a new plugin gear can fill | unstable |
 | `POST` | `/gearbox/complete` | Complete picked gears into a resolvable set; writes nothing | unstable |
 | `POST` | `/gearbox/config-schema` | Each named gear's config fields: required, default, derived; writes nothing | unstable |
+| `POST` | `/gearbox/brings` | What adding one gear would bring into the product with it: the gears that come along and why, whether each keeps its own database, and every contract the product would then get from two gears (interview problem 4.7, issue #732); writes nothing | unstable |
 | `GET` | `/gearbox/corpus/info/refs` | Git smart-HTTP ref advertisement for the corpus | unstable |
 | `POST` | `/gearbox/corpus/git-upload-pack` | Git smart-HTTP upload-pack, fetch only | unstable |
 

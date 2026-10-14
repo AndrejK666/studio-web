@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  basisSummary,
   buildLine,
   codeSpans,
   coverageCounts,
   entitiesOf,
   factsByKind,
+  filterRequirements,
+  orderRelated,
   mergeTargets,
   orderFindings,
   orderProductFindings,
   relatedEntities,
+  requirementKinds,
+  traceGaps,
   ruleLabel,
   sideLabel,
   subjectKey,
@@ -20,6 +25,7 @@ import {
   type SpecModelFact,
   type SpecModelFinding,
 } from "./spec-model";
+import type { RelatedRequirement, RequirementTrace, SpecRequirement } from "./spec-model";
 
 function fact(subject: string, kind: SpecModelFact["kind"], path = "a.md", extra: Partial<SpecModelFact> = {}): SpecModelFact {
   return {
@@ -221,5 +227,96 @@ describe("product findings", () => {
     const ordered = orderProductFindings([finding("tenancy", "medium"), finding("storage", "high"), finding("auth", "high")]);
     expect(ordered.map((f) => f.capability)).toEqual(["auth", "storage", "tenancy"]);
     expect(ruleLabel("product.decided_not_built")).toBe("Decided, not built");
+  });
+});
+
+describe("requirements and their basis", () => {
+  const req = (id: string, basis: SpecRequirement["basis"], extra: Partial<SpecRequirement> = {}): SpecRequirement => ({
+    id,
+    defined_in: { path: "prd.md", line_start: 1, line_end: 1, quote: null },
+    title: null,
+    text: `${id} text`,
+    kind: "fr",
+    priority: null,
+    done: null,
+    basis,
+    cites: [],
+    because: null,
+    work: 0,
+    ...extra,
+  });
+  const items = [
+    req("cpt-a-fr-1", "cited", { work: 2 }),
+    req("cpt-a-fr-2", "stated"),
+    req("cpt-a-actor-x", "stated", { kind: "actor" }),
+    req("cpt-a-fr-3", "open_question", { title: "Upload limit" }),
+  ];
+  const all = { basis: "all", kind: "all", text: "", noWork: false } as const;
+
+  it("puts doubt first, then keeps document order", () => {
+    expect(filterRequirements(items, all).map((r) => r.id)).toEqual([
+      "cpt-a-fr-3",
+      "cpt-a-fr-2",
+      "cpt-a-actor-x",
+      "cpt-a-fr-1",
+    ]);
+  });
+
+  it("filters by basis, kind, text in the title, and work", () => {
+    expect(filterRequirements(items, { ...all, basis: "stated", kind: "fr" }).map((r) => r.id)).toEqual(["cpt-a-fr-2"]);
+    expect(filterRequirements(items, { ...all, text: "upload" }).map((r) => r.id)).toEqual(["cpt-a-fr-3"]);
+    expect(filterRequirements(items, { ...all, noWork: true })).toHaveLength(3);
+  });
+
+  it("lists kinds most common first", () => {
+    expect(requirementKinds(items)).toEqual(["fr", "actor"]);
+  });
+
+  it("summarises the basis counts", () => {
+    expect(basisSummary({ items, total: 4, by_basis: { cited: 1, stated: 2, open_question: 1 }, synced: true })).toBe(
+      "1 of 4 cite a source; 1 open question; 2 state no basis.",
+    );
+  });
+});
+
+describe("requirements elsewhere", () => {
+  const side = { path: "prd.md", line_start: 1, line_end: 1, quote: null };
+  const rel = (id: string, relation: RelatedRequirement["relation"], score: number): RelatedRequirement => ({
+    id,
+    defined_in: side,
+    text: "",
+    other_project_id: "p",
+    other_project_name: "P",
+    other_workspace_name: "W",
+    other_id: "x",
+    other_defined_in: side,
+    other_text: "",
+    score,
+    relation,
+    shared: [],
+  });
+  it("puts opposites first, then the same, then overlaps, strongest first", () => {
+    const got = orderRelated([rel("a", "overlap", 0.6), rel("b", "same", 0.8), rel("c", "opposite", 0.5), rel("d", "same", 0.9)]);
+    expect(got.map((r) => r.id)).toEqual(["c", "d", "b", "a"]);
+  });
+});
+
+describe("requirement traces", () => {
+  const side = { path: "x", line_start: 1, line_end: 1, quote: null };
+  const tr = (id: string, docs: number, code: number, tests: number): RequirementTrace => ({
+    id,
+    defined_in: side,
+    title: null,
+    text: "",
+    documents: Array(docs).fill(side),
+    code: Array(code).fill(side),
+    tests: Array(tests).fill(side),
+  });
+  const items = [tr("a", 1, 1, 1), tr("b", 1, 1, 0), tr("c", 0, 0, 0), tr("d", 1, 0, 0)];
+  it("keeps the gaps a filter asks for", () => {
+    expect(traceGaps(items, "no-code").map((t) => t.id)).toEqual(["c", "d"]);
+    expect(traceGaps(items, "no-test").map((t) => t.id)).toEqual(["b", "c", "d"]);
+    expect(traceGaps(items, "untraced").map((t) => t.id)).toEqual(["c"]);
+    expect(traceGaps(items, "all")).toHaveLength(4);
   });
 });

@@ -1983,7 +1983,11 @@ impl CatalogService {
     /// The repositories a project was seeded from. One whose connection the
     /// caller cannot see is skipped and logged, so one private repository
     /// does not hide the others.
-    async fn source_repos(&self, ctx: &SecurityContext, project_id: &str) -> Vec<ProjectRepo> {
+    pub(super) async fn source_repos(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> Vec<ProjectRepo> {
         let (Some(am), Some(connectors)) =
             (self.account_management.get(), self.connector_service())
         else {

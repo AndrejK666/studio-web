@@ -215,3 +215,33 @@ pub mod invitation {
     pub enum Relation {}
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+/// What a person did with one item of their inbox: done, or snoozed until a
+/// time. The items themselves are not stored — they are read from the facts
+/// (review requests, pull requests) every time — so a mark is all that is
+/// theirs to keep.
+pub mod inbox_mark {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_inbox_mark")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// v5 of `(user, item_key)`: one mark per item.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub user_id: Uuid,
+        pub item_key: String,
+        /// `done` or `snoozed`.
+        pub state: String,
+        pub until: Option<OffsetDateTime>,
+        pub updated_at: OffsetDateTime,
+    }
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}

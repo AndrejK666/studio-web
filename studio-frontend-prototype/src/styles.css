@@ -2195,6 +2195,13 @@ ul.rows li.sm-work-row { flex-direction: column; align-items: stretch; gap: 4px;
 .sm-work-items { list-style: none; margin: 0; padding: 0 0 0 12px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
 ul.rows .sm-work-items li { display: block; padding: 0; border-bottom: none; overflow-wrap: anywhere; }
 .sm-work-title { color: var(--muted-foreground); }
+.sm-req-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.sm-req-filters input[type="search"] { flex: 1 1 200px; min-width: 0; }
+.sm-req-nowork { font-size: 13px; white-space: nowrap; }
+.sm-req-title { font-weight: 600; font-size: 13px; }
+.sm-req-cites { font-size: 12px; color: var(--muted-foreground); display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; overflow-wrap: anywhere; }
+.sm-basis-open_question, .sm-basis-assumption { background: var(--warning-muted, var(--muted)); }
+.sm-basis-cited { background: var(--success-muted, var(--muted)); }
 ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
 .sm-term-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
 .sm-term-actions, .sm-term-rename { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -2219,3 +2226,50 @@ ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
 @media (max-width: 720px) {
   .sm-entities { grid-template-columns: 1fr; }
 }
+
+/* The review of one document (review-panel.tsx). */
+.rv-panel { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+.rv-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.rv-title { font-weight: 600; }
+.rv-muted { color: var(--muted-foreground); }
+.rv-err { color: var(--destructive); overflow-wrap: anywhere; }
+.rv-reviewers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.rv-decide { display: flex; flex-wrap: wrap; gap: 6px; }
+.rv-decide input { flex: 1 1 140px; min-width: 0; }
+.rv-link { align-self: flex-start; background: none; border: none; padding: 0; color: var(--primary); cursor: pointer; font-size: 12px; }
+.rv-history ul { margin: 4px 0 0; padding-left: 16px; }
+.rv-ask { display: flex; flex-direction: column; gap: 6px; }
+.rv-picked { display: flex; flex-wrap: wrap; gap: 4px; }
+.rv-picked .chip { display: inline-flex; gap: 6px; align-items: center; }
+.rv-x { background: none; border: none; padding: 0 2px; cursor: pointer; }
+.rv-actions { display: flex; gap: 6px; }
+
+/* What a candidate gear brings with it (gear-brings-view.tsx). */
+.gb-panel { flex-basis: 100%; font-size: 12px; border: 1px solid var(--border); border-radius: var(--radius-md, 6px); padding: 8px; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+.gb-head { display: flex; justify-content: space-between; gap: 8px; }
+.gb-list { margin: 0; padding-left: 16px; }
+.gb-warn { color: var(--warning); }
+.gb-muted { color: var(--muted-foreground); }
+.gb-err { color: var(--destructive); }
+.gb-tag { margin-left: 6px; font-size: 10px; padding: 0 5px; border-radius: var(--radius-full); background: var(--muted); }
+
+/* Done / snooze on an inbox item (waiting-on-me-view.tsx). */
+.wo-marks { display: inline-flex; gap: 8px; margin-left: 8px; font-size: 12px; white-space: nowrap; }
+@media (max-width: 640px) { .wo-marks { margin-left: 0; } }
+.sm-rel-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 720px) { .sm-rel-pair { grid-template-columns: 1fr; } }
+.sm-rel-opposite { background: var(--warning-muted, var(--muted)); }
+
+/* Domain questions under a document (domain-questions-panel.tsx). */
+.dq-panel { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 12px; display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+.dq-title { font-weight: 600; }
+.dq-q { display: flex; flex-direction: column; gap: 2px; }
+.dq-muted { color: var(--muted-foreground); }
+.dq-experts { margin: 2px 0 0; padding-left: 16px; }
+.dq-drift { color: var(--warning); }
+
+/* Checks on pull requests and components beyond gears (project-checks-view.tsx). */
+.pc-panel { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+.pc-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.pc-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.pc-err { color: var(--destructive); }

@@ -10,13 +10,14 @@ use sea_orm::{ColumnTrait, Condition, EntityTrait, IntoActiveModel, Order, Query
 use toolkit_db::DBProvider;
 use toolkit_db::secure::{
     SecureDeleteExt, SecureEntityExt, SecureInsertExt, SecureInsertManyExt, SecureOnConflict,
+    SecureUpdateExt,
 };
 use toolkit_security::AccessScope;
 use uuid::Uuid;
 
 use super::entity::{
-    analysis, capability, doc_type, document, document_binding, spec_decision, spec_extraction,
-    spec_judgement, spec_term, stage,
+    analysis, approval, capability, decision, doc_type, document, document_binding, review_request,
+    spec_decision, spec_extraction, spec_judgement, spec_term, stage,
 };
 
 /// UUIDv5 namespace for a document type's deterministic id — makes `(tenant,
@@ -488,6 +489,156 @@ impl DocumentsRepo {
             .exec(&conn)
             .await?;
         Ok(())
+    }
+
+    // ── review requests and approvals ───────────────────────────────────────
+
+    /// Record a request, and mark every earlier open request on the same
+    /// document superseded: one document has one current request.
+    pub async fn put_review_request(&self, model: review_request::Model) -> Result<()> {
+        use sea_orm::sea_query::Expr;
+        let conn = self.db.conn()?;
+        let scope = AccessScope::for_tenant(model.tenant_id);
+        review_request::Entity::update_many()
+            .secure()
+            .scope_with(&scope)
+            .filter(
+                Condition::all()
+                    .add(review_request::Column::SubjectId.eq(model.subject_id))
+                    .add(review_request::Column::State.eq("open")),
+            )
+            .col_expr(review_request::Column::State, Expr::value("superseded"))
+            .exec(&conn)
+            .await?;
+        review_request::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&scope)?
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// A project's requests, newest first; one document's when `subject_id`
+    /// is given.
+    pub async fn list_review_requests(
+        &self,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        subject_id: Option<Uuid>,
+    ) -> Result<Vec<review_request::Model>> {
+        let conn = self.db.conn()?;
+        let mut cond = Condition::all();
+        if let Some(p) = project_id {
+            cond = cond.add(review_request::Column::ProjectId.eq(p));
+        }
+        if let Some(sub) = subject_id {
+            cond = cond.add(review_request::Column::SubjectId.eq(sub));
+        }
+        let rows = review_request::Entity::find()
+            .filter(cond)
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .order_by(review_request::Column::CreatedAt, Order::Desc)
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
+    pub async fn get_review_request(
+        &self,
+        workspace_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<review_request::Model>> {
+        let conn = self.db.conn()?;
+        let row = review_request::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .filter(Condition::all().add(review_request::Column::Id.eq(id)))
+            .one(&conn)
+            .await?;
+        Ok(row)
+    }
+
+    pub async fn set_review_request_state(
+        &self,
+        workspace_id: Uuid,
+        id: Uuid,
+        state: &str,
+    ) -> Result<()> {
+        use sea_orm::sea_query::Expr;
+        let conn = self.db.conn()?;
+        review_request::Entity::update_many()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .filter(Condition::all().add(review_request::Column::Id.eq(id)))
+            .col_expr(
+                review_request::Column::State,
+                Expr::value(state.to_string()),
+            )
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Record a verdict. Insert only: an approval is never changed.
+    pub async fn insert_approval(&self, model: approval::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let scope = AccessScope::for_tenant(model.tenant_id);
+        approval::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&scope)?
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// The verdicts on these requests, oldest first.
+    pub async fn list_approvals(
+        &self,
+        workspace_id: Uuid,
+        request_ids: &[Uuid],
+    ) -> Result<Vec<approval::Model>> {
+        if request_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.db.conn()?;
+        let rows = approval::Entity::find()
+            .filter(approval::Column::RequestId.is_in(request_ids.iter().copied()))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .order_by(approval::Column::DecidedAt, Order::Asc)
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
+    /// Record a decision. Insert only.
+    pub async fn insert_decision(&self, model: decision::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let scope = AccessScope::for_tenant(model.tenant_id);
+        decision::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&scope)?
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// A project's decisions, newest first.
+    pub async fn list_decisions(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<decision::Model>> {
+        let conn = self.db.conn()?;
+        let rows = decision::Entity::find()
+            .filter(decision::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .order_by(decision::Column::DecidedAt, Order::Desc)
+            .all(&conn)
+            .await?;
+        Ok(rows)
     }
 
     // ── documents ───────────────────────────────────────────────────────────

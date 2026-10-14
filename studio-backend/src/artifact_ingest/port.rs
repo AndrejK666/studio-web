@@ -196,10 +196,14 @@ pub trait ArtifactFiles: Send + Sync + 'static {
     ///
     /// Beside the files because the Specs list needs both, and paged every
     /// `spec_finding` in the browser to fold this itself.
+    ///
+    /// `dismissed` holds the fingerprints of findings members marked as not a
+    /// problem; they are not counted.
     async fn reviews(
         &self,
         ctx: &toolkit_security::SecurityContext,
         scope: &str,
+        dismissed: &std::collections::BTreeSet<String>,
     ) -> anyhow::Result<std::collections::HashMap<String, ReviewSummary>>;
 
     /// `repo node id -> full_path` for every repository in `scope`: what

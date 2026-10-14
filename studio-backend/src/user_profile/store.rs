@@ -36,6 +36,9 @@ fn from_ms(ms: i64) -> OffsetDateTime {
     OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000)
         .unwrap_or(OffsetDateTime::UNIX_EPOCH)
 }
+/// UUIDv5 namespace for a person's mark on one inbox item.
+const INBOX_MARK_NS: Uuid = Uuid::from_u128(0x3b6f_d1a2_77c4_4e09_8a51_c2e9_0f46_d813);
+
 fn parse_uuid(s: &str) -> Result<Uuid> {
     Uuid::parse_str(s).map_err(|e| anyhow!("invalid uuid '{s}': {e}"))
 }
@@ -54,6 +57,21 @@ pub(crate) trait IdentityStore: Send + Sync {
     /// provider's claims, which knows nothing about UI choices and would blank
     /// them on each login.
     async fn set_ui_preferences(&self, user_id: &str, json: Option<&str>) -> Result<bool>;
+    /// The person's marks on their inbox items, newest first.
+    async fn inbox_marks_of(&self, _user_id: &str) -> Result<Vec<super::service::InboxMark>> {
+        Ok(Vec::new())
+    }
+    /// Set one mark, or clear it with `None`; then keep at most `keep` marks,
+    /// dropping the oldest.
+    async fn set_inbox_mark(
+        &self,
+        _user_id: &str,
+        _item_key: &str,
+        _mark: Option<(&str, Option<OffsetDateTime>)>,
+        _keep: usize,
+    ) -> Result<()> {
+        Ok(())
+    }
     async fn upsert_login(&self, login: &LoginView) -> Result<()>;
     async fn logins_of(&self, user_id: &str) -> Result<Vec<LoginView>>;
     async fn upsert_membership(&self, m: &MembershipView) -> Result<()>;
@@ -329,6 +347,101 @@ impl IdentityStore for PgStore {
             .one(&conn)
             .await?
             .and_then(|m| m.ui_preferences))
+    }
+
+    async fn inbox_marks_of(&self, user_id: &str) -> Result<Vec<super::service::InboxMark>> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let rows = entity::inbox_mark::Entity::find()
+            .filter(entity::inbox_mark::Column::UserId.eq(parse_uuid(user_id)?))
+            .secure()
+            .scope_with(&scope())
+            .order_by(entity::inbox_mark::Column::UpdatedAt, sea_orm::Order::Desc)
+            .all(&conn)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|m| super::service::InboxMark {
+                item_key: m.item_key,
+                state: m.state,
+                until: m.until,
+                updated_at: m.updated_at,
+            })
+            .collect())
+    }
+
+    async fn set_inbox_mark(
+        &self,
+        user_id: &str,
+        item_key: &str,
+        mark: Option<(&str, Option<OffsetDateTime>)>,
+        keep: usize,
+    ) -> Result<()> {
+        use sea_orm::IntoActiveModel;
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let user = parse_uuid(user_id)?;
+        let id = Uuid::new_v5(&INBOX_MARK_NS, format!("{user}\u{1f}{item_key}").as_bytes());
+        match mark {
+            None => {
+                entity::inbox_mark::Entity::delete_many()
+                    .secure()
+                    .scope_with(&scope())
+                    .filter(Condition::all().add(entity::inbox_mark::Column::Id.eq(id)))
+                    .exec(&conn)
+                    .await?;
+            }
+            Some((state, until)) => {
+                let model = entity::inbox_mark::Model {
+                    id,
+                    tenant_id: ROOT_TENANT,
+                    user_id: user,
+                    item_key: item_key.to_owned(),
+                    state: state.to_owned(),
+                    until,
+                    updated_at: OffsetDateTime::now_utc(),
+                };
+                let on_conflict = SecureOnConflict::<entity::inbox_mark::Entity>::columns([
+                    entity::inbox_mark::Column::Id,
+                ])
+                .update_columns([
+                    entity::inbox_mark::Column::State,
+                    entity::inbox_mark::Column::Until,
+                    entity::inbox_mark::Column::UpdatedAt,
+                ])?;
+                entity::inbox_mark::Entity::insert(model.into_active_model())
+                    .secure()
+                    .scope_unchecked(&scope())?
+                    .on_conflict(on_conflict)
+                    .exec(&conn)
+                    .await?;
+            }
+        }
+        // Bounded: the oldest marks go first. A mark on an item that no longer
+        // exists is never read again, and this is where it leaves.
+        let marks = self.inbox_marks_of(user_id).await?;
+        if marks.len() > keep {
+            let stale: Vec<Uuid> = marks[keep..]
+                .iter()
+                .map(|m| {
+                    Uuid::new_v5(
+                        &INBOX_MARK_NS,
+                        format!("{user}\u{1f}{}", m.item_key).as_bytes(),
+                    )
+                })
+                .collect();
+            entity::inbox_mark::Entity::delete_many()
+                .secure()
+                .scope_with(&scope())
+                .filter(Condition::all().add(entity::inbox_mark::Column::Id.is_in(stale)))
+                .exec(&conn)
+                .await?;
+        }
+        Ok(())
     }
 
     async fn set_ui_preferences(&self, user_id: &str, json: Option<&str>) -> Result<bool> {

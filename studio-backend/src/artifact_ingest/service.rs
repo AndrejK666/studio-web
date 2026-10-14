@@ -2278,6 +2278,7 @@ impl super::port::ArtifactFiles for IngestService {
         &self,
         ctx: &SecurityContext,
         scope: &str,
+        dismissed: &std::collections::BTreeSet<String>,
     ) -> anyhow::Result<HashMap<String, super::port::ReviewSummary>> {
         let findings: Vec<(String, serde_json::Value)> = self
             .list_in_scope(ctx, Some("spec_finding"), scope)
@@ -2285,7 +2286,9 @@ impl super::port::ArtifactFiles for IngestService {
             .into_iter()
             .map(|n| (n.instance_id, n.value))
             .collect();
-        Ok(super::activity::review_by_subject(&findings))
+        Ok(super::activity::review_by_subject_except(
+            &findings, dismissed,
+        ))
     }
 
     async fn repo_paths(

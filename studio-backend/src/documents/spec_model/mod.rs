@@ -15,8 +15,12 @@ pub(crate) mod finding;
 pub(crate) mod glossary;
 pub(crate) mod index;
 pub(crate) mod judge;
+pub(crate) mod questions;
 pub(crate) mod record;
+pub(crate) mod related;
+pub(crate) mod requirements;
 pub(crate) mod rules;
+pub(crate) mod trace;
 pub(crate) mod work;
 
 /// One document of the project, with its text.
@@ -36,6 +40,9 @@ pub struct SourceText {
 pub struct Sources {
     pub documents: Vec<SourceText>,
     pub tree: BTreeSet<String>,
+    /// The checkouts' other text files, `(path, text)`: the code and tests a
+    /// requirement can be traced to.
+    pub files: Vec<(String, String)>,
 }
 
 impl Sources {
@@ -46,6 +53,20 @@ impl Sources {
     /// The identifiers the documents define with a label, and where.
     pub fn labelled_ids(&self) -> BTreeMap<String, Vec<finding::Side>> {
         index::labelled_ids(&source_docs(&self.documents))
+    }
+
+    /// Every requirement the documents define, with the basis it states.
+    pub fn requirements(&self) -> Vec<requirements::Requirement> {
+        requirements::requirements(&source_docs(&self.documents))
+    }
+
+    /// Where each requirement is cited: documents, code, tests.
+    pub fn trace(&self) -> Vec<trace::Trace> {
+        trace::trace(
+            &self.requirements(),
+            &source_docs(&self.documents),
+            &self.files,
+        )
     }
 }
 

@@ -13,6 +13,8 @@
 //! project tenant is authorized through account-management, as `studio-kits`
 //! does for its project routes.
 
+mod approvals;
+mod brief;
 mod classify;
 mod entity;
 pub(crate) mod gts;
@@ -21,7 +23,9 @@ mod migrations;
 pub(crate) mod model;
 mod paths;
 pub(crate) mod port;
+mod pr_checks;
 mod quality;
+mod remarks;
 mod repo;
 #[cfg(test)]
 mod repo_tests;

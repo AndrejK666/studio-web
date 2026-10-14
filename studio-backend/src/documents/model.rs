@@ -561,6 +561,11 @@ pub struct Requirement {
     /// for, that nothing is outstanding, because a stage that required one would
     /// have to say so.
     pub analyses_outstanding: Vec<Detector>,
+    /// The required reviewers of the document's current review request who
+    /// have not approved it, by name (or person id when nameless). Empty when
+    /// nobody was asked: a review gates the stage only once it is requested.
+    #[serde(default)]
+    pub approvals_outstanding: Vec<String>,
 }
 
 /// A document type registered in the platform (its `gts_type_id` is registered

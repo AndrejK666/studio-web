@@ -315,9 +315,68 @@ before that are swept by each repository sync of the project.
 | `POST` | `/workspaces/{workspace_id}/projects/{project_id}/quality/{detector}` | Queue a detector over named bindings, documents and inline texts | unstable |
 | `GET` | `/spec-rows`, `/spec-pipeline`, `/specs-per-source` | The folded spec views | unstable |
 | `GET` | `/review-criteria?type_key=&project_id=` | The semantic criteria a type is judged by, with ids a verdict can cite | unstable |
+| `POST` `GET` | `/review-requests` | Ask people to review one version of a document; a project's (`?project_id=`, `&subject_id=`) or a workspace's (`?workspace_id=`) requests, `&waiting_on=me` for the caller's own queue | unstable |
+| `POST` | `/review-requests/{request_id}/approvals` | A reviewer's verdict, recorded and never edited | unstable |
+| `POST` | `/review-requests/{request_id}/cancel` | Withdraw a request you asked for | unstable |
+| `GET` | `/review-requests/reviewer-suggestions?project_id=&subject_id=&type_key=` | Whom to ask, from who was asked before | unstable |
+| `GET` | `/spec-model/requirements?project_id=` | The requirements the documents define and the basis each states ([spec-domain-model.md](../spec-domain-model.md#requirements-and-their-basis)) | unstable |
+| `GET` | `/spec-model/decisions?project_id=` | Every ✓/✗ on the project's findings, the model's and Spec Quality's | unstable |
+| `GET` | `/spec-model/related`, `/spec-model/trace`, `/spec-model/questions`, `/spec-model/term-drift`, `/spec-model/experts` | Requirements of other projects alike or opposite; requirement → documents, code, tests; what a document leaves out of the domain and whom to ask ([spec-domain-model.md](../spec-domain-model.md)) | unstable |
+| `POST` | `/review-brief` | A brief of one document for its reviewers | unstable |
+| `GET` `POST` | `/remarks`, `/remarks/replies` | Review threads on a document from its pull requests; a reply to one | unstable |
+| `GET` `POST` | `/decisions` | Decisions recorded on requirements | unstable |
+| `POST` | `/pull-request-checks` | Check the documents open pull requests change; set a commit status | unstable |
 
 A quality request may carry at most 20 inline documents of 256 KiB each and
 1 MiB in total (`quality.rs`).
+
+**Reviews and approvals** (`approvals.rs`, issue #731). A review request names
+one version of one document (a Studio document or a repository binding), the
+people asked and which of them are required, and an optional due date. A newer
+request on the same document supersedes the open one. A verdict is a row of
+`studio_approvals`: inserted, never updated; the latest per reviewer counts,
+and it keeps the detectors that had passed on the document when it was given.
+`stage-status` folds the current request (the newest open or approved one) into
+each requirement as `approvals_outstanding`: the required reviewers who have
+not approved. A stage is complete only when that is empty, so a review gates a
+stage once somebody asks for it, and never before. Reviewer suggestions are the
+reviewers of earlier requests on the document, then on its type, ranked by how
+often they were asked. Each request change is announced on `studio-events` as
+`review_request.created`, `.decided` or `.cancelled`
+([events catalogue](../events-catalog.md)), which the portal's inbox reads
+again. Reminders before the due date are not sent yet: an overdue request is
+marked `overdue` and leads the reviewer's inbox.
+
+A finding a member dismissed (✗) is not counted on the Specs list: `spec-rows`
+passes the dismissed fingerprints to `ArtifactFiles::reviews` (issue #729).
+
+**Review briefs** (`brief.rs`, `POST /review-brief`, issue #736). Which
+requirements were added, removed or reworded since a base version (`base_ref`,
+or the document before its latest commit, read through the project's
+repository connection) is computed from the labelled requirements of both
+versions. A model on the caller's key (ADR-0039) writes the problem, roles,
+scope, assumptions and open decisions, and says for each computed change
+whether it changes what is required. A claim about a change the comparison did
+not find is dropped; an added or removed requirement always counts as meaning.
+Nothing is stored.
+
+**Remarks and decisions** (`remarks.rs`, issue #735). `GET /remarks` asks the
+repository host, in one GraphQL query per repository, for the review threads on
+a document in the pull requests its last twenty commits came from and in the
+open pull requests that change it; unresolved threads of pull requests no
+longer open are `left_open`: what a merge left behind. A reply
+(`POST /remarks/replies`) is posted to the thread through the project's
+connection. A decision (`POST /decisions`, table `studio_decisions`) records
+what was decided, the requirement identifiers it closes, where it was taken
+and by whom; insert only.
+
+**Checks on pull requests** (`pr_checks.rs`, `POST /pull-request-checks`,
+issue #734). Every open pull request of the project's repositories that changes
+a settled document is checked, on the version in the pull request, against its
+type's template, and the result is set as a `studio/documents` commit status on
+the head commit (`ConnectorDriver::set_commit_status`). A commit status, not a
+check run, because a personal token can set one. The run is asked for by a
+member; a webhook that runs it on every push is the next step.
 
 In process the gear publishes four ports on the ClientHub (`port.rs`):
 `DocumentClassifier` and `BindingNames` for the ingest gear,
@@ -589,6 +648,77 @@ deletes one.
 | detector | state |
 |--------|--------|
 | `purpose` | `passed` |
+
+#### Table: `studio_review_requests`
+
+**ID**: `cpt-studio-dbtable-review-requests`
+
+**Schema**:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | |
+| `tenant_id` | UUID | the workspace tenant |
+| `project_id` | UUID | |
+| `subject_kind` | TEXT | `document` or `binding` |
+| `subject_id` | UUID | the document or binding |
+| `type_key` | TEXT | the document's type, when known |
+| `title` | TEXT | what the request is shown as |
+| `version` | TEXT | the version asked about: a content sha or a revision |
+| `requested_by`, `requested_by_name` | TEXT | the canonical person who asked (ADR-0025) |
+| `reviewers` | JSONB | `[{person, name, required}]` |
+| `due_at` | TIMESTAMPTZ | optional |
+| `state` | TEXT | `open`, `approved`, `superseded` or `withdrawn` |
+| `created_at` | TIMESTAMPTZ | |
+
+**PK**: `id`
+
+**Additional info**: Index on `(tenant_id, project_id, subject_id)`.
+
+#### Table: `studio_decisions`
+
+**ID**: `cpt-studio-dbtable-decisions`
+
+**Schema**:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | |
+| `tenant_id` | UUID | the workspace tenant |
+| `project_id` | UUID | |
+| `statement` | TEXT | what was decided, 1–4000 characters |
+| `requirements` | JSONB | the requirement identifiers it closes |
+| `source_url`, `source_kind` | TEXT | where it was taken: `review_thread`, `meeting`, `chat` or `other` |
+| `path` | TEXT | the document it is about, when one |
+| `decided_by`, `decided_by_name` | TEXT | the canonical person |
+| `decided_at` | TIMESTAMPTZ | |
+
+**PK**: `id`
+
+**Additional info**: Insert only. Index on `(tenant_id, project_id, decided_at)`.
+
+#### Table: `studio_approvals`
+
+**ID**: `cpt-studio-dbtable-approvals`
+
+**Schema**:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | |
+| `tenant_id` | UUID | the workspace tenant |
+| `project_id`, `request_id`, `subject_id` | UUID | `request_id` references `studio_review_requests`, `ON DELETE CASCADE` |
+| `version` | TEXT | the version the verdict is about |
+| `approver`, `approver_name` | TEXT | the canonical person |
+| `verdict` | TEXT | `approved` or `changes_requested` |
+| `note` | TEXT | optional |
+| `checks` | JSONB | the detectors that had passed on the document then |
+| `decided_at` | TIMESTAMPTZ | |
+
+**PK**: `id`
+
+**Additional info**: Insert only; there is no update path. Index on
+`(tenant_id, request_id)`.
 
 ### 3.8 Deployment Topology
 

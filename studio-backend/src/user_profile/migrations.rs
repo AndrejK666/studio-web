@@ -25,6 +25,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0003::Migration),
             Box::new(m0004::Migration),
             Box::new(m0005::Migration),
+            Box::new(m0006::Migration),
         ]
     }
 }
@@ -341,6 +342,58 @@ ALTER TABLE identity_login
     DROP COLUMN IF EXISTS email;
                     ",
                 )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// A person's marks on their inbox items (`entity::inbox_mark`).
+mod m0006 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const UNSUPPORTED: &str = "studio-user migrations: PostgreSQL only";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0006_inbox_marks"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            let sql = match manager.get_database_backend() {
+                sea_orm::DatabaseBackend::Postgres => {
+                    r"
+CREATE TABLE IF NOT EXISTS identity_inbox_mark (
+    id         UUID PRIMARY KEY,
+    tenant_id  UUID NOT NULL,
+    user_id    UUID NOT NULL,
+    item_key   TEXT NOT NULL,
+    state      TEXT NOT NULL CHECK (state IN ('done', 'snoozed')),
+    until      TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (user_id, item_key)
+);
+CREATE INDEX IF NOT EXISTS idx_identity_inbox_mark_user
+    ON identity_inbox_mark (tenant_id, user_id, updated_at);
+                    "
+                }
+                _ => return Err(DbErr::Custom(UNSUPPORTED.to_owned())),
+            };
+            manager.get_connection().execute_unprepared(sql).await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS identity_inbox_mark;")
                 .await?;
             Ok(())
         }

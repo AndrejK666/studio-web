@@ -20,6 +20,7 @@ use toolkit::client_hub::ClientHub;
 /// A working copy on disk: shallow clone, fast-forward, walk. Credentials go
 /// to `git` through a helper, never the URL or argv.
 pub(crate) use super::clone as git_checkout;
+pub use super::driver::CommitStatus;
 #[cfg(test)]
 pub use super::driver::RemoteReview;
 pub use super::driver::{

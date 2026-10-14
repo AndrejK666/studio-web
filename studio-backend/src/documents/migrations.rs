@@ -36,6 +36,8 @@ impl MigratorTrait for Migrator {
             Box::new(m0015::Migration),
             Box::new(m0016::Migration),
             Box::new(m0017::Migration),
+            Box::new(m0018::Migration),
+            Box::new(m0019::Migration),
         ]
     }
 }
@@ -1112,6 +1114,145 @@ CREATE TABLE IF NOT EXISTS studio_spec_model_terms (
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS studio_spec_model_terms;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Review requests and the approvals given on them (`approvals.rs`). An
+/// approval is a record: there is no update path, and the table has no
+/// column a later verdict would overwrite.
+mod m0018 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0018_review_requests_and_approvals"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_review_requests (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    subject_kind TEXT NOT NULL CHECK (subject_kind IN ('document', 'binding')),
+    subject_id UUID NOT NULL,
+    type_key TEXT,
+    title TEXT NOT NULL,
+    version TEXT NOT NULL,
+    requested_by TEXT NOT NULL,
+    requested_by_name TEXT,
+    reviewers JSONB NOT NULL,
+    due_at TIMESTAMPTZ,
+    state TEXT NOT NULL CHECK (state IN ('open', 'approved', 'superseded', 'withdrawn')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_review_requests_project
+    ON studio_review_requests (tenant_id, project_id, subject_id);",
+                r"
+CREATE TABLE IF NOT EXISTS studio_approvals (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    request_id UUID NOT NULL REFERENCES studio_review_requests (id) ON DELETE CASCADE,
+    subject_id UUID NOT NULL,
+    version TEXT NOT NULL,
+    approver TEXT NOT NULL,
+    approver_name TEXT,
+    verdict TEXT NOT NULL CHECK (verdict IN ('approved', 'changes_requested')),
+    note TEXT,
+    checks JSONB NOT NULL DEFAULT '[]'::jsonb,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_approvals_request
+    ON studio_approvals (tenant_id, request_id);",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                "DROP TABLE IF EXISTS studio_approvals;",
+                "DROP TABLE IF EXISTS studio_review_requests;",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Decisions recorded on requirements (`remarks.rs`). Insert only, like an
+/// approval: a decision changed is a new decision.
+mod m0019 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0019_decisions"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_decisions (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    statement TEXT NOT NULL,
+    requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_url TEXT,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('review_thread', 'meeting', 'chat', 'other')),
+    path TEXT,
+    decided_by TEXT NOT NULL,
+    decided_by_name TEXT,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_decisions_project
+    ON studio_decisions (tenant_id, project_id, decided_at);",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_decisions;")
                 .await?;
             Ok(())
         }

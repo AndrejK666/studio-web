@@ -809,6 +809,171 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
     }
 }
 
+// ── What a candidate brings with it ───────────────────────────────────────
+
+/// One gear a candidate would add to the product, and why it comes along.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Brought {
+    /// Crate name.
+    pub gear: String,
+    pub reason: String,
+    /// It keeps its own database (`db` among its runtime capabilities).
+    pub database: bool,
+}
+
+/// A contract the product would get from two gears: one it has, one the
+/// candidate brings — the second audit store a certified platform cannot
+/// keep (interview problem 4.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Overlap {
+    pub contract: String,
+    /// Crate names already in the product that provide it.
+    pub already: Vec<String>,
+    /// Crate names the candidate brings that provide it too.
+    pub brought: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Brings {
+    /// The candidate as asked; `false` when no `gear.gdl` describes it.
+    pub described: bool,
+    /// What is new to the product, the candidate first.
+    pub brought: Vec<Brought>,
+    pub overlaps: Vec<Overlap>,
+    /// What completing the product with the candidate would drop or change
+    /// that completing it without would not.
+    pub changes: Vec<Change>,
+}
+
+/// What adding `candidate` to a product of `current` would bring with it,
+/// from the catalogue alone: the gears completion adds and those they must
+/// share a binary with, the host a plugin needs, and the contracts the
+/// product would then get twice. Nothing is written; the engine still has
+/// the last word when the product is resolved.
+pub fn brings(
+    catalogue: &EngineCatalogue,
+    current: &[String],
+    candidate: &str,
+    config: &GearConfig,
+) -> Brings {
+    let Some(cand) = catalogue.find(candidate.trim()) else {
+        return Brings::default();
+    };
+    let crate_of = |id: &str| {
+        catalogue
+            .gears
+            .get(id)
+            .map_or(id.to_string(), |g| g.package.crate_name.clone())
+    };
+    let ids_of = |completion: &Completion| -> Vec<String> {
+        completion
+            .gears
+            .iter()
+            .filter_map(|n| catalogue.find(n).map(|g| g.id.clone()))
+            .collect()
+    };
+    let before_completion = complete(catalogue, current, config);
+    let mut with: Vec<String> = current.to_vec();
+    with.push(cand.package.crate_name.clone());
+    let after_completion = complete(catalogue, &with, config);
+    let mut before = catalogue.closure(&ids_of(&before_completion));
+    let mut after = catalogue.closure(&ids_of(&after_completion));
+    // A plugin runs under its host: `compose` writes the host in, so count it.
+    for set in [&mut before, &mut after] {
+        let hosts: Vec<String> = set
+            .iter()
+            .filter_map(|id| catalogue.gears.get(id))
+            .filter_map(|g| catalogue.host_of(g).map(|h| h.id.clone()))
+            .collect();
+        let hosts: Vec<String> = catalogue.closure(&hosts).into_iter().collect();
+        set.extend(hosts);
+    }
+
+    let reason_for = |id: &str| -> String {
+        if id == cand.id {
+            return "the gear you picked".to_string();
+        }
+        let name = crate_of(id);
+        if let Some(c) = after_completion
+            .changes
+            .iter()
+            .find(|c| c.added && c.gear == name)
+        {
+            return c.reason.clone();
+        }
+        if let Some(g) = after
+            .iter()
+            .filter_map(|o| catalogue.gears.get(o))
+            .find(|g| g.colocated_deps.iter().any(|d| d == id))
+        {
+            return format!("{} must run with it", g.package.crate_name);
+        }
+        if let Some(p) = after
+            .iter()
+            .filter_map(|o| catalogue.gears.get(o))
+            .find(|g| catalogue.host_of(g).is_some_and(|h| h.id == id))
+        {
+            return format!("hosts the extension point {} fills", p.package.crate_name);
+        }
+        "completion of the product".to_string()
+    };
+    let mut new: Vec<&String> = after.difference(&before).collect();
+    new.sort_by_key(|id| (**id != cand.id, (*id).clone()));
+    let brought: Vec<Brought> = new
+        .iter()
+        .map(|id| Brought {
+            gear: crate_of(id),
+            reason: reason_for(id),
+            database: catalogue
+                .gears
+                .get(*id)
+                .is_some_and(|g| g.runtime_caps.iter().any(|c| c == "db")),
+        })
+        .collect();
+
+    let provides = |id: &str| -> Vec<String> {
+        catalogue
+            .gears
+            .get(id)
+            .map(|g| g.provides.iter().map(|p| p.contract.clone()).collect())
+            .unwrap_or_default()
+    };
+    let mut by_contract: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
+    for id in &before {
+        for c in provides(id) {
+            by_contract.entry(c).or_default().0.insert(crate_of(id));
+        }
+    }
+    for id in &new {
+        for c in provides(id) {
+            by_contract.entry(c).or_default().1.insert(crate_of(id));
+        }
+    }
+    let overlaps = by_contract
+        .into_iter()
+        .filter(|(_, (a, b))| !a.is_empty() && !b.is_empty())
+        .map(|(contract, (a, b))| Overlap {
+            contract,
+            already: a.into_iter().collect(),
+            brought: b.into_iter().collect(),
+        })
+        .collect();
+
+    let changes = after_completion
+        .changes
+        .into_iter()
+        .filter(|c| !before_completion.changes.contains(c))
+        .filter(|c| !(c.added && brought.iter().any(|b| b.gear == c.gear)))
+        .collect();
+
+    Brings {
+        described: true,
+        brought,
+        overlaps,
+        changes,
+    }
+}
+
 // ── Facts: what the engine knows, as component-profile fields ─────────────
 
 fn fact(v: &str) -> Value {
@@ -1840,6 +2005,17 @@ impl Gearbox {
         Ok(complete(&catalogue, picked, config))
     }
 
+    /// [`brings`] against the current corpus.
+    pub async fn brings(
+        &self,
+        current: &[String],
+        candidate: &str,
+        config: &GearConfig,
+    ) -> anyhow::Result<Brings> {
+        let (_, _, catalogue) = self.ensure_corpus().await?;
+        Ok(brings(&catalogue, current, candidate, config))
+    }
+
     /// [`config_schemas`] against the current corpus.
     pub async fn config_schemas(&self, names: &[String]) -> anyhow::Result<Vec<GearConfigSchema>> {
         let (_, _, catalogue) = self.ensure_corpus().await?;
@@ -2221,6 +2397,77 @@ mod tests {
 
     fn names(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    /// A product with an audit store, and a candidate that brings its own.
+    fn audited() -> EngineCatalogue {
+        serde_json::from_value(json!({"gears": {
+            "audit": {"id": "audit", "package": {"crate_name": "cf-gears-audit"},
+                      "provides": [{"contract": "audit/AuditLog@v1"}], "runtime_caps": ["db"]},
+            "billing": {"id": "billing", "package": {"crate_name": "cf-gears-billing"},
+                        "colocated_deps": ["billing-audit"]},
+            "billing-audit": {"id": "billing-audit", "package": {"crate_name": "cf-gears-billing-audit"},
+                              "provides": [{"contract": "audit/AuditLog@v1"}], "runtime_caps": ["db"]},
+            "authn-resolver": {"id": "authn-resolver", "package": {"crate_name": "cf-gears-authn-resolver"},
+                               "extension_points": [{"sdk": {"crate_name": "authn-sdk"}}]},
+            "static-authn-plugin": {"id": "static-authn-plugin",
+                                    "package": {"crate_name": "cf-gears-static-authn-plugin"},
+                                    "fills": {"point": {"sdk": {"crate_name": "authn-sdk"}}}}
+        }}))
+        .expect("audited fixture parses")
+    }
+
+    #[test]
+    fn a_candidate_shows_what_comes_with_it_and_the_contract_it_doubles() {
+        let b = brings(
+            &audited(),
+            &names(&["cf-gears-audit"]),
+            "cf-gears-billing",
+            &GearConfig::new(),
+        );
+        assert!(b.described);
+        let gears: Vec<&str> = b.brought.iter().map(|g| g.gear.as_str()).collect();
+        assert_eq!(gears, ["cf-gears-billing", "cf-gears-billing-audit"]);
+        assert_eq!(b.brought[0].reason, "the gear you picked");
+        assert_eq!(b.brought[1].reason, "cf-gears-billing must run with it");
+        assert!(b.brought[1].database);
+        assert_eq!(
+            b.overlaps,
+            vec![Overlap {
+                contract: "audit/AuditLog@v1".into(),
+                already: vec!["cf-gears-audit".into()],
+                brought: vec!["cf-gears-billing-audit".into()],
+            }]
+        );
+    }
+
+    #[test]
+    fn a_plugin_brings_its_host_and_nothing_already_there_is_new() {
+        let b = brings(&audited(), &[], "static-authn-plugin", &GearConfig::new());
+        let gears: Vec<&str> = b.brought.iter().map(|g| g.gear.as_str()).collect();
+        assert_eq!(
+            gears,
+            ["cf-gears-static-authn-plugin", "cf-gears-authn-resolver"]
+        );
+        assert_eq!(
+            b.brought[1].reason,
+            "hosts the extension point cf-gears-static-authn-plugin fills"
+        );
+        let again = brings(
+            &audited(),
+            &names(&["cf-gears-billing"]),
+            "cf-gears-billing-audit",
+            &GearConfig::new(),
+        );
+        assert!(again.brought.is_empty());
+        assert!(again.overlaps.is_empty());
+    }
+
+    #[test]
+    fn an_undescribed_candidate_brings_nothing() {
+        let b = brings(&audited(), &[], "cf-gears-nowhere", &GearConfig::new());
+        assert!(!b.described);
+        assert!(b.brought.is_empty());
     }
 
     #[test]

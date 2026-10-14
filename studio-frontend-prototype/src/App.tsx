@@ -124,7 +124,7 @@ import { OrgEnvironments } from "./environments-screen";
 import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
-import { PullRequestsOnMe } from "./pull-requests-on-me";
+import { WaitingOnYou } from "./waiting-on-me-view";
 import {
   BookIcon,
   CheckIcon,
@@ -6580,7 +6580,7 @@ function HomeView({
           )}
         </div>
 
-        <PullRequestsOnMe token={token} workspaces={workspaces} onOpenWorkspace={onOpenDashboard} />
+        <WaitingOnYou token={token} workspaces={workspaces} onOpenWorkspace={onOpenDashboard} />
 
         <div className="card">
           <h2>Build</h2>
