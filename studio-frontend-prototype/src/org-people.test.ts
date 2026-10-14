@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api, type Colleague, type OrgMember } from "./api";
 import type { GrantDef } from "./access";
-import { byName, fromColleagues, fromMembers, holderName, orgPeople, projectGrantsOf } from "./org-people";
+import { byName, fromColleagues, fromMembers, holderName, orgPeople, projectGrantsOf, withColleagues } from "./org-people";
 
 const member = (user_id: string, over: Partial<OrgMember> = {}): OrgMember => ({
   user_id,
@@ -103,5 +103,32 @@ describe("a grant and a member match by person", () => {
       grant("u-bob", { id: "bob" }),
     ];
     expect(projectGrantsOf("u-ada", grants).map((g) => g.id)).toEqual(["g-u-ada"]);
+  });
+});
+
+describe("one list of people", () => {
+  it("joins each member to their colleague row by person id", () => {
+    const rows = withColleagues(
+      [
+        { id: "u-a", name: "Ann", email: "ann@x.example", role: "owner" },
+        { id: "u-b", name: "Ben", role: "member" },
+      ],
+      [
+        { ...colleague("u-a", "org-1", "Ann"), avatar_url: "/p/a.png", last_seen_at_epoch_ms: 5, directory: { title: "CTO" } },
+        { ...colleague("u-b", "org-2", "Ben"), last_seen_at_epoch_ms: 9 },
+      ],
+      "org-1",
+    );
+    expect(rows[0]).toEqual({
+      id: "u-a",
+      name: "Ann",
+      email: "ann@x.example",
+      role: "owner",
+      avatarUrl: "/p/a.png",
+      directory: { title: "CTO" },
+      lastSeenMs: 5,
+    });
+    // Ben's colleague row is another organization's: nothing joins.
+    expect(rows[1]).toEqual({ id: "u-b", name: "Ben", role: "member" });
   });
 });

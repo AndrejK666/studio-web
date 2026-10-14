@@ -79,3 +79,29 @@ export function projectGrantsOf(memberId: string, grants: GrantDef[]): GrantDef[
     (g) => g.subjectType === "member" && g.subjectId === memberId && g.scopeType === "project",
   );
 }
+
+/** A member with what the colleague projection adds about them: photo, how
+ *  the organization describes them, and when they were last seen. */
+export interface PersonRow extends Member {
+  avatarUrl?: string;
+  directory?: Colleague["directory"];
+  lastSeenMs?: number;
+}
+
+/** The members, each joined to their colleague row by person id, so one
+ *  list carries both the address (administrative listing) and the photo and
+ *  last-seen (colleague projection). A member with no colleague row keeps
+ *  what it had. */
+export function withColleagues(members: Member[], colleagues: Colleague[], orgId: string): PersonRow[] {
+  const byId = new Map(colleagues.filter((c) => c.org_id === orgId).map((c) => [c.user_id, c]));
+  return members.map((m) => {
+    const c = byId.get(m.id);
+    if (!c) return m;
+    return {
+      ...m,
+      ...(c.avatar_url ? { avatarUrl: c.avatar_url } : {}),
+      directory: c.directory,
+      ...(c.last_seen_at_epoch_ms != null ? { lastSeenMs: c.last_seen_at_epoch_ms } : {}),
+    };
+  });
+}

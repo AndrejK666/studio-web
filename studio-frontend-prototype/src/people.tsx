@@ -23,9 +23,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { api } from "./api";
-import { DataTable } from "./data-table";
+import { api, type Colleague } from "./api";
+import { DataTable, When } from "./data-table";
 import { errText, initials } from "./format";
+import { Modal } from "./modal";
 import {
   normalizeAccessConfig,
   type AccessConfig,
@@ -33,8 +34,13 @@ import {
   type RoleDef,
 } from "./access";
 import type { RootProject } from "./projects";
-import { holderName, orgPeople, projectGrantsOf, type Member } from "./org-people";
-import { ColleaguesCard } from "./people-profile";
+import { holderName, orgPeople, projectGrantsOf, withColleagues, type Member, type PersonRow } from "./org-people";
+import { PersonPhoto, directoryLine } from "./people-profile";
+
+const ROLE_LABEL: Record<string, string> = { owner: "Owner", admin: "Admin", member: "Member" };
+
+/** When somebody was last seen, as a date the list can sort and show. */
+const seen = (ms: number | undefined) => (ms == null ? null : new Date(ms).toISOString());
 
 export function PeopleView({
   token,
@@ -56,6 +62,10 @@ export function PeopleView({
   onOpenProject: (rootId: string) => void;
 }) {
   const [people, setPeople] = useState<Member[] | null>(null);
+  /** Photos, descriptions and last-seen, joined to the members by person id. */
+  const [colleagues, setColleagues] = useState<Colleague[]>([]);
+  /** The person whose contact card is open. */
+  const [contact, setContact] = useState<PersonRow | null>(null);
   const [cfg, setCfg] = useState<AccessConfig | null>(null);
   const [email, setEmail] = useState("");
   const [addPick, setAddPick] = useState("");
@@ -88,6 +98,8 @@ export function PeopleView({
       ]);
       setPeople(members);
       setCfg(normalizeAccessConfig(access, catalogue));
+      // Best effort: without it the list still has names, addresses and roles.
+      setColleagues(orgId ? await api.myColleagues(token).catch(() => [] as Colleague[]) : []);
     } catch (e) {
       setError(errText(e));
       setPeople([]);
@@ -190,6 +202,10 @@ export function PeopleView({
 
   const all = people ?? [];
   const personName = (g: GrantDef) => holderName(g, all);
+  const rows = orgId ? withColleagues(all, colleagues, orgId) : all;
+  /** How the organization describes a person: title, department, company, manager. */
+  const describe = (p: PersonRow) =>
+    directoryLine(p.directory, (id) => all.find((m) => m.id === id)?.name);
 
   /* ── Organization People ── */
   if (mode === "org") {
@@ -205,8 +221,6 @@ export function PeopleView({
           </div>
         </div>
 
-        <ColleaguesCard token={token} orgId={orgId} />
-
         {error && <div className="error">{error}</div>}
         {notice && <div className="hint">{notice}</div>}
 
@@ -214,15 +228,16 @@ export function PeopleView({
           {!org && people !== null ? (
             <p className="empty">No organization in context.</p>
           ) : (
-            <DataTable<Member>
+            <DataTable<PersonRow>
               list="people"
-              rows={people === null ? null : all}
+              rows={people === null ? null : rows}
               error={people === null ? error : null}
               onRetry={() => void load()}
               rowKey={(p) => p.id}
               rowLabel={(p) => p.name}
+              onOpen={(p) => setContact(p)}
               search={{ placeholder: "Search people" }}
-              searchText={(p) => [p.name, p.email]}
+              searchText={(p) => [p.name, p.email, describe(p)]}
               empty={{ title: "Nobody here yet.", body: "Invite the first person below." }}
               columns={[
                 {
@@ -231,10 +246,10 @@ export function PeopleView({
                   compare: (a, b) => a.name.localeCompare(b.name),
                   cell: (p) => (
                     <div className="pcell">
-                      <span className="account-avatar small">{initials(p.name)}</span>
+                      <PersonPhoto name={p.name} url={p.avatarUrl} />
                       <div>
                         <div className="pname plain">{p.name}</div>
-                        {p.email && <div className="sub">{p.email}</div>}
+                        <div className="sub">{[p.email, describe(p)].filter(Boolean).join(" · ")}</div>
                       </div>
                     </div>
                   ),
@@ -242,7 +257,7 @@ export function PeopleView({
                 {
                   id: "role",
                   header: "Role",
-                  cell: (p) => <span className="sub">{p.role}</span>,
+                  cell: (p) => <span className="sub">{ROLE_LABEL[p.role] ?? p.role}</span>,
                 },
                 {
                   id: "projects",
@@ -271,7 +286,26 @@ export function PeopleView({
                     );
                   },
                 },
+                {
+                  id: "seen",
+                  header: "Last seen",
+                  compare: (a, b) => (b.lastSeenMs ?? 0) - (a.lastSeenMs ?? 0),
+                  cell: (p) => <When iso={seen(p.lastSeenMs)} className="sub" />,
+                },
               ]}
+            />
+          )}
+          {contact && (
+            <ContactCard
+              person={contact}
+              describe={describe(contact)}
+              projects={projectsOf(contact)}
+              everyProject={cfg?.model !== "roles"}
+              onOpenProject={(id) => {
+                setContact(null);
+                onOpenProject(id);
+              }}
+              onClose={() => setContact(null)}
             />
           )}
 
@@ -432,5 +466,83 @@ export function PeopleView({
         </div>
       )}
     </>
+  );
+}
+
+/** One person's contact card: who they are, how to reach them, where they
+ *  work here, and when they were last seen. */
+function ContactCard({
+  person,
+  describe,
+  projects,
+  everyProject,
+  onOpenProject,
+  onClose,
+}: {
+  person: PersonRow;
+  describe: string;
+  projects: { id: string; name: string; role: string }[];
+  /** Tenant access: everyone works on every project. */
+  everyProject: boolean;
+  onOpenProject: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copy = (text: string) => {
+    navigator.clipboard
+      ?.writeText(text)
+      .then(() => setCopied(true))
+      .catch(() => setCopied(false));
+  };
+  return (
+    <Modal label={`Contact: ${person.name}`} onClose={onClose}>
+      <div className="contact-card">
+        <div className="contact-head">
+          <PersonPhoto name={person.name} url={person.avatarUrl} size="large" />
+          <div className="grow">
+            <h2 style={{ margin: 0 }}>{person.name}</h2>
+            <div className="sub">
+              {[ROLE_LABEL[person.role] ?? person.role, describe].filter(Boolean).join(" · ")}
+            </div>
+          </div>
+          <button type="button" className="ghost" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <dl className="contact-facts">
+          <dt>Email</dt>
+          <dd>
+            {person.email ? (
+              <>
+                <a href={`mailto:${person.email}`}>{person.email}</a>{" "}
+                <button type="button" className="ghost" onClick={() => copy(person.email!)}>
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </>
+            ) : (
+              <span className="sub">Only administrators see addresses.</span>
+            )}
+          </dd>
+          <dt>Projects</dt>
+          <dd>
+            {projects.length > 0 ? (
+              <div className="chips">
+                {projects.map((o) => (
+                  <button key={o.id} type="button" className="chip on" onClick={() => onOpenProject(o.id)}>
+                    {o.name} · {o.role}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <span className="sub">{everyProject ? "every project" : "not on a project"}</span>
+            )}
+          </dd>
+          <dt>Last seen</dt>
+          <dd>
+            <When iso={seen(person.lastSeenMs)} />
+          </dd>
+        </dl>
+      </div>
+    </Modal>
   );
 }
