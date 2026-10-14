@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useDismiss } from "./use-dismiss";
 import { LevelBadge, LevelMark, LogoControl, OrgMark } from "./level-marks";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
 import { URL_CHANGE_EVENT } from "./list-state";
@@ -891,6 +892,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
    *  is always visible and opens on hover; this is only the latch that keeps it
    *  open once the pointer leaves. Unpinned is the resting state. */
   const [productMenu, setProductMenu] = useState(false);
+  const productMenuRef = useRef<HTMLSpanElement | null>(null);
+  const closeProductMenu = useCallback(() => setProductMenu(false), []);
+  useDismiss(productMenuRef, productMenu, closeProductMenu);
   // What sits above PLATFORM in the rail. Persisted per browser; see pins.ts
   // for why the group it replaced had stopped meaning anything.
   const [pins, setPins] = useState<Pin[]>(() => loadPins());
@@ -1737,7 +1741,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             open, and finding them under the fold. The wordmark is where a
             product family is looked for, and a menu names all three rather
             than implying the first owns the other two. */}
-        <span className="brand-wrap" onMouseLeave={() => setProductMenu(false)}>
+        <span className="brand-wrap" ref={productMenuRef}>
           <button
             type="button"
             className="brand"
@@ -3216,11 +3220,16 @@ export function PathBar({
   onPickProject: (p: { id: string; name: string } | null) => void;
 }) {
   const [open, setOpen] = useState<"org" | "ws" | "proj" | null>(null);
+  // Open until a press outside the bar, or Escape: closing on mouse-leave
+  // folded a menu away while the pointer crossed the gap to it.
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const closeMenu = useCallback(() => setOpen(null), []);
+  useDismiss(barRef, open !== null, closeMenu);
   const initial = (s: string) => (s || "?").slice(0, 1).toUpperCase();
   const currentWs = workspaces.find((w) => w.id === currentWorkspaceId) ?? null;
 
   return (
-    <div className="path-bar" onMouseLeave={() => setOpen(null)}>
+    <div className="path-bar" ref={barRef}>
       {/* The platform: the level above every organization, holding the
           components they all share (ADR-0042). Not a picker -- there is one. */}
       <div className="path-seg">
