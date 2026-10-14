@@ -37,6 +37,7 @@ import { ScaffoldModal } from "./documents";
 import { ProjectCandidate } from "./component-registry";
 import {
   candidateReasons,
+  candidatePlace,
   candidateTier,
   tierReason,
   tierTag,
@@ -907,7 +908,7 @@ function SuggestedComponents({
                                   {picked ? "✓" : "+"}
                                 </button>
                               )}
-                              <ComponentLink nav={c.origin === "project" ? null : nav} name={c.name} />
+                              <ComponentLink nav={c.origin === "project" || c.origin === "organization" ? null : nav} name={c.name} />
                               <span style={{ opacity: 0.6, marginLeft: 5 }}>{c.kind}</span>
                               {couldBecomeGear(c) ? (
                                 <span
@@ -923,7 +924,7 @@ function SuggestedComponents({
                                   // the organization's, or this project's own.
                                   const tier = candidateTier(c);
                                   if (!tier) return null;
-                                  const where = tier === "project" && c.path ? ` (${c.path})` : "";
+                                  const where = candidatePlace(c);
                                   return (
                                     <span
                                       title={`${tierReason(tier)}${where}`}

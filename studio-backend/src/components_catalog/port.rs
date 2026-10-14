@@ -438,6 +438,72 @@ impl Registry for CatalogRegistry {
     }
 }
 
+/// The organization's gears a project can draw on beyond its own (ADR-0042
+/// §3, tier `organization`): every entry the organization has accepted --
+/// `registered` or `published` -- that this project does not declare
+/// itself, at the place that declares it (the organization's gear
+/// repository first, then by project). In the catalogue's shape, marked
+/// `origin: organization` and `tier: organization`, and with where each one
+/// lives, by name: `Insight: src/backend/services/analytics`. A `declared`
+/// entry is not offered: it is a project's until a person registers it.
+pub fn organization_gears_of(
+    entries: &[RegistryEntry],
+    project_id: Uuid,
+) -> (
+    Vec<Value>,
+    Map<String, Value>,
+    std::collections::BTreeMap<String, String>,
+) {
+    use super::registry::{STATE_PUBLISHED, STATE_REGISTERED};
+    let mut nodes = Vec::new();
+    let mut profiles = Map::new();
+    let mut places = std::collections::BTreeMap::new();
+    for entry in entries {
+        let state = entry.entry.state.as_str();
+        if state != STATE_REGISTERED && state != STATE_PUBLISHED {
+            continue;
+        }
+        let declared_here = entry
+            .occurrences
+            .iter()
+            .any(|o| o.project_id == Some(project_id) && !o.detected());
+        if declared_here || places.contains_key(&entry.entry.name) {
+            continue;
+        }
+        let Some(occ) = entry
+            .occurrences
+            .iter()
+            .filter(|o| !o.detected())
+            .min_by(|a, b| {
+                b.in_organization()
+                    .cmp(&a.in_organization())
+                    .then_with(|| a.project_name.cmp(&b.project_name))
+                    .then_with(|| a.path.cmp(&b.path))
+            })
+        else {
+            continue;
+        };
+        let gear = occ.local_gear();
+        let mut node = gear.component();
+        let mut profile = gear.profile();
+        for v in [&mut node, &mut profile] {
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("origin".into(), Value::String(TIER_ORGANIZATION.into()));
+                obj.insert("tier".into(), Value::String(TIER_ORGANIZATION.into()));
+            }
+        }
+        let owner = if occ.in_organization() {
+            "the organization's gear repository".to_owned()
+        } else {
+            occ.project_name.clone().unwrap_or_else(|| occ.repo.clone())
+        };
+        places.insert(entry.entry.name.clone(), format!("{owner}: {}", occ.path));
+        profiles.insert(entry.entry.name.clone(), profile);
+        nodes.push(node);
+    }
+    (nodes, profiles, places)
+}
+
 /// A project's own gears as the registry knows them, in the shape
 /// [`ComponentCatalog::project_gears`] answers: one per entry found in the
 /// project (where it is declared there, else where it was detected: a

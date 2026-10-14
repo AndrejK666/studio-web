@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Candidate, PlanRow } from "./api";
 import {
   candidateReasons,
+  candidatePlace,
   candidateTier,
   candidateStrength,
   couldBecomeGear,
@@ -114,6 +115,15 @@ describe("why a gear is offered", () => {
       "Deprecated in the organization's registry: no longer to be chosen.",
     );
     expect(candidateReasons(cand("a", { registry_state: "registered" }), "x").some((l) => l.includes("Deprecated"))).toBe(false);
+  });
+
+  it("says where a project's or the organization's gear lives, and nothing for the platform's", () => {
+    expect(candidatePlace(cand("a", { tier: "project", path: "src/tasks" }))).toBe(" (src/tasks)");
+    expect(
+      candidatePlace(cand("a", { tier: "organization", origin: "organization", path: "Insight: src/analytics" })),
+    ).toBe(" (Insight: src/analytics)");
+    expect(candidatePlace(cand("a", { tier: "platform", path: "gears/x" }))).toBe("");
+    expect(candidatePlace(cand("a", { tier: "organization" }))).toBe("");
   });
 
   it("tags a candidate with its tier and says what the tier means", () => {

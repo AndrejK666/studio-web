@@ -864,9 +864,12 @@ export interface Candidate {
   /** The engine's reason, when `blocked`. */
   composable_why?: string | null;
   /** `project` when the project's own repository declares this gear (whether
-   *  or not the catalogue lists it too); `catalogue` otherwise. */
-  origin?: "catalogue" | "project";
-  /** For a `project` gear, where it lives in the repository. */
+   *  or not the catalogue lists it too); `organization` for a gear the
+   *  organization's registry holds from another project or its gear
+   *  repository; `catalogue` otherwise. */
+  origin?: "catalogue" | "project" | "organization";
+  /** For a `project` gear, where it lives in the repository; for an
+   *  `organization` one, which project and where (`Insight: src/analytics`). */
   path?: string | null;
   /** For a gear the organization's registry backs, its state there. */
   registry_state?: string | null;

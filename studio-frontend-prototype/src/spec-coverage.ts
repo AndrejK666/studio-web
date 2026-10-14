@@ -119,6 +119,13 @@ export function candidateTier(c: Candidate): ComponentTier | null {
   return c.origin === "project" ? "project" : null;
 }
 
+/** Where a candidate lives, for its chip's title: a path in this project's
+ *  repository, or the organization's project (or gear repository) and path. */
+export function candidatePlace(c: Candidate): string {
+  const tier = candidateTier(c);
+  return (tier === "project" || tier === "organization") && c.path ? ` (${c.path})` : "";
+}
+
 /** The chip's tag for a tier. */
 export function tierTag(tier: ComponentTier): string {
   return tier === "platform" ? "PLATFORM" : tier === "organization" ? "OURS" : "THIS PROJECT";

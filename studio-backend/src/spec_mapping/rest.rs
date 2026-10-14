@@ -178,10 +178,15 @@ pub struct CandidateDto {
     pub composable: String,
     /// The engine's reason, when `blocked`. Null otherwise.
     pub composable_why: Option<String>,
-    /// `catalogue`, or `project` for a gear the project's own repository
-    /// declares -- whether or not the catalogue lists it too.
+    /// `catalogue`, `project` for a gear the project's own repository
+    /// declares -- whether or not the catalogue lists it too -- or
+    /// `organization` for a gear the organization's registry holds from
+    /// another project or its gear repository.
     pub origin: String,
-    /// For a `project` gear, where it lives in the repository. Null otherwise.
+    /// For a `project` gear, where it lives in the repository; for an
+    /// `organization` one, which project (or the organization's gear
+    /// repository) and where: `Insight: src/backend/services/analytics`.
+    /// Null otherwise.
     pub path: Option<String>,
     /// For a gear the organization's registry backs, its lifecycle state
     /// there (`declared`, `registered`, `published`, `deprecated`, …). Null
@@ -793,6 +798,8 @@ struct ProjectReading {
     rules: Vocabulary,
     rows: Vec<plan::PlanRow>,
     in_repo: BTreeMap<String, String>,
+    /// The organization's gears from elsewhere, with where each lives.
+    in_org: BTreeMap<String, String>,
     registry_states: local::RegistryStates,
 }
 
@@ -824,9 +831,19 @@ async fn read_project(
     let catalog = ports.catalog()?;
     let (mut components, mut profiles) = catalog.components(org).await.map_err(internal)?;
     let registry = ports.registry();
-    let (own, registry_states) =
+    let (own, mut registry_states) =
         local::project_gears(catalog.as_ref(), registry.as_deref(), org, project_id).await;
     let in_repo = local::with_project_gears(&mut components, &mut profiles, own);
+    // The organization's gears beyond this project's (ADR-0042 §3): a
+    // capability one of them fills is not a gap either.
+    let (from_org, org_states) = match registry.as_deref() {
+        Some(registry) => local::organization_gears(registry, org, project_id).await,
+        None => Default::default(),
+    };
+    for (name, state) in org_states {
+        registry_states.entry(name).or_insert(state);
+    }
+    let in_org = local::with_organization_gears(&mut components, &mut profiles, from_org, &in_repo);
     let keys: Vec<String> = needs.iter().map(|c| c.key.clone()).collect();
     let rules = vocabulary_of(&vocabulary, past_decisions(&recorded, &needs));
     let rows = plan::plan(&keys, &components, &profiles, &rules);
@@ -837,6 +854,7 @@ async fn read_project(
         rules,
         rows,
         in_repo,
+        in_org,
         registry_states,
     })
 }
@@ -856,6 +874,7 @@ async fn get_project_plan(
         rules,
         rows,
         in_repo,
+        in_org,
         registry_states,
     } = read_project(&ctx, &org, &ports, project_id).await?;
     let mut dto = plan_dto(rows, &rules, plan::deployment_profile(&statements));
@@ -866,6 +885,11 @@ async fn get_project_plan(
     local::mark_registry_state(
         dto.items.iter_mut().flat_map(|r| r.candidates.iter_mut()),
         &in_repo,
+        &registry_states,
+    );
+    local::mark_organization(
+        dto.items.iter_mut().flat_map(|r| r.candidates.iter_mut()),
+        &in_org,
         &registry_states,
     );
     let mut sources: BTreeMap<String, Vec<CapabilitySource>> =
