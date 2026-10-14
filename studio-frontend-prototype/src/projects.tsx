@@ -16,6 +16,7 @@ import type { CSSProperties, FormEvent } from "react";
 import { api, TENANT_TYPES, type User } from "./api";
 import { DataTable } from "./data-table";
 import { errText } from "./format";
+import { Modal } from "./modal";
 import { portfolioRollups, rollupText, type WorkspaceRollup } from "./rollups";
 import { Tile } from "./view-mode";
 
@@ -116,6 +117,30 @@ export function ProjectsPortfolio({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The workspace being renamed, and the name being typed. */
+  const [renaming, setRenaming] = useState<RootProject | null>(null);
+  const [renameTo, setRenameTo] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const saveRename = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!renaming) return;
+    const next = renameTo.trim();
+    if (!next || next === renaming.name) {
+      setRenaming(null);
+      return;
+    }
+    setBusy(true);
+    setRenameError(null);
+    try {
+      await api.updateTenant(token, renaming.id, { name: next });
+      setRenaming(null);
+      onChanged();
+    } catch (err) {
+      setRenameError(errText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
   // Nested projects per workspace, read the first time a row is expanded.
   const [children, setChildren] = useState<Record<string, { id: string; name: string }[]>>({});
   const loadChildren = useCallback(
@@ -246,6 +271,29 @@ export function ProjectsPortfolio({
 
       {error && <div className="error">{error}</div>}
 
+      {renaming && (
+        <Modal label={`Rename workspace “${renaming.name}”`} onClose={() => setRenaming(null)}>
+          <form onSubmit={(e) => void saveRename(e)} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <h2 style={{ margin: 0 }}>Rename workspace</h2>
+            <input
+              autoFocus
+              aria-label="Workspace name"
+              value={renameTo}
+              onChange={(e) => setRenameTo(e.target.value)}
+            />
+            {renameError && <div className="error">{renameError}</div>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="ghost" onClick={() => setRenaming(null)}>
+                Cancel
+              </button>
+              <button className="primary" disabled={busy || !renameTo.trim()}>
+                {busy ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       <div className="card">
         <DataTable<RootProject>
           list="workspaces"
@@ -308,6 +356,14 @@ export function ProjectsPortfolio({
           )}
           actions={(r) => [
             { label: "Open", onSelect: () => onOpen(r) },
+            {
+              label: "Rename",
+              onSelect: () => {
+                setRenameTo(r.name);
+                setRenameError(null);
+                setRenaming(r);
+              },
+            },
             {
               label: "Delete",
               danger: {
