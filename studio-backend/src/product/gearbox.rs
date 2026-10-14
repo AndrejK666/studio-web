@@ -301,26 +301,56 @@ impl EngineCatalogue {
     /// A gear by its engine id or its crate name. The portal knows gears by
     /// crate (`cf-gears-api-gateway`), the engine by `#[toolkit::gear(name)]`
     /// (`api-gateway`); both spellings are accepted so neither side translates.
+    ///
+    /// A crate can hold several gears (`cf-gears-mini-chat` is mini-chat and
+    /// its two static plugins); its name then means the gear that is not a
+    /// plugin, and the others are named by id -- see [`Self::pick_name`].
     fn find(&self, name: &str) -> Option<&EngineGear> {
-        self.gears
-            .get(name)
-            .or_else(|| self.gears.values().find(|g| g.package.crate_name == name))
+        self.gears.get(name).or_else(|| {
+            let mut same = self.gears.values().filter(|g| g.package.crate_name == name);
+            let first = same.next()?;
+            Some(if first.fills.is_none() {
+                first
+            } else {
+                same.find(|g| g.fills.is_none()).unwrap_or(first)
+            })
+        })
     }
 
-    /// Every gear filling one of `host`'s extension points, by crate name —
-    /// the spelling the portal picks by, so an offer reads like a suggestion.
+    /// How the portal names a gear: its crate when the crate finds it, else
+    /// its engine id -- so the name finds this gear and no other, and a
+    /// plugin sharing its host's crate never folds into the host.
+    fn pick_name(&self, g: &EngineGear) -> String {
+        if self
+            .find(&g.package.crate_name)
+            .is_some_and(|f| f.id == g.id)
+        {
+            g.package.crate_name.clone()
+        } else {
+            g.id.clone()
+        }
+    }
+
+    /// The portal's name for an engine id; the id itself when unknown.
+    fn pick_name_of(&self, id: &str) -> String {
+        self.gears
+            .get(id)
+            .map_or(id.to_string(), |g| self.pick_name(g))
+    }
+
+    /// Every gear filling one of `host`'s extension points, by the portal's
+    /// name for it, so an offer reads like a suggestion.
     fn implementers_of(&self, host: &EngineGear) -> Vec<String> {
         self.implementers(host)
             .into_iter()
-            .map(|g| g.package.crate_name.clone())
+            .map(|g| self.pick_name(g))
             .collect()
     }
 
     /// The gear whose extension point `plugin` fills.
     fn host_of(&self, plugin: &EngineGear) -> Option<&EngineGear> {
-        let sdk = &plugin.fills.as_ref()?.point.sdk.crate_name;
         self.gears.values().find(|g| {
-            g.id != plugin.id && g.extension_points.iter().any(|p| &p.sdk.crate_name == sdk)
+            g.id != plugin.id && g.extension_points.iter().any(|p| fills_point(plugin, p))
         })
     }
 }
@@ -532,14 +562,19 @@ impl EngineCatalogue {
     fn implementers(&self, host: &EngineGear) -> Vec<&EngineGear> {
         self.gears
             .values()
-            .filter(|g| {
-                g.id != host.id
-                    && g.fills.as_ref().is_some_and(|f| {
-                        host.extension_points
-                            .iter()
-                            .any(|p| p.sdk.crate_name == f.point.sdk.crate_name)
-                    })
-            })
+            .filter(|g| g.id != host.id && host.extension_points.iter().any(|p| fills_point(g, p)))
+            .collect()
+    }
+
+    /// The gears filling this one point of `host`.
+    fn implementers_at<'a>(
+        &'a self,
+        host: &EngineGear,
+        point: &EnginePoint,
+    ) -> Vec<&'a EngineGear> {
+        self.gears
+            .values()
+            .filter(|g| g.id != host.id && fills_point(g, point))
             .collect()
     }
 
@@ -595,10 +630,11 @@ impl EngineCatalogue {
     fn default_plugin<'a>(
         &'a self,
         host: &EngineGear,
+        point: &EnginePoint,
         dead: &BTreeMap<String, Dead>,
     ) -> Option<&'a EngineGear> {
         let mut alive: Vec<&EngineGear> = self
-            .implementers(host)
+            .implementers_at(host, point)
             .into_iter()
             .filter(|p| !dead.contains_key(&p.id))
             .collect();
@@ -664,12 +700,7 @@ fn dead_reason(catalogue: &EngineCatalogue, why: &Dead) -> String {
 pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearConfig) -> Completion {
     let dead = catalogue.dead();
     let mut config = config.clone();
-    let crate_of = |id: &str| {
-        catalogue
-            .gears
-            .get(id)
-            .map_or(id.to_string(), |g| g.package.crate_name.clone())
-    };
+    let crate_of = |id: &str| catalogue.pick_name_of(id);
     let mut changes: Vec<Change> = Vec::new();
     let mut set: Vec<String> = Vec::new();
 
@@ -690,7 +721,7 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
         };
         if let Some(why) = dead.get(&g.id) {
             changes.push(Change {
-                gear: g.package.crate_name.clone(),
+                gear: catalogue.pick_name(g),
                 added: false,
                 reason: dead_reason(catalogue, why),
             });
@@ -712,27 +743,28 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
             let Some(host) = catalogue.gears.get(host_id) else {
                 continue;
             };
-            if host.extension_points.is_empty() {
-                continue;
-            }
-            let filled = catalogue
-                .implementers(host)
-                .iter()
-                .any(|p| set.contains(&p.id));
-            if filled {
-                continue;
-            }
-            if let Some(p) = catalogue.default_plugin(host, &dead) {
-                set.push(p.id.clone());
-                changes.push(Change {
-                    gear: p.package.crate_name.clone(),
-                    added: true,
-                    reason: format!(
-                        "{} needs a plugin; this one runs with no configuration",
-                        crate_of(host_id)
-                    ),
-                });
-                added = true;
+            // Each point on its own: mini-chat's audit and model-policy
+            // points live in one SDK, and a plugin for one fills not the other.
+            for point in &host.extension_points {
+                let filled = catalogue
+                    .implementers_at(host, point)
+                    .iter()
+                    .any(|p| set.contains(&p.id));
+                if filled {
+                    continue;
+                }
+                if let Some(p) = catalogue.default_plugin(host, point, &dead) {
+                    set.push(p.id.clone());
+                    changes.push(Change {
+                        gear: catalogue.pick_name(p),
+                        added: true,
+                        reason: format!(
+                            "{} needs a plugin; this one runs with no configuration",
+                            crate_of(host_id)
+                        ),
+                    });
+                    added = true;
+                }
             }
         }
 
@@ -750,7 +782,7 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
             if let Some(h) = host {
                 set.push(h.id.clone());
                 changes.push(Change {
-                    gear: h.package.crate_name.clone(),
+                    gear: catalogue.pick_name(h),
                     added: true,
                     reason: "the REST gears need a REST host to serve their routes".to_string(),
                 });
@@ -778,7 +810,7 @@ pub fn complete(catalogue: &EngineCatalogue, picked: &[String], config: &GearCon
             if !set.contains(&p.id) {
                 continue;
             }
-            let crate_name = p.package.crate_name.clone();
+            let crate_name = catalogue.pick_name(p);
             let set_here = config
                 .get(&crate_name)
                 .is_some_and(|c| c.contains_key("vendor"));
@@ -859,12 +891,7 @@ pub fn brings(
     let Some(cand) = catalogue.find(candidate.trim()) else {
         return Brings::default();
     };
-    let crate_of = |id: &str| {
-        catalogue
-            .gears
-            .get(id)
-            .map_or(id.to_string(), |g| g.package.crate_name.clone())
-    };
+    let crate_of = |id: &str| catalogue.pick_name_of(id);
     let ids_of = |completion: &Completion| -> Vec<String> {
         completion
             .gears
@@ -874,7 +901,7 @@ pub fn brings(
     };
     let before_completion = complete(catalogue, current, config);
     let mut with: Vec<String> = current.to_vec();
-    with.push(cand.package.crate_name.clone());
+    with.push(catalogue.pick_name(cand));
     let after_completion = complete(catalogue, &with, config);
     let mut before = catalogue.closure(&ids_of(&before_completion));
     let mut after = catalogue.closure(&ids_of(&after_completion));
@@ -990,12 +1017,7 @@ fn lamp(v: &str, s: &str) -> Value {
 /// cells rather than a false "no".
 pub fn gear_facts(catalogue: &EngineCatalogue, corpus: &str) -> BTreeMap<String, Value> {
     let dead = catalogue.dead();
-    let crate_of = |id: &str| {
-        catalogue
-            .gears
-            .get(id)
-            .map_or(id.to_string(), |g| g.package.crate_name.clone())
-    };
+    let crate_of = |id: &str| catalogue.pick_name_of(id);
     let list = |items: Vec<String>| {
         if items.is_empty() {
             "—".to_string()
@@ -1016,7 +1038,7 @@ pub fn gear_facts(catalogue: &EngineCatalogue, corpus: &str) -> BTreeMap<String,
                 }
             } else if g.fills.is_some() {
                 match catalogue.host_of(g) {
-                    Some(h) => format!("plugin of {}", h.package.crate_name),
+                    Some(h) => format!("plugin of {}", catalogue.pick_name(h)),
                     None => "plugin; no gear in the corpus hosts it".to_string(),
                 }
             } else {
@@ -2340,6 +2362,19 @@ fn run_engine(bin: &Path, args: &[String], cwd: Option<&Path>) -> anyhow::Result
     })
 }
 
+/// Whether `plugin` fills `point`: by the point's GTS spec when both sides
+/// state one -- two points can share an SDK crate, and only their specs tell
+/// them apart -- else by the SDK crate the point lives in.
+fn fills_point(plugin: &EngineGear, point: &EnginePoint) -> bool {
+    let Some(f) = plugin.fills.as_ref() else {
+        return false;
+    };
+    match (f.point.spec.as_deref(), point.spec.as_deref()) {
+        (Some(a), Some(b)) => a == b,
+        _ => f.point.sdk.crate_name == point.sdk.crate_name,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2479,6 +2514,50 @@ mod tests {
         let ids: Vec<&str> = c.gears.iter().map(|g| g.id.as_str()).collect();
         assert_eq!(ids, ["api-gateway", "authn-resolver"]);
         assert!(c.not_described.is_empty());
+    }
+
+    /// mini-chat as the corpus has it: its two static plugins live in its
+    /// own crate, and both of its points in one SDK.
+    fn mini_chat() -> EngineCatalogue {
+        let point =
+            |spec: &str| json!({"spec": spec, "sdk": {"crate_name": "cf-gears-mini-chat-sdk"}});
+        let plugin = |id: &str, spec: &str| json!({"id": id, "package": {"crate_name": "cf-gears-mini-chat"}, "fills": {"point": point(spec)}});
+        serde_json::from_value(json!({"gears": {
+            "mini-chat": {"id": "mini-chat", "package": {"crate_name": "cf-gears-mini-chat"},
+                          "extension_points": [point("audit~"), point("model_policy~")]},
+            "static-mini-chat-audit-plugin": plugin("static-mini-chat-audit-plugin", "audit~"),
+            "static-mini-chat-model-policy-plugin": plugin("static-mini-chat-model-policy-plugin", "model_policy~"),
+        }}))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_crate_shared_by_a_host_and_its_plugins_names_the_host_and_each_point_gets_its_plugin() {
+        let cat = mini_chat();
+        assert_eq!(cat.find("cf-gears-mini-chat").unwrap().id, "mini-chat");
+        let done = complete(
+            &cat,
+            &names(&["cf-gears-mini-chat"]),
+            &GearConfig::default(),
+        );
+        assert_eq!(
+            done.gears,
+            [
+                "cf-gears-mini-chat",
+                "static-mini-chat-audit-plugin",
+                "static-mini-chat-model-policy-plugin"
+            ]
+        );
+        let c = compose(&cat, &done.gears);
+        assert_eq!(c.gears.len(), 1);
+        assert_eq!(
+            c.gears[0].plugins,
+            [
+                "static-mini-chat-audit-plugin",
+                "static-mini-chat-model-policy-plugin"
+            ]
+        );
+        assert!(c.plugin_options.is_empty());
     }
 
     #[test]

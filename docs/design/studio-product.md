@@ -256,7 +256,11 @@ diagnostics.
 refreshed every `STUDIO_GEARBOX_REFRESH_SECS`; the engine catalogue; the
 extension points a plugin can fill; completion (`/gearbox/complete` drops what
 the catalogue proves cannot run and adds a plugin for a bare host and a REST
-host for REST gears, saying why, writing nothing); each named gear's config
+host for REST gears, saying why, writing nothing; a host with several
+extension points gets one plugin per point, matched by the point's GTS spec,
+since two points can share an SDK crate); gears named by their crate, or by
+their engine id when other gears share that crate (mini-chat's static plugins
+live in `cf-gears-mini-chat`), so a plugin never folds into its host; each named gear's config
 schema (`/gearbox/config-schema`: the fields its `gear.gdl` declares, with
 `required`, `default`, and `derived` for the addresses generation writes from
 `serves[].config_key`, so the portal's product form asks for what the engine

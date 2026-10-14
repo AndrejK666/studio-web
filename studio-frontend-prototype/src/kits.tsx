@@ -23,6 +23,7 @@ import { ProjectEnvironments } from "./environments-screen";
 import { When, useConfirm } from "./data-table";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
+import { ProductConfigurator, useGearCatalogue } from "./product-configurator-view";
 import {
   PRODUCT_PROFILES,
   defaultPicks,
@@ -1462,6 +1463,11 @@ function ProductCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [command?.at]);
 
+  // The product as a map when the catalogue can be read; the plain list of
+  // picks and settings otherwise.
+  const catalogue = useGearCatalogue(token, product.composing);
+  const map = catalogue && "index" in catalogue ? catalogue.index : null;
+
   const inCode = code.report ? codeGears(code.report) : [];
   const diff = codeDiff(picks, inCode);
   const resolvesNow = !!preview?.ok && !stale;
@@ -1489,29 +1495,49 @@ function ProductCard({
         </span>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-        {picks.length === 0 ? (
-          <span className="empty" style={{ fontSize: 12 }}>
-            Nothing in the product yet — take it from the code, add the recommended components above, or pick them with +.
-          </span>
-        ) : (
-          picks.map((name) => (
-            <span key={name} style={chipStyle(true)}>
-              <ComponentLink nav={nav} name={name} />
-              <button
-                type="button"
-                title="Take it out of the product"
-                aria-label={`Remove ${name}`}
-                onClick={() => product.toggle(name)}
-                style={{ ...chipToggleStyle, padding: "0 0 0 6px", opacity: 0.6 }}
-              >
-                ×
-              </button>
-            </span>
-          ))
-        )}
-      </div>
-      <GearConfigForm token={token} product={product} />
+      {map ? (
+        <ProductConfigurator
+          token={token}
+          index={map}
+          product={product}
+          preview={preview}
+          stale={stale}
+          busy={busy !== null}
+          onBuild={() => void buildInTheia()}
+          onOpen={nav ? (name) => nav.openComponent(name) : undefined}
+        />
+      ) : (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            {picks.length === 0 ? (
+              <span className="empty" style={{ fontSize: 12 }}>
+                Nothing in the product yet — take it from the code, add the recommended components above, or pick them with +.
+              </span>
+            ) : (
+              picks.map((name) => (
+                <span key={name} style={chipStyle(true)}>
+                  <ComponentLink nav={nav} name={name} />
+                  <button
+                    type="button"
+                    title="Take it out of the product"
+                    aria-label={`Remove ${name}`}
+                    onClick={() => product.toggle(name)}
+                    style={{ ...chipToggleStyle, padding: "0 0 0 6px", opacity: 0.6 }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))
+            )}
+          </div>
+          <GearConfigForm token={token} product={product} />
+            {catalogue && "error" in catalogue && (
+              <p className="hint" style={{ fontSize: 12 }}>
+                The product map needs the gear catalogue, which could not be read ({catalogue.error}).
+              </p>
+            )}
+        </>
+      )}
       {product.adjustments.length > 0 && (
         <div style={{ fontSize: 12, marginTop: 8 }}>
           <div style={{ opacity: 0.7 }}>Adjusted so the product can resolve — each can be undone:</div>
@@ -1717,121 +1743,127 @@ function ProductCard({
             {stale && <span className="badge warn">the product changed since — preview again</span>}
           </div>
 
-          {(() => {
-            const c = corpusErrors(preview.diagnostics);
-            if (c.errors === 0) return null;
-            return (
-              <p className="error" style={{ fontSize: 12 }} data-corpus-errors>
-                {c.errors === errors ? "Every error here is" : `${c.errors} of these errors are`} in the gear
-                corpus&apos;s own descriptions ({c.files} <code>gear.gdl</code> file{c.files === 1 ? "" : "s"} in{" "}
-                <code>{gearbox?.corpus_ref ?? "the corpus"}</code>), not in this product. The Gearbox engine (
-                {gearbox?.engine_version ?? "its version"}) cannot read them, so the engine and the corpus disagree
-                — nothing picked here can fix that; the deployment has to move the engine or pin the corpus.
-              </p>
-            );
-          })()}
+          <details open={!map} style={{ margin: "8px 0" }} data-engine-details>
+            <summary style={{ fontSize: 12, cursor: "pointer" }}>
+              Engine details: {errors} error{errors === 1 ? "" : "s"}, {warnings} warning{warnings === 1 ? "" : "s"},{" "}
+              {preview.applications.length} application{preview.applications.length === 1 ? "" : "s"}, product.gdl
+            </summary>
+            {(() => {
+              const c = corpusErrors(preview.diagnostics);
+              if (c.errors === 0) return null;
+              return (
+                <p className="error" style={{ fontSize: 12 }} data-corpus-errors>
+                  {c.errors === errors ? "Every error here is" : `${c.errors} of these errors are`} in the gear
+                  corpus&apos;s own descriptions ({c.files} <code>gear.gdl</code> file{c.files === 1 ? "" : "s"} in{" "}
+                  <code>{gearbox?.corpus_ref ?? "the corpus"}</code>), not in this product. The Gearbox engine (
+                  {gearbox?.engine_version ?? "its version"}) cannot read them, so the engine and the corpus disagree
+                  — nothing picked here can fix that; the deployment has to move the engine or pin the corpus.
+                </p>
+              );
+            })()}
 
-          {preview.not_described.length > 0 && (
-            <p className="hint" style={{ fontSize: 12 }}>
-              Left out, because no <code>gear.gdl</code> describes{" "}
-              {preview.not_described.length === 1 ? "it" : "them"} yet:{" "}
-              {preview.not_described.map((n, i) => (
-                <span key={n}>
-                  {i > 0 && ", "}
-                  <ComponentLink nav={nav} name={n} />
-                </span>
-              ))}
-              .
-            </p>
-          )}
-          {preview.added.length > 0 && (
-            <p className="hint" style={{ fontSize: 12 }}>
-              Added: {preview.added.map((a) => `${a.id} (${a.reason})`).join(", ")}.
-            </p>
-          )}
-
-          {preview.plugin_options.length > 0 && (
-            <div style={{ fontSize: 12, margin: "8px 0" }}>
-              {preview.plugin_options.map((o) => (
-                <div key={o.host} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", margin: "0 0 4px" }}>
-                  <span>
-                    <b>{o.host}</b> needs a plugin:
+            {preview.not_described.length > 0 && (
+              <p className="hint" style={{ fontSize: 12 }}>
+                Left out, because no <code>gear.gdl</code> describes{" "}
+                {preview.not_described.length === 1 ? "it" : "them"} yet:{" "}
+                {preview.not_described.map((n, i) => (
+                  <span key={n}>
+                    {i > 0 && ", "}
+                    <ComponentLink nav={nav} name={n} />
                   </span>
-                  {o.available.map((name) => (
-                    <span key={name} style={chipStyle(picks.includes(name))}>
-                      <button
-                        type="button"
-                        disabled={picks.includes(name)}
-                        title="Put this plugin into the product, then preview again"
-                        onClick={() => product.setPicks((current) => (current.includes(name) ? current : [...current, name]))}
-                        style={chipToggleStyle}
-                      >
-                        {picks.includes(name) ? "✓" : "+"}
-                      </button>
-                      <ComponentLink nav={nav} name={name} />
-                    </span>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+                .
+              </p>
+            )}
+            {preview.added.length > 0 && (
+              <p className="hint" style={{ fontSize: 12 }}>
+                Added: {preview.added.map((a) => `${a.id} (${a.reason})`).join(", ")}.
+              </p>
+            )}
 
-          {preview.diagnostics.length > 0 && (
-            <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", fontSize: 12 }}>
-              {groupDiagnostics(preview.diagnostics).map((d, i) => (
-                <li key={`${d.code}-${i}`} style={{ margin: "0 0 6px" }}>
-                  <span className={`badge ${d.severity === "error" ? "danger" : d.severity === "warning" ? "warn" : "info"}`}>
-                    {d.code}
-                  </span>{" "}
-                  {d.message}
-                  {d.profiles.length > 0 && <span style={{ opacity: 0.6 }}> · {d.profiles.join(", ")}</span>}
-                  {d.file && (
+            {preview.plugin_options.length > 0 && (
+              <div style={{ fontSize: 12, margin: "8px 0" }}>
+                {preview.plugin_options.map((o) => (
+                  <div key={o.host} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", margin: "0 0 4px" }}>
+                    <span>
+                      <b>{o.host}</b> needs a plugin:
+                    </span>
+                    {o.available.map((name) => (
+                      <span key={name} style={chipStyle(picks.includes(name))}>
+                        <button
+                          type="button"
+                          disabled={picks.includes(name)}
+                          title="Put this plugin into the product, then preview again"
+                          onClick={() => product.setPicks((current) => (current.includes(name) ? current : [...current, name]))}
+                          style={chipToggleStyle}
+                        >
+                          {picks.includes(name) ? "✓" : "+"}
+                        </button>
+                        <ComponentLink nav={nav} name={name} />
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {preview.diagnostics.length > 0 && (
+              <ul style={{ listStyle: "none", padding: 0, margin: "8px 0", fontSize: 12 }}>
+                {groupDiagnostics(preview.diagnostics).map((d, i) => (
+                  <li key={`${d.code}-${i}`} style={{ margin: "0 0 6px" }}>
+                    <span className={`badge ${d.severity === "error" ? "danger" : d.severity === "warning" ? "warn" : "info"}`}>
+                      {d.code}
+                    </span>{" "}
+                    {d.message}
+                    {d.profiles.length > 0 && <span style={{ opacity: 0.6 }}> · {d.profiles.join(", ")}</span>}
+                    {d.file && (
+                      <span style={{ opacity: 0.6 }}>
+                        {" "}
+                        — {d.file}
+                        {d.line ? `:${d.line}` : ""}
+                      </span>
+                    )}
+                    {d.help && <div style={{ opacity: 0.7, marginLeft: 8 }}>{d.help}</div>}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {preview.applications.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "8px 0" }}>
+                {preview.applications.map((a) => (
+                  <div
+                    key={a.name}
+                    style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", fontSize: 12 }}
+                  >
+                    <b>{a.name}</b>
                     <span style={{ opacity: 0.6 }}>
                       {" "}
-                      — {d.file}
-                      {d.line ? `:${d.line}` : ""}
+                      · {a.kind}
+                      {a.replicas > 1 ? ` · ×${a.replicas}` : ""}
+                      {a.listens.length > 0 ? ` · ${a.listens.map((l) => `${l.name} ${l.address}`).join(", ")}` : ""}
                     </span>
-                  )}
-                  {d.help && <div style={{ opacity: 0.7, marginLeft: 8 }}>{d.help}</div>}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {preview.applications.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: "8px 0" }}>
-              {preview.applications.map((a) => (
-                <div
-                  key={a.name}
-                  style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "6px 10px", fontSize: 12 }}
-                >
-                  <b>{a.name}</b>
-                  <span style={{ opacity: 0.6 }}>
-                    {" "}
-                    · {a.kind}
-                    {a.replicas > 1 ? ` · ×${a.replicas}` : ""}
-                    {a.listens.length > 0 ? ` · ${a.listens.map((l) => `${l.name} ${l.address}`).join(", ")}` : ""}
-                  </span>
-                  <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {a.gears.map((g) => {
-                      const why = preview.gears.find((x) => x.id === g)?.reasons ?? [];
-                      const pulled = why.length > 0 && !why.includes("selected");
-                      return (
-                        <span key={g} title={why.join("; ")} style={{ opacity: pulled ? 0.7 : 1 }}>
-                          <ComponentLink nav={nav} name={crateOf(g)} label={g} />
-                          {pulled && <span style={{ fontSize: 10 }}> ({why[0]})</span>}
-                        </span>
-                      );
-                    })}
+                    <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {a.gears.map((g) => {
+                        const why = preview.gears.find((x) => x.id === g)?.reasons ?? [];
+                        const pulled = why.length > 0 && !why.includes("selected");
+                        return (
+                          <span key={g} title={why.join("; ")} style={{ opacity: pulled ? 0.7 : 1 }}>
+                            <ComponentLink nav={nav} name={crateOf(g)} label={g} />
+                            {pulled && <span style={{ fontSize: 10 }}> ({why[0]})</span>}
+                          </span>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
 
-          <details style={{ margin: "8px 0" }}>
-            <summary style={{ fontSize: 12, cursor: "pointer" }}>product.gdl</summary>
-            <pre style={{ fontSize: 11, maxHeight: 320, overflow: "auto" }}>{preview.product_gdl}</pre>
+            <details style={{ margin: "8px 0" }}>
+              <summary style={{ fontSize: 12, cursor: "pointer" }}>product.gdl</summary>
+              <pre style={{ fontSize: 11, maxHeight: 320, overflow: "auto" }}>{preview.product_gdl}</pre>
+            </details>
           </details>
         </div>
       )}
