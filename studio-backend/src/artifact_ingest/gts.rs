@@ -12,6 +12,7 @@ use super::comment_threads::{ThreadCounts, Waiting};
 use super::graph::{GtsEdge, GtsNode};
 use crate::connectors::sdk::{
     PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteIssue, RemotePullRequest,
+    RemoteWorkflowRun,
 };
 
 /// Fixed namespace for uuid5 instance ids (studio artifact graph).
@@ -29,6 +30,9 @@ pub const SPEC_FINDING_TYPE: &str = "gts.cf.studio.artifact.spec_finding.v1~";
 pub const COMMENT_TYPE: &str = "gts.cf.studio.artifact.comment.v1~";
 /// A commit in a repository.
 pub const COMMIT_TYPE: &str = "gts.cf.studio.artifact.commit.v1~";
+/// A CI run in a repository: one run of one workflow on one commit
+/// (ADR-0045). A build of the project's product, when its workflow builds it.
+pub const WORKFLOW_RUN_TYPE: &str = "gts.cf.studio.artifact.workflow_run.v1~";
 /// What search sees of a file's text: a bounded excerpt, beside the file
 /// rather than inside it.
 ///
@@ -45,7 +49,7 @@ pub const FILE_CONTENT_TYPE: &str = "gts.cf.studio.artifact.file_content.v1~";
 pub const MAPPING_DECISION_TYPE: &str = "gts.cf.studio.artifact.mapping_decision.v1~";
 
 /// Every artifact node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 10] = [
+pub const ALL_NODE_TYPES: [&str; 11] = [
     REPO_TYPE,
     ISSUE_TYPE,
     PULL_REQUEST_TYPE,
@@ -56,6 +60,7 @@ pub const ALL_NODE_TYPES: [&str; 10] = [
     COMMIT_TYPE,
     FILE_CONTENT_TYPE,
     MAPPING_DECISION_TYPE,
+    WORKFLOW_RUN_TYPE,
 ];
 
 /// The node types the artifact listing returns by default — the four
@@ -180,7 +185,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 10] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 11] = [
     (
         REPO_TYPE,
         "Repository",
@@ -230,6 +235,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 10] = [
         MAPPING_DECISION_TYPE,
         "MappingDecision",
         "A member's decision on which gear covers a capability a document declares.",
+    ),
+    (
+        WORKFLOW_RUN_TYPE,
+        "WorkflowRun",
+        "A CI run of one workflow on one commit, pulled from the connector API.",
     ),
 ];
 
@@ -838,6 +848,43 @@ pub fn commit_node(
     }
 }
 
+/// A CI run's node, keyed by the provider's run id: a re-run upserts over it.
+/// `updated_at` orders the listing (`sort=updated`).
+pub fn workflow_run_node(
+    scope_key: &str,
+    repo_id: &str,
+    connector_id: &str,
+    repo_full_path: &str,
+    r: RemoteWorkflowRun,
+) -> GtsNode {
+    let short_sha: String = r.sha.chars().take(7).collect();
+    let id = r.id.to_string();
+    GtsNode {
+        type_id: WORKFLOW_RUN_TYPE,
+        instance_id: anon_id(&[scope_key, connector_id, repo_full_path, "workflow_run", &id]),
+        value: json!({
+            "repo": repo_id,
+            "external_id": id,
+            "workflow": r.workflow,
+            "workflow_path": r.workflow_path,
+            "title": r.title,
+            "event": r.event,
+            "branch": r.branch,
+            "sha": r.sha,
+            "short_sha": short_sha,
+            "status": r.status,
+            "conclusion": r.conclusion,
+            "author": r.actor,
+            "url": r.url,
+            "number": r.run_number,
+            "attempt": r.attempt,
+            "created_at": r.created_at,
+            "started_at": r.started_at,
+            "updated_at": r.updated_at,
+        }),
+    }
+}
+
 /// comment → issue / pull_request (the artifact the comment is on).
 pub fn comment_on_edge(comment_id: &str, target_id: &str) -> GtsEdge {
     GtsEdge {
@@ -1320,6 +1367,34 @@ mod tests {
 #[cfg(test)]
 mod listable_type_tests {
     use super::*;
+
+    #[test]
+    fn a_workflow_run_is_listable_by_its_leaf_and_keyed_by_run_not_attempt() {
+        assert_eq!(
+            resolve_listable_types(Some("workflow_run")),
+            vec![WORKFLOW_RUN_TYPE]
+        );
+        assert!(!resolve_listable_types(None).contains(&WORKFLOW_RUN_TYPE));
+        let run = |attempt| RemoteWorkflowRun {
+            id: 7,
+            workflow: "CI".into(),
+            sha: "abcdef123".into(),
+            attempt: Some(attempt),
+            conclusion: Some("failure".into()),
+            ..Default::default()
+        };
+        let a = workflow_run_node("t", "repo-id", "c", "o/r", run(1));
+        let b = workflow_run_node("t", "repo-id", "c", "o/r", run(2));
+        assert_eq!(
+            a.instance_id, b.instance_id,
+            "a re-run upserts over its run"
+        );
+        assert_eq!(a.type_id, WORKFLOW_RUN_TYPE);
+        assert_eq!(b.value["attempt"], 2);
+        assert_eq!(a.value["short_sha"], "abcdef1");
+        assert_eq!(a.value["repo"], "repo-id");
+        assert_eq!(a.value["conclusion"], "failure");
+    }
 
     #[test]
     fn default_lists_only_the_four_first_class_artifacts() {

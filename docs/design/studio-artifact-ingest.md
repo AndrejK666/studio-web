@@ -158,8 +158,9 @@ in every config profile, because the default 1,000 truncates a 400-seed chunk.
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-artifact-ingest-bounds`
 
-Per sync: 10,000 files, 20,000 comments, 20,000 commits, 50 pages of 100 per
-API channel, and review threads of at most 200 open pull requests. Nodes and
+Per sync: 10,000 files, 20,000 comments, 20,000 commits, the newest 300 CI
+runs (read again every sync, so a run that was in progress shows how it
+ended), 50 pages of 100 per API channel, and review threads of at most 200 open pull requests. Nodes and
 edges are flushed 1,000 per call (edges went from 5,000 after a large ingest
 took part in an OOM kill, studio-web#561), and a process runs one ingest at a
 time while other task types proceed. A comment thread beyond the file cap is
@@ -172,7 +173,10 @@ cap closes.
 
 - [x] `p2` - **ID**: `cpt-studio-entity-artifact-node`
 
-Node types `gts.cf.studio.artifact.{repo,issue,pull_request,file,user,spec_finding,comment,commit,file_content,mapping_decision}.v1~`;
+Node types `gts.cf.studio.artifact.{repo,issue,pull_request,file,user,spec_finding,comment,commit,file_content,mapping_decision,workflow_run}.v1~`;
+`workflow_run` is one CI run of one workflow on one commit, keyed by the
+provider's run id (a re-run upserts over it), and is what a project's Builds
+tab reads (ADR-0045);
 `repo`, `file`, `issue` and `pull_request` are listed by default and the rest
 only when asked for by type. Edge types
 `gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of,decision_on,reviewed_by,assigned_to}.v1~`.

@@ -58,6 +58,7 @@ import {
 import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
 import { SpecModelTab } from "./spec-model-tab";
+import { ProjectBuilds } from "./builds-tab";
 import { GearsTable, PermissionsTable } from "./system-tables";
 import {
   StudioBridgeProvider,
@@ -5091,6 +5092,10 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // Kits are how the project works (workflows, conventions pinned to a Git
   // version), not what it is made of, so they stopped sharing a page with the
   // specs-to-product journey.
+  // What the product was built into, where, and how it went (ADR-0045): after
+  // the tab that says what it is made of, before where it runs. The portal
+  // does not build; CI and the IDE do.
+  { id: "builds", icon: "activity", label: "Builds" },
   { id: "kits", icon: "grid", label: "Kits" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
   // Sources sits after them because it is where they come from: a sync run
@@ -5435,6 +5440,7 @@ function ProjectScreen({
             workspaceId={workspace.id}
           />
         )}
+        {tab === "builds" && <ProjectBuilds token={token} projectId={proj.id} />}
         {tab === "kits" && (
           <ProjectKits
             token={token}

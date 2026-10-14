@@ -619,6 +619,14 @@ export const SURFACES: Surface[] = [
     ],
   },
   {
+    id: "project-builds",
+    area: "project",
+    title: "Builds",
+    does: "See what the product was built into, where and how it went: the CI runs of the project's repositories.",
+    components: ["ProjectBuilds"],
+    gears: ["studio-artifact-ingest"],
+  },
+  {
     id: "project-artifacts",
     area: "project",
     title: "Artifacts",
