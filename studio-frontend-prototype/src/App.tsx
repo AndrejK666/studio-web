@@ -3240,11 +3240,11 @@ export function PathBar({
           title="The platform: the components every organization shares"
           onClick={onOpenPlatform}
         >
+          {/* Not a level one picks among -- there is one, under every
+              organization -- so no level caption, and a layers mark rather
+              than an initial. */}
           <LevelMark level="platform" name="Platform" />
-          <span className="path-text">
-            <span className="path-level">Platform</span>
-            <span className="org-select-name">Platform</span>
-          </span>
+          <span className="org-select-name">Platform</span>
         </button>
       </div>
 
