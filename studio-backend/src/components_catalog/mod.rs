@@ -23,6 +23,7 @@ mod registry_curation;
 mod registry_decisions;
 mod registry_declare;
 mod registry_publish;
+mod registry_readiness;
 mod registry_suggest;
 mod registry_task;
 mod repo_enrich;

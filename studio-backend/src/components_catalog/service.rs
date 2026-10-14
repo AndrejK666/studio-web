@@ -467,6 +467,33 @@ impl CatalogService {
         best_effort(self.sink.list(&pctx, Some("gear_profile")).await)
     }
 
+    /// A checkout of a component's repository through the engine's working
+    /// directory, as a gears source is read: one clone, shared, refreshed by
+    /// a fetch. `None` without an engine, a connection or a clonable host --
+    /// the caller then reads through the API.
+    pub(super) async fn checkout_of(
+        &self,
+        ctx: &SecurityContext,
+        occ: &super::registry::OccurrenceRecord,
+    ) -> Option<std::path::PathBuf> {
+        let gearbox = self.gearbox.get()?;
+        let source = RepoSource {
+            tenant: occ.tenant?,
+            connection_id: occ.connection_id,
+            repo: occ.repo.clone(),
+            git_ref: occ.git_ref.clone().unwrap_or_default(),
+            mode: "gears".into(),
+        };
+        let corpus = self.corpus_source(ctx, &source).await?;
+        match gearbox.checkout(&corpus).await {
+            Ok(dir) => Some(dir),
+            Err(e) => {
+                tracing::warn!(error = %format!("{e:#}"), repo = %occ.repo, "components-catalog: no checkout for the readiness check; reading through the API");
+                None
+            }
+        }
+    }
+
     /// The catalogue's gears repository as a place the engine can check out:
     /// the same connection the repository scan reads through, its clone URL
     /// and credentials. `None` without a connection or a clonable host.

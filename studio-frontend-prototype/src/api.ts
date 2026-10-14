@@ -609,6 +609,47 @@ export interface RegistrySuggestion {
   model: string;
 }
 
+/** One place a readiness check fails at. */
+export interface ReadinessSpot {
+  path: string;
+  /** 1-based. */
+  line?: number | null;
+  text?: string | null;
+}
+
+/** One readiness check (ADR-0044 §1). */
+export interface ReadinessCheck {
+  /** `size`, `boundary`, `persistence`, `reaches_out`, `gears`, `reached_into` or `dependencies`. */
+  key: string;
+  ok: boolean;
+  /** A failure that stops Extract; a failed check that does not block is advice. */
+  blocks: boolean;
+  summary: string;
+  spots: ReadinessSpot[];
+  more: number;
+}
+
+/** What `GET /registry/{name}/readiness` answered: whether the component
+ *  could leave its project as a crate of its own. */
+export interface RegistryReadiness {
+  name: string;
+  ready: boolean;
+  /** `module` or `crate`. */
+  kind: string;
+  repo: string;
+  git_ref?: string | null;
+  project_name?: string | null;
+  path: string;
+  module_path?: string | null;
+  files: number;
+  checks: ReadinessCheck[];
+  dependencies: { name: string; spec?: string | null }[];
+  /** Other gears it uses, which must be crates first. */
+  gears: string[];
+  outside_read: number;
+  outside_total: number;
+}
+
 /** One signal a candidate detector found (ADR-0041 P3). */
 export interface RegistryEvidence {
   /** `rest`, `persistence`, `types`, `boundary`, `docs`, `consumers` or `copied`. */
@@ -4534,6 +4575,11 @@ export const api = {
     request<RegistrySuggestion>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/suggest`, token, {
       method: "POST",
     }),
+  /** Whether an entry could leave its project as a crate of its own, and
+   *  what stops it (ADR-0044 §1). Reads its code; nothing is written. An
+   *  organization administrator only: anyone else gets a 403 problem. */
+  registryReadiness: (token: string, name: string) =>
+    request<RegistryReadiness>(`/studio-components-catalog/v1/registry/${encodeURIComponent(name)}/readiness`, token),
   /** What the last registry walk saw of each project: read, unchanged, or
    *  not readable and why. */
   registryProjects: (token: string) =>

@@ -654,6 +654,34 @@ the entry is not its consumer; neither is the organization's gear
 repository, nor a project out of scope. Deprecating answers the entry with
 its consumers, and the page says which projects will see it deprecated.
 
+**Readiness to leave the project.** `GET /registry/{name}/readiness`
+(same rule as decisions, `component.registry`: it quotes the project's code)
+says whether an entry could become a crate of its own -- the check that
+comes before Extract in the gear-extraction ADR (ADR-0044, proposed in #747)
+-- in `registry_readiness.rs`. It reads the occurrence that declares the
+entry (a candidate's best finding when nothing does): the unit is a module
+(a directory with `mod.rs`, or `x.rs` with `x/`) or a crate (a directory with
+a `Cargo.toml`). From the Gearbox engine's checkout of the repository when
+there is one, every file of the crate around it is read; over the API, the
+unit's files and at most 150 of the crate's others, and the answer says how
+many. Mechanical, no model, nothing written. The checks, each with the files
+and lines that fail it:
+
+| Check | Fails when | Blocks |
+|---|---|---|
+| `size` | more than one pull request carries (200 files, 2 MiB) | yes |
+| `boundary` | no `port` or no `sdk` | yes |
+| `persistence` | `entity`/`repo` files and no migrations of its own | yes |
+| `reaches_out` | `crate::` paths outside it, `super::` past its top (inline `mod` blocks counted), a crate's `path` dependency outside it | yes; only its tests: no |
+| `gears` | it uses another gear: through its `sdk`/`port`, or a top module that has one | no: those must be crates first |
+| `reached_into` | code elsewhere in the crate names its private modules | yes; only tests: no |
+| `dependencies` | a name it `use`s that its crate's `Cargo.toml` does not list | no |
+
+Comments, strings and character literals are blanked before paths are read,
+keeping line numbers. On this repository every backend gear fails
+`reaches_out` today: `org_scope`, `pagination`, `graph_error` and
+`test_pg` are shared code that would stay behind.
+
 **Suggestions (P4).** `POST /registry/{name}/suggest` (same rule as
 decisions, `component.registry`) asks a model, on the caller's own key, what
 the entry is (`registry_suggest.rs`). The question carries its name, kind,
@@ -897,6 +925,7 @@ than one corpus are later phases.
 | `GET` | `/platform/publication-requests` | The platform's queue: every organization's open `request_publication`, oldest first, `{items: [{organization_id, organization_name, name, version, reason, requested_by, requested_by_name, at}]}`. 403 `PLATFORM_CURATOR_REQUIRED` for anyone but a platform curator | unstable |
 | `POST` | `/platform/publication-requests/{organization_id}/{name}/decisions` | A curator's answer, `publish` (`dry_run` previews) or `decline_publication` (`reason`), recorded on the organization's entry; 404 without an open request; 400 for another action | unstable |
 | `GET` / `PUT` | `/platform/curators` | The platform's gear curators `{items: [{id, name}], may_manage}`; a curator reads, a platform administrator replaces (403 `PLATFORM_ADMIN_REQUIRED`) | unstable |
+| `GET` | `/registry/{name}/readiness` | Whether the entry could leave its project as a crate of its own: `{name, ready, kind, repo, git_ref, project_name, path, module_path, files, checks: [{key, ok, blocks, summary, spots: [{path, line, text}], more}], dependencies: [{name, spec}], gears, outside_read, outside_total}` (see Readiness to leave the project). Nothing written. 403 for anyone but an organization administrator; 404 for no such entry; 400 `failed_precondition` when nothing says where it is (`REGISTRY_NO_OCCURRENCE`, `REGISTRY_CONNECTION_UNKNOWN`) or the repository no longer has it (`REGISTRY_OCCURRENCE_GONE`) | unstable |
 | `POST` | `/registry/{name}/suggest` | A model's `{description, category, capabilities, at, model}` for the entry, on the caller's own key through studio-llm-proxy, capabilities bounded by the organization's vocabulary; stored as the entry's `suggestion`, never a state change. 403 for anyone but an organization administrator; 400 `failed_precondition` (`PROVIDER_KEY_REQUIRED`) without a model key; 503 when the model cannot be asked or answers no usable JSON, or without studio-llm-proxy | unstable |
 | `POST` | `/registry/{name}/declare` | Declare it, for a `candidate`: `{description?, capabilities?, category?, project_id?, dry_run?}` (all optional) → `{branch, pr_url, files, repo, path, dry_run, manifest}`: a pull request adding the module's manifest in its directory on `declare/<name>` — the engine's `gear.gdl` when the Gearbox engine is configured, else (and always inside a crate's `src/`) a `gear.toml`; `manifest` says which — recorded as a `declare` decision. 403 for anyone but an organization administrator; 400 `failed_precondition` for an entry that is not a candidate, or a repository read through a connection the organization only inherits (`CONNECTION_NOT_OWNED`); 503 without studio-product | unstable |
 | `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do. The organization's gear repository is one more row, keyed by the organization | unstable |

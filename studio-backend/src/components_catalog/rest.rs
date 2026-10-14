@@ -3147,6 +3147,9 @@ mod publish;
 #[path = "registry_curation_rest.rs"]
 mod curation;
 
+#[path = "registry_readiness_rest.rs"]
+mod readiness_routes;
+
 #[cfg(test)]
 #[path = "sources_rest_tests.rs"]
 mod sources_tests;
@@ -3158,6 +3161,7 @@ fn register_registry_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Ro
     let router = gear_repository::register(router, openapi);
     let router = publish::register(router, openapi);
     let router = curation::register(router, openapi);
+    let router = readiness_routes::register(router, openapi);
     let router = OperationBuilder::get("/studio-components-catalog/v1/sources")
         .operation_id("studio_components_catalog.list_sources")
         .summary("The organization's catalogue sources, kept on the server")

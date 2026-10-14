@@ -11,6 +11,7 @@ import type {
   RegistryOwner,
   RegistryProjectWalk,
   RegistryPublishPreview,
+  RegistryReadiness,
   RegistrySuggestion,
 } from "./api";
 import { occurrencePlace } from "./org-gear-repository";
@@ -354,6 +355,41 @@ export function suggestionEdit(s: RegistrySuggestion): RegistryDecisionInput {
 
 /** What a refused suggestion says to a person: a 403 is the administrator
  *  rule, a 400 a missing model key, a 503 a model that could not be asked. */
+/** What each readiness check is called on the page. */
+export const READINESS_LABEL: Record<string, string> = {
+  size: "Size",
+  boundary: "Boundary",
+  persistence: "Its tables",
+  reaches_out: "Code it uses",
+  gears: "Other gears",
+  reached_into: "Code that uses it",
+  dependencies: "Dependencies",
+};
+
+/** The one line above the checks. */
+export function readinessHeadline(r: Pick<RegistryReadiness, "ready" | "checks">): string {
+  const blocking = r.checks.filter((c) => !c.ok && c.blocks).length;
+  const advice = r.checks.filter((c) => !c.ok && !c.blocks).length;
+  if (r.ready) {
+    return advice === 0
+      ? "Ready to leave its project: every check passes."
+      : `Ready to leave its project, with ${advice} thing${advice === 1 ? "" : "s"} to look at first.`;
+  }
+  return `Not ready: ${blocking} check${blocking === 1 ? "" : "s"} stop${blocking === 1 ? "s" : ""} it.`;
+}
+
+/** A readiness spot as one line: `path:line`. */
+export function spotLabel(s: { path: string; line?: number | null }): string {
+  return s.line ? `${s.path}:${s.line}` : s.path;
+}
+
+/** A refused readiness check, in words. */
+export function readinessRefusal(status: number | undefined, fallback: string): string {
+  if (status === 403) return `Only an organization administrator can check this: it reads the project's code (${fallback}).`;
+  if (status === 400) return `Cannot check it: ${fallback}`;
+  return fallback;
+}
+
 export function suggestRefusal(status: number | undefined, fallback: string): string {
   if (status === 403) return `Only an organization administrator can ask for a suggestion (${fallback}).`;
   if (status === 400) return `Add a model key to your profile, or connect one under Connections, to ask for a suggestion (${fallback}).`;

@@ -30,12 +30,14 @@ import type {
   RegistryDeclareResult,
   RegistryEntry,
   RegistryProjectWalk,
+  RegistryReadiness,
   RegistrySuggestion,
 } from "./api";
 import { errText } from "./format";
 import { occurrencePlace } from "./org-gear-repository";
 import {
   ACTION_LABEL,
+  READINESS_LABEL,
   REGISTRY_STATES,
   STATE_LABEL,
   STATE_TONE,
@@ -58,9 +60,12 @@ import {
   projectsOf,
   publicationPending,
   publishStatus,
+  readinessHeadline,
+  readinessRefusal,
   registryProjects,
   stateCounts,
   suggestRefusal,
+  spotLabel,
   suggestionEdit,
   walkLine,
 } from "./registry";
@@ -504,6 +509,7 @@ function RegistryRow({
               </div>
             )}
             <SuggestDescription token={token} entry={e} onApplied={onDecided} />
+            <ExtractReadiness token={token} entry={e} />
             <div style={{ marginTop: 4 }}>
               <b>Found in</b>
             </div>
@@ -1117,6 +1123,85 @@ function SuggestDescription({
       {error && (
         <div className="error" style={{ fontSize: 12 }} data-registry-suggest-error>
           {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Ready to leave its project? (ADR-0044 §1, phase 1): the checks that come
+ *  before Extract, read from the component's code on request. Each failure
+ *  names its files and lines; nothing is written. */
+function ExtractReadiness({ token, entry: e }: { token: string; entry: RegistryEntry }) {
+  const [result, setResult] = useState<RegistryReadiness | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const check = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await api.registryReadiness(token, e.name));
+    } catch (cause) {
+      setError(readinessRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ margin: "6px 0" }} data-registry-readiness>
+      <button type="button" disabled={busy} onClick={() => void check()}>
+        {busy ? "Checking…" : result ? "Check again" : "Ready to leave its project?"}
+      </button>{" "}
+      <span className="hint" style={{ fontSize: 12 }}>
+        reads its code and says what would stop it building as a crate of its own
+      </span>
+      {error && (
+        <div className="error" style={{ fontSize: 12 }} data-registry-readiness-error>
+          {error}
+        </div>
+      )}
+      {result && (
+        <div style={{ marginTop: 4, padding: 6, background: "var(--muted, rgba(0,0,0,0.04))" }}>
+          <div data-registry-readiness-headline>
+            <b>{readinessHeadline(result)}</b>
+          </div>
+          <div style={{ opacity: 0.7, fontSize: 12 }}>
+            {result.kind === "crate" ? "The crate" : "The module"} <code>{result.module_path ?? result.path}</code>
+            {" · "}
+            {result.files} file{result.files === 1 ? "" : "s"} in {result.repo}
+            {result.project_name ? ` (${result.project_name})` : ""}
+            {result.outside_read < result.outside_total &&
+              ` · read ${result.outside_read} of the crate's ${result.outside_total} other files`}
+          </div>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            {result.checks.map((c) => (
+              <li key={c.key} data-readiness-check={c.key}>
+                <span className={`badge ${c.ok ? "ok" : c.blocks ? "danger" : "warn"}`}>
+                  {c.ok ? "ok" : c.blocks ? "blocks" : "look"}
+                </span>{" "}
+                <b>{READINESS_LABEL[c.key] ?? c.key}:</b> {c.summary}
+                {c.spots.length > 0 && (
+                  <ul style={{ margin: "2px 0", paddingLeft: 16, fontSize: 12 }}>
+                    {c.spots.map((s, i) => (
+                      <li key={`${s.path}:${s.line ?? ""}:${i}`} style={{ overflowWrap: "anywhere" }}>
+                        <code>{spotLabel(s)}</code>
+                        {s.text ? <span style={{ opacity: 0.7 }}> {s.text}</span> : null}
+                      </li>
+                    ))}
+                    {c.more > 0 && <li style={{ opacity: 0.6 }}>and {c.more} more</li>}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+          {result.dependencies.length > 0 && (
+            <div style={{ marginTop: 4, fontSize: 12, overflowWrap: "anywhere" }}>
+              <b>Its Cargo.toml would list:</b>{" "}
+              {result.dependencies.map((d) => (d.spec ? d.name : `${d.name} (not in the crate's)`)).join(", ")}
+            </div>
+          )}
         </div>
       )}
     </div>

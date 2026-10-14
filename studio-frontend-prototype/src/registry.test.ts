@@ -9,6 +9,9 @@ import {
   candidateWhere,
   candidatesOf,
   declareRefusal,
+  readinessHeadline,
+  readinessRefusal,
+  spotLabel,
   detectedProjects,
   evidenceLines,
   decisionLine,
@@ -334,5 +337,31 @@ describe("asking the platform to take a gear", () => {
     expect(publicationPending([{ action: "decline_publication" }, { action: "request_publication" }])).toBe(false);
     expect(publicationPending([{ action: "publish" }, { action: "request_publication" }])).toBe(false);
     expect(publicationPending([{ action: "request_publication" }, { action: "decline_publication" }, { action: "request_publication" }])).toBe(true);
+  });
+});
+
+describe("readiness", () => {
+  const check = (key: string, ok: boolean, blocks = false) => ({ key, ok, blocks, summary: "", spots: [], more: 0 });
+
+  it("says ready, ready with things to look at, or how many checks stop it", () => {
+    expect(readinessHeadline({ ready: true, checks: [check("size", true)] })).toBe(
+      "Ready to leave its project: every check passes.",
+    );
+    expect(readinessHeadline({ ready: true, checks: [check("gears", false)] })).toBe(
+      "Ready to leave its project, with 1 thing to look at first.",
+    );
+    expect(
+      readinessHeadline({ ready: false, checks: [check("boundary", false, true), check("reaches_out", false, true)] }),
+    ).toBe("Not ready: 2 checks stop it.");
+  });
+
+  it("names a spot by path and line", () => {
+    expect(spotLabel({ path: "src/a.rs", line: 4 })).toBe("src/a.rs:4");
+    expect(spotLabel({ path: "src/a", line: null })).toBe("src/a");
+  });
+
+  it("explains a refusal", () => {
+    expect(readinessRefusal(403, "x")).toContain("organization administrator");
+    expect(readinessRefusal(500, "boom")).toBe("boom");
   });
 });
