@@ -733,7 +733,7 @@ export const SURFACES: Surface[] = [
     area: "organization",
     title: "People and your profile",
     does: "Find colleagues, edit your profile and view preferences, see the logins and accounts that are you, keep your AI keys.",
-    components: ["ColleaguesCard", "MyPersonCard", "MyIdentitiesCard", "MemberDirectoryForm", "ViewModePreferences", "AiKeysCard"],
+    components: ["MyPersonCard", "MyIdentitiesCard", "MemberDirectoryForm", "ViewModePreferences", "AiKeysCard"],
     gears: ["credstore", "studio-user"],
   },
   {

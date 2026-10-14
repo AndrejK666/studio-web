@@ -2330,3 +2330,10 @@ ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
 .pm-inspector [data-config-field], .pm-inspector form { flex-wrap: wrap; }
 .pm-inspector [data-config-field] input, .pm-inspector form input, .pm-inspector form select { width: 100% !important; min-width: 0; }
 .pm-inspector [data-config-field] code { min-width: 0 !important; }
+
+/* A person's contact card (people.tsx). */
+.contact-card { display: flex; flex-direction: column; gap: 14px; }
+.contact-head { display: flex; align-items: center; gap: 12px; }
+.contact-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 0; font-size: 13px; }
+.contact-facts dt { color: var(--muted-foreground); }
+.contact-facts dd { margin: 0; overflow-wrap: anywhere; }
