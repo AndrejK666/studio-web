@@ -23,8 +23,8 @@ use uuid::Uuid;
 
 use super::rest::CandidateDto;
 use crate::components_catalog::port::{
-    ComponentCatalog, Registry, RegistryEntry, STATE_DEPRECATED, TIER_PROJECT, offered,
-    project_gears_of,
+    ComponentCatalog, Registry, RegistryEntry, STATE_DEPRECATED, TIER_ORGANIZATION, TIER_PROJECT,
+    offered, organization_gears_of, project_gears_of,
 };
 
 /// What the organization's registry says of each of its entries, by name
@@ -119,6 +119,98 @@ pub(super) async fn project_gears(
             (Vec::new(), Map::new())
         });
     (withhold(read, &states), states)
+}
+
+/// The organization's gears, in the shape `organization_gears_of` answers.
+pub(super) type OrganizationGears = (Vec<Value>, Map<String, Value>, BTreeMap<String, String>);
+
+/// The organization's gears from other projects and its gear repository
+/// (`organization_gears_of`), with where each lives, and every entry's
+/// state; none when the registry cannot be read -- the plan stands without
+/// them.
+pub(super) async fn organization_gears(
+    registry: &dyn Registry,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+) -> (OrganizationGears, RegistryStates) {
+    match registry.entries(ctx, ctx.subject_tenant_id()).await {
+        Ok(entries) => (
+            organization_gears_of(&entries, project_id),
+            registry_states(&entries),
+        ),
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "spec-mapping: the registry unreadable; no organization gears offered");
+            Default::default()
+        }
+    }
+}
+
+/// Add the organization's gears to the candidates, after the project's own:
+/// a name the project already has stays the project's, and one the
+/// catalogue lists keeps the catalogue's facts unless it is the platform's
+/// (the platform's shadows it, ADR-0042). Answers where each one added or
+/// kept as the organization's lives, by the name it goes by.
+pub(super) fn with_organization_gears(
+    components: &mut Vec<Value>,
+    profiles: &mut Map<String, Value>,
+    (gears, mut gear_profiles, places): OrganizationGears,
+    in_repo: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut in_org = BTreeMap::new();
+    for gear in gears {
+        let Some(name) = gear.get("name").and_then(Value::as_str).map(str::to_owned) else {
+            continue;
+        };
+        if in_repo.keys().any(|k| k.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        let place = places.get(&name).cloned().unwrap_or_default();
+        let catalogued = components.iter().find_map(|c| {
+            let n = c.get("name").and_then(Value::as_str)?;
+            n.eq_ignore_ascii_case(&name).then(|| {
+                (
+                    n.to_owned(),
+                    c.get("tier").and_then(Value::as_str) == Some("platform"),
+                )
+            })
+        });
+        let key = match catalogued {
+            Some((_, true)) => continue,
+            Some((catalogued, false)) => catalogued,
+            None => {
+                components.push(gear);
+                name.clone()
+            }
+        };
+        if let Some(profile) = gear_profiles.remove(&name)
+            && !profiles.contains_key(&key)
+        {
+            profiles.insert(key.clone(), profile);
+        }
+        in_org.insert(key, place);
+    }
+    in_org
+}
+
+/// Label the candidates that are the organization's gears: where they live,
+/// and their registry state.
+pub(super) fn mark_organization<'a>(
+    candidates: impl IntoIterator<Item = &'a mut CandidateDto>,
+    in_org: &BTreeMap<String, String>,
+    states: &RegistryStates,
+) {
+    for candidate in candidates {
+        let Some(place) = in_org.get(&candidate.name) else {
+            continue;
+        };
+        candidate.origin = TIER_ORGANIZATION.to_owned();
+        TIER_ORGANIZATION.clone_into(&mut candidate.tier);
+        candidate.path = (!place.is_empty()).then(|| place.clone());
+        if let Some((state, replaced_by)) = states.get(&candidate.name.to_ascii_lowercase()) {
+            candidate.registry_state = Some(state.clone());
+            candidate.replaced_by = replaced_by.clone();
+        }
+    }
 }
 
 /// Mark the candidates the registry backs -- the project's own gears it has
@@ -423,5 +515,76 @@ mod tests {
         assert_eq!(candidates[1].replaced_by, None);
         // Not the registry's: no mark.
         assert_eq!(candidates[2].registry_state, None);
+    }
+
+    #[test]
+    fn an_organization_gear_joins_the_candidates_after_the_projects_own_and_never_over_the_platforms()
+     {
+        let mut components = vec![
+            json!({ "name": "billing", "kind": "gear", "tier": "organization" }),
+            json!({ "name": "Search", "kind": "gear", "tier": "platform" }),
+        ];
+        let mut profiles = Map::new();
+        let in_repo = BTreeMap::from([("tasks".to_owned(), "src/tasks".to_owned())]);
+        let org = (
+            vec![
+                json!({ "name": "analytics", "kind": "gear", "origin": "organization", "tier": "organization" }),
+                json!({ "name": "billing", "kind": "gear", "origin": "organization", "tier": "organization" }),
+                json!({ "name": "search", "kind": "gear", "origin": "organization", "tier": "organization" }),
+                json!({ "name": "Tasks", "kind": "gear", "origin": "organization", "tier": "organization" }),
+            ],
+            Map::from_iter([("analytics".to_owned(), json!({ "gear_name": "analytics" }))]),
+            BTreeMap::from([
+                ("analytics".to_owned(), "Insight: src/analytics".to_owned()),
+                (
+                    "billing".to_owned(),
+                    "the organization's gear repository: gears/billing".to_owned(),
+                ),
+            ]),
+        );
+        let in_org = with_organization_gears(&mut components, &mut profiles, org, &in_repo);
+        let names: Vec<&str> = components
+            .iter()
+            .filter_map(|c| c["name"].as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["billing", "Search", "analytics"],
+            "one billing; tasks stays the project's"
+        );
+        assert_eq!(
+            in_org.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["analytics", "billing"],
+            "search is the platform's"
+        );
+        assert!(profiles.contains_key("analytics"));
+
+        let mut candidate = CandidateDto {
+            name: "analytics".into(),
+            kind: "gear".into(),
+            step: "evidence".into(),
+            contracts: Vec::new(),
+            passage: None,
+            cites: None,
+            version: None,
+            decision: None,
+            declared: true,
+            score: 1,
+            why: Vec::new(),
+            built: "built".into(),
+            composable: "undescribed".into(),
+            composable_why: None,
+            origin: "catalogue".into(),
+            path: None,
+            registry_state: None,
+            replaced_by: None,
+            tier: "organization".into(),
+        };
+        let states =
+            RegistryStates::from([("analytics".to_owned(), ("registered".to_owned(), None))]);
+        mark_organization(std::iter::once(&mut candidate), &in_org, &states);
+        assert_eq!(candidate.origin, "organization");
+        assert_eq!(candidate.path.as_deref(), Some("Insight: src/analytics"));
+        assert_eq!(candidate.registry_state.as_deref(), Some("registered"));
     }
 }

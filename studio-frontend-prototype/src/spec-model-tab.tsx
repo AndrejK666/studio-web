@@ -454,7 +454,7 @@ function AgainstTheCode({
     <div className="sm-findings">
       <p className="hint">
         The documents against the crates <code>{read.repo}</code> depends on and the gears it declares.
-        A decision about which gear fills a capability is taken in the project&apos;s Components tab.
+        A decision about which gear fills a capability is taken in the project&apos;s Product tab.
       </p>
       {read.items.map((f) => (
         <div key={f.fingerprint} className={`card sm-finding sm-${f.severity}`}>

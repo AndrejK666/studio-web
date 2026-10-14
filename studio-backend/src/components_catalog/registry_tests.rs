@@ -868,3 +868,87 @@ fn only_an_organization_scope_connection_serves_the_gear_repository() {
         "main"
     );
 }
+
+fn org_entry(
+    name: &str,
+    state: &str,
+    occurrences: Vec<(Option<Uuid>, &str, &str, bool)>,
+) -> RegistryEntry {
+    RegistryEntry {
+        entry: EntryRecord {
+            name: name.into(),
+            state: state.into(),
+            ..Default::default()
+        },
+        occurrences: occurrences
+            .into_iter()
+            .map(
+                |(project_id, project_name, path, detected)| OccurrenceRecord {
+                    entry: name.into(),
+                    project_id,
+                    project_name: (!project_name.is_empty()).then(|| project_name.into()),
+                    repo: "acme/insight".into(),
+                    path: path.into(),
+                    kind: "gear".into(),
+                    declared_in: if detected { "detected" } else { "gear.toml" }.into(),
+                    scope: project_id.is_none().then(|| "organization".into()),
+                    ..Default::default()
+                },
+            )
+            .collect(),
+    }
+}
+
+#[test]
+fn the_organizations_registered_gears_from_elsewhere_are_offered_with_where_they_live() {
+    let here = Uuid::from_u128(1);
+    let insight = Uuid::from_u128(2);
+    let entries = [
+        org_entry(
+            "analytics",
+            "registered",
+            vec![(Some(insight), "Insight", "src/analytics", false)],
+        ),
+        org_entry(
+            "billing",
+            "published",
+            vec![
+                (None, "", "gears/billing", false),
+                (Some(insight), "Insight", "src/billing", false),
+            ],
+        ),
+        // Declared only: still a project's until a person registers it.
+        org_entry(
+            "authenticator",
+            "declared",
+            vec![(Some(insight), "Insight", "src/auth", false)],
+        ),
+        // This project declares it: it is the project's own.
+        org_entry(
+            "tasks",
+            "registered",
+            vec![(Some(here), "Studio", "src/tasks", false)],
+        ),
+        // Only a detector found it elsewhere: nothing declares it.
+        org_entry(
+            "guess",
+            "registered",
+            vec![(Some(insight), "Insight", "src/guess", true)],
+        ),
+    ];
+    let (nodes, profiles, places) =
+        crate::components_catalog::port::organization_gears_of(&entries, here);
+    let names: Vec<&str> = nodes.iter().filter_map(|n| n["name"].as_str()).collect();
+    assert_eq!(names, ["analytics", "billing"]);
+    assert!(
+        nodes
+            .iter()
+            .all(|n| n["tier"] == "organization" && n["origin"] == "organization")
+    );
+    assert_eq!(places["analytics"], "Insight: src/analytics");
+    assert_eq!(
+        places["billing"], "the organization's gear repository: gears/billing",
+        "the gear repository comes before a project"
+    );
+    assert!(profiles.contains_key("analytics"));
+}

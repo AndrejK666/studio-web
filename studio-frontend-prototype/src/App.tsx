@@ -4705,7 +4705,7 @@ function WorkspaceProjects({
                 No components are offered for a shared gear store. A kit installs with
                 <code> copy</code> across every repository the project has, and this one
                 already belongs to the gears in it — it has its own conventions to keep.
-                The project can still take a kit later, from its Components tab.
+                The project can still take a kit later, from its Kits tab.
               </p>
             )}
 
@@ -5084,10 +5084,13 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   { id: "specs", icon: "scan", label: "Specs" },
   // What the specs say the application is, read out of them, and where they
   // disagree about it (docs/spec-domain-model.md). Next to Specs because it is
-  // made of them, and before Components because what a product is composed
+  // made of them, and before Product because what a product is composed
   // from should answer this model.
   { id: "model", icon: "layers", label: "Domain model" },
-  { id: "components", icon: "package", label: "Components" },
+  // Called Product, not Components: a project gathers repositories, and what
+  // this tab makes of them is the product. The organization and the platform
+  // keep "Components" for what they hold. The id stays, so links still open it.
+  { id: "components", icon: "package", label: "Product" },
   // Kits are how the project works (workflows, conventions pinned to a Git
   // version), not what it is made of, so they stopped sharing a page with the
   // specs-to-product journey.

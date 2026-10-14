@@ -212,13 +212,23 @@ organization. A project the caller cannot reach answers 404.
 - **Candidate**: a gear with the `step` that proposed it (`contract` or
   `evidence`), the `contracts` it provides or the `passage` it was found by
   (and the document it `cites`), its build state, what the engine says, its
-  `version`, an earlier `decision`, and its `origin` — `catalogue`, or
-  `project` with its `path` when the project's repository declares it — and
-  its `tier` (ADR-0042): `project` (declared in the project's own
-  repositories, a catalogued gear included), `organization` (the
-  organization's catalogue or registry) or `platform` (the shared set). On
-  otherwise equal ranking keys, the project's and the organization's come
-  before the platform's: the last tie-breaker before the name.
+  `version`, an earlier `decision`, and its `origin` — `catalogue`;
+  `project` with its `path` when the project's repository declares it; or
+  `organization` with its `path` as `<project>: <path>` (or "the
+  organization's gear repository: <path>") for a gear the organization's
+  registry holds from elsewhere — and its `tier` (ADR-0042): `project`
+  (declared in the project's own repositories, a catalogued gear included),
+  `organization` (the organization's catalogue or registry) or `platform`
+  (the shared set). On otherwise equal ranking keys, the project's and the
+  organization's come before the platform's: the last tie-breaker before the
+  name.
+- **The organization's gears** are every registry entry the organization
+  has accepted — `registered` or `published` — that the project does not
+  declare itself, read at the place that declares it (the gear repository
+  first, then by project; a detector's finding is not a declaration). A
+  `declared` entry is a project's until a person registers it, so it is not
+  offered elsewhere. A name the project has stays the project's, and a name
+  the platform's catalogue has stays the platform's.
 - **Decision**: (document, section, capability, gear) → `confirmed` or
   `rejected`, with who, when, the step, the gear version and the document
   revision.
