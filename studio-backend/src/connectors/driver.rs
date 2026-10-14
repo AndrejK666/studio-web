@@ -314,6 +314,36 @@ pub struct RemoteCommit {
     pub committed_at: Option<String>,
 }
 
+/// One CI run on a repository: one run of one workflow, on one commit
+/// (ADR-0045). Keyed by the provider's run id; a re-run is the same run with
+/// a higher `attempt`.
+#[derive(Debug, Clone, Default)]
+pub struct RemoteWorkflowRun {
+    pub id: i64,
+    /// The workflow's name (`Studio Delivery`).
+    pub workflow: String,
+    /// The workflow's file (`.github/workflows/studio-delivery.yml`).
+    pub workflow_path: Option<String>,
+    /// What the run shows as its title: the commit subject, a PR title.
+    pub title: Option<String>,
+    /// What started it: `push`, `pull_request`, `workflow_dispatch`, …
+    pub event: Option<String>,
+    pub branch: Option<String>,
+    pub sha: String,
+    /// `queued`, `in_progress`, `completed`, …
+    pub status: Option<String>,
+    /// For a completed run: `success`, `failure`, `cancelled`, `skipped`, …
+    pub conclusion: Option<String>,
+    /// Who started it.
+    pub actor: Option<String>,
+    pub url: Option<String>,
+    pub run_number: Option<i64>,
+    pub attempt: Option<i64>,
+    pub created_at: Option<String>,
+    pub started_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
 /// A repository tree read at a ref, for the knowledge-graph sync.
 #[derive(Debug, Clone)]
 pub struct RepoTree {
@@ -554,6 +584,19 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         per_page: u32,
     ) -> anyhow::Result<Vec<RemoteCommit>> {
         let _ = (auth, repo_full_path, since, page, per_page);
+        Ok(Vec::new())
+    }
+
+    /// CI runs in one repository, newest first: `page` of `per_page` (1-based).
+    /// Defaulted to empty so a driver without CI contributes no runs.
+    async fn list_workflow_runs(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteWorkflowRun>> {
+        let _ = (auth, repo_full_path, page, per_page);
         Ok(Vec::new())
     }
 

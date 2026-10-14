@@ -40,6 +40,9 @@ const MAX_FILES: usize = 10_000;
 /// graph" guard as files. Hitting one is logged (not silent truncation).
 const MAX_COMMENTS: usize = 20_000;
 const MAX_COMMITS: usize = 20_000;
+/// CI runs read per repository, newest first (ADR-0045): three pages. Runs
+/// are read again every sync, so this bounds every sync, not only the first.
+const MAX_RUN_PAGES: u32 = 3;
 /// How many open pull requests the review-thread query walks.
 ///
 /// Not a flood guard — the query stores nothing per pull request beyond one
@@ -1082,6 +1085,62 @@ impl IngestService {
             "studio-artifact-ingest: pulled comments and commits"
         );
 
+        // CI runs (ADR-0045): the newest few hundred, whatever `since` says --
+        // a run that was in progress at the last sync has finished since, and
+        // only reading it again says so. Best effort: a token that cannot
+        // read Actions loses the runs, not the sync.
+        progress.set("pulling CI runs…");
+        let mut runs = 0usize;
+        for page in 1..=MAX_RUN_PAGES {
+            let batch = match driver
+                .list_workflow_runs(&auth, repo_full_path, page, PER_PAGE)
+                .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = repo_full_path,
+                        "studio-artifact-ingest: CI run listing failed — skipping CI runs"
+                    );
+                    break;
+                }
+            };
+            if batch.is_empty() {
+                break;
+            }
+            runs += batch.len();
+            for r in batch {
+                let author = r.actor.clone();
+                let node =
+                    gts::workflow_run_node(source_scope, &repo_id, connector_id, repo_full_path, r);
+                let run_id = node.instance_id.clone();
+                edges.push(gts::artifact_of_edge(&run_id, &repo_id));
+                author_edge(&mut edges, &mut users, &run_id, author.as_deref());
+                nodes.push(node);
+            }
+            self.flush_and_report(
+                ctx,
+                progress,
+                &mut nodes,
+                &mut flushed,
+                workspace_id,
+                project_id,
+                "pulling CI runs…",
+                issues,
+                pull_requests,
+                files,
+                comments,
+                commits,
+            )
+            .await?;
+        }
+        tracing::info!(
+            repo = repo_full_path,
+            runs,
+            "studio-artifact-ingest: pulled CI runs"
+        );
+
         // Author nodes discovered along the way join the batch, then a final
         // flush stores them plus anything appended since the last page. Node
         // tenant-tagging happens inside `store_node_batch`, so every flushed
@@ -1570,6 +1629,7 @@ impl IngestService {
             gts::PULL_REQUEST_TYPE,
             gts::COMMENT_TYPE,
             gts::COMMIT_TYPE,
+            gts::WORKFLOW_RUN_TYPE,
         ] {
             for node in self.graph.list(ctx, Some(type_id)).await?.iter() {
                 let repo = node.value.get("repo").and_then(serde_json::Value::as_str);

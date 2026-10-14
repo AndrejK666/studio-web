@@ -10,7 +10,7 @@ use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, CreatedRepository,
     DriverIdentity, FileToWrite, OpenedPullRequest, PullRequestThreads, RemoteComment,
     RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText, RemoteIssue, RemotePullRequest,
-    RemoteRepo, RemoteReview, RepoTree, RepoTreeEntry, WrittenFile,
+    RemoteRepo, RemoteReview, RemoteWorkflowRun, RepoTree, RepoTreeEntry, WrittenFile,
 };
 
 pub struct GitHubDriver {
@@ -213,6 +213,70 @@ impl From<GitHubCommit> for RemoteCommit {
             url: Some(c.html_url),
             created_at,
             committed_at,
+        }
+    }
+}
+
+/// `/repos/{path}/actions/runs`.
+#[derive(Deserialize)]
+struct GitHubRuns {
+    #[serde(default)]
+    workflow_runs: Vec<GitHubRun>,
+}
+
+#[derive(Deserialize)]
+struct GitHubRun {
+    id: i64,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    display_title: Option<String>,
+    #[serde(default)]
+    event: Option<String>,
+    #[serde(default)]
+    head_branch: Option<String>,
+    head_sha: String,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    conclusion: Option<String>,
+    #[serde(default)]
+    actor: Option<GitHubUser>,
+    #[serde(default)]
+    html_url: Option<String>,
+    #[serde(default)]
+    run_number: Option<i64>,
+    #[serde(default)]
+    run_attempt: Option<i64>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    run_started_at: Option<String>,
+    #[serde(default)]
+    updated_at: Option<String>,
+}
+
+impl From<GitHubRun> for RemoteWorkflowRun {
+    fn from(r: GitHubRun) -> Self {
+        RemoteWorkflowRun {
+            id: r.id,
+            workflow: r.name.unwrap_or_default(),
+            workflow_path: r.path,
+            title: r.display_title,
+            event: r.event,
+            branch: r.head_branch,
+            sha: r.head_sha,
+            status: r.status,
+            conclusion: r.conclusion,
+            actor: r.actor.map(|u| u.login),
+            url: r.html_url,
+            run_number: r.run_number,
+            attempt: r.run_attempt,
+            created_at: r.created_at,
+            started_at: r.run_started_at,
+            updated_at: r.updated_at,
         }
     }
 }
@@ -851,6 +915,36 @@ impl ConnectorDriver for GitHubDriver {
         }
         let commits: Vec<GitHubCommit> = res.json().await?;
         Ok(commits.into_iter().map(RemoteCommit::from).collect())
+    }
+
+    async fn list_workflow_runs(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteWorkflowRun>> {
+        let url = format!(
+            "{}/repos/{repo_full_path}/actions/runs?per_page={}&page={}",
+            auth.root(),
+            per_page.clamp(1, 100),
+            page.max(1),
+        );
+        let res = self.request(&url, auth).send().await?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let runs: GitHubRuns = res.json().await?;
+        Ok(runs
+            .workflow_runs
+            .into_iter()
+            .map(RemoteWorkflowRun::from)
+            .collect())
     }
 
     async fn read_file(
@@ -2245,6 +2339,47 @@ mod tests {
             decode_file_content(&json!({ "type": "file", "encoding": "none", "content": "" }))
                 .expect("no body"),
             None
+        );
+    }
+
+    #[test]
+    fn a_workflow_run_keeps_what_a_build_record_needs() {
+        let body = json!({
+            "total_count": 1,
+            "workflow_runs": [{
+                "id": 38527017145_i64,
+                "name": "Studio Delivery",
+                "path": ".github/workflows/studio-delivery.yml",
+                "display_title": "feat(environments): …",
+                "event": "push",
+                "head_branch": "main",
+                "head_sha": "420057a1bcd",
+                "status": "completed",
+                "conclusion": "success",
+                "actor": { "login": "AndrejK666" },
+                "html_url": "https://github.com/o/r/actions/runs/38527017145",
+                "run_number": 812,
+                "run_attempt": 2,
+                "created_at": "2026-10-14T07:14:14Z",
+                "run_started_at": "2026-10-14T07:20:00Z",
+                "updated_at": "2026-10-14T07:40:00Z",
+                "something_new": true
+            }, { "id": 2, "head_sha": "x" }]
+        });
+        let runs: GitHubRuns = serde_json::from_value(body).unwrap();
+        let mut runs: Vec<RemoteWorkflowRun> =
+            runs.workflow_runs.into_iter().map(Into::into).collect();
+        let r = runs.remove(0);
+        assert_eq!(r.id, 38527017145);
+        assert_eq!(r.workflow, "Studio Delivery");
+        assert_eq!(r.branch.as_deref(), Some("main"));
+        assert_eq!(r.conclusion.as_deref(), Some("success"));
+        assert_eq!(r.actor.as_deref(), Some("AndrejK666"));
+        assert_eq!(r.attempt, Some(2));
+        assert_eq!(r.started_at.as_deref(), Some("2026-10-14T07:20:00Z"));
+        assert_eq!(
+            runs[0].workflow, "",
+            "a run with almost nothing still reads"
         );
     }
 }
