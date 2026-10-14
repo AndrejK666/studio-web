@@ -127,6 +127,34 @@ impl OrganizationService {
         self.authority.may_dispose(ctx, org_id).await
     }
 
+    /// May the caller change the organization's logo? Whoever administers
+    /// its access, or a platform administrator.
+    pub async fn may_change_logo(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
+        self.authority
+            .may_administer(ctx, org_id, super::logo::LOGO_PRIVILEGE)
+            .await
+    }
+
+    /// The organization's logo, as the caller reads it.
+    pub async fn logo(
+        &self,
+        ctx: &SecurityContext,
+        org_id: Uuid,
+    ) -> anyhow::Result<Option<super::logo::Logo>> {
+        Ok(super::logo::read(&self.am, ctx, org_id)
+            .await?
+            .map(|(logo, _)| logo))
+    }
+
+    /// Keep a new logo for the organization, or remove it with `None`.
+    pub async fn set_logo(
+        &self,
+        org_id: Uuid,
+        logo: Option<&super::logo::Logo>,
+    ) -> anyhow::Result<()> {
+        super::logo::write(&self.am, org_id, logo).await
+    }
+
     /// Create an organization owned by the caller, or finish creating one.
     ///
     /// `resume` carries the id from a previous attempt's error. With it, the

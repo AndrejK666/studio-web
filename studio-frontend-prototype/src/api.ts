@@ -105,6 +105,14 @@ export interface MemberDirectory {
 
 /** Somebody the caller shares an organization with, as any member sees them
  *  (ADR-0036): no addresses and no sign-ins. One row per organization. */
+/** An organization's logo, as `GET …/organizations/{id}/logo` answers. */
+export interface OrganizationLogo {
+  content_type: string;
+  /** The image, base64. */
+  data: string;
+  digest: string;
+}
+
 export interface Colleague {
   org_id: string;
   user_id: string;
@@ -3434,6 +3442,20 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ item_key: itemKey, state, until }),
     }),
+
+  /** An organization's logo; 404 when it has none. */
+  organizationLogo: (token: string, orgId: string) =>
+    request<OrganizationLogo>(`/studio-organizations/v1/organizations/${encodeURIComponent(orgId)}/logo`, token),
+  /** Set an organization's logo: PNG, JPEG, WebP or GIF, at most 256 KiB.
+   *  Its administrators may. */
+  setOrganizationLogo: (token: string, orgId: string, contentType: string, base64: string) =>
+    request<OrganizationLogo>(`/studio-organizations/v1/organizations/${encodeURIComponent(orgId)}/logo`, token, {
+      method: "PUT",
+      body: JSON.stringify({ content_type: contentType, data: base64 }),
+    }),
+  /** Remove an organization's logo. */
+  deleteOrganizationLogo: (token: string, orgId: string) =>
+    request<void>(`/studio-organizations/v1/organizations/${encodeURIComponent(orgId)}/logo`, token, { method: "DELETE" }),
 
   /** Store the caller's photo: PNG, JPEG, WebP or GIF, at most 1 MiB. */
   uploadMyAvatar: (token: string, contentType: string, base64: string) =>

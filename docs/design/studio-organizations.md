@@ -231,6 +231,9 @@ rollups keep their own rule and settle the same failure as an empty subtree.
 | `GET` | `/studio-organizations/v1/capabilities` | Whether a person may create an organization here | stable |
 | `GET` | `/studio-organizations/v1/access-catalogue` | Every privilege id the PDP understands, and the seeded role ladder; no labels | stable |
 | `GET` | `/studio-organizations/v1/rollups` | The portfolio, or one workspace or project; every count nullable | stable |
+| `GET` | `/studio-organizations/v1/organizations/{org_id}/logo` | Its logo, read as the caller; 404 when none | unstable |
+| `PUT` | `/studio-organizations/v1/organizations/{org_id}/logo` | Set it: PNG, JPEG, WebP or GIF up to 256 KiB, by whoever holds `access.manage` | unstable |
+| `DELETE` | `/studio-organizations/v1/organizations/{org_id}/logo` | Remove it; the portal shows the initial again | unstable |
 
 ### 3.4 Internal Dependencies
 

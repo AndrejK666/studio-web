@@ -262,6 +262,17 @@ gears:
             - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.organization.logo.v1~"
+          # An organization's logo: a small image the portal shows beside its
+          # name. Written only by studio-organizations (the PDP refuses anybody
+          # else's write), on the organization; not inherited.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio organization logo (free-form until gears issue #4)"
+          type: "object"
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.environment.list.v1~"
           # An organization's deployment environments (ADR-0043): cluster
           # connection, registry, namespace pattern, protection. Written only by
