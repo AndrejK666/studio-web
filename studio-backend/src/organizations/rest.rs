@@ -85,21 +85,33 @@ fn logo_dto(logo: super::logo::Logo) -> OrganizationLogoDto {
     }
 }
 
-fn org_id(raw: &str) -> ApiResult<Uuid> {
-    Uuid::parse_str(raw).map_err(|_| {
-        OrganizationError::invalid_argument()
-            .with_constraint("organization id must be a uuid")
-            .create()
-    })
+/// Which organization's logo: `?organization_id=` (convention C2: a scope is
+/// a query parameter, never a path segment).
+#[derive(Debug, serde::Deserialize)]
+pub struct LogoQuery {
+    #[serde(default)]
+    pub organization_id: Option<String>,
+}
+
+fn org_id(query: &LogoQuery) -> ApiResult<Uuid> {
+    query
+        .organization_id
+        .as_deref()
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+        .ok_or_else(|| {
+            OrganizationError::invalid_argument()
+                .with_constraint("organization_id must be the organization's uuid")
+                .create()
+        })
 }
 
 async fn get_organization_logo(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<OrganizationService>>>,
-    Path(org): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<LogoQuery>,
 ) -> ApiResult<JsonBody<OrganizationLogoDto>> {
     let service = configured(service)?;
-    let org = org_id(&org)?;
+    let org = org_id(&query)?;
     match service.logo(&ctx, org).await {
         Ok(Some(logo)) => Ok(Json(logo_dto(logo))),
         Ok(None) => Err(OrganizationError::not_found("the organization has no logo")
@@ -112,11 +124,11 @@ async fn get_organization_logo(
 async fn upsert_organization_logo(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<OrganizationService>>>,
-    Path(org): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<LogoQuery>,
     Json(request): Json<UpsertOrganizationLogoRequest>,
 ) -> ApiResult<JsonBody<OrganizationLogoDto>> {
     let service = configured(service)?;
-    let org = org_id(&org)?;
+    let org = org_id(&query)?;
     if !service.may_change_logo(&ctx, org).await {
         return Err(OrganizationError::permission_denied()
             .with_reason("ORG_ADMIN_REQUIRED")
@@ -137,10 +149,10 @@ async fn upsert_organization_logo(
 async fn delete_organization_logo(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<OrganizationService>>>,
-    Path(org): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<LogoQuery>,
 ) -> ApiResult<StatusCode> {
     let service = configured(service)?;
-    let org = org_id(&org)?;
+    let org = org_id(&query)?;
     if !service.may_change_logo(&ctx, org).await {
         return Err(OrganizationError::permission_denied()
             .with_reason("ORG_ADMIN_REQUIRED")
@@ -493,7 +505,7 @@ pub fn register_routes(
         .error_401(openapi)
         .register(router, openapi);
 
-    let router = OperationBuilder::get("/studio-organizations/v1/organizations/{org_id}/logo")
+    let router = OperationBuilder::get("/studio-organizations/v1/logo")
         .operation_id("studio_organizations.get_organization_logo")
         .summary("An organization's logo")
         .description(
@@ -504,7 +516,7 @@ pub fn register_routes(
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<License>([])
-        .path_param("org_id", "Organization (tenant) id")
+        .query_param_typed("organization_id", true, "The organization", "string")
         .handler(get_organization_logo)
         .json_response_with_schema::<OrganizationLogoDto>(openapi, StatusCode::OK, "The logo")
         .error_400(openapi)
@@ -513,7 +525,7 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    let router = OperationBuilder::put("/studio-organizations/v1/organizations/{org_id}/logo")
+    let router = OperationBuilder::put("/studio-organizations/v1/logo")
         .operation_id("studio_organizations.upsert_organization_logo")
         .summary("Set an organization's logo")
         .description(
@@ -525,7 +537,7 @@ pub fn register_routes(
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<License>([])
-        .path_param("org_id", "Organization (tenant) id")
+        .query_param_typed("organization_id", true, "The organization", "string")
         .json_request::<UpsertOrganizationLogoRequest>(openapi, "The logo, base64-encoded")
         .handler(upsert_organization_logo)
         .json_response_with_schema::<OrganizationLogoDto>(openapi, StatusCode::OK, "The logo kept")
@@ -536,7 +548,7 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    let router = OperationBuilder::delete("/studio-organizations/v1/organizations/{org_id}/logo")
+    let router = OperationBuilder::delete("/studio-organizations/v1/logo")
         .operation_id("studio_organizations.delete_organization_logo")
         .summary("Remove an organization's logo")
         .description(
@@ -546,7 +558,7 @@ pub fn register_routes(
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<License>([])
-        .path_param("org_id", "Organization (tenant) id")
+        .query_param_typed("organization_id", true, "The organization", "string")
         .handler(delete_organization_logo)
         .no_content_response(StatusCode::NO_CONTENT, "Removed")
         .error_400(openapi)

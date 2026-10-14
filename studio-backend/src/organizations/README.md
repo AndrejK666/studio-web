@@ -32,7 +32,7 @@ This README is what you need to work in the directory.
   the tenant tree itself.
 
 - The organization's logo ([`logo.rs`](logo.rs)): `GET`, `PUT` and `DELETE
-  /studio-organizations/v1/organizations/{org_id}/logo`. One account-management
+  /studio-organizations/v1/logo?organization_id=`. One account-management
   metadata row on the organization (`cf.studio.organization.logo.v1~`, declared
   in every `config/*.yaml`), base64 PNG, JPEG, WebP or GIF of at most 256 KiB,
   checked as a photo is (`user_profile::check_avatar`). Read as the caller;

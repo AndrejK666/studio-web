@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 249,
+  "open_violations": 246,
   "operations": [
     {
       "method": "DELETE",
@@ -192,10 +192,10 @@
     },
     {
       "method": "DELETE",
-      "path": "/studio-organizations/v1/organizations/{org_id}",
-      "operation_id": "studio_organizations.delete_organization",
+      "path": "/studio-organizations/v1/logo",
+      "operation_id": "studio_organizations.delete_organization_logo",
       "tag": "StudioOrganizations",
-      "summary": "Delete an organization",
+      "summary": "Remove an organization's logo",
       "authenticated": true,
       "errors": [
         "400",
@@ -207,10 +207,10 @@
     },
     {
       "method": "DELETE",
-      "path": "/studio-organizations/v1/organizations/{org_id}/logo",
-      "operation_id": "studio_organizations.delete_organization_logo",
+      "path": "/studio-organizations/v1/organizations/{org_id}",
+      "operation_id": "studio_organizations.delete_organization",
       "tag": "StudioOrganizations",
-      "summary": "Remove an organization's logo",
+      "summary": "Delete an organization",
       "authenticated": true,
       "errors": [
         "400",
@@ -1881,7 +1881,7 @@
     },
     {
       "method": "GET",
-      "path": "/studio-organizations/v1/organizations/{org_id}/logo",
+      "path": "/studio-organizations/v1/logo",
       "operation_id": "studio_organizations.get_organization_logo",
       "tag": "StudioOrganizations",
       "summary": "An organization's logo",
@@ -4908,7 +4908,7 @@
     },
     {
       "method": "PUT",
-      "path": "/studio-organizations/v1/organizations/{org_id}/logo",
+      "path": "/studio-organizations/v1/logo",
       "operation_id": "studio_organizations.upsert_organization_logo",
       "tag": "StudioOrganizations",
       "summary": "Set an organization's logo",
