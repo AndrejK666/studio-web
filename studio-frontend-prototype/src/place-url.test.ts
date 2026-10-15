@@ -62,3 +62,18 @@ describe("the portal's address", () => {
     expect(pathToPlace("/workspaces", "?org=org-9", KNOWN)).toMatchObject({ activeOrgId: "org-9" });
   });
 });
+
+describe("sections that moved into administration", () => {
+  it("still land a kept link on the same screen, now under /admin/", () => {
+    expect(pathToPlace("/objects", "", KNOWN)).toEqual({ adminOpen: true, adminView: "objects" });
+    expect(pathToPlace("/views", "?org=org-1", KNOWN)).toEqual({
+      adminOpen: true,
+      adminView: "views",
+      activeOrgId: "org-1",
+    });
+  });
+
+  it("are written under /admin/", () => {
+    expect(placeToPath({ ...base, adminOpen: true, adminView: "objects" })).toBe("/admin/objects");
+  });
+});
