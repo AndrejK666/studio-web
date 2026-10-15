@@ -14,22 +14,24 @@
 //! `catalogue`, `validate` and `resolve` with `--format json` rather than
 //! holding a JSON-RPC session: a preview is one question, not a conversation.
 //!
-//! Off unless `STUDIO_GEARBOX_WORKDIR` and `STUDIO_GEARBOX_CORPUS_URL` are
-//! both set. Configuration:
+//! Off unless `STUDIO_GEARBOX_WORKDIR` is set. Configuration:
 //!
 //! | Variable | Default |
 //! |---|---|
 //! | `STUDIO_GEARBOX_WORKDIR` | unset: previews are unavailable |
 //! | `STUDIO_GEARBOX_BIN` | `gearbox` |
-//! | `STUDIO_GEARBOX_CORPUS_URL` | unset: previews are unavailable |
+//! | `STUDIO_GEARBOX_CORPUS_URL` | unset: no corpus until the platform has a gear repository |
 //! | `STUDIO_GEARBOX_CORPUS_REF` | `main` |
 //! | `STUDIO_GEARBOX_REFRESH_SECS` | `600` |
 //!
-//! The corpus is the platform's gears (ADR-0042), named by the deployment and
-//! by nothing else: no catalogue sync can repoint it. The ref is where the
-//! descriptors live; `gear.gdl` files exist only on a fork's branch until
-//! constructorfabric/gears-rust#4793 merges, which is what the Helm values and
-//! the compose file point at for now.
+//! The corpus is the platform's gears (ADR-0042), read from the platform's
+//! gear repositories (ADR-0046): connections of the `gear-repository` kind in
+//! the root tenant, in the order they were added, each checked out and handed
+//! to the engine as its own `--root`, under a directory named by its source
+//! id. They are read together, because a gear in one may need a gear in
+//! another. While the platform has none, the deployment's corpus
+//! (`STUDIO_GEARBOX_CORPUS_URL` / `_REF`) is the one root, under the source id
+//! `gears-rust`. No organization's settings or sync can change either.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
@@ -51,6 +53,9 @@ pub const CORPUS_SOURCE_ID: &str = "gears-rust";
 
 const DEFAULT_CORPUS_REF: &str = "main";
 const DEFAULT_REFRESH: Duration = Duration::from_secs(600);
+/// How often the platform's gear repositories are listed again. A list read
+/// is one metadata row; a change is checked out on the next use.
+const ROOTS_RECHECK: Duration = Duration::from_secs(60);
 /// A catalogue load plus a resolve is well under a second on the corpus; a
 /// minute is for a cold disk, not for a healthy run.
 const ENGINE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -70,10 +75,9 @@ pub struct GearboxConfig {
 }
 
 impl GearboxConfig {
-    /// `None` when `STUDIO_GEARBOX_WORKDIR` is unset — without a place for the
-    /// corpus there is nothing to resolve against — or when no corpus is
-    /// named: the platform's gears are the deployment's to name, so there is
-    /// no built-in one to fall back to.
+    /// `None` when `STUDIO_GEARBOX_WORKDIR` is unset: without a place for the
+    /// corpus there is nothing to resolve against. A deployment that names no
+    /// corpus has none until the platform connects a gear repository.
     pub fn from_env() -> Option<Self> {
         let var = |name: &str| {
             std::env::var(name)
@@ -82,12 +86,7 @@ impl GearboxConfig {
                 .filter(|s| !s.is_empty())
         };
         let workdir = PathBuf::from(var("STUDIO_GEARBOX_WORKDIR")?);
-        let Some(corpus_url) = var("STUDIO_GEARBOX_CORPUS_URL") else {
-            warn!(
-                "studio-product: STUDIO_GEARBOX_WORKDIR is set but STUDIO_GEARBOX_CORPUS_URL is not; product previews are off"
-            );
-            return None;
-        };
+        let corpus_url = var("STUDIO_GEARBOX_CORPUS_URL").unwrap_or_default();
         Some(Self {
             bin: PathBuf::from(var("STUDIO_GEARBOX_BIN").unwrap_or_else(|| "gearbox".into())),
             workdir,
@@ -143,6 +142,9 @@ pub struct EngineGear {
     /// default); the two must agree or the engine refuses (GBX0512).
     #[serde(default)]
     pub vendor_selector: Option<String>,
+    /// The root (gear repository) the engine found it in, by source id.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -1404,7 +1406,9 @@ fn gdl_string(s: &str) -> String {
     out
 }
 
-/// Which corpus a description names, and at which commit.
+/// Which corpus a description names, and at which commit: one root, as a
+/// test spells it ([`render_product_gdl_from`] takes several).
+#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
 pub struct CorpusPin<'a> {
     pub url: &'a str,
@@ -1420,12 +1424,13 @@ pub fn product_gdl_path(product_id: &str) -> String {
     format!("products/{product_id}/product.gdl")
 }
 
-/// The corpus checkout beside the repository, as seen from the description at
-/// `product_path` (relative to the repository root): `../gears-rust` from the
-/// root, `../../../gears-rust` from `products/<id>/`.
-fn sibling_corpus_from(product_path: &str) -> String {
-    let depth = product_path.split('/').filter(|s| !s.is_empty()).count();
-    format!("{}{CORPUS_SOURCE_ID}", "../".repeat(depth.max(1)))
+/// One gear repository a `product.gdl` names: its source id, its clone URL,
+/// and the commit it was checked against. Without a commit, the description
+/// reaches the checkout beside the repository instead.
+pub struct SourcePin<'a> {
+    pub id: &'a str,
+    pub url: &'a str,
+    pub rev: Option<&'a str>,
 }
 
 /// The `product.gdl` for a composition, to be saved at `product_path` in the
@@ -1436,6 +1441,7 @@ fn sibling_corpus_from(product_path: &str) -> String {
 /// and needs no checkout beside it; the IDE brings that commit in when it opens
 /// the product. Without one (a corpus whose commit is unknown), the sibling
 /// checkout, reached from where the description sits.
+#[cfg(test)]
 pub fn render_product_gdl(
     product_id: &str,
     product_path: &str,
@@ -1443,6 +1449,38 @@ pub fn render_product_gdl(
     composition: &Composition,
     default_profile: &str,
     pin: Option<CorpusPin<'_>>,
+    config: &BTreeMap<String, serde_json::Map<String, Value>>,
+) -> String {
+    let source = SourcePin {
+        id: CORPUS_SOURCE_ID,
+        url: pin.as_ref().map_or("", |p| p.url),
+        rev: pin.as_ref().map(|p| p.rev),
+    };
+    render_product_gdl_from(
+        product_id,
+        product_path,
+        name,
+        composition,
+        default_profile,
+        &[source],
+        &BTreeMap::new(),
+        config,
+    )
+}
+
+/// [`render_product_gdl`] over several gear repositories (ADR-0046): one
+/// `source` per repository, and each `use_gear` naming the repository the
+/// engine found it in (`gear_source`, by engine id; the first repository when
+/// unknown).
+#[allow(clippy::too_many_arguments)]
+pub fn render_product_gdl_from(
+    product_id: &str,
+    product_path: &str,
+    name: &str,
+    composition: &Composition,
+    default_profile: &str,
+    sources: &[SourcePin<'_>],
+    gear_source: &BTreeMap<String, String>,
     config: &BTreeMap<String, serde_json::Map<String, Value>>,
 ) -> String {
     // `config` is keyed by engine id here; the caller maps crate names.
@@ -1453,13 +1491,20 @@ pub fn render_product_gdl(
             .map(|c| format!(", config = {}", gdl_map(c)))
             .unwrap_or_default()
     };
+    let first = sources.first().map_or(CORPUS_SOURCE_ID, |s| s.id);
+    let source_of = |id: &str| -> String {
+        gear_source
+            .get(id)
+            .filter(|s| sources.iter().any(|p| p.id == s.as_str()))
+            .map_or_else(|| first.to_string(), Clone::clone)
+    };
     let mut gears = String::new();
     for g in &composition.gears {
         if g.plugins.is_empty() {
             gears.push_str(&format!(
                 "        use_gear({}, source = {}{}),\n",
                 gdl_string(&g.id),
-                gdl_string(CORPUS_SOURCE_ID),
+                gdl_string(&source_of(&g.id)),
                 config_arg(&g.id)
             ));
         } else {
@@ -1472,41 +1517,59 @@ pub fn render_product_gdl(
             gears.push_str(&format!(
                 "        use_gear({}, source = {}{}, plugins = [{plugins}]),\n",
                 gdl_string(&g.id),
-                gdl_string(CORPUS_SOURCE_ID),
+                gdl_string(&source_of(&g.id)),
                 config_arg(&g.id)
             ));
         }
     }
     let id = gdl_string(product_id);
-    let corpus = sibling_corpus_from(product_path);
-    let (from, at) = match pin {
-        Some(p) => (
-            format!(
-                "# gears come from `{CORPUS_SOURCE_ID}` at the commit this was checked against;\n\
-                 # the Studio IDE brings that commit in when it opens the product. From a\n\
-                 # checkout of `{CORPUS_SOURCE_ID}` at that commit, resolve it with"
-            ),
-            format!(
-                "git(url = {}, rev = {})",
-                gdl_string(p.url),
-                gdl_string(p.rev)
-            ),
-        ),
-        None => (
-            format!(
-                "# gears come from the `{CORPUS_SOURCE_ID}` checkout beside this repository in a\n\
-                 # Studio workspace. Resolve it with"
-            ),
-            format!("path({})", gdl_string(&corpus)),
-        ),
+    let depth = product_path.split('/').filter(|s| !s.is_empty()).count();
+    let up = "../".repeat(depth.max(1));
+    let names = sources
+        .iter()
+        .map(|s| format!("`{}`", s.id))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let pinned = !sources.is_empty() && sources.iter().all(|s| s.rev.is_some());
+    let from = if pinned {
+        format!(
+            "# gears come from {names} at the commit this was checked against;\n\
+             # the Studio IDE brings that commit in when it opens the product. From a\n\
+             # checkout of {names} at that commit, resolve it with"
+        )
+    } else {
+        format!(
+            "# gears come from the {names} checkout beside this repository in a\n\
+             # Studio workspace. Resolve it with"
+        )
     };
+    let roots = sources
+        .iter()
+        .map(|s| format!("--root {up}{}", s.id))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let declared = sources
+        .iter()
+        .map(|s| {
+            let at = match s.rev {
+                Some(rev) => format!(
+                    "git(url = {}, rev = {})",
+                    gdl_string(s.url),
+                    gdl_string(rev)
+                ),
+                None => format!("path({})", gdl_string(&format!("{up}{}", s.id))),
+            };
+            format!("source(id = {}, at = {at})", gdl_string(s.id))
+        })
+        .collect::<Vec<_>>()
+        .join(",\n                   ");
     format!(
         "# The product this project ships, as Gearbox composes it.\n\
          #\n\
          # Written by Constructor Studio from the gears picked for the project. The\n\
          {from}\n\
          #\n\
-         #   gearbox resolve --root {corpus} --product product.gdl --profile dev\n\
+         #   gearbox resolve {roots} --product product.gdl --profile dev\n\
          #\n\
          # Reference: https://github.com/constructorfabric/gearbox/blob/main/docs/gdl.md\n\
          \n\
@@ -1514,7 +1577,7 @@ pub fn render_product_gdl(
          \x20   id = {id},\n\
          \x20   name = {name},\n\
          \x20   version = \"0.1.0\",\n\
-         \x20   sources = [source(id = {src_s}, at = {at})],\n\
+         \x20   sources = [{declared}],\n\
          \x20   profiles = [\n\
          \x20       embedded(id = \"dev\"),\n\
          \x20       self_hosted(id = \"local\", host = {id}, worker_discovery = \"directory\",\n\
@@ -1526,7 +1589,6 @@ pub fn render_product_gdl(
          {gears}\
          \x20   ],\n\
          )\n",
-        src_s = gdl_string(CORPUS_SOURCE_ID),
         name = gdl_string(name),
         profile = gdl_string(default_profile),
     )
@@ -1752,11 +1814,56 @@ pub struct GearboxStatus {
     pub corpus_ref: String,
     pub corpus_commit: Option<String>,
     pub problem: Option<String>,
+    /// Each root the engine reads, in its order.
+    pub sources: Vec<SourceStatus>,
+}
+
+/// One gear repository as the engine last read it.
+#[derive(Debug, Clone)]
+pub struct SourceStatus {
+    pub source_id: String,
+    /// `owner/repo`, or the deployment's URL for its corpus.
+    pub repo: String,
+    pub git_ref: String,
+    pub commit: Option<String>,
+    /// Gears the engine attributes to it.
+    pub gears: usize,
+    /// The gear repository connection it comes from; `None` for the
+    /// deployment's corpus.
+    pub connection_id: Option<uuid::Uuid>,
+}
+
+/// A root of the corpus: a gear repository and the id the engine knows it by.
+#[derive(Clone)]
+pub struct GearRoot {
+    pub id: String,
+    pub source: CorpusSource,
+    /// The connection it is read through; `None` for the deployment's corpus.
+    pub connection_id: Option<uuid::Uuid>,
+}
+
+impl GearRoot {
+    /// What decides whether a checkout is still the one asked for.
+    fn same(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.source.url == other.source.url
+            && self.source.git_ref == other.source.git_ref
+            && self.source.token == other.source.token
+    }
+}
+
+/// A root as it is checked out.
+#[derive(Clone)]
+struct Root {
+    id: String,
+    dir: PathBuf,
+    commit: Option<String>,
 }
 
 struct Corpus {
-    dir: PathBuf,
-    commit: Option<String>,
+    roots: Vec<Root>,
+    /// The [`RootSet`] generation these roots were checked out for.
+    generation: u64,
     refreshed: Instant,
     catalogue: Option<Arc<EngineCatalogue>>,
     /// The engine's answer verbatim, for a client that reads more of it than
@@ -1764,9 +1871,23 @@ struct Corpus {
     raw: Option<Arc<Value>>,
 }
 
-/// A repository checked out under the engine's working directory: the corpus,
-/// which is the configured one and only that (ADR-0042 §7), or a catalogue
-/// source whose files the component catalogue reads.
+impl Corpus {
+    /// The first root's commit: the one a single-corpus client shows.
+    fn commit(&self) -> Option<String> {
+        self.roots.first().and_then(|r| r.commit.clone())
+    }
+}
+
+/// The roots asked for, and when the platform's list was last read.
+struct RootSet {
+    list: Vec<GearRoot>,
+    generation: u64,
+    checked: Option<Instant>,
+}
+
+/// A repository checked out under the engine's working directory: a root of
+/// the corpus, or a catalogue source whose files the component catalogue
+/// reads.
 #[derive(Clone)]
 pub struct CorpusSource {
     /// `owner/repo@ref`, as a person reads it.
@@ -1784,12 +1905,17 @@ pub struct CorpusSource {
 pub struct Gearbox {
     cfg: GearboxConfig,
     corpus: Mutex<Option<Corpus>>,
-    source: CorpusSource,
+    roots: std::sync::Mutex<RootSet>,
 }
 
-impl Gearbox {
-    pub fn new(cfg: GearboxConfig) -> Self {
-        let source = CorpusSource {
+/// The deployment's corpus as the one root, when it names one.
+fn deployment_roots(cfg: &GearboxConfig) -> Vec<GearRoot> {
+    if cfg.corpus_url.trim().is_empty() {
+        return Vec::new();
+    }
+    vec![GearRoot {
+        id: CORPUS_SOURCE_ID.to_string(),
+        source: CorpusSource {
             label: format!(
                 "{}@{}",
                 cfg.corpus_url
@@ -1803,21 +1929,73 @@ impl Gearbox {
             username: "x-access-token".to_string(),
             token: String::new(),
             git_ref: cfg.corpus_ref.clone(),
-        };
+        },
+        connection_id: None,
+    }]
+}
+
+impl Gearbox {
+    pub fn new(cfg: GearboxConfig) -> Self {
+        let list = deployment_roots(&cfg);
         Self {
             cfg,
             corpus: Mutex::new(None),
-            source,
+            roots: std::sync::Mutex::new(RootSet {
+                list,
+                generation: 0,
+                checked: None,
+            }),
         }
     }
 
-    fn current_source(&self) -> CorpusSource {
-        self.source.clone()
+    /// The roots the corpus is read from, in the engine's order.
+    pub fn roots(&self) -> Vec<GearRoot> {
+        self.roots.lock().expect("gearbox roots").list.clone()
     }
 
-    /// The corpus repository as `owner/repo`, for comparing with a project's.
-    pub fn corpus_repo(&self) -> String {
-        repo_key(&self.current_source().url)
+    /// Whether the platform's gear repositories are due to be read again.
+    pub fn roots_due(&self) -> bool {
+        self.roots
+            .lock()
+            .expect("gearbox roots")
+            .checked
+            .is_none_or(|t| t.elapsed() >= ROOTS_RECHECK)
+    }
+
+    /// Read the corpus from `repositories` (the platform's gear repositories,
+    /// in order), or from the deployment's corpus while there are none. A
+    /// list unlike the last one is checked out afresh on the next use.
+    pub fn use_repositories(&self, repositories: Vec<GearRoot>) {
+        let list = if repositories.is_empty() {
+            deployment_roots(&self.cfg)
+        } else {
+            repositories
+        };
+        let mut set = self.roots.lock().expect("gearbox roots");
+        set.checked = Some(Instant::now());
+        let unchanged =
+            set.list.len() == list.len() && set.list.iter().zip(&list).all(|(a, b)| a.same(b));
+        if !unchanged {
+            set.list = list;
+            set.generation += 1;
+        }
+    }
+
+    /// Note a failed read of the platform's list, so it is not retried on
+    /// every request.
+    pub fn mark_roots_checked(&self) {
+        self.roots.lock().expect("gearbox roots").checked = Some(Instant::now());
+    }
+
+    fn first_source(&self) -> Option<CorpusSource> {
+        self.roots().into_iter().next().map(|r| r.source)
+    }
+
+    /// Whether `repo_key` (`owner/repo`) is one of the corpus's repositories.
+    pub fn is_corpus_repo(&self, repo_key: &str) -> bool {
+        self.roots()
+            .iter()
+            .any(|r| self::repo_key(&r.source.url) == repo_key)
     }
 
     /// The directory the corpus is checked out under; also where the
@@ -1826,24 +2004,41 @@ impl Gearbox {
         &self.cfg.workdir
     }
 
-    /// The corpus the catalogue, previews and facts are read from, as a label.
+    /// The corpus the catalogue, previews and facts are read from, as a label:
+    /// each root's `owner/repo@ref`.
     pub fn corpus_label(&self) -> String {
-        self.current_source().label
+        let labels: Vec<String> = self.roots().into_iter().map(|r| r.source.label).collect();
+        if labels.is_empty() {
+            "no gear repository".to_string()
+        } else {
+            labels.join(", ")
+        }
     }
 
-    /// Where a client can clone the corpus itself: its URL and ref, and
-    /// whether reaching it takes the token this backend holds (which is never
-    /// handed out, so such a corpus cannot be cloned from a laptop directly).
+    /// Where a client can clone the corpus's first root itself: its URL and
+    /// ref, and whether reaching it takes the token this backend holds (which
+    /// is never handed out, so such a corpus cannot be cloned from a laptop
+    /// directly). One root for now: the relay per root is ADR-0046 phase 2.
     pub fn corpus_origin(&self) -> (String, String, bool) {
-        let s = self.current_source();
-        (s.url, s.git_ref, !s.token.is_empty())
+        self.first_source()
+            .map(|s| (s.url, s.git_ref, !s.token.is_empty()))
+            .unwrap_or_default()
+    }
+
+    /// The source id of the root [`Self::corpus_origin`] names.
+    pub fn corpus_source_id(&self) -> String {
+        self.roots()
+            .into_iter()
+            .next()
+            .map_or_else(|| CORPUS_SOURCE_ID.to_string(), |r| r.id)
     }
 
     /// What the corpus Git relay sends upstream: the repository URL and the
     /// token it is read with (empty for a public corpus). Server-side only.
     pub(crate) fn corpus_fetch(&self) -> (String, String) {
-        let s = self.current_source();
-        (s.url, s.token)
+        self.first_source()
+            .map(|s| (s.url, s.token))
+            .unwrap_or_default()
     }
 
     /// Check `source` out (or bring its checkout up to date) under the engine's
@@ -1899,6 +2094,45 @@ impl Gearbox {
             Ok((_, commit, _)) => (commit, None),
             Err(e) => (None, Some(format!("{e:#}"))),
         };
+        let roots = self.roots();
+        let (commits, counts) = {
+            let guard = self.corpus.lock().await;
+            let commits: BTreeMap<String, Option<String>> = guard
+                .as_ref()
+                .map(|c| {
+                    c.roots
+                        .iter()
+                        .map(|r| (r.id.clone(), r.commit.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+            if let Some(raw) = guard.as_ref().and_then(|c| c.raw.clone()) {
+                for g in raw
+                    .get("gears")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flat_map(|m| m.values())
+                {
+                    if let Some(src) = g.get("source").and_then(Value::as_str) {
+                        *counts.entry(src.to_string()).or_default() += 1;
+                    }
+                }
+            }
+            (commits, counts)
+        };
+        let sources = roots
+            .iter()
+            .map(|r| SourceStatus {
+                source_id: r.id.clone(),
+                repo: repo_key(&r.source.url),
+                git_ref: r.source.git_ref.clone(),
+                commit: commits.get(&r.id).cloned().flatten(),
+                gears: counts.get(&r.id).copied().unwrap_or(0),
+                connection_id: r.connection_id,
+            })
+            .collect();
+        let first = roots.first().map(|r| r.source.clone());
         GearboxStatus {
             problem: if version.is_none() {
                 Some(format!(
@@ -1909,90 +2143,120 @@ impl Gearbox {
                 problem
             },
             engine_version: version,
-            corpus_url: self.cfg.corpus_url.clone(),
-            corpus_ref: self.cfg.corpus_ref.clone(),
+            corpus_url: first.as_ref().map(|s| s.url.clone()).unwrap_or_default(),
+            corpus_ref: first.map(|s| s.git_ref).unwrap_or_default(),
             corpus_commit: commit,
+            sources,
         }
     }
 
-    /// The corpus checkout, refreshed at most once per `refresh`, and its
-    /// catalogue, loaded once per commit.
+    /// The corpus's roots checked out, refreshed at most once per `refresh`
+    /// and whenever the roots asked for change, and their catalogue, loaded
+    /// once per set of commits. Returns each root's id and directory, the
+    /// first root's commit, and the catalogue.
     async fn ensure_corpus(
         &self,
-    ) -> anyhow::Result<(PathBuf, Option<String>, Arc<EngineCatalogue>)> {
+    ) -> anyhow::Result<(Vec<(String, PathBuf)>, Option<String>, Arc<EngineCatalogue>)> {
+        let (wanted, generation) = {
+            let set = self.roots.lock().expect("gearbox roots");
+            (set.list.clone(), set.generation)
+        };
+        if wanted.is_empty() {
+            bail!(
+                "no gear repository: the platform has none connected, and the deployment names \
+                 no corpus (STUDIO_GEARBOX_CORPUS_URL)"
+            );
+        }
         let mut guard = self.corpus.lock().await;
-        let stale = guard
-            .as_ref()
-            .is_none_or(|c| c.refreshed.elapsed() >= self.cfg.refresh);
+        let stale = guard.as_ref().is_none_or(|c| {
+            c.generation != generation || c.refreshed.elapsed() >= self.cfg.refresh
+        });
         if stale {
             let workdir = self.cfg.workdir.clone();
-            let s = self.current_source();
+            let asked = wanted.clone();
             let cloned = tokio::task::spawn_blocking(move || {
-                crate::connectors::sdk::git_checkout::clone_or_update(
-                    &workdir,
-                    &s.key,
-                    &s.repo,
-                    &s.url,
-                    &s.username,
-                    &s.token,
-                    Some(&s.git_ref),
-                )
+                asked
+                    .iter()
+                    .map(|r| {
+                        let s = &r.source;
+                        let git_ref = Some(s.git_ref.as_str()).filter(|g| !g.trim().is_empty());
+                        crate::connectors::sdk::git_checkout::clone_or_update(
+                            &workdir,
+                            &s.key,
+                            &s.repo,
+                            &s.url,
+                            &s.username,
+                            &s.token,
+                            git_ref,
+                        )
+                    })
+                    .collect::<Vec<_>>()
             })
             .await
             .context("corpus sync task")?;
-            match cloned {
-                Ok(c) => {
-                    let same = guard.as_ref().is_some_and(|old| old.commit == c.commit);
-                    let (catalogue, raw) = if same {
-                        guard
-                            .as_ref()
-                            .map(|old| (old.catalogue.clone(), old.raw.clone()))
-                            .unwrap_or_default()
-                    } else {
-                        (None, None)
-                    };
-                    *guard = Some(Corpus {
+            let previous = guard.as_ref().filter(|c| c.generation == generation);
+            let mut roots = Vec::with_capacity(wanted.len());
+            for (r, result) in wanted.iter().zip(cloned) {
+                match result {
+                    Ok(c) => roots.push(Root {
+                        id: r.id.clone(),
                         dir: c.dir,
                         commit: c.commit,
-                        refreshed: Instant::now(),
-                        catalogue,
-                        raw,
-                    });
+                    }),
+                    // Keep serving the checkout we have; a flaky fetch should
+                    // not turn every preview into an error.
+                    Err(e) => match previous.and_then(|p| p.roots.iter().find(|x| x.id == r.id)) {
+                        Some(kept) => {
+                            warn!(source = %r.id, error = %format!("{e:#}"), "gearbox: gear repository refresh failed; using the last checkout");
+                            roots.push(kept.clone());
+                        }
+                        None => {
+                            return Err(e.context(format!(
+                                "cannot check out the gear repository `{}` ({})",
+                                r.id, r.source.label
+                            )));
+                        }
+                    },
                 }
-                // Keep serving the checkout we have; a flaky fetch should not
-                // turn every preview into an error.
-                Err(e) if guard.is_some() => {
-                    warn!(error = %format!("{e:#}"), "gearbox: corpus refresh failed; using the last checkout");
-                    if let Some(c) = guard.as_mut() {
-                        c.refreshed = Instant::now();
-                    }
-                }
-                Err(e) => return Err(e.context("cannot check out the gear corpus")),
             }
+            let same = previous.is_some_and(|p| {
+                p.roots.len() == roots.len()
+                    && p.roots
+                        .iter()
+                        .zip(&roots)
+                        .all(|(a, b)| a.id == b.id && a.commit == b.commit)
+            });
+            let (catalogue, raw) = if same {
+                previous
+                    .map(|p| (p.catalogue.clone(), p.raw.clone()))
+                    .unwrap_or_default()
+            } else {
+                (None, None)
+            };
+            *guard = Some(Corpus {
+                roots,
+                generation,
+                refreshed: Instant::now(),
+                catalogue,
+                raw,
+            });
         }
         let corpus = guard.as_mut().expect("corpus is set above");
+        let named = link_roots(&self.cfg.workdir.join("gearbox-roots"), &corpus.roots)?;
         if corpus.catalogue.is_none() {
             let bin = self.cfg.bin.clone();
-            let dir = corpus.dir.clone();
-            let out = tokio::task::spawn_blocking(move || {
-                run_engine(
-                    &bin,
-                    &[
-                        "catalogue".into(),
-                        "--root".into(),
-                        dir.to_string_lossy().into_owned(),
-                        // The checkout directory is named by the clone helper, not after the
-                        // source; the id the descriptions are joined on has to be given.
-                        "--source-id".into(),
-                        CORPUS_SOURCE_ID.into(),
-                        "--format".into(),
-                        "json".into(),
-                    ],
-                    None,
-                )
-            })
-            .await
-            .context("catalogue task")??;
+            let mut args: Vec<String> = vec!["catalogue".into()];
+            // Each root under a directory named by its source id: the engine
+            // takes a root's id from its directory's name when there are
+            // several (`--source-id` names one root only).
+            for (_, dir) in &named {
+                args.push("--root".into());
+                args.push(dir.to_string_lossy().into_owned());
+            }
+            args.extend(["--format".into(), "json".into()]);
+            let out = tokio::task::spawn_blocking(move || run_engine(&bin, &args, None))
+                .await
+                .context("catalogue task")??;
             let raw: Value = serde_json::from_str(&out.stdout).with_context(|| {
                 format!("the engine's catalogue is not JSON: {}", out.stderr_tail())
             })?;
@@ -2002,8 +2266,8 @@ impl Gearbox {
             corpus.raw = Some(Arc::new(raw));
         }
         Ok((
-            corpus.dir.clone(),
-            corpus.commit.clone(),
+            named,
+            corpus.commit(),
             corpus.catalogue.clone().expect("catalogue is set above"),
         ))
     }
@@ -2016,7 +2280,7 @@ impl Gearbox {
         let guard = self.corpus.lock().await;
         let corpus = guard.as_ref().context("the corpus is not checked out")?;
         let raw = corpus.raw.clone().context("the corpus has no catalogue")?;
-        Ok((raw, corpus.commit.clone()))
+        Ok((raw, corpus.commit()))
     }
 
     /// [`complete`] against the current corpus.
@@ -2108,10 +2372,36 @@ impl Gearbox {
                 PROFILES.join(", ")
             );
         }
-        let (corpus, commit, catalogue) = self.ensure_corpus().await?;
+        let (named, commit, catalogue) = self.ensure_corpus().await?;
         let composition = compose(&catalogue, &input.gears);
-        let url = self.current_source().url;
-        let pin = commit.as_deref().map(|rev| CorpusPin { url: &url, rev });
+        // Each root at the commit it was read at, so the description says by
+        // itself what it was built from.
+        let checked: BTreeMap<String, Option<String>> = {
+            let guard = self.corpus.lock().await;
+            guard
+                .as_ref()
+                .map(|c| {
+                    c.roots
+                        .iter()
+                        .map(|r| (r.id.clone(), r.commit.clone()))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let roots = self.roots();
+        let pins: Vec<SourcePin<'_>> = roots
+            .iter()
+            .map(|r| SourcePin {
+                id: &r.id,
+                url: &r.source.url,
+                rev: checked.get(&r.id).and_then(|c| c.as_deref()),
+            })
+            .collect();
+        let gear_source: BTreeMap<String, String> = catalogue
+            .gears
+            .values()
+            .filter_map(|g| g.source.clone().map(|s| (g.id.clone(), s)))
+            .collect();
         // Config arrives keyed as the picks are (crate names); the description
         // names gears by engine id.
         let by_id: BTreeMap<String, serde_json::Map<String, Value>> = input
@@ -2125,13 +2415,14 @@ impl Gearbox {
                 input.product_path
             );
         }
-        let product_gdl = render_product_gdl(
+        let product_gdl = render_product_gdl_from(
             &input.product_id,
             &input.product_path,
             &input.name,
             &composition,
             &input.profile,
-            pin,
+            &pins,
+            &gear_source,
             &by_id,
         );
         // A product at its project's birth names no gears yet. There is nothing
@@ -2151,16 +2442,8 @@ impl Gearbox {
         let product_id = input.product_id.clone();
         let product_path = input.product_path.clone();
         let profile = input.profile.clone();
-        let corpus_dir = corpus.clone();
         let resolution = tokio::task::spawn_blocking(move || {
-            evaluate(
-                &bin,
-                &corpus_dir,
-                &product_id,
-                &product_path,
-                &gdl,
-                &profile,
-            )
+            evaluate(&bin, &named, &product_id, &product_path, &gdl, &profile)
         })
         .await
         .context("engine task")??;
@@ -2186,11 +2469,12 @@ pub(crate) fn is_product_path(path: &str) -> bool {
 
 /// Lay the description out the way a session workspace does — the project's
 /// repository, with the description at `product_path` in it, beside a
-/// `gears-rust` directory — then validate and, if that is clean, resolve.
+/// directory per gear repository, named by its source id — then validate and,
+/// if that is clean, resolve. A diagnostic's file is `<source id>/<path>`.
 /// Blocking.
 fn evaluate(
     bin: &Path,
-    corpus: &Path,
+    roots: &[(String, PathBuf)],
     product_id: &str,
     product_path: &str,
     gdl: &str,
@@ -2202,36 +2486,32 @@ fn evaluate(
         if let Some(dir) = product_file.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        link_dir(corpus, &scratch.join(CORPUS_SOURCE_ID))?;
+        let mut root_args: Vec<String> = Vec::new();
+        for (id, dir) in roots {
+            let link = scratch.join(id);
+            link_dir(dir, &link)?;
+            root_args.push("--root".into());
+            root_args.push(link.to_string_lossy().into_owned());
+        }
         std::fs::write(&product_file, gdl)?;
-        let root = scratch
-            .join(CORPUS_SOURCE_ID)
-            .to_string_lossy()
-            .into_owned();
         let product = product_file.to_string_lossy().into_owned();
 
-        let validate = run_engine(
-            bin,
-            &[
-                "validate".into(),
-                "--root".into(),
-                root.clone(),
-                "--source-id".into(),
-                CORPUS_SOURCE_ID.into(),
-                "--product".into(),
-                product.clone(),
-                "--format".into(),
-                "json".into(),
-            ],
-            Some(&scratch),
-        )?;
+        let mut args: Vec<String> = vec!["validate".into()];
+        args.extend(root_args.iter().cloned());
+        args.extend([
+            "--product".into(),
+            product.clone(),
+            "--format".into(),
+            "json".into(),
+        ]);
+        let validate = run_engine(bin, &args, Some(&scratch))?;
         let parsed: Value = serde_json::from_str(&validate.stdout).with_context(|| {
             format!(
                 "the engine's validation is not JSON: {}",
                 validate.stderr_tail()
             )
         })?;
-        let diagnostics = parse_diagnostics(&parsed, &scratch.join(CORPUS_SOURCE_ID));
+        let diagnostics = parse_diagnostics(&parsed, &scratch);
         let diagnostics = relabel(diagnostics);
         if diagnostics.iter().any(EngineDiagnostic::is_error) {
             return Ok(Resolution {
@@ -2240,30 +2520,24 @@ fn evaluate(
             });
         }
 
-        let resolve = run_engine(
-            bin,
-            &[
-                "resolve".into(),
-                "--root".into(),
-                root,
-                "--source-id".into(),
-                CORPUS_SOURCE_ID.into(),
-                "--product".into(),
-                product,
-                "--profile".into(),
-                profile.into(),
-                "--format".into(),
-                "json".into(),
-            ],
-            Some(&scratch),
-        )?;
+        let mut args: Vec<String> = vec!["resolve".into()];
+        args.extend(root_args);
+        args.extend([
+            "--product".into(),
+            product,
+            "--profile".into(),
+            profile.into(),
+            "--format".into(),
+            "json".into(),
+        ]);
+        let resolve = run_engine(bin, &args, Some(&scratch))?;
         let parsed: Value = serde_json::from_str(&resolve.stdout).with_context(|| {
             format!(
                 "the engine's resolution is not JSON: {}",
                 resolve.stderr_tail()
             )
         })?;
-        let mut resolution = parse_resolution(&parsed, &scratch.join(CORPUS_SOURCE_ID));
+        let mut resolution = parse_resolution(&parsed, &scratch);
         let mut all = diagnostics;
         all.extend(relabel(resolution.diagnostics));
         resolution.diagnostics = all;
@@ -2286,6 +2560,23 @@ fn relabel(diagnostics: Vec<EngineDiagnostic>) -> Vec<EngineDiagnostic> {
                 d.file = Some("product.gdl".into());
             }
             d
+        })
+        .collect()
+}
+
+/// Each root under `base/<source id>`, linked to its checkout, as the engine
+/// names a root by its directory. `base` is laid out afresh: a root that left
+/// the list must not stay a root.
+fn link_roots(base: &Path, roots: &[Root]) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    let _ = std::fs::remove_dir_all(base);
+    std::fs::create_dir_all(base).with_context(|| format!("cannot create {}", base.display()))?;
+    roots
+        .iter()
+        .map(|r| {
+            let link = base.join(&r.id);
+            link_dir(&r.dir, &link)
+                .with_context(|| format!("cannot link the gear repository `{}`", r.id))?;
+            Ok((r.id.clone(), link))
         })
         .collect()
 }
@@ -3259,5 +3550,115 @@ mod tests {
             gdl.contains(r#"use_gear("account-management", source = "gears-rust", config = {"strict": True}, plugins = [plugin("static-idp-plugin", config = {"priority": 100, "vendor": "constructorfabric"})])"#),
             "{gdl}"
         );
+    }
+
+    fn config(corpus_url: &str) -> GearboxConfig {
+        GearboxConfig {
+            bin: PathBuf::from("gearbox"),
+            workdir: std::env::temp_dir(),
+            corpus_url: corpus_url.into(),
+            corpus_ref: "main".into(),
+            refresh: DEFAULT_REFRESH,
+        }
+    }
+
+    fn repo_root(id: &str, url: &str) -> GearRoot {
+        GearRoot {
+            id: id.into(),
+            source: CorpusSource {
+                label: id.into(),
+                key: format!("gearbox-{id}"),
+                repo: id.into(),
+                url: url.into(),
+                username: "x-access-token".into(),
+                token: String::new(),
+                git_ref: String::new(),
+            },
+            connection_id: Some(uuid::Uuid::new_v4()),
+        }
+    }
+
+    fn ids(g: &Gearbox) -> Vec<String> {
+        g.roots().into_iter().map(|r| r.id).collect()
+    }
+
+    #[test]
+    fn the_platforms_gear_repositories_replace_the_deployments_corpus_until_there_are_none() {
+        let g = Gearbox::new(config("https://github.com/MikeFalcon77/gears-rust.git"));
+        assert_eq!(ids(&g), ["gears-rust"]);
+        assert!(g.roots_due());
+
+        let core = repo_root(
+            "gears-core",
+            "https://github.com/constructorfabric/gears-core.git",
+        );
+        let bss = repo_root(
+            "gears-bss",
+            "https://github.com/constructorfabric/gears-bss.git",
+        );
+        g.use_repositories(vec![core.clone(), bss.clone()]);
+        assert_eq!(ids(&g), ["gears-core", "gears-bss"]);
+        assert!(!g.roots_due());
+        assert!(g.is_corpus_repo("constructorfabric/gears-bss"));
+        assert!(!g.is_corpus_repo("MikeFalcon77/gears-rust"));
+        let generation = g.roots.lock().expect("roots").generation;
+
+        // The same list again is not a change: nothing is checked out afresh.
+        g.use_repositories(vec![core.clone(), bss.clone()]);
+        assert_eq!(g.roots.lock().expect("roots").generation, generation);
+        // Another order is: the engine's order decides which declaration wins.
+        g.use_repositories(vec![bss, core]);
+        assert_eq!(g.roots.lock().expect("roots").generation, generation + 1);
+
+        g.use_repositories(Vec::new());
+        assert_eq!(ids(&g), ["gears-rust"]);
+    }
+
+    #[test]
+    fn without_a_corpus_or_a_gear_repository_there_is_nothing_to_read() {
+        let g = Gearbox::new(config(""));
+        assert!(g.roots().is_empty());
+        assert_eq!(g.corpus_label(), "no gear repository");
+        assert_eq!(g.corpus_origin(), (String::new(), String::new(), false));
+    }
+
+    #[test]
+    fn each_gear_names_the_repository_it_came_from_and_each_repository_is_pinned() {
+        let c = compose(&catalogue(), &names(&["api-gateway", "credstore"]));
+        let gear_source: BTreeMap<String, String> =
+            [("credstore".to_string(), "gears-security".to_string())].into();
+        let gdl = render_product_gdl_from(
+            "my-shop",
+            "products/my-shop/product.gdl",
+            "My Shop",
+            &c,
+            "dev",
+            &[
+                SourcePin {
+                    id: "gears-core",
+                    url: "https://github.com/constructorfabric/gears-core.git",
+                    rev: Some("aaaa"),
+                },
+                SourcePin {
+                    id: "gears-security",
+                    url: "https://github.com/constructorfabric/gears-security.git",
+                    rev: Some("bbbb"),
+                },
+            ],
+            &gear_source,
+            &BTreeMap::new(),
+        );
+        assert!(gdl.contains(r#"source(id = "gears-core", at = git(url = "https://github.com/constructorfabric/gears-core.git", rev = "aaaa"))"#), "{gdl}");
+        assert!(gdl.contains(r#"source(id = "gears-security", at = git(url = "https://github.com/constructorfabric/gears-security.git", rev = "bbbb"))"#), "{gdl}");
+        assert!(
+            gdl.contains(r#"use_gear("credstore", source = "gears-security""#),
+            "{gdl}"
+        );
+        // A gear the engine attributes to no listed repository takes the first.
+        assert!(
+            gdl.contains(r#"use_gear("api-gateway", source = "gears-core""#),
+            "{gdl}"
+        );
+        assert!(gdl.contains("gearbox resolve --root ../../../gears-core --root ../../../gears-security --product"), "{gdl}");
     }
 }

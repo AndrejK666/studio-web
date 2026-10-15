@@ -123,10 +123,11 @@ already Studio's one way into a repository host.
   repositories are read with the platform's connections only, never with one
   an organization could name. An organization's repositories are read with
   its own connections.
-- **The deployment's corpus setting retires.** On the first start without
-  platform gear repositories, `STUDIO_GEARBOX_CORPUS_URL` / `_REF` seed one,
-  and after that they are not read. The catalogue's existing `gears` sources
-  become gear repositories in the same way, once.
+- **The deployment's corpus setting becomes a fallback.** While the platform
+  has no gear repository, `STUDIO_GEARBOX_CORPUS_URL` / `_REF` is the one
+  root. Once it has one, the setting is not read. Nothing is written for the
+  platform at start: the server has no one to act as there. The catalogue's
+  existing `gears` sources become gear repositories in phase 3.
 
 ### 4. A product names the repository of each gear
 
@@ -188,8 +189,9 @@ as today.
 
 1. **The connector type, the Sources tab and the platform's corpus.** Add the
    `gear-repository` connector, `options`, and Platform › Sources. Build the
-   engine's corpus from the platform's repositories (N roots), seeded once
-   from the deployment's setting. Show status per repository.
+   engine's corpus from the platform's repositories (N roots), with the
+   deployment's setting as the fallback while there are none. Show status per
+   repository. *Built: see studio-product's design, and the connector's.*
 2. **`product.gdl` with a source per repository**, pinned commits, and the IDE
    relay per source id.
 3. **The organization's gear repositories:** Organization › Sources, the

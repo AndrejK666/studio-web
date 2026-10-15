@@ -30,7 +30,9 @@ pub use super::driver::{
 };
 pub use super::kubernetes::ClusterAccess;
 pub use super::repository::{Repository, create_repository};
-pub use super::service::{ConnectorService, check_owned, connection_by_id, holder_of_row};
+pub use super::service::{
+    ConnectorService, GearRepositorySource, check_owned, connection_by_id, holder_of_row,
+};
 
 /// Whose connection a tenant may use: an organization, and anything under
 /// it, only one held by itself, one of its workspaces or one of its

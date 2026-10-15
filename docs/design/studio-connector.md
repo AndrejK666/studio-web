@@ -8,7 +8,7 @@ owner: studio-team
 
 - [x] `p3` - **ID**: `cpt-studio-design-connector`
 
-The gear-level design of `cpt-studio-component-connector` and its eleven
+The gear-level design of `cpt-studio-component-connector` and its thirteen
 provider plugin gears. The product-level view, and how this gear sits among
 the others, is in [Constructor Studio's design](constructor-studio.md). The
 code is [`studio-backend/src/connectors/`](../../studio-backend/src/connectors/).
@@ -40,8 +40,23 @@ There are three kinds of provider and one contract. **Source hosts** (GitHub,
 GitLab, Bitbucket) bring repositories in; **model providers** (Anthropic,
 OpenAI) hold the key the IDE agents authenticate with; **chat platforms**
 (Slack, Zulip, Discord, each with a bot-token and an incoming-webhook variant)
-are where notifications are delivered. The difference between them is only
-which capabilities of the driver contract a driver implements.
+are where notifications are delivered; **clusters** (Kubernetes) are where
+products are deployed; **gear repositories** (ADR-0046) are where a tier's gears
+come from. The difference between them is only which capabilities of the
+driver contract a driver implements.
+
+A gear repository connection is one repository, not a host: its address is
+`https://github.com/<owner>/<repo>`, and its `options` say which ref to read
+(`ref`, the default branch when absent) and the name the Gearbox engine and
+`product.gdl` know it by (`source_id`, kebab-case, the repository's name by
+default, unique among the tenant's gear repositories). Its token is optional
+(`token_optional` on the provider): a public repository is stored without one,
+and then no credstore secret is written and `secret_ref` is empty. The test
+reads the repository and the ref and counts its `gear.gdl` files ("49 gears at
+main"). The platform's gear repositories are the root tenant's; studio-product
+lists them (`ConnectorService::gear_repositories`) and checks them out for the
+engine. Options are a driver's to check (`ConnectorDriver::check_options`); a
+driver that takes none refuses any.
 
 A model-provider driver does not call its provider. `studio-llm-proxy` is
 Studio's one way out to a model provider (ADR-0039): the Anthropic and OpenAI
@@ -308,7 +323,8 @@ fail to compile: `github-connector-plugin`, `gitlab-connector-plugin`,
 `openai-connector-plugin`, `slack-connector-plugin`,
 `slack-webhook-connector-plugin`, `zulip-connector-plugin`,
 `zulip-webhook-connector-plugin`, `discord-connector-plugin`,
-`discord-webhook-connector-plugin`, `kubernetes-connector-plugin`. Each registers its instance (vendor
+`discord-webhook-connector-plugin`, `kubernetes-connector-plugin`,
+`gear-repository-connector-plugin`. Each registers its instance (vendor
 `constructorfabric`, priority 100 by default) and publishes its
 `ConnectorDriver`. A profile that does not declare the connector contract
 skips the scoped registration instead of failing the boot. Model providers

@@ -124,6 +124,7 @@ import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
 import { OrgEnvironments } from "./environments-screen";
+import { PlatformSources } from "./platform-sources";
 import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
@@ -512,6 +513,7 @@ type View =
   | "gears"
   | "platform"
   | "publications"
+  | "platform-sources"
   | "org"
   | "reports"
   | "objects"
@@ -640,6 +642,8 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
   platform: [
     // The common set every organization builds on (ADR-0042).
     { id: "platform", icon: "layers", label: "Components" },
+    // The repositories those components come from (ADR-0046).
+    { id: "platform-sources", icon: "plug", label: "Sources" },
     // What organizations ask the platform to take, answered by a curator.
     { id: "publications", icon: "package", label: "Publication requests" },
     // How the deployment itself is doing.
@@ -2586,6 +2590,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "publications" && <PublicationRequests token={token} orgId={orgAsSpace?.id} />}
+        {view === "platform-sources" && <PlatformSources token={token} isPlatformAdmin={showPlatform} />}
         {view === "environments" && orgAsSpace && (
           <OrgEnvironments
             key={orgAsSpace.id}

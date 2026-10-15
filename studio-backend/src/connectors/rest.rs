@@ -20,6 +20,7 @@
 //! those routes find the source in the project's config, read as the caller,
 //! and act with the source's own connection.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query};
@@ -156,6 +157,9 @@ pub struct ProviderDto {
     /// the channel — an incoming webhook — so a client should offer no channel
     /// picker and send no `target`.
     pub fixed_target: bool,
+    /// `true` when a connection may be stored without a credential: a public
+    /// gear repository.
+    pub token_optional: bool,
 }
 
 #[derive(Debug)]
@@ -174,8 +178,13 @@ pub struct CreateConnectionRequest {
     /// Installation root; omitted = the provider's default.
     #[serde(default)]
     pub base_url: Option<String>,
-    /// Personal access token. Stored in credstore, never returned.
+    /// Personal access token. Stored in credstore, never returned. Blank only
+    /// for a provider whose `token_optional` is true.
+    #[serde(default)]
     pub token: String,
+    /// The provider's options (a gear repository's `ref` and `source_id`).
+    #[serde(default)]
+    pub options: BTreeMap<String, String>,
     /// personal | workspace | organization (default: workspace).
     #[serde(default)]
     pub scope: Option<String>,
@@ -200,6 +209,9 @@ pub struct PatchConnectionRequest {
     /// still verified against it). Never returned.
     #[serde(default)]
     pub token: Option<String>,
+    /// Replacement options. Omitted = unchanged.
+    #[serde(default)]
+    pub options: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug)]
@@ -211,6 +223,7 @@ pub struct ProbeConnectionRequest {
     #[serde(default)]
     pub base_url: Option<String>,
     /// Credential to verify. Not stored.
+    #[serde(default)]
     pub token: String,
 }
 
@@ -238,9 +251,12 @@ pub struct ConnectionDto {
     pub base_url: String,
     pub scope: String,
     /// credstore reference of the token — hand this to studio-session as
-    /// `token_ref` instead of copying the secret around.
+    /// `token_ref` instead of copying the secret around. Empty for a
+    /// connection stored without a credential.
     pub secret_ref: String,
     pub created_at_epoch_secs: u64,
+    /// The provider's options (a gear repository's `ref` and `source_id`).
+    pub options: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -529,6 +545,7 @@ fn to_dto(c: Connection) -> ConnectionDto {
         scope: c.scope,
         secret_ref: c.secret_ref,
         created_at_epoch_secs: c.created_at_epoch_secs,
+        options: c.options,
     }
 }
 
@@ -581,6 +598,7 @@ async fn list_providers(
                 credential_label: p.credential_label,
                 credential_hint: p.credential_hint,
                 fixed_target: p.fixed_target,
+                token_optional: p.token_optional,
             })
             .collect(),
     }))
@@ -621,6 +639,7 @@ async fn patch_connection(
                 label: req.label.as_deref(),
                 base_url: req.base_url.as_deref(),
                 token: req.token.as_deref(),
+                options: req.options,
             },
         )
         .await
@@ -653,6 +672,7 @@ async fn create_connection(
                 base_url: req.base_url.as_deref(),
                 token: &req.token,
                 scope: req.scope.as_deref().unwrap_or("workspace"),
+                options: req.options,
             },
         )
         .await
