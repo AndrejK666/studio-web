@@ -431,3 +431,30 @@ mod kubernetes_plugin {
         }
     }
 }
+
+mod gear_repository_plugin {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use toolkit::Gear;
+    use toolkit::context::GearCtx;
+
+    use super::super::driver::ConnectorDriver;
+    use super::super::gear_repository::GearRepositoryDriver;
+    use super::super::gts::GEAR_REPOSITORY_INSTANCE_ID;
+    use super::{ConnectorPluginConfig, http_client, register_driver};
+
+    #[toolkit::gear(name = "gear-repository-connector-plugin", deps = [types_registry])]
+    #[derive(Default)]
+    pub struct GearRepositoryConnectorPlugin {}
+
+    #[async_trait]
+    impl Gear for GearRepositoryConnectorPlugin {
+        async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+            let cfg: ConnectorPluginConfig = ctx.config_or_default()?;
+            let driver: Arc<dyn ConnectorDriver> =
+                Arc::new(GearRepositoryDriver::new(http_client()?));
+            register_driver(ctx, GEAR_REPOSITORY_INSTANCE_ID, &cfg, driver).await
+        }
+    }
+}

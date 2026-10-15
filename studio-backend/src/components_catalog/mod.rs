@@ -120,8 +120,9 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         )))?;
 
         // The Gearbox engine is studio-product's; the catalogue reads what it
-        // says about each gear from the configured platform corpus, which a
-        // sync never changes (ADR-0042 §7). Every gear's `init` has run by now, so it is published if it
+        // says about each gear from the platform's corpus -- its gear
+        // repositories (ADR-0046) -- which an organization's sync never
+        // changes. Every gear's `init` has run by now, so it is published if it
         // is configured at all.
         let gearbox = crate::product::port::engine(&ctx.client_hub());
         if let Some(g) = &gearbox {
@@ -163,6 +164,9 @@ impl RestApiCapability for StudioComponentsCatalogGear {
 
         let _ = self.service.set(service.clone());
         let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);
+        // The engine reads the platform's gear repositories, listed on the way
+        // into a route that may run it (ADR-0046).
+        let router = crate::product::port::with_gear_roots(router, &ctx.client_hub());
         // Without it, a request that names an organization is refused rather
         // than served from the caller's home tenant.
         Ok(match org_access {

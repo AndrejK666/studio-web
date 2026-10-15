@@ -132,7 +132,7 @@ function storeSession(body: {
  * provider — google / github / microsoft — when one is configured in the
  * realm (Identity Providers section); otherwise Keycloak shows its own form.
  */
-export async function startSsoLogin(idpHint?: string): Promise<void> {
+export async function startSsoLogin(idpHint?: string, loginHint?: string): Promise<void> {
   const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
   sessionStorage.setItem(VERIFIER_KEY, verifier);
   /*
@@ -167,7 +167,72 @@ export async function startSsoLogin(idpHint?: string): Promise<void> {
     code_challenge_method: "S256",
   });
   if (idpHint) params.set("kc_idp_hint", idpHint);
+  // Pre-fills the IdP's own form, so an e-mail typed here is not asked twice.
+  if (loginHint) params.set("login_hint", loginHint);
   window.location.href = `${ISSUER}/protocol/openid-connect/auth?${params.toString()}`;
+}
+
+/** What a password sign-in came to. */
+export type PasswordSignIn =
+  | { kind: "signed-in"; session: SsoSession }
+  /** The IdP checked the credentials and said no; `reason` is for the person. */
+  | { kind: "rejected"; reason: string }
+  /** The portal could not finish here and handed over to the IdP's form. */
+  | { kind: "redirected" };
+
+/**
+ * Sign in with an e-mail and a password without leaving the portal.
+ *
+ * This is the password grant (Keycloak "Direct access grants" on the client),
+ * the only way a password typed on this page becomes a session without the
+ * browser visiting the IdP. Its costs are known and accepted for our own
+ * first-party page: the password passes through this script on its way to the
+ * IdP, and the grant cannot run anything interactive — no OTP, no "update
+ * your password", no terms to accept.
+ *
+ * So whatever the grant cannot finish goes on to the IdP's own form with the
+ * e-mail filled in, rather than failing: a client with direct grants switched
+ * off (`unauthorized_client`), and an account Keycloak calls "not fully set
+ * up" (pending required actions). Only a refusal of the credentials stays
+ * here as an error, because the IdP's form would refuse them too.
+ */
+export async function signInWithPassword(username: string, password: string): Promise<PasswordSignIn> {
+  const res = await fetch(tokenEndpoint(), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "password",
+      client_id: CLIENT_ID,
+      username,
+      password,
+      scope: "openid",
+    }),
+  });
+  if (res.ok) return { kind: "signed-in", session: storeSession(await res.json()) };
+  let body: { error?: string; error_description?: string } = {};
+  try {
+    body = await res.json();
+  } catch {
+    /* not an OAuth error body — treated as "cannot finish here" below */
+  }
+  const description = body.error_description ?? "";
+  if (body.error === "invalid_grant" && !/not fully set up/i.test(description)) {
+    return {
+      kind: "rejected",
+      reason:
+        !description || /invalid user credentials/i.test(description)
+          ? "Wrong email or password."
+          : description,
+    };
+  }
+  await startSsoLogin(undefined, username);
+  return { kind: "redirected" };
+}
+
+/** Keycloak's own "forgot password" form for this client. It needs no
+ *  sign-in in progress: given a client id, Keycloak starts one itself. */
+export function resetPasswordUrl(): string {
+  return `${ISSUER}/login-actions/reset-credentials?${new URLSearchParams({ client_id: CLIENT_ID })}`;
 }
 
 /** The return trip this tab stored, consumed so a reload cannot replay it. */

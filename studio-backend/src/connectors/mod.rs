@@ -36,6 +36,7 @@ mod bitbucket;
 pub(crate) mod clone;
 mod discord;
 mod driver;
+pub(crate) mod gear_repository; // a repository of gears a tier reads (ADR-0046)
 mod github;
 mod github_write;
 mod gitlab;
@@ -78,7 +79,7 @@ use service::ConnectorService;
 /// Every driver instance id the assembly knows how to look for. Resolution is
 /// by GTS id through ClientHub, so an id whose plugin gear is not linked
 /// simply yields no driver.
-const KNOWN_DRIVERS: [&str; 12] = [
+const KNOWN_DRIVERS: [&str; 13] = [
     gts::GITLAB_INSTANCE_ID,
     gts::GITHUB_INSTANCE_ID,
     gts::BITBUCKET_INSTANCE_ID,
@@ -91,6 +92,7 @@ const KNOWN_DRIVERS: [&str; 12] = [
     gts::DISCORD_INSTANCE_ID,
     gts::DISCORD_WEBHOOK_INSTANCE_ID,
     gts::KUBERNETES_INSTANCE_ID,
+    gts::GEAR_REPOSITORY_INSTANCE_ID,
 ];
 
 /// ClientHub key under which the notification sender is published for other

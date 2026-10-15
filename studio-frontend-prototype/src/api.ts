@@ -1248,6 +1248,9 @@ export interface ConnectorProvider {
    *  channel — an incoming webhook — so there is no channel to pick and no
    *  `target` to send. */
   fixed_target?: boolean;
+  /** True when a connection may be stored without a credential: a public
+   *  gear repository. */
+  token_optional?: boolean;
 }
 
 /** One channel a notification connection can post to.
@@ -1283,9 +1286,12 @@ export interface Connection {
   base_url: string;
   /** personal | workspace | organization */
   scope: string;
-  /** credstore reference of the token — pass as token_ref when launching a session. */
+  /** credstore reference of the token — pass as token_ref when launching a session.
+   *  Empty for a connection stored without one (a public gear repository). */
   secret_ref: string;
   created_at_epoch_secs: number;
+  /** The provider's options: a gear repository's `ref` and `source_id`. */
+  options?: Record<string, string>;
 }
 
 /* ── studio-environments: where an organization's products run (ADR-0043) ── */
@@ -2612,6 +2618,22 @@ export interface GearboxStatus {
   source_id: string;
   profiles: string[];
   problem?: string | null;
+  /** Every gear repository the engine reads, in its order (ADR-0046): the
+   *  platform's, or the deployment's corpus while it has none. */
+  sources?: GearboxSource[];
+}
+
+/** One gear repository as the engine last read it. */
+export interface GearboxSource {
+  source_id: string;
+  /** `owner/repo`. */
+  repo: string;
+  /** Empty: the repository's default branch. */
+  git_ref: string;
+  commit?: string | null;
+  gears: number;
+  /** The gear repository connection; absent for the deployment's corpus. */
+  connection_id?: string | null;
 }
 
 export interface GearboxDiagnostic {
@@ -3730,6 +3752,8 @@ export const api = {
       scope?: string;
       /** Organization (inherited by its workspaces) or a single workspace. */
       owner_tenant_id?: string;
+      /** The provider's options: a gear repository's `ref` and `source_id`. */
+      options?: Record<string, string>;
     },
   ) =>
     request<ConnectionTest>("/studio-connector/v1/connections", token, {
@@ -4954,8 +4978,8 @@ export const api = {
       token,
     ),
   /** Whether product previews can run, and against which gear corpus. */
-  gearboxStatus: (token: string) =>
-    request<GearboxStatus>(`/studio-product/v1/gearbox`, token),
+  gearboxStatus: (token: string, refresh = false) =>
+    request<GearboxStatus>(`/studio-product/v1/gearbox${refresh ? "?refresh=true" : ""}`, token),
   /** Compose a product.gdl from picked gears and resolve it with the Gearbox
    *  engine. `write` also commits it to the project's repository -- where its
    *  source's share mode says (onto the base branch, or a `product/…` branch

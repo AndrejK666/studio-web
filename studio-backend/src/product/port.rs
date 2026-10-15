@@ -108,6 +108,23 @@ pub fn engine(hub: &ClientHub) -> Option<Arc<Gearbox>> {
     hub.get::<Gearbox>().ok()
 }
 
+/// `router` with the platform's gear repositories read into the engine on the
+/// way into a route that may run it (ADR-0046). A gear whose routes use the
+/// engine wraps them with this; without an engine it is `router` unchanged.
+pub fn with_gear_roots(router: axum::Router, hub: &Arc<ClientHub>) -> axum::Router {
+    let Some(gearbox) = engine(hub) else {
+        return router;
+    };
+    let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(hub));
+    router.layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let gearbox = Arc::clone(&gearbox);
+            let connectors = connectors.clone();
+            async move { super::gear_roots::layer(gearbox, connectors, request, next).await }
+        },
+    ))
+}
+
 // ── Declare it (ADR-0041 P3) ──────────────────────────────────────────────────
 
 /// Existing code to declare a gear: where its manifest goes and what it says.

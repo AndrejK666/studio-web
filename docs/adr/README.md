@@ -58,6 +58,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0043](0043-an-organization-deploys-products-to-its-environments.md) | An organization's products run in its environments | proposed | 2026-10-13 |
 | [0044](0044-a-gear-leaves-its-project.md) | A gear leaves its project, serves the organization's projects, and can be given to another organization | proposed | 2026-10-14 |
 | [0045](0045-a-project-keeps-a-record-of-its-builds.md) | A project keeps a record of its product's builds; the portal manages them and does not build | proposed | 2026-10-14 |
+| [0046](0046-gears-come-from-connected-gear-repositories.md) | Gears come from gear repositories, connected like any other connection, several per tier | proposed | 2026-10-15 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

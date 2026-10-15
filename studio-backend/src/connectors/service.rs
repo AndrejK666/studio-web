@@ -116,6 +116,38 @@ pub struct Connection {
     #[serde(default)]
     pub created_by: String,
     pub created_at_epoch_secs: u64,
+    /// What the driver takes beside the address and the credential, checked
+    /// by it ([`super::driver::ConnectorDriver::check_options`]): a gear
+    /// repository's `ref` and `source_id`. Empty for every other kind.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub options: BTreeMap<String, String>,
+}
+
+/// A gear repository as the server clones it (ADR-0046).
+#[derive(Clone)]
+pub struct GearRepositorySource {
+    pub connection_id: Uuid,
+    /// The root's name for the engine and `product.gdl`.
+    pub source_id: String,
+    /// `owner/repo`.
+    pub repo: String,
+    /// The clone URL.
+    pub url: String,
+    /// Blank: the repository's default branch.
+    pub git_ref: String,
+    pub username: String,
+    /// Empty for a public repository. Never logged or returned.
+    pub token: String,
+}
+
+impl std::fmt::Debug for GearRepositorySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GearRepositorySource")
+            .field("source_id", &self.source_id)
+            .field("url", &self.url)
+            .field("git_ref", &self.git_ref)
+            .finish_non_exhaustive()
+    }
 }
 
 /// One request to add a connection.
@@ -140,6 +172,8 @@ pub struct NewConnection<'a> {
     /// `personal` | `workspace` | `organization` — becomes the credstore
     /// sharing mode of the stored token.
     pub scope: &'a str,
+    /// The driver's options; empty for a driver that takes none.
+    pub options: BTreeMap<String, String>,
 }
 
 /// One request to change a connection.
@@ -159,6 +193,8 @@ pub struct ConnectionEdit<'a> {
     /// Replacement credential. The change is verified against the stored one
     /// when this is absent.
     pub token: Option<&'a str>,
+    /// Replacement options, checked by the driver; kept when absent.
+    pub options: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -196,6 +232,7 @@ pub struct ProviderInfo {
     /// which channel messages land in (an incoming webhook), so there is no
     /// channel to list and none to pick.
     pub fixed_target: bool,
+    pub token_optional: bool,
 }
 
 pub struct ConnectorService {
@@ -248,6 +285,41 @@ fn resolve_base_url(
 /// permission. Whoever supplies the credential already holds it, so the move
 /// discloses nothing new — and rotating while relocating is what a real
 /// migration looks like anyway.
+/// What a refused test is put down to: the credential, unless the connection
+/// may have none -- then it is the repository or the ref that was not there.
+fn refusal(driver: &dyn ConnectorDriver) -> &'static str {
+    if driver.token_optional() {
+        "the provider refused it"
+    } else {
+        "the credential was rejected by the provider"
+    }
+}
+
+/// Two gear repositories of one tenant may not share a source id: the engine
+/// takes each as a root's directory name, and `product.gdl` names gears'
+/// repositories by it. `except` is the connection being edited.
+fn unique_source_id(
+    items: &[Connection],
+    provider: &str,
+    options: &BTreeMap<String, String>,
+    except: Option<Uuid>,
+) -> anyhow::Result<()> {
+    let key = super::gear_repository::OPTION_SOURCE_ID;
+    let Some(id) = options.get(key) else {
+        return Ok(());
+    };
+    if let Some(other) = items
+        .iter()
+        .find(|c| c.provider == provider && Some(c.id) != except && c.options.get(key) == Some(id))
+    {
+        return Err(anyhow!(
+            "the source id `{id}` is taken by `{}`; give this repository another",
+            other.label
+        ));
+    }
+    Ok(())
+}
+
 fn address_change_needs_token(
     new_base_url: &str,
     existing_base_url: &str,
@@ -322,6 +394,7 @@ impl ConnectorService {
                 credential_label: d.credential_label().to_string(),
                 credential_hint: d.credential_hint().to_string(),
                 fixed_target: d.fixed_target(),
+                token_optional: d.token_optional(),
             })
             .collect()
     }
@@ -384,6 +457,47 @@ impl ConnectorService {
         tenant: Uuid,
     ) -> anyhow::Result<Vec<Connection>> {
         Ok(self.load(ctx, tenant).await?.items)
+    }
+
+    /// The gear repositories `tenant` itself holds (ADR-0046), oldest first,
+    /// each with what a clone needs. Only the tenant's own: the platform's
+    /// are read in the root, an organization's in the organization, and an
+    /// inherited row is not the tenant's repository. The token is for the
+    /// server's clone and never leaves it.
+    pub async fn gear_repositories(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+    ) -> anyhow::Result<Vec<GearRepositorySource>> {
+        use super::gear_repository::{OPTION_REF, OPTION_SOURCE_ID, PROVIDER};
+        let mut rows: Vec<Connection> = self
+            .load_own(ctx, tenant)
+            .await?
+            .items
+            .into_iter()
+            .filter(|c| c.provider == PROVIDER)
+            .collect();
+        rows.sort_by_key(|c| c.created_at_epoch_secs);
+        let driver = self.driver(PROVIDER)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for c in rows {
+            let Some(source_id) = c.options.get(OPTION_SOURCE_ID).cloned() else {
+                continue;
+            };
+            let url = driver.clone_url(&c.base_url, "")?;
+            let token = self.auth(ctx, &c).await?.token;
+            let (username, _) = driver.clone_credentials(&token);
+            out.push(GearRepositorySource {
+                connection_id: c.id,
+                source_id,
+                repo: super::gear_repository::repository_of(&c.base_url)?,
+                url,
+                git_ref: c.options.get(OPTION_REF).cloned().unwrap_or_default(),
+                username: username.to_string(),
+                token,
+            });
+        }
+        Ok(out)
     }
 
     /// The tenant, `from` or one of its ancestors, whose catalogue lists
@@ -508,6 +622,13 @@ impl ConnectorService {
 
     /// Assemble driver credentials for a stored connection.
     async fn auth(&self, ctx: &SecurityContext, c: &Connection) -> anyhow::Result<ConnectionAuth> {
+        // Stored without a credential (a public gear repository).
+        if c.secret_ref.is_empty() {
+            return Ok(ConnectionAuth {
+                base_url: c.base_url.clone(),
+                token: String::new(),
+            });
+        }
         let key = SecretRef::new(&c.secret_ref)
             .map_err(|e| anyhow!("bad secret reference '{}': {e}", c.secret_ref))?;
         let secret = self
@@ -550,6 +671,7 @@ impl ConnectorService {
             base_url,
             token,
             scope,
+            options,
         } = req;
         let driver = self.driver(provider)?;
         let label = label.trim();
@@ -557,32 +679,47 @@ impl ConnectorService {
             return Err(anyhow!("label is required"));
         }
         let token = token.trim();
-        if token.is_empty() {
+        if token.is_empty() && !driver.token_optional() {
             return Err(anyhow!("token is required"));
         }
         let base_url = resolve_base_url(driver.as_ref(), base_url)?;
         let scope = ConnectionScope::parse(scope)?;
+        let options = driver.check_options(&base_url, &options)?;
+        let mut catalogue = self.load_own(ctx, owner_tenant).await?;
+        unique_source_id(&catalogue.items, provider, &options, None)?;
 
         let identity = driver
-            .test(&ConnectionAuth {
-                base_url: base_url.clone(),
-                token: token.to_string(),
-            })
-            .await
-            .context("the credential was rejected by the provider")?;
-
-        let id = Uuid::new_v4();
-        let secret_ref = format!("studio-connection-{id}");
-        let key = SecretRef::new(&secret_ref).map_err(|e| anyhow!("bad secret reference: {e}"))?;
-        self.credstore
-            .create(
-                ctx,
-                &key,
-                SecretValue::new(token.as_bytes().to_vec()),
-                scope.sharing(),
+            .test_with_options(
+                &ConnectionAuth {
+                    base_url: base_url.clone(),
+                    token: token.to_string(),
+                },
+                &options,
             )
             .await
-            .map_err(|e| anyhow!("cannot store the token: {e}"))?;
+            .context(refusal(driver.as_ref()))?;
+
+        let id = Uuid::new_v4();
+        // No credential, no secret: a public gear repository is read
+        // anonymously, and [`Self::auth`] reads an empty reference as that.
+        let secret_ref = if token.is_empty() {
+            String::new()
+        } else {
+            format!("studio-connection-{id}")
+        };
+        if !token.is_empty() {
+            let key =
+                SecretRef::new(&secret_ref).map_err(|e| anyhow!("bad secret reference: {e}"))?;
+            self.credstore
+                .create(
+                    ctx,
+                    &key,
+                    SecretValue::new(token.as_bytes().to_vec()),
+                    scope.sharing(),
+                )
+                .await
+                .map_err(|e| anyhow!("cannot store the token: {e}"))?;
+        }
 
         let connection = Connection {
             id,
@@ -595,8 +732,8 @@ impl ConnectorService {
             scope: scope.as_str().to_string(),
             created_by: ctx.subject_id().to_string(),
             created_at_epoch_secs: now_secs(),
+            options,
         };
-        let mut catalogue = self.load_own(ctx, owner_tenant).await?;
         catalogue.items.push(connection.clone());
         self.store(ctx, owner_tenant, &catalogue).await?;
         Ok((connection, identity))
@@ -613,7 +750,7 @@ impl ConnectorService {
     ) -> anyhow::Result<DriverIdentity> {
         let driver = self.driver(provider)?;
         let token = token.trim();
-        if token.is_empty() {
+        if token.is_empty() && !driver.token_optional() {
             return Err(anyhow!("token is required"));
         }
         let base_url = resolve_base_url(driver.as_ref(), base_url)?;
@@ -743,6 +880,7 @@ impl ConnectorService {
             label,
             base_url,
             token,
+            options,
         } = edit;
         let existing = self.find(ctx, tenant, id).await?;
         let driver = self.driver(&existing.provider)?;
@@ -798,6 +936,12 @@ impl ConnectorService {
         address_change_needs_token(&base_url, &existing.base_url, token)?;
 
         let rotating = token.is_some();
+        // A connection stored without a credential has no secret to rotate.
+        if rotating && existing.secret_ref.is_empty() {
+            return Err(anyhow!(
+                "this connection was stored without a token; remove it and add it again with one"
+            ));
+        }
         let token = match token {
             Some(t) => {
                 let t = t.trim();
@@ -808,14 +952,21 @@ impl ConnectorService {
             }
             None => self.auth(ctx, &existing).await?.token,
         };
+        let options = match options {
+            Some(o) => driver.check_options(&base_url, &o)?,
+            None => existing.options.clone(),
+        };
 
         let identity = driver
-            .test(&ConnectionAuth {
-                base_url: base_url.clone(),
-                token: token.clone(),
-            })
+            .test_with_options(
+                &ConnectionAuth {
+                    base_url: base_url.clone(),
+                    token: token.clone(),
+                },
+                &options,
+            )
             .await
-            .context("the credential was rejected by the provider")?;
+            .context(refusal(driver.as_ref()))?;
 
         if rotating {
             let key = SecretRef::new(&existing.secret_ref)
@@ -841,6 +992,7 @@ impl ConnectorService {
         // where it is defined.
         let owner = existing.owner_tenant_id;
         let mut catalogue = self.load_own(ctx, owner).await?;
+        unique_source_id(&catalogue.items, &existing.provider, &options, Some(id))?;
         let Some(slot) = catalogue.items.iter_mut().find(|c| c.id == id) else {
             return Err(anyhow!(
                 "connection {id} is inherited from tenant {owner} and cannot be edited from here"
@@ -848,6 +1000,7 @@ impl ConnectorService {
         };
         slot.label = label;
         slot.base_url = base_url;
+        slot.options = options;
         // Re-stamp the account: a rotated credential may belong to a different
         // person, and a stale name here is exactly the kind of thing nobody
         // notices until it matters.
@@ -1688,7 +1841,33 @@ mod default_connection_tests {
             scope: scope.into(),
             created_by: String::new(),
             created_at_epoch_secs: 0,
+            options: Default::default(),
         }
+    }
+
+    #[test]
+    fn two_gear_repositories_of_a_tenant_never_share_a_source_id() {
+        let opts = |id: &str| -> BTreeMap<String, String> {
+            [("source_id".to_string(), id.to_string())].into()
+        };
+        let mut core = conn("core", "gear-repository", "organization");
+        core.options = opts("gears-core");
+        let github = conn("gh", "github", "organization");
+        let items = vec![core.clone(), github];
+        let taken = unique_source_id(&items, "gear-repository", &opts("gears-core"), None)
+            .expect_err("a second gears-core is refused");
+        assert!(taken.to_string().contains("`core`"), "{taken}");
+        unique_source_id(&items, "gear-repository", &opts("gears-bss"), None).expect("free");
+        // Editing a repository keeps its own id.
+        unique_source_id(
+            &items,
+            "gear-repository",
+            &opts("gears-core"),
+            Some(core.id),
+        )
+        .expect("its own");
+        // Options of a driver that takes none never collide.
+        unique_source_id(&items, "github", &BTreeMap::new(), None).expect("no options");
     }
 
     #[test]

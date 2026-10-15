@@ -674,6 +674,14 @@ export const SURFACES: Surface[] = [
     gears: ["studio-components-catalog", "studio-user"],
   },
   {
+    id: "platform-sources",
+    area: "organization",
+    title: "Platform sources",
+    does: "List the platform's gear repositories, which the Gearbox engine reads together as the corpus every organization builds on; a platform administrator adds one (a gear-repository connection, tested first) or removes it.",
+    components: ["PlatformSources", "AddGearRepository"],
+    gears: ["studio-connector", "studio-product"],
+  },
+  {
     id: "organization-dashboard",
     area: "organization",
     title: "Organization dashboard",

@@ -245,6 +245,28 @@ pub struct GearboxStatusDto {
     pub profiles: Vec<String>,
     /// Why previews will fail, when they will.
     pub problem: Option<String>,
+    /// Every gear repository the engine reads, in its order (ADR-0046): the
+    /// platform's, or the deployment's corpus while it has none.
+    pub sources: Vec<GearboxSourceDto>,
+}
+
+/// One gear repository as the engine last read it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearboxSourceDto {
+    /// The id the engine and `product.gdl` know it by.
+    pub source_id: String,
+    /// `owner/repo`.
+    pub repo: String,
+    /// Empty: the repository's default branch.
+    pub git_ref: String,
+    pub commit: Option<String>,
+    /// Gears the engine found in it.
+    pub gears: u32,
+    /// The gear repository connection it is read through; absent for the
+    /// deployment's corpus.
+    #[schema(value_type = Option<String>)]
+    pub connection_id: Option<Uuid>,
 }
 
 /// Save what a project's product is made of. Every field is optional and
@@ -1065,7 +1087,7 @@ async fn gearbox_catalogue(
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let (corpus_url, corpus_ref, corpus_needs_token) = gearbox.corpus_origin();
     Ok(Json(GearboxCatalogueDto {
-        source_id: CORPUS_SOURCE_ID.to_string(),
+        source_id: gearbox.corpus_source_id(),
         corpus: gearbox.corpus_label(),
         corpus_url,
         corpus_ref,
@@ -1198,6 +1220,7 @@ async fn gearbox_status(
             source_id: CORPUS_SOURCE_ID.to_string(),
             profiles,
             problem: Some("STUDIO_GEARBOX_WORKDIR is not set".to_string()),
+            sources: Vec::new(),
         }));
     };
     let status = gearbox.status().await;
@@ -1207,9 +1230,21 @@ async fn gearbox_status(
         corpus_url: Some(status.corpus_url),
         corpus_ref: Some(status.corpus_ref),
         corpus_commit: status.corpus_commit,
-        source_id: CORPUS_SOURCE_ID.to_string(),
+        source_id: gearbox.corpus_source_id(),
         profiles,
         problem: status.problem,
+        sources: status
+            .sources
+            .into_iter()
+            .map(|s| GearboxSourceDto {
+                source_id: s.source_id,
+                repo: s.repo,
+                git_ref: s.git_ref,
+                commit: s.commit,
+                gears: u32::try_from(s.gears).unwrap_or(u32::MAX),
+                connection_id: s.connection_id,
+            })
+            .collect(),
     }))
 }
 
@@ -1787,12 +1822,19 @@ pub fn register_routes(
         .summary("Whether product previews can run, and against which gear corpus")
         .description(
             "Reports the Gearbox engine version and the gear corpus checkout \
-             previews resolve against. A session opened for a product project \
-             checks out the same corpus beside the project, under `source_id`.",
+             previews resolve against: every gear repository it reads, in order \
+             (ADR-0046). A session opened for a product project checks out the \
+             first beside the project, under `source_id`.",
         )
         .tag("StudioProduct")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(
+            "refresh",
+            false,
+            "`true`: list the platform's gear repositories again now, rather than \
+             within the minute",
+        )
         .handler(gearbox_status)
         .json_response_with_schema::<GearboxStatusDto>(openapi, StatusCode::OK, "Engine status")
         .error_401(openapi)

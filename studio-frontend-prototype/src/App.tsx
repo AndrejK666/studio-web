@@ -124,6 +124,7 @@ import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
 import { OrgEnvironments } from "./environments-screen";
+import { PlatformSources } from "./platform-sources";
 import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
@@ -415,86 +416,173 @@ function Login({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const sso = (idpHint?: string) =>
-    import("./oidc").then(({ startSsoLogin }) => startSsoLogin(idpHint));
+  const [tab, setTab] = useState<"sign-in" | "create">("sign-in");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+
+  // GitHub is the one federated way in. kc_idp_hint takes the browser through
+  // Keycloak straight on to GitHub with a 303, so no Keycloak page is drawn on
+  // the way. A hint the realm has not switched on is ignored, and Keycloak then
+  // shows its own form — which is why Google and Microsoft, never enabled
+  // there, used to land people on a Keycloak page. They come back here when
+  // their identity providers do.
+  const github = () => {
+    setBusy(true);
+    void import("./oidc").then(({ startSsoLogin }) => startSsoLogin("github"));
+  };
+
+  const signIn = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const { signInWithPassword } = await import("./oidc");
+      const outcome = await signInWithPassword(email.trim(), password);
+      if (outcome.kind === "signed-in") {
+        const who = await api.me(outcome.session.accessToken);
+        onLogin(outcome.session.accessToken, who);
+      } else if (outcome.kind === "rejected") {
+        setBusy(false);
+        setError(outcome.reason);
+      }
+      // "redirected": the page is already on its way to the IdP.
+    } catch (err) {
+      setBusy(false);
+      setError(errText(err));
+    }
+  };
+
+  const forgotPassword = () =>
+    void import("./oidc").then(({ resetPasswordUrl }) => {
+      window.location.href = resetPasswordUrl();
+    });
+
+  const githubButton = (
+    <button
+      type="button"
+      className="auth-provider"
+      title="GitHub (via Keycloak identity federation)"
+      disabled={busy}
+      onClick={github}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0C19.3 4.7 20.3 5 20.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.2c0 .3.2.6.8.5A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/></svg>
+      GitHub
+    </button>
+  );
 
   return (
-    // The deployed sign-in screen's two panes: the story on a dark-to-blue
-    // gradient, and a white card of a fixed 480x640 beside it. Taken from the
-    // portal's own first-paint skeleton (the .initial-auth-* block inlined in
-    // its index.html), so the proportions are the product's rather than a
-    // reading of a screenshot.
+    // One centred column on a dark-to-blue field: the mark, the headline, and
+    // a two-pane panel — e-mail and password on the left, GitHub on the right.
+    // The gradient is authored art, identical in both themes, so it is not
+    // mixed from tokens.
     <div className="auth-shell">
-      <section className="auth-story">
-        <div>
-          <p className="auth-brand">Constructor Studio</p>
-          <div className="auth-rule" />
-          <h1 className="auth-title">
-            From requirements
-            <br />
-            to production.
-          </h1>
-          <p className="auth-copy">
-            Let’s AI define, build, and run software end to end — with reusable components,
-            operational automation, and built-in productivity measurement and insights.
-          </p>
-        </div>
-      </section>
+      <div className="auth-column">
+        <p className="auth-brand">
+          <img src={PRODUCT_MARK} alt="" width={24} height={24} />
+          Constructor Studio
+        </p>
+        <h1 className="auth-title">
+          Open-source <span className="auth-accent">AI fabric</span>{" "}
+          <br />
+          for Software as a Service.
+        </h1>
 
-      <section className="auth-panel-wrap">
         <div className="auth-panel">
-          <p className="auth-kicker">Welcome back</p>
-          <h2 className="auth-heading">Sign in to Constructor Studio</h2>
-          <p className="auth-panel-copy">
-            Use your work account to continue across the full software development lifecycle.
-          </p>
+          <div className="auth-local">
+            <div className="auth-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "sign-in"}
+                className={tab === "sign-in" ? "active" : ""}
+                onClick={() => setTab("sign-in")}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "create"}
+                className={tab === "create" ? "active" : ""}
+                onClick={() => setTab("create")}
+              >
+                Create account
+              </button>
+            </div>
 
-          {/* The product puts an e-mail and a password here, above the SSO
-              button. This portal has no password of its own — every sign-in is
-              a redirect to Keycloak — so the slot carries the real primary
-              action instead of two inputs that would look like a credential
-              form and accept nothing. Drawing a dead password field on a sign-in
-              screen is worse than not matching the mock: people type real
-              passwords into fields that look like this one. */}
-          <button className="primary auth-submit" disabled={busy} onClick={() => void sso()}>
-            {busy ? "Signing in…" : "Continue with Constructor ID"}
-          </button>
+            {tab === "sign-in" ? (
+              // A real form: the password goes from here to the IdP's token
+              // endpoint (signInWithPassword), and whatever that cannot finish
+              // continues on the IdP's own page with the e-mail filled in.
+              <form className="auth-form" onSubmit={(e) => void signIn(e)}>
+                <label className="auth-field">
+                  <span>Work email</span>
+                  <input
+                    type="text"
+                    autoComplete="username"
+                    placeholder="name@company.com"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </label>
+                <label className="auth-field">
+                  <span className="auth-field-head">
+                    Password
+                    <button type="button" className="auth-link" onClick={forgotPassword}>
+                      Forgot password?
+                    </button>
+                  </span>
+                  <span className="auth-password">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      placeholder="Enter your password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="auth-eye"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      onClick={() => setShowPassword((v) => !v)}
+                    >
+                      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+                        <circle cx="12" cy="12" r="3" />
+                        {!showPassword && <path d="m3 3 18 18" />}
+                      </svg>
+                    </button>
+                  </span>
+                </label>
+                <button type="submit" className="primary auth-submit" disabled={busy}>
+                  {busy ? "Signing in…" : "Sign in"}
+                </button>
+              </form>
+            ) : (
+              // Studio accounts are not opened from a form: the first GitHub
+              // sign-in creates the identity, and an organization owner then
+              // lets it in. Saying so beats a form that ends in a refusal.
+              <div className="auth-form">
+                <p className="auth-copy">
+                  Your Studio account is created the first time you sign in with GitHub. An
+                  organization owner then invites you to its workspaces.
+                </p>
+                {githubButton}
+              </div>
+            )}
 
-          <div className="auth-divider" />
-
-          {/* Where the product shows Google, we show GitHub — it is the identity
-              our people actually carry, and the one the access-pending screen
-              already names ("Your GitHub sign-in succeeded"). Routed through
-              Keycloak by kc_idp_hint, so it works once the matching Identity
-              Provider exists in the realm and falls back to Keycloak's own form
-              until then. */}
-          <button
-            className="auth-provider"
-            title="GitHub (via Keycloak identity federation)"
-            disabled={busy}
-            onClick={() => void sso("github")}
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.5v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0C19.3 4.7 20.3 5 20.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.2c0 .3.2.6.8.5A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/></svg>
-            Continue with GitHub
-          </button>
-
-          {/* Google and Microsoft still federate; they are kept as a quiet row
-              rather than deleted, because removing a working way in to match a
-              layout costs somebody their account. */}
-          <div className="auth-more">
-            <button title="Google (via Keycloak identity federation)" disabled={busy} onClick={() => void sso("google")}>
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.2H12v4.1h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.7 2.9c2.3-2.1 3.7-5.1 3.7-8.6z"/><path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.7-2.9c-1 .7-2.4 1.2-4.2 1.2-3.1 0-5.8-2.1-6.7-5l-3.9 3C3.3 21.3 7.3 24 12 24z"/><path fill="#FBBC05" d="M5.3 14.4a7.4 7.4 0 0 1 0-4.7l-3.9-3a12 12 0 0 0 0 10.7l3.9-3z"/><path fill="#EA4335" d="M12 4.7c1.8 0 3 .8 3.7 1.4l3.3-3.2C17.9 1.1 15.2 0 12 0 7.3 0 3.3 2.7 1.4 6.7l3.9 3c.9-2.9 3.6-5 6.7-5z"/></svg>
-              Google
-            </button>
-            <button title="Microsoft (via Keycloak identity federation)" disabled={busy} onClick={() => void sso("microsoft")}>
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="13" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="13" width="10" height="10" fill="#00A4EF"/><rect x="13" y="13" width="10" height="10" fill="#FFB900"/></svg>
-              Microsoft
-            </button>
+            {error && <div className="error auth-error">{error}</div>}
           </div>
 
-          {error && <div className="error auth-error">{error}</div>}
+          <div className="auth-federated">
+            <p className="auth-kicker">Or continue with</p>
+            {githubButton}
+          </div>
         </div>
-      </section>
+      </div>
     </div>
   );
 }
@@ -512,10 +600,9 @@ type View =
   | "gears"
   | "platform"
   | "publications"
+  | "platform-sources"
   | "org"
   | "reports"
-  | "objects"
-  | "views"
   | "tasks"
   | "system"
   | "profile";
@@ -640,6 +727,8 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
   platform: [
     // The common set every organization builds on (ADR-0042).
     { id: "platform", icon: "layers", label: "Components" },
+    // The repositories those components come from (ADR-0046).
+    { id: "platform-sources", icon: "plug", label: "Sources" },
     // What organizations ask the platform to take, answered by a curator.
     { id: "publications", icon: "package", label: "Publication requests" },
     // How the deployment itself is doing.
@@ -657,9 +746,6 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     { id: "gears", icon: "package", label: "Components" },
     // Every report the Studio draws, configured once for the organization.
     { id: "reports", icon: "activity", label: "Reports" },
-    // The type catalogue, and the lists of its objects people save.
-    { id: "objects", icon: "grid", label: "Objects" },
-    { id: "views", icon: "grid", label: "Views" },
     // Its studio-tasks runs and studio-scheduler schedules.
     { id: "tasks", icon: "scan", label: "Background work" },
   ],
@@ -682,7 +768,9 @@ type AdminView =
   | "connectors"
   | "secrets"
   | "tenants"
-  | "workspaces";
+  | "workspaces"
+  | "objects"
+  | "views";
 
 /** Administration that survives concept v2: people, the shared catalogue,
  *  credentials. The tenant hierarchy (organizations, the raw workspace list)
@@ -695,6 +783,11 @@ const ADMIN_NAV: { id: AdminView; icon: string; label: string }[] = [
   { id: "access", icon: "shield", label: "Access" },
   { id: "connectors", icon: "plug", label: "Integrations" },
   { id: "secrets", icon: "key", label: "Secrets" },
+  // The type catalogue and the saved lists of its objects. They shape what
+  // the organization's screens show, so they are set up here, once, rather
+  // than sitting among the sections people work in.
+  { id: "objects", icon: "grid", label: "Objects" },
+  { id: "views", icon: "grid", label: "Views" },
 ];
 
 const PLATFORM_NAV: { id: AdminView; icon: string; label: string }[] = [
@@ -897,7 +990,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   useDismiss(productMenuRef, productMenu, closeProductMenu);
   // What sits above PLATFORM in the rail. Persisted per browser; see pins.ts
   // for why the group it replaced had stopped meaning anything.
-  const [pins, setPins] = useState<Pin[]>(() => loadPins());
+  // A pin to a section that has since moved (Objects and Views went to
+  // administration) would open nothing, so it is dropped on load.
+  const [pins, setPins] = useState<Pin[]>(() =>
+    loadPins().filter(
+      (p) => p.kind !== "view" || NAV_SECTIONS.some((s) => s.items.some((i) => i.id === p.id)),
+    ),
+  );
   const [pinPicker, setPinPicker] = useState(false);
   const setPinned = (next: Pin[]) => {
     setPins(next);
@@ -2545,6 +2644,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 </div>
               ))}
             {adminView === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
+            {adminView === "objects" && <ObjectTypes token={token} query={filters.query} />}
+            {adminView === "views" && <ViewsScreen token={token} />}
           </>
         ) : dash ? (
           <WorkspaceDashboard
@@ -2586,6 +2687,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "publications" && <PublicationRequests token={token} orgId={orgAsSpace?.id} />}
+        {view === "platform-sources" && <PlatformSources token={token} isPlatformAdmin={showPlatform} />}
         {view === "environments" && orgAsSpace && (
           <OrgEnvironments
             key={orgAsSpace.id}
@@ -2668,8 +2770,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             projects={workspaces.filter((w) => w.orgId === orgAsSpace?.id).map((w) => ({ id: w.id, name: w.name }))}
           />
         )}
-        {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
-        {view === "views" && <ViewsScreen token={token} />}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
         {view === "system" && (
           <SystemView token={token} filters={filters} tenant={orgAsSpace} meId={me.subject_id} />

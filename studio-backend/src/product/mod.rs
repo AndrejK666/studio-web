@@ -14,6 +14,7 @@
 //! `gear.gdl` says) and a project's gear repository, both through
 //! [`port`].
 
+mod gear_roots;
 mod gearbox;
 mod new_gear;
 pub mod port;
@@ -58,7 +59,7 @@ impl Gear for StudioProductGear {
                 workdir = %cfg.workdir.display(),
                 corpus = %cfg.corpus_url,
                 corpus_ref = %cfg.corpus_ref,
-                "studio-product: product previews through the Gearbox engine"
+                "studio-product: product previews through the Gearbox engine; the platform's gear repositories replace this corpus once connected"
             );
             let engine = Arc::new(gearbox::Gearbox::new(cfg));
             ctx.client_hub()
@@ -128,6 +129,8 @@ impl RestApiCapability for StudioProductGear {
 
         let gearbox = port::engine(&ctx.client_hub());
         let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);
+        // The platform's gear repositories, read on the way in (ADR-0046).
+        let router = port::with_gear_roots(router, &ctx.client_hub());
         // Without it, a request that names an organization is refused rather
         // than served from the caller's home tenant.
         Ok(match org_access {
