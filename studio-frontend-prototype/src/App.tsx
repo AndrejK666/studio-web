@@ -126,6 +126,7 @@ import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
 import { OrgEnvironments } from "./environments-screen";
+import { OrgCosts } from "./costs-screen";
 import { OrgSources, PlatformSources } from "./platform-sources";
 import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
@@ -599,6 +600,7 @@ type View =
   | "files"
   | "connectors"
   | "environments"
+  | "costs"
   | "gears"
   | "platform"
   | "publications"
@@ -694,6 +696,12 @@ function NavIcon({ name }: { name: string }) {
     // lucide `activity` and `clock-3`, the two the shipped project-sidebar uses
     // for those sections.
     activity: <path d="M3 12h4l3 8 4-16 3 8h4" />,
+    coins: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M14.5 9.2A2.6 2.6 0 0 0 12 7.8c-1.4 0-2.5.8-2.5 1.9s1.1 1.7 2.5 2 2.5.8 2.5 2-1.1 2-2.5 2a2.6 2.6 0 0 1-2.5-1.5M12 6.3v1.5M12 16.2v1.5" />
+      </>
+    ),
     clock: (
       <>
         <circle cx="12" cy="12" r="9" />
@@ -745,6 +753,8 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     { id: "connectors", icon: "plug", label: "Connections" },
     // Where its products run: clusters, registries, approvals (ADR-0043).
     { id: "environments", icon: "layers", label: "Environments" },
+    // What its model calls and IDE sessions cost, and the prices (issue #781).
+    { id: "costs", icon: "coins", label: "Costs" },
     // What its projects build: the registry, candidates, its gear repository.
     { id: "gears", icon: "package", label: "Components" },
     // Its own gear repositories, read after the platform's (ADR-0046).
@@ -2694,6 +2704,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         {view === "publications" && <PublicationRequests token={token} orgId={orgAsSpace?.id} />}
         {view === "platform-sources" && <PlatformSources token={token} isPlatformAdmin={showPlatform} />}
         {view === "org-sources" && <OrgSources token={token} orgId={orgAsSpace?.id} />}
+        {view === "costs" && orgAsSpace && (
+          <OrgCosts
+            key={orgAsSpace.id}
+            token={token}
+            org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
+            you={me.subject_id}
+          />
+        )}
         {view === "environments" && orgAsSpace && (
           <OrgEnvironments
             key={orgAsSpace.id}

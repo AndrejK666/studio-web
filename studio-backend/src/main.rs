@@ -52,7 +52,7 @@ mod tasks; // studio-tasks: durable background runs (queue + history + cancel)
 mod test_env; // one lock for the process environment, shared by every test that sets a variable
 #[cfg(test)]
 mod test_pg; // one PostgreSQL for the whole test process, shared by the suites that keep tables
-mod usage; // usage metering: what model calls and IDE sessions use, recorded with usage-collector
+mod usage; // studio-usage: what model calls and IDE sessions use (usage-collector), and what it costs
 mod user_profile; // studio-user: canonical user + profile + sign-in methods (identity mapper)
 
 use std::path::{Path, PathBuf};
@@ -428,7 +428,7 @@ mod operation_docs_tests {
     /// A module missing from this list is simply not checked, so add the entry
     /// with the module: [`every_rest_module_is_listed`] catches the common way
     /// of forgetting, but it cannot see a module nobody mentioned anywhere.
-    const REST_MODULES: [(&str, &str); 20] = [
+    const REST_MODULES: [(&str, &str); 21] = [
         ("artifact_ingest", include_str!("artifact_ingest/rest.rs")),
         ("assembly", include_str!("assembly/rest.rs")),
         (
@@ -454,6 +454,7 @@ mod operation_docs_tests {
         ("studio_session", include_str!("studio_session/rest.rs")),
         ("studio_theia", include_str!("studio_theia/rest.rs")),
         ("tasks", include_str!("tasks/rest.rs")),
+        ("usage", include_str!("usage/rest.rs")),
         ("user_profile", include_str!("user_profile/rest.rs")),
     ];
 

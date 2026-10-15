@@ -801,6 +801,30 @@ Knows nothing about tasks, repositories or sessions; producers bring their own p
 - `cpt-studio-component-theia-bridge` — is published to by, with IDE events
 - `cpt-studio-component-portal-shell` — is consumed by
 
+#### studio-usage
+
+- [x] `p2` - **ID**: `cpt-studio-component-usage`
+
+Design: [studio-usage](studio-usage.md)
+
+##### Why this component exists
+
+An organization asked what its models and IDE sessions cost it (issue #781).
+
+##### Responsibility scope
+
+`studio-backend/src/usage/`: what studio-llm-proxy and studio-session record with the platform's `usage-collector`, an organization's price list, and `/studio-usage/v1/{prices,costs}`.
+
+##### Responsibility boundaries
+
+The records are the collector's; budgets and limits are not here yet.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-llm-proxy` — records model calls through
+- `cpt-studio-component-session` — records sessions through
+- `cpt-studio-component-platform-feature-gears` — stores in usage-collector
+
 #### studio-tasks
 
 - [x] `p2` - **ID**: `cpt-studio-component-tasks`

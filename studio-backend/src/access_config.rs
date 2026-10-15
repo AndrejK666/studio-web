@@ -47,7 +47,7 @@ pub const ROLE_OWNER: &str = "owner";
 /// purpose: projects are account-management tenants (ADR-0010), so reaching one
 /// is membership rather than a privilege, and an entry that must be granted to
 /// everybody in order not to break them is worse than no entry.
-pub const PRIVILEGES: [&str; 16] = [
+pub const PRIVILEGES: [&str; 18] = [
     "people.view",
     "people.invite",
     "people.manage",
@@ -70,6 +70,10 @@ pub const PRIVILEGES: [&str; 16] = [
     // Deployment environments (ADR-0043): changing them, and deciding about a
     // deploy to a protected one, is administration asked of studio-user.
     "environment.manage",
+    // An organization's costs (issue #781): reading them, and changing the
+    // price list they are priced with, is administration asked of studio-user.
+    "cost.view",
+    "cost.manage",
 ];
 
 /// The role ladder a fresh organization is seeded with (ADR-0019 §2).

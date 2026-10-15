@@ -65,6 +65,7 @@ const DOMAINS: &[&str] = &[
     "studio-spec-quality",
     "studio-tasks",
     "studio-theia",
+    "studio-usage",
     "studio-user",
 ];
 

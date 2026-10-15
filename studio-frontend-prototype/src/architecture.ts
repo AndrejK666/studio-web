@@ -137,8 +137,8 @@ export const DOMAINS: Domain[] = [
   {
     id: "reporting",
     title: "Reporting",
-    blurb: "Reports and the roadmap plan, and Insight's trends over the synced history.",
-    gears: ["studio-reports", "studio-insight"],
+    blurb: "Reports and the roadmap plan, Insight's trends over the synced history, and what usage costs an organization.",
+    gears: ["studio-reports", "studio-insight", "studio-usage"],
   },
   {
     id: "plumbing",
@@ -450,6 +450,7 @@ export const COMPONENT_GEAR: Record<string, string> = {
   "studio-spec-mapping": "studio-spec-mapping",
   "studio-spec-quality": "studio-spec-quality",
   "studio-tasks": "studio-tasks",
+  "studio-usage": "studio-usage",
   "studio-theia": "studio-theia",
   "studio-user": "studio-user",
 };
@@ -700,6 +701,14 @@ export const SURFACES: Surface[] = [
     does: "Open the organization from the path: its workspaces, people, repositories, specs, open pull requests, its own components and failed background work, with the projects that need attention.",
     components: ["OrgDashboard"],
     gears: ["studio-components-catalog", "studio-organizations", "studio-tasks", "studio-user"],
+  },
+  {
+    id: "costs",
+    area: "organization",
+    title: "Costs",
+    does: "See what the organization's model calls and IDE sessions cost over a period -- by project, person, model, source or who paid, with or without people's own keys -- and keep the price list they are priced with.",
+    components: ["OrgCosts"],
+    gears: ["studio-usage"],
   },
   {
     id: "environments",

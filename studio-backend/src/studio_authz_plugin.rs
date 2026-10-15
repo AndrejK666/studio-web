@@ -694,6 +694,7 @@ fn is_access_config_write(request: &EvaluationRequest) -> bool {
 /// by writing the document directly (ADR-0043).
 const GEAR_HELD_METADATA: [&str; 4] = [
     crate::environments::ENVIRONMENTS_METADATA_TYPE,
+    crate::usage::PRICES_METADATA_TYPE,
     crate::environments::DEPLOYMENTS_METADATA_TYPE,
     crate::organizations::logo::LOGO_METADATA_TYPE,
     crate::product::EXPLANATIONS_METADATA_TYPE,

@@ -196,6 +196,11 @@ usage_collector = { package = "cf-gears-usage-collector", version = "0.4.0" }
 usage_collector_sdk = { package = "cf-gears-usage-collector-sdk", version = "0.3.14" }
 postgres_usage_collector_plugin = { package = "studio-postgres-usage-collector-plugin", path = "plugins/postgres-usage-collector-plugin" }
 rust_decimal = "1.39"
+# Reading the collector's sums (studio-usage costs): its query is OData, its
+# instants chrono, its sums BigDecimal.
+toolkit_odata = { package = "cf-gears-toolkit-odata", version = "0.9.7" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+bigdecimal = "0.4"
 
 # ── Dev plugins (static auth for the demo; replace with OIDC for real deployments) ──
 static_authn_plugin = { package = "cf-gears-static-authn-plugin", version = "0.3.18" }

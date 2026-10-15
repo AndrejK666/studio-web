@@ -39,6 +39,7 @@ export const VIEW_PATHS = {
   files: "files",
   connectors: "connections",
   environments: "environments",
+  costs: "costs",
   gears: "components",
   platform: "platform",
   publications: "publication-requests",

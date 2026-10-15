@@ -1,0 +1,393 @@
+//! Who may, in which order: an organization's price list and its costs.
+//!
+//! **Prices** are one account-management metadata row on the organization
+//! (`super::PRICES_METADATA_TYPE`). Anybody who reaches the organization may
+//! read it; only its administrators — or whoever holds `cost.manage` — change
+//! it, and the write is this gear's, as the service: the PDP refuses
+//! anybody else's write of the row (`studio_authz_plugin::GEAR_HELD_METADATA`).
+//!
+//! **Costs** are read from the usage collector one tenant at a time: the
+//! organization and every workspace and project in it. The collector's query
+//! is scoped by the PDP to the tenant it is asked in, and the Studio PDP does
+//! not expand a tenant into its subtree for it, so asking once as the
+//! organization would see only the organization's own records. Each tenant is
+//! asked with the caller acting in it, after the caller has been shown to
+//! administer the organization (`cost.view`).
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+
+use account_management_sdk::{AccountManagementClient, UpsertMetadataRequest};
+use anyhow::anyhow;
+use bigdecimal::ToPrimitive;
+use futures_util::{StreamExt, stream};
+use gts::GtsTypeId;
+use time::OffsetDateTime;
+use toolkit::client_hub::{ClientHub, ClientScope};
+use toolkit_canonical_errors::CanonicalError;
+use toolkit_odata::ODataQuery;
+use toolkit_odata::ast::{CompareOperator, Expr, Value};
+use toolkit_security::SecurityContext;
+use usage_collector_sdk::{
+    AggregationDimension, AggregationOp, AggregationSpec, MetadataKey, UsageCollectorClientV1,
+    UsageCollectorError,
+};
+use uuid::Uuid;
+
+use super::PRICES_METADATA_TYPE;
+use super::costs::{self, Fact, FactKind, GroupBy, Report};
+use super::port::Payer;
+use super::prices::PriceList;
+use super::types;
+
+/// Reads an organization's costs.
+pub const VIEW_PRIVILEGE: &str = "cost.view";
+/// Changes its price list.
+pub const MANAGE_PRIVILEGE: &str = "cost.manage";
+
+/// How many tenants are asked at once.
+const PARALLEL_TENANTS: usize = 8;
+/// The longest period one report covers.
+const LONGEST_PERIOD_DAYS: i64 = 366;
+
+/// The subject this gear writes the price list as. Fixed, so an audit of
+/// account-management says which gear changed the row.
+const SERVICE_SUBJECT_ID: Uuid = Uuid::from_u128(0x5e7d_05a9_e000_4c57_8f03_c057_5000_0781);
+
+#[derive(Debug)]
+pub enum Refusal {
+    Forbidden(&'static str),
+    Invalid(String),
+    Unavailable(String),
+    Internal(String),
+}
+
+type Result<T> = std::result::Result<T, Refusal>;
+
+/// A tenant of the organization, and how a person recognizes it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Place {
+    pub id: Uuid,
+    pub label: String,
+}
+
+/// A report and what its tenant keys are called.
+pub struct Costs {
+    pub report: Report,
+    pub currency: String,
+    pub places: Vec<Place>,
+}
+
+pub struct UsageService {
+    am: Arc<dyn AccountManagementClient>,
+    hub: Arc<ClientHub>,
+}
+
+impl UsageService {
+    pub fn new(am: Arc<dyn AccountManagementClient>, hub: Arc<ClientHub>) -> Self {
+        Self { am, hub }
+    }
+
+    /// May the caller do what `privilege` names in `org`? An organization
+    /// administrator, a platform administrator, or a holder of the privilege.
+    pub async fn may(&self, ctx: &SecurityContext, org: Uuid, privilege: &str) -> bool {
+        match self
+            .hub
+            .get_scoped::<dyn crate::user_profile::OrgAuthority>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            )) {
+            Ok(authority) => authority.may_administer(ctx, org, privilege).await,
+            // Without studio-user nobody can be shown to hold it.
+            Err(_) => false,
+        }
+    }
+
+    pub async fn prices(&self, ctx: &SecurityContext, org: Uuid) -> Result<(PriceList, i64)> {
+        match self
+            .am
+            .get_metadata(ctx, org, GtsTypeId::new(PRICES_METADATA_TYPE))
+            .await
+        {
+            Ok(entry) => Ok((
+                serde_json::from_value(entry.value).map_err(|e| {
+                    Refusal::Internal(format!("the stored price list is unreadable: {e}"))
+                })?,
+                entry.version,
+            )),
+            Err(CanonicalError::NotFound { .. }) => Ok((PriceList::default(), 0)),
+            Err(e) => Err(Refusal::Unavailable(format!(
+                "the price list cannot be read: {e}"
+            ))),
+        }
+    }
+
+    /// Replace the organization's price list.
+    pub async fn put_prices(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        list: PriceList,
+    ) -> Result<PriceList> {
+        if !self.may(ctx, org, MANAGE_PRIVILEGE).await {
+            return Err(Refusal::Forbidden("COST_ADMIN_REQUIRED"));
+        }
+        list.validate().map_err(|e| Refusal::Invalid(e.0))?;
+        let (_, version) = self.prices(ctx, org).await?;
+        let service = SecurityContext::builder()
+            .subject_id(SERVICE_SUBJECT_ID)
+            .subject_type("service")
+            .subject_tenant_id(org)
+            .token_scopes(vec!["*".to_owned()])
+            .build()
+            .map_err(|e| Refusal::Internal(format!("cannot build a service context: {e}")))?;
+        let value = serde_json::to_value(&list).map_err(|e| Refusal::Internal(e.to_string()))?;
+        let mut request = UpsertMetadataRequest::new(GtsTypeId::new(PRICES_METADATA_TYPE), value);
+        if version > 0 {
+            request = request.with_expected_version(version);
+        }
+        self.am
+            .upsert_metadata(&service, org, request)
+            .await
+            .map_err(|e| Refusal::Unavailable(format!("the price list cannot be written: {e}")))?;
+        Ok(list)
+    }
+
+    /// The organization's costs from `from` up to (not including) `to`.
+    pub async fn costs(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        from: OffsetDateTime,
+        to: OffsetDateTime,
+        group: GroupBy,
+        include_personal: bool,
+    ) -> Result<Costs> {
+        if !self.may(ctx, org, VIEW_PRIVILEGE).await {
+            return Err(Refusal::Forbidden("COST_ADMIN_REQUIRED"));
+        }
+        if to <= from || (to - from).whole_days() > LONGEST_PERIOD_DAYS {
+            return Err(Refusal::Invalid(format!(
+                "a period runs forwards and covers at most {LONGEST_PERIOD_DAYS} days"
+            )));
+        }
+        let (prices, _) = self.prices(ctx, org).await?;
+        let collector = self
+            .hub
+            .get::<dyn UsageCollectorClientV1>()
+            .map_err(|_| Refusal::Unavailable("usage is not recorded in this deployment".into()))?;
+        let places = self.places(ctx, org).await?;
+
+        let lookups = places.clone().into_iter().map(|place| {
+            let collector = Arc::clone(&collector);
+            async move {
+                let acting = crate::org_scope::acting_in(ctx, place.id)
+                    .map_err(|e| Refusal::Internal(format!("cannot act in {}: {e}", place.id)))?;
+                facts_of(collector.as_ref(), &acting, place.id, from, to)
+                    .await
+                    .map_err(|e| {
+                        Refusal::Unavailable(format!(
+                            "usage of {} cannot be read: {e}",
+                            place.label
+                        ))
+                    })
+            }
+        });
+        let mut facts = Vec::new();
+        {
+            let mut answers = stream::iter(lookups).buffer_unordered(PARALLEL_TENANTS);
+            while let Some(answer) = answers.next().await {
+                facts.extend(answer?);
+            }
+        }
+        Ok(Costs {
+            report: costs::report(&facts, &prices, group, include_personal),
+            currency: prices.currency().to_owned(),
+            places,
+        })
+    }
+
+    /// The organization, its workspaces and its projects.
+    async fn places(&self, ctx: &SecurityContext, org: Uuid) -> Result<Vec<Place>> {
+        let name = self
+            .am
+            .get_tenant(ctx, org)
+            .await
+            .map(|t| t.name)
+            .unwrap_or_default();
+        let mut places = vec![Place {
+            id: org,
+            label: name,
+        }];
+        let projects = self
+            .hub
+            .get::<dyn crate::organizations::port::ProjectsOf>()
+            .map_err(|_| Refusal::Unavailable("the organization's tree cannot be read".into()))?
+            .projects_of(ctx, org)
+            .await
+            .map_err(|e| {
+                Refusal::Unavailable(format!("the organization's tree cannot be read: {e:#}"))
+            })?;
+        for p in projects {
+            if !places.iter().any(|place| place.id == p.workspace_id) {
+                places.push(Place {
+                    id: p.workspace_id,
+                    label: p.workspace_name.clone(),
+                });
+            }
+            places.push(Place {
+                id: p.id,
+                label: format!("{} / {}", p.workspace_name, p.name),
+            });
+        }
+        Ok(places)
+    }
+}
+
+fn period_filter(from: OffsetDateTime, to: OffsetDateTime) -> anyhow::Result<ODataQuery> {
+    let at = |t: OffsetDateTime| -> anyhow::Result<Expr> {
+        let utc =
+            chrono::DateTime::<chrono::Utc>::from_timestamp(t.unix_timestamp(), t.nanosecond())
+                .ok_or_else(|| anyhow!("{t} is not a time"))?;
+        Ok(Expr::Value(Value::DateTime(utc)))
+    };
+    let created = || Box::new(Expr::Identifier("created_at".to_owned()));
+    let since = Expr::Compare(created(), CompareOperator::Ge, Box::new(at(from)?));
+    let before = Expr::Compare(created(), CompareOperator::Lt, Box::new(at(to)?));
+    Ok(ODataQuery::new().with_filter(since.and(before)))
+}
+
+fn whole(v: Option<&bigdecimal::BigDecimal>) -> u64 {
+    v.and_then(ToPrimitive::to_u64).unwrap_or(0)
+}
+
+/// Sums of one usage type in one tenant, grouped by `dims`: each bucket's key
+/// and value. A type nothing was ever recorded under is no usage.
+async fn sums(
+    collector: &dyn UsageCollectorClientV1,
+    ctx: &SecurityContext,
+    name: &str,
+    query: &ODataQuery,
+    dims: &[AggregationDimension],
+) -> anyhow::Result<Vec<(Vec<String>, u64)>> {
+    let spec = AggregationSpec {
+        op: AggregationOp::Sum,
+        group_by: dims.to_vec(),
+    };
+    match collector
+        .query_aggregated_usage_records(ctx, types::gts_id(name)?, query, &[], spec)
+        .await
+    {
+        Ok(result) => Ok(result
+            .buckets
+            .into_iter()
+            .map(|b| (b.key, whole(b.value.as_ref())))
+            .collect()),
+        Err(UsageCollectorError::NotFound { .. }) => Ok(Vec::new()),
+        Err(e) => Err(anyhow!("{e}")),
+    }
+}
+
+fn payer(s: &str) -> Option<Payer> {
+    match s {
+        "personal" => Some(Payer::Personal),
+        "workspace" => Some(Payer::Workspace),
+        "organization" => Some(Payer::Organization),
+        _ => None,
+    }
+}
+
+/// Everything recorded in `tenant` over the period, as facts.
+async fn facts_of(
+    collector: &dyn UsageCollectorClientV1,
+    ctx: &SecurityContext,
+    tenant: Uuid,
+    from: OffsetDateTime,
+    to: OffsetDateTime,
+) -> anyhow::Result<Vec<Fact>> {
+    let query = period_filter(from, to)?;
+    let meta = |k: &str| -> anyhow::Result<AggregationDimension> {
+        Ok(AggregationDimension::Metadata(MetadataKey::new(k)?))
+    };
+
+    let llm_dims = [
+        AggregationDimension::SubjectId,
+        meta("provider")?,
+        meta("model")?,
+        meta("payer")?,
+    ];
+    let mut calls: BTreeMap<Vec<String>, Fact> = BTreeMap::new();
+    for name in [
+        types::LLM_INPUT,
+        types::LLM_OUTPUT,
+        types::LLM_CACHE_READ,
+        types::LLM_CACHE_WRITE,
+    ] {
+        for (key, value) in sums(collector, ctx, name, &query, &llm_dims).await? {
+            let fact = calls.entry(key.clone()).or_insert_with(|| Fact {
+                tenant,
+                person: key.first().and_then(|s| s.parse().ok()),
+                kind: FactKind::Llm,
+                provider: key.get(1).cloned().unwrap_or_default(),
+                item: key.get(2).cloned().unwrap_or_default(),
+                payer: key.get(3).and_then(|s| payer(s)),
+                ..Fact::default()
+            });
+            match name {
+                types::LLM_INPUT => fact.tokens.input += value,
+                types::LLM_OUTPUT => fact.tokens.output += value,
+                types::LLM_CACHE_READ => fact.tokens.cache_read += value,
+                _ => fact.tokens.cache_write += value,
+            }
+        }
+    }
+
+    let session_dims = [meta("driver")?, meta("payer")?];
+    let mut sessions: HashMap<Vec<String>, Fact> = HashMap::new();
+    for name in [
+        types::SESSION_SECONDS,
+        types::SESSION_CPU,
+        types::SESSION_MEMORY,
+    ] {
+        for (key, value) in sums(collector, ctx, name, &query, &session_dims).await? {
+            let fact = sessions.entry(key.clone()).or_insert_with(|| Fact {
+                tenant,
+                kind: FactKind::Session,
+                provider: key.first().cloned().unwrap_or_default(),
+                item: super::port::SESSION_ITEM.to_owned(),
+                payer: key.get(1).and_then(|s| payer(s)),
+                ..Fact::default()
+            });
+            match name {
+                types::SESSION_SECONDS => fact.session_seconds += value,
+                types::SESSION_CPU => fact.cpu_millicore_seconds += value,
+                _ => fact.memory_mib_seconds += value,
+            }
+        }
+    }
+    Ok(calls.into_values().chain(sessions.into_values()).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use time::macros::datetime;
+
+    use super::*;
+
+    #[test]
+    fn a_period_is_two_bounds_on_created_at() {
+        let q = period_filter(
+            datetime!(2026-10-01 0:00 UTC),
+            datetime!(2026-11-01 0:00 UTC),
+        )
+        .unwrap();
+        let text = format!("{:?}", q.filter().unwrap());
+        assert!(
+            text.contains("created_at") && text.contains("Ge") && text.contains("Lt"),
+            "{text}"
+        );
+        assert!(
+            text.contains("2026-10-01") && text.contains("2026-11-01"),
+            "{text}"
+        );
+    }
+}
