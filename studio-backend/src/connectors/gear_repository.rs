@@ -431,7 +431,14 @@ impl ConnectorDriver for GearRepositoryDriver {
         message: &str,
     ) -> anyhow::Result<String> {
         self.github
-            .commit_files(&self.api(auth, repo)?, repo, base_branch, branch, files, message)
+            .commit_files(
+                &self.api(auth, repo)?,
+                repo,
+                base_branch,
+                branch,
+                files,
+                message,
+            )
             .await
     }
 

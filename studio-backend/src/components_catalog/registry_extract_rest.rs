@@ -9,9 +9,7 @@
 //!   repository's tip `<gear>/v0.1.0`, and moves the entry to `extracted`.
 
 use super::*;
-use crate::components_catalog::registry_extract::{
-    ConnectionRepos, ExtractError, ExtractFailure,
-};
+use crate::components_catalog::registry_extract::{ConnectionRepos, ExtractError, ExtractFailure};
 use crate::components_catalog::registry_publish::RepositoryFiles;
 
 /// A refused extraction as a problem: 404 for no such entry, 400
@@ -58,9 +56,7 @@ pub(super) fn extract_problem(e: ExtractError) -> CanonicalError {
         ExtractError::TooLarge { .. } => {
             precondition("occurrence".to_owned(), "REGISTRY_GEAR_TOO_LARGE")
         }
-        ExtractError::NotExtracting => {
-            precondition("extraction".to_owned(), "EXTRACTION_NOT_OPEN")
-        }
+        ExtractError::NotExtracting => precondition("extraction".to_owned(), "EXTRACTION_NOT_OPEN"),
         ExtractError::NotMerged { .. } => {
             precondition("extraction".to_owned(), "EXTRACTION_NOT_MERGED")
         }

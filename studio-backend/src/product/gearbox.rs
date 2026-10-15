@@ -2130,6 +2130,7 @@ impl Gearbox {
     }
 
     /// The platform's roots, in the engine's order.
+    #[cfg(test)]
     pub fn roots(&self) -> Vec<GearRoot> {
         self.roots.lock().expect("gearbox roots").list.clone()
     }
@@ -2247,6 +2248,7 @@ impl Gearbox {
 
     /// Whether `repo_key` (`owner/repo`) is one of the repositories `scope`
     /// reads.
+    #[cfg(test)]
     pub fn is_corpus_repo(&self, scope: Scope, repo_key: &str) -> bool {
         self.roots_in(scope)
             .iter()
@@ -2578,7 +2580,10 @@ impl Gearbox {
     /// The corpus's catalogue as the engine printed it (`gearbox catalogue
     /// --format json`), and the first root's commit. One checkout serves every
     /// project, so an IDE lists the gears without cloning the corpus.
-    pub async fn catalogue_json(&self, scope: Scope) -> anyhow::Result<(Arc<Value>, Option<String>)> {
+    pub async fn catalogue_json(
+        &self,
+        scope: Scope,
+    ) -> anyhow::Result<(Arc<Value>, Option<String>)> {
         self.ensure_corpus(scope).await?;
         let cell = self.cell(self.view(scope).scope);
         let guard = cell.lock().await;
@@ -3791,8 +3796,14 @@ mod tests {
             sdk_path_beside("gears", "gears-rust", "gears/system/x-sdk"),
             "../../../gears-rust/gears/system/x-sdk"
         );
-        assert_eq!(sdk_path_beside("", "gears-rust", "x-sdk"), "../../gears-rust/x-sdk");
-        assert_eq!(sdk_path_beside("", "gears-bss", "x-sdk"), "../../gears-bss/x-sdk");
+        assert_eq!(
+            sdk_path_beside("", "gears-rust", "x-sdk"),
+            "../../gears-rust/x-sdk"
+        );
+        assert_eq!(
+            sdk_path_beside("", "gears-bss", "x-sdk"),
+            "../../gears-bss/x-sdk"
+        );
     }
 
     #[test]
@@ -4021,7 +4032,10 @@ mod tests {
     #[test]
     fn an_organization_reads_the_platforms_repositories_then_its_own() {
         let g = Gearbox::new(config("https://github.com/MikeFalcon77/gears-rust.git"));
-        let core = repo_root("gears-core", "https://github.com/constructorfabric/gears-core.git");
+        let core = repo_root(
+            "gears-core",
+            "https://github.com/constructorfabric/gears-core.git",
+        );
         g.use_repositories(vec![core.clone()]);
         let acme = uuid::Uuid::new_v4();
         let other = uuid::Uuid::new_v4();
@@ -4049,7 +4063,9 @@ mod tests {
         assert!(!g.is_corpus_repo(None, "acme/gears"));
 
         // The relay finds a root by id, in the scope that reads it only.
-        let (url, _) = g.corpus_fetch(Some(acme), Some("acme-gears")).expect("acme's");
+        let (url, _) = g
+            .corpus_fetch(Some(acme), Some("acme-gears"))
+            .expect("acme's");
         assert_eq!(url, "https://github.com/acme/gears.git");
         assert!(g.corpus_fetch(Some(other), Some("acme-gears")).is_none());
         assert_eq!(
@@ -4117,7 +4133,10 @@ mod tests {
     #[test]
     fn the_engines_version_says_which_commit_it_was_built_from() {
         assert_eq!(
-            with_revision("gearbox 0.1.0", Some("ea964f94a59627ab818f4215d8251cbd64db098d")),
+            with_revision(
+                "gearbox 0.1.0",
+                Some("ea964f94a59627ab818f4215d8251cbd64db098d")
+            ),
             "gearbox 0.1.0-ea964f9"
         );
         assert_eq!(with_revision("gearbox 0.1.0", None), "gearbox 0.1.0");

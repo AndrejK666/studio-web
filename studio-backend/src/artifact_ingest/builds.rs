@@ -104,7 +104,9 @@ fn hash(v: Option<&str>, field: &str) -> Result<Option<String>, BuildRefusal> {
     if v.len() >= 7 && v.bytes().all(|b| b.is_ascii_hexdigit()) {
         Ok(Some(v.to_ascii_lowercase()))
     } else {
-        Err(BuildRefusal::Invalid(format!("{field} '{v}' is not a hex hash")))
+        Err(BuildRefusal::Invalid(format!(
+            "{field} '{v}' is not a hex hash"
+        )))
     }
 }
 
@@ -176,7 +178,11 @@ pub fn record(
         )));
     }
     let r#where = one_of(&report.r#where, &WHERE, "where")?;
-    let action = one_of(report.action.as_deref().unwrap_or("build"), &ACTIONS, "action")?;
+    let action = one_of(
+        report.action.as_deref().unwrap_or("build"),
+        &ACTIONS,
+        "action",
+    )?;
     let status = one_of(&report.status, &STATUSES, "status")?;
     let finished = status != "running";
 
@@ -245,15 +251,24 @@ pub fn record(
     put("action", json!(action));
     put("status", json!(status));
     put("product", json!(product));
-    put("profile", json!(clean(report.profile.as_deref(), "profile", 60)?));
+    put(
+        "profile",
+        json!(clean(report.profile.as_deref(), "profile", 60)?),
+    );
     put(
         "repository",
         json!(clean(report.repository.as_deref(), "repository", 200)?),
     );
     put("commit", json!(commit));
     put("short_sha", json!(short_sha));
-    put("branch", json!(clean(report.branch.as_deref(), "branch", 200)?));
-    put("lock_hash", json!(hash(report.lock_hash.as_deref(), "lock_hash")?));
+    put(
+        "branch",
+        json!(clean(report.branch.as_deref(), "branch", 200)?),
+    );
+    put(
+        "lock_hash",
+        json!(hash(report.lock_hash.as_deref(), "lock_hash")?),
+    );
     put("started_at", json!(rfc3339(started)));
     if let Some(end) = ended {
         put("finished_at", json!(rfc3339(end)));
@@ -329,7 +344,9 @@ pub fn checked_ref(git_ref: Option<&str>) -> Result<Option<String>, BuildRefusal
     {
         Ok(Some(r.to_owned()))
     } else {
-        Err(BuildRefusal::Invalid(format!("'{r}' is not a branch or tag")))
+        Err(BuildRefusal::Invalid(format!(
+            "'{r}' is not a branch or tag"
+        )))
     }
 }
 

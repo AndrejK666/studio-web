@@ -2979,7 +2979,6 @@ const SUGGESTED_REVIEWERS: usize = 8;
 pub struct ReviewAsk {
     pub subject_kind: String,
     pub subject_id: Uuid,
-    pub type_key: Option<String>,
     pub title: String,
     pub version: String,
     pub reviewers: Vec<super::approvals::Reviewer>,
@@ -4212,6 +4211,7 @@ mod tests {
             due_at: None,
             state: state.to_string(),
             created_at: OffsetDateTime::UNIX_EPOCH,
+            reviewed_text: None,
         };
         let verdicts = approved_by
             .iter()
@@ -4238,21 +4238,21 @@ mod tests {
     fn an_approval_of_an_earlier_version_does_not_open_the_stage() {
         let mut file = bound("prd", BindingState::Confirmed, Some(true));
         file.content_sha = "sha-1".to_string();
-        let stage = || {
+        let stage = |file: &_| {
             evaluate_stage(
                 stage_with(&["prd"], &[]),
                 &[],
-                std::slice::from_ref(&file),
+                std::slice::from_ref(file),
                 &[],
                 &[],
             )
         };
         let approved = [review_of("sha-1", "approved", &["ann"])];
-        let now = gate_on_approvals(stage(), &[], std::slice::from_ref(&file), &approved);
+        let now = gate_on_approvals(stage(&file), &[], std::slice::from_ref(&file), &approved);
         assert!(now.complete, "{now:?}");
 
         file.content_sha = "sha-2".to_string();
-        let later = gate_on_approvals(stage(), &[], std::slice::from_ref(&file), &approved);
+        let later = gate_on_approvals(stage(&file), &[], std::slice::from_ref(&file), &approved);
         assert_eq!(later.requirements[0].approvals_outstanding, ["Ann"]);
         assert!(!later.complete);
     }
@@ -4275,7 +4275,10 @@ mod tests {
         ] {
             assert_eq!(keep(bad), None, "{bad:?}");
         }
-        assert_eq!(keep(&format!("https://x/{}", "a".repeat(SOURCE_URL_MAX))), None);
+        assert_eq!(
+            keep(&format!("https://x/{}", "a".repeat(SOURCE_URL_MAX))),
+            None
+        );
         assert_eq!(safe_source_url(None), None);
     }
 

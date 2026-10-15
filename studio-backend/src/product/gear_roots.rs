@@ -104,20 +104,20 @@ pub async fn scope_for(
     now: bool,
 ) -> Scope {
     let org = org.filter(|o| *o != PLATFORM_ROOT_TENANT)?;
-    if now || gearbox.org_roots_due(org) {
-        if let Some(service) = connectors.get() {
-            let listed = match acting_in(ctx, org) {
-                Ok(octx) => service.gear_repositories(&octx, org).await,
-                Err(e) => Err(e),
-            };
-            match listed {
-                Ok(list) => {
-                    gearbox.use_org_repositories(org, list.into_iter().map(root_of).collect());
-                }
-                Err(e) => {
-                    gearbox.mark_org_roots_checked(org);
-                    warn!(organization_id = %org, error = %format!("{e:#}"), "studio-product: the organization's gear repositories could not be read");
-                }
+    if (now || gearbox.org_roots_due(org))
+        && let Some(service) = connectors.get()
+    {
+        let listed = match acting_in(ctx, org) {
+            Ok(octx) => service.gear_repositories(&octx, org).await,
+            Err(e) => Err(e),
+        };
+        match listed {
+            Ok(list) => {
+                gearbox.use_org_repositories(org, list.into_iter().map(root_of).collect());
+            }
+            Err(e) => {
+                gearbox.mark_org_roots_checked(org);
+                warn!(organization_id = %org, error = %format!("{e:#}"), "studio-product: the organization's gear repositories could not be read");
             }
         }
     }

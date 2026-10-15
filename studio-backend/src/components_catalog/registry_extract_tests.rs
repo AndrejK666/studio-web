@@ -166,7 +166,11 @@ impl GearContributions for Writer {
         Ok(DeclarationWritten {
             branch: branch.to_owned(),
             commit_sha: "abc".into(),
-            pr_url: Some(format!("https://github.com/{}/pull/{}", target.repo, writes.len())),
+            pr_url: Some(format!(
+                "https://github.com/{}/pull/{}",
+                target.repo,
+                writes.len()
+            )),
         })
     }
 
@@ -254,6 +258,7 @@ async fn seeded(svc: &CatalogService, gear_repo: bool) {
                 connection_id: GEAR_CONNECTION,
                 repo: "acme/gears".into(),
                 branch: "main".into(),
+                from_sources: false,
                 connection_label: None,
                 set_by: None,
                 set_at: None,
@@ -290,7 +295,12 @@ fn the_project_depends_on_the_crate_at_its_tag() {
         "{out}"
     );
     // No section: one is added.
-    let bare = depend_on("[package]\nname = \"app\"\n", "billing", url, "billing/v0.1.0");
+    let bare = depend_on(
+        "[package]\nname = \"app\"\n",
+        "billing",
+        url,
+        "billing/v0.1.0",
+    );
     assert!(bare.ends_with("\n[dependencies]\nbilling = { git = \"https://github.com/acme/gears.git\", tag = \"billing/v0.1.0\" }\n"), "{bare}");
     // Already named: left alone.
     let named = format!("{MANIFEST}billing = \"0.1\"\n");
@@ -312,7 +322,10 @@ fn the_module_declaration_becomes_the_crate_under_the_same_name() {
         Some("use b as billing;\n")
     );
     // Not this module, or not a declaration.
-    assert_eq!(reexport("mod billings;\nmod billing { }\n", "billing", "b"), None);
+    assert_eq!(
+        reexport("mod billings;\nmod billing { }\n", "billing", "b"),
+        None
+    );
 }
 
 #[test]
@@ -336,20 +349,41 @@ fn a_module_becomes_a_crate_with_its_own_manifest() {
         files
             .iter()
             .find(|f| f.path == p)
-            .unwrap_or_else(|| panic!("{p} in {:?}", files.iter().map(|f| &f.path).collect::<Vec<_>>()))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{p} in {:?}",
+                    files.iter().map(|f| &f.path).collect::<Vec<_>>()
+                )
+            })
             .content
             .clone()
     };
     // The top file is the crate root, its paths re-homed.
     assert!(at("gears/billing/src/lib.rs").contains("use crate::sdk::Invoice;"));
-    assert_eq!(at("gears/billing/src/repo.rs"), "use crate::sdk::Invoice;\n");
-    assert_eq!(at("gears/billing/src/port.rs"), "use super::sdk::Invoice;\n");
+    assert_eq!(
+        at("gears/billing/src/repo.rs"),
+        "use crate::sdk::Invoice;\n"
+    );
+    assert_eq!(
+        at("gears/billing/src/port.rs"),
+        "use super::sdk::Invoice;\n"
+    );
     // Its description sits beside the manifest.
     assert_eq!(at("gears/billing/gear.gdl"), "gear(id = \"billing\")\n");
     let manifest = at("gears/billing/Cargo.toml");
-    assert!(manifest.starts_with("[package]\nname = \"billing\"\nversion = \"0.1.0\"\nedition = \"2024\""), "{manifest}");
-    assert!(manifest.contains("serde = { workspace = true }\nserde_json = \"1\"\n"), "{manifest}");
-    assert!(manifest.contains("resolve against the gear repository's workspace"), "{manifest}");
+    assert!(
+        manifest
+            .starts_with("[package]\nname = \"billing\"\nversion = \"0.1.0\"\nedition = \"2024\""),
+        "{manifest}"
+    );
+    assert!(
+        manifest.contains("serde = { workspace = true }\nserde_json = \"1\"\n"),
+        "{manifest}"
+    );
+    assert!(
+        manifest.contains("resolve against the gear repository's workspace"),
+        "{manifest}"
+    );
 }
 
 #[test]
@@ -360,21 +394,36 @@ fn a_crate_moves_as_it_is() {
     ];
     let unit = registry_readiness::locate(&listing, "crates/billing").unwrap();
     let texts = BTreeMap::from([
-        ("crates/billing/Cargo.toml".to_owned(), "[package]\nname = \"cf-billing\"\n".to_owned()),
-        ("crates/billing/src/lib.rs".to_owned(), "use crate::x;\n".to_owned()),
+        (
+            "crates/billing/Cargo.toml".to_owned(),
+            "[package]\nname = \"cf-billing\"\n".to_owned(),
+        ),
+        (
+            "crates/billing/src/lib.rs".to_owned(),
+            "use crate::x;\n".to_owned(),
+        ),
     ]);
     let (files, _) = crate_files(&unit, &texts, "gears/billing", "cf-billing", "2021", &[]);
     let paths: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, ["gears/billing/Cargo.toml", "gears/billing/src/lib.rs"]);
+    assert_eq!(
+        paths,
+        ["gears/billing/Cargo.toml", "gears/billing/src/lib.rs"]
+    );
     assert_eq!(files[1].content, "use crate::x;\n");
-    assert_eq!(package_name(&texts["crates/billing/Cargo.toml"]).as_deref(), Some("cf-billing"));
+    assert_eq!(
+        package_name(&texts["crates/billing/Cargo.toml"]).as_deref(),
+        Some("cf-billing")
+    );
 }
 
 #[test]
 fn the_manifest_says_the_name_and_edition() {
     assert_eq!(package_name(MANIFEST).as_deref(), Some("app"));
     assert_eq!(package_edition(MANIFEST).as_deref(), Some("2024"));
-    assert_eq!(package_edition("[package]\nedition.workspace = true\n"), None);
+    assert_eq!(
+        package_edition("[package]\nedition.workspace = true\n"),
+        None
+    );
     assert_eq!(tag_of("Billing Engine", "0.1.0"), "billing-engine/v0.1.0");
     assert_eq!(crate_ident("billing-engine"), "billing_engine");
 }
@@ -409,19 +458,28 @@ fn a_modules_declaration_is_in_its_parent() {
 #[test]
 fn extracted_sits_between_registered_and_published() {
     use super::super::registry_decisions::transition;
-    assert_eq!(transition(Action::Extract, STATE_REGISTERED, true), Some(STATE_REGISTERED));
+    assert_eq!(
+        transition(Action::Extract, STATE_REGISTERED, true),
+        Some(STATE_REGISTERED)
+    );
     assert_eq!(transition(Action::Extract, STATE_EXTRACTED, true), None);
     assert_eq!(
         transition(Action::CompleteExtraction, STATE_REGISTERED, true),
         Some(STATE_EXTRACTED)
     );
     // Publishing starts from extracted (ADR-0044 §5) and leaves it there.
-    assert_eq!(transition(Action::Publish, STATE_EXTRACTED, true), Some(STATE_EXTRACTED));
+    assert_eq!(
+        transition(Action::Publish, STATE_EXTRACTED, true),
+        Some(STATE_EXTRACTED)
+    );
     assert_eq!(
         transition(Action::MarkPublished, STATE_EXTRACTED, true),
         Some(registry::STATE_PUBLISHED)
     );
-    assert_eq!(transition(Action::Deprecate, STATE_EXTRACTED, true), Some(STATE_DEPRECATED));
+    assert_eq!(
+        transition(Action::Deprecate, STATE_EXTRACTED, true),
+        Some(STATE_DEPRECATED)
+    );
 
     // A deprecated gear that had left its project is restored as extracted.
     let entry = EntryRecord {
@@ -472,8 +530,14 @@ async fn extract_opens_both_pull_requests_and_completing_it_tags_the_version() {
         .unwrap();
     assert_eq!(entry.entry.state, STATE_REGISTERED);
     let x = entry.entry.extraction.clone().expect("the extraction");
-    assert_eq!(x.gear_pr_url.as_deref(), Some("https://github.com/acme/gears/pull/1"));
-    assert_eq!(x.source_pr_url.as_deref(), Some("https://github.com/acme/app/pull/2"));
+    assert_eq!(
+        x.gear_pr_url.as_deref(),
+        Some("https://github.com/acme/gears/pull/1")
+    );
+    assert_eq!(
+        x.source_pr_url.as_deref(),
+        Some("https://github.com/acme/app/pull/2")
+    );
     assert_eq!(x.source_top.as_deref(), Some("app/src/main.rs"));
     assert_eq!(decisions[0].action, "extract");
     {
@@ -481,31 +545,55 @@ async fn extract_opens_both_pull_requests_and_completing_it_tags_the_version() {
         assert_eq!(writes.len(), 2);
         // The gear repository is the organization's, written as it.
         let gear = &writes[0];
-        assert_eq!((gear.tenant, gear.target.repo.as_str()), (ORG, "acme/gears"));
+        assert_eq!(
+            (gear.tenant, gear.target.repo.as_str()),
+            (ORG, "acme/gears")
+        );
         assert_eq!(gear.target.connection_id, Some(GEAR_CONNECTION));
         assert_eq!(gear.branch, "extract/billing");
         assert!(gear.deleted.is_empty());
-        assert!(gear.files.iter().any(|f| f.path == "gears/billing/src/lib.rs"));
-        assert!(gear.text.body.contains("billing/v0.1.0"), "{}", gear.text.body);
+        assert!(
+            gear.files
+                .iter()
+                .any(|f| f.path == "gears/billing/src/lib.rs")
+        );
+        assert!(
+            gear.text.body.contains("billing/v0.1.0"),
+            "{}",
+            gear.text.body
+        );
         // The project's: written in its tenant, the module gone, the crate in
         // its place.
         let source = &writes[1];
-        assert_eq!((source.tenant, source.target.repo.as_str()), (P1, "acme/app"));
+        assert_eq!(
+            (source.tenant, source.target.repo.as_str()),
+            (P1, "acme/app")
+        );
         assert_eq!(source.target.base_branch, "trunk");
-        assert!(source.deleted.contains(&"app/src/billing/mod.rs".to_owned()));
+        assert!(
+            source
+                .deleted
+                .contains(&"app/src/billing/mod.rs".to_owned())
+        );
         assert!(!source.deleted.iter().any(|d| d == "app/src/main.rs"));
         let main = source
             .files
             .iter()
             .find(|f| f.path == "app/src/main.rs")
             .unwrap();
-        assert!(main.content.starts_with("pub use billing as billing;\n"), "{}", main.content);
+        assert!(
+            main.content.starts_with("pub use billing as billing;\n"),
+            "{}",
+            main.content
+        );
         let manifest = source
             .files
             .iter()
             .find(|f| f.path == "app/Cargo.toml")
             .unwrap();
-        assert!(manifest.content.contains("billing = { git = \"https://github.com/acme/gears.git\", tag = \"billing/v0.1.0\" }"));
+        assert!(manifest.content.contains(
+            "billing = { git = \"https://github.com/acme/gears.git\", tag = \"billing/v0.1.0\" }"
+        ));
         assert!(source.text.body.contains(x.gear_pr_url.as_deref().unwrap()));
     }
 
@@ -574,7 +662,15 @@ async fn extract_needs_a_gear_repository_and_a_ready_gear() {
     let repos = Repos::default();
     let writer = Writer::default();
     let r = svc
-        .extract_registry(&ctx, "billing", &extract(), &by(), &Files(repository()), &repos, &writer)
+        .extract_registry(
+            &ctx,
+            "billing",
+            &extract(),
+            &by(),
+            &Files(repository()),
+            &repos,
+            &writer,
+        )
         .await;
     assert_eq!(refusal(r), ExtractError::NoGearRepository);
 
@@ -588,11 +684,22 @@ async fn extract_needs_a_gear_repository_and_a_ready_gear() {
         }
     }
     let r = svc
-        .extract_registry(&ctx, "billing", &extract(), &by(), &Files(files), &repos, &writer)
+        .extract_registry(
+            &ctx,
+            "billing",
+            &extract(),
+            &by(),
+            &Files(files),
+            &repos,
+            &writer,
+        )
         .await;
     match refusal(r) {
         ExtractError::NotReady { blocking } => {
-            assert!(blocking.iter().any(|b| b.starts_with("reaches_out")), "{blocking:?}");
+            assert!(
+                blocking.iter().any(|b| b.starts_with("reaches_out")),
+                "{blocking:?}"
+            );
         }
         other => panic!("{other:?}"),
     }

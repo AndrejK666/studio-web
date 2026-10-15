@@ -1194,7 +1194,10 @@ const CORPUS_GIT_PATH: &str = "/studio-product/v1/gearbox/corpus";
 /// `/organizations/{org}/gearbox/corpus/{source_id}` (ADR-0046 phase 2).
 fn corpus_git_path(scope: Scope, root: &super::gearbox::GearRoot) -> String {
     match scope.filter(|_| root.organization) {
-        Some(org) => format!("/studio-product/v1/organizations/{org}/gearbox/corpus/{}", root.id),
+        Some(org) => format!(
+            "/studio-product/v1/organizations/{org}/gearbox/corpus/{}",
+            root.id
+        ),
         None => format!("{CORPUS_GIT_PATH}/{}", root.id),
     }
 }
@@ -1432,7 +1435,11 @@ async fn gearbox_status(
         }));
     };
     let scope = product
-        .scope(&ctx, ctx.subject_tenant_id(), query.refresh.unwrap_or(false))
+        .scope(
+            &ctx,
+            ctx.subject_tenant_id(),
+            query.refresh.unwrap_or(false),
+        )
         .await;
     let status = gearbox.status(scope).await;
     Ok(Json(GearboxStatusDto {
@@ -1512,14 +1519,17 @@ async fn preview_product(
     let product_path = product_path_for(record.as_ref().map(|n| &n.value), &body.product_id);
     let scope = product.scope(&ctx, project_id, false).await;
     let preview = gearbox
-        .preview(scope, PreviewInput {
-            product_id: body.product_id.clone(),
-            product_path: product_path.clone(),
-            name,
-            gears: body.gears.clone(),
-            profile: profile.clone(),
-            config: config.clone(),
-        })
+        .preview(
+            scope,
+            PreviewInput {
+                product_id: body.product_id.clone(),
+                product_path: product_path.clone(),
+                name,
+                gears: body.gears.clone(),
+                profile: profile.clone(),
+                config: config.clone(),
+            },
+        )
         .await
         .map_err(invalid)?;
 

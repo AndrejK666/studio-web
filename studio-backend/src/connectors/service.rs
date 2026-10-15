@@ -1879,11 +1879,17 @@ mod default_connection_tests {
         let mut items = vec![a.clone(), b.clone(), other];
         single_create_target(&mut items, b.id);
         assert!(!items[0].options.contains_key("create_target"));
-        assert_eq!(items[1].options.get("create_target").map(String::as_str), Some("true"));
+        assert_eq!(
+            items[1].options.get("create_target").map(String::as_str),
+            Some("true")
+        );
         // Saving one that is not marked leaves the marked one alone.
         let mut items2 = items.clone();
         single_create_target(&mut items2, a.id);
-        assert_eq!(items2[1].options.get("create_target").map(String::as_str), Some("true"));
+        assert_eq!(
+            items2[1].options.get("create_target").map(String::as_str),
+            Some("true")
+        );
     }
 
     #[test]

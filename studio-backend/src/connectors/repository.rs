@@ -121,23 +121,8 @@ impl Repository {
             .await
     }
 
-    /// Commit `files` in one commit on top of `base_branch`, onto `branch`
-    /// ([`ConnectorDriver::commit_files`]). Returns the commit `branch` points
-    /// at.
-    pub async fn commit_files(
-        &self,
-        base_branch: &str,
-        branch: &str,
-        files: &[FileToWrite],
-        message: &str,
-    ) -> Result<String> {
-        self.driver
-            .commit_files(&self.auth, &self.repo, base_branch, branch, files, message)
-            .await
-    }
-
-    /// [`Self::commit_files`], deleting `deleted` in the same commit
-    /// ([`ConnectorDriver::commit_changes`]).
+    /// Commit `files` in one commit on top of `base_branch`, onto `branch`,
+    /// deleting `deleted` in the same commit ([`ConnectorDriver::commit_changes`]).
     pub async fn commit_changes(
         &self,
         base_branch: &str,
@@ -157,11 +142,6 @@ impl Repository {
                 message,
             )
             .await
-    }
-
-    /// The repository's default branch.
-    pub async fn default_branch(&self) -> Result<String> {
-        self.driver.default_branch(&self.auth, &self.repo).await
     }
 
     /// The commit `branch` points at; `None` when there is no such branch.

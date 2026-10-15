@@ -1803,7 +1803,10 @@ impl CatalogService {
                 return None;
             }
         };
-        let pick = own.iter().find(|r| r.create_target).or_else(|| own.first())?;
+        let pick = own
+            .iter()
+            .find(|r| r.create_target)
+            .or_else(|| own.first())?;
         let branch = if pick.git_ref.is_empty() {
             match crate::connectors::sdk::Repository::open(
                 &connectors,
@@ -1816,7 +1819,10 @@ impl CatalogService {
             )
             .await
             {
-                Ok(repo) => repo.default_branch().await.unwrap_or_else(|_| "main".into()),
+                Ok(repo) => repo
+                    .default_branch()
+                    .await
+                    .unwrap_or_else(|_| "main".into()),
                 Err(_) => "main".into(),
             }
         } else {

@@ -666,7 +666,9 @@ fn build_problem(e: super::builds::BuildRefusal) -> CanonicalError {
         BuildRefusal::Invalid(why) => StudioArtifactIngestError::invalid_argument()
             .with_constraint(why)
             .create(),
-        BuildRefusal::NotFound(why) => StudioArtifactIngestError::not_found(why).create(),
+        BuildRefusal::NotFound(why) => StudioArtifactIngestError::not_found(why)
+            .with_resource("build".to_owned())
+            .create(),
         BuildRefusal::Finished(why) => StudioArtifactIngestError::failed_precondition()
             .with_precondition_violation("build".to_owned(), why, "BUILD_FINISHED")
             .create(),
@@ -690,7 +692,10 @@ async fn reachable_project(
     ingest: &Ingest,
     ctx: &SecurityContext,
     project_id: Uuid,
-) -> ApiResult<(Arc<dyn account_management_sdk::AccountManagementClient>, Option<Uuid>)> {
+) -> ApiResult<(
+    Arc<dyn account_management_sdk::AccountManagementClient>,
+    Option<Uuid>,
+)> {
     let am = ingest
         .hub
         .get::<dyn account_management_sdk::AccountManagementClient>()
@@ -700,7 +705,9 @@ async fn reachable_project(
                 .create()
         })?;
     let tenant = am.get_tenant(ctx, project_id).await.map_err(|_| {
-        StudioArtifactIngestError::not_found(format!("project {project_id} is not found")).create()
+        StudioArtifactIngestError::not_found(format!("project {project_id} is not found"))
+            .with_resource(project_id.to_string())
+            .create()
     })?;
     Ok((am, tenant.parent_id.map(|p| p.0)))
 }
@@ -1775,7 +1782,11 @@ pub fn register_routes(
         .path_param("project_id", "Project tenant id")
         .json_request::<BuildReportRequest>(openapi, "The build's start or end")
         .handler(report_build)
-        .json_response_with_schema::<ArtifactNodeDto>(openapi, StatusCode::OK, "The build as recorded")
+        .json_response_with_schema::<ArtifactNodeDto>(
+            openapi,
+            StatusCode::OK,
+            "The build as recorded",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

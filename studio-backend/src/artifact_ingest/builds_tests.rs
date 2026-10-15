@@ -40,16 +40,30 @@ fn a_start_is_running_from_now_and_says_what_and_where() {
 
 #[test]
 fn the_end_lands_on_the_start_keeps_its_start_and_starter_and_says_how_long() {
-    let first = record(&start(), "p1", None, "alice", at("2026-10-15T10:00:00Z"), None)
-        .expect("start");
+    let first = record(
+        &start(),
+        "p1",
+        None,
+        "alice",
+        at("2026-10-15T10:00:00Z"),
+        None,
+    )
+    .expect("start");
     let end = BuildReport {
         status: "failed".into(),
         failure: Some("Could not find `protoc`".into()),
         failure_step: Some("protoc".into()),
         ..start()
     };
-    let v = record(&end, "p1", None, "alice-desktop", at("2026-10-15T10:06:10Z"), Some(&first))
-        .expect("end");
+    let v = record(
+        &end,
+        "p1",
+        None,
+        "alice-desktop",
+        at("2026-10-15T10:06:10Z"),
+        Some(&first),
+    )
+    .expect("end");
     assert_eq!(v["status"], "failed");
     assert_eq!(v["started_at"], "2026-10-15T10:00:00Z");
     assert_eq!(v["finished_at"], "2026-10-15T10:06:10Z");
@@ -59,7 +73,14 @@ fn the_end_lands_on_the_start_keeps_its_start_and_starter_and_says_how_long() {
     assert_eq!(v["reported_by"], "alice");
 
     // A record once finished is not changed.
-    let again = record(&end, "p1", None, "alice", at("2026-10-15T10:07:00Z"), Some(&v));
+    let again = record(
+        &end,
+        "p1",
+        None,
+        "alice",
+        at("2026-10-15T10:07:00Z"),
+        Some(&v),
+    );
     assert!(matches!(again, Err(BuildRefusal::Finished(_))), "{again:?}");
 }
 
@@ -80,16 +101,49 @@ fn a_passed_build_carries_no_failure_and_names_its_images() {
 #[test]
 fn what_a_report_must_say_is_checked() {
     let now = at("2026-10-15T10:00:00Z");
-    let bad = |r: BuildReport| matches!(record(&r, "p", None, "a", now, None), Err(BuildRefusal::Invalid(_)));
-    assert!(bad(BuildReport { build_id: "short".into(), ..start() }));
-    assert!(bad(BuildReport { build_id: "has space in it".into(), ..start() }));
-    assert!(bad(BuildReport { r#where: "ci".into(), ..start() }));
-    assert!(bad(BuildReport { status: "done".into(), ..start() }));
-    assert!(bad(BuildReport { action: Some("deploy".into()), ..start() }));
-    assert!(bad(BuildReport { commit: Some("not-a-hash".into()), ..start() }));
-    assert!(bad(BuildReport { started_at: Some("yesterday".into()), ..start() }));
-    assert!(bad(BuildReport { failure: Some("x\u{7}".into()), status: "failed".into(), ..start() }));
-    assert!(bad(BuildReport { outputs: vec!["img".into(); 21], ..start() }));
+    let bad = |r: BuildReport| {
+        matches!(
+            record(&r, "p", None, "a", now, None),
+            Err(BuildRefusal::Invalid(_))
+        )
+    };
+    assert!(bad(BuildReport {
+        build_id: "short".into(),
+        ..start()
+    }));
+    assert!(bad(BuildReport {
+        build_id: "has space in it".into(),
+        ..start()
+    }));
+    assert!(bad(BuildReport {
+        r#where: "ci".into(),
+        ..start()
+    }));
+    assert!(bad(BuildReport {
+        status: "done".into(),
+        ..start()
+    }));
+    assert!(bad(BuildReport {
+        action: Some("deploy".into()),
+        ..start()
+    }));
+    assert!(bad(BuildReport {
+        commit: Some("not-a-hash".into()),
+        ..start()
+    }));
+    assert!(bad(BuildReport {
+        started_at: Some("yesterday".into()),
+        ..start()
+    }));
+    assert!(bad(BuildReport {
+        failure: Some("x\u{7}".into()),
+        status: "failed".into(),
+        ..start()
+    }));
+    assert!(bad(BuildReport {
+        outputs: vec!["img".into(); 21],
+        ..start()
+    }));
     assert!(bad(BuildReport {
         status: "passed".into(),
         started_at: Some("2026-10-15T11:00:00Z".into()),
@@ -101,12 +155,18 @@ fn what_a_report_must_say_is_checked() {
 #[test]
 fn a_workflow_is_named_by_its_file_or_its_id() {
     assert_eq!(workflow_file("build.yml").unwrap(), "build.yml");
-    assert_eq!(workflow_file(".github/workflows/studio-delivery.yaml").unwrap(), "studio-delivery.yaml");
+    assert_eq!(
+        workflow_file(".github/workflows/studio-delivery.yaml").unwrap(),
+        "studio-delivery.yaml"
+    );
     assert_eq!(workflow_file("123456").unwrap(), "123456");
     for bad in ["", "Delivery", "a b.yml", "x.yml?y=1"] {
         assert!(workflow_file(bad).is_err(), "{bad}");
     }
-    assert_eq!(checked_ref(Some(" feat/x ")).unwrap().as_deref(), Some("feat/x"));
+    assert_eq!(
+        checked_ref(Some(" feat/x ")).unwrap().as_deref(),
+        Some("feat/x")
+    );
     assert_eq!(checked_ref(None).unwrap(), None);
     assert!(checked_ref(Some("../main")).is_err());
     assert!(checked_ref(Some("a b")).is_err());

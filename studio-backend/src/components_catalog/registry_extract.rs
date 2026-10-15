@@ -150,7 +150,9 @@ impl std::fmt::Display for ExtractError {
                 "the component is not ready to leave its project: {}",
                 blocking.join("; ")
             ),
-            Self::Gone(path) => write!(f, "nothing is at `{path}` any more; read the project again"),
+            Self::Gone(path) => {
+                write!(f, "nothing is at `{path}` any more; read the project again")
+            }
             Self::NoManifest => write!(
                 f,
                 "the component is not inside a crate, so there is no Cargo.toml to depend on it from"
@@ -195,8 +197,11 @@ impl From<DecideFailure> for ExtractFailure {
 /// table in tests.
 #[async_trait]
 pub trait ExtractionRepos: Send + Sync {
-    async fn default_branch(&self, ctx: &SecurityContext, at: &RepositoryTarget)
-    -> anyhow::Result<String>;
+    async fn default_branch(
+        &self,
+        ctx: &SecurityContext,
+        at: &RepositoryTarget,
+    ) -> anyhow::Result<String>;
 
     /// Whether `path` is on `at`'s base branch.
     async fn has_file(
@@ -385,10 +390,7 @@ pub fn crate_files(
         } else if !rel.contains('/') && BESIDE_MANIFEST.contains(&rel) {
             (format!("{dest}/{rel}"), text.clone())
         } else if rel.ends_with(".rs") {
-            (
-                format!("{dest}/src/{rel}"),
-                rehome(text, &unit.module_path),
-            )
+            (format!("{dest}/src/{rel}"), rehome(text, &unit.module_path))
         } else {
             (format!("{dest}/src/{rel}"), text.clone())
         };
@@ -408,10 +410,10 @@ pub fn crate_files(
 /// that already names the crate is left as it is.
 pub fn depend_on(manifest: &str, crate_name: &str, git_url: &str, tag: &str) -> String {
     let line = format!("{crate_name} = {{ git = \"{git_url}\", tag = \"{tag}\" }}");
-    if manifest
-        .lines()
-        .any(|l| l.trim_start().starts_with(&format!("{crate_name} ")) || l.trim_start().starts_with(&format!("{crate_name}=")))
-    {
+    if manifest.lines().any(|l| {
+        l.trim_start().starts_with(&format!("{crate_name} "))
+            || l.trim_start().starts_with(&format!("{crate_name}="))
+    }) {
         return manifest.to_owned();
     }
     let mut out = String::with_capacity(manifest.len() + line.len() + 1);
@@ -474,7 +476,11 @@ pub fn reexport(parent_text: &str, module: &str, crate_ident: &str) -> Option<St
 /// The file that declares the module `module_path` in its crate: `lib.rs`
 /// (or `main.rs`) for a top module, else the parent module's `mod.rs` or
 /// `<parent>.rs`. From the listing.
-pub fn parent_module_file(listing: &[String], manifest: &str, module_path: &[String]) -> Option<String> {
+pub fn parent_module_file(
+    listing: &[String],
+    manifest: &str,
+    module_path: &[String],
+) -> Option<String> {
     let src = if parent(manifest).is_empty() {
         "src".to_owned()
     } else {
@@ -724,8 +730,14 @@ impl CatalogService {
         };
         let edition = package_edition(&manifest_text).unwrap_or_else(|| DEFAULT_EDITION.to_owned());
         let dest = format!("{DEFAULT_PARENT}/{}", kebab(&e.name));
-        let (gear_files, skipped) =
-            crate_files(&unit, &texts, &dest, &crate_name, &edition, &readiness.dependencies);
+        let (gear_files, skipped) = crate_files(
+            &unit,
+            &texts,
+            &dest,
+            &crate_name,
+            &edition,
+            &readiness.dependencies,
+        );
         if gear_files.is_empty() {
             return refuse(ExtractError::Empty {
                 path: occ.path.clone(),
@@ -864,9 +876,7 @@ impl CatalogService {
             Some(project) => registry::in_tenant(ctx, project)?,
             None => ctx.clone(),
         };
-        let organization = self
-            .organization_name(ctx, ctx.subject_tenant_id())
-            .await;
+        let organization = self.organization_name(ctx, ctx.subject_tenant_id()).await;
         let (_, source_text) =
             extraction_texts(&organization, &entry.entry, &plan.extraction, &plan.skipped);
         let source = contributions
@@ -945,7 +955,9 @@ impl CatalogService {
                 "`{manifest}` is not on {}@{} yet ({})",
                 gear_target.repo,
                 gear_target.base_branch,
-                x.gear_pr_url.as_deref().unwrap_or("the gear repository's pull request")
+                x.gear_pr_url
+                    .as_deref()
+                    .unwrap_or("the gear repository's pull request")
             ));
         }
         // The project's side: the moved file is gone from its base branch.
@@ -969,7 +981,9 @@ impl CatalogService {
                     x.moved_file,
                     x.source_repo,
                     x.source_base,
-                    x.source_pr_url.as_deref().unwrap_or("the project's pull request")
+                    x.source_pr_url
+                        .as_deref()
+                        .unwrap_or("the project's pull request")
                 ));
             }
         }

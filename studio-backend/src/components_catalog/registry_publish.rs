@@ -257,7 +257,10 @@ pub fn choose_target<'a>(
 /// How many gears of `category` the engine found in each root, by source id.
 /// Engine gears name their category (`gear.gdl`'s `category`); a registry
 /// entry with none counts every gear.
-pub fn gears_in_category(catalogue: &serde_json::Value, category: Option<&str>) -> BTreeMap<String, usize> {
+pub fn gears_in_category(
+    catalogue: &serde_json::Value,
+    category: Option<&str>,
+) -> BTreeMap<String, usize> {
     let wanted = category.map(str::trim).filter(|c| !c.is_empty());
     let mut counts = BTreeMap::new();
     for g in catalogue
@@ -499,7 +502,11 @@ impl CatalogService {
         // platform's.
         let pctx = platform_ctx(ctx)?;
         let (source, source_id, targets) = self
-            .publish_target(&pctx, entry.entry.category.as_deref(), input.target.as_deref())
+            .publish_target(
+                &pctx,
+                entry.entry.category.as_deref(),
+                input.target.as_deref(),
+            )
             .await?;
         if source.tenant != super::tiers::PLATFORM_TENANT {
             return Err(PublishFailure::Refused(

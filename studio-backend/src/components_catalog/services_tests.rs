@@ -71,9 +71,21 @@ fn an_open_pulls_answer_that_stops_at_a_page_is_a_lower_bound() {
     };
     let (files, all) = open_pull_files(&answer(false, false));
     assert!(all);
-    assert_eq!(files, vec![vec!["svc/a.go".to_string(), "README.md".to_string()], vec![]]);
-    assert!(!open_pull_files(&answer(true, false)).1, "more pull requests");
-    assert!(!open_pull_files(&answer(false, true)).1, "a pull request with more files");
+    assert_eq!(
+        files,
+        vec![
+            vec!["svc/a.go".to_string(), "README.md".to_string()],
+            vec![]
+        ]
+    );
+    assert!(
+        !open_pull_files(&answer(true, false)).1,
+        "more pull requests"
+    );
+    assert!(
+        !open_pull_files(&answer(false, true)).1,
+        "a pull request with more files"
+    );
     // No answer at all (no access): nothing counted, nothing claimed missing.
     assert_eq!(open_pull_files(&serde_json::json!({})), (Vec::new(), true));
 }

@@ -258,9 +258,15 @@ fn a_gear_goes_where_its_category_already_lives_unless_the_curator_names_another
     };
     let targets = vec![t("gears-core", 2), t("gears-bss", 5), t("gears-ai", 5)];
     // Most gears of its category; the first added on a tie.
-    assert_eq!(choose_target(&targets, None).unwrap().unwrap().source_id, "gears-bss");
     assert_eq!(
-        choose_target(&targets, Some("gears-core")).unwrap().unwrap().source_id,
+        choose_target(&targets, None).unwrap().unwrap().source_id,
+        "gears-bss"
+    );
+    assert_eq!(
+        choose_target(&targets, Some("gears-core"))
+            .unwrap()
+            .unwrap()
+            .source_id,
         "gears-core"
     );
     assert_eq!(

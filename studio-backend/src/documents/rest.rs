@@ -5766,6 +5766,10 @@ pub struct ReviewRequestInput {
     /// `document` (written in Studio) or `binding` (a repository file).
     pub subject_kind: String,
     pub subject_id: String,
+    /// Ignored: the review takes its type from the stored document or
+    /// binding, never from the caller (#744). Still accepted, so a client
+    /// that sends it is not refused.
+    #[allow(dead_code)]
     pub type_key: Option<String>,
     pub title: String,
     /// The version asked about: a commit sha or a revision.
@@ -6098,7 +6102,6 @@ async fn create_review_request(
     let ask = super::service::ReviewAsk {
         subject_kind: body.subject_kind,
         subject_id,
-        type_key: body.type_key,
         title: body.title,
         version,
         reviewers: body

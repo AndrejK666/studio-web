@@ -516,7 +516,6 @@ query($owner: String!, $name: String!) {
 }
 "#;
 
-
 fn bot(login: &str) -> bool {
     let a = login.to_ascii_lowercase();
     a.ends_with("[bot]") || a.ends_with("-bot") || a == "github-actions" || a.contains("dependabot")
@@ -603,9 +602,7 @@ async fn list_project_components(
                                 }),
                             )
                             .await
-                            .map_or((Vec::new(), true), |a| {
-                                super::services::open_pull_files(&a)
-                            }),
+                            .map_or((Vec::new(), true), |a| super::services::open_pull_files(&a)),
                         Err(_) => (Vec::new(), true),
                     }
                 }
@@ -4320,7 +4317,10 @@ mod registry_dto_tests {
     fn a_refused_move_says_which_states_the_action_applies_to() {
         use crate::components_catalog::registry_decisions::DecisionError;
         assert_eq!(allowed_from("publish"), "registered, extracted");
-        assert_eq!(allowed_from("deprecate"), "registered, extracted, published");
+        assert_eq!(
+            allowed_from("deprecate"),
+            "registered, extracted, published"
+        );
         assert_eq!(allowed_from("complete_extraction"), "registered");
         let problem = decision_problem(DecisionError::Illegal {
             action: "publish".into(),
