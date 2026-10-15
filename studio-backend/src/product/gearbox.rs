@@ -1936,6 +1936,8 @@ impl GearRoot {
     /// What decides whether a checkout is still the one asked for.
     fn same(&self, other: &Self) -> bool {
         self.id == other.id
+            && self.connection_id == other.connection_id
+            && self.source.key == other.source.key
             && self.source.url == other.source.url
             && self.source.git_ref == other.source.git_ref
             && self.source.token == other.source.token
@@ -3797,8 +3799,17 @@ mod tests {
         g.use_repositories(vec![core.clone(), bss.clone()]);
         assert_eq!(g.roots.lock().expect("roots").generation, generation);
         // Another order is: the engine's order decides which declaration wins.
-        g.use_repositories(vec![bss, core]);
+        g.use_repositories(vec![bss.clone(), core]);
         assert_eq!(g.roots.lock().expect("roots").generation, generation + 1);
+        // Removed and added again as it was: another connection, so another
+        // root -- its status must name the connection that exists.
+        let again = repo_root(
+            "gears-core",
+            "https://github.com/constructorfabric/gears-core.git",
+        );
+        g.use_repositories(vec![bss, again.clone()]);
+        assert_eq!(g.roots.lock().expect("roots").generation, generation + 2);
+        assert_eq!(g.roots()[1].connection_id, again.connection_id);
 
         g.use_repositories(Vec::new());
         assert_eq!(ids(&g), ["gears-rust"]);

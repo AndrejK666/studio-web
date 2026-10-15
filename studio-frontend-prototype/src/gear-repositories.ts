@@ -9,7 +9,9 @@ export const GEAR_REPOSITORY = "gear-repository";
 
 /** One row of the Sources page: the connection, and what the engine read. */
 export interface GearRepositoryRow {
-  connection: Connection;
+  /** The connection; null when the viewer may not read the platform's
+   *  connections and the row comes from what the engine read. */
+  connection: Connection | null;
   sourceId: string;
   /** `owner/repo`. */
   repo: string;
@@ -55,6 +57,15 @@ export function gearRepositoryRows(
       ref: c.options?.ref ?? "",
       read: read.find((s) => s.connection_id === c.id) ?? null,
     }));
+}
+
+/** The platform's gear repositories as the engine read them, for a viewer
+ *  who may not read the platform's connections (every organization's
+ *  member): the same rows, read-only. */
+export function gearRepositoryRowsFromStatus(status: GearboxStatus | null): GearRepositoryRow[] {
+  return (status?.sources ?? [])
+    .filter((s) => !!s.connection_id)
+    .map((s) => ({ connection: null, sourceId: s.source_id, repo: s.repo, ref: s.git_ref, read: s }));
 }
 
 /** While the platform has no gear repository, the engine reads the

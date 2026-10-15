@@ -53,7 +53,9 @@ default, unique among the tenant's gear repositories). Its token is optional
 (`token_optional` on the provider): a public repository is stored without one,
 and then no credstore secret is written and `secret_ref` is empty. The test
 reads the repository and the ref and counts its `gear.gdl` files ("59 gear.gdl files at
-main"). The platform's gear repositories are the root tenant's; studio-product
+main"). Only the root tenant may hold one for now: an organization's own gear
+repositories are ADR-0046 phase 3, and until then one would be read by nothing.
+The platform's gear repositories are the root tenant's; studio-product
 lists them (`ConnectorService::gear_repositories`) and checks them out for the
 engine. Options are a driver's to check (`ConnectorDriver::check_options`); a
 driver that takes none refuses any.
