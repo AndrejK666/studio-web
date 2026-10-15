@@ -17,6 +17,7 @@ import {
   defaultSourceId,
   deploymentCorpus,
   gearRepositoryRows,
+  gearRepositoryRowsFromStatus,
   isSourceId,
   readLine,
   repositoryOf,
@@ -29,25 +30,37 @@ export function PlatformSources({ token, isPlatformAdmin }: { token: string; isP
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const [statusRead, setStatusRead] = useState(false);
+
   const load = useCallback(
     (refresh = false) => {
-      api
-        .connections(token, PLATFORM_ROOT_TENANT_ID)
-        .then((r) => setConnections(r.items))
-        .catch((e) => {
-          setConnections([]);
-          setError(errText(e));
-        });
+      // Only a platform administrator reads the platform's connections; every
+      // other member sees the list as the engine read it.
+      if (isPlatformAdmin)
+        api
+          .connections(token, PLATFORM_ROOT_TENANT_ID)
+          .then((r) => setConnections(r.items))
+          .catch((e) => {
+            setConnections([]);
+            setError(errText(e));
+          });
+      // The engine may be fetching its repositories as it answers: say so
+      // rather than "not read yet" while it does.
+      setStatusRead(false);
       api
         .gearboxStatus(token, refresh)
         .then(setStatus)
-        .catch(() => setStatus(null));
+        .catch(() => setStatus(null))
+        .finally(() => setStatusRead(true));
     },
-    [token],
+    [token, isPlatformAdmin],
   );
   useEffect(() => load(), [load]);
 
-  const rows = gearRepositoryRows(connections ?? [], PLATFORM_ROOT_TENANT_ID, status);
+  const rows = isPlatformAdmin
+    ? gearRepositoryRows(connections ?? [], PLATFORM_ROOT_TENANT_ID, status)
+    : gearRepositoryRowsFromStatus(status);
+  const loading = isPlatformAdmin ? connections === null : !statusRead;
   const fallback = rows.length === 0 ? deploymentCorpus(status) : null;
 
   const test = async (c: Connection) => {
@@ -99,8 +112,8 @@ export function PlatformSources({ token, isPlatformAdmin }: { token: string; isP
           The engine could not read the corpus: {status.problem}
         </div>
       )}
-      {connections === null ? (
-        <p className="hint">Loading…</p>
+      {loading ? (
+        <p className="hint">{isPlatformAdmin ? "Loading…" : "Asking the engine what it reads…"}</p>
       ) : rows.length === 0 ? (
         <p className="hint" data-gear-sources-empty>
           {fallback
@@ -122,7 +135,7 @@ export function PlatformSources({ token, isPlatformAdmin }: { token: string; isP
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={r.connection.id} data-gear-source={r.sourceId}>
+              <tr key={r.connection?.id ?? r.sourceId} data-gear-source={r.sourceId}>
                 <td>{i + 1}</td>
                 <td>
                   <code>{r.sourceId}</code>
@@ -133,18 +146,20 @@ export function PlatformSources({ token, isPlatformAdmin }: { token: string; isP
                   </a>
                   <span className="sub">
                     {r.ref ? ` @ ${r.ref}` : " @ default branch"}
-                    {r.connection.secret_ref ? " · with a token" : " · public"}
+                    {r.connection && (r.connection.secret_ref ? " · with a token" : " · public")}
                   </span>
                 </td>
-                <td>{readLine(r.read)}</td>
+                <td>{statusRead ? readLine(r.read) : "reading…"}</td>
                 <td className="gear-source-actions">
-                  <button type="button" disabled={busy === r.connection.id} onClick={() => void test(r.connection)}>
-                    Test
-                  </button>
-                  {isPlatformAdmin && (
-                    <button type="button" disabled={busy === r.connection.id} onClick={() => void remove(r.connection)}>
-                      Remove
-                    </button>
+                  {r.connection && (
+                    <>
+                      <button type="button" disabled={busy === r.connection.id} onClick={() => void test(r.connection!)}>
+                        Test
+                      </button>
+                      <button type="button" disabled={busy === r.connection.id} onClick={() => void remove(r.connection!)}>
+                        Remove
+                      </button>
+                    </>
                   )}
                 </td>
               </tr>

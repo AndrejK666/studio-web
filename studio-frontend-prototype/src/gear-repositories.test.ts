@@ -5,6 +5,7 @@ import {
   defaultSourceId,
   deploymentCorpus,
   gearRepositoryRows,
+  gearRepositoryRowsFromStatus,
   isSourceId,
   readLine,
   repositoryOf,
@@ -72,5 +73,21 @@ describe("gear repositories", () => {
         sources: [{ source_id: "gears-rust", repo: "MikeFalcon77/gears-rust", git_ref: "feature/gearbox", gears: 1 }],
       })?.repo,
     ).toBe("MikeFalcon77/gears-rust");
+  });
+
+  it("shows a member who may not read the platform's connections what the engine read, read-only", () => {
+    const rows = gearRepositoryRowsFromStatus({
+      enabled: true,
+      source_id: "gears-core",
+      profiles: [],
+      sources: [
+        { source_id: "gears-core", repo: "cf/gears-core", git_ref: "v2", commit: "abc", gears: 3, connection_id: "c1" },
+        { source_id: "gears-rust", repo: "MikeFalcon77/gears-rust", git_ref: "x", gears: 49 },
+      ],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ connection: null, sourceId: "gears-core", ref: "v2" });
+    expect(readLine(rows[0].read)).toBe("3 gears at abc");
+    expect(gearRepositoryRowsFromStatus(null)).toEqual([]);
   });
 });

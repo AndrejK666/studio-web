@@ -285,6 +285,21 @@ fn resolve_base_url(
 /// permission. Whoever supplies the credential already holds it, so the move
 /// discloses nothing new — and rotating while relocating is what a real
 /// migration looks like anyway.
+/// A gear repository is the platform's for now: the engine reads the root
+/// tenant's, and an organization's own arrive with ADR-0046 phase 3. One held
+/// anywhere else would be a connection nothing reads.
+fn platform_only(provider: &str, owner_tenant: Uuid) -> anyhow::Result<()> {
+    if provider == super::gear_repository::PROVIDER
+        && owner_tenant != super::ownership::PLATFORM_ROOT_TENANT
+    {
+        return Err(anyhow!(
+            "a gear repository is connected on the platform (Platform › Sources); an \
+             organization's own gear repositories are not read yet"
+        ));
+    }
+    Ok(())
+}
+
 /// What a refused test is put down to: the credential, unless the connection
 /// may have none -- then it is the repository or the ref that was not there.
 fn refusal(driver: &dyn ConnectorDriver) -> &'static str {
@@ -685,6 +700,7 @@ impl ConnectorService {
         let base_url = resolve_base_url(driver.as_ref(), base_url)?;
         let scope = ConnectionScope::parse(scope)?;
         let options = driver.check_options(&base_url, &options)?;
+        platform_only(provider, owner_tenant)?;
         let mut catalogue = self.load_own(ctx, owner_tenant).await?;
         unique_source_id(&catalogue.items, provider, &options, None)?;
 
@@ -1827,6 +1843,22 @@ mod default_connection_tests {
             created_at_epoch_secs: 0,
             options: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_gear_repository_is_connected_on_the_platform_only_for_now() {
+        let org = Uuid::new_v4();
+        let refused = platform_only("gear-repository", org).expect_err("an organization's");
+        assert!(
+            refused.to_string().contains("Platform › Sources"),
+            "{refused}"
+        );
+        platform_only(
+            "gear-repository",
+            super::super::ownership::PLATFORM_ROOT_TENANT,
+        )
+        .expect("the platform's");
+        platform_only("github", org).expect("any other kind anywhere");
     }
 
     #[test]
