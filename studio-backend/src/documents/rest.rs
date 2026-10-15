@@ -6233,7 +6233,14 @@ async fn create_review_approval(
     let request_id = parse_uuid_field("request_id", &request_id)?;
     let approver = quality.caller(&ctx).await?;
     let (review, approval) = service
-        .give_verdict(workspace_id, request_id, approver, &body.verdict, body.note)
+        .give_verdict(
+            workspace_id,
+            project_id,
+            request_id,
+            approver,
+            &body.verdict,
+            body.note,
+        )
         .await
         .map_err(invalid)?
         .ok_or_else(|| {
@@ -6259,7 +6266,7 @@ async fn cancel_review_request(
     let request_id = parse_uuid_field("request_id", &request_id)?;
     let (me, _) = quality.caller(&ctx).await?;
     let review = service
-        .withdraw_review(workspace_id, request_id, &me)
+        .withdraw_review(workspace_id, project_id, request_id, &me)
         .await
         .map_err(invalid)?
         .ok_or_else(|| {

@@ -55,9 +55,14 @@ fn a_missing_required_section_fails_and_says_which() {
     );
     assert!(out.description.contains("0002.md"));
     assert!(out.description.chars().count() <= 140);
-    assert!(
-        out.files[0].issues.iter().any(|i| i.contains(&required)),
-        "{:?}",
+    assert_eq!(
+        out.files[0]
+            .issues
+            .iter()
+            .filter(|i| i.contains(&required))
+            .count(),
+        1,
+        "the section is named once: {:?}",
         out.files[0].issues
     );
 }

@@ -974,3 +974,52 @@ async fn forgetting_gone_files_deletes_exactly_their_bindings() {
         .expect("verdicts");
     assert!(verdicts.is_empty(), "the verdict went with its binding");
 }
+
+/// #744: one project's request on a document never supersedes another
+/// project's request on the same document.
+#[tokio::test]
+async fn a_new_request_supersedes_only_its_own_projects_request() {
+    use crate::documents::entity::review_request;
+    let repo = repo().await;
+    let ws = tenant();
+    let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
+    let subject = Uuid::new_v4();
+    let request = |project: Uuid| review_request::Model {
+        id: Uuid::new_v4(),
+        tenant_id: ws,
+        project_id: project,
+        subject_kind: "document".to_string(),
+        subject_id: subject,
+        type_key: Some("prd".to_string()),
+        title: "PRD".to_string(),
+        version: "v1".to_string(),
+        requested_by: "ann".to_string(),
+        requested_by_name: None,
+        reviewers: serde_json::json!([{ "person": "bob" }]),
+        due_at: None,
+        state: "open".to_string(),
+        created_at: OffsetDateTime::now_utc(),
+    };
+    let in_b = request(b);
+    repo.put_review_request(in_b.clone()).await.expect("b's");
+    let first_in_a = request(a);
+    repo.put_review_request(first_in_a.clone()).await.expect("a's");
+    repo.put_review_request(request(a)).await.expect("a's again");
+
+    let state = |id: Uuid| {
+        let repo = &repo;
+        async move {
+            repo.get_review_request(ws, id)
+                .await
+                .expect("read")
+                .expect("there")
+                .state
+        }
+    };
+    assert_eq!(
+        state(in_b.id).await,
+        "open",
+        "another project's request stands"
+    );
+    assert_eq!(state(first_in_a.id).await, "superseded");
+}

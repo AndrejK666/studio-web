@@ -497,7 +497,8 @@ impl DocumentsRepo {
     // ── review requests and approvals ───────────────────────────────────────
 
     /// Record a request, and mark every earlier open request on the same
-    /// document superseded: one document has one current request.
+    /// document in the same project superseded: one document has one current
+    /// request per project, and no project's request ends another's.
     pub async fn put_review_request(&self, model: review_request::Model) -> Result<()> {
         use sea_orm::sea_query::Expr;
         let conn = self.db.conn()?;
@@ -507,6 +508,7 @@ impl DocumentsRepo {
             .scope_with(&scope)
             .filter(
                 Condition::all()
+                    .add(review_request::Column::ProjectId.eq(model.project_id))
                     .add(review_request::Column::SubjectId.eq(model.subject_id))
                     .add(review_request::Column::State.eq("open")),
             )

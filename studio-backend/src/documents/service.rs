@@ -739,6 +739,31 @@ impl DocumentsService {
         if ask.version.trim().is_empty() {
             bail!("name the version being reviewed");
         }
+        // The subject is read, not taken on the caller's word: it must be this
+        // project's (or the workspace's, which every project inherits), and
+        // its type is the one stored. Otherwise a request could name another
+        // project's document and supersede that project's current request.
+        let (subject_project, type_key) = match ask.subject_kind.as_str() {
+            "document" => {
+                let doc = self
+                    .repo
+                    .get_doc(workspace_id, ask.subject_id)
+                    .await?
+                    .context("no such document in this workspace")?;
+                (doc.project_id, Some(doc.type_key))
+            }
+            _ => {
+                let binding = self
+                    .repo
+                    .get_binding(workspace_id, ask.subject_id)
+                    .await?
+                    .context("no such document in this workspace")?;
+                (binding.project_id, binding.type_key)
+            }
+        };
+        if !subject_in_project(subject_project, project_id) {
+            bail!("the document is not this project's");
+        }
         let mut seen = std::collections::BTreeSet::new();
         let reviewers: Vec<super::approvals::Reviewer> = ask
             .reviewers
@@ -751,7 +776,7 @@ impl DocumentsService {
             project_id,
             subject_kind: ask.subject_kind,
             subject_id: ask.subject_id,
-            type_key: ask.type_key,
+            type_key,
             title: ask.title,
             version: ask.version.trim().to_string(),
             requested_by: requester.0,
@@ -771,10 +796,12 @@ impl DocumentsService {
 
     /// Record one reviewer's verdict. The caller must be one of the request's
     /// reviewers, and the request still open. Every required approval in
-    /// closes the request as `approved`.
+    /// closes the request as `approved`. `None` when the request is not
+    /// `project_id`'s: a project's caller never decides another's.
     pub async fn give_verdict(
         &self,
         workspace_id: Uuid,
+        project_id: Uuid,
         request_id: Uuid,
         approver: (String, Option<String>),
         verdict: &str,
@@ -784,6 +811,7 @@ impl DocumentsService {
             .repo
             .get_review_request(workspace_id, request_id)
             .await?
+            .filter(|r| r.project_id == project_id)
         else {
             return Ok(None);
         };
@@ -897,9 +925,11 @@ impl DocumentsService {
     }
 
     /// Withdraw an open request. Only the person who asked for it can.
+    /// `None` when the request is not `project_id`'s.
     pub async fn withdraw_review(
         &self,
         workspace_id: Uuid,
+        project_id: Uuid,
         request_id: Uuid,
         caller: &str,
     ) -> Result<Option<Review>> {
@@ -907,6 +937,7 @@ impl DocumentsService {
             .repo
             .get_review_request(workspace_id, request_id)
             .await?
+            .filter(|r| r.project_id == project_id)
         else {
             return Ok(None);
         };
@@ -2275,7 +2306,7 @@ impl DocumentsService {
             project_id,
             statement: statement.to_string(),
             requirements: serde_json::to_value(&requirements)?,
-            source_url: source_url.filter(|u| !u.trim().is_empty()),
+            source_url: safe_source_url(source_url),
             source_kind: source_kind.to_string(),
             path: path.filter(|p| !p.trim().is_empty()),
             decided_by: decided_by.0,
@@ -2979,6 +3010,28 @@ impl Review {
     }
 }
 
+/// The longest link a remark keeps to where it came from.
+const SOURCE_URL_MAX: usize = 2048;
+
+/// A remark's link to where it came from, as the portal will render it: an
+/// `http(s)` URL of a sane length, or nothing. The portal makes it an anchor,
+/// and a `javascript:` or `data:` one would run in another member's browser.
+fn safe_source_url(url: Option<String>) -> Option<String> {
+    let url = url?.trim().to_string();
+    let lower = url.to_ascii_lowercase();
+    ((lower.starts_with("https://") || lower.starts_with("http://"))
+        && url.len() <= SOURCE_URL_MAX
+        && !url.chars().any(char::is_control))
+    .then_some(url)
+}
+
+/// Whether a document whose row says `subject_project` may be reviewed in
+/// `project_id`: it is that project's, or the workspace's (`None`), which
+/// every project in it inherits.
+fn subject_in_project(subject_project: Option<Uuid>, project_id: Uuid) -> bool {
+    subject_project.is_none_or(|p| p == project_id)
+}
+
 /// The reviewers a request stored. A row this code did not write reads as
 /// nobody rather than failing the list.
 fn reviewers_of(request: &super::entity::review_request::Model) -> Vec<super::approvals::Reviewer> {
@@ -2987,8 +3040,10 @@ fn reviewers_of(request: &super::entity::review_request::Model) -> Vec<super::ap
 
 /// A stage's status with its documents' reviews folded in: a document whose
 /// current request (the newest that is open or approved) still waits on a
-/// required reviewer holds the stage. Nothing is outstanding for a document
-/// nobody asked to review.
+/// required reviewer holds the stage, and so does one whose request is about
+/// an earlier version -- a Studio document's `updated_at`, a file's
+/// `content_sha` -- than the one there now: every required reviewer is then
+/// outstanding. Nothing is outstanding for a document nobody asked to review.
 fn gate_on_approvals(
     mut status: StageStatus,
     docs: &[Document],
@@ -3001,7 +3056,10 @@ fn gate_on_approvals(
             b.type_key.as_deref() == Some(req.type_key.as_str())
                 && matches!(b.state, BindingState::Confirmed | BindingState::Manual)
         });
-        let Some(subject) = doc.map(|d| d.id).or(bound.map(|b| b.id)) else {
+        let Some((subject, version)) = doc
+            .map(|d| (d.id, d.updated_at.as_str()))
+            .or(bound.map(|b| (b.id, b.content_sha.as_str())))
+        else {
             continue;
         };
         // Newest first, as the repository lists them.
@@ -3012,11 +3070,15 @@ fn gate_on_approvals(
             continue;
         };
         let reviewers = current.reviewers();
-        req.approvals_outstanding =
+        let waiting: Vec<&super::approvals::Reviewer> = if current.request.version == version {
             super::approvals::outstanding(&reviewers, &current.verdict_facts())
-                .into_iter()
-                .map(|r| r.name.clone().unwrap_or_else(|| r.person.clone()))
-                .collect();
+        } else {
+            reviewers.iter().filter(|r| r.required).collect()
+        };
+        req.approvals_outstanding = waiting
+            .into_iter()
+            .map(|r| r.name.clone().unwrap_or_else(|| r.person.clone()))
+            .collect();
     }
     status.complete = status.requirements.iter().all(|r| {
         r.present
@@ -4132,6 +4194,97 @@ mod tests {
         for guess in [Detected, Unknown, NotADocument] {
             assert!(!guess.is_typed(), "{guess:?}");
         }
+    }
+
+    fn review_of(version: &str, state: &str, approved_by: &[&str]) -> Review {
+        let request = crate::documents::entity::review_request::Model {
+            id: Uuid::from_u128(0xfeed),
+            tenant_id: WS,
+            project_id: WS,
+            subject_kind: "binding".to_string(),
+            subject_id: BINDING,
+            type_key: Some("prd".to_string()),
+            title: "prd.md".to_string(),
+            version: version.to_string(),
+            requested_by: "req".to_string(),
+            requested_by_name: None,
+            reviewers: serde_json::json!([{ "person": "ann", "name": "Ann", "required": true }]),
+            due_at: None,
+            state: state.to_string(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+        };
+        let verdicts = approved_by
+            .iter()
+            .map(|who| crate::documents::entity::approval::Model {
+                id: Uuid::new_v4(),
+                tenant_id: WS,
+                project_id: WS,
+                request_id: request.id,
+                subject_id: BINDING,
+                version: version.to_string(),
+                approver: (*who).to_string(),
+                approver_name: None,
+                verdict: "approved".to_string(),
+                note: None,
+                checks: serde_json::json!([]),
+                decided_at: OffsetDateTime::UNIX_EPOCH,
+            })
+            .collect();
+        Review { request, verdicts }
+    }
+
+    /// #731: an approval of `sha-1` does not hold once the file is `sha-2`.
+    #[test]
+    fn an_approval_of_an_earlier_version_does_not_open_the_stage() {
+        let mut file = bound("prd", BindingState::Confirmed, Some(true));
+        file.content_sha = "sha-1".to_string();
+        let stage = || {
+            evaluate_stage(
+                stage_with(&["prd"], &[]),
+                &[],
+                std::slice::from_ref(&file),
+                &[],
+                &[],
+            )
+        };
+        let approved = [review_of("sha-1", "approved", &["ann"])];
+        let now = gate_on_approvals(stage(), &[], std::slice::from_ref(&file), &approved);
+        assert!(now.complete, "{now:?}");
+
+        file.content_sha = "sha-2".to_string();
+        let later = gate_on_approvals(stage(), &[], std::slice::from_ref(&file), &approved);
+        assert_eq!(later.requirements[0].approvals_outstanding, ["Ann"]);
+        assert!(!later.complete);
+    }
+
+    #[test]
+    fn a_remark_keeps_only_a_web_link_to_where_it_came_from() {
+        let keep = |u: &str| safe_source_url(Some(u.to_string()));
+        assert_eq!(
+            keep(" https://github.com/o/r/pull/1#x "),
+            Some("https://github.com/o/r/pull/1#x".to_string())
+        );
+        assert!(keep("http://example.com/a").is_some());
+        for bad in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "data:text/html,x",
+            "//evil.example",
+            "",
+            "https://x/\nset-cookie",
+        ] {
+            assert_eq!(keep(bad), None, "{bad:?}");
+        }
+        assert_eq!(keep(&format!("https://x/{}", "a".repeat(SOURCE_URL_MAX))), None);
+        assert_eq!(safe_source_url(None), None);
+    }
+
+    #[test]
+    fn a_review_is_asked_only_about_the_projects_own_document_or_the_workspaces() {
+        let project = Uuid::from_u128(0xa);
+        assert!(subject_in_project(Some(project), project));
+        assert!(subject_in_project(None, project));
+        assert!(!subject_in_project(Some(Uuid::from_u128(0xb)), project));
     }
 
     fn bound(type_key: &str, state: BindingState, conforms: Option<bool>) -> DocumentBinding {

@@ -357,7 +357,8 @@ project with those of the organization's other projects the caller can read
 (three quarters or more) or `overlap` (from 45%), and `opposite` when one of
 them negates what the other requires ("must not", "never", "without").
 Deterministic and stored nowhere: a list of pairs to read side by side, never a
-finding. A model judge can stand behind it the way it stands behind the rules.
+finding. No model judges these pairs: the words above are the whole rule. A
+judge is future work, the same as for the rules that need a model key.
 
 ## From requirement to code and test
 

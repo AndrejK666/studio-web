@@ -105,26 +105,15 @@ pub fn check(changed: &[(String, &DocumentType, String)]) -> Outcome {
     let files: Vec<FileResult> = changed
         .iter()
         .map(|(path, ty, text)| {
+            // The validator already names every failing section (missing,
+            // empty, too short) among its issues; saying it again here put
+            // each one in the commit status twice.
             let report = validate(text, &ty.template);
-            let mut issues: Vec<String> = report
-                .sections
-                .iter()
-                .filter(|s| s.required && !s.ok)
-                .map(|s| {
-                    if s.present {
-                        format!("section “{}” is too thin", s.title)
-                    } else {
-                        format!("section “{}” is missing", s.title)
-                    }
-                })
-                .collect();
-            issues.extend(report.issues.iter().cloned());
-            issues.dedup();
             FileResult {
                 path: path.clone(),
                 type_key: ty.key.clone(),
                 conforms: report.conforms,
-                issues,
+                issues: report.issues,
             }
         })
         .collect();
