@@ -34,6 +34,9 @@ export interface SpecModelFact {
   status: FactStatus;
   status_because: string;
   source: SpecModelSide;
+  /** Saved from this screen and not read by a build yet (saved-entities.ts):
+   *  shown at once so a person sees the edit, replaced on the next build. */
+  provisional?: boolean;
 }
 
 export interface SpecModelDocument {

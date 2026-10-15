@@ -75,6 +75,17 @@ export function cardSize(name: string, fields: string[]): { w: number; h: number
   return { w: Math.round(Math.min(230, Math.max(130, 18 + 7.2 * longest))), h: 30 + (fields.length ? 6 + 16 * fields.length : 0) };
 }
 
+/** The entity a relation fact points at: its value folded to an entity's key,
+ *  or a longer phrase that starts or ends with one ("the owning workspace").
+ *  Never the entity itself. */
+export function relationTarget(e: Entity, f: SpecModelFact, entities: Entity[], byKey?: Map<string, Entity>): Entity | null {
+  const tk = subjectKey(f.value);
+  const target =
+    (byKey ?? new Map(entities.map((x) => [x.key, x]))).get(tk) ??
+    entities.find((o) => o.key !== e.key && o.key.length > 3 && (o.keys.includes(tk) || tk.startsWith(`${o.key} `) || tk.endsWith(` ${o.key}`)));
+  return target && target.key !== e.key ? target : null;
+}
+
 /** A line of the diagram: a relation a document declares, with its verbs. */
 export interface DiagramEdge extends MapEdge {
   verbs: string[];
@@ -88,11 +99,8 @@ export function relationEdges(entities: Entity[]): DiagramEdge[] {
   for (const e of entities) {
     for (const f of e.facts as SpecModelFact[]) {
       if (f.kind !== "relation") continue;
-      const tk = subjectKey(f.value);
-      const target =
-        byKey.get(tk) ??
-        entities.find((o) => o.key !== e.key && o.key.length > 3 && (o.keys.includes(tk) || tk.startsWith(`${o.key} `) || tk.endsWith(` ${o.key}`)));
-      if (!target || target.key === e.key) continue;
+      const target = relationTarget(e, f, entities, byKey);
+      if (!target) continue;
       const id = [e.key, target.key].sort().join("|");
       const had = out.get(id);
       const verb = f.aspect.trim();

@@ -2547,4 +2547,10 @@ div.dm-block { padding-left: 0; }
 .dm-field textarea { width: 100%; box-sizing: border-box; font: inherit; }
 .dm-row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 4px; }
 .dm-row2 input { min-width: 0; }
+/* The queue's documentation changes (doc-quality.ts), and what a save shows
+   before the next build reads it (saved-entities.ts). */
+.dm-ready-docs { margin-top: 8px; }
+.dm-inverse { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dm-inverse input { width: 12em; max-width: 100%; }
+.sm-status.dm-provisional { color: var(--success, #16a34a); margin-left: 6px; }
 .dm-saved { font-size: 12.5px; color: var(--success, #16a34a); margin-top: 4px; }
