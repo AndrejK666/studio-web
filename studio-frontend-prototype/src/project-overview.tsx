@@ -44,6 +44,7 @@ import { projectRepoRows } from "./project-sources";
 import { errText, initials, relTime } from "./format";
 import { OpenInDesktop } from "./open-in-desktop";
 import { PullRequestsWaiting } from "./pull-requests-waiting";
+import { ProjectPath } from "./project-path-view";
 
 /** The sections of an open project. Lives here because Overview is the screen
  *  that links to all of them; the shell's rail renders the list.
@@ -501,6 +502,16 @@ export function ProjectOverview({
           No answer from: {missing.join(", ")} — what they hold is shown as “—”, not as zero.
         </p>
       )}
+
+      {/* Where the project is on its way to a product that builds. Loads on
+          its own, after the numbers below, so a slow model read never holds
+          the dashboard. */}
+      <ProjectPath
+        token={token}
+        projectId={project.id}
+        repositories={missed("repositories") ? null : repos.length}
+        onOpenTab={onOpenTab}
+      />
 
       {/* The project in six numbers. Each one opens the tab that owns it. */}
       <div className="dash-stats">

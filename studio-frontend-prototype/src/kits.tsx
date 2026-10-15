@@ -363,7 +363,10 @@ export function ProjectKits({
       {catalog === null ? (
         <p className="empty">Loading kit registry…</p>
       ) : catalog.length === 0 ? (
-        <p className="empty">No kits are published in this registry.</p>
+        <p className="empty">
+          No kits are published in this registry yet. Next: ask an organization admin to publish one; the project
+          works without kits meanwhile.
+        </p>
       ) : (
         <div className="kit-grid">
           {catalog.map((kit) => {
@@ -715,7 +718,7 @@ function SuggestedComponents({
         (plan.length === 0 ? (
           <p className="empty" style={{ fontSize: 13 }}>
             {docCount === 0
-              ? "No specification in this project says what it needs yet. This reads the functional requirements of the project's PRDs, as they are written, and of the documents Studio holds; sync the repository if its specs are not on the Specs tab yet."
+              ? "No specification says what the product needs yet. Next: connect a repository on Sources and type its documents on Specs; the functional requirements they hold are read here as written."
               : "The documents declare no capabilities to match."}
           </p>
         ) : (
