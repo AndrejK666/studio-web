@@ -16,11 +16,13 @@
 mod approvals;
 mod brief;
 mod classify;
+mod delivery;
 mod entity;
 pub(crate) mod gts;
 pub(crate) mod intake;
 mod migrations;
 pub(crate) mod model;
+mod parts;
 mod paths;
 pub(crate) mod port;
 mod pr_checks;

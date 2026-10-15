@@ -417,6 +417,8 @@ pub struct IdentityService {
     last_seen: Mutex<HashMap<String, i64>>,
     /// When this process last asked the realm about each person.
     realm_read: Mutex<HashMap<String, i64>>,
+    /// The assembly's hub, for the domain model's view of the roadmap plan.
+    hub: OnceLock<Arc<toolkit::client_hub::ClientHub>>,
 }
 
 impl IdentityService {
@@ -429,7 +431,119 @@ impl IdentityService {
             first_login_join: OnceLock::new(),
             last_seen: Mutex::new(HashMap::new()),
             realm_read: Mutex::new(HashMap::new()),
+            hub: OnceLock::new(),
         }
+    }
+
+    /// Hand the service the hub, in the REST phase like the connectors.
+    pub fn attach_hub(&self, hub: Arc<toolkit::client_hub::ClientHub>) {
+        let _ = self.hub.set(hub);
+    }
+
+    /// The people the roadmap plan names, with their team and power, as the
+    /// reports gear mirrors them into the domain model. Empty when the model
+    /// or the plan is not there.
+    pub async fn plan_people(&self, ctx: &SecurityContext) -> Vec<super::capacity::PlanPerson> {
+        let Some(objects) = self
+            .hub
+            .get()
+            .and_then(|h| h.get::<dyn crate::domain_model::port::DomainObjects>().ok())
+        else {
+            return Vec::new();
+        };
+        let active = |o: &crate::domain_model::port::StoredObject| {
+            o.payload.get("status").and_then(serde_json::Value::as_str) != Some("inactive")
+                && o.payload
+                    .get("valid_to")
+                    .is_none_or(serde_json::Value::is_null)
+        };
+        let (Ok(people), Ok(members), Ok(teams)) = (
+            objects.list(ctx, "person").await,
+            objects.list(ctx, "membership").await,
+            objects.list(ctx, "team").await,
+        ) else {
+            return Vec::new();
+        };
+        let team_name: HashMap<String, String> = teams
+            .iter()
+            .filter_map(|t| {
+                Some((
+                    t.instance_id.clone(),
+                    t.payload.get("name")?.as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        people
+            .iter()
+            .filter(|p| active(p))
+            .filter_map(|p| {
+                let key = p.payload.get("mirror_key")?.as_str()?.to_string();
+                let membership = members.iter().filter(|m| active(m)).find(|m| {
+                    m.payload
+                        .get("person_ref")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(p.instance_id.as_str())
+                        && m.payload
+                            .get("scope_kind")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("team")
+                });
+                Some(super::capacity::PlanPerson {
+                    name: p
+                        .payload
+                        .get("display_name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or(&key)
+                        .to_string(),
+                    team: membership
+                        .and_then(|m| m.payload.get("scope_ref")?.as_str())
+                        .and_then(|t| team_name.get(t).cloned()),
+                    power: membership.and_then(|m| m.payload.get("allocation")?.as_f64()),
+                    key,
+                })
+            })
+            .collect()
+    }
+
+    /// One organization's week of capacity.
+    pub async fn capacity(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        week: &str,
+        project: Option<&str>,
+    ) -> Result<Vec<super::capacity::Row>> {
+        let (set, allocations) = self.store.capacity_of(org, week).await?;
+        let plan = self.plan_people(ctx).await;
+        Ok(super::capacity::rows(&plan, &set, &allocations, project))
+    }
+
+    pub async fn set_availability(
+        &self,
+        org: Uuid,
+        person: &str,
+        week: &str,
+        hours: Option<f64>,
+        by: &str,
+    ) -> Result<()> {
+        self.store
+            .set_availability(org, person, week, hours, by)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn set_allocation(
+        &self,
+        org: Uuid,
+        person: &str,
+        project: Uuid,
+        week: &str,
+        hours: Option<f64>,
+        by: &str,
+    ) -> Result<()> {
+        self.store
+            .set_allocation(org, person, project, week, hours, by)
+            .await
     }
 
     /// Hand the service its view of the connection catalogue.

@@ -245,3 +245,60 @@ pub mod inbox_mark {
     pub enum Relation {}
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+/// Hours a person is available in one week of one organization (#785).
+pub mod capacity_availability {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_capacity_availability")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// v5 of `(org, person, week)`.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub org_id: Uuid,
+        /// `github:<login>` or a Studio person id.
+        pub person: String,
+        /// The week's Monday, `YYYY-MM-DD`.
+        pub week: String,
+        pub hours: f64,
+        pub updated_by: String,
+        pub updated_at: OffsetDateTime,
+    }
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// Hours of a person given to a project in one week (#785).
+pub mod capacity_allocation {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_capacity_allocation")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// v5 of `(org, person, project, week)`.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub org_id: Uuid,
+        pub person: String,
+        pub project_id: Uuid,
+        pub week: String,
+        pub hours: f64,
+        pub updated_by: String,
+        pub updated_at: OffsetDateTime,
+    }
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}

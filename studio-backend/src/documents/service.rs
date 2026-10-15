@@ -419,6 +419,7 @@ impl DocumentsService {
             ordinal: st.position,
             requires: serde_json::to_string(&st.requires)?,
             gates: serde_json::to_string(&st.gates)?,
+            checks: serde_json::to_string(&st.checks)?,
             hidden: st.hidden,
             created_at: now,
             updated_at: now,
@@ -635,6 +636,7 @@ impl DocumentsService {
         ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
+        evidence: &super::model::StageEvidence,
     ) -> Result<Vec<StageStatus>> {
         let stages = self.list_stages(ctx, workspace_id).await?;
         let docs = self.all_documents(workspace_id, Some(project_id)).await?;
@@ -663,8 +665,12 @@ impl DocumentsService {
 
         Ok(stages
             .into_iter()
-            .map(|stage| evaluate_stage(stage, &docs, &bindings, &analyses, &binding_analyses))
-            .map(|status| gate_on_approvals(status, &docs, &bindings, &reviews))
+            .map(|stage| {
+                let checks = stage.checks.clone();
+                let status = evaluate_stage(stage, &docs, &bindings, &analyses, &binding_analyses);
+                let status = gate_on_approvals(status, &docs, &bindings, &reviews);
+                gate_on_checks(status, &checks, evidence)
+            })
             .collect())
     }
 
@@ -1313,6 +1319,8 @@ fn stage_from_row(row: stage::Model, workspace_id: Option<Uuid>) -> Result<Stage
         position: row.ordinal,
         requires,
         gates: serde_json::from_str(&row.gates).context("stage `gates` is malformed")?,
+        // A row from before checks, or one written by hand, reads as none.
+        checks: serde_json::from_str(&row.checks).unwrap_or_default(),
         owner: owner_of(row.tenant_id, workspace_id),
         hidden: row.hidden,
     })
@@ -1411,6 +1419,7 @@ fn evaluate_stage(
         label: stage.label,
         required: stage.required,
         requirements,
+        checks: Vec::new(),
     }
 }
 
@@ -1838,6 +1847,310 @@ impl DocumentsService {
             tree,
             files,
         })
+    }
+
+    // ── application parts (#786) ─────────────────────────────────────────────
+
+    pub async fn part_records(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::entity::application_part::Model>> {
+        self.repo.list_parts(workspace_id, project_id).await
+    }
+
+    /// Record (or replace) what is known about one part.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_part(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        repo: &str,
+        kind: &str,
+        reference: &str,
+        about: PartRecord,
+        by: &str,
+    ) -> Result<super::entity::application_part::Model> {
+        if !super::parts::KINDS.contains(&kind) {
+            bail!("kind is configuration, storage or deployment");
+        }
+        if repo.trim().is_empty() || reference.len() > 500 {
+            bail!("name the repository, and a reference of at most 500 characters");
+        }
+        let clean = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let mut related: Vec<String> = about
+            .related
+            .into_iter()
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty())
+            .collect();
+        related.sort();
+        related.dedup();
+        let model = super::entity::application_part::Model {
+            id: super::repo::part_id(project_id, repo, kind, reference),
+            tenant_id: workspace_id,
+            project_id,
+            repo: repo.to_string(),
+            kind: kind.to_string(),
+            reference: reference.to_string(),
+            owner: clean(about.owner),
+            owner_name: clean(about.owner_name),
+            description_path: clean(about.description_path),
+            boundary: clean(about.boundary),
+            related: serde_json::to_value(&related)?,
+            updated_by: by.to_string(),
+            updated_at: OffsetDateTime::now_utc(),
+        };
+        self.repo.put_part(model.clone()).await?;
+        Ok(model)
+    }
+
+    // ── delivery scopes (#784) ───────────────────────────────────────────────
+
+    /// The project's scopes with their limits and whether each is blocked.
+    pub async fn delivery_scopes(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<ScopeView>> {
+        let scopes = self.repo.list_scopes(workspace_id, project_id).await?;
+        let limits = self.repo.list_limits(workspace_id, project_id).await?;
+        let state_of: std::collections::BTreeMap<String, String> = scopes
+            .iter()
+            .map(|s| (s.id.to_string(), s.state.clone()))
+            .collect();
+        Ok(scopes
+            .into_iter()
+            .map(|scope| {
+                let mine: Vec<super::entity::delivery_limit::Model> = limits
+                    .iter()
+                    .filter(|l| l.scope_id == scope.id)
+                    .cloned()
+                    .collect();
+                let states: Vec<super::delivery::LimitState<'_>> = mine
+                    .iter()
+                    .map(|l| super::delivery::LimitState {
+                        blocking: l.blocking,
+                        resolution: l.resolution.as_deref(),
+                        depends_on_state: l
+                            .depends_on
+                            .as_deref()
+                            .and_then(|d| state_of.get(d))
+                            .map(String::as_str),
+                    })
+                    .collect();
+                let blocked = super::delivery::blocked(&states);
+                ScopeView {
+                    scope,
+                    limits: mine,
+                    blocked,
+                }
+            })
+            .collect())
+    }
+
+    async fn scope_of(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<super::entity::delivery_scope::Model>> {
+        Ok(self
+            .repo
+            .list_scopes(workspace_id, project_id)
+            .await?
+            .into_iter()
+            .find(|s| s.id == id))
+    }
+
+    pub async fn create_scope(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        fields: super::delivery::ScopeFields,
+        by: &str,
+    ) -> Result<super::entity::delivery_scope::Model> {
+        let f = super::delivery::check_scope(fields).map_err(|e| anyhow::anyhow!(e))?;
+        let now = OffsetDateTime::now_utc();
+        let model = super::entity::delivery_scope::Model {
+            id: Uuid::new_v4(),
+            tenant_id: workspace_id,
+            project_id,
+            title: f.title,
+            outcome: f.outcome,
+            owner: f.owner,
+            owner_name: f.owner_name,
+            target_date: f.target_date,
+            requirements: serde_json::to_value(&f.requirements)?,
+            gears: serde_json::to_value(&f.gears)?,
+            acceptance: f.acceptance,
+            state: f.state,
+            created_by: by.to_string(),
+            created_at: now,
+            updated_by: by.to_string(),
+            updated_at: now,
+        };
+        self.repo.put_scope(model.clone()).await?;
+        Ok(model)
+    }
+
+    /// Change a scope; the version it replaces is kept in its history.
+    pub async fn update_scope(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        id: Uuid,
+        patch: ScopePatch,
+        by: &str,
+    ) -> Result<Option<super::entity::delivery_scope::Model>> {
+        let Some(old) = self.scope_of(workspace_id, project_id, id).await? else {
+            return Ok(None);
+        };
+        let list = |v: &serde_json::Value| -> Vec<String> {
+            serde_json::from_value(v.clone()).unwrap_or_default()
+        };
+        let f = super::delivery::check_scope(super::delivery::ScopeFields {
+            title: patch.title.unwrap_or_else(|| old.title.clone()),
+            outcome: patch.outcome.unwrap_or_else(|| old.outcome.clone()),
+            owner: patch.owner.unwrap_or_else(|| old.owner.clone()),
+            owner_name: patch.owner_name.unwrap_or_else(|| old.owner_name.clone()),
+            target_date: patch.target_date.unwrap_or_else(|| old.target_date.clone()),
+            requirements: patch
+                .requirements
+                .unwrap_or_else(|| list(&old.requirements)),
+            gears: patch.gears.unwrap_or_else(|| list(&old.gears)),
+            acceptance: patch.acceptance.unwrap_or_else(|| old.acceptance.clone()),
+            state: patch.state.unwrap_or_else(|| old.state.clone()),
+        })
+        .map_err(|e| anyhow::anyhow!(e))?;
+        let now = OffsetDateTime::now_utc();
+        self.repo
+            .insert_scope_history(super::entity::delivery_history::Model {
+                id: Uuid::new_v4(),
+                tenant_id: workspace_id,
+                scope_id: id,
+                snapshot: scope_snapshot(&old),
+                changed_by: by.to_string(),
+                changed_at: now,
+            })
+            .await?;
+        let model = super::entity::delivery_scope::Model {
+            title: f.title,
+            outcome: f.outcome,
+            owner: f.owner,
+            owner_name: f.owner_name,
+            target_date: f.target_date,
+            requirements: serde_json::to_value(&f.requirements)?,
+            gears: serde_json::to_value(&f.gears)?,
+            acceptance: f.acceptance,
+            state: f.state,
+            updated_by: by.to_string(),
+            updated_at: now,
+            ..old
+        };
+        self.repo.put_scope(model.clone()).await?;
+        Ok(Some(model))
+    }
+
+    pub async fn delete_scope(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        id: Uuid,
+    ) -> Result<bool> {
+        if self.scope_of(workspace_id, project_id, id).await?.is_none() {
+            return Ok(false);
+        }
+        self.repo.delete_scope(workspace_id, id).await?;
+        Ok(true)
+    }
+
+    pub async fn scope_history(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<Vec<super::entity::delivery_history::Model>>> {
+        if self.scope_of(workspace_id, project_id, id).await?.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(self.repo.list_scope_history(workspace_id, id).await?))
+    }
+
+    pub async fn add_limit(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        scope_id: Uuid,
+        fields: super::delivery::LimitFields,
+        by: &str,
+    ) -> Result<Option<super::entity::delivery_limit::Model>> {
+        if self
+            .scope_of(workspace_id, project_id, scope_id)
+            .await?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        let f = super::delivery::check_limit(fields).map_err(|e| anyhow::anyhow!(e))?;
+        let model = super::entity::delivery_limit::Model {
+            id: Uuid::new_v4(),
+            tenant_id: workspace_id,
+            project_id,
+            scope_id,
+            kind: f.kind,
+            text: f.text,
+            blocking: f.blocking,
+            depends_on: f.depends_on,
+            resolution: None,
+            resolved_by: None,
+            resolved_at: None,
+            created_by: by.to_string(),
+            created_at: OffsetDateTime::now_utc(),
+        };
+        self.repo.put_limit(model.clone()).await?;
+        Ok(Some(model))
+    }
+
+    /// Resolve a limit (or reopen it with an empty resolution), or change
+    /// whether it blocks.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_limit(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        scope_id: Uuid,
+        limit_id: Uuid,
+        resolution: Option<String>,
+        blocking: Option<bool>,
+        by: &str,
+    ) -> Result<Option<super::entity::delivery_limit::Model>> {
+        let Some(mut limit) = self
+            .repo
+            .list_limits(workspace_id, project_id)
+            .await?
+            .into_iter()
+            .find(|l| l.id == limit_id && l.scope_id == scope_id)
+        else {
+            return Ok(None);
+        };
+        if let Some(r) = resolution {
+            let r = r.trim().to_string();
+            if r.is_empty() {
+                limit.resolution = None;
+                limit.resolved_by = None;
+                limit.resolved_at = None;
+            } else {
+                limit.resolution = Some(r);
+                limit.resolved_by = Some(by.to_string());
+                limit.resolved_at = Some(OffsetDateTime::now_utc());
+            }
+        }
+        if let Some(b) = blocking {
+            limit.blocking = b;
+        }
+        self.repo.put_limit(limit.clone()).await?;
+        Ok(Some(limit))
     }
 
     /// Record a decision on the project's requirements.
@@ -2449,6 +2762,70 @@ fn settle(
 pub struct DeclaredCapability {
     pub key: String,
     pub sources: Vec<CapabilitySource>,
+}
+
+/// A stage's checks beyond documents folded into its status: each declared
+/// check is answered from the evidence, and the stage is complete only when
+/// its documents are and every check passed.
+fn gate_on_checks(
+    mut status: StageStatus,
+    checks: &[String],
+    evidence: &super::model::StageEvidence,
+) -> StageStatus {
+    status.checks = checks.iter().map(|k| evidence.check(k)).collect();
+    // A check nobody can read is not passed: the stage is not complete.
+    status.complete = status.complete && status.checks.iter().all(|c| c.passed == Some(true));
+    status
+}
+
+/// What a person records about a part.
+#[derive(Clone, Debug, Default)]
+pub struct PartRecord {
+    pub owner: Option<String>,
+    pub owner_name: Option<String>,
+    pub description_path: Option<String>,
+    pub boundary: Option<String>,
+    pub related: Vec<String>,
+}
+
+/// A scope with its limits, and whether a blocking one still holds.
+#[derive(Clone, Debug)]
+pub struct ScopeView {
+    pub scope: super::entity::delivery_scope::Model,
+    pub limits: Vec<super::entity::delivery_limit::Model>,
+    pub blocked: bool,
+}
+
+/// What a change to a scope sets; an absent field is left as it is, and
+/// `Some(None)` clears an optional one.
+#[derive(Clone, Debug, Default)]
+pub struct ScopePatch {
+    pub title: Option<String>,
+    pub outcome: Option<String>,
+    pub owner: Option<Option<String>>,
+    pub owner_name: Option<Option<String>>,
+    pub target_date: Option<Option<String>>,
+    pub requirements: Option<Vec<String>>,
+    pub gears: Option<Vec<String>>,
+    pub acceptance: Option<String>,
+    pub state: Option<String>,
+}
+
+/// A scope as its history keeps it.
+fn scope_snapshot(s: &super::entity::delivery_scope::Model) -> serde_json::Value {
+    serde_json::json!({
+        "title": s.title,
+        "outcome": s.outcome,
+        "owner": s.owner,
+        "owner_name": s.owner_name,
+        "target_date": s.target_date,
+        "requirements": s.requirements,
+        "gears": s.gears,
+        "acceptance": s.acceptance,
+        "state": s.state,
+        "updated_by": s.updated_by,
+        "updated_at": s.updated_at.format(&Rfc3339).unwrap_or_default(),
+    })
 }
 
 /// How many reviewers a suggestion offers.
@@ -3247,6 +3624,7 @@ mod tests {
             ordinal,
             requires: "[]".to_string(),
             gates: "[]".to_string(),
+            checks: "[]".to_string(),
             hidden,
             created_at: now,
             updated_at: now,
@@ -3293,7 +3671,9 @@ mod tests {
                 "architecture",
                 "ui_design",
                 "user_stories",
-                "testing"
+                "code",
+                "testing",
+                "review"
             ]
         );
     }
@@ -3456,6 +3836,7 @@ mod tests {
             position: 30,
             requires: requires.iter().map(|k| (*k).to_string()).collect(),
             gates: gates.iter().map(|k| (*k).to_string()).collect(),
+            checks: Vec::new(),
             owner: Owner::Builtin,
             hidden: false,
         }

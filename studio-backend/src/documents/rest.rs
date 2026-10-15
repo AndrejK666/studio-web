@@ -204,6 +204,20 @@ pub struct StageStatusDto {
     pub required: bool,
     pub complete: bool,
     pub requirements: Vec<RequirementDto>,
+    /// The stage's checks beyond documents, each answered (#782).
+    pub checks: Vec<StageCheckDto>,
+}
+
+/// One check beyond documents, and where the project stands on it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct StageCheckDto {
+    /// `code`, `tests` or `review`.
+    pub kind: String,
+    /// `null` when this deployment cannot read the evidence: no verdict.
+    pub passed: Option<bool>,
+    /// What passed it, or what is still missing.
+    pub detail: String,
 }
 
 #[derive(Debug)]
@@ -228,6 +242,8 @@ pub struct StageDto {
     pub requires: Vec<String>,
     /// Detectors every required document must pass before the stage completes.
     pub gates: Vec<String>,
+    /// Checks beyond documents: `code`, `tests`, `review`.
+    pub checks: Vec<String>,
     /// "builtin", "organization" or "workspace".
     pub owner: String,
     pub owner_tenant_id: Option<Uuid>,
@@ -250,6 +266,8 @@ pub struct UpsertStageDto {
     pub position: Option<i32>,
     pub requires: Option<Vec<String>>,
     pub gates: Option<Vec<String>>,
+    /// Checks beyond documents, each of `code`, `tests`, `review`.
+    pub checks: Option<Vec<String>>,
     /// Hide the key this entry overrides instead of replacing it.
     pub hidden: Option<bool>,
 }
@@ -620,6 +638,15 @@ impl From<StageStatus> for StageStatusDto {
                     approvals_outstanding: r.approvals_outstanding,
                 })
                 .collect(),
+            checks: st
+                .checks
+                .into_iter()
+                .map(|c| StageCheckDto {
+                    kind: c.kind,
+                    passed: c.passed,
+                    detail: c.detail,
+                })
+                .collect(),
         }
     }
 }
@@ -638,6 +665,7 @@ impl From<Stage> for StageDto {
             position: st.position,
             requires: st.requires,
             gates: st.gates,
+            checks: st.checks,
             owner,
             owner_tenant_id,
             hidden: st.hidden,
@@ -962,6 +990,15 @@ async fn upsert_stage_at(
         .authorize(&ctx, tenant_id)
         .await
         .map_err(no_tenant)?;
+    let checks = body.checks.unwrap_or_default();
+    if let Some(bad) = checks
+        .iter()
+        .find(|c| !super::model::STAGE_CHECKS.contains(&c.as_str()))
+    {
+        return Err(invalid(anyhow::anyhow!(
+            "`{bad}` is not a stage check: use code, tests or review"
+        )));
+    }
     let st = Stage {
         key: body.key,
         label: body.label,
@@ -969,6 +1006,7 @@ async fn upsert_stage_at(
         position: body.position.unwrap_or(0),
         requires: body.requires.unwrap_or_default(),
         gates: body.gates.unwrap_or_default(),
+        checks,
         owner: owner.clone(),
         hidden: body.hidden.unwrap_or(false),
     };
@@ -1058,18 +1096,163 @@ async fn list_project_analyses(
     Ok(Json(AnalysisListDto { items, total }))
 }
 
+/// The evidence the stages' checks read, gathered only for the kinds some
+/// stage declares.
+async fn stage_evidence(
+    service: &DocumentsService,
+    quality: &Quality,
+    ctx: &SecurityContext,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    kinds: &std::collections::BTreeSet<String>,
+) -> super::model::StageEvidence {
+    let mut ev = super::model::StageEvidence::default();
+    let scope = project_id.to_string();
+    let delivery = quality
+        .hub
+        .get::<dyn crate::artifact_ingest::port::DeliveryEvidence>()
+        .ok();
+    if kinds.contains("code") {
+        ev.code = match (quality.work(), quality.reader().ok()) {
+            (Some(source), Some(reader)) => {
+                match (
+                    source.project_work(ctx, &scope).await,
+                    service
+                        .spec_model_sources(ctx, workspace_id, project_id, reader.as_ref())
+                        .await,
+                ) {
+                    (Ok(work), Ok(sources)) => Some(code_evidence(&sources.labelled_ids(), &work)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+    }
+    if kinds.contains("tests") {
+        ev.tests = match &delivery {
+            Some(d) => d.ci_runs(ctx, &scope).await.ok().map(|runs| {
+                match crate::artifact_ingest::port::latest_completed_run(&runs) {
+                    None => Err("no completed CI run has been synced".to_string()),
+                    Some(r) => {
+                        let what = format!(
+                            "{} on {} at {}",
+                            r.workflow,
+                            r.branch.as_deref().unwrap_or("?"),
+                            r.sha.chars().take(7).collect::<String>()
+                        );
+                        if r.conclusion.as_deref() == Some("success") {
+                            Ok(format!("{what} passed"))
+                        } else {
+                            Err(format!(
+                                "{what} ended {}",
+                                r.conclusion.as_deref().unwrap_or("without a conclusion")
+                            ))
+                        }
+                    }
+                }
+            }),
+            None => None,
+        };
+    }
+    if kinds.contains("review") {
+        let pulls = match &delivery {
+            Some(d) => d.pulls_waiting_on_review(ctx, &scope).await.ok(),
+            None => None,
+        };
+        let awaited: Vec<String> = service
+            .reviews_with_verdicts(workspace_id, project_id, None)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.request.state == "open")
+            .filter(|r| {
+                !super::approvals::outstanding(&r.reviewers(), &r.verdict_facts()).is_empty()
+            })
+            .map(|r| r.request.title.clone())
+            .collect();
+        ev.review = pulls.map(|waiting| {
+            let mut missing = Vec::new();
+            if waiting > 0 {
+                missing.push(format!(
+                    "{waiting} pull request{} wait on review",
+                    if waiting == 1 { "" } else { "s" }
+                ));
+            }
+            if !awaited.is_empty() {
+                missing.push(format!(
+                    "review requested and not approved: {}",
+                    awaited.join(", ")
+                ));
+            }
+            if missing.is_empty() {
+                Ok("nothing waits on a reviewer".to_string())
+            } else {
+                Err(missing.join("; "))
+            }
+        });
+    }
+    ev
+}
+
+/// `code` passes when a commit or a merged pull request names one of the
+/// requirements the project's documents define; with no labelled
+/// requirements, when any commit was synced.
+fn code_evidence(
+    ids: &std::collections::BTreeMap<String, Vec<super::spec_model::finding::Side>>,
+    work: &[crate::artifact_ingest::port::WorkItem],
+) -> Result<String, String> {
+    let landed: Vec<crate::artifact_ingest::port::WorkItem> = work
+        .iter()
+        .filter(|w| w.kind == "commit" || (w.kind == "pull_request" && w.merged))
+        .cloned()
+        .collect();
+    if ids.is_empty() {
+        return if landed.iter().any(|w| w.kind == "commit") {
+            Ok("commits are synced (the documents label no requirements to match)".to_string())
+        } else {
+            Err("no commit has been synced".to_string())
+        };
+    }
+    let (linked, _) = super::spec_model::work::link(ids, &landed);
+    if linked.is_empty() {
+        Err(format!(
+            "no commit or merged pull request names one of the {} requirements",
+            ids.len()
+        ))
+    } else {
+        Ok(format!(
+            "{} of {} requirements are named by commits or merged pull requests",
+            linked.len(),
+            ids.len()
+        ))
+    }
+}
+
 /// Where a project stands against its workspace's stages.
 async fn project_stage_status(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
     Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<JsonBody<StageStatusListDto>> {
     service
         .authorize(&ctx, project_id)
         .await
         .map_err(no_tenant)?;
+    let kinds: std::collections::BTreeSet<String> = service
+        .list_stages(&ctx, workspace_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .flat_map(|s| s.checks)
+        .collect();
+    let evidence = if kinds.is_empty() {
+        super::model::StageEvidence::default()
+    } else {
+        stage_evidence(&service, &quality, &ctx, workspace_id, project_id, &kinds).await
+    };
     let items = service
-        .stage_status(&ctx, workspace_id, project_id)
+        .stage_status(&ctx, workspace_id, project_id, &evidence)
         .await
         .map_err(internal)?;
     Ok(Json(StageStatusListDto {
@@ -3604,6 +3787,590 @@ async fn list_decisions(
     }))
 }
 
+/// One part of the application beyond its gears.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ApplicationPartDto {
+    /// `configuration`, `storage` or `deployment`.
+    pub kind: String,
+    /// `owner/repo`.
+    pub repo: String,
+    /// A directory or a file in it.
+    pub reference: String,
+    pub name: String,
+    /// What it was recognised by; empty for a part only recorded.
+    pub evidence: String,
+    /// Still found in the repository.
+    pub present: bool,
+    pub owner: Option<String>,
+    pub owner_name: Option<String>,
+    pub description_path: Option<String>,
+    pub boundary: Option<String>,
+    pub related: Vec<String>,
+    pub updated_by: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ApplicationPartListDto {
+    pub items: Vec<ApplicationPartDto>,
+    pub total: u32,
+    /// Repositories read.
+    pub repos: u32,
+}
+
+/// Record what is known about one part.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ApplicationPartInput {
+    pub project_id: String,
+    pub repo: String,
+    pub kind: String,
+    pub reference: String,
+    pub owner: Option<String>,
+    pub owner_name: Option<String>,
+    pub description_path: Option<String>,
+    pub boundary: Option<String>,
+    pub related: Option<Vec<String>>,
+}
+
+fn part_dto(
+    kind: String,
+    repo: String,
+    reference: String,
+    name: String,
+    evidence: String,
+    present: bool,
+    record: Option<&super::entity::application_part::Model>,
+) -> ApplicationPartDto {
+    ApplicationPartDto {
+        kind,
+        repo,
+        reference,
+        name,
+        evidence,
+        present,
+        owner: record.and_then(|r| r.owner.clone()),
+        owner_name: record.and_then(|r| r.owner_name.clone()),
+        description_path: record.and_then(|r| r.description_path.clone()),
+        boundary: record.and_then(|r| r.boundary.clone()),
+        related: record
+            .map(|r| serde_json::from_value(r.related.clone()).unwrap_or_default())
+            .unwrap_or_default(),
+        updated_by: record.map(|r| r.updated_by.clone()),
+        updated_at: record.map(|r| rfc3339(r.updated_at)),
+    }
+}
+
+/// The application's configuration, storage and deployment parts, found in
+/// the project's repositories, with what people recorded about each.
+async fn list_application_parts(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<ApplicationPartListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let records = service
+        .part_records(workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    let mut items = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut repos = 0u32;
+    for (driver, auth, repo, branch) in
+        reachable_repositories(&service, &quality, &ctx, project_id).await
+    {
+        let Ok(list) = driver.list_files(&auth, &repo, Some(&branch)).await else {
+            continue;
+        };
+        repos += 1;
+        let paths: Vec<String> = list
+            .files
+            .into_iter()
+            .filter(|f| !f.is_dir)
+            .map(|f| f.path)
+            .collect();
+        for part in super::parts::detect(&repo, &paths) {
+            let record = records
+                .iter()
+                .find(|r| r.repo == repo && r.kind == part.kind && r.reference == part.reference);
+            seen.insert((repo.clone(), part.kind.to_string(), part.reference.clone()));
+            items.push(part_dto(
+                part.kind.to_string(),
+                repo.clone(),
+                part.reference,
+                part.name,
+                part.evidence,
+                true,
+                record,
+            ));
+        }
+    }
+    // A part someone recorded that the repositories no longer show.
+    for r in &records {
+        if !seen.contains(&(r.repo.clone(), r.kind.clone(), r.reference.clone())) {
+            let name = r
+                .reference
+                .rsplit('/')
+                .next()
+                .unwrap_or(&r.reference)
+                .to_string();
+            items.push(part_dto(
+                r.kind.clone(),
+                r.repo.clone(),
+                r.reference.clone(),
+                name,
+                String::new(),
+                false,
+                Some(r),
+            ));
+        }
+    }
+    Ok(Json(ApplicationPartListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        repos,
+    }))
+}
+
+async fn upsert_application_part(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<ApplicationPartInput>,
+) -> ApiResult<JsonBody<ApplicationPartDto>> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let (me, _) = quality.caller(&ctx).await?;
+    let saved = service
+        .record_part(
+            workspace_id,
+            project_id,
+            body.repo.trim(),
+            body.kind.trim(),
+            body.reference.trim(),
+            super::service::PartRecord {
+                owner: body.owner,
+                owner_name: body.owner_name,
+                description_path: body.description_path,
+                boundary: body.boundary,
+                related: body.related.unwrap_or_default(),
+            },
+            &me,
+        )
+        .await
+        .map_err(invalid)?;
+    let name = saved
+        .reference
+        .rsplit('/')
+        .next()
+        .unwrap_or(&saved.reference)
+        .to_string();
+    Ok(Json(part_dto(
+        saved.kind.clone(),
+        saved.repo.clone(),
+        saved.reference.clone(),
+        name,
+        String::new(),
+        true,
+        Some(&saved),
+    )))
+}
+
+/// A new delivery scope.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct DeliveryScopeInput {
+    pub project_id: String,
+    pub title: String,
+    pub outcome: Option<String>,
+    /// Canonical person id.
+    pub owner: Option<String>,
+    pub owner_name: Option<String>,
+    /// `YYYY-MM-DD`.
+    pub target_date: Option<String>,
+    /// Requirement identifiers it delivers.
+    pub requirements: Option<Vec<String>>,
+    /// Gears it pins, by crate name.
+    pub gears: Option<Vec<String>>,
+    pub acceptance: Option<String>,
+    /// `planned` (default), `in_progress`, `delivered`, `dropped`.
+    pub state: Option<String>,
+}
+
+/// A change to a delivery scope: only the fields given change.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct DeliveryScopePatch {
+    pub project_id: String,
+    pub title: Option<String>,
+    pub outcome: Option<String>,
+    /// An empty string clears it.
+    pub owner: Option<String>,
+    pub owner_name: Option<String>,
+    /// An empty string clears it.
+    pub target_date: Option<String>,
+    pub requirements: Option<Vec<String>>,
+    pub gears: Option<Vec<String>>,
+    pub acceptance: Option<String>,
+    pub state: Option<String>,
+}
+
+/// A new limit on a scope.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct DeliveryLimitInput {
+    pub project_id: String,
+    /// `limitation`, `open_question` or `dependency`.
+    pub kind: String,
+    pub text: String,
+    pub blocking: Option<bool>,
+    /// For a dependency: another scope's id, or a decision record.
+    pub depends_on: Option<String>,
+}
+
+/// Resolve a limit, or change whether it blocks.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct DeliveryLimitPatch {
+    pub project_id: String,
+    /// The resolution; an empty string reopens the limit.
+    pub resolution: Option<String>,
+    pub blocking: Option<bool>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeliveryLimitDto {
+    pub id: String,
+    pub scope_id: String,
+    pub kind: String,
+    pub text: String,
+    pub blocking: bool,
+    pub depends_on: Option<String>,
+    pub resolution: Option<String>,
+    pub resolved_by: Option<String>,
+    pub resolved_at: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeliveryScopeDto {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub outcome: String,
+    pub owner: Option<String>,
+    pub owner_name: Option<String>,
+    pub target_date: Option<String>,
+    pub requirements: Vec<String>,
+    pub gears: Vec<String>,
+    pub acceptance: String,
+    pub state: String,
+    /// A blocking limit still holds.
+    pub blocked: bool,
+    pub limits: Vec<DeliveryLimitDto>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_by: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeliveryScopeListDto {
+    pub items: Vec<DeliveryScopeDto>,
+    pub total: u32,
+}
+
+/// One earlier version of a scope.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeliveryScopeVersionDto {
+    /// The scope's fields as they were before the change.
+    pub snapshot: serde_json::Value,
+    pub changed_by: String,
+    pub changed_at: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DeliveryScopeHistoryDto {
+    pub items: Vec<DeliveryScopeVersionDto>,
+    pub total: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ProjectQuery {
+    pub project_id: String,
+}
+
+fn limit_dto(l: super::entity::delivery_limit::Model) -> DeliveryLimitDto {
+    DeliveryLimitDto {
+        id: l.id.to_string(),
+        scope_id: l.scope_id.to_string(),
+        kind: l.kind,
+        text: l.text,
+        blocking: l.blocking,
+        depends_on: l.depends_on,
+        resolution: l.resolution,
+        resolved_by: l.resolved_by,
+        resolved_at: l.resolved_at.map(rfc3339),
+        created_by: l.created_by,
+        created_at: rfc3339(l.created_at),
+    }
+}
+
+fn scope_dto(
+    s: super::entity::delivery_scope::Model,
+    limits: Vec<super::entity::delivery_limit::Model>,
+    blocked: bool,
+) -> DeliveryScopeDto {
+    DeliveryScopeDto {
+        id: s.id.to_string(),
+        project_id: s.project_id.to_string(),
+        title: s.title,
+        outcome: s.outcome,
+        owner: s.owner,
+        owner_name: s.owner_name,
+        target_date: s.target_date,
+        requirements: serde_json::from_value(s.requirements).unwrap_or_default(),
+        gears: serde_json::from_value(s.gears).unwrap_or_default(),
+        acceptance: s.acceptance,
+        state: s.state,
+        blocked,
+        limits: limits.into_iter().map(limit_dto).collect(),
+        created_by: s.created_by,
+        created_at: rfc3339(s.created_at),
+        updated_by: s.updated_by,
+        updated_at: rfc3339(s.updated_at),
+    }
+}
+
+fn no_scope() -> CanonicalError {
+    DocumentsError::not_found("no such delivery scope in this project")
+        .with_resource("delivery_scope")
+        .create()
+}
+
+/// The scope as it now stands, with its limits and whether it is blocked.
+async fn scope_view_dto(
+    service: &DocumentsService,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    id: Uuid,
+) -> ApiResult<DeliveryScopeDto> {
+    let view = service
+        .delivery_scopes(workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .find(|v| v.scope.id == id)
+        .ok_or_else(no_scope)?;
+    Ok(scope_dto(view.scope, view.limits, view.blocked))
+}
+
+async fn list_delivery_scopes(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<DeliveryScopeListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let items: Vec<DeliveryScopeDto> = service
+        .delivery_scopes(workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|v| scope_dto(v.scope, v.limits, v.blocked))
+        .collect();
+    Ok(Json(DeliveryScopeListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+async fn create_delivery_scope(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<DeliveryScopeInput>,
+) -> ApiResult<(StatusCode, JsonBody<DeliveryScopeDto>)> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let (me, _) = quality.caller(&ctx).await?;
+    let saved = service
+        .create_scope(
+            workspace_id,
+            project_id,
+            super::delivery::ScopeFields {
+                title: body.title,
+                outcome: body.outcome.unwrap_or_default(),
+                owner: body.owner,
+                owner_name: body.owner_name,
+                target_date: body.target_date,
+                requirements: body.requirements.unwrap_or_default(),
+                gears: body.gears.unwrap_or_default(),
+                acceptance: body.acceptance.unwrap_or_default(),
+                state: body.state.unwrap_or_default(),
+            },
+            &me,
+        )
+        .await
+        .map_err(invalid)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(scope_dto(saved, Vec::new(), false)),
+    ))
+}
+
+async fn update_delivery_scope(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path(scope_id): Path<String>,
+    Json(body): Json<DeliveryScopePatch>,
+) -> ApiResult<JsonBody<DeliveryScopeDto>> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let id = parse_uuid_field("scope_id", &scope_id)?;
+    let (me, _) = quality.caller(&ctx).await?;
+    let clearable = |v: Option<String>| v.map(|s| Some(s).filter(|s| !s.trim().is_empty()));
+    let patch = super::service::ScopePatch {
+        title: body.title,
+        outcome: body.outcome,
+        owner: clearable(body.owner),
+        owner_name: clearable(body.owner_name),
+        target_date: clearable(body.target_date),
+        requirements: body.requirements,
+        gears: body.gears,
+        acceptance: body.acceptance,
+        state: body.state,
+    };
+    service
+        .update_scope(workspace_id, project_id, id, patch, &me)
+        .await
+        .map_err(invalid)?
+        .ok_or_else(no_scope)?;
+    Ok(Json(
+        scope_view_dto(&service, workspace_id, project_id, id).await?,
+    ))
+}
+
+async fn delete_delivery_scope(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path(scope_id): Path<String>,
+    Query(query): Query<ProjectQuery>,
+) -> ApiResult<StatusCode> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let id = parse_uuid_field("scope_id", &scope_id)?;
+    if service
+        .delete_scope(workspace_id, project_id, id)
+        .await
+        .map_err(internal)?
+    {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(no_scope())
+    }
+}
+
+async fn list_delivery_scope_history(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path(scope_id): Path<String>,
+    Query(query): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<DeliveryScopeHistoryDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let id = parse_uuid_field("scope_id", &scope_id)?;
+    let items: Vec<DeliveryScopeVersionDto> = service
+        .scope_history(workspace_id, project_id, id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(no_scope)?
+        .into_iter()
+        .map(|h| DeliveryScopeVersionDto {
+            snapshot: h.snapshot,
+            changed_by: h.changed_by,
+            changed_at: rfc3339(h.changed_at),
+        })
+        .collect();
+    Ok(Json(DeliveryScopeHistoryDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+async fn create_delivery_limit(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path(scope_id): Path<String>,
+    Json(body): Json<DeliveryLimitInput>,
+) -> ApiResult<(StatusCode, JsonBody<DeliveryLimitDto>)> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let id = parse_uuid_field("scope_id", &scope_id)?;
+    let (me, _) = quality.caller(&ctx).await?;
+    let saved = service
+        .add_limit(
+            workspace_id,
+            project_id,
+            id,
+            super::delivery::LimitFields {
+                kind: body.kind,
+                text: body.text,
+                blocking: body.blocking.unwrap_or(false),
+                depends_on: body.depends_on,
+            },
+            &me,
+        )
+        .await
+        .map_err(invalid)?
+        .ok_or_else(no_scope)?;
+    Ok((StatusCode::CREATED, Json(limit_dto(saved))))
+}
+
+async fn update_delivery_limit(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path((scope_id, limit_id)): Path<(String, String)>,
+    Json(body): Json<DeliveryLimitPatch>,
+) -> ApiResult<JsonBody<DeliveryLimitDto>> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let scope = parse_uuid_field("scope_id", &scope_id)?;
+    let limit = parse_uuid_field("limit_id", &limit_id)?;
+    let (me, _) = quality.caller(&ctx).await?;
+    let saved = service
+        .update_limit(
+            workspace_id,
+            project_id,
+            scope,
+            limit,
+            body.resolution,
+            body.blocking,
+            &me,
+        )
+        .await
+        .map_err(invalid)?
+        .ok_or_else(|| {
+            DocumentsError::not_found("no such limit on this scope")
+                .with_resource("delivery_limit")
+                .create()
+        })?;
+    Ok(Json(limit_dto(saved)))
+}
+
 /// Check the project's open pull requests.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -5777,6 +6544,204 @@ pub fn register_routes(
         .error_500(openapi)
         .error_503(openapi)
         .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/application-parts")
+        .operation_id("studio_documents.list_application_parts")
+        .summary("The application's configuration, storage and deployment parts beyond its gears")
+        .description(
+            "Found in the project's repositories by what the files are: Helm charts and their \
+             values, Dockerfiles, compose files, Kubernetes and Terraform directories, \
+             deployment workflows, configuration files and directories, migrations and \
+             schemas; each with the owner, describing document, boundary and related parts \
+             people recorded. A recorded part the repositories no longer show is listed with \
+             `present: false` (issue #786).",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .handler(list_application_parts)
+        .json_response_with_schema::<ApplicationPartListDto>(openapi, StatusCode::OK, "The parts")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-documents/v1/application-parts")
+        .operation_id("studio_documents.upsert_application_part")
+        .summary("Record the owner, describing document, boundary and related parts of one part")
+        .description(
+            "Keyed by the repository, the kind and the reference; replaces what was recorded \
+             for it. A part need not have been found to be recorded.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ApplicationPartInput>(openapi, "The part and what is known about it")
+        .handler(upsert_application_part)
+        .json_response_with_schema::<ApplicationPartDto>(openapi, StatusCode::OK, "The part")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/delivery-scopes")
+        .operation_id("studio_documents.list_delivery_scopes")
+        .summary("A project's delivery scopes, with their limits and whether each is blocked")
+        .description(
+            "Every delivery scope of the project, oldest first: its outcome, owner, target \
+             date, the requirement identifiers it delivers, the gears it pins, its acceptance \
+             and state, and its limits (limitations, open questions, dependencies). `blocked` \
+             is true while a blocking limit holds: unresolved, and for a dependency on another \
+             scope, that scope not delivered (issue #784).",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .handler(list_delivery_scopes)
+        .json_response_with_schema::<DeliveryScopeListDto>(openapi, StatusCode::OK, "The scopes")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/delivery-scopes")
+        .operation_id("studio_documents.create_delivery_scope")
+        .summary("Add a delivery scope to a project")
+        .description(
+            "A scope is one outcome the project promises: title, outcome, owner, target date \
+             (YYYY-MM-DD), the requirement identifiers it delivers (as decisions name them), \
+             the gears it pins, how it is accepted, and its state (`planned` by default).",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<DeliveryScopeInput>(openapi, "The scope")
+        .handler(create_delivery_scope)
+        .json_response_with_schema::<DeliveryScopeDto>(openapi, StatusCode::CREATED, "The scope")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::patch("/studio-documents/v1/delivery-scopes/{scope_id}")
+        .operation_id("studio_documents.patch_delivery_scope")
+        .summary("Change a delivery scope; the version it replaces is kept")
+        .description(
+            "Only the fields given change; an empty owner or target date clears it. The \
+             version the change replaces is kept in the scope's history, with who changed it \
+             and when.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("scope_id", "The scope")
+        .json_request::<DeliveryScopePatch>(openapi, "The project and the fields to change")
+        .handler(update_delivery_scope)
+        .json_response_with_schema::<DeliveryScopeDto>(openapi, StatusCode::OK, "The scope")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::delete("/studio-documents/v1/delivery-scopes/{scope_id}")
+        .operation_id("studio_documents.delete_delivery_scope")
+        .summary("Remove a delivery scope with its limits and history")
+        .description(
+            "Removes the scope, its limits and its history. To keep a scope on record without \
+             it counting, set its state to `dropped` instead.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("scope_id", "The scope")
+        .query_param("project_id", true, "The project")
+        .handler(delete_delivery_scope)
+        .no_content_response(StatusCode::NO_CONTENT, "Removed")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/delivery-scopes/{scope_id}/history")
+        .operation_id("studio_documents.list_delivery_scope_history")
+        .summary("Earlier versions of a delivery scope, newest first")
+        .description(
+            "Each version a change replaced, with who changed it and when. The scope as it \
+             stands is the scope itself, not a version here.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("scope_id", "The scope")
+        .query_param("project_id", true, "The project")
+        .handler(list_delivery_scope_history)
+        .json_response_with_schema::<DeliveryScopeHistoryDto>(
+            openapi,
+            StatusCode::OK,
+            "The versions",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/delivery-scopes/{scope_id}/limits")
+        .operation_id("studio_documents.create_delivery_limit")
+        .summary("Add a limit to a delivery scope: a limitation, an open question or a dependency")
+        .description(
+            "A limit may block the scope (`blocking`). A dependency names what it depends on: \
+             another scope's id (it stops holding once that scope is delivered) or a decision \
+             record.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("scope_id", "The scope")
+        .json_request::<DeliveryLimitInput>(openapi, "The limit")
+        .handler(create_delivery_limit)
+        .json_response_with_schema::<DeliveryLimitDto>(openapi, StatusCode::CREATED, "The limit")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::patch(
+        "/studio-documents/v1/delivery-scopes/{scope_id}/limits/{limit_id}",
+    )
+    .operation_id("studio_documents.patch_delivery_limit")
+    .summary("Resolve a limit, reopen it, or change whether it blocks")
+    .description(
+        "A resolution records who resolved it and when; an empty resolution reopens it. A \
+         resolved limit no longer blocks its scope.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("scope_id", "The scope")
+    .path_param("limit_id", "The limit")
+    .json_request::<DeliveryLimitPatch>(openapi, "The project and the change")
+    .handler(update_delivery_limit)
+    .json_response_with_schema::<DeliveryLimitDto>(openapi, StatusCode::OK, "The limit")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .error_503(openapi)
+    .register(router, openapi);
 
     router = OperationBuilder::post("/studio-documents/v1/pull-request-checks")
         .operation_id("studio_documents.run_pull_request_checks")

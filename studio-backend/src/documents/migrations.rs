@@ -38,6 +38,9 @@ impl MigratorTrait for Migrator {
             Box::new(m0017::Migration),
             Box::new(m0018::Migration),
             Box::new(m0019::Migration),
+            Box::new(m0020::Migration),
+            Box::new(m0021::Migration),
+            Box::new(m0022::Migration),
         ]
     }
 }
@@ -1253,6 +1256,204 @@ CREATE TABLE IF NOT EXISTS studio_decisions (
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS studio_decisions;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// A stage's checks beyond documents (issue #782).
+mod m0020 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0020_stage_checks"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_process_stages ADD COLUMN IF NOT EXISTS checks TEXT NOT NULL DEFAULT '[]';",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_process_stages DROP COLUMN IF EXISTS checks;",
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Delivery scopes, their limits and their history (issue #784).
+mod m0021 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0021_delivery_scopes"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_delivery_scopes (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    title TEXT NOT NULL,
+    outcome TEXT NOT NULL DEFAULT '',
+    owner TEXT,
+    owner_name TEXT,
+    target_date TEXT,
+    requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
+    gears JSONB NOT NULL DEFAULT '[]'::jsonb,
+    acceptance TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL CHECK (state IN ('planned', 'in_progress', 'delivered', 'dropped')),
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_delivery_scopes_project
+    ON studio_delivery_scopes (tenant_id, project_id);",
+                r"
+CREATE TABLE IF NOT EXISTS studio_delivery_limits (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    scope_id UUID NOT NULL REFERENCES studio_delivery_scopes (id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('limitation', 'open_question', 'dependency')),
+    text TEXT NOT NULL,
+    blocking BOOLEAN NOT NULL DEFAULT FALSE,
+    depends_on TEXT,
+    resolution TEXT,
+    resolved_by TEXT,
+    resolved_at TIMESTAMPTZ,
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_delivery_limits_project
+    ON studio_delivery_limits (tenant_id, project_id);",
+                r"
+CREATE TABLE IF NOT EXISTS studio_delivery_scope_history (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    scope_id UUID NOT NULL REFERENCES studio_delivery_scopes (id) ON DELETE CASCADE,
+    snapshot JSONB NOT NULL,
+    changed_by TEXT NOT NULL,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_delivery_scope_history_scope
+    ON studio_delivery_scope_history (tenant_id, scope_id, changed_at);",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                "DROP TABLE IF EXISTS studio_delivery_scope_history;",
+                "DROP TABLE IF EXISTS studio_delivery_limits;",
+                "DROP TABLE IF EXISTS studio_delivery_scopes;",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// What people record about an application's parts (issue #786).
+mod m0022 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0022_application_parts"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_application_parts (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    repo TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('configuration', 'storage', 'deployment')),
+    reference TEXT NOT NULL,
+    owner TEXT,
+    owner_name TEXT,
+    description_path TEXT,
+    boundary TEXT,
+    related JSONB NOT NULL DEFAULT '[]'::jsonb,
+    updated_by TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_application_parts_project
+    ON studio_application_parts (tenant_id, project_id);",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_application_parts;")
                 .await?;
             Ok(())
         }

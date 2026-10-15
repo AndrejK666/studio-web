@@ -81,6 +81,8 @@ pub mod stage {
         pub requires: String,
         /// JSON array of detector names every required document must pass.
         pub gates: String,
+        /// JSON array of the checks beyond documents (`code`, `tests`, `review`).
+        pub checks: String,
         /// A tombstone: hides the key this row overrides.
         pub hidden: bool,
         pub created_at: OffsetDateTime,
@@ -524,6 +526,142 @@ pub mod decision {
         pub decided_by: String,
         pub decided_by_name: Option<String>,
         pub decided_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// A delivery scope inside a project (`delivery.rs`).
+pub mod delivery_scope {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_delivery_scopes")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        pub title: String,
+        pub outcome: String,
+        pub owner: Option<String>,
+        pub owner_name: Option<String>,
+        pub target_date: Option<String>,
+        #[sea_orm(column_type = "JsonBinary")]
+        pub requirements: serde_json::Value,
+        #[sea_orm(column_type = "JsonBinary")]
+        pub gears: serde_json::Value,
+        pub acceptance: String,
+        pub state: String,
+        pub created_by: String,
+        pub created_at: OffsetDateTime,
+        pub updated_by: String,
+        pub updated_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// A limit on a delivery scope.
+pub mod delivery_limit {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_delivery_limits")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        pub scope_id: Uuid,
+        pub kind: String,
+        pub text: String,
+        pub blocking: bool,
+        pub depends_on: Option<String>,
+        pub resolution: Option<String>,
+        pub resolved_by: Option<String>,
+        pub resolved_at: Option<OffsetDateTime>,
+        pub created_by: String,
+        pub created_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// The version of a scope a change replaced.
+pub mod delivery_history {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_delivery_scope_history")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub scope_id: Uuid,
+        #[sea_orm(column_type = "JsonBinary")]
+        pub snapshot: serde_json::Value,
+        pub changed_by: String,
+        pub changed_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// What a person records about one application part (`parts.rs`).
+pub mod application_part {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_application_parts")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// v5 of `(project, repo, kind, reference)`.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        pub repo: String,
+        pub kind: String,
+        pub reference: String,
+        pub owner: Option<String>,
+        pub owner_name: Option<String>,
+        /// The document that describes it, repo-relative.
+        pub description_path: Option<String>,
+        /// What it covers and what it does not.
+        pub boundary: Option<String>,
+        /// References of related parts.
+        #[sea_orm(column_type = "JsonBinary")]
+        pub related: serde_json::Value,
+        pub updated_by: String,
+        pub updated_at: OffsetDateTime,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

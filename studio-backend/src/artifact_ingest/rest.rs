@@ -1437,6 +1437,94 @@ async fn scoped_values(
 }
 
 /// The same, keeping each node's instance id — what a feed row is keyed on.
+/// One CI run, as the sync kept it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CiRunDto {
+    pub id: String,
+    pub repo: Option<String>,
+    pub workflow: String,
+    pub workflow_path: Option<String>,
+    pub title: Option<String>,
+    pub event: Option<String>,
+    pub branch: Option<String>,
+    pub sha: String,
+    pub status: Option<String>,
+    pub conclusion: Option<String>,
+    pub url: Option<String>,
+    pub number: Option<i64>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CiRunListDto {
+    pub items: Vec<CiRunDto>,
+    pub total: u32,
+    /// The newest completed run on a mainline (else the newest completed
+    /// run): what says whether the project's code passes now.
+    pub latest_completed: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CiRunQuery {
+    pub project_id: String,
+    /// A full or short commit sha.
+    pub revision: Option<String>,
+    pub branch: Option<String>,
+}
+
+fn ci_run_dto(r: super::ci_runs::CiRun) -> CiRunDto {
+    CiRunDto {
+        id: r.id,
+        repo: r.repo,
+        workflow: r.workflow,
+        workflow_path: r.workflow_path,
+        title: r.title,
+        event: r.event,
+        branch: r.branch,
+        sha: r.sha,
+        status: r.status,
+        conclusion: r.conclusion,
+        url: r.url,
+        number: r.number,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+    }
+}
+
+/// A project's CI runs, by revision or branch, newest first.
+async fn list_ci_runs(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(ingest): Extension<Ingest>,
+    Query(query): Query<CiRunQuery>,
+) -> ApiResult<JsonBody<CiRunListDto>> {
+    let scope = query.project_id.trim();
+    if scope.is_empty() {
+        return Err(StudioArtifactIngestError::invalid_argument()
+            .with_field_violation("project_id", "required".to_owned(), "REQUIRED")
+            .create());
+    }
+    let service = ingest.get()?;
+    let runs: Vec<super::ci_runs::CiRun> = scoped_entries(service, &ctx, "workflow_run", scope)
+        .await?
+        .iter()
+        .filter_map(|(id, v)| super::ci_runs::run_of(id, v))
+        .collect();
+    let latest = super::ci_runs::latest_completed(&runs).map(|r| r.id.clone());
+    let items: Vec<CiRunDto> =
+        super::ci_runs::filter(runs, query.revision.as_deref(), query.branch.as_deref())
+            .into_iter()
+            .map(ci_run_dto)
+            .collect();
+    Ok(Json(CiRunListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        latest_completed: latest,
+    }))
+}
+
 async fn scoped_entries(
     service: &Arc<IngestService>,
     ctx: &SecurityContext,
@@ -1572,6 +1660,30 @@ pub fn register_routes(
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-artifact-ingest/v1/runs")
+        .operation_id("studio_artifact_ingest.list_ci_runs")
+        .summary("A project's CI runs, by revision or branch: execution evidence")
+        .description(
+            "The workflow runs the last sync kept for one project (ADR-0045), newest first, \
+             narrowed to a revision (a full or short sha) or a branch: workflow, revision, \
+             branch, status, conclusion and when. `latest_completed` names the newest \
+             completed run on a mainline (main, master, trunk), else the newest completed run \
+             — what a `tests` stage gate reads (issue #783). As fresh as the last sync.",
+        )
+        .tag("StudioArtifactIngest")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .query_param("revision", false, "A full or short commit sha")
+        .query_param("branch", false, "A branch name")
+        .handler(list_ci_runs)
+        .json_response_with_schema::<CiRunListDto>(openapi, StatusCode::OK, "The runs")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-artifact-ingest/v1/open-pull-requests")

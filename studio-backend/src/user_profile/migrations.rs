@@ -26,6 +26,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0004::Migration),
             Box::new(m0005::Migration),
             Box::new(m0006::Migration),
+            Box::new(m0007::Migration),
         ]
     }
 }
@@ -394,6 +395,75 @@ CREATE INDEX IF NOT EXISTS idx_identity_inbox_mark_user
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS identity_inbox_mark;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Weekly availability and allocation (#785).
+mod m0007 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const UNSUPPORTED: &str = "studio-user migrations: PostgreSQL only";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0007_capacity"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            let sql = match manager.get_database_backend() {
+                sea_orm::DatabaseBackend::Postgres => {
+                    r"
+CREATE TABLE IF NOT EXISTS identity_capacity_availability (
+    id         UUID PRIMARY KEY,
+    tenant_id  UUID NOT NULL,
+    org_id     UUID NOT NULL,
+    person     TEXT NOT NULL,
+    week       TEXT NOT NULL,
+    hours      DOUBLE PRECISION NOT NULL CHECK (hours >= 0 AND hours <= 80),
+    updated_by TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (org_id, person, week)
+);
+CREATE TABLE IF NOT EXISTS identity_capacity_allocation (
+    id         UUID PRIMARY KEY,
+    tenant_id  UUID NOT NULL,
+    org_id     UUID NOT NULL,
+    person     TEXT NOT NULL,
+    project_id UUID NOT NULL,
+    week       TEXT NOT NULL,
+    hours      DOUBLE PRECISION NOT NULL CHECK (hours >= 0 AND hours <= 80),
+    updated_by TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    UNIQUE (org_id, person, project_id, week)
+);
+CREATE INDEX IF NOT EXISTS idx_identity_capacity_availability_week
+    ON identity_capacity_availability (tenant_id, org_id, week);
+CREATE INDEX IF NOT EXISTS idx_identity_capacity_allocation_week
+    ON identity_capacity_allocation (tenant_id, org_id, week);
+                    "
+                }
+                _ => return Err(DbErr::Custom(UNSUPPORTED.to_owned())),
+            };
+            manager.get_connection().execute_unprepared(sql).await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "DROP TABLE IF EXISTS identity_capacity_allocation; DROP TABLE IF EXISTS identity_capacity_availability;",
+                )
                 .await?;
             Ok(())
         }

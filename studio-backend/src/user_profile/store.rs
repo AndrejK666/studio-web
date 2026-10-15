@@ -36,6 +36,9 @@ fn from_ms(ms: i64) -> OffsetDateTime {
     OffsetDateTime::from_unix_timestamp_nanos((ms as i128) * 1_000_000)
         .unwrap_or(OffsetDateTime::UNIX_EPOCH)
 }
+/// UUIDv5 namespace for capacity rows.
+const CAPACITY_NS: Uuid = Uuid::from_u128(0x6f2e_8a41_d3c7_4b90_a5e2_17c8_903b_4ad6);
+
 /// UUIDv5 namespace for a person's mark on one inbox item.
 const INBOX_MARK_NS: Uuid = Uuid::from_u128(0x3b6f_d1a2_77c4_4e09_8a51_c2e9_0f46_d813);
 
@@ -57,6 +60,40 @@ pub(crate) trait IdentityStore: Send + Sync {
     /// provider's claims, which knows nothing about UI choices and would blank
     /// them on each login.
     async fn set_ui_preferences(&self, user_id: &str, json: Option<&str>) -> Result<bool>;
+    /// One organization's week: the availability set and the allocations.
+    async fn capacity_of(
+        &self,
+        _org: Uuid,
+        _week: &str,
+    ) -> Result<(
+        Vec<super::capacity::Availability>,
+        Vec<super::capacity::Allocation>,
+    )> {
+        Ok((Vec::new(), Vec::new()))
+    }
+    /// Set (or, with `None`, clear) one person's availability in a week.
+    async fn set_availability(
+        &self,
+        _org: Uuid,
+        _person: &str,
+        _week: &str,
+        _hours: Option<f64>,
+        _by: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+    /// Set (or, with `None`, clear) one person's hours on a project in a week.
+    async fn set_allocation(
+        &self,
+        _org: Uuid,
+        _person: &str,
+        _project: Uuid,
+        _week: &str,
+        _hours: Option<f64>,
+        _by: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
     /// The person's marks on their inbox items, newest first.
     async fn inbox_marks_of(&self, _user_id: &str) -> Result<Vec<super::service::InboxMark>> {
         Ok(Vec::new())
@@ -347,6 +384,170 @@ impl IdentityStore for PgStore {
             .one(&conn)
             .await?
             .and_then(|m| m.ui_preferences))
+    }
+
+    async fn capacity_of(
+        &self,
+        org: Uuid,
+        week: &str,
+    ) -> Result<(
+        Vec<super::capacity::Availability>,
+        Vec<super::capacity::Allocation>,
+    )> {
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let set = entity::capacity_availability::Entity::find()
+            .filter(
+                Condition::all()
+                    .add(entity::capacity_availability::Column::OrgId.eq(org))
+                    .add(entity::capacity_availability::Column::Week.eq(week)),
+            )
+            .secure()
+            .scope_with(&scope())
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(|m| super::capacity::Availability {
+                person: m.person,
+                hours: m.hours,
+            })
+            .collect();
+        let allocations = entity::capacity_allocation::Entity::find()
+            .filter(
+                Condition::all()
+                    .add(entity::capacity_allocation::Column::OrgId.eq(org))
+                    .add(entity::capacity_allocation::Column::Week.eq(week)),
+            )
+            .secure()
+            .scope_with(&scope())
+            .all(&conn)
+            .await?
+            .into_iter()
+            .map(|m| super::capacity::Allocation {
+                person: m.person,
+                project_id: m.project_id.to_string(),
+                hours: m.hours,
+            })
+            .collect();
+        Ok((set, allocations))
+    }
+
+    async fn set_availability(
+        &self,
+        org: Uuid,
+        person: &str,
+        week: &str,
+        hours: Option<f64>,
+        by: &str,
+    ) -> Result<()> {
+        use sea_orm::IntoActiveModel;
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let id = Uuid::new_v5(
+            &CAPACITY_NS,
+            format!("{org}\u{1f}{person}\u{1f}{week}").as_bytes(),
+        );
+        match hours {
+            None => {
+                entity::capacity_availability::Entity::delete_many()
+                    .secure()
+                    .scope_with(&scope())
+                    .filter(Condition::all().add(entity::capacity_availability::Column::Id.eq(id)))
+                    .exec(&conn)
+                    .await?;
+            }
+            Some(hours) => {
+                let model = entity::capacity_availability::Model {
+                    id,
+                    tenant_id: ROOT_TENANT,
+                    org_id: org,
+                    person: person.to_owned(),
+                    week: week.to_owned(),
+                    hours,
+                    updated_by: by.to_owned(),
+                    updated_at: OffsetDateTime::now_utc(),
+                };
+                let on_conflict =
+                    SecureOnConflict::<entity::capacity_availability::Entity>::columns([
+                        entity::capacity_availability::Column::Id,
+                    ])
+                    .update_columns([
+                        entity::capacity_availability::Column::Hours,
+                        entity::capacity_availability::Column::UpdatedBy,
+                        entity::capacity_availability::Column::UpdatedAt,
+                    ])?;
+                entity::capacity_availability::Entity::insert(model.into_active_model())
+                    .secure()
+                    .scope_unchecked(&scope())?
+                    .on_conflict(on_conflict)
+                    .exec(&conn)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn set_allocation(
+        &self,
+        org: Uuid,
+        person: &str,
+        project: Uuid,
+        week: &str,
+        hours: Option<f64>,
+        by: &str,
+    ) -> Result<()> {
+        use sea_orm::IntoActiveModel;
+        let conn = self
+            .db
+            .conn()
+            .map_err(|e| anyhow!("identity db connect: {e}"))?;
+        let id = Uuid::new_v5(
+            &CAPACITY_NS,
+            format!("{org}\u{1f}{person}\u{1f}{project}\u{1f}{week}").as_bytes(),
+        );
+        match hours {
+            None => {
+                entity::capacity_allocation::Entity::delete_many()
+                    .secure()
+                    .scope_with(&scope())
+                    .filter(Condition::all().add(entity::capacity_allocation::Column::Id.eq(id)))
+                    .exec(&conn)
+                    .await?;
+            }
+            Some(hours) => {
+                let model = entity::capacity_allocation::Model {
+                    id,
+                    tenant_id: ROOT_TENANT,
+                    org_id: org,
+                    person: person.to_owned(),
+                    project_id: project,
+                    week: week.to_owned(),
+                    hours,
+                    updated_by: by.to_owned(),
+                    updated_at: OffsetDateTime::now_utc(),
+                };
+                let on_conflict =
+                    SecureOnConflict::<entity::capacity_allocation::Entity>::columns([
+                        entity::capacity_allocation::Column::Id,
+                    ])
+                    .update_columns([
+                        entity::capacity_allocation::Column::Hours,
+                        entity::capacity_allocation::Column::UpdatedBy,
+                        entity::capacity_allocation::Column::UpdatedAt,
+                    ])?;
+                entity::capacity_allocation::Entity::insert(model.into_active_model())
+                    .secure()
+                    .scope_unchecked(&scope())?
+                    .on_conflict(on_conflict)
+                    .exec(&conn)
+                    .await?;
+            }
+        }
+        Ok(())
     }
 
     async fn inbox_marks_of(&self, user_id: &str) -> Result<Vec<super::service::InboxMark>> {

@@ -13,6 +13,7 @@
 //! than failing a boot, mirroring studio-credstore-pg.
 
 mod alias_policy;
+mod capacity;
 mod entity;
 #[cfg(test)]
 mod grants_tests;
@@ -786,6 +787,8 @@ impl RestApiCapability for StudioUserGear {
             // The one connector service, resolved when an identity is
             // confirmed: without it the credential proof channel is closed.
             svc.attach_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub()));
+            // The domain model, for the roadmap plan's people and power (#785).
+            svc.attach_hub(ctx.client_hub());
 
             // The IdP proof channel. Same phase and the same reason: the
             // directory is a separate gear. Absent when Keycloak admin is

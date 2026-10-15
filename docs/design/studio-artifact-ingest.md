@@ -321,6 +321,7 @@ and unscoped listings.
 | `GET` | `/studio-artifact-ingest/v1/edges` | Relations as endpoint pairs, by `scope` | unstable |
 | `GET` | `/studio-artifact-ingest/v1/source-activity` | Pull requests and commits per repository over `days` (default 7, at most 90) | unstable |
 | `GET` | `/studio-artifact-ingest/v1/activity` | One project's checks and comments, newest first | unstable |
+| `GET` | `/studio-artifact-ingest/v1/runs` | One project's CI runs (the `workflow_run` nodes the sync keeps, ADR-0045), by `revision` (full or short sha) or `branch`, newest first; `latest_completed` names the newest completed run on a mainline (main, master, trunk), else the newest completed run: the execution evidence the `tests` stage check reads (issue #783). The `DeliveryEvidence` port gives the documents gear the same runs and the count of open pull requests waiting on review | unstable |
 | `GET` | `/studio-artifact-ingest/v1/open-pull-requests` | One project's (or, by `workspace_id`, a workspace's) open pull requests, each in one bucket (`review`, `author`, `merge`, `draft`, `nobody`) with the people it waits on, longest-quiet first; `members_known` says whether accounts were matched to members; `waiting_on=me` keeps the caller's | unstable |
 | `GET` | `/studio-artifact-ingest/v1/repo-files` | Text files of a session checkout | unstable |
 | `POST` | `/studio-artifact-ingest/v1/quality` | Upsert `spec_finding` nodes and derived `duplicates`/`traces_to` edges | unstable |

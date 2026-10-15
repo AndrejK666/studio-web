@@ -78,6 +78,12 @@ pub struct Stage {
     /// typo to swallow.
     #[serde(default)]
     pub requires: Vec<String>,
+    /// Evidence beyond documents this stage is not complete without, each one
+    /// of [`STAGE_CHECKS`]: `code` (a commit or merged pull request names a
+    /// requirement of the project), `tests` (the latest completed CI run on
+    /// the mainline passed), `review` (nothing waits on a reviewer). Issue #782.
+    #[serde(default)]
+    pub checks: Vec<String>,
     pub owner: Owner,
     /// A tombstone, exactly as on a document type.
     #[serde(default)]
@@ -93,34 +99,96 @@ impl CatalogEntry for Stage {
     }
 }
 
+/// `(key, label, required, requires, checks)` of one built-in stage.
+type BuiltinStage = (
+    &'static str,
+    &'static str,
+    bool,
+    &'static [&'static str],
+    &'static [&'static str],
+);
+
 /// The platform's journey catalogue.
 ///
 /// Positions are spaced by ten so an organization can insert between two
 /// built-ins without renumbering anything it does not own.
 pub fn builtin_stages() -> Vec<Stage> {
-    [
-        ("intent", "Intent", true),
-        ("brd", "BRD", false),
-        ("prd", "PRD", false),
-        ("prd_spec", "PRD-Spec", false),
-        ("architecture", "Architecture", false),
-        ("ui_design", "UI Design", false),
-        ("user_stories", "User Stories", false),
-        ("testing", "Testing", false),
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(i, (key, label, required))| Stage {
-        key: key.to_string(),
-        label: label.to_string(),
-        required,
-        position: (i as i32 + 1) * 10,
-        requires: Vec::new(),
-        gates: Vec::new(),
-        owner: Owner::Builtin,
-        hidden: false,
-    })
-    .collect()
+    // The delivery stages the portal shows (Requirements, Design, Code, Tests,
+    // Review) are `prd`, `architecture`, `code`, `testing` and `review` here
+    // (issue #782): the first two answered by documents, the last three by
+    // the repositories' evidence.
+    let stages: [BuiltinStage; 10] = [
+        ("intent", "Intent", true, &[], &[]),
+        ("brd", "BRD", false, &[], &[]),
+        ("prd", "PRD", false, &["prd"], &[]),
+        ("prd_spec", "PRD-Spec", false, &[], &[]),
+        ("architecture", "Architecture", false, &["design"], &[]),
+        ("ui_design", "UI Design", false, &[], &[]),
+        ("user_stories", "User Stories", false, &[], &[]),
+        ("code", "Code", false, &[], &["code"]),
+        ("testing", "Testing", false, &[], &["tests"]),
+        ("review", "Review", false, &[], &["review"]),
+    ];
+    stages
+        .into_iter()
+        .enumerate()
+        .map(|(i, (key, label, required, requires, checks))| Stage {
+            key: key.to_string(),
+            label: label.to_string(),
+            required,
+            position: (i as i32 + 1) * 10,
+            requires: requires.iter().map(|s| (*s).to_string()).collect(),
+            gates: Vec::new(),
+            checks: checks.iter().map(|s| (*s).to_string()).collect(),
+            owner: Owner::Builtin,
+            hidden: false,
+        })
+        .collect()
+}
+
+/// The stage checks beyond documents.
+pub const STAGE_CHECKS: [&str; 3] = ["code", "tests", "review"];
+
+/// One check of a stage, and where the project stands on it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageCheck {
+    /// `code`, `tests` or `review`.
+    pub kind: String,
+    /// `None` when this deployment cannot tell: no verdict, not a failure.
+    pub passed: Option<bool>,
+    /// What passed it, or what is still missing.
+    pub detail: String,
+}
+
+/// The evidence the checks read, gathered once per `stage-status` call. Each
+/// is `None` when this deployment cannot tell, `Ok(what passed it)` or
+/// `Err(what is missing)`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StageEvidence {
+    pub code: Option<Result<String, String>>,
+    pub tests: Option<Result<String, String>>,
+    pub review: Option<Result<String, String>>,
+}
+
+impl StageEvidence {
+    pub fn check(&self, kind: &str) -> StageCheck {
+        let found = match kind {
+            "code" => &self.code,
+            "tests" => &self.tests,
+            "review" => &self.review,
+            _ => &None,
+        };
+        let (passed, detail) = match found {
+            Some(Ok(why)) => (Some(true), why.clone()),
+            Some(Err(missing)) => (Some(false), missing.clone()),
+            None => (None, "not readable in this deployment".to_string()),
+        };
+        StageCheck {
+            kind: kind.to_string(),
+            passed,
+            detail,
+        }
+    }
 }
 
 /// One capability a product may need, and the words that find components
@@ -546,6 +614,9 @@ pub struct StageStatus {
     pub complete: bool,
     /// One entry per document type the stage requires.
     pub requirements: Vec<Requirement>,
+    /// One entry per check beyond documents the stage declares (#782).
+    #[serde(default)]
+    pub checks: Vec<StageCheck>,
 }
 
 /// One document type a stage asks for, and how the project stands against it.

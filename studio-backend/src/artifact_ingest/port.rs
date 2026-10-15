@@ -240,6 +240,28 @@ pub trait ProjectSignalSource: Send + Sync + 'static {
 
 pub use super::service::{QualityFinding, QualityLink};
 
+pub use super::ci_runs::{CiRun, latest_completed as latest_completed_run};
+
+/// What a project's synced repositories show about its delivery: the CI runs
+/// and the pull requests waiting on a review — the evidence the documents
+/// gear's stage gates of kind `tests` and `review` read (issue #782).
+#[async_trait]
+pub trait DeliveryEvidence: Send + Sync + 'static {
+    /// Every CI run the sync kept in `scope` (a project's tenant id).
+    async fn ci_runs(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<CiRun>>;
+
+    /// How many open pull requests in `scope` wait on a reviewer.
+    async fn pulls_waiting_on_review(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<u32>;
+}
+
 /// One piece of a project's work, as the sync keeps it: an issue, a pull
 /// request or a commit, with the text a person wrote on it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

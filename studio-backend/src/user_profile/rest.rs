@@ -814,6 +814,220 @@ async fn update_me(
     Ok(Json(profile_dto(&service, updated).await?))
 }
 
+/// One person's week of capacity.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CapacityRowDto {
+    /// `github:<login>` (as the roadmap plan names people) or a Studio id.
+    pub person: String,
+    pub name: Option<String>,
+    pub team: Option<String>,
+    /// `set` (someone set it), `plan` (the plan's power × 40 h) or `none`.
+    pub source: String,
+    pub available_hours: f64,
+    pub allocations: Vec<CapacityAllocationDto>,
+    pub allocated_hours: f64,
+    /// Negative when over-allocated.
+    pub free_hours: f64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CapacityAllocationDto {
+    pub project_id: String,
+    pub hours: f64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CapacityListDto {
+    pub items: Vec<CapacityRowDto>,
+    pub total: u32,
+    /// The week's Monday.
+    pub week: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CapacityQuery {
+    pub organization_id: String,
+    /// Any day of the week; defaults to this week.
+    pub week: Option<String>,
+    pub project_id: Option<String>,
+}
+
+/// Set or clear one person's availability in a week.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct AvailabilityRequest {
+    pub organization_id: String,
+    pub person: String,
+    /// Any day of the week.
+    pub week: String,
+    /// `null` clears it: the plan's power speaks again.
+    pub hours: Option<f64>,
+}
+
+/// Set or clear one person's hours on a project in a week.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct AllocationRequest {
+    pub organization_id: String,
+    pub person: String,
+    pub project_id: String,
+    pub week: String,
+    /// `null` or 0 clears it.
+    pub hours: Option<f64>,
+}
+
+/// The caller's membership of `org`: refused unless active.
+async fn org_membership(
+    service: &IdentityService,
+    me: &str,
+    org: &str,
+) -> ApiResult<super::service::MembershipView> {
+    service
+        .list_memberships(me)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .find(|m| m.org_id == org && m.status == "active")
+        .ok_or_else(|| {
+            UserProfileError::permission_denied()
+                .with_reason("ORG_MEMBER_REQUIRED")
+                .create()
+        })
+}
+
+fn this_week() -> String {
+    let today = time::OffsetDateTime::now_utc().date();
+    let monday = today - time::Duration::days(i64::from(today.weekday().number_days_from_monday()));
+    format!(
+        "{:04}-{:02}-{:02}",
+        monday.year(),
+        u8::from(monday.month()),
+        monday.day()
+    )
+}
+
+async fn list_capacity(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Query(query): Query<CapacityQuery>,
+) -> ApiResult<JsonBody<CapacityListDto>> {
+    let service = configured(service)?;
+    let me = caller_user_id(&ctx, &service).await?;
+    let org = parse_org(query.organization_id.trim())?;
+    org_membership(&service, &me, &org.to_string()).await?;
+    let week = match query
+        .week
+        .as_deref()
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+    {
+        Some(w) => super::capacity::monday_of(w).map_err(|e| invalid(anyhow::anyhow!(e)))?,
+        None => this_week(),
+    };
+    let items: Vec<CapacityRowDto> = service
+        .capacity(
+            &ctx,
+            org,
+            &week,
+            query
+                .project_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty()),
+        )
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|r| CapacityRowDto {
+            person: r.person,
+            name: r.name,
+            team: r.team,
+            source: r.source.to_string(),
+            available_hours: r.available_hours,
+            allocations: r
+                .allocations
+                .into_iter()
+                .map(|(project_id, hours)| CapacityAllocationDto { project_id, hours })
+                .collect(),
+            allocated_hours: r.allocated_hours,
+            free_hours: r.free_hours,
+        })
+        .collect();
+    Ok(Json(CapacityListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        week,
+    }))
+}
+
+/// An owner of the organization edits anyone's capacity; a member only their own.
+fn may_edit(m: &super::service::MembershipView, me: &str, person: &str) -> ApiResult<()> {
+    if m.role == crate::access_config::ROLE_OWNER || person == me {
+        Ok(())
+    } else {
+        Err(UserProfileError::permission_denied()
+            .with_reason("ORG_OWNER_REQUIRED")
+            .create())
+    }
+}
+
+async fn update_availability(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Json(req): Json<AvailabilityRequest>,
+) -> ApiResult<StatusCode> {
+    let service = configured(service)?;
+    let me = caller_user_id(&ctx, &service).await?;
+    let org = parse_org(req.organization_id.trim())?;
+    let m = org_membership(&service, &me, &org.to_string()).await?;
+    let person = req.person.trim();
+    if person.is_empty() || person.len() > 200 {
+        return Err(invalid(anyhow::anyhow!("person is 1 to 200 characters")));
+    }
+    may_edit(&m, &me, person)?;
+    let week = super::capacity::monday_of(&req.week).map_err(|e| invalid(anyhow::anyhow!(e)))?;
+    let hours = match req.hours {
+        Some(h) => Some(super::capacity::check_hours(h).map_err(|e| invalid(anyhow::anyhow!(e)))?),
+        None => None,
+    };
+    service
+        .set_availability(org, person, &week, hours, &me)
+        .await
+        .map_err(internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn update_allocation(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    Json(req): Json<AllocationRequest>,
+) -> ApiResult<StatusCode> {
+    let service = configured(service)?;
+    let me = caller_user_id(&ctx, &service).await?;
+    let org = parse_org(req.organization_id.trim())?;
+    let m = org_membership(&service, &me, &org.to_string()).await?;
+    let person = req.person.trim();
+    if person.is_empty() || person.len() > 200 {
+        return Err(invalid(anyhow::anyhow!("person is 1 to 200 characters")));
+    }
+    may_edit(&m, &me, person)?;
+    let project = Uuid::parse_str(req.project_id.trim())
+        .map_err(|_| invalid(anyhow::anyhow!("project_id must be a UUID")))?;
+    let week = super::capacity::monday_of(&req.week).map_err(|e| invalid(anyhow::anyhow!(e)))?;
+    let hours = match req.hours.filter(|h| *h != 0.0) {
+        Some(h) => Some(super::capacity::check_hours(h).map_err(|e| invalid(anyhow::anyhow!(e)))?),
+        None => None,
+    };
+    service
+        .set_allocation(org, person, project, &week, hours, &me)
+        .await
+        .map_err(internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// One mark on an inbox item.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -1590,6 +1804,76 @@ pub fn register_routes(
         .json_response_with_schema::<UserProfileDto>(openapi, StatusCode::OK, "The updated profile")
         .error_400(openapi)
         .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::get("/studio-user/v1/capacity")
+        .operation_id("studio_user.list_capacity")
+        .summary("An organization's capacity for one week: availability and allocation per person")
+        .description(
+            "Each person's available hours in the week and their hours per project, with what \
+             is left (`free_hours`, negative when over-allocated). Availability someone set \
+             wins (`source: set`); otherwise the roadmap plan's power × 40 h \
+             (`source: plan`), as the reports gear mirrors the plan into the domain model. \
+             `week` is any day of it (this week by default); `project_id` keeps the people \
+             allocated to that project. For members of the organization (issue #785).",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("organization_id", true, "The organization")
+        .query_param("week", false, "Any day of the week, YYYY-MM-DD")
+        .query_param(
+            "project_id",
+            false,
+            "Only the people allocated to this project",
+        )
+        .handler(list_capacity)
+        .json_response_with_schema::<CapacityListDto>(openapi, StatusCode::OK, "The week")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::put("/studio-user/v1/capacity/availability")
+        .operation_id("studio_user.update_capacity_availability")
+        .summary("Set or clear one person's available hours in a week")
+        .description(
+            "0 to 80 hours; `null` clears it, and the plan's power speaks again. An owner of \
+             the organization sets anyone's; a member only their own (person = their id).",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<AvailabilityRequest>(openapi, "The person, week and hours")
+        .handler(update_availability)
+        .no_content_response(StatusCode::NO_CONTENT, "Set")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::put("/studio-user/v1/capacity/allocations")
+        .operation_id("studio_user.update_capacity_allocation")
+        .summary("Set or clear one person's hours on a project in a week")
+        .description(
+            "0 to 80 hours; `null` or 0 clears it. An owner of the organization sets anyone's; \
+             a member only their own.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<AllocationRequest>(openapi, "The person, project, week and hours")
+        .handler(update_allocation)
+        .no_content_response(StatusCode::NO_CONTENT, "Set")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .register(router, openapi)
         .layer(Extension(service.clone()));

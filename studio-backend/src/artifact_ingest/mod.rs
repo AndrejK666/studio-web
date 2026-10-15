@@ -12,6 +12,7 @@
 //! `hypothesis/graph-storage` adapter lands).
 
 mod activity;
+mod ci_runs;
 mod comment_threads;
 mod entity;
 mod graph;
@@ -277,6 +278,9 @@ impl RestApiCapability for StudioArtifactIngestGear {
             // gear to link to the requirements they name.
             ctx.client_hub()
                 .register::<dyn port::ProjectWork>(service.clone());
+            // CI runs and review waits, for the stage gates (#782).
+            ctx.client_hub()
+                .register::<dyn port::DeliveryEvidence>(service.clone());
             // The ingested files, for the gear that decides what each one is.
             ctx.client_hub()
                 .register::<dyn port::ArtifactFiles>(service.clone());

@@ -16,8 +16,9 @@ use toolkit_security::AccessScope;
 use uuid::Uuid;
 
 use super::entity::{
-    analysis, approval, capability, decision, doc_type, document, document_binding, review_request,
-    spec_decision, spec_extraction, spec_judgement, spec_term, stage,
+    analysis, application_part, approval, capability, decision, delivery_history, delivery_limit,
+    delivery_scope, doc_type, document, document_binding, review_request, spec_decision,
+    spec_extraction, spec_judgement, spec_term, stage,
 };
 
 /// UUIDv5 namespace for a document type's deterministic id — makes `(tenant,
@@ -612,6 +613,164 @@ impl DocumentsRepo {
         Ok(rows)
     }
 
+    // ── application parts ───────────────────────────────────────────────────
+
+    pub async fn put_part(&self, model: application_part::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let scope = AccessScope::for_tenant(model.tenant_id);
+        let on_conflict =
+            SecureOnConflict::<application_part::Entity>::columns([application_part::Column::Id])
+                .update_columns([
+                application_part::Column::Owner,
+                application_part::Column::OwnerName,
+                application_part::Column::DescriptionPath,
+                application_part::Column::Boundary,
+                application_part::Column::Related,
+                application_part::Column::UpdatedBy,
+                application_part::Column::UpdatedAt,
+            ])?;
+        application_part::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&scope)?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_parts(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<application_part::Model>> {
+        let conn = self.db.conn()?;
+        Ok(application_part::Entity::find()
+            .filter(application_part::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?)
+    }
+
+    // ── delivery scopes ─────────────────────────────────────────────────────
+
+    /// Write a scope whole: insert, or replace the row with the same id.
+    pub async fn put_scope(&self, model: delivery_scope::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let scope = AccessScope::for_tenant(model.tenant_id);
+        let on_conflict =
+            SecureOnConflict::<delivery_scope::Entity>::columns([delivery_scope::Column::Id])
+                .update_columns([
+                    delivery_scope::Column::Title,
+                    delivery_scope::Column::Outcome,
+                    delivery_scope::Column::Owner,
+                    delivery_scope::Column::OwnerName,
+                    delivery_scope::Column::TargetDate,
+                    delivery_scope::Column::Requirements,
+                    delivery_scope::Column::Gears,
+                    delivery_scope::Column::Acceptance,
+                    delivery_scope::Column::State,
+                    delivery_scope::Column::UpdatedBy,
+                    delivery_scope::Column::UpdatedAt,
+                ])?;
+        delivery_scope::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&scope)?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_scopes(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<delivery_scope::Model>> {
+        let conn = self.db.conn()?;
+        Ok(delivery_scope::Entity::find()
+            .filter(delivery_scope::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .order_by(delivery_scope::Column::CreatedAt, Order::Asc)
+            .all(&conn)
+            .await?)
+    }
+
+    pub async fn delete_scope(&self, workspace_id: Uuid, id: Uuid) -> Result<()> {
+        let conn = self.db.conn()?;
+        delivery_scope::Entity::delete_many()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .filter(Condition::all().add(delivery_scope::Column::Id.eq(id)))
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn insert_scope_history(&self, model: delivery_history::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let scope = AccessScope::for_tenant(model.tenant_id);
+        delivery_history::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&scope)?
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_scope_history(
+        &self,
+        workspace_id: Uuid,
+        scope_id: Uuid,
+    ) -> Result<Vec<delivery_history::Model>> {
+        let conn = self.db.conn()?;
+        Ok(delivery_history::Entity::find()
+            .filter(delivery_history::Column::ScopeId.eq(scope_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .order_by(delivery_history::Column::ChangedAt, Order::Desc)
+            .all(&conn)
+            .await?)
+    }
+
+    pub async fn put_limit(&self, model: delivery_limit::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let scope = AccessScope::for_tenant(model.tenant_id);
+        let on_conflict =
+            SecureOnConflict::<delivery_limit::Entity>::columns([delivery_limit::Column::Id])
+                .update_columns([
+                    delivery_limit::Column::Text,
+                    delivery_limit::Column::Blocking,
+                    delivery_limit::Column::DependsOn,
+                    delivery_limit::Column::Resolution,
+                    delivery_limit::Column::ResolvedBy,
+                    delivery_limit::Column::ResolvedAt,
+                ])?;
+        delivery_limit::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&scope)?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_limits(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<delivery_limit::Model>> {
+        let conn = self.db.conn()?;
+        Ok(delivery_limit::Entity::find()
+            .filter(delivery_limit::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .order_by(delivery_limit::Column::CreatedAt, Order::Asc)
+            .all(&conn)
+            .await?)
+    }
+
     /// Record a decision. Insert only.
     pub async fn insert_decision(&self, model: decision::Model) -> Result<()> {
         let conn = self.db.conn()?;
@@ -998,4 +1157,14 @@ impl DocumentsRepo {
         }
         Ok(deleted)
     }
+}
+
+/// UUIDv5 namespace for what is recorded about one application part.
+const PART_NS: Uuid = Uuid::from_u128(0x2c71_95e4_8b0a_4f63_9d17_e6a3_04c8_51b2);
+
+pub fn part_id(project_id: Uuid, repo: &str, kind: &str, reference: &str) -> Uuid {
+    Uuid::new_v5(
+        &PART_NS,
+        format!("{project_id}\u{1f}{repo}\u{1f}{kind}\u{1f}{reference}").as_bytes(),
+    )
 }

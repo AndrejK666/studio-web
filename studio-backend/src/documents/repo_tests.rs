@@ -180,6 +180,7 @@ fn stage_row(tenant: Uuid, key: &str, label: &str, hidden: bool) -> stage::Model
         ordinal: 15,
         requires: "[]".to_string(),
         gates: "[]".to_string(),
+        checks: "[]".to_string(),
         hidden,
         created_at: now,
         updated_at: now,

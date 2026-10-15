@@ -2361,6 +2361,46 @@ impl super::port::ProjectSignalSource for IngestService {
 /// The same store read and the same scope rule as the count beside it — the
 /// index's columns when the tenant has them, `node_in_scope` otherwise.
 #[async_trait::async_trait]
+impl super::port::DeliveryEvidence for IngestService {
+    async fn ci_runs(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<super::port::CiRun>> {
+        Ok(self
+            .list_in_scope(ctx, Some("workflow_run"), scope)
+            .await?
+            .into_iter()
+            .filter_map(|n| super::ci_runs::run_of(&n.instance_id, &n.value))
+            .collect())
+    }
+
+    async fn pulls_waiting_on_review(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<u32> {
+        let pulls: Vec<(String, serde_json::Value)> = self
+            .list_in_scope(ctx, Some("pull_request"), scope)
+            .await?
+            .into_iter()
+            .map(|n| (n.instance_id, n.value))
+            .collect();
+        let now = time::OffsetDateTime::now_utc().unix_timestamp() * 1000;
+        let waiting = super::pull_request_waits::waiting_pulls(&pulls, now)
+            .into_iter()
+            .filter(|w| {
+                matches!(
+                    w.verdict.waiting,
+                    super::pull_request_waits::Waiting::Review
+                )
+            })
+            .count();
+        Ok(u32::try_from(waiting).unwrap_or(u32::MAX))
+    }
+}
+
+#[async_trait::async_trait]
 impl super::port::ArtifactFiles for IngestService {
     async fn list_files(
         &self,
