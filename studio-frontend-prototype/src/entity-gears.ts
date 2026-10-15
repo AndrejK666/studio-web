@@ -101,13 +101,21 @@ export function gearSubject(name: string): string {
   return subjectKey(name.replace(PREFIX, "").replace(/_/g, "-"));
 }
 
+/** What a gear's name can be about: folded as above, and with only the crate
+ *  prefix taken off, so a gear drafted for "Studio session"
+ *  (`cf-gears-studio-sessions`) is still that entity's and not "session"'s. */
+export function gearSubjects(name: string): string[] {
+  const crateOnly = subjectKey(name.replace(/^(@[^/]+\/)?(cf-gears-|cf-|gears-)*/, "").replace(/_/g, "-"));
+  return [...new Set([gearSubject(name), crateOnly])];
+}
+
 const has = (text: string, phrase: string) => ` ${text} `.includes(` ${phrase} `);
 
 /** How well one gear matches one entity key, with the reason; null when it does not. */
 function match(g: GearRef, key: string): Omit<Keeper, "gear"> | null {
   for (const n of new Set([g.id, g.crate])) {
     const subject = gearSubject(n);
-    if (subject === key) return { score: 4, why: `its name is the entity's: ${gearLabel(n)}` };
+    if (gearSubjects(n).includes(key)) return { score: 4, why: `its name is the entity's: ${gearLabel(n)}` };
     const words = subject.split(" ");
     if (!key.includes(" ") && words.includes(key) && !GENERIC.has(key))
       return { score: 3, why: `its name says it: ${gearLabel(n)}` };

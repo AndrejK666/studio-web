@@ -3135,14 +3135,18 @@ function kindColor(kind: string): string {
 // browser the only thing that knew what a gear looks like.
 
 /** What a scaffold is sent: the project's route or the organization's. */
-type ScaffoldBody = { slug: string; problem?: string; capabilities?: string[]; dry_run?: boolean; open_pr?: boolean };
+type ScaffoldBody = { slug: string; problem?: string; origin?: string; capabilities?: string[]; dry_run?: boolean; open_pr?: boolean };
 
 export function ScaffoldModal({
   capability,
   token,
   projectTenantId,
-  problem,
+  problem: givenProblem,
   declares,
+  origin,
+  editable = false,
+  lead,
+  nameWarning,
   send,
   onBack,
   onClose,
@@ -3156,12 +3160,31 @@ export function ScaffoldModal({
   problem?: string;
   /** Capability keys written into its gear.toml, so it declares them. */
   declares?: string[];
+  /** Where the request came from, said in the gear's manifest. */
+  origin?: string;
+  /** The name and the problem can be changed before the push: a draft from
+   *  the Domain model is a proposal, not a decision. */
+  editable?: boolean;
+  /** A line above the form saying what the gear is drafted from. */
+  lead?: string;
+  /** Why a typed-in name is a poor one, or null. */
+  nameWarning?: (name: string) => string | null;
   /** Where the request goes instead of the project's route: the
    *  organization's Components page sends it to its gear repository. */
   send?: (body: ScaffoldBody) => Promise<ScaffoldResult>;
   onBack?: () => void;
   onClose: () => void;
 }) {
+  // What is typed, and what the preview was last asked with: the preview
+  // asks the server, so it follows a field when the field is left, not on
+  // every key.
+  const [typedName, setTypedName] = useState(capability);
+  const [typedProblem, setTypedProblem] = useState(givenProblem ?? "");
+  const [asked, setAsked] = useState({ name: capability, problem: givenProblem });
+  const capabilityName = editable ? asked.name.trim() || capability : capability;
+  const problem = editable ? asked.problem : givenProblem;
+  const commit = () => setAsked({ name: typedName, problem: typedProblem.trim() || undefined });
+  const warning = editable && nameWarning ? nameWarning(typedName) : null;
   const [active, setActive] = useState(0);
   const [openPr, setOpenPr] = useState(true);
   const [pushing, setPushing] = useState(false);
@@ -3170,7 +3193,7 @@ export function ScaffoldModal({
   const [files, setFiles] = useState<ScaffoldFile[] | null>(null);
   /** Where it goes, as the server's dry run answered. */
   const [where, setWhere] = useState<{ target?: string | null; repo?: string | null } | null>(null);
-  const slug = gearSlug(capability);
+  const slug = gearSlug(capabilityName);
   const post = (body: ScaffoldBody): Promise<ScaffoldResult> =>
     send ? send(body) : api.scaffoldGearToRepo(token, projectTenantId ?? "", body);
 
@@ -3181,7 +3204,7 @@ export function ScaffoldModal({
   useEffect(() => {
     let alive = true;
     setPushErr(null);
-    post({ slug: capability, problem, capabilities: declares, dry_run: true })
+    post({ slug: capabilityName, problem, origin, capabilities: declares, dry_run: true })
       .then((r) => {
         if (!alive) return;
         setFiles(r.files);
@@ -3195,7 +3218,7 @@ export function ScaffoldModal({
     };
     // `declares` is a fresh array per render; its content is what matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, projectTenantId, capability, problem, (declares ?? []).join(",")]);
+  }, [token, projectTenantId, capabilityName, problem, origin, (declares ?? []).join(",")]);
 
   const file = files?.[active];
   const copy = () => {
@@ -3205,10 +3228,13 @@ export function ScaffoldModal({
   const push = async () => {
     setPushing(true);
     setPushErr(null);
+    // The header and the path say what is written: the typed name.
+    if (editable) commit();
     try {
       const r = await post({
-        slug: capability,
-        problem,
+        slug: editable ? typedName.trim() || capability : capability,
+        problem: editable ? typedProblem.trim() || undefined : problem,
+        origin,
         capabilities: declares,
         open_pr: openPr,
       });
@@ -3229,8 +3255,38 @@ export function ScaffoldModal({
           <code style={{ fontSize: 12 }}>cf-gears-{slug}</code>
           <button onClick={onClose} style={{ marginLeft: "auto" }} aria-label="Close">✕</button>
         </div>
+        {lead && <p style={{ fontSize: 12, margin: "0 0 6px" }}>{lead}</p>}
+        {editable && !result && (
+          <div data-scaffold-draft style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 10px", alignItems: "start", fontSize: 12, margin: "0 0 8px" }}>
+            <label htmlFor="scaffold-name">Name</label>
+            <div>
+              <input
+                id="scaffold-name"
+                value={typedName}
+                onChange={(e) => setTypedName(e.target.value)}
+                onBlur={commit}
+                onKeyDown={(e) => e.key === "Enter" && commit()}
+                style={{ width: "100%", fontFamily: "ui-monospace, Menlo, monospace" }}
+              />
+              {warning && (
+                <div className="hint" style={{ color: "var(--warning)" }}>
+                  {warning}
+                </div>
+              )}
+            </div>
+            <label htmlFor="scaffold-problem">What it is for</label>
+            <textarea
+              id="scaffold-problem"
+              rows={3}
+              value={typedProblem}
+              onChange={(e) => setTypedProblem(e.target.value)}
+              onBlur={commit}
+              style={{ width: "100%" }}
+            />
+          </div>
+        )}
         <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 6px" }}>
-          Starter skeleton for <code>{capability}</code>. Review, then push it on a{" "}
+          Starter skeleton for <code>{capabilityName}</code>. Review, then push it on a{" "}
           <code>scaffold/{slug}</code> branch — the session agent fills it in, and the registry finds
           it once it is merged.
         </p>

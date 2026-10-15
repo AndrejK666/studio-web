@@ -35,6 +35,7 @@ import {
 import { DOC_QUALITY_LABEL, docQuality, type DocQualityItem, type DocQualityType } from "./doc-quality";
 import { PROVISIONAL_NOTE } from "./saved-entities";
 import { entityGears, type GearRef, type Keeper } from "./entity-gears";
+import { gearDraftFrom, type GearDraft } from "./gear-from-entity";
 import {
   BASIS_LABEL,
   BASIS_ORDER,
@@ -452,7 +453,7 @@ export function ModelMapView({
   onSave,
   saved = new Map(),
   gears,
-  onOpenProduct,
+  onCreateGear,
 }: {
   entities: Entity[];
   onOpenFile: OpenFile;
@@ -462,8 +463,8 @@ export function ModelMapView({
   saved?: Map<string, SpecModelWrite>;
   /** The gears that could keep a Domain entity; null while unknown, so no gap is claimed. */
   gears?: GearRef[] | null;
-  /** Open the project's Product tab, where a gear is made. */
-  onOpenProduct?: () => void;
+  /** Open the project's Product tab with a gear for an entity drafted. */
+  onCreateGear?: (draft: GearDraft) => void;
 }) {
   const [layer, setLayer] = useState<Layer>("domain");
   const [query, setQuery] = useState("");
@@ -503,6 +504,12 @@ export function ModelMapView({
     () => new Set(keepers ? [...keepers].filter(([, k]) => k === null).map(([key]) => key) : []),
     [keepers],
   );
+  // The gaps as a list, the most described first: the ones a gear is most
+  // clearly owed.
+  const gapEntities = useMemo(
+    () => entities.filter((e) => gaps.has(e.key)).sort((a, b) => weight(b) - weight(a)),
+    [entities, gaps],
+  );
 
   if (entities.length === 0) return <div className="empty">Nothing read yet. Build the model to read the documents.</div>;
 
@@ -536,6 +543,26 @@ export function ModelMapView({
         Left out: {counts.hidden} words that are not things the product has — identifiers such as ADR-0007 or cpt-…, a word
         used once in passing, what a kit&apos;s templates and examples say. They stay in Requirements and the Glossary.
       </p>
+      {layer === "domain" && onCreateGear && gapEntities.length > 1 && (
+        <details className="dm-gaps hint" style={{ margin: "0 0 8px" }}>
+          <summary style={{ cursor: "pointer" }}>
+            {gapEntities.length} entities have no gear — create gears
+          </summary>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            {gapEntities.map((e) => (
+              <li key={e.key} data-gap={e.key}>
+                <button type="button" className="dm-link" onClick={() => setSelected(e.key)}>
+                  {e.name}
+                </button>{" "}
+                ·{" "}
+                <button type="button" className="dm-link" onClick={() => onCreateGear(gearDraftFrom(e))}>
+                  Create a gear for it
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <div className="dm-map2">
         <div className="card dm-canvas">
           <div className="dm-mapbar">
@@ -614,7 +641,7 @@ export function ModelMapView({
               onSave={onSave}
               layer={layerOfKey.get(sel.key) ?? null}
               keeper={keepers?.get(sel.key)}
-              onOpenProduct={onOpenProduct}
+              onCreateGear={onCreateGear}
               related={relations
                 .filter((r) => r.from === sel.key || r.to === sel.key)
                 .map((r) => ({ other: entities.find((e) => e.key === (r.from === sel.key ? r.to : r.from)), verbs: r.verbs }))
@@ -826,13 +853,13 @@ function EntityCard({
   onSelect,
   onOpenFile,
   keeper,
-  onOpenProduct,
+  onCreateGear,
 }: {
   entity: Entity;
   layer: Layer | null;
   /** The gear that keeps it; null when none does; undefined when not asked. */
   keeper?: Keeper | null;
-  onOpenProduct?: () => void;
+  onCreateGear?: (draft: GearDraft) => void;
   related: { other: Entity; verbs: string[] }[];
   /** Every entity's name, for a relation's target. */
   names: string[];
@@ -877,9 +904,9 @@ function EntityCard({
         <div className="dm-keeper gap" data-keeper="">
           <b>No gear keeps it.</b> Nothing in the gear catalogue or this project is named for it or says it in its
           description, so the product has nowhere to store it yet.
-          {onOpenProduct && (
+          {onCreateGear && (
             <div style={{ marginTop: 4 }}>
-              <button type="button" className="dm-link" onClick={onOpenProduct}>
+              <button type="button" className="dm-link" onClick={() => onCreateGear(gearDraftFrom(entity))}>
                 Create a gear for it
               </button>
             </div>

@@ -3,7 +3,7 @@
 // ignores, the gap, and the project's own gears.
 import { describe, expect, it } from "vitest";
 
-import { entityGears, gearRefs, gearSubject, type EntityRef } from "./entity-gears";
+import { entityGears, gearRefs, gearSubject, gearSubjects, type EntityRef } from "./entity-gears";
 import { indexCatalogue, type CatalogueGear } from "./product-configurator";
 import { subjectKey } from "./spec-model";
 
@@ -51,6 +51,9 @@ describe("the gears an entity can be kept by", () => {
     expect(gearSubject("cf-gears-studio-projects")).toBe("project");
     expect(gearSubject("studio-project-members")).toBe("project member");
     expect(gearSubject("account_management")).toBe("account management");
+    // A name that starts with a prefix word is also about the whole of it.
+    expect(gearSubjects("cf-gears-studio-sessions")).toEqual(["session", "studio session"]);
+    expect(gearSubjects("cf-gears-invoices")).toEqual(["invoice"]);
   });
 });
 
