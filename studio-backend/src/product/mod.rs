@@ -14,8 +14,8 @@
 //! `gear.gdl` says) and a project's gear repository, both through
 //! [`port`].
 
-mod gear_roots;
 mod explanations;
+mod gear_roots;
 mod gearbox;
 mod new_gear;
 pub mod port;
