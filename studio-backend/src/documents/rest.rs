@@ -2173,6 +2173,52 @@ impl From<super::spec_model::finding::Finding> for SpecModelFindingDto {
     }
 }
 
+/// One field of an entity, as a person wrote it on the Domain model tab.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelFieldInput {
+    pub name: String,
+    /// What it holds, in a few words.
+    #[serde(default)]
+    pub meaning: String,
+}
+
+/// One relation of an entity: "belongs to" Workspace.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelRelationInput {
+    pub verb: String,
+    /// The entity it relates to, by name.
+    pub target: String,
+}
+
+/// An entity of the domain model as a person edited it: what it is, what it
+/// holds, how it relates. It replaces the entity's section of
+/// `docs/domain-model.md`.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelEntityRequest {
+    pub name: String,
+    #[serde(default)]
+    pub definition: Option<String>,
+    #[serde(default)]
+    pub fields: Vec<SpecModelFieldInput>,
+    #[serde(default)]
+    pub relations: Vec<SpecModelRelationInput>,
+}
+
+/// Where a change to the documents landed.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelWriteDto {
+    /// The file written, from the repository's root.
+    pub path: String,
+    pub branch: String,
+    pub commit_sha: String,
+    /// Set when the change went as a pull request.
+    pub pr_url: Option<String>,
+}
+
 /// A member's ✓ or ✗ on one finding.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -4270,6 +4316,238 @@ async fn decide_spec_model_finding(
     ))
 }
 
+/// studio-product's writer into the project's repository.
+fn project_files(quality: &Quality) -> ApiResult<Arc<dyn crate::product::port::ProjectFiles>> {
+    quality
+        .hub
+        .get::<dyn crate::product::port::ProjectFiles>()
+        .map_err(|_| {
+            CanonicalError::service_unavailable()
+                .with_detail(
+                    "studio-product is not running, so nothing can be written to a repository",
+                )
+                .create()
+        })
+}
+
+/// A branch name's part made of `name`: lowercase letters, digits, dashes.
+fn branch_part(name: &str) -> String {
+    let slug: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let slug = slug
+        .split('-')
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    slug.chars().take(40).collect()
+}
+
+/// The first hex digits of `text`'s SHA-256: a branch for each new content,
+/// so saving the same thing twice lands on the same branch.
+fn content_tag(text: &str) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(text.as_bytes()))[..6].to_owned()
+}
+
+/// Save one entity of the domain model as a person edited it: its section of
+/// `docs/domain-model.md` in the project's repository, the way the repository
+/// takes changes. The model reads it like any other document once its type is
+/// settled, on the next build.
+async fn upsert_spec_model_entity(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+    Json(body): Json<SpecModelEntityRequest>,
+) -> ApiResult<JsonBody<SpecModelWriteDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    parent_workspace(&service, &ctx, project_id).await?;
+    let invalid = |field: &str, why: &str| {
+        DocumentsError::invalid_argument()
+            .with_field_violation(field, why.to_owned(), "INVALID")
+            .create()
+    };
+    let name = body.name.trim();
+    if name.is_empty() || name.len() > GLOSSARY_TEXT_MAX {
+        return Err(invalid("name", "must be a name of at most 200 bytes"));
+    }
+    let definition = body
+        .definition
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty());
+    if definition.is_some_and(|d| d.len() > 4000) {
+        return Err(invalid("definition", "must be at most 4000 bytes"));
+    }
+    if body.fields.len() > 60 || body.relations.len() > 60 {
+        return Err(invalid("fields", "at most 60 fields and 60 relations"));
+    }
+    let short = |s: &str| !s.trim().is_empty() && s.len() <= GLOSSARY_TEXT_MAX;
+    if !body
+        .fields
+        .iter()
+        .all(|f| short(&f.name) && f.meaning.len() <= 1000)
+    {
+        return Err(invalid(
+            "fields",
+            "each field needs a name of at most 200 bytes",
+        ));
+    }
+    if !body
+        .relations
+        .iter()
+        .all(|r| short(&r.verb) && short(&r.target))
+    {
+        return Err(invalid(
+            "relations",
+            "each relation needs a verb and a target",
+        ));
+    }
+    let edit = super::spec_model::domain_doc::EntityEdit {
+        name: name.to_owned(),
+        definition: definition.map(str::to_owned),
+        fields: body
+            .fields
+            .iter()
+            .map(|f| (f.name.trim().to_owned(), f.meaning.trim().to_owned()))
+            .collect(),
+        relations: body
+            .relations
+            .iter()
+            .map(|r| (r.verb.trim().to_owned(), r.target.trim().to_owned()))
+            .collect(),
+    };
+    let files = project_files(&quality)?;
+    let path = super::spec_model::domain_doc::DOMAIN_DOC_PATH;
+    let project = project_id.to_string();
+    let current = files
+        .read(&ctx, &project, path)
+        .await
+        .map_err(invalid_or_internal)?;
+    let content = super::spec_model::domain_doc::upsert(current.as_deref(), &edit);
+    let branch = format!(
+        "domain-model/{}-{}",
+        branch_part(name),
+        content_tag(&content)
+    );
+    let written = files
+        .write(
+            &ctx,
+            &project,
+            &branch,
+            &[crate::product::port::DeclarationFile { path: path.to_owned(), content }],
+            &crate::product::port::PullRequestText {
+                message: format!("docs(domain-model): {name}"),
+                title: format!("Domain model: {name}"),
+                body: format!(
+                    "What `{name}` is, what it holds and how it relates, as edited on the Domain model tab. \
+                     Studio keeps `{path}` one section per entity; the model reads it on its next build."
+                ),
+            },
+            false,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok(Json(SpecModelWriteDto {
+        path: path.to_owned(),
+        branch: written.branch,
+        commit_sha: written.commit_sha,
+        pr_url: written.pr_url,
+    }))
+}
+
+/// A write refused for a reason the caller can act on (no repository, a
+/// connection the organization does not own) as such; anything else is ours.
+fn invalid_or_internal(error: anyhow::Error) -> CanonicalError {
+    let text = format!("{error:#}");
+    if text.contains("repository") || text.contains("connection") || text.contains("not owned") {
+        DocumentsError::invalid_argument()
+            .with_constraint(text)
+            .create()
+    } else {
+        internal(error)
+    }
+}
+
+/// Propose a finding's smallest fix as a pull request on the document it
+/// names: its passage replaced, matched the way the finding was checked.
+async fn create_spec_model_finding_proposal(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path(fingerprint): Path<String>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<(StatusCode, JsonBody<SpecModelWriteDto>)> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let (findings, _) = spec_model_findings(&service, workspace_id, project_id, &sources)
+        .await
+        .map_err(internal)?;
+    let gone = || {
+        DocumentsError::not_found("no such finding now: the documents changed since it was shown")
+            .with_resource(fingerprint.clone())
+            .create()
+    };
+    let finding = findings
+        .into_iter()
+        .find(|f| f.fingerprint == fingerprint)
+        .ok_or_else(gone)?;
+    let edit = finding.edit.clone().ok_or_else(|| {
+        DocumentsError::invalid_argument()
+            .with_constraint("this finding names no edit: it needs a person's decision, not a fix")
+            .create()
+    })?;
+    let files = project_files(&quality)?;
+    let project = project_id.to_string();
+    let text = files
+        .read(&ctx, &project, &edit.path)
+        .await
+        .map_err(invalid_or_internal)?
+        .ok_or_else(gone)?;
+    let changed = super::spec_model::domain_doc::apply_edit(&text, &edit.replace, &edit.with).ok_or_else(|| {
+        DocumentsError::invalid_argument()
+            .with_constraint("the passage is no longer in the document as the finding saw it, or is there twice")
+            .create()
+    })?;
+    let branch = format!("fix/{}", &fingerprint[..fingerprint.len().min(12)]);
+    let title: String = finding.message.chars().take(70).collect();
+    let written = files
+        .write(
+            &ctx,
+            &project,
+            &branch,
+            &[crate::product::port::DeclarationFile { path: edit.path.clone(), content: changed }],
+            &crate::product::port::PullRequestText {
+                message: format!("docs: {title}"),
+                title: format!("Fix: {title}"),
+                body: format!(
+                    "{}\n\nIn `{}`:\n\n```diff\n- {}\n+ {}\n```\n\nProposed from the Domain model tab.",
+                    finding.message, edit.path, edit.replace, edit.with
+                ),
+            },
+            true,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(SpecModelWriteDto {
+            path: edit.path,
+            branch: written.branch,
+            commit_sha: written.commit_sha,
+            pr_url: written.pr_url,
+        }),
+    ))
+}
+
 /// Every decision members recorded on the project's findings, of the model
 /// and of the Spec Quality detectors alike: both are keyed by fingerprint.
 async fn list_spec_model_decisions(
@@ -5592,6 +5870,56 @@ pub fn register_routes(
                 openapi,
                 StatusCode::CREATED,
                 "The decision",
+            )
+            .error_400(openapi)
+            .error_401(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/entities")
+        .operation_id("studio_documents.upsert_spec_model_entity")
+        .summary("Save an entity of the domain model to the project's documentation")
+        .description(
+            "What the entity is, what it holds and how it relates, as a person edited it. It \
+             replaces the entity's section of `docs/domain-model.md` in the project's repository, \
+             which Studio keeps one section per entity and which the model reads like any other \
+             document once its type is settled. Written the way the repository takes changes: \
+             onto its branch, or on a `domain-model/…` branch with a pull request.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose model it is")
+        .json_request::<SpecModelEntityRequest>(openapi, "The entity as edited")
+        .handler(upsert_spec_model_entity)
+        .json_response_with_schema::<SpecModelWriteDto>(openapi, StatusCode::OK, "Where it landed")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router =
+        OperationBuilder::post("/studio-documents/v1/spec-model/findings/{fingerprint}/proposals")
+            .operation_id("studio_documents.create_spec_model_finding_proposal")
+            .summary("Propose a finding's fix as a pull request on its document")
+            .description(
+                "The finding's smallest edit applied to the passage it names, matched across line \
+         breaks the way it was checked, on a `fix/…` branch with a pull request: a proposal, \
+         never a commit onto the document's branch. 404 when the finding is gone; 400 when it \
+         names no edit or its passage is no longer in the document.",
+            )
+            .tag("StudioDocuments")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("fingerprint", "The finding's fingerprint")
+            .query_param("project_id", true, "The project the finding is in")
+            .handler(create_spec_model_finding_proposal)
+            .json_response_with_schema::<SpecModelWriteDto>(
+                openapi,
+                StatusCode::CREATED,
+                "The pull request",
             )
             .error_400(openapi)
             .error_401(openapi)

@@ -3,7 +3,7 @@
 // relation, and that no two cards overlap.
 import { describe, expect, it } from "vitest";
 
-import { cardFields, cardSize, layerOf, placeCards, relationEdges, weight } from "./domain-layers";
+import { cardFields, cardSize, entityDraft, layerOf, placeCards, relationEdges, weight } from "./domain-layers";
 import { entitiesOf, type SpecModelFact } from "./spec-model";
 
 const fact = (subject: string, kind: SpecModelFact["kind"], extra: Partial<SpecModelFact> = {}): SpecModelFact => ({
@@ -83,5 +83,23 @@ describe("the diagram", () => {
     expect(note.loose).toBe(true);
     expect(note.y - note.h / 2).toBeGreaterThan(looseTop!);
     expect(placeCards(cards, relationEdges(entities))).toEqual(placeCards(cards, relationEdges(entities)));
+  });
+});
+
+describe("the editor's draft", () => {
+  it("starts from what the model knows, each field and relation once", () => {
+    const e = one([
+      fact("Project", "entity", { text: "A project is a unit of work." }),
+      fact("Project", "attribute", { aspect: "type", value: "product" }),
+      fact("Project", "attribute", { aspect: "type", value: "library" }),
+      fact("Project", "relation", { aspect: "belongs to", value: "Workspace" }),
+      fact("Project", "relation", { aspect: "belongs to", value: "workspace" }),
+    ]);
+    expect(entityDraft(e)).toEqual({
+      name: "Project",
+      definition: "A project is a unit of work.",
+      fields: [{ name: "type", meaning: "product" }],
+      relations: [{ verb: "belongs to", target: "Workspace" }],
+    });
   });
 });

@@ -276,6 +276,7 @@ export function SpecModelTab({
           findings={ordered}
           requirements={requirements && "items" in requirements ? requirements : null}
           onDecide={decide}
+          onPropose={(f) => api.proposeSpecModelFix(token, projectId, f.fingerprint)}
           onTrace={(id) => {
             setTraced(id);
             setView("reqs");
@@ -284,7 +285,9 @@ export function SpecModelTab({
           built={model.facts.length > 0}
         />
       )}
-      {model && view === "map" && <ModelMapView entities={entities} onOpenFile={onOpenFile} />}
+      {model && view === "map" && (
+        <ModelMapView entities={entities} onOpenFile={onOpenFile} onSave={(edit) => api.saveSpecModelEntity(token, projectId, edit)} />
+      )}
       {view === "reqs" && (
         <RequirementsView read={requirements} traces={traces} work={work} selected={traced} onSelect={setTraced} onOpenFile={onOpenFile} />
       )}

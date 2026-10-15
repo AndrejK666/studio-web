@@ -105,6 +105,22 @@ export interface MemberDirectory {
 
 /** Somebody the caller shares an organization with, as any member sees them
  *  (ADR-0036): no addresses and no sign-ins. One row per organization. */
+/** An entity of the domain model as a person edits it on the tab. */
+export interface SpecModelEntityEdit {
+  name: string;
+  definition?: string | null;
+  fields: { name: string; meaning: string }[];
+  relations: { verb: string; target: string }[];
+}
+
+/** Where a change to the documents landed. */
+export interface SpecModelWrite {
+  path: string;
+  branch: string;
+  commit_sha: string;
+  pr_url?: string | null;
+}
+
 /** An organization's logo, as `GET …/organizations/{id}/logo` answers. */
 export interface OrganizationLogo {
   content_type: string;
@@ -3089,6 +3105,20 @@ export const api = {
       items: { fingerprint: string; decision: "confirmed" | "dismissed"; decided_by: string; decided_at: string }[];
       total: number;
     }>(`/studio-documents/v1/spec-model/decisions?project_id=${encodeURIComponent(projectId)}`, token),
+  /** Save one entity of the domain model as a person edited it: its section
+   *  of docs/domain-model.md, written the way the repository takes changes. */
+  saveSpecModelEntity: (token: string, projectId: string, entity: SpecModelEntityEdit) =>
+    request<SpecModelWrite>(`/studio-documents/v1/spec-model/entities?project_id=${encodeURIComponent(projectId)}`, token, {
+      method: "POST",
+      body: JSON.stringify(entity),
+    }),
+  /** Propose a finding's fix as a pull request on the document it names. */
+  proposeSpecModelFix: (token: string, projectId: string, fingerprint: string) =>
+    request<SpecModelWrite>(
+      `/studio-documents/v1/spec-model/findings/${encodeURIComponent(fingerprint)}/proposals?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST" },
+    ),
   decideSpecModelFinding: (
     token: string,
     projectId: string,

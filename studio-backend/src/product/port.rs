@@ -186,6 +186,96 @@ pub trait GearDeclarations: Send + Sync {
     ) -> anyhow::Result<DeclarationWritten>;
 }
 
+/// How another gear writes into a project's repository, the one its product
+/// description goes to: read a file there, and commit files the way the
+/// repository takes changes (its source's `share_mode`), or always as a
+/// pull request when what is written is only a proposal.
+#[async_trait]
+pub trait ProjectFiles: Send + Sync {
+    /// `path`'s text on the repository's base branch; `None` when absent.
+    async fn read(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<String>>;
+
+    /// Commit `files`. With `propose`, or when the repository takes changes
+    /// as pull requests, they go on `branch` with a pull request; when it
+    /// takes them straight onto its branch, they are committed there.
+    async fn write(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        branch: &str,
+        files: &[DeclarationFile],
+        text: &PullRequestText,
+        propose: bool,
+    ) -> anyhow::Result<DeclarationWritten>;
+}
+
+/// studio-product's [`ProjectFiles`]: its own project writer.
+pub struct Files {
+    service: Arc<super::service::ProductService>,
+}
+
+impl Files {
+    pub(super) fn new(service: Arc<super::service::ProductService>) -> Self {
+        Self { service }
+    }
+}
+
+#[async_trait]
+impl ProjectFiles for Files {
+    async fn read(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<String>> {
+        self.service.read_project_file(ctx, project_id, path).await
+    }
+
+    async fn write(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        branch: &str,
+        files: &[DeclarationFile],
+        text: &PullRequestText,
+        propose: bool,
+    ) -> anyhow::Result<DeclarationWritten> {
+        let onto_base = !propose
+            && matches!(
+                self.service.write_share_mode(ctx, project_id).await,
+                Some(crate::project_sources::ShareMode::Branch)
+            );
+        let files: Vec<super::scaffold::ScaffoldFile> = files
+            .iter()
+            .map(|f| super::scaffold::ScaffoldFile {
+                path: f.path.clone(),
+                content: f.content.clone(),
+            })
+            .collect();
+        let w = self
+            .service
+            .write_to_project_repo(
+                ctx,
+                project_id,
+                (!onto_base).then_some(branch),
+                &files,
+                &text.message,
+                (!onto_base).then_some(text.title.as_str()),
+            )
+            .await?;
+        Ok(DeclarationWritten {
+            branch: w.branch,
+            commit_sha: w.commit_sha,
+            pr_url: w.pr_url,
+        })
+    }
+}
+
 /// studio-product's [`GearDeclarations`]: the skeleton's manifest, the
 /// engine's `gear.gdl`, and the scaffold's writer.
 pub struct Declarations {

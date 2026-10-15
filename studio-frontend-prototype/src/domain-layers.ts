@@ -191,3 +191,24 @@ export function placeCards(cards: Card[], edges: MapEdge[]): { cards: PlacedCard
     looseTop: looseTop === null ? null : looseTop - top,
   };
 }
+
+/** An entity as the editor starts it: what the model already knows, each
+ *  field and relation once, so a person corrects rather than retypes. */
+export function entityDraft(e: Pick<Entity, "name" | "facts">): {
+  name: string;
+  definition: string;
+  fields: { name: string; meaning: string }[];
+  relations: { verb: string; target: string }[];
+} {
+  const fields: { name: string; meaning: string }[] = [];
+  const relations: { verb: string; target: string }[] = [];
+  for (const f of e.facts) {
+    if (f.kind === "attribute" && f.aspect.trim() && !fields.some((x) => x.name === f.aspect.trim()))
+      fields.push({ name: f.aspect.trim(), meaning: f.value.trim() });
+    if (f.kind === "relation" && f.aspect.trim() && f.value.trim()) {
+      const r = { verb: f.aspect.trim(), target: f.value.trim() };
+      if (!relations.some((x) => x.verb === r.verb && x.target.toLowerCase() === r.target.toLowerCase())) relations.push(r);
+    }
+  }
+  return { name: e.name, definition: e.facts.find((f) => f.kind === "entity")?.text ?? "", fields, relations };
+}

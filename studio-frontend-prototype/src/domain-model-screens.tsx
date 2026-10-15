@@ -3,9 +3,11 @@
  * requirement followed from its passage to its code. */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 
+import type { SpecModelEntityEdit, SpecModelWrite } from "./api";
 import {
   cardFields,
   cardSize,
+  entityDraft,
   LAYER_TITLE,
   LAYER_WHAT,
   layerOf,
@@ -92,6 +94,7 @@ export function ResolveView({
   findings,
   requirements,
   onDecide,
+  onPropose,
   onTrace,
   onOpenFile,
   built,
@@ -99,6 +102,8 @@ export function ResolveView({
   findings: SpecModelFinding[];
   requirements: SpecRequirements | null;
   onDecide: (f: SpecModelFinding, d: "confirmed" | "dismissed") => void;
+  /** Open a pull request with a finding's fix on its document. */
+  onPropose?: (f: SpecModelFinding) => Promise<SpecModelWrite>;
   /** Follow a requirement in the Requirements view. */
   onTrace: (id: string) => void;
   onOpenFile: OpenFile;
@@ -153,7 +158,7 @@ export function ResolveView({
       )}
       <div className="dm-queue">
         {shown.slice(0, 80).map((i) => (
-          <QueueItem key={i.key} item={i} onDecide={onDecide} onTrace={onTrace} onOpenFile={onOpenFile} />
+          <QueueItem key={i.key} item={i} onDecide={onDecide} onPropose={onPropose} onTrace={onTrace} onOpenFile={onOpenFile} />
         ))}
         {shown.length > 80 && <p className="hint">and {shown.length - 80} more; pick a tile above to narrow it.</p>}
       </div>
@@ -187,15 +192,27 @@ function Tile({
 function QueueItem({
   item,
   onDecide,
+  onPropose,
   onTrace,
   onOpenFile,
 }: {
   item: ResolveItem;
   onDecide: (f: SpecModelFinding, d: "confirmed" | "dismissed") => void;
+  onPropose?: (f: SpecModelFinding) => Promise<SpecModelWrite>;
   onTrace: (id: string) => void;
   onOpenFile: OpenFile;
 }) {
   const f = item.finding;
+  const [proposal, setProposal] = useState<{ busy: boolean; done?: SpecModelWrite; error?: string } | null>(null);
+  const propose = async () => {
+    if (!f || !onPropose) return;
+    setProposal({ busy: true });
+    try {
+      setProposal({ busy: false, done: await onPropose(f) });
+    } catch (e) {
+      setProposal({ busy: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  };
   const r = item.requirement;
   return (
     <article className={`card dm-item${item.done ? " dm-done" : ""}`} data-item={item.key}>
@@ -244,8 +261,26 @@ function QueueItem({
             </>
           ) : (
             <>
+              {f.edit && onPropose && !proposal?.done && (
+                <button type="button" className="primary" disabled={proposal?.busy} onClick={() => void propose()} title="Open a pull request with this change on the document">
+                  {proposal?.busy ? "Proposing…" : "Propose this change"}
+                </button>
+              )}
+              {proposal?.done && (
+                <span className="dm-saved">
+                  ✓ Proposed{" "}
+                  {proposal.done.pr_url ? (
+                    <a href={proposal.done.pr_url} target="_blank" rel="noreferrer">
+                      as a pull request
+                    </a>
+                  ) : (
+                    <>on {proposal.done.branch}</>
+                  )}
+                </span>
+              )}
+              {proposal?.error && <span className="error-inline">{proposal.error}</span>}
               {f.sides[0] && onOpenFile && (
-                <button type="button" className="primary" onClick={() => onOpenFile(f.sides[0].path)}>
+                <button type="button" className={f.edit && onPropose ? "ghost" : "primary"} onClick={() => onOpenFile(f.sides[0].path)}>
                   Fix it in the editor
                 </button>
               )}
@@ -278,7 +313,18 @@ function QueueItem({
 /** How many entities a layer shows at first: few enough to read. */
 const SHOW_STEPS = [25, 40, 80, Infinity] as const;
 
-export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onOpenFile: OpenFile }) {
+export function ModelMapView({
+  entities,
+  onOpenFile,
+  onSave,
+}: {
+  entities: Entity[];
+  onOpenFile: OpenFile;
+  /** Save an edited entity to the project's documentation. */
+  onSave?: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
+}) {
+  /** What was saved this visit, by entity: shown until the next build reads it. */
+  const [saved, setSaved] = useState<Map<string, SpecModelWrite>>(new Map());
   const [layer, setLayer] = useState<Layer>("domain");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -403,7 +449,18 @@ export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onO
         <aside className="card dm-card" aria-label="The selected entity">
           {sel ? (
             <EntityCard
+              key={sel.key}
               entity={sel}
+              names={entities.filter((e) => layerOfKey.get(e.key)).map((e) => e.name)}
+              saved={saved.get(sel.key) ?? null}
+              onSave={
+                onSave &&
+                (async (edit) => {
+                  const done = await onSave(edit);
+                  setSaved((m) => new Map(m).set(sel.key, done));
+                  return done;
+                })
+              }
               layer={layerOfKey.get(sel.key) ?? null}
               related={relations
                 .filter((r) => r.from === sel.key || r.to === sel.key)
@@ -602,21 +659,37 @@ function EntityCard({
   entity,
   layer,
   related,
+  names,
+  saved,
+  onSave,
   onSelect,
   onOpenFile,
 }: {
   entity: Entity;
   layer: Layer | null;
   related: { other: Entity; verbs: string[] }[];
+  /** Every entity's name, for a relation's target. */
+  names: string[];
+  saved: SpecModelWrite | null;
+  onSave?: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
   onSelect: (k: string) => void;
   onOpenFile: OpenFile;
 }) {
   const definition = entity.facts.find((f) => f.kind === "entity");
+  const [editing, setEditing] = useState(false);
+  if (editing && onSave)
+    return <EntityEditor entity={entity} names={names} onSave={onSave} onDone={() => setEditing(false)} />;
   return (
     <>
       <div>
         {layer && <span className={`dm-layer-pill dm-layer-${layer}`}>{LAYER_TITLE[layer]}</span>}
+        {onSave && (
+          <button type="button" className="ghost" style={{ float: "right" }} onClick={() => setEditing(true)} title="Correct what it is, what it holds or how it relates">
+            Edit
+          </button>
+        )}
         <h2 style={{ margin: "4px 0 0" }}>{entity.name}</h2>
+        {saved && <SavedNote saved={saved} />}
         <div className="hint">
           {entity.facts.length} facts from {entity.documents} document{entity.documents === 1 ? "" : "s"}
         </div>
@@ -646,6 +719,122 @@ function EntityCard({
         </section>
       ))}
     </>
+  );
+}
+
+/** Where a saved edit went, and when the model will show it. */
+function SavedNote({ saved }: { saved: SpecModelWrite }) {
+  return (
+    <div className="dm-saved">
+      ✓ Saved to <code>{saved.path}</code>{" "}
+      {saved.pr_url ? (
+        <a href={saved.pr_url} target="_blank" rel="noreferrer">
+          as a pull request
+        </a>
+      ) : (
+        <>on {saved.branch}</>
+      )}
+      . The model reads it on its next build.
+    </div>
+  );
+}
+
+/** Correct an entity: what it is, what it holds, how it relates. Saved as
+ *  its section of docs/domain-model.md, the way the repository takes changes. */
+function EntityEditor({
+  entity,
+  names,
+  onSave,
+  onDone,
+}: {
+  entity: Entity;
+  names: string[];
+  onSave: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
+  onDone: () => void;
+}) {
+  const [draft, setDraft] = useState(() => entityDraft(entity));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const listId = `dm-names-${entity.key.replace(/\W+/g, "-")}`;
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onSave({
+        name: draft.name,
+        definition: draft.definition.trim() || null,
+        fields: draft.fields.filter((f) => f.name.trim()),
+        relations: draft.relations.filter((r) => r.verb.trim() && r.target.trim()),
+      });
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form
+      className="dm-editor"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <div className="dm-h">Edit {entity.name}</div>
+      <p className="hint" style={{ margin: 0 }}>
+        Saved to <code>docs/domain-model.md</code> in the project&apos;s repository, one section per entity. The model reads
+        it on its next build.
+      </p>
+      <label className="dm-field">
+        <span>What it is</span>
+        <textarea rows={3} value={draft.definition} onChange={(e) => setDraft({ ...draft, definition: e.target.value })} placeholder={`A ${entity.name} is …`} />
+      </label>
+      <div className="dm-field">
+        <span>What it holds</span>
+        {draft.fields.map((f, i) => (
+          <div key={i} className="dm-row2">
+            <input aria-label="Field" value={f.name} placeholder="field" onChange={(e) => setDraft({ ...draft, fields: draft.fields.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+            <input aria-label="What it holds" value={f.meaning} placeholder="what it holds" onChange={(e) => setDraft({ ...draft, fields: draft.fields.map((x, j) => (j === i ? { ...x, meaning: e.target.value } : x)) })} />
+            <button type="button" className="ghost" aria-label="Remove field" onClick={() => setDraft({ ...draft, fields: draft.fields.filter((_, j) => j !== i) })}>
+              ×
+            </button>
+          </div>
+        ))}
+        <button type="button" className="dm-link" onClick={() => setDraft({ ...draft, fields: [...draft.fields, { name: "", meaning: "" }] })}>
+          + field
+        </button>
+      </div>
+      <div className="dm-field">
+        <span>How it relates</span>
+        <datalist id={listId}>
+          {names.map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
+        {draft.relations.map((r, i) => (
+          <div key={i} className="dm-row2">
+            <input aria-label="Verb" value={r.verb} placeholder="belongs to" onChange={(e) => setDraft({ ...draft, relations: draft.relations.map((x, j) => (j === i ? { ...x, verb: e.target.value } : x)) })} />
+            <input aria-label="Entity" list={listId} value={r.target} placeholder="entity" onChange={(e) => setDraft({ ...draft, relations: draft.relations.map((x, j) => (j === i ? { ...x, target: e.target.value } : x)) })} />
+            <button type="button" className="ghost" aria-label="Remove relation" onClick={() => setDraft({ ...draft, relations: draft.relations.filter((_, j) => j !== i) })}>
+              ×
+            </button>
+          </div>
+        ))}
+        <button type="button" className="dm-link" onClick={() => setDraft({ ...draft, relations: [...draft.relations, { verb: "", target: "" }] })}>
+          + relation
+        </button>
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="dm-actions">
+        <button type="submit" className="primary" disabled={busy}>
+          {busy ? "Saving…" : "Save to the documentation"}
+        </button>
+        <button type="button" className="ghost" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 

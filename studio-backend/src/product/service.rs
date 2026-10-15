@@ -279,6 +279,34 @@ impl ProductService {
         .await
     }
 
+    /// The text of `path` in the project's repository (the one a product
+    /// description is written to), on its base branch; `None` when the
+    /// repository has no such file.
+    pub async fn read_project_file(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        path: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let target = self.write_target(ctx, project_id).await?;
+        self.ensure_owned(ctx, scope_of(ctx, project_id), &target)
+            .await?;
+        let connectors = self
+            .connector_service()
+            .ok_or_else(|| anyhow!("connectors service unavailable"))?;
+        let repo = Repository::open(
+            &connectors,
+            ctx,
+            target.tenant,
+            target.connection_id,
+            "github",
+            &target.repo,
+            Some(&target.base_branch),
+        )
+        .await?;
+        Ok(repo.read_file(path).await?.map(|f| f.text))
+    }
+
     /// Commit files onto a new `branch` off `target`'s base branch in the
     /// repository `target` names, through its connection, and open a pull
     /// request back: what Declare it writes (ADR-0041 P3). `ctx` is the
