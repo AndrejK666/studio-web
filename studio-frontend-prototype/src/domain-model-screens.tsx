@@ -4,17 +4,29 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 
 import {
+  cardFields,
+  cardSize,
+  LAYER_TITLE,
+  LAYER_WHAT,
+  layerOf,
+  placeCards,
+  relationEdges,
+  weight,
+  type DiagramEdge,
+  type Layer,
+  type PlacedCard,
+} from "./domain-layers";
+import {
   blockItems,
-  entityArea,
   findEntities,
   findRequirements,
-  layout,
   mapEdges,
   neighbours,
   readiness,
   RESOLVE_LABEL,
   resolveQueue,
   traceChain,
+  type MapEdge,
   type ResolveItem,
   type ResolveType,
 } from "./domain-model-views";
@@ -259,210 +271,208 @@ function QueueItem({
 
 // ── 2 · Model map ───────────────────────────────────────────────────────────
 
-/** Area colours, readable on both themes. */
-const AREA_COLOURS = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#64748b"];
-const W = 900;
-const H = 620;
+/** How many entities a layer shows at first: few enough to read. */
+const SHOW_STEPS = [25, 40, 80, Infinity] as const;
 
 export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onOpenFile: OpenFile }) {
-  const [area, setArea] = useState<string | null>(null);
+  const [layer, setLayer] = useState<Layer>("domain");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
-  const [mode, setMode] = useState<"graph" | "list">("graph");
-  const [declaredOnly, setDeclaredOnly] = useState(false);
+  const [mode, setMode] = useState<"diagram" | "list">("diagram");
+  const [show, setShow] = useState<number>(25);
+  const [mentions, setMentions] = useState(false);
 
-  const areaOf = useMemo(() => new Map(entities.map((e) => [e.key, entityArea(e)])), [entities]);
-  const areas = useMemo(() => {
-    const n = new Map<string, number>();
-    for (const a of areaOf.values()) n.set(a, (n.get(a) ?? 0) + 1);
-    return [...n.entries()].sort((a, b) => b[1] - a[1]);
-  }, [areaOf]);
-  const colour = (a: string) => AREA_COLOURS[areas.findIndex(([x]) => x === a) % AREA_COLOURS.length];
-
-  const shown = useMemo(
-    () => findEntities(entities, query).filter((e) => !area || areaOf.get(e.key) === area),
-    [entities, query, area, areaOf],
+  const layerOfKey = useMemo(() => new Map(entities.map((e) => [e.key, layerOf(e)])), [entities]);
+  const counts = useMemo(() => {
+    const c: Record<Layer, number> = { domain: 0, system: 0, deployment: 0 };
+    let hidden = 0;
+    for (const l of layerOfKey.values()) l ? c[l]++ : hidden++;
+    return { ...c, hidden };
+  }, [layerOfKey]);
+  const pool = useMemo(
+    () => findEntities(entities, query).filter((e) => layerOfKey.get(e.key) === layer),
+    [entities, query, layer, layerOfKey],
   );
-  const allEdges = useMemo(() => mapEdges(entities), [entities]);
+  const shown = useMemo(() => [...pool].sort((a, b) => weight(b) - weight(a)).slice(0, show), [pool, show]);
+  const relations = useMemo(() => relationEdges(entities), [entities]);
+  const allMentions = useMemo(() => (mentions ? mapEdges(entities).filter((e) => e.kind === "mentions") : []), [entities, mentions]);
   const edges = useMemo(() => {
     const keep = new Set(shown.map((e) => e.key));
-    return allEdges.filter((e) => keep.has(e.from) && keep.has(e.to) && (!declaredOnly || e.kind === "relation"));
-  }, [allEdges, shown, declaredOnly]);
+    const rel = relations.filter((e) => keep.has(e.from) && keep.has(e.to));
+    const men = allMentions.filter((e) => keep.has(e.from) && keep.has(e.to) && !rel.some((r) => (r.from === e.from && r.to === e.to) || (r.from === e.to && r.to === e.from)));
+    return { rel, men };
+  }, [shown, relations, allMentions]);
   const sel = entities.find((e) => e.key === selected) ?? null;
 
   if (entities.length === 0) return <div className="empty">Nothing read yet. Build the model to read the documents.</div>;
 
   return (
-    <div className="dm-map">
-      <aside className="card dm-areas" aria-label="Where it is described">
-        <input type="search" placeholder="Find an entity" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Find an entity" />
-        <div className="dm-h">Where it is described</div>
-        <button type="button" className="dm-area" aria-pressed={!area} onClick={() => setArea(null)}>
-          All <span>{entities.length}</span>
-        </button>
-        {areas.map(([a, n]) => (
-          <button key={a} type="button" className="dm-area" aria-pressed={area === a} onClick={() => setArea(area === a ? null : a)}>
-            <i style={{ background: colour(a) }} />
-            {a} <span>{n}</span>
+    <div className="dm-layered">
+      <div className="dm-layers" role="tablist" aria-label="Layer">
+        {(Object.keys(LAYER_TITLE) as Layer[]).map((l) => (
+          <button
+            key={l}
+            type="button"
+            role="tab"
+            aria-selected={layer === l}
+            className={`dm-layer dm-layer-${l}${layer === l ? " on" : ""}`}
+            onClick={() => {
+              setLayer(l);
+              setSelected(null);
+            }}
+          >
+            <i />
+            <b>{LAYER_TITLE[l]}</b>
+            <span className="dm-layer-n">{counts[l]}</span>
+            <small>{LAYER_WHAT[l]}</small>
           </button>
         ))}
-      </aside>
-
-      <div className="card dm-canvas">
-        <div className="dm-mapbar">
-          <span className="dm-seg" role="group" aria-label="How to show it">
-            <button type="button" aria-pressed={mode === "graph"} onClick={() => setMode("graph")}>
-              Graph
-            </button>
-            <button type="button" aria-pressed={mode === "list"} onClick={() => setMode("list")}>
-              List
-            </button>
-          </span>
-          {mode === "graph" && (
-            <label className="hint">
-              <input type="checkbox" checked={declaredOnly} onChange={(e) => setDeclaredOnly(e.target.checked)} /> only relations the documents declare
-            </label>
-          )}
-          <span className="hint" style={{ marginLeft: "auto" }}>
-            {shown.length} entities{mode === "graph" ? ` · ${edges.length} links` : ""}
-          </span>
-        </div>
-        {mode === "graph" ? (
-          <Graph
-            entities={shown}
-            edges={edges}
-            declaredOnly={declaredOnly}
-            selected={selected}
-            onSelect={setSelected}
-            colour={(k) => colour(areaOf.get(k) ?? "")}
-          />
-        ) : (
-          <div className="dm-list">
-            {shown.map((e) => (
-              <button key={e.key} type="button" className={`dm-ent${e.key === selected ? " on" : ""}`} onClick={() => setSelected(e.key)}>
-                <i style={{ background: colour(areaOf.get(e.key) ?? "") }} />
-                <b>{e.name}</b>
-                <span className="hint">
-                  {e.facts.length} facts · {e.documents} doc{e.documents === 1 ? "" : "s"}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-        {mode === "graph" && (
-          <div className="dm-legend">
-            <span>
-              <svg viewBox="0 0 26 8" width="26" height="8" aria-hidden="true">
-                <line x1="0" y1="4" x2="26" y2="4" className="dm-edge relation" />
-              </svg>
-              a document declares the relation
-            </span>
-            <span>
-              <svg viewBox="0 0 26 8" width="26" height="8" aria-hidden="true">
-                <line x1="0" y1="4" x2="26" y2="4" className="dm-edge mentions" />
-              </svg>
-              one names the other
-            </span>
-            <span className="hint">scroll to zoom · drag to move</span>
-          </div>
-        )}
       </div>
-
-      <aside className="card dm-card" aria-label="The selected entity">
-        {sel ? (
-          <EntityCard
-            entity={sel}
-            area={areaOf.get(sel.key) ?? ""}
-            linked={[...neighbours(sel.key, allEdges)].map((k) => entities.find((e) => e.key === k)).filter((e): e is Entity => !!e)}
-            onSelect={setSelected}
-            onOpenFile={onOpenFile}
-          />
-        ) : (
-          <>
-            <div className="dm-h">How to read the map</div>
-            <p className="hint" style={{ margin: 0 }}>
-              Every circle is something the documents talk about; the bigger, the more they say about it. A solid line is a relation a
-              document declares, a dashed one means one entity&apos;s description names the other. Pick one to see what it holds, what
-              must always be true of it, how it changes and which passages say so.
-            </p>
-          </>
-        )}
-      </aside>
+      <p className="hint" style={{ margin: "0 0 8px" }}>
+        Left out: {counts.hidden} words that are not things the product has — identifiers such as ADR-0007 or cpt-…, a word
+        used once in passing, what a kit&apos;s templates and examples say. They stay in Requirements and the Glossary.
+      </p>
+      <div className="dm-map2">
+        <div className="card dm-canvas">
+          <div className="dm-mapbar">
+            <input type="search" placeholder="Find an entity" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Find an entity" />
+            <span className="dm-seg" role="group" aria-label="How many">
+              {SHOW_STEPS.map((n) => (
+                <button key={n} type="button" aria-pressed={show === n} onClick={() => setShow(n)}>
+                  {n === Infinity ? "all" : n === 25 ? "25 main" : n}
+                </button>
+              ))}
+            </span>
+            <label className="hint">
+              <input type="checkbox" checked={mentions} onChange={(e) => setMentions(e.target.checked)} /> show mentions
+            </label>
+            <span className="dm-seg" role="group" aria-label="How to show it">
+              <button type="button" aria-pressed={mode === "diagram"} onClick={() => setMode("diagram")}>
+                Diagram
+              </button>
+              <button type="button" aria-pressed={mode === "list"} onClick={() => setMode("list")}>
+                List
+              </button>
+            </span>
+            <span className="hint" style={{ marginLeft: "auto" }}>
+              {shown.length} of {pool.length} · {edges.rel.length} declared relation{edges.rel.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          {mode === "diagram" ? (
+            <Diagram entities={shown} layer={layer} relations={edges.rel} mentions={edges.men} selected={selected} onSelect={setSelected} />
+          ) : (
+            <div className="dm-list">
+              {shown.map((e) => (
+                <button key={e.key} type="button" className={`dm-ent${e.key === selected ? " on" : ""}`} onClick={() => setSelected(e.key)}>
+                  <b>{e.name}</b>
+                  <span className="hint">
+                    {e.facts.length} facts · {e.documents} doc{e.documents === 1 ? "" : "s"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {mode === "diagram" && (
+            <div className="dm-legend">
+              <span>
+                <svg viewBox="0 0 26 8" width="26" height="8" aria-hidden="true">
+                  <line x1="0" y1="4" x2="26" y2="4" className="dm-edge relation" />
+                </svg>
+                a relation a document declares, named by its verb
+              </span>
+              {mentions && (
+                <span>
+                  <svg viewBox="0 0 26 8" width="26" height="8" aria-hidden="true">
+                    <line x1="0" y1="4" x2="26" y2="4" className="dm-edge mentions" />
+                  </svg>
+                  one names the other
+                </span>
+              )}
+              <span className="hint">scroll to zoom · drag to move</span>
+            </div>
+          )}
+        </div>
+        <aside className="card dm-card" aria-label="The selected entity">
+          {sel ? (
+            <EntityCard
+              entity={sel}
+              layer={layerOfKey.get(sel.key) ?? null}
+              related={relations
+                .filter((r) => r.from === sel.key || r.to === sel.key)
+                .map((r) => ({ other: entities.find((e) => e.key === (r.from === sel.key ? r.to : r.from)), verbs: r.verbs }))
+                .filter((r): r is { other: Entity; verbs: string[] } => !!r.other)}
+              onSelect={(k) => {
+                const l = layerOfKey.get(k);
+                if (l && l !== layer) setLayer(l);
+                setSelected(k);
+              }}
+              onOpenFile={onOpenFile}
+            />
+          ) : (
+            <>
+              <div className="dm-h">{LAYER_TITLE[layer]}</div>
+              <p style={{ margin: 0 }}>{LAYER_WHAT[layer]}.</p>
+              <p className="hint" style={{ margin: 0 }}>
+                The entities the documents say most about and relate most come first. A line is a relation a document
+                declares, named by its verb. Pick a card to see what it holds, how it relates, what must always be true of
+                it and which passages say so.
+              </p>
+            </>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }
 
-function Graph({
+function Diagram({
   entities,
-  edges,
-  declaredOnly,
+  layer,
+  relations,
+  mentions,
   selected,
   onSelect,
-  colour,
 }: {
   entities: Entity[];
-  edges: ReturnType<typeof mapEdges>;
-  declaredOnly: boolean;
+  layer: Layer;
+  relations: DiagramEdge[];
+  mentions: MapEdge[];
   selected: string | null;
   onSelect: (k: string | null) => void;
-  colour: (key: string) => string;
 }) {
-  const degree = useMemo(() => {
-    const d = new Map<string, number>();
-    for (const e of edges) {
-      d.set(e.from, (d.get(e.from) ?? 0) + 1);
-      d.set(e.to, (d.get(e.to) ?? 0) + 1);
-    }
-    return d;
-  }, [edges]);
-  // With only declared relations, an entity with none is left out.
-  const nodes = useMemo(() => (declaredOnly ? entities.filter((e) => degree.has(e.key)) : entities), [entities, declaredOnly, degree]);
-  // The drawing grows with the model, about sixty nodes to a screen, so a
-  // big one spreads out instead of piling against the frame; the view starts
-  // on all of it and zooms in from there.
-  const scale = Math.max(1, Math.sqrt(nodes.length / 60));
-  const LW = W * scale;
-  const LH = H * scale;
-  const placed = useMemo(() => {
-    const p = layout(nodes.map((e) => e.key), edges, LW, LH);
-    return new Map(p.map((n) => [n.key, n]));
-  }, [nodes, edges, LW, LH]);
-  const top = useMemo(() => new Set([...nodes].sort((a, b) => (degree.get(b.key) ?? 0) - (degree.get(a.key) ?? 0)).slice(0, 15).map((e) => e.key)), [nodes, degree]);
-  const near = selected ? new Set([selected, ...neighbours(selected, edges)]) : null;
+  const cards = useMemo(
+    () =>
+      entities.map((e) => {
+        const fields = cardFields(e);
+        return { key: e.key, name: e.name, fields, ...cardSize(e.name, fields) };
+      }),
+    [entities],
+  );
+  const placed = useMemo(() => placeCards(cards, relations), [cards, relations]);
+  const at = useMemo(() => new Map(placed.cards.map((c) => [c.key, c])), [placed]);
+  const near = selected ? new Set([selected, ...neighbours(selected, relations)]) : null;
+  const few = entities.length <= 25;
 
-  // Pan and zoom by moving the viewBox.
-  // Start on what the nodes cover, with a margin for their names.
+  // Start on the whole drawing, with a margin, at the frame's proportions.
   const fit = useMemo(() => {
-    const ps = [...placed.values()];
-    if (ps.length === 0) return { x: 0, y: 0, w: LW, h: LH };
-    const pad = 40 * scale;
-    let x0 = Math.min(...ps.map((q) => q.x)) - pad;
-    let y0 = Math.min(...ps.map((q) => q.y)) - pad;
-    let w = Math.max(...ps.map((q) => q.x)) + pad - x0;
-    let h = Math.max(...ps.map((q) => q.y)) + pad - y0;
-    // Keep the frame's proportions, so nothing is stretched.
-    const ratio = W / H;
-    if (w / h > ratio) {
-      const nh = w / ratio;
-      y0 -= (nh - h) / 2;
-      h = nh;
-    } else {
-      const nw = h * ratio;
-      x0 -= (nw - w) / 2;
-      w = nw;
-    }
-    return { x: x0, y: y0, w, h };
-  }, [placed, LW, LH, scale]);
+    const pad = 40;
+    const w = placed.width + 2 * pad;
+    const h = placed.height + 2 * pad;
+    const ratio = 900 / 620;
+    return w / h > ratio
+      ? { x: -pad, y: -pad - (w / ratio - h) / 2, w, h: w / ratio }
+      : { x: -pad - (h * ratio - w) / 2, y: -pad, w: h * ratio, h };
+  }, [placed]);
   const [view, setView] = useState(fit);
   useEffect(() => setView(fit), [fit]);
-  const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null);
   const svg = useRef<SVGSVGElement | null>(null);
-  const toUnits = (dx: number) => (svg.current ? dx * (view.w / svg.current.clientWidth) : dx);
+  const drag = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null);
+  const units = (px: number) => (svg.current ? px * (view.w / svg.current.clientWidth) : px);
   const onWheel = (e: ReactWheelEvent<SVGSVGElement>) => {
     const box = svg.current?.getBoundingClientRect();
     if (!box) return;
     const f = e.deltaY > 0 ? 1.15 : 1 / 1.15;
-    const w = Math.min(LW * 2, Math.max(W / 5, view.w * f));
+    const w = Math.min(fit.w * 2, Math.max(fit.w / 8, view.w * f));
     const h = (w / view.w) * view.h;
     const px = view.x + ((e.clientX - box.left) / box.width) * view.w;
     const py = view.y + ((e.clientY - box.top) / box.height) * view.h;
@@ -476,7 +486,7 @@ function Graph({
     const d = drag.current;
     if (!d) return;
     if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 3) d.moved = true;
-    setView((v) => ({ ...v, x: d.vx - toUnits(e.clientX - d.x), y: d.vy - toUnits(e.clientY - d.y) }));
+    setView((v) => ({ ...v, x: d.vx - units(e.clientX - d.x), y: d.vy - units(e.clientY - d.y) }));
   };
   const onUp = () => {
     const d = drag.current;
@@ -484,74 +494,96 @@ function Graph({
     if (d && !d.moved) onSelect(null);
   };
 
-  // Sizes in screen terms at the starting zoom, so a bigger drawing does not
-  // shrink its circles and names to dots.
-  const unit = fit.w / W;
-  const radius = (e: Entity) => (5 + Math.sqrt(e.facts.length) * 2.2) * unit;
+  // A line leaves a card at its centre and bends a little, so two lines
+  // between neighbours do not lie on each other.
+  const curve = (a: PlacedCard, b: PlacedCard) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const mx = (a.x + b.x) / 2 - (dy / len) * 0.12 * len;
+    const my = (a.y + b.y) / 2 + (dx / len) * 0.12 * len;
+    return { d: `M${a.x},${a.y} Q${mx},${my} ${b.x},${b.y}`, lx: (a.x + b.x) / 2 - (dy / len) * 0.06 * len, ly: (a.y + b.y) / 2 + (dx / len) * 0.06 * len };
+  };
+
   return (
     <svg
       ref={svg}
-      className="dm-graph"
+      className="dm-diagram"
       viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
       onWheel={onWheel}
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
       role="img"
-      aria-label="Entities and how they connect"
+      aria-label={`${LAYER_TITLE[layer]} entities and how they relate`}
     >
-      {edges.map((e) => {
-        const a = placed.get(e.from);
-        const b = placed.get(e.to);
+      {mentions.map((e) => {
+        const a = at.get(e.from);
+        const b = at.get(e.to);
+        if (!a || !b) return null;
+        const cold = !!near && !(near.has(e.from) && near.has(e.to));
+        return <path key={`m${e.from}|${e.to}`} d={curve(a, b).d} className={`dm-edge mentions${cold ? " cold" : ""}`} />;
+      })}
+      {relations.map((e) => {
+        const a = at.get(e.from);
+        const b = at.get(e.to);
         if (!a || !b) return null;
         const hot = !!selected && (e.from === selected || e.to === selected);
-        return (
-          <line
-            key={`${e.from}|${e.to}`}
-            x1={a.x}
-            y1={a.y}
-            x2={b.x}
-            y2={b.y}
-            className={`dm-edge ${e.kind}${hot ? " hot" : selected ? " cold" : ""}`}
-            strokeWidth={Math.min(1 + e.n * 0.5, 4)}
-          />
-        );
+        return <path key={`r${e.from}|${e.to}`} d={curve(a, b).d} className={`dm-edge relation${hot ? " hot" : selected ? " cold" : ""}`} />;
       })}
-      {nodes.map((e) => {
-        const p = placed.get(e.key);
-        if (!p) return null;
-        const r = radius(e);
-        const cold = !!near && !near.has(e.key);
-        const label = near ? near.has(e.key) : top.has(e.key);
+      {placed.looseTop !== null && (
+        <text x={0} y={placed.looseTop} className="dm-loose">
+          Not related yet: no document declares how these connect to the rest
+        </text>
+      )}
+      {placed.cards.map((c) => {
+        const card = cards.find((x) => x.key === c.key)!;
+        const cold = !!near && !near.has(c.key);
         return (
           <g
-            key={e.key}
-            transform={`translate(${p.x},${p.y})`}
-            className={`dm-node${e.key === selected ? " sel" : ""}${cold ? " cold" : ""}`}
+            key={c.key}
+            transform={`translate(${c.x - c.w / 2},${c.y - c.h / 2})`}
+            className={`dm-cardnode dm-layer-${layer}${c.key === selected ? " sel" : ""}${cold ? " cold" : ""}`}
             onPointerDown={(ev) => ev.stopPropagation()}
             onClick={(ev) => {
               ev.stopPropagation();
-              onSelect(e.key === selected ? null : e.key);
+              onSelect(c.key === selected ? null : c.key);
             }}
             role="button"
             tabIndex={0}
-            aria-label={e.name}
+            aria-label={card.name}
             onKeyDown={(ev) => {
               if (ev.key === "Enter" || ev.key === " ") {
                 ev.preventDefault();
-                onSelect(e.key);
+                onSelect(c.key);
               }
             }}
           >
-            <circle r={r} fill={colour(e.key)}>
-              <title>{e.name}</title>
-            </circle>
-            {label && (
-              <text x={r + 3 * unit} y={4 * unit} style={{ fontSize: 11 * unit, strokeWidth: 3 * unit }}>
-                {e.name}
+            <rect className="box" width={c.w} height={c.h} rx={8} />
+            <rect className="band" x={1} y={1} width={c.w - 2} height={28} rx={7} />
+            <rect className="stripe" x={8} y={6} width={4} height={18} rx={2} />
+            <text className="title" x={18} y={19}>
+              {card.name}
+            </text>
+            {card.fields.map((f, i) => (
+              <text key={f} className="field" x={12} y={46 + 16 * i}>
+                • {f}
               </text>
-            )}
+            ))}
           </g>
+        );
+      })}
+      {relations.map((e) => {
+        const a = at.get(e.from);
+        const b = at.get(e.to);
+        if (!a || !b || e.verbs.length === 0) return null;
+        const hot = !!selected && (e.from === selected || e.to === selected);
+        if (!few && !hot) return null;
+        const { lx, ly } = curve(a, b);
+        return (
+          <text key={`l${e.from}|${e.to}`} x={lx} y={ly} className="dm-verb" textAnchor="middle">
+            {e.verbs.slice(0, 2).join(" / ")}
+          </text>
         );
       })}
     </svg>
@@ -560,14 +592,14 @@ function Graph({
 
 function EntityCard({
   entity,
-  area,
-  linked,
+  layer,
+  related,
   onSelect,
   onOpenFile,
 }: {
   entity: Entity;
-  area: string;
-  linked: Entity[];
+  layer: Layer | null;
+  related: { other: Entity; verbs: string[] }[];
   onSelect: (k: string) => void;
   onOpenFile: OpenFile;
 }) {
@@ -575,24 +607,29 @@ function EntityCard({
   return (
     <>
       <div>
-        <div className="hint">{area}</div>
-        <h2 style={{ margin: 0 }}>{entity.name}</h2>
+        {layer && <span className={`dm-layer-pill dm-layer-${layer}`}>{LAYER_TITLE[layer]}</span>}
+        <h2 style={{ margin: "4px 0 0" }}>{entity.name}</h2>
         <div className="hint">
           {entity.facts.length} facts from {entity.documents} document{entity.documents === 1 ? "" : "s"}
         </div>
       </div>
       {definition && <blockquote className="sm-quote">{definition.text}</blockquote>}
-      {linked.length > 0 && (
-        <div className="sm-related">
-          Connects to:{" "}
-          {linked.map((e) => (
-            <button key={e.key} type="button" className="chip" onClick={() => onSelect(e.key)}>
-              {e.name}
-            </button>
+      {related.length > 0 && (
+        <section className="dm-rels">
+          <div className="dm-h">How it relates</div>
+          {related.map((r) => (
+            <div key={r.other.key}>
+              <b className="dm-verbtext" title={r.verbs.join(" / ")}>
+                {r.verbs.length > 3 ? `${r.verbs.slice(0, 3).join(" / ")} …` : r.verbs.join(" / ") || "relates to"}
+              </b>{" "}
+              <button type="button" className="dm-link" onClick={() => onSelect(r.other.key)}>
+                {r.other.name}
+              </button>
+            </div>
           ))}
-        </div>
+        </section>
       )}
-      {factsByKind(entity.facts.filter((f) => f !== definition)).map((g) => (
+      {factsByKind(entity.facts.filter((f) => f !== definition && f.kind !== "relation")).map((g) => (
         <section key={g.kind} className="sm-kind">
           <h3>{KIND_TITLE[g.kind] ?? g.kind}</h3>
           {g.facts.map((f, i) => (
