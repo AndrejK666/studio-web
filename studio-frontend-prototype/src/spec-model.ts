@@ -33,6 +33,9 @@ export interface SpecModelFact {
   text: string;
   status: FactStatus;
   status_because: string;
+  /** Where an `entity` sits, as the extractor stated it; absent on other
+   *  kinds and on facts extracted before it was asked. */
+  layer?: "domain" | "system" | "deployment" | null;
   source: SpecModelSide;
   /** Saved from this screen and not read by a build yet (saved-entities.ts):
    *  shown at once so a person sees the edit, replaced on the next build. */
