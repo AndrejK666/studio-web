@@ -100,7 +100,7 @@ export function GlossaryScreen({
             </span>
           ) : (
             <span>
-              The documents still say “{offer.from}”.{" "}
+              The documents still say “{offer.from}” (and its plural and possessive forms).{" "}
               <button type="button" className="primary" disabled={proposing} onClick={() => propose(offer)}>
                 {proposing ? "Proposing…" : `Propose renaming “${offer.from}” to “${offer.to}” in the documents`}
               </button>

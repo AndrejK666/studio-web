@@ -11,6 +11,12 @@
 //!
 //! The organization is `?organization_id=` (the caller's home tenant without
 //! it), reached by the caller ([`OrgCtx`]); the row is written as the service.
+//! Every member reads the explanations; only the organization's
+//! administrators and platform administrators change them
+//! ([`explanations::may_explain`]), anybody else is refused with 403
+//! `EXPLANATION_ADMIN_REQUIRED`.
+
+use toolkit::client_hub::ClientScope;
 
 use super::*;
 use crate::llm_proxy::port::{CompletionError, ModelProviders};
@@ -39,6 +45,9 @@ pub struct GearExplanationDto {
 pub struct GearExplanationListDto {
     pub items: Vec<GearExplanationDto>,
     pub total: u32,
+    /// Whether the caller may change them (save, or have a model write): an
+    /// organization or platform administrator.
+    pub may_manage: bool,
 }
 
 /// A person's explanation of a gear.
@@ -96,6 +105,28 @@ impl Product {
         })
     }
 
+    /// May the caller change the organization's explanations?
+    async fn may_explain(&self, ctx: &SecurityContext) -> bool {
+        let authority = self
+            .hub
+            .get_scoped::<dyn crate::user_profile::OrgAuthority>(&ClientScope::gts_id(
+                crate::user_profile::IDENTITY_INSTANCE_ID,
+            ))
+            .ok();
+        explanations::may_explain(authority.as_deref(), ctx, ctx.subject_tenant_id()).await
+    }
+
+    /// 403 unless the caller may change the organization's explanations.
+    async fn require_explainer(&self, ctx: &SecurityContext) -> ApiResult<()> {
+        if self.may_explain(ctx).await {
+            Ok(())
+        } else {
+            Err(StudioProductError::permission_denied()
+                .with_reason("EXPLANATION_ADMIN_REQUIRED")
+                .create())
+        }
+    }
+
     /// The catalogue's facts of `gear_id`; 404 when the corpus does not
     /// describe it.
     async fn brief(&self, gear_id: &str) -> ApiResult<GearBrief> {
@@ -140,6 +171,7 @@ async fn list_gear_explanations(
     Ok(Json(GearExplanationListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
+        may_manage: product.may_explain(&ctx).await,
     }))
 }
 
@@ -149,6 +181,7 @@ async fn update_gear_explanation(
     Path(gear_id): Path<String>,
     Json(body): Json<UpdateGearExplanationRequest>,
 ) -> ApiResult<JsonBody<GearExplanationDto>> {
+    product.require_explainer(&ctx).await?;
     let text = checked_text(&body.text).map_err(|e| {
         StudioProductError::invalid_argument()
             .with_constraint(e)
@@ -180,6 +213,7 @@ async fn create_gear_explanation_generation(
     Path(gear_id): Path<String>,
     Json(body): Json<CreateGearExplanationGenerationRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<GearExplanationDto>)> {
+    product.require_explainer(&ctx).await?;
     let force = body.force.unwrap_or(false);
     let brief = product.brief(&gear_id).await?;
     let store = product.explanations()?;
@@ -241,7 +275,9 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
              three sentences on what the gear is, what a product gets from it and \
              when to pick it -- keyed by the gear's engine id, each saying whether \
              a model wrote it (`generated`) or a person did (`edited`). A gear \
-             with none is absent; show the catalogue's description instead.",
+             with none is absent; show the catalogue's description instead. \
+             Every member reads them; `may_manage` says whether the caller may \
+             change them (an organization or platform administrator).",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -267,7 +303,9 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
              `edited`, so a model never writes over it unless asked to. The gear is \
              named by engine id or crate name and must be in the gear catalogue \
              (404 otherwise); the text is trimmed and at most 1200 characters \
-             (400 otherwise). 503 without a gear corpus or account-management.",
+             (400 otherwise). Only an organization or platform administrator \
+             may (403 `EXPLANATION_ADMIN_REQUIRED` otherwise). 503 without a gear \
+             corpus or account-management.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -279,6 +317,7 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
         .json_response_with_schema::<GearExplanationDto>(openapi, StatusCode::OK, "Saved")
         .error_400(openapi)
         .error_401(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_503(openapi)
@@ -297,7 +336,9 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
              explained is refused with 400 `EXPLANATION_EDITED` unless `force` is \
              set. 404 for a gear not in the catalogue; 400 `PROVIDER_KEY_REQUIRED` \
              when the caller has no model key; 503 when the model cannot be asked \
-             or answers nothing usable, or without a gear corpus.",
+             or answers nothing usable, or without a gear corpus. Only an \
+             organization or platform administrator may (403 \
+             `EXPLANATION_ADMIN_REQUIRED` otherwise).",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -313,6 +354,7 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
         )
         .error_400(openapi)
         .error_401(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_503(openapi)

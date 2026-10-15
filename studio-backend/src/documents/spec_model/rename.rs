@@ -7,21 +7,33 @@
 //! machine reads, not the project's words. The first letter keeps the case
 //! it had, so a sentence that starts with the old name starts with the new.
 //!
+//! The last word of the old name is also found in its English plural
+//! (`members`, `boxes`, `entities`) and becomes the same form of the new
+//! name; a possessive (`member's`, `members'`) follows, since the apostrophe
+//! ends the word. Irregular plurals are not guessed: the new name takes the
+//! regular rule, and a new name already ending in `s` stays as it is.
+//!
 //! Pure: no I/O. The route in `rest.rs` reads and writes the files.
 
 /// `text` with every whole-word use of `from` (any case) in its prose
 /// replaced by `to`, and how many were replaced; `None` when there was none.
+/// The plural of `from` becomes the plural of `to`.
 pub fn rename(text: &str, from: &str, to: &str) -> Option<(String, usize)> {
-    let from: Vec<char> = from.trim().chars().collect();
+    let from = from.trim();
     let to = to.trim();
     if from.is_empty() || to.is_empty() {
         return None;
     }
+    // The longer form first, so it is tried before its stem.
+    let forms: Vec<(Vec<char>, String)> = vec![
+        (plural_of(from).chars().collect(), plural_of_target(to)),
+        (from.chars().collect(), to.to_owned()),
+    ];
     let mut out = String::with_capacity(text.len());
     let mut count = 0;
     for (segment, prose) in segments(text) {
         if prose {
-            count += replace_words(segment, &from, to, &mut out);
+            count += replace_words(segment, &forms, &mut out);
         } else {
             out.push_str(segment);
         }
@@ -176,24 +188,64 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// Append `prose` with every whole-word, any-case `from` replaced; the count.
-fn replace_words(prose: &str, from: &[char], to: &str, out: &mut String) -> usize {
+/// The regular English plural of a name (its last word): `-ies` after a
+/// consonant and `y`, `-es` after `s`, `x`, `z`, `ch` or `sh`, `-s`
+/// otherwise.
+fn plural_of(name: &str) -> String {
+    let lower = name.to_lowercase();
+    let mut tail = lower.chars().rev();
+    let last = tail.next();
+    let before = tail.next();
+    let consonant = |c: char| c.is_ascii_alphabetic() && !"aeiou".contains(c);
+    if matches!(last, Some('y')) && before.is_some_and(consonant) {
+        // `y` is one byte, so cutting it keeps a char boundary.
+        return format!("{}ies", &name[..name.len() - 1]);
+    }
+    let hissing = ["s", "x", "z", "ch", "sh"]
+        .iter()
+        .any(|end| lower.ends_with(end));
+    if hissing {
+        format!("{name}es")
+    } else {
+        format!("{name}s")
+    }
+}
+
+/// The plural the new name takes: the regular rule, except that a name
+/// already ending in `s` is kept as it is.
+fn plural_of_target(name: &str) -> String {
+    if name.ends_with(['s', 'S']) {
+        name.to_owned()
+    } else {
+        plural_of(name)
+    }
+}
+
+/// Append `prose` with every whole-word, any-case use of a form replaced by
+/// its counterpart; the count. At each place the forms are tried in order.
+fn replace_words(prose: &str, forms: &[(Vec<char>, String)], out: &mut String) -> usize {
     let chars: Vec<(usize, char)> = prose.char_indices().collect();
-    let mut count = 0;
-    let mut copied = 0usize;
-    let mut i = 0;
-    while i + from.len() <= chars.len() {
-        let before_ok = i == 0 || !is_word_char(chars[i - 1].1);
-        let after_ok = chars
-            .get(i + from.len())
-            .is_none_or(|(_, c)| !is_word_char(*c));
-        let same = before_ok
-            && after_ok
+    let matches_at = |i: usize, from: &[char]| {
+        i + from.len() <= chars.len()
+            && chars
+                .get(i + from.len())
+                .is_none_or(|(_, c)| !is_word_char(*c))
             && chars[i..i + from.len()]
                 .iter()
                 .zip(from)
-                .all(|((_, a), b)| a.to_lowercase().eq(b.to_lowercase()));
-        if same {
+                .all(|((_, a), b)| a.to_lowercase().eq(b.to_lowercase()))
+    };
+    let mut count = 0;
+    let mut copied = 0usize;
+    let mut i = 0;
+    while i < chars.len() {
+        let before_ok = i == 0 || !is_word_char(chars[i - 1].1);
+        let found = if before_ok {
+            forms.iter().find(|(from, _)| matches_at(i, from))
+        } else {
+            None
+        };
+        if let Some((from, to)) = found {
             let start = chars[i].0;
             out.push_str(&prose[copied..start]);
             out.push_str(&cased(chars[i].1, to));

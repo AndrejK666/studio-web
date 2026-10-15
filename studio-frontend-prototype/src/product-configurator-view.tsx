@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
-import { api, type GearConfig, type GearExplanation, type ProductPreview } from "./api";
+import { api, ApiError, type GearConfig, type GearExplanation, type ProductPreview } from "./api";
 import { layerOf } from "./domain-layers";
 import { entityGears, gearRefs } from "./entity-gears";
 import { BringsWithIt } from "./gear-brings-view";
@@ -106,12 +106,16 @@ type Explanations = {
   put: (e: GearExplanation) => void;
   /** Why they could not be read; the tiles then show descriptions only. */
   error: string | null;
+  /** The caller may change them: only organization (and platform)
+   *  administrators do; everyone else reads. */
+  mayManage: boolean;
 };
 
 /** The organization's explanations, read once per token. */
 export function useGearExplanations(token: string): Explanations {
   const [byId, setById] = useState<Map<string, GearExplanation>>(() => new Map());
   const [error, setError] = useState<string | null>(null);
+  const [mayManage, setMayManage] = useState(false);
   useEffect(() => {
     let live = true;
     api
@@ -119,6 +123,7 @@ export function useGearExplanations(token: string): Explanations {
       .then((r) => {
         if (!live) return;
         setById(explanationIndex(r.items));
+        setMayManage(r.may_manage === true);
         setError(null);
       })
       .catch((e: unknown) => live && setError(errText(e)));
@@ -130,7 +135,7 @@ export function useGearExplanations(token: string): Explanations {
     (e: GearExplanation) => setById((current) => new Map(current).set(e.gear_id, e)),
     [],
   );
-  return { byId, put, error };
+  return { byId, put, error, mayManage };
 }
 
 /** The kind of a refused precondition (`PROVIDER_KEY_REQUIRED`, …), if any. */
@@ -140,6 +145,7 @@ function refusalKind(e: unknown): string | undefined {
 
 /** Why a gear could not be explained, for a person. */
 function explainError(e: unknown): string {
+  if (e instanceof ApiError && e.status === 403) return "Only organization admins can change explanations.";
   switch (refusalKind(e)) {
     case "PROVIDER_KEY_REQUIRED":
       return "Explaining needs a model key: add one to your profile, or connect one under Connections.";
@@ -673,7 +679,7 @@ function Explanation({
       explanations.put(await api.updateGearExplanation(token, gearId, draft));
       setEditing(false);
     } catch (e) {
-      setError(errText(e));
+      setError(explainError(e));
     } finally {
       setWorking(false);
     }
@@ -712,20 +718,25 @@ function Explanation({
               {kept.source === "edited" ? "Written by a person" : "Written by a model"}
             </span>
           )}
-          <button type="button" className="pm-link" disabled={working} onClick={() => void generate()}>
-            {working ? "Explaining…" : kept ? "Explain again" : "Explain in plain words"}
-          </button>
-          <button
-            type="button"
-            className="pm-link"
-            disabled={working}
-            onClick={() => {
-              setDraft(words ?? "");
-              setEditing(true);
-            }}
-          >
-            Edit
-          </button>
+          {/* Changing them is an organization admin's; everyone reads. */}
+          {explanations.mayManage && (
+            <>
+              <button type="button" className="pm-link" disabled={working} onClick={() => void generate()}>
+                {working ? "Explaining…" : kept ? "Explain again" : "Explain in plain words"}
+              </button>
+              <button
+                type="button"
+                className="pm-link"
+                disabled={working}
+                onClick={() => {
+                  setDraft(words ?? "");
+                  setEditing(true);
+                }}
+              >
+                Edit
+              </button>
+            </>
+          )}
         </div>
       )}
       {error && <div style={{ color: "var(--destructive)", fontSize: 12 }}>{error}</div>}
@@ -811,7 +822,8 @@ function ExplainAll({
           </button>
         </div>
       ) : (
-        left.length > 0 && (
+        left.length > 0 &&
+        explanations.mayManage && (
           <button type="button" className="ghost" style={{ fontSize: 12 }} onClick={() => void start()}>
             Explain all without description ({left.length})
           </button>

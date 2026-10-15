@@ -124,3 +124,54 @@ fn a_long_answer_is_cut_at_a_sentence_end() {
     assert!(cleaned.chars().count() <= MAX_TEXT_CHARS);
     assert!(cleaned.ends_with('.'));
 }
+
+/// A fake studio-user: one subject administers the organization's catalogue.
+struct Authority(Uuid);
+
+#[async_trait::async_trait]
+impl crate::user_profile::OrgAuthority for Authority {
+    async fn may_administer(&self, ctx: &SecurityContext, _org: Uuid, privilege: &str) -> bool {
+        privilege == EXPLAIN_PRIVILEGE && ctx.subject_id() == self.0
+    }
+    async fn may_dispose(&self, _ctx: &SecurityContext, _org: Uuid) -> bool {
+        false
+    }
+}
+
+fn caller(id: u128, org: Uuid) -> SecurityContext {
+    SecurityContext::builder()
+        .subject_id(Uuid::from_u128(id))
+        .subject_tenant_id(org)
+        .build()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn only_an_administrator_changes_explanations_and_without_studio_user_nobody_does() {
+    let org = Uuid::from_u128(0x0a6);
+    let admin = Authority(Uuid::from_u128(7));
+    assert!(may_explain(Some(&admin), &caller(7, org), org).await);
+    assert!(!may_explain(Some(&admin), &caller(8, org), org).await);
+    assert!(!may_explain(None, &caller(7, org), org).await);
+}
+
+#[test]
+fn the_privilege_is_one_the_role_ladder_knows_and_admins_hold() {
+    assert!(crate::access_config::PRIVILEGES.contains(&EXPLAIN_PRIVILEGE));
+    let roles = crate::access_config::default_roles();
+    let holds = |key: &str| {
+        roles
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["key"] == key)
+            .unwrap()["privileges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == EXPLAIN_PRIVILEGE)
+    };
+    assert!(holds("admin"));
+    assert!(!holds("editor"));
+    assert!(!holds("viewer"));
+}

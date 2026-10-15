@@ -17,7 +17,7 @@ fn a_whole_word_is_renamed_keeping_its_first_letter_case() {
 
 #[test]
 fn part_of_a_longer_word_is_left_alone() {
-    assert_eq!(renamed("membership and members and remember"), None);
+    assert_eq!(renamed("membership and remember and memberships"), None);
     assert_eq!(renamed("a member_id"), None);
     assert_eq!(
         renamed("(member), member.").as_deref(),
@@ -101,6 +101,76 @@ fn non_ascii_text_keeps_its_bytes() {
             .map(|(t, _)| t)
             .as_deref(),
         Some("Oben alles, oben")
+    );
+}
+
+#[test]
+fn plural_and_possessive_forms_take_the_same_form_of_the_new_name() {
+    assert_eq!(
+        rename(
+            "Members and a member's role; the members' roles. Members!",
+            "member",
+            "teammate"
+        ),
+        Some((
+            "Teammates and a teammate's role; the teammates' roles. Teammates!".to_owned(),
+            4
+        ))
+    );
+    assert_eq!(
+        rename("entities, an entity, Entities", "entity", "record")
+            .map(|(t, _)| t)
+            .as_deref(),
+        Some("records, an record, Records")
+    );
+    assert_eq!(
+        rename("boxes and a box's lid", "box", "crate")
+            .map(|(t, _)| t)
+            .as_deref(),
+        Some("crates and a crate's lid")
+    );
+    // A vowel before `y` takes a plain `s`; a consonant before it, `-ies`.
+    assert_eq!(
+        rename("keys and a key", "key", "story")
+            .map(|(t, _)| t)
+            .as_deref(),
+        Some("stories and a story")
+    );
+}
+
+#[test]
+fn a_new_name_ending_in_s_is_its_own_plural() {
+    assert_eq!(
+        rename("members and a member", "member", "Status")
+            .map(|(t, _)| t)
+            .as_deref(),
+        Some("status and a status")
+    );
+    assert_eq!(
+        rename("the APIs", "api", "SDK").map(|(t, _)| t).as_deref(),
+        Some("the SDKs")
+    );
+}
+
+#[test]
+fn only_the_last_word_of_a_phrase_is_inflected() {
+    assert_eq!(
+        rename(
+            "Product owners and the product owner's call; products owner.",
+            "product owner",
+            "sponsor"
+        )
+        .map(|(t, _)| t)
+        .as_deref(),
+        Some("Sponsors and the sponsor's call; products owner.")
+    );
+}
+
+#[test]
+fn a_plural_in_code_or_a_link_stays() {
+    assert_eq!(
+        renamed("`members` and [members](docs/members.md)").as_deref(),
+        Some("`members` and [teammates](docs/members.md)")
     );
 }
 
