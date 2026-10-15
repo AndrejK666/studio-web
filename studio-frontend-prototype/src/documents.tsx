@@ -59,6 +59,19 @@ import { Modal } from "./modal";
 import { gearSlug } from "./scaffold";
 import { scaffoldTargetLine } from "./org-gear-repository";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
+import {
+  applies,
+  bodyOf,
+  foldStale,
+  placeByPath,
+  progressLine,
+  pruneSelection,
+  repoShortName,
+  runLimited,
+  staleCounts,
+  toggleAll,
+  type BulkDecision,
+} from "./spec-bulk";
 
 const card = { border: "1px solid var(--border)", borderRadius: 10, padding: 12 } as const;
 const basename = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -466,6 +479,12 @@ function IngestedDocumentsView({
   /** Members' ✓/✗ on those findings, by fingerprint. */
   const [decisions, setDecisions] = useState<Record<string, FindingDecision>>({});
   const [view, setView] = useViewMode("specs.view");
+  /** Rows ticked for one decision applied to all of them (binding ids). */
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  /** The type "Set type" applies to the ticked rows. */
+  const [bulkType, setBulkType] = useState("");
+  /** Decided rows whose stale same-path copies are listed under them. */
+  const [openCopies, setOpenCopies] = useState<Set<string>>(() => new Set());
   /** The list itself, folded by studio-documents.
    *
    *  Bindings, authored documents and the files nothing has classified yet,
@@ -1063,7 +1082,7 @@ function IngestedDocumentsView({
   const setFilter = (queue: SpecFilter) => listCtl.setFilter("queue", queue);
   const needle = listState.q.trim().toLowerCase();
 
-  const shown = useMemo(() => {
+  const filtered = useMemo(() => {
     const list = rows.filter((row) => {
       if (needle && ![row.path, row.name, row.type_key].some((f) => (f ?? "").toLowerCase().includes(needle))) {
         return false;
@@ -1079,6 +1098,74 @@ function IngestedDocumentsView({
     // a candidate arriving from the graph — was not shown until something else
     // forced a recompute.
   }, [rows, filter, typeFilter, originFilter, needle]);
+
+  /** Rows sharing a path: two repositories' files told apart by a chip, and a
+   *  stale unscanned copy folded under the row somebody decided. */
+  const places = useMemo(() => placeByPath(filtered), [filtered]);
+  const copiesOf = useMemo(() => staleCounts(places), [places]);
+  const shown = useMemo(() => foldStale(filtered, places, openCopies), [filtered, places, openCopies]);
+
+  /** The rows a bulk decision can act on: the ones with a binding, across
+   *  every page of this queue. A file never scanned has no binding to decide. */
+  const bindingIds = useMemo(() => new Set(bindings.map((b) => b.id)), [bindings]);
+  const pickable = useMemo(() => shown.filter((r) => bindingIds.has(r.id)).map((r) => r.id), [shown, bindingIds]);
+  // A selection only ever holds rows still on screen: switching the queue or
+  // the search must not leave invisible rows ticked for the next decision.
+  useEffect(() => {
+    setPicked((prev) => {
+      const next = pruneSelection(prev, pickable);
+      return next.size === prev.size ? prev : next;
+    });
+  }, [pickable]);
+  const pickedBindings = useMemo(() => bindings.filter((b) => picked.has(b.id)), [bindings, picked]);
+  const togglePick = (id: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
+  /** One decision for every ticked row, through the per-row route, four at a
+   *  time, with a progress line. The rows it does not apply to (confirming a
+   *  file with no proposal, rejecting one already rejected) are skipped. */
+  const applyBulk = async (decision: BulkDecision) => {
+    const targets = pickedBindings.filter((b) => applies(b, decision));
+    if (targets.length === 0) {
+      setNote("Nothing to change: every ticked row is already that way.");
+      return;
+    }
+    const ctl = new AbortController();
+    abortRef.current = ctl;
+    setBusy(true);
+    setErr(null);
+    setNote("");
+    try {
+      const result = await runLimited(
+        targets,
+        4,
+        async (b) => {
+          const updated = await api.decideDocBinding(token, workspaceId, b.id, bodyOf(decision));
+          setBindings((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+        },
+        (p) => setProgress(progressLine(p, false)),
+        ctl.signal,
+      );
+      const skipped = pickedBindings.length - targets.length;
+      setNote(
+        progressLine(result, true) +
+          (skipped > 0 ? ` ${skipped} skipped, already that way.` : "") +
+          (ctl.signal.aborted ? " Stopped." : ""),
+      );
+      if (result.errors.length > 0) setErr(result.errors[0]);
+      setPicked(new Set());
+      await reload();
+    } finally {
+      abortRef.current = null;
+      setBusy(false);
+      setProgress("");
+    }
+  };
+  const confirmable = pickedBindings.filter((b) => applies(b, { action: "confirm" })).length;
 
   /** The files behind the rows the filters leave on screen — what the Spec
    *  Quality menu runs on. Picking "Architecture Decision Record" and then
@@ -1347,6 +1434,66 @@ function IngestedDocumentsView({
         <ViewToggle mode={view} onChange={setView} />
       </div>
 
+      {/* One decision for many rows. Typing forty kit examples or a folder of
+          ADRs one select at a time is what this bar is for. */}
+      {view !== "tiles" && pickable.length > 0 && (
+        <div className="ing-bulk" role="toolbar" aria-label="Decide the ticked rows">
+          <label className="ing-bulk-all">
+            <input
+              type="checkbox"
+              checked={pickable.every((id) => picked.has(id))}
+              ref={(el) => {
+                if (el) el.indeterminate = picked.size > 0 && !pickable.every((id) => picked.has(id));
+              }}
+              onChange={() => setPicked((prev) => toggleAll(prev, pickable))}
+              disabled={busy}
+            />
+            Select all {pickable.length} in this queue
+          </label>
+          {picked.size > 0 && (
+            <>
+              <span className="ing-bulk-count">{picked.size} selected</span>
+              <button
+                onClick={() => void applyBulk({ action: "confirm" })}
+                disabled={busy || confirmable === 0}
+                title="Accept the suggested type of each ticked row that has one"
+              >
+                Confirm suggested <span className="ing-count">{confirmable}</span>
+              </button>
+              <select
+                value={bulkType}
+                onChange={(e) => setBulkType(e.target.value)}
+                aria-label="Type to set"
+                disabled={busy}
+              >
+                <option value="">Set type…</option>
+                {types.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => void applyBulk({ action: "set", type_key: bulkType })}
+                disabled={busy || !bulkType}
+              >
+                Set
+              </button>
+              <button
+                onClick={() => void applyBulk({ action: "reject" })}
+                disabled={busy}
+                title="None of the ticked files is a document"
+              >
+                Not a document
+              </button>
+              <button className="ghost" onClick={() => setPicked(new Set())} disabled={busy}>
+                Clear
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {shown.length === 0 ? (
         counts.all === 0 ? (
           /* A project with no documents is the ordinary state of a project that
@@ -1470,10 +1617,18 @@ function IngestedDocumentsView({
                 selectedId === row.id && row.origin === "authored"
                   ? (authored.find((d) => d.id === row.id) ?? null)
                   : null;
+              const place = places.get(row.id);
+              const copies = copiesOf.get(row.id) ?? 0;
               return (
               <Fragment key={row.id}>
               <div
-                className={opened ? "ing-row on" : "ing-row"}
+                className={[
+                  "ing-row",
+                  opened ? "on" : "",
+                  place?.staleOf ? "ing-stale" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 aria-expanded={opened != null || openedDoc != null}
                 onClick={() =>
                   toggle(row.id)
@@ -1484,12 +1639,53 @@ function IngestedDocumentsView({
                     here cost the widest column in the table to say the same
                     thing twice. */}
                 <span className="ing-name" title={row.path || row.name}>
+                  {b ? (
+                    <input
+                      type="checkbox"
+                      className="ing-pick"
+                      checked={picked.has(row.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => togglePick(row.id)}
+                      disabled={busy}
+                      aria-label={`Select ${row.path || row.name}`}
+                    />
+                  ) : (
+                    <span className="ing-pick" aria-hidden />
+                  )}
                   {/* Which way the row opens, where the document icon used
                       to say only that it is a document. */}
                   <span className="ing-doc-ic" aria-hidden>
                     {opened || openedDoc ? "▾" : "▸"}
                   </span>
                   {row.name}
+                  {/* Two rows with one path: which repository each is from. */}
+                  {place?.shared && repoShortName(row) && (
+                    <span className="ing-repo-chip" title={row.repo_full_path || row.repo}>
+                      {repoShortName(row)}
+                    </span>
+                  )}
+                  {place?.staleOf && (
+                    <span className="ing-repo-chip" title="An older, never scanned copy of the row above">
+                      stale copy
+                    </span>
+                  )}
+                  {copies > 0 && (
+                    <button
+                      className="ing-copies"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenCopies((prev) => {
+                          const next = new Set(prev);
+                          if (!next.delete(row.id)) next.add(row.id);
+                          return next;
+                        });
+                      }}
+                      title="The same path, never scanned, left over from an earlier sync"
+                    >
+                      {openCopies.has(row.id) ? "−" : "+"}
+                      {copies} stale {copies === 1 ? "copy" : "copies"}
+                    </button>
+                  )}
                 </span>
                 {/* A picker only where there is something to pick. An authored
                     document's type was chosen before a word of it was written,
@@ -2434,6 +2630,13 @@ const INGESTED_CSS = `
    repository. A chip rather than plain text: it is a different KIND of answer
    from the ones around it, not another repository with an odd name. */
 .ing-origin { border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; font-size: 11px; color: var(--muted-foreground); }
+.ing-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; margin: 6px 0; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--accent); }
+.ing-bulk-all { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.ing-bulk-count { font-weight: 600; margin-left: 8px; }
+.ing-pick { width: 14px; height: 14px; flex: none; margin: 0; }
+.ing-repo-chip { flex: none; border: 1px solid var(--border); border-radius: 20px; padding: 0 7px; font-size: 10.5px; font-weight: 500; color: var(--muted-foreground); }
+.ing-copies { flex: none; font-size: 10.5px; padding: 0 6px; border-radius: 20px; }
+.ing-row.ing-stale { opacity: 0.7; padding-left: 32px; }
 .ing-findings { display: flex; gap: 4px; flex-wrap: wrap; }
 .jr-stages { display: flex; flex-direction: column; gap: 6px; }
 .jr-stage { display: grid; grid-template-columns: 14px minmax(120px, 200px) minmax(0, 1fr); gap: 8px; align-items: center; font-size: 12px; }
