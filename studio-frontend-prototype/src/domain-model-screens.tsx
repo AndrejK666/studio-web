@@ -113,6 +113,10 @@ export function ResolveView({
 
   return (
     <div className="dm-resolve">
+      <p className="dm-howto">
+        <b>Decide what blocks a build.</b> Work down the list: fix a document in the editor, or say a finding is fine.
+        A tile narrows the list to one kind.
+      </p>
       <div className="dm-ready">
         <div className="dm-tile dm-verdict">
           <b>{ready.ready ? "Ready to build" : "Not ready to build yet"}</b>
@@ -308,6 +312,10 @@ export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onO
 
   return (
     <div className="dm-layered">
+      <p className="dm-howto">
+        <b>See what the application is.</b> Pick a layer, then a card: what it holds, how it relates and which passages
+        say so. Missing a relation? A document has to declare it; the model reads it on the next build.
+      </p>
       <div className="dm-layers" role="tablist" aria-label="Layer">
         {(Object.keys(LAYER_TITLE) as Layer[]).map((l) => (
           <button
@@ -683,6 +691,11 @@ export function RequirementsView({
   const testsOf = (id: string) => traceById.get(id)?.tests.length ?? 0;
 
   return (
+    <>
+    <p className="dm-howto">
+      <b>Follow a requirement to the code.</b> Pick one: the chain shows the passage that states it, what it rests
+      on, the work that names it and where the code and tests carry it. An orange step is where it stops.
+    </p>
     <div className="dm-reqs">
       <div className="card dm-reqlist">
         <div className="dm-filters">
@@ -731,6 +744,7 @@ export function RequirementsView({
         )}
       </aside>
     </div>
+    </>
   );
 }
 
