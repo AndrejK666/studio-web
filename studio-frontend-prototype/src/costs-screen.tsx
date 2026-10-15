@@ -82,11 +82,12 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
     };
   }, [token, org.id, prices?.may_view_costs, period, group, personal, prices]);
 
-  const problem = priceProblem(models);
+  const problem = priceProblem(models, session, currency);
   const save = async () => {
     if (problem) return;
     setSaving(true);
     setNotice(null);
+    setError(null);
     try {
       const saved = await api.updatePrices(token, org.id, { currency, models, session });
       setPrices(saved);

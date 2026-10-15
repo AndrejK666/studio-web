@@ -264,6 +264,11 @@ gears:
           # Gears in plain words, per organization. Written only by studio-product.
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio gear explanations of an organization (free-form until gears issue #4)"
+          type: "object"
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.usage.prices.v1~"
           # An organization's price list for model tokens and IDE sessions
           # (issue #781). Written only by studio-usage (the PDP refuses anybody

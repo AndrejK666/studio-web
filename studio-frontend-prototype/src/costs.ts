@@ -1,7 +1,7 @@
 /* What the Costs screen computes before it draws (issue #781). Pure, so it is
  * tested without a backend. */
 
-import type { CostGroup, CostRow, ModelPrice } from "./api";
+import type { CostGroup, CostRow, ModelPrice, SessionPrice } from "./api";
 
 export type Period = "this-month" | "last-month" | "last-30-days";
 
@@ -103,8 +103,14 @@ export function blankModel(): ModelPrice {
   };
 }
 
-/** What would stop a price list from being stored, before it is sent. */
-export function priceProblem(models: ModelPrice[]): string | null {
+/** What would stop a price list from being stored, before it is sent: the
+ *  rules the backend applies (`usage/prices.rs`, `validate`). */
+export function priceProblem(
+  models: ModelPrice[],
+  session: SessionPrice | null = null,
+  currency = "USD",
+): string | null {
+  if (!/^[A-Z]{3}$/.test(currency.trim() || "USD")) return `${currency} is not an ISO 4217 currency code.`;
   const seen = new Set<string>();
   for (const m of models) {
     if (!m.provider.trim() || !m.model.trim()) return "Every price names a provider and a model.";
@@ -114,5 +120,7 @@ export function priceProblem(models: ModelPrice[]): string | null {
     const values = [m.input_per_mtok, m.output_per_mtok, m.cache_read_per_mtok, m.cache_write_per_mtok];
     if (values.some((v) => !Number.isFinite(v) || v < 0)) return `${key}: a price is not a price.`;
   }
+  if (session && [session.cpu_core_hour, session.memory_gib_hour].some((v) => !Number.isFinite(v) || v < 0))
+    return "An IDE session price is not a price.";
   return null;
 }

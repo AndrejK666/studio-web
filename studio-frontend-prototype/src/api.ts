@@ -1385,8 +1385,6 @@ export interface Connection {
 
 /* ── studio-environments: where an organization's products run (ADR-0043) ── */
 
-/** One place an organization's products run: a cluster reached through a
- *  `kubernetes` connection, a registry, a namespace per project. */
 /** A model's price per million tokens of each kind (studio-usage, issue #781). */
 export interface ModelPrice {
   provider: string;
@@ -1438,6 +1436,8 @@ export interface CostReport {
   unpriced: string[];
 }
 
+/** One place an organization's products run: a cluster reached through a
+ *  `kubernetes` connection, a registry, a namespace per project. */
 export interface DeployEnvironment {
   id: string;
   name: string;

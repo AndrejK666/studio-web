@@ -55,5 +55,8 @@ describe("the costs screen", () => {
     expect(priceProblem([m, m])).toMatch(/twice/);
     expect(priceProblem([{ ...m, model: " " }])).toMatch(/names/);
     expect(priceProblem([{ ...m, output_per_mtok: -1 }])).toMatch(/not a price/);
+    expect(priceProblem([m], { cpu_core_hour: Number.NaN, memory_gib_hour: 0 })).toMatch(/session/);
+    expect(priceProblem([m], { cpu_core_hour: 0.04, memory_gib_hour: 0.005 }, "EUR")).toBeNull();
+    expect(priceProblem([m], null, "dollars")).toMatch(/ISO 4217/);
   });
 });

@@ -276,19 +276,21 @@ gears:
             - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "override_only"
-<<<<<<< HEAD
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.product.gear_explanations.v1~"
           # Gears in plain words, per organization. Written only by studio-product.
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio gear explanations of an organization (free-form until gears issue #4)"
-=======
+          type: "object"
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.usage.prices.v1~"
           # An organization's price list for model tokens and IDE sessions
           # (issue #781). Written only by studio-usage (the PDP refuses anybody
           # else's write), on the organization; not inherited.
           "$schema": "http://json-schema.org/draft-07/schema#"
           description: "Studio price list of an organization (free-form until gears issue #4)"
->>>>>>> 91b0dcc7 (wip(usage): org costs — price list, priced usage report, Costs screen (#781 step 2, unfinished))
           type: "object"
           allOf:
             - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
