@@ -40,8 +40,7 @@ database:
         # this assembly configures fourteen gear databases: 13 x 4 = 52, plus
         # the gears with their own override below, Keycloak, the bootstrap Job,
         # the CloudNativePG manager and the reserved slots, 87 in all. A second
-        # replica needs 154, over the 150 `max_connections` allows (raise it with
-        # the replica);
+        # replica needs 154, which is why `max_connections` is 160;
         # deploy/k8s/cloudnative-pg/README.md carries the table and the memory
         # that pays for it. Lowering this is not the way to make room (at 3 two
         # replicas still need 128); raising it by one raises the ceiling by

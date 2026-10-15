@@ -34,7 +34,7 @@ The other blocker, a push channel whose sequence lived in process memory, is
 gone: `studio-events` keeps its sequence and its replay window in the database
 listed above, so two replicas agree on what a cursor means.
 
-So `max_connections` is **150**, not PostgreSQL's default of 100. The
+So `max_connections` is **160**, not PostgreSQL's default of 100. The
 arithmetic, which is the whole reason for the number:
 
 | shared `max_conns` | per replica | two replicas | with everyone else | under 100? |
@@ -46,18 +46,16 @@ arithmetic, which is the whole reason for the number:
 (Per replica: thirteen gears on the shared pool, plus graph-storage's own 8,
 studio-events' 2, studio-artifact-ingest's 2 and the usage plugin's 3.)
 
-**Two replicas no longer fit in 150.** The usage plugin (issue #781) added three
-connections per replica, and two replicas now need 154. A second replica is
-blocked anyway while IDE sessions are on (see the Helm values), so 150 stays
-until one is actually wanted; raise `max_connections` to 160 in both templates
-— and `limits.memory` with it — in the same change that turns it on.
+It was 150 until the usage plugin (issue #781) added three connections per
+replica and two replicas came to 154; 160 keeps them fitting with a little
+room. Dev's 3 Gi and test's 4 Gi memory limits cover the ten more processes.
 
-Lowering the per-gear pool is therefore not the way to make room: three
-connections per gear still does not fit, and two — the only value that does —
-is a queue rather than a budget for any gear serving a burst.
+Lowering the per-gear pool is therefore not the way to make room: neither
+three nor two connections per gear fits in 100 any more, and two would be a
+queue rather than a budget for any gear serving a burst.
 
 Raising the ceiling is not free either. A PostgreSQL backend is a process, so
-150 of them is roughly another 400 MB of resident memory at saturation, and
+160 of them is roughly another 450 MB of resident memory at saturation, and
 `resources.limits.memory` moves from 2 Gi to 3 Gi with it. That is the trade
 being made: memory on one server against a second replica of the backend.
 
