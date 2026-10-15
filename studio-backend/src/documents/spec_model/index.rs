@@ -220,6 +220,7 @@ fn check_adr_citations(
                     format!("{token} is cited, but the project has no ADR numbered {number}."),
                     vec![Side::at(doc.path, line.number, line.text)],
                 )
+                .with_target(token.clone())
                 .with_fix_decide(&[
                     &format!("link the record {token} means"),
                     &format!("remove the citation of {token}"),
@@ -498,6 +499,7 @@ fn check_links(
                     ),
                     vec![Side::at(doc.path, line.number, line.text)],
                 )
+                .with_target(resolved.clone())
                 .with_fix_decide(&["point the link at the file it means", "remove the link"]),
             );
             continue;
@@ -515,6 +517,7 @@ fn check_links(
                     format!("`{resolved}` has no section `#{anchor}`."),
                     vec![Side::at(doc.path, line.number, line.text)],
                 )
+                .with_target(format!("{resolved}#{anchor}"))
                 .with_fix_decide(&["point the link at the section it means", "drop the anchor"]),
             );
         }
@@ -774,6 +777,7 @@ fn check_ids(
                 format!("`{id}` is referenced, but no document of the project defines it."),
                 vec![Side::at(doc.path, line.number, line.text)],
             )
+            .with_target(id.to_string())
             .with_fix_decide(&[
                 &format!("define `{id}` where it belongs"),
                 "reference the identifier that is defined",

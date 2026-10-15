@@ -482,6 +482,8 @@ impl DocumentsRepo {
                     spec_decision::Column::Decision,
                     spec_decision::Column::DecidedBy,
                     spec_decision::Column::DecidedAt,
+                    spec_decision::Column::Note,
+                    spec_decision::Column::Snapshot,
                 ])?;
         spec_decision::Entity::insert(model.into_active_model())
             .secure()

@@ -268,6 +268,11 @@ pub mod spec_decision {
         pub decision: String,
         pub decided_by: Uuid,
         pub decided_at: OffsetDateTime,
+        /// Why, in the member's words.
+        pub note: Option<String>,
+        /// The finding as it stood when decided: `{rule, message, sides}`.
+        #[sea_orm(column_type = "JsonBinary", nullable)]
+        pub snapshot: Option<serde_json::Value>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -452,6 +457,8 @@ pub mod review_request {
         /// document) or `withdrawn`.
         pub state: String,
         pub created_at: OffsetDateTime,
+        /// The text asked about, kept at request time (at most 256 KiB).
+        pub reviewed_text: Option<String>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

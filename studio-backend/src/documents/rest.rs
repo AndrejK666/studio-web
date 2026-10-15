@@ -2290,6 +2290,9 @@ pub struct SpecModelSideDto {
     pub line_end: Option<u32>,
     /// The passage verbatim, or the document's title for a whole document.
     pub quote: Option<String>,
+    /// The document binding the path is, when the project binds it.
+    #[serde(default)]
+    pub binding_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -2310,6 +2313,8 @@ pub struct SpecModelFindingDto {
     pub edit: Option<SpecModelEditDto>,
     /// A member's word on it: `confirmed` (a real problem) or `dismissed`.
     pub decision: Option<String>,
+    /// For a reference to something missing: what it refers to.
+    pub target: Option<String>,
 }
 
 /// Replace `replace` with `with` in `path`.
@@ -2343,6 +2348,7 @@ impl From<super::spec_model::finding::Finding> for SpecModelFindingDto {
                     line_start: s.line_start.and_then(|n| u32::try_from(n).ok()),
                     line_end: s.line_end.and_then(|n| u32::try_from(n).ok()),
                     quote: s.quote,
+                    binding_id: None,
                 })
                 .collect(),
             decide: f.decide,
@@ -2352,6 +2358,7 @@ impl From<super::spec_model::finding::Finding> for SpecModelFindingDto {
                 with: e.with,
             }),
             decision: None,
+            target: f.target,
         }
     }
 }
@@ -2363,6 +2370,8 @@ pub struct SpecModelDecisionRequest {
     pub project_id: String,
     /// `confirmed` (a real problem) or `dismissed` (not one).
     pub decision: String,
+    /// Why, in the member's words; at most 2000 characters.
+    pub note: Option<String>,
 }
 
 #[derive(Debug)]
@@ -2372,6 +2381,16 @@ pub struct SpecModelDecisionDto {
     pub decision: String,
     pub decided_by: String,
     pub decided_at: String,
+    pub note: Option<String>,
+    /// Whether the finding is still found: `false` once the documents no
+    /// longer show it (resolved), `null` when it was not a domain-model
+    /// finding the decision kept.
+    pub present: Option<bool>,
+    /// The finding as it stood when decided, when it was a domain-model one.
+    pub rule: Option<String>,
+    pub message: Option<String>,
+    pub target: Option<String>,
+    pub sides: Vec<SpecModelSideDto>,
 }
 
 /// Every ✓/✗ members gave on a project's findings.
@@ -2689,6 +2708,7 @@ async fn get_spec_model(
                     line_start: u32::try_from(f.line_start).ok(),
                     line_end: u32::try_from(f.line_end).ok(),
                     quote: Some(f.quote),
+                    binding_id: None,
                 },
             })
             .collect(),
@@ -2981,18 +3001,78 @@ async fn list_spec_model_findings(
     let (findings, decisions) = spec_model_findings(&service, workspace_id, project_id, &sources)
         .await
         .map_err(internal)?;
+    let binding_of = binding_ids(&sources);
     let items: Vec<SpecModelFindingDto> = findings
         .into_iter()
         .map(|f| {
             let decision = decisions.get(&f.fingerprint).cloned();
-            SpecModelFindingDto {
+            let mut dto = SpecModelFindingDto {
                 decision,
                 ..f.into()
+            };
+            for side in &mut dto.sides {
+                side.binding_id = binding_of.get(&side.path).cloned();
             }
+            dto
         })
         .collect();
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
     Ok(Json(SpecModelFindingListDto { items, total }))
+}
+
+/// Path → binding id, for every document the model read.
+fn binding_ids(sources: &super::spec_model::Sources) -> std::collections::BTreeMap<String, String> {
+    sources
+        .documents
+        .iter()
+        .filter_map(|d| d.binding.map(|b| (d.path.clone(), b.to_string())))
+        .collect()
+}
+
+/// A finding as a decision keeps it.
+fn finding_snapshot(f: &super::spec_model::finding::Finding) -> serde_json::Value {
+    serde_json::json!({
+        "rule": f.rule,
+        "message": f.message,
+        "target": f.target,
+        "sides": f.sides,
+    })
+}
+
+/// A decision with the finding it was taken on, and whether that is still found.
+fn decision_dto(
+    d: super::entity::spec_decision::Model,
+    present: Option<bool>,
+    binding_of: &std::collections::BTreeMap<String, String>,
+) -> SpecModelDecisionDto {
+    let snap = d.snapshot.clone().unwrap_or(serde_json::Value::Null);
+    let text = |k: &str| snap.get(k).and_then(serde_json::Value::as_str).map(str::to_string);
+    let sides: Vec<super::spec_model::finding::Side> = snap
+        .get("sides")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    SpecModelDecisionDto {
+        fingerprint: d.fingerprint,
+        decision: d.decision,
+        decided_by: d.decided_by.to_string(),
+        decided_at: rfc3339(d.decided_at),
+        note: d.note,
+        present: if d.snapshot.is_some() { present } else { None },
+        rule: text("rule"),
+        message: text("message"),
+        target: text("target"),
+        sides: sides
+            .into_iter()
+            .map(|s| SpecModelSideDto {
+                binding_id: binding_of.get(&s.path).cloned(),
+                path: s.path,
+                line_start: s.line_start.and_then(|n| u32::try_from(n).ok()),
+                line_end: s.line_end.and_then(|n| u32::try_from(n).ok()),
+                quote: s.quote,
+            })
+            .collect(),
+    }
 }
 
 /// Record a member's ✓ or ✗ on one finding. It holds for as long as the
@@ -3087,6 +3167,7 @@ async fn list_work_links(
                     line_start: first.line_start.and_then(|n| u32::try_from(n).ok()),
                     line_end: first.line_end.and_then(|n| u32::try_from(n).ok()),
                     quote: first.quote,
+                    binding_id: None,
                 },
                 work: l
                     .work
@@ -3163,6 +3244,7 @@ async fn list_spec_requirements(
                     line_start: line,
                     line_end: line,
                     quote: None,
+                    binding_id: None,
                 },
                 id: r.id,
                 title: r.title,
@@ -4836,6 +4918,7 @@ fn side_at(path: &str, line: usize) -> SpecModelSideDto {
         line_start: line,
         line_end: line,
         quote: None,
+        binding_id: None,
     }
 }
 
@@ -4993,6 +5076,7 @@ async fn decide_glossary_entry(
 async fn decide_spec_model_finding(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
     Path(fingerprint): Path<String>,
     Json(body): Json<SpecModelDecisionRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<SpecModelDecisionDto>)> {
@@ -5019,21 +5103,40 @@ async fn decide_spec_model_finding(
             )
             .create());
     }
+    // Keep the finding as it stands, so a fixed one stays readable as
+    // resolved. A Spec Quality finding is not the model's: no snapshot.
+    let (snapshot, binding_of) = match quality.reader() {
+        Ok(reader) => match service
+            .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+            .await
+        {
+            Ok(sources) => {
+                let found = spec_model_findings(&service, workspace_id, project_id, &sources)
+                    .await
+                    .ok()
+                    .and_then(|(fs, _)| fs.into_iter().find(|f| f.fingerprint == fingerprint));
+                (found.as_ref().map(finding_snapshot), binding_ids(&sources))
+            }
+            Err(_) => (None, Default::default()),
+        },
+        Err(_) => (None, Default::default()),
+    };
+    let present = snapshot.as_ref().map(|_| true);
     let saved = service
-        .put_spec_decision(&ctx, workspace_id, project_id, &fingerprint, &body.decision)
+        .put_spec_decision(
+            &ctx,
+            workspace_id,
+            project_id,
+            &fingerprint,
+            &body.decision,
+            body.note,
+            snapshot,
+        )
         .await
-        .map_err(internal)?;
+        .map_err(invalid)?;
     Ok((
         StatusCode::CREATED,
-        Json(SpecModelDecisionDto {
-            fingerprint: saved.fingerprint,
-            decision: saved.decision,
-            decided_by: saved.decided_by.to_string(),
-            decided_at: saved
-                .decided_at
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default(),
-        }),
+        Json(decision_dto(saved, present, &binding_of)),
     ))
 }
 
@@ -5042,23 +5145,38 @@ async fn decide_spec_model_finding(
 async fn list_spec_model_decisions(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
     Query(query): Query<SpecScopeQuery>,
 ) -> ApiResult<JsonBody<SpecModelDecisionListDto>> {
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    // Which fingerprints the documents still show: a decided finding no
+    // longer among them was resolved.
+    let (current, binding_of): (Option<std::collections::BTreeSet<String>>, _) =
+        match quality.reader() {
+            Ok(reader) => match service
+                .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+                .await
+            {
+                Ok(sources) => (
+                    spec_model_findings(&service, workspace_id, project_id, &sources)
+                        .await
+                        .ok()
+                        .map(|(fs, _)| fs.into_iter().map(|f| f.fingerprint).collect()),
+                    binding_ids(&sources),
+                ),
+                Err(_) => (None, Default::default()),
+            },
+            Err(_) => (None, Default::default()),
+        };
     let items: Vec<SpecModelDecisionDto> = service
         .spec_decisions(workspace_id, project_id)
         .await
         .map_err(internal)?
         .into_iter()
-        .map(|d| SpecModelDecisionDto {
-            fingerprint: d.fingerprint,
-            decision: d.decision,
-            decided_by: d.decided_by.to_string(),
-            decided_at: d
-                .decided_at
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default(),
+        .map(|d| {
+            let present = current.as_ref().map(|c| c.contains(&d.fingerprint));
+            decision_dto(d, present, &binding_of)
         })
         .collect();
     Ok(Json(SpecModelDecisionListDto {
@@ -5164,6 +5282,40 @@ pub struct ReviewRequestDto {
     pub outstanding: Vec<String>,
     pub created_at: String,
     pub verdicts: Vec<ApprovalDto>,
+    /// The version the document is at now: a binding's content digest, a
+    /// Studio document's SHA-256. `null` when the document is gone.
+    pub current_version: Option<String>,
+    /// The document changed since the version asked about.
+    pub stale: bool,
+    /// The detectors that pass on the document now.
+    pub recorded_checks: Vec<String>,
+}
+
+/// What a review was asked about, against what the document is now and the
+/// last version approved before it: the review card's diff.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewDiffDto {
+    pub request_id: String,
+    pub version: String,
+    pub current_version: Option<String>,
+    pub stale: bool,
+    /// The text kept when the review was asked for; `null` for a request from
+    /// before texts were kept.
+    pub reviewed_text: Option<String>,
+    /// The text now; `null` when no checkout holds it.
+    pub current_text: Option<String>,
+    /// The newest earlier request on the same document that was approved.
+    pub base: Option<ReviewBaseDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ReviewBaseDto {
+    pub request_id: String,
+    pub version: String,
+    pub reviewed_text: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug)]
@@ -5171,6 +5323,12 @@ pub struct ReviewRequestDto {
 pub struct ReviewRequestListDto {
     pub items: Vec<ReviewRequestDto>,
     pub total: u32,
+    /// Open requests in the list.
+    pub open: u32,
+    /// Open requests past their due date.
+    pub overdue: u32,
+    /// Open requests whose document changed since the version asked about.
+    pub stale: u32,
 }
 
 /// A reviewer worth asking, from who was asked before.
@@ -5313,7 +5471,24 @@ fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> Rev
         state: r.state.clone(),
         created_at: rfc3339(r.created_at),
         verdicts: review.verdicts.iter().map(approval_dto).collect(),
+        current_version: None,
+        stale: false,
+        recorded_checks: Vec::new(),
     }
+}
+
+/// Fold the document's current version and passing checks into a request.
+fn with_version(
+    mut dto: ReviewRequestDto,
+    versions: &std::collections::HashMap<Uuid, (String, Vec<String>)>,
+) -> ReviewRequestDto {
+    let current = Uuid::parse_str(&dto.subject_id)
+        .ok()
+        .and_then(|id| versions.get(&id));
+    dto.current_version = current.map(|(v, _)| v.clone());
+    dto.stale = current.is_some_and(|(v, _)| *v != dto.version);
+    dto.recorded_checks = current.map(|(_, c)| c.clone()).unwrap_or_default();
+    dto
 }
 
 /// Ask people to review one version of a document.
@@ -5343,12 +5518,29 @@ async fn create_review_request(
         None => None,
     };
     let requester = quality.caller(&ctx).await?;
+    let reader = quality.reader().ok();
+    let (current, text) = service
+        .subject_state(
+            &ctx,
+            workspace_id,
+            project_id,
+            &body.subject_kind,
+            subject_id,
+            reader.as_deref(),
+        )
+        .await
+        .map_err(internal)?;
+    // A request with no version is about the document as it is now.
+    let version = match body.version.trim() {
+        "" => current.clone().unwrap_or_default(),
+        v => v.to_string(),
+    };
     let ask = super::service::ReviewAsk {
         subject_kind: body.subject_kind,
         subject_id,
         type_key: body.type_key,
         title: body.title,
-        version: body.version,
+        version,
         reviewers: body
             .reviewers
             .into_iter()
@@ -5361,10 +5553,14 @@ async fn create_review_request(
         due_at,
     };
     let review = service
-        .request_review(workspace_id, project_id, ask, requester)
+        .request_review(workspace_id, project_id, ask, requester, text)
         .await
         .map_err(invalid)?;
-    let dto = review_dto(&review, time::OffsetDateTime::now_utc());
+    let versions = service
+        .subject_versions(workspace_id, project_id)
+        .await
+        .unwrap_or_default();
+    let dto = with_version(review_dto(&review, time::OffsetDateTime::now_utc()), &versions);
     announce_review(&quality, &ctx, "review_request.created", &dto);
     Ok((StatusCode::CREATED, Json(dto)))
 }
@@ -5432,9 +5628,31 @@ async fn list_review_requests(
         }
     };
     let now = time::OffsetDateTime::now_utc();
-    let items: Vec<ReviewRequestDto> = reviews.iter().map(|r| review_dto(r, now)).collect();
+    let mut versions: std::collections::HashMap<Uuid, (String, Vec<String>)> =
+        std::collections::HashMap::new();
+    let projects: std::collections::BTreeSet<Uuid> =
+        reviews.iter().map(|r| r.request.project_id).collect();
+    for p in projects {
+        let ws = reviews
+            .iter()
+            .find(|r| r.request.project_id == p)
+            .map(|r| r.request.tenant_id)
+            .unwrap_or_default();
+        if let Ok(v) = service.subject_versions(ws, p).await {
+            versions.extend(v);
+        }
+    }
+    let items: Vec<ReviewRequestDto> = reviews
+        .iter()
+        .map(|r| with_version(review_dto(r, now), &versions))
+        .collect();
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let open: Vec<&ReviewRequestDto> = items.iter().filter(|r| r.state == "open").collect();
     Ok(Json(ReviewRequestListDto {
-        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        total: count(items.len()),
+        open: count(open.len()),
+        overdue: count(open.iter().filter(|r| r.overdue).count()),
+        stale: count(open.iter().filter(|r| r.stale).count()),
         items,
     }))
 }
@@ -5489,6 +5707,67 @@ async fn cancel_review_request(
     let dto = review_dto(&review, time::OffsetDateTime::now_utc());
     announce_review(&quality, &ctx, "review_request.cancelled", &dto);
     Ok(Json(dto))
+}
+
+/// A request's reviewed text, the document now, and the last approved
+/// version before it.
+async fn get_review_request_diff(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path(request_id): Path<String>,
+    Query(query): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<ReviewDiffDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let request_id = parse_uuid_field("request_id", &request_id)?;
+    let all = service
+        .reviews_with_verdicts(workspace_id, project_id, None)
+        .await
+        .map_err(internal)?;
+    let Some(this) = all.iter().find(|r| r.request.id == request_id) else {
+        return Err(DocumentsError::not_found("no such review request in this project")
+            .with_resource("review_request")
+            .create());
+    };
+    let r = &this.request;
+    let reader = quality.reader().ok();
+    let (current, text) = service
+        .subject_state(
+            &ctx,
+            workspace_id,
+            project_id,
+            &r.subject_kind,
+            r.subject_id,
+            reader.as_deref(),
+        )
+        .await
+        .map_err(internal)?;
+    // Newest first, as the repository lists them.
+    let base = all
+        .iter()
+        .filter(|o| {
+            o.request.subject_id == r.subject_id
+                && o.request.id != r.id
+                && o.request.state == "approved"
+                && o.request.created_at < r.created_at
+        })
+        .max_by_key(|o| o.request.created_at)
+        .map(|o| ReviewBaseDto {
+            request_id: o.request.id.to_string(),
+            version: o.request.version.clone(),
+            reviewed_text: o.request.reviewed_text.clone(),
+            created_at: rfc3339(o.request.created_at),
+        });
+    Ok(Json(ReviewDiffDto {
+        request_id: r.id.to_string(),
+        version: r.version.clone(),
+        stale: current.as_ref().is_some_and(|c| *c != r.version),
+        current_version: current,
+        reviewed_text: r.reviewed_text.clone(),
+        current_text: text,
+        base,
+    }))
 }
 
 /// Whom to ask about a document, from who was asked before in the project.
@@ -6515,6 +6794,28 @@ pub fn register_routes(
         .error_404(openapi)
         .error_500(openapi)
         .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/review-requests/{request_id}/diff")
+        .operation_id("studio_documents.get_review_request_diff")
+        .summary("What a review was asked about, the document now, and the last approved version")
+        .description(
+            "The text kept when the review was asked for, the document's text now, whether it \
+             changed since (`stale`), and `base`: the newest earlier request on the same \
+             document that was approved, with its text, for a Before / Proposed diff. Texts \
+             are kept from this version on; an older request answers `reviewed_text: null`.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("request_id", "The review request")
+        .query_param("project_id", true, "The project")
+        .handler(get_review_request_diff)
+        .json_response_with_schema::<ReviewDiffDto>(openapi, StatusCode::OK, "The texts")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/review-requests/reviewer-suggestions")

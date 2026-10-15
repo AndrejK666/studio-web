@@ -41,6 +41,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0020::Migration),
             Box::new(m0021::Migration),
             Box::new(m0022::Migration),
+            Box::new(m0023::Migration),
         ]
     }
 }
@@ -1455,6 +1456,54 @@ CREATE TABLE IF NOT EXISTS studio_application_parts (
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS studio_application_parts;")
                 .await?;
+            Ok(())
+        }
+    }
+}
+
+/// What a review was asked about, and why a finding was decided (the
+/// prototype's review card and document comparisons).
+mod m0023 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0023_review_text_and_decision_notes"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                "ALTER TABLE studio_review_requests ADD COLUMN IF NOT EXISTS reviewed_text TEXT;",
+                "ALTER TABLE studio_spec_model_decisions ADD COLUMN IF NOT EXISTS note TEXT;",
+                "ALTER TABLE studio_spec_model_decisions ADD COLUMN IF NOT EXISTS snapshot JSONB;",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                "ALTER TABLE studio_spec_model_decisions DROP COLUMN IF EXISTS snapshot;",
+                "ALTER TABLE studio_spec_model_decisions DROP COLUMN IF EXISTS note;",
+                "ALTER TABLE studio_review_requests DROP COLUMN IF EXISTS reviewed_text;",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
             Ok(())
         }
     }

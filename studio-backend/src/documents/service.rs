@@ -728,6 +728,7 @@ impl DocumentsService {
         project_id: Uuid,
         ask: ReviewAsk,
         requester: (String, Option<String>),
+        reviewed_text: Option<String>,
     ) -> Result<Review> {
         if !matches!(ask.subject_kind.as_str(), "document" | "binding") {
             bail!("subject_kind must be `document` or `binding`");
@@ -759,6 +760,7 @@ impl DocumentsService {
             due_at: ask.due_at,
             state: "open".to_string(),
             created_at: OffsetDateTime::now_utc(),
+            reviewed_text: reviewed_text.map(|t| clip_text(&t, REVIEWED_TEXT_MAX)),
         };
         self.repo.put_review_request(model.clone()).await?;
         Ok(Review {
@@ -826,6 +828,70 @@ impl DocumentsService {
             review.request.state = "approved".to_string();
         }
         Ok(Some((review, model)))
+    }
+
+    /// The version a document is at now and its text: a binding's content
+    /// digest and its file from the checkout, or a Studio document's content
+    /// and the digest of it. `(None, None)` for a subject not found.
+    pub async fn subject_state(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        subject_kind: &str,
+        subject_id: Uuid,
+        reader: Option<&dyn crate::artifact_ingest::port::RepoFileReader>,
+    ) -> Result<(Option<String>, Option<String>)> {
+        if subject_kind == "document" {
+            return Ok(match self.repo.get_doc(workspace_id, subject_id).await? {
+                Some(doc) => (Some(content_digest(&doc.content)), Some(doc.content)),
+                None => (None, None),
+            });
+        }
+        let Some(row) = self.repo.get_binding(workspace_id, subject_id).await? else {
+            return Ok((None, None));
+        };
+        let text = match reader {
+            Some(r) => self
+                .project_binding_text(ctx, workspace_id, project_id, subject_id, r)
+                .await
+                .unwrap_or(None),
+            None => None,
+        };
+        Ok((Some(row.content_sha), text))
+    }
+
+    /// Every document's current version and the detectors that pass on it,
+    /// by subject id: what a review list compares its requests against.
+    pub async fn subject_versions(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<std::collections::HashMap<Uuid, (String, Vec<String>)>> {
+        let mut out = std::collections::HashMap::new();
+        let docs = self.all_documents(workspace_id, Some(project_id)).await?;
+        let doc_ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();
+        let analyses = self.repo.list_analyses(workspace_id, &doc_ids).await?;
+        for d in &docs {
+            let passed = analyses
+                .iter()
+                .filter(|a| a.document_id == Some(d.id) && a.state == AnalysisState::Passed.as_str())
+                .map(|a| a.detector.clone())
+                .collect();
+            out.insert(d.id, (content_digest(&d.content), passed));
+        }
+        let rows = self.all_bindings(workspace_id, Some(project_id)).await?;
+        let ids: Vec<Uuid> = rows.iter().map(|b| b.id).collect();
+        let banalyses = self.repo.list_binding_analyses(workspace_id, &ids).await?;
+        for b in rows {
+            let passed = banalyses
+                .iter()
+                .filter(|a| a.binding_id == Some(b.id) && a.state == AnalysisState::Passed.as_str())
+                .map(|a| a.detector.clone())
+                .collect();
+            out.insert(b.id, (b.content_sha, passed));
+        }
+        Ok(out)
     }
 
     /// Withdraw an open request. Only the person who asked for it can.
@@ -1831,6 +1897,7 @@ impl DocumentsService {
                     .remove(&row.path)
                     .flatten()
                     .map(|text| super::spec_model::SourceText {
+                        binding: Some(row.id),
                         path: row.path,
                         text,
                         doc_type: row.type_key,
@@ -2374,7 +2441,13 @@ impl DocumentsService {
         project_id: Uuid,
         fingerprint: &str,
         decision: &str,
+        note: Option<String>,
+        snapshot: Option<serde_json::Value>,
     ) -> Result<super::entity::spec_decision::Model> {
+        let note = note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        if note.as_ref().is_some_and(|n| n.chars().count() > 2_000) {
+            bail!("a note is at most 2000 characters");
+        }
         let model = super::entity::spec_decision::Model {
             id: super::repo::spec_decision_id(project_id, fingerprint),
             tenant_id: workspace_id,
@@ -2383,6 +2456,8 @@ impl DocumentsService {
             decision: decision.to_string(),
             decided_by: ctx.subject_id(),
             decided_at: OffsetDateTime::now_utc(),
+            note,
+            snapshot,
         };
         self.repo.put_spec_decision(model.clone()).await?;
         Ok(model)
@@ -2826,6 +2901,29 @@ fn scope_snapshot(s: &super::entity::delivery_scope::Model) -> serde_json::Value
         "updated_by": s.updated_by,
         "updated_at": s.updated_at.format(&Rfc3339).unwrap_or_default(),
     })
+}
+
+/// The longest reviewed text a request keeps.
+const REVIEWED_TEXT_MAX: usize = 256 * 1024;
+
+fn clip_text(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut end = max_bytes;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
+/// A Studio document's version: the SHA-256 of its content, hex.
+pub fn content_digest(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(content.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// How many reviewers a suggestion offers.

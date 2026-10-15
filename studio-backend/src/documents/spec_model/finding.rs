@@ -59,6 +59,11 @@ pub struct Finding {
     /// is right.
     #[serde(default)]
     pub edit: Option<Edit>,
+    /// For a reference to something missing: what is referred to (an
+    /// identifier, an ADR, a file or a section), so a reader sees "refers to
+    /// X, which is missing" rather than an empty second side.
+    #[serde(default)]
+    pub target: Option<String>,
 }
 
 /// Replace `replace` with `with` in `path`; `replace` is checked to be in
@@ -81,7 +86,14 @@ impl Finding {
             sides,
             decide: Vec::new(),
             edit: None,
+            target: None,
         }
+    }
+
+    /// Name what a reference refers to and the project lacks.
+    pub fn with_target(mut self, target: impl Into<String>) -> Self {
+        self.target = Some(target.into());
+        self
     }
 
     /// Fingerprinted by the rule and the message alone, for a finding about

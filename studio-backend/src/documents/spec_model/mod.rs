@@ -32,6 +32,8 @@ pub struct SourceText {
     /// The file's node in the artifact graph, which its `spec_finding`
     /// verdict is recorded on.
     pub node: String,
+    /// The document binding it was read for.
+    pub binding: Option<uuid::Uuid>,
 }
 
 /// What the model is read from: the project's documents, and every path of

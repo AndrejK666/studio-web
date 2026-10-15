@@ -372,6 +372,20 @@ connection. A decision (`POST /decisions`, table `studio_decisions`) records
 what was decided, the requirement identifiers it closes, where it was taken
 and by whom; insert only.
 
+**For the review card and document comparisons** (`m0023`). A review request
+keeps the text it was asked about (`reviewed_text`, at most 256 KiB); a request
+without a `version` is about the document as it is now. Every request carries
+`current_version` (a binding's content digest, a Studio document's SHA-256),
+`stale` when the document changed since, and `recorded_checks` (the detectors
+that pass on it now); the list adds `open`, `overdue` and `stale` counts.
+`GET /review-requests/{id}/diff` answers the reviewed text, the text now and
+`base`, the newest earlier approved request on the same document, for a
+Before / Proposed diff. A domain-model finding's sides carry `binding_id`, and a
+reference to something missing names it as `target`. A decision takes an
+optional `note` and keeps the finding as it stood; `/spec-model/decisions`
+answers `present: false` for a decided finding the documents no longer show
+(resolved), with its rule, message and sides.
+
 **Stage checks beyond documents** (issue #782). A stage may declare `checks`,
 each `code`, `tests` or `review`, next to the document types it `requires`.
 `stage-status` answers each per stage as `{kind, passed, detail}`: `code` passes
