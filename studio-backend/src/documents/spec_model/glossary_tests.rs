@@ -13,6 +13,7 @@ fn fact(path: &str, kind: &str, subject: &str, aspect: &str, value: &str) -> Fac
         line_start: 1,
         line_end: 1,
         quote: format!("{subject} {value}"),
+        layer: None,
     }
 }
 

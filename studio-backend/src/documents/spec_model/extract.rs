@@ -32,6 +32,10 @@ pub const KINDS: [&str; 7] = [
     "decision",
 ];
 
+/// Where an entity sits on the map: what the product is about, what serves
+/// it, or where it runs.
+pub const LAYERS: [&str; 3] = ["domain", "system", "deployment"];
+
 pub const STATUSES: [&str; 6] = [
     "active",
     "proposed",
@@ -64,6 +68,10 @@ pub struct Fact {
     pub line_end: usize,
     /// Verbatim from the document.
     pub quote: String,
+    /// One of [`LAYERS`], stated by the model for an `entity` fact; absent
+    /// on other kinds and on extractions kept before it was asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
 }
 
 /// What one document gave.
@@ -164,11 +172,15 @@ the application they describe, as facts. You never invent: every fact rests on a
 quote verbatim from the numbered text you are given.\n\n\
 Answer with one JSON object and nothing else:\n\
 {\"facts\": [{\"kind\": ..., \"subject\": ..., \"aspect\": ..., \"value\": ..., \"text\": ..., \
-\"status\": ..., \"status_because\": ..., \"line_start\": N, \"line_end\": N, \"quote\": ...}]}\n\n\
+\"status\": ..., \"status_because\": ..., \"line_start\": N, \"line_end\": N, \"quote\": ..., \
+\"layer\": ...}]}\n\n\
 kind is one of:\n\
 - entity: a thing the application keeps or acts on. Include implicit ones: a thing never \
 declared but used as a key, a grain or a row kind (\"one row per connector instance\" makes \
-connector instance an entity).\n\
+connector instance an entity). Give each entity a layer: domain (what the product is about: \
+organizations, projects, people, what they own and do), system (what serves it: services, \
+gears, sessions, screens, events, APIs, the IDE) or deployment (where it runs: clusters, \
+images, pipelines, identity provider, databases, CI). Other kinds leave layer out.\n\
 - attribute: a property of an entity (subject = the entity, aspect = the property, value = its \
 type, rule or allowed values).\n\
 - relation: subject relates to another entity (aspect = the verb, value = the other entity and \
@@ -249,6 +261,8 @@ struct RawFact {
     line_end: Option<usize>,
     #[serde(default)]
     quote: String,
+    #[serde(default)]
+    layer: Option<String>,
 }
 
 /// Read one answer about `chunk`: every fact whose quote is in the text is
@@ -286,6 +300,9 @@ fn checked(path: &str, chunk: &Chunk, raw: RawFact) -> Option<Fact> {
         Some(serde_json::Value::Null) | None => String::new(),
         Some(other) => other.to_string(),
     };
+    let layer = (kind == "entity")
+        .then(|| raw.layer.unwrap_or_default().trim().to_ascii_lowercase())
+        .filter(|l| LAYERS.contains(&l.as_str()));
     Some(Fact {
         kind,
         subject,
@@ -298,6 +315,7 @@ fn checked(path: &str, chunk: &Chunk, raw: RawFact) -> Option<Fact> {
         line_start,
         line_end,
         quote: raw.quote.trim().to_string(),
+        layer,
     })
 }
 

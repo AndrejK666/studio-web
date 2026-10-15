@@ -438,6 +438,7 @@ fn misattribution(path: &str, line: &Line<'_>, adr: &Adr, record: &str) -> Candi
         line_start: line.number,
         line_end: line.number,
         quote: line.text.trim().to_string(),
+        layer: None,
     };
     let cited = Fact {
         kind: "decision".into(),
@@ -451,6 +452,7 @@ fn misattribution(path: &str, line: &Line<'_>, adr: &Adr, record: &str) -> Candi
         line_start: title_line,
         line_end: title_line,
         quote: title_text,
+        layer: None,
     };
     Candidate {
         rule: "reference.misattributed",

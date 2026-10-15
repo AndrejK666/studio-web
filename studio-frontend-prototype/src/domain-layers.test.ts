@@ -28,6 +28,28 @@ describe("a layer", () => {
     expect(layerOf(one([fact("Stage", "entity", { source: { path: "deploy/PIPELINES.md" } })]))).toBe("deployment");
   });
 
+  it("is the one the extractor stated most, over a guess from the name", () => {
+    // The name says System; the extractor said Domain.
+    expect(layerOf(one([fact("Session", "entity", { layer: "domain" })]))).toBe("domain");
+    expect(
+      layerOf(
+        one([
+          fact("Build", "entity", { layer: "deployment" }),
+          fact("Build", "entity", { layer: "system" }),
+          fact("Build", "entity", { layer: "deployment" }),
+          // Only an entity fact states a layer.
+          fact("Build", "attribute", { layer: "system" }),
+          fact("Build", "attribute", { layer: "system" }),
+        ]),
+      ),
+    ).toBe("deployment");
+  });
+
+  it("is guessed when no entity fact states one, and still none for an identifier", () => {
+    expect(layerOf(one([fact("IDE session", "entity", { layer: null }), fact("IDE session", "entity")]))).toBe("system");
+    expect(layerOf(one([fact("ADR-0007", "entity", { layer: "domain" })]))).toBeNull();
+  });
+
   it("is none for an identifier, a passing word, or a kit's template", () => {
     expect(layerOf(one([fact("ADR-0007", "entity")]))).toBeNull();
     expect(layerOf(one([fact("header", "attribute")]))).toBeNull();

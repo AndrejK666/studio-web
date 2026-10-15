@@ -131,3 +131,38 @@ fn a_revision_changes_with_the_text_only() {
     assert_eq!(revision("a"), revision("a"));
     assert_ne!(revision("a"), revision("b"));
 }
+
+#[test]
+fn an_entity_keeps_the_layer_it_is_given_and_other_kinds_drop_it() {
+    let c = chunk_of(DOC);
+    let out = read_answer(
+        "d.md",
+        &c,
+        &answer(concat!(
+            r#"{"kind":"entity","subject":"seat snapshot","text":"t","status":"active","quote":"Each (seat, month) snapshot is emitted once","layer":" System "},"#,
+            r#"{"kind":"entity","subject":"billing month","text":"t","status":"active","quote":"dated at the first day of its billing month","layer":"cloud"},"#,
+            r#"{"kind":"entity","subject":"window","text":"t","status":"active","quote":"A window inside a month returns nothing"},"#,
+            r#"{"kind":"constraint","subject":"window","text":"t","status":"active","quote":"A window inside a month returns nothing","layer":"domain"}"#,
+        )),
+    )
+    .unwrap();
+    assert_eq!(out.dropped, 0);
+    let layers: Vec<Option<&str>> = out.facts.iter().map(|f| f.layer.as_deref()).collect();
+    assert_eq!(layers, [Some("system"), None, None, None]);
+}
+
+#[test]
+fn a_kept_fact_without_a_layer_still_loads() {
+    let stored = r#"[{"kind":"entity","subject":"seat","aspect":"","value":"","text":"t","status":"active","status_because":"","path":"d.md","line_start":1,"line_end":1,"quote":"q"}]"#;
+    let facts: Vec<Fact> = serde_json::from_str(stored).unwrap();
+    assert_eq!(facts[0].layer, None);
+    assert!(!serde_json::to_string(&facts).unwrap().contains("layer"));
+}
+
+#[test]
+fn the_question_asks_for_a_layer() {
+    let c = chunk_of(DOC);
+    let r = request("d.md", None, &c, (1, 1));
+    assert!(r.system.contains("\"layer\""));
+    assert!(r.system.contains("deployment (where it runs"));
+}

@@ -2463,6 +2463,9 @@ pub struct SpecModelFactDto {
     /// `evidence`.
     pub status: String,
     pub status_because: String,
+    /// `domain`, `system` or `deployment` when the extractor stated where an
+    /// `entity` sits; absent otherwise.
+    pub layer: Option<String>,
     pub source: SpecModelSideDto,
 }
 
@@ -2547,6 +2550,7 @@ async fn get_spec_model(
                 text: f.text,
                 status: f.status,
                 status_because: f.status_because,
+                layer: f.layer,
                 source: SpecModelSideDto {
                     path: f.path,
                     line_start: u32::try_from(f.line_start).ok(),

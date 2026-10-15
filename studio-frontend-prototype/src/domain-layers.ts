@@ -2,7 +2,9 @@
 // serves it (System) and where that runs (Deployment), each drawn as a
 // diagram of entity cards and the relations the documents declare.
 //
-// A layer is read off the entity's name and where it is described: a name
+// A layer is what the extractor stated on the entity's `entity` facts, the
+// one most of them name. When none states one, it is read off the entity's
+// name and where it is described: a name
 // that says it is a screen, a gear or an API is System; one that says it is a
 // cluster, an image or a pipeline, or a thing described almost only in
 // deployment documents, is Deployment; the rest is the subject itself. Not
@@ -37,6 +39,20 @@ const DEPLOY_NAME =
   /\b(k8s|kubernetes|helm|cluster|namespace|pod|keycloak|postgres|pg|cnpg|docker|compose|ci|cd|pipeline|workflow|image|ingress|secret|env|deploy|deployment|rollout|replica|volume|s3|bucket|dns|tls|certificate|vault|backup|hook|runner|ghcr|realm)\b/i;
 const NOT_ENTITY = /^(adr[- ]?\d+|cpt-|https?:|\/|`)/i;
 
+const LAYERS: Layer[] = ["domain", "system", "deployment"];
+
+/** The layer most of the `entity` facts state (a tie goes to the earlier of
+ *  domain, system, deployment), or null when none states one. */
+function statedLayer(facts: SpecModelFact[]): Layer | null {
+  const count = new Map<Layer, number>();
+  for (const f of facts) {
+    if (f.kind === "entity" && f.layer && LAYERS.includes(f.layer)) count.set(f.layer, (count.get(f.layer) ?? 0) + 1);
+  }
+  let best: Layer | null = null;
+  for (const l of LAYERS) if ((count.get(l) ?? 0) > (best ? count.get(best)! : 0)) best = l;
+  return best;
+}
+
 /** Which layer an entity belongs to, or null when it is not an entity of the
  *  product at all. Facts from a kit's templates do not count. */
 export function layerOf(e: Pick<Entity, "name" | "facts">): Layer | null {
@@ -45,6 +61,8 @@ export function layerOf(e: Pick<Entity, "name" | "facts">): Layer | null {
   if (facts.length === 0) return null;
   // A word used in passing: nothing says what it is, and little about it.
   if (!facts.some((f) => f.kind === "entity") && facts.length < 3) return null;
+  const stated = statedLayer(facts);
+  if (stated) return stated;
   if (SYSTEM_NAME.test(e.name)) return "system";
   const deploy = facts.filter((f) => isDeployPath(f.source.path)).length;
   if (DEPLOY_NAME.test(e.name) || deploy > facts.length - deploy) return "deployment";

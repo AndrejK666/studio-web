@@ -13,6 +13,7 @@ fn fact(path: &str, line: usize, subject: &str, aspect: &str, value: &str, statu
         line_start: line,
         line_end: line,
         quote: format!("q{line}"),
+        layer: None,
     }
 }
 

@@ -14,6 +14,7 @@ fn fact(path: &str, subject: &str, value: &str, text: &str) -> Fact {
         line_start: 4,
         line_end: 4,
         quote: text.into(),
+        layer: None,
     }
 }
 
