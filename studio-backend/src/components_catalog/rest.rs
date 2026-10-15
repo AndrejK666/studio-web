@@ -480,6 +480,9 @@ pub struct ProjectComponentDto {
     pub owners: Vec<String>,
     pub last_change: Option<String>,
     pub open_pulls: u32,
+    /// `open_pulls` is a lower bound: the repository has more open pull
+    /// requests, or one with more files, than one read returns.
+    pub open_pulls_partial: bool,
     /// `ready`, `caution` or `not_ready`.
     pub readiness: String,
     pub reasons: Vec<String>,
@@ -505,10 +508,14 @@ const COMPONENT_HISTORY_MAX: usize = 25;
 const OPEN_PULL_FILES_QUERY: &str = r#"
 query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
-    pullRequests(states: OPEN, first: 50) { nodes { files(first: 100) { nodes { path } } } }
+    pullRequests(states: OPEN, first: 50) {
+      pageInfo { hasNextPage }
+      nodes { files(first: 100) { pageInfo { hasNextPage } nodes { path } } }
+    }
   }
 }
 "#;
+
 
 fn bot(login: &str) -> bool {
     let a = login.to_ascii_lowercase();
@@ -578,47 +585,32 @@ async fn list_project_components(
             })
             .collect();
         let found = detect(&source.repo, &paths, &gear_dirs);
-        // Open pull requests, once per repository: which files each changes.
-        let open_files: Vec<Vec<String>> = match (source.repo.split_once('/'), source.connection_id)
-        {
-            (Some((owner, name)), Some(connection_id)) => {
-                match connectors
-                    .driver_and_auth(&ctx, source.tenant, connection_id)
-                    .await
-                {
-                    Ok((driver, auth, _)) => driver
-                        .graphql(
-                            &auth,
-                            &serde_json::json!({
-                                "query": OPEN_PULL_FILES_QUERY,
-                                "variables": { "owner": owner, "name": name },
-                            }),
-                        )
+        // Open pull requests, once per repository: which files each changes,
+        // and whether that is all of them.
+        let (open_files, all_read): (Vec<Vec<String>>, bool) =
+            match (source.repo.split_once('/'), source.connection_id) {
+                (Some((owner, name)), Some(connection_id)) => {
+                    match connectors
+                        .driver_and_auth(&ctx, source.tenant, connection_id)
                         .await
-                        .ok()
-                        .and_then(|a| a.pointer("/data/repository/pullRequests/nodes").cloned())
-                        .and_then(|n| n.as_array().cloned())
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|pr| {
-                            pr.pointer("/files/nodes")
-                                .and_then(serde_json::Value::as_array)
-                                .map(|f| {
-                                    f.iter()
-                                        .filter_map(|x| {
-                                            x.get("path").and_then(serde_json::Value::as_str)
-                                        })
-                                        .map(str::to_string)
-                                        .collect()
-                                })
-                                .unwrap_or_default()
-                        })
-                        .collect(),
-                    Err(_) => Vec::new(),
+                    {
+                        Ok((driver, auth, _)) => driver
+                            .graphql(
+                                &auth,
+                                &serde_json::json!({
+                                    "query": OPEN_PULL_FILES_QUERY,
+                                    "variables": { "owner": owner, "name": name },
+                                }),
+                            )
+                            .await
+                            .map_or((Vec::new(), true), |a| {
+                                super::services::open_pull_files(&a)
+                            }),
+                        Err(_) => (Vec::new(), true),
+                    }
                 }
-            }
-            _ => Vec::new(),
-        };
+                _ => (Vec::new(), true),
+            };
         for f in found {
             let prefix = if f.dir.is_empty() {
                 String::new()
@@ -666,6 +658,7 @@ async fn list_project_components(
                 days_since_change: days,
                 authors: owners.len(),
                 open_pulls,
+                open_pulls_partial: !all_read,
                 has_tests: f.has_tests,
                 has_readme: f.has_readme,
                 has_contract: !f.contracts.is_empty(),
@@ -682,6 +675,7 @@ async fn list_project_components(
                 owners: owners.into_iter().take(3).collect(),
                 last_change,
                 open_pulls: u32::try_from(open_pulls).unwrap_or(u32::MAX),
+                open_pulls_partial: !all_read,
                 readiness: r.signal.to_string(),
                 reasons: r.reasons,
             });

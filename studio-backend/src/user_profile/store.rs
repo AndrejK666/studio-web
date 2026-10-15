@@ -622,6 +622,19 @@ impl IdentityStore for PgStore {
                     .await?;
             }
         }
+        // A snooze that has run out marks nothing: it leaves first, so it never
+        // counts toward the bound and pushes out a live `done` mark (#744).
+        entity::inbox_mark::Entity::delete_many()
+            .secure()
+            .scope_with(&scope())
+            .filter(
+                Condition::all()
+                    .add(entity::inbox_mark::Column::UserId.eq(user))
+                    .add(entity::inbox_mark::Column::State.eq("snoozed"))
+                    .add(entity::inbox_mark::Column::Until.lte(OffsetDateTime::now_utc())),
+            )
+            .exec(&conn)
+            .await?;
         // Bounded: the oldest marks go first. A mark on an item that no longer
         // exists is never read again, and this is where it leaves.
         let marks = self.inbox_marks_of(user_id).await?;

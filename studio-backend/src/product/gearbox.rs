@@ -855,9 +855,11 @@ pub struct Brought {
     pub database: bool,
 }
 
-/// A contract the product would get from two gears: one it has, one the
-/// candidate brings — the second audit store a certified platform cannot
-/// keep (interview problem 4.7).
+/// A contract the product would get from two gears because of the
+/// candidate: one it has and one the candidate brings, or two the candidate
+/// brings — the second audit store a certified platform cannot keep
+/// (interview problem 4.7). A contract the product already gets twice, with
+/// nothing more brought for it, is not the candidate's doing and is not one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Overlap {
     pub contract: String,
@@ -980,7 +982,7 @@ pub fn brings(
     }
     let overlaps = by_contract
         .into_iter()
-        .filter(|(_, (a, b))| !a.is_empty() && !b.is_empty())
+        .filter(|(_, (a, b))| !b.is_empty() && a.len() + b.len() > 1)
         .map(|(contract, (a, b))| Overlap {
             contract,
             already: a.into_iter().collect(),
@@ -2930,6 +2932,29 @@ mod tests {
                 contract: "audit/AuditLog@v1".into(),
                 already: vec!["cf-gears-audit".into()],
                 brought: vec!["cf-gears-billing-audit".into()],
+            }]
+        );
+    }
+
+    /// #744: two gears the candidate brings that provide one contract are an
+    /// overlap too, with nothing of it in the product yet.
+    #[test]
+    fn two_gears_a_candidate_brings_for_one_contract_overlap() {
+        let catalogue: EngineCatalogue = serde_json::from_value(json!({"gears": {
+            "ledger": {"id": "ledger", "package": {"crate_name": "cf-gears-ledger"},
+                       "provides": [{"contract": "audit/AuditLog@v1"}],
+                       "colocated_deps": ["ledger-audit"]},
+            "ledger-audit": {"id": "ledger-audit", "package": {"crate_name": "cf-gears-ledger-audit"},
+                             "provides": [{"contract": "audit/AuditLog@v1"}]}
+        }}))
+        .expect("fixture parses");
+        let b = brings(&catalogue, &[], "cf-gears-ledger", &GearConfig::new());
+        assert_eq!(
+            b.overlaps,
+            vec![Overlap {
+                contract: "audit/AuditLog@v1".into(),
+                already: vec![],
+                brought: vec!["cf-gears-ledger".into(), "cf-gears-ledger-audit".into()],
             }]
         );
     }

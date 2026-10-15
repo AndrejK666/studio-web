@@ -56,6 +56,28 @@ fn the_root_is_a_component_named_after_the_repository() {
     assert!(found[0].has_tests);
 }
 
+/// #744: the answer says whether it is all of the open pull requests.
+#[test]
+fn an_open_pulls_answer_that_stops_at_a_page_is_a_lower_bound() {
+    let answer = |more_pulls: bool, more_files: bool| {
+        serde_json::json!({ "data": { "repository": { "pullRequests": {
+            "pageInfo": { "hasNextPage": more_pulls },
+            "nodes": [
+                { "files": { "pageInfo": { "hasNextPage": more_files },
+                             "nodes": [{ "path": "svc/a.go" }, { "path": "README.md" }] } },
+                { "files": { "pageInfo": { "hasNextPage": false }, "nodes": [] } }
+            ]
+        } } } })
+    };
+    let (files, all) = open_pull_files(&answer(false, false));
+    assert!(all);
+    assert_eq!(files, vec![vec!["svc/a.go".to_string(), "README.md".to_string()], vec![]]);
+    assert!(!open_pull_files(&answer(true, false)).1, "more pull requests");
+    assert!(!open_pull_files(&answer(false, true)).1, "a pull request with more files");
+    // No answer at all (no access): nothing counted, nothing claimed missing.
+    assert_eq!(open_pull_files(&serde_json::json!({})), (Vec::new(), true));
+}
+
 #[test]
 fn readiness_says_why() {
     let ready = readiness(&Facts {
@@ -65,6 +87,7 @@ fn readiness_says_why() {
         has_tests: true,
         has_readme: true,
         has_contract: true,
+        ..Facts::default()
     });
     assert_eq!(ready.signal, "ready");
     assert!(
@@ -80,6 +103,7 @@ fn readiness_says_why() {
         has_tests: true,
         has_readme: true,
         has_contract: true,
+        ..Facts::default()
     });
     assert_eq!(busy.signal, "caution");
     assert!(
@@ -93,6 +117,24 @@ fn readiness_says_why() {
             .any(|r| r.contains("unchanged for 400 days"))
     );
     assert!(busy.reasons.iter().any(|r| r.contains("one person")));
+
+    // #744: a count cut short by the read is a lower bound, and not "ready".
+    let unread = readiness(&Facts {
+        days_since_change: Some(10),
+        authors: 4,
+        open_pulls: 1,
+        open_pulls_partial: true,
+        has_tests: true,
+        has_readme: true,
+        has_contract: true,
+    });
+    assert_eq!(unread.signal, "caution");
+    assert!(
+        unread
+            .reasons
+            .iter()
+            .any(|r| r.contains("at least 1 open pull requests"))
+    );
 
     let untested = readiness(&Facts {
         has_tests: false,

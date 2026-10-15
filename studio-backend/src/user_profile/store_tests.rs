@@ -589,3 +589,33 @@ async fn somebody_in_no_organization_has_no_colleagues() {
     store.upsert_user(&person(&loner)).await.unwrap();
     assert!(service.colleagues(&loner).await.unwrap().is_empty());
 }
+
+/// #744: a snooze that has run out does not count toward the bound, so it
+/// never pushes out a live `done` mark.
+#[tokio::test]
+async fn an_expired_snooze_never_pushes_a_done_mark_out() {
+    let store = store().await;
+    let user = Uuid::new_v4().to_string();
+    let past = OffsetDateTime::now_utc() - time::Duration::hours(1);
+    store
+        .set_inbox_mark(&user, "old-done", Some(("done", None)), 2)
+        .await
+        .unwrap();
+    store
+        .set_inbox_mark(&user, "ran-out", Some(("snoozed", Some(past))), 2)
+        .await
+        .unwrap();
+    store
+        .set_inbox_mark(&user, "new-done", Some(("done", None)), 2)
+        .await
+        .unwrap();
+    let mut left: Vec<String> = store
+        .inbox_marks_of(&user)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|m| m.item_key)
+        .collect();
+    left.sort();
+    assert_eq!(left, ["new-done", "old-done"]);
+}
