@@ -2673,6 +2673,18 @@ export interface GearConfigField {
   derived: boolean;
 }
 
+/** An organization's plain explanation of a gear: what it is, what a
+ *  product gets from it, when to pick it. `generated` by a model, or
+ *  `edited` by a person -- a model never writes over a person's words unless
+ *  asked to. */
+export interface GearExplanation {
+  /** The gear's engine id, as the catalogue keys it. */
+  gear_id: string;
+  text: string;
+  source: "generated" | "edited";
+  updated_at: string;
+}
+
 /** A gear's config schema, keyed by the name it was asked for. */
 export interface GearConfigSchema {
   gear: string;
@@ -2798,6 +2810,13 @@ export interface SpecQualityVerdict {
   recognised?: boolean | null;
   /** What the detector found, each placed in the text. */
   findings?: SpecFindingItem[];
+}
+
+/** `path` naming the organization on screen, for a route that keeps data per
+ *  organization; `path` itself when none is known. The path stays one literal,
+ *  so the application map (scripts/prototype-api-map.mjs) reads it whole. */
+function withOrganization(path: string): string {
+  return `${path}${orgQuery(currentOrganization, path.includes("?") ? "&" : "?")}`;
 }
 
 /** `?organization_id=` for a reports call, or nothing when no organization is known. */
@@ -4982,6 +5001,29 @@ export const api = {
     request<{ catalogue: GearCatalogue; corpus_ref: string; corpus_commit?: string | null }>(
       `/studio-product/v1/gearbox/catalogue`,
       token,
+    ),
+  /** The organization's plain explanations of gears, by engine id. Kept
+   *  per organization: the one on screen is named. */
+  gearExplanations: (token: string) =>
+    request<{ items: GearExplanation[]; total: number }>(
+      withOrganization(`/studio-product/v1/gear-explanations`),
+      token,
+    ),
+  /** Keep a person's explanation of a gear (marked `edited`). */
+  updateGearExplanation: (token: string, gearId: string, text: string) =>
+    request<GearExplanation>(
+      withOrganization(`/studio-product/v1/gear-explanations/${encodeURIComponent(gearId)}`),
+      token,
+      { method: "PUT", body: JSON.stringify({ text }) },
+    ),
+  /** Have a model explain a gear on the caller's own key, and keep it. 400
+   *  `EXPLANATION_EDITED` over a person's words unless `force`; 400
+   *  `PROVIDER_KEY_REQUIRED` without a model key. */
+  generateGearExplanation: (token: string, gearId: string, force = false) =>
+    request<GearExplanation>(
+      withOrganization(`/studio-product/v1/gear-explanations/${encodeURIComponent(gearId)}/generations`),
+      token,
+      { method: "POST", body: JSON.stringify({ force }) },
     ),
   /** Whether product previews can run, and against which gear corpus. */
   gearboxStatus: (token: string) =>

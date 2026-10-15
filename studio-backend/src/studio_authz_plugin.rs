@@ -692,10 +692,11 @@ fn is_access_config_write(request: &EvaluationRequest) -> bool {
 /// with the tenant clamp -- "you are a member" -- so without this a member
 /// could unprotect a production environment, or forge a deployment record,
 /// by writing the document directly (ADR-0043).
-const GEAR_HELD_METADATA: [&str; 3] = [
+const GEAR_HELD_METADATA: [&str; 4] = [
     crate::environments::ENVIRONMENTS_METADATA_TYPE,
     crate::environments::DEPLOYMENTS_METADATA_TYPE,
     crate::organizations::logo::LOGO_METADATA_TYPE,
+    crate::product::EXPLANATIONS_METADATA_TYPE,
 ];
 
 /// Is this a caller's own write to a document only its gear writes?

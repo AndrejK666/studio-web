@@ -4,25 +4,37 @@
  * choices; the selected part on the right, with what it is, why one adds
  * it, its choices and its settings. What the engine added by itself sits in
  * its own zone, and one line on top says what is left to do.
+ *
+ * Every gear reads in plain words: the organization's explanation when it
+ * has one (`/studio-product/v1/gear-explanations`), else its gear.gdl
+ * description. A model writes one on the person's own key, a person can
+ * edit it, and "Explain all" fills in every gear that says nothing yet.
  */
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
-import { api, type GearConfig, type ProductPreview } from "./api";
+import { api, type GearConfig, type GearExplanation, type ProductPreview } from "./api";
 import { BringsWithIt } from "./gear-brings-view";
 import { GearConfigForm } from "./gear-config-form";
 import {
   choosePlugin,
   compose,
+  explanationIndex,
   gearFacts,
+  inBatches,
   indexCatalogue,
   offers,
+  plainWords,
   removePart,
   subsystemOf,
   subsystems,
   todos,
+  unexplained,
+  type BatchResult,
   type CatalogueIndex,
+  type ExplanationIndex,
   type Part,
 } from "./product-configurator";
+import { errText, problemOf } from "./problem";
 import { gearLabel } from "./product";
 
 /** What the map needs of the project's product. */
@@ -55,6 +67,57 @@ export function useGearCatalogue(token: string, on: boolean): Catalogue {
     };
   }, [token, on]);
   return read;
+}
+
+/** The organization's explanations of gears, and a way to keep a new one. */
+type Explanations = {
+  byId: ExplanationIndex;
+  /** Keep what the server answered for one gear. */
+  put: (e: GearExplanation) => void;
+  /** Why they could not be read; the tiles then show descriptions only. */
+  error: string | null;
+};
+
+/** The organization's explanations, read once per token. */
+export function useGearExplanations(token: string): Explanations {
+  const [byId, setById] = useState<Map<string, GearExplanation>>(() => new Map());
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .gearExplanations(token)
+      .then((r) => {
+        if (!live) return;
+        setById(explanationIndex(r.items));
+        setError(null);
+      })
+      .catch((e: unknown) => live && setError(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [token]);
+  const put = useCallback(
+    (e: GearExplanation) => setById((current) => new Map(current).set(e.gear_id, e)),
+    [],
+  );
+  return { byId, put, error };
+}
+
+/** The kind of a refused precondition (`PROVIDER_KEY_REQUIRED`, …), if any. */
+function refusalKind(e: unknown): string | undefined {
+  return problemOf(e)?.context.violations?.find((v) => v.type_)?.type_;
+}
+
+/** Why a gear could not be explained, for a person. */
+function explainError(e: unknown): string {
+  switch (refusalKind(e)) {
+    case "PROVIDER_KEY_REQUIRED":
+      return "Explaining needs a model key: add one to your profile, or connect one under Connections.";
+    case "EXPLANATION_EDITED":
+      return "Someone wrote this explanation by hand; it was kept.";
+    default:
+      return errText(e);
+  }
 }
 
 function Cog({ size = 24 }: { size?: number }) {
@@ -102,6 +165,7 @@ export function ProductConfigurator({
   onOpen?: (name: string) => void;
 }) {
   const { picks, config } = product;
+  const explanations = useGearExplanations(token);
   const [selected, setSelected] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const composition = useMemo(() => compose(index, picks, config, preview), [index, picks, config, preview]);
@@ -177,7 +241,14 @@ export function ProductConfigurator({
       </div>
 
       <div className="pm-work">
-        <Palette token={token} index={index} product={product} onAdd={add} onDrag={setDragging} />
+        <Palette
+          token={token}
+          index={index}
+          product={product}
+          explanations={explanations}
+          onAdd={add}
+          onDrag={setDragging}
+        />
 
         <div className="pm-box">
           <div className="pm-h">Product map</div>
@@ -207,7 +278,13 @@ export function ProductConfigurator({
                   </header>
                   {parts.length === 0 && <div className="pm-hint">Drop it here</div>}
                   {parts.map((p) => (
-                    <Tile key={p.name} part={p} selected={p.name === selected} onSelect={() => setSelected(p.name)} />
+                    <Tile
+                      key={p.name}
+                      part={p}
+                      words={plainWords(index.find(p.name), explanations.byId)}
+                      selected={p.name === selected}
+                      onSelect={() => setSelected(p.name)}
+                    />
                   ))}
                 </section>
               );
@@ -248,6 +325,7 @@ export function ProductConfigurator({
           index={index}
           part={chosen}
           product={product}
+          explanations={explanations}
           busy={busy}
           onOpen={onOpen}
           onRemove={(p) => {
@@ -260,14 +338,25 @@ export function ProductConfigurator({
   );
 }
 
-function Tile({ part, selected, onSelect }: { part: Part; selected: boolean; onSelect: () => void }) {
+function Tile({
+  part,
+  words,
+  selected,
+  onSelect,
+}: {
+  part: Part;
+  /** The gear in plain words: its explanation, else its description. */
+  words: string | null;
+  selected: boolean;
+  onSelect: () => void;
+}) {
   const open = part.unset.length > 0 || part.slots.some((s) => s.chosen.length === 0 || s.unset.length > 0);
   return (
     <button type="button" className={`pm-tile${selected ? " selected" : ""}`} onClick={onSelect} data-part={part.name}>
       {open && <span className="pm-flag" title="Needs something from you" />}
       <Cog size={24} />
       <b>{part.label}</b>
-      <small>{part.description ?? (part.plugsInto ? `Plugs into ${part.plugsInto}` : gearLabel(part.name))}</small>
+      <small>{words ?? (part.plugsInto ? `Plugs into ${part.plugsInto}` : gearLabel(part.name))}</small>
       {part.slots.length > 0 && (
         <span className="pm-sockets">
           {part.slots.map((s) => {
@@ -289,12 +378,14 @@ function Palette({
   token,
   index,
   product,
+  explanations,
   onAdd,
   onDrag,
 }: {
   token: string;
   index: CatalogueIndex;
   product: ConfiguredProduct;
+  explanations: Explanations;
   onAdd: (name: string) => void;
   onDrag: (name: string | null) => void;
 }) {
@@ -306,6 +397,7 @@ function Palette({
   return (
     <div className="pm-box pm-palette" aria-label="Parts you can add">
       <div className="pm-h">Parts you can add</div>
+      <ExplainAll token={token} index={index} explanations={explanations} />
       <input
         type="search"
         id="pm-find"
@@ -344,7 +436,9 @@ function Palette({
                 Add
               </button>
               <p>
-                {o.description || gearFacts(index, index.find(o.name)!).join(" ") || gearLabel(o.name)}
+                {plainWords(index.find(o.name), explanations.byId) ||
+                  gearFacts(index, index.find(o.name)!).join(" ") ||
+                  gearLabel(o.name)}
                 {o.maturity && o.maturity !== "stable" ? ` · ${o.maturity}` : ""}{" "}
                 <button type="button" className="pm-link" style={{ fontSize: 11 }} onClick={() => setLooking(looking === o.name ? null : o.name)}>
                   what comes with it
@@ -374,6 +468,7 @@ function Inspector({
   index,
   part,
   product,
+  explanations,
   busy,
   onOpen,
   onRemove,
@@ -382,6 +477,7 @@ function Inspector({
   index: CatalogueIndex;
   part: Part | null;
   product: ConfiguredProduct;
+  explanations: Explanations;
   busy: boolean;
   onOpen?: (name: string) => void;
   onRemove: (part: Part) => void;
@@ -426,9 +522,7 @@ function Inspector({
           </>
         )}
       </div>
-      <div className="pm-why">
-        {part.description ?? "Its gear.gdl does not say what it is for yet. What is known of it:"}
-      </div>
+      <Explanation key={part.id} token={token} gearId={part.id} description={part.description} explanations={explanations} />
       {facts.length > 0 && (
         <ul className="pm-facts">
           {facts.map((f) => (
@@ -456,7 +550,9 @@ function Inspector({
                 <b>{o.label}</b>
                 {o.name === s.recommended && <em>recommended</em>}
               </span>
-              {o.description && <small>{o.description}</small>}
+              {plainWords(index.find(o.name), explanations.byId) && (
+                <small>{plainWords(index.find(o.name), explanations.byId)}</small>
+              )}
             </label>
           ))}
         </section>
@@ -476,6 +572,199 @@ function Inspector({
           Remove from the product
         </button>
       </div>
+    </div>
+  );
+}
+
+/** A gear in plain words, in the Inspector: what it says now and who wrote
+ *  it, "Explain in plain words" (a model, on the person's key) and "Edit". */
+function Explanation({
+  token,
+  gearId,
+  description,
+  explanations,
+}: {
+  token: string;
+  gearId: string;
+  description: string | null;
+  explanations: Explanations;
+}) {
+  const kept = explanations.byId.get(gearId) ?? null;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const words = kept?.text.trim() || description;
+
+  const generate = async () => {
+    // A person's words are replaced only when they say so.
+    const force = kept?.source === "edited";
+    if (force && !window.confirm("Someone wrote this explanation by hand. Replace it with a generated one?")) return;
+    setWorking(true);
+    setError(null);
+    try {
+      explanations.put(await api.generateGearExplanation(token, gearId, force));
+    } catch (e) {
+      setError(explainError(e));
+    } finally {
+      setWorking(false);
+    }
+  };
+  const save = async () => {
+    setWorking(true);
+    setError(null);
+    try {
+      explanations.put(await api.updateGearExplanation(token, gearId, draft));
+      setEditing(false);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 6 }} data-explanation={gearId}>
+      {editing ? (
+        <>
+          <textarea
+            aria-label="Explanation in plain words"
+            rows={4}
+            maxLength={1200}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="What it is, what a product gets from it, when to pick it."
+          />
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" className="primary" disabled={working || !draft.trim()} onClick={() => void save()}>
+              {working ? "Saving…" : "Save"}
+            </button>
+            <button type="button" className="ghost" disabled={working} onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="pm-why">
+          {words ?? "Its gear.gdl does not say what it is for yet. What is known of it:"}
+        </div>
+      )}
+      {!editing && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, flexWrap: "wrap" }}>
+          {kept && (
+            <span style={{ color: "var(--muted-foreground)" }} data-source={kept.source}>
+              {kept.source === "edited" ? "Written by a person" : "Written by a model"}
+            </span>
+          )}
+          <button type="button" className="pm-link" disabled={working} onClick={() => void generate()}>
+            {working ? "Explaining…" : kept ? "Explain again" : "Explain in plain words"}
+          </button>
+          <button
+            type="button"
+            className="pm-link"
+            disabled={working}
+            onClick={() => {
+              setDraft(words ?? "");
+              setEditing(true);
+            }}
+          >
+            Edit
+          </button>
+        </div>
+      )}
+      {error && <div style={{ color: "var(--destructive)", fontSize: 12 }}>{error}</div>}
+    </div>
+  );
+}
+
+/** How many gears are explained at once by "Explain all". */
+const EXPLAIN_AT_ONCE = 3;
+
+/** "Explain all without description": a model explains every gear that says
+ *  nothing yet, three at a time, with progress and a way to stop. */
+function ExplainAll({
+  token,
+  index,
+  explanations,
+}: {
+  token: string;
+  index: CatalogueIndex;
+  explanations: Explanations;
+}) {
+  const left = useMemo(() => unexplained(index, explanations.byId), [index, explanations.byId]);
+  const [run, setRun] = useState<{ total: number; progress: BatchResult; stopping: boolean } | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const stop = useRef(false);
+
+  const start = async () => {
+    const gears = left;
+    stop.current = false;
+    setSaid(null);
+    setRun({ total: gears.length, progress: { done: 0, failed: 0, skipped: 0 }, stopping: false });
+    let firstError: string | null = null;
+    const result = await inBatches(
+      gears,
+      EXPLAIN_AT_ONCE,
+      async (g) => {
+        try {
+          explanations.put(await api.generateGearExplanation(token, g.id));
+        } catch (e) {
+          firstError ??= explainError(e);
+          // Without a key every other gear fails the same way: stop asking.
+          if (refusalKind(e) === "PROVIDER_KEY_REQUIRED") stop.current = true;
+          throw e;
+        }
+      },
+      {
+        stop: () => stop.current,
+        onProgress: (progress) => setRun((r) => (r ? { ...r, progress } : r)),
+      },
+    );
+    setRun(null);
+    const parts = [`Explained ${result.done} of ${gears.length}.`];
+    if (result.failed > 0) parts.push(`${result.failed} failed${firstError ? `: ${firstError}` : "."}`);
+    if (result.skipped > 0) parts.push(`${result.skipped} not tried.`);
+    setSaid(parts.join(" "));
+  };
+
+  if (!run && left.length === 0 && !said) return null;
+  return (
+    <div style={{ display: "grid", gap: 4, fontSize: 12 }} data-explain-all>
+      {run ? (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <progress
+            max={run.total}
+            value={run.progress.done + run.progress.failed}
+            aria-label="Explaining gears"
+            style={{ flex: 1 }}
+          />
+          <span>
+            {run.progress.done + run.progress.failed} / {run.total}
+          </span>
+          <button
+            type="button"
+            className="ghost"
+            style={{ fontSize: 11, padding: "0 6px" }}
+            disabled={run.stopping}
+            onClick={() => {
+              stop.current = true;
+              setRun((r) => (r ? { ...r, stopping: true } : r));
+            }}
+          >
+            {run.stopping ? "Stopping…" : "Stop"}
+          </button>
+        </div>
+      ) : (
+        left.length > 0 && (
+          <button type="button" className="ghost" style={{ fontSize: 12 }} onClick={() => void start()}>
+            Explain all without description ({left.length})
+          </button>
+        )
+      )}
+      {said && <span style={{ color: "var(--muted-foreground)" }}>{said}</span>}
+      {explanations.error && !run && (
+        <span style={{ color: "var(--muted-foreground)" }}>Explanations could not be read: {explanations.error}</span>
+      )}
     </div>
   );
 }

@@ -19,6 +19,10 @@ import {
   subsystemOrder,
   subsystems,
   todos,
+  explanationIndex,
+  inBatches,
+  plainWords,
+  unexplained,
 } from "./product-configurator";
 
 const AUTHN = "cf.toolkit.plugins.plugin.v1~cf.core.authn_resolver.plugin.v1~";
@@ -205,5 +209,58 @@ describe("a crate that holds a gear and its plugins", () => {
     const picks = ["cf-gears-mini-chat", "static-mini-chat-audit-plugin", "static-mini-chat-model-policy-plugin"];
     const [part] = compose(chat, picks, {}).parts;
     expect(part.slots.map((s) => s.chosen)).toEqual([["static-mini-chat-audit-plugin"], ["static-mini-chat-model-policy-plugin"]]);
+  });
+});
+
+describe("gears in plain words", () => {
+  const explanations = explanationIndex([
+    { gear_id: "authn-resolver", text: " Lets people sign in. ", source: "generated", updated_at: "2026-10-15T00:00:00Z" },
+    { gear_id: "api-gateway", text: "The front door.", source: "edited", updated_at: "2026-10-15T00:00:00Z" },
+  ]);
+
+  it("reads the explanation first, then the catalogue's description, then nothing", () => {
+    expect(plainWords(index.find("authn-resolver"), explanations)).toBe("Lets people sign in.");
+    expect(plainWords(index.find("api-gateway"), explanations)).toBe("The front door.");
+    expect(plainWords(index.find("api-gateway"), explanationIndex([]))).toBe("Routes requests to gears.");
+    expect(plainWords(index.find("rest-host"), explanations)).toBeNull();
+    expect(plainWords(undefined, explanations)).toBeNull();
+  });
+
+  it("lists, for Explain all, the gears with neither a description nor an explanation", () => {
+    expect(unexplained(index, explanations).map((g) => g.id)).toEqual([
+      "oidc-authn-plugin",
+      "rest-host",
+      "static-authn-plugin",
+    ]);
+  });
+
+  it("runs at most `limit` at a time, counts failures, and stops starting when told", async () => {
+    let running = 0;
+    let most = 0;
+    const seen: number[] = [];
+    const progress: number[] = [];
+    const r = await inBatches(
+      [1, 2, 3, 4, 5, 6, 7],
+      3,
+      async (n) => {
+        running++;
+        most = Math.max(most, running);
+        await new Promise((ok) => setTimeout(ok, 1));
+        running--;
+        seen.push(n);
+        if (n === 4) throw new Error("no");
+      },
+      { onProgress: (p) => progress.push(p.done + p.failed) },
+    );
+    expect(most).toBe(3);
+    expect(r).toEqual({ done: 6, failed: 1, skipped: 0 });
+    expect([...seen].sort()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(progress.at(-1)).toBe(7);
+
+    let stopped = false;
+    const s = await inBatches([1, 2, 3, 4, 5], 1, async (n) => {
+      if (n === 2) stopped = true;
+    }, { stop: () => stopped });
+    expect(s).toEqual({ done: 2, failed: 0, skipped: 3 });
   });
 });

@@ -14,6 +14,7 @@
 //! `gear.gdl` says) and a project's gear repository, both through
 //! [`port`].
 
+mod explanations;
 mod gearbox;
 mod new_gear;
 pub mod port;
@@ -34,6 +35,10 @@ use tracing::info;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
 use service::ProductService;
+
+/// The metadata row an organization's plain explanations of gears are kept
+/// in. Only this gear writes it (`studio_authz_plugin::GEAR_HELD_METADATA`).
+pub use explanations::EXPLANATIONS_METADATA_TYPE;
 
 #[toolkit::gear(
     name = "studio-product",
