@@ -467,13 +467,15 @@ decision, `POST /registry/{name}/decisions`, checked against one table
 |---|---|---|---|
 | `register` | `candidate`, `declared` | `registered` | `owner` (required unless the entry has one), and `kind`, `category`, `capabilities` |
 | `reject` | `candidate`, `declared` | `rejected` | `reason` (required) |
-| `deprecate` | `registered`, `published` | `deprecated` | `replaced_by`: an existing live entry, optional |
+| `deprecate` | `registered`, `extracted`, `published` | `deprecated` | `replaced_by`: an existing live entry, optional |
 | `restore` | `rejected` | `declared`, or `candidate` when nothing declares it | — |
-| `restore` | `deprecated` | `registered` | clears `replaced_by` |
-| `request_publication` | `registered` | `registered` | `version` and `reason`, optional; joins the platform's queue (see Publishing) |
-| `publish` | `registered` | `registered` | a platform curator, on an open request: opens a pull request into the platform's gear repository and records its `contribution` (see Publishing) |
-| `decline_publication` | `registered` | `registered` | `reason` required; a platform curator; the request leaves the queue |
-| `mark_published` | `registered` | `published` | `version`, optional; a platform curator only |
+| `restore` | `deprecated` | `registered`, or `extracted` when its extraction completed | clears `replaced_by` |
+| `extract` | `registered` | `registered` | opens Extract's two pull requests and records the `extraction` (see Extract); `dry_run` answers `extract_preview` |
+| `complete_extraction` | `registered`, with an open extraction | `extracted` | both pull requests merged; tags `<gear>/v0.1.0`; `version` set |
+| `request_publication` | `registered`, `extracted` | unchanged | `version` and `reason`, optional; joins the platform's queue (see Publishing) |
+| `publish` | `registered`, `extracted` | unchanged | a platform curator, on an open request: opens a pull request into the platform's gear repository and records its `contribution` (see Publishing) |
+| `decline_publication` | `registered`, `extracted` | unchanged | `reason` required; a platform curator; the request leaves the queue |
+| `mark_published` | `registered`, `extracted` | `published` | `version`, optional; a platform curator only |
 | `merge` | any state but `merged` | `merged` | `merge_into`: an existing live entry |
 | `edit` | any | unchanged | `owner`, `kind`, `category`, `capabilities`, `description` |
 
@@ -688,6 +690,41 @@ Comments, strings and character literals are blanked before paths are read,
 keeping line numbers. On this repository every backend gear fails
 `reaches_out` today: `org_scope`, `pagination`, `graph_error` and
 `test_pg` are shared code that would stay behind.
+
+**Extract (ADR-0044 §1, phase 2).** `extract` on a `registered` Rust gear
+(`registry_extract.rs`; an organization administrator) runs the readiness
+check again and refuses what it blocks (`REGISTRY_NOT_READY`, each blocking
+check named), then opens two pull requests on `extract/<name>`:
+
+- into the **organization's gear repository** (refused without one,
+  `ORGANIZATION_NO_GEAR_REPOSITORY`), written as the organization: the gear as
+  its own crate at `gears/<name>/`. A crate is copied as it is; a module's
+  `mod.rs` (or `<name>.rs`) becomes `src/lib.rs`, its other files `src/…`, its
+  `crate::<module>::` paths `crate::`, its `gear.gdl`/`gear.toml`/README sit
+  beside a `Cargo.toml` written from the dependencies the readiness check
+  listed (`[package] name` = the entry's name in kebab case, `version
+  0.1.0`, the project's edition);
+- into the **project it leaves**, through the occurrence's own connection
+  (never an inherited one, `CONNECTION_NOT_OWNED`) and acting in the
+  project's tenant: the module's files deleted (`ConnectorDriver::
+  commit_changes`, GitHub's git-data tree with null entries), the crate's
+  `Cargo.toml` depending on `<name> = { git = "<gear repository>", tag =
+  "<name>/v0.1.0" }`, and the parent module's `mod <name>;` replaced by
+  `use <crate> as <name>;` (visibility kept), so the project's other code
+  still compiles.
+
+The entry stays `registered` with its `extraction` recorded (both pull
+requests, the crate, the tag, who and when); a second `extract` is refused
+while it is open (`EXTRACTION_OPEN`). `complete_extraction` checks the crate's
+`Cargo.toml` is on the gear repository's base branch and the moved file is
+gone from the project's (`EXTRACTION_NOT_MERGED`, naming what is not), tags the
+gear repository's tip `<name>/v0.1.0` (`ConnectorDriver::create_tag`), and
+moves the entry to `extracted` with `version: 0.1.0`. Once extracted, the
+walk finds it in the organization's gear repository, the project that used
+to declare it is one of its consumers, and the Product tab offers it as an
+organization gear (`port::organization_gears_of` takes `extracted`). FrontX
+packages and kits are refused (`REGISTRY_EXTRACT_RUST_ONLY`); a crate leaving
+a workspace is copied, and the workspace's `members` change by hand.
 
 **Suggestions (P4).** `POST /registry/{name}/suggest` (same rule as
 decisions, `component.registry`) asks a model, on the caller's own key, what
@@ -930,7 +967,7 @@ than one corpus are later phases.
 | `POST` | `/platform/sync` | Queue a `catalog.sync` run in the root tenant that reads the platform's stored sources; 202 with `run_id`. 403 for anyone but a platform administrator | unstable |
 | `GET` | `/registry` | The registry: `state`, `project_id`, `q` narrow it, `offset`/`limit` page it; `{items: RegistryEntryDto[], total}`, each entry with its occurrences | unstable |
 | `GET` | `/registry/{name}` | One entry (`RegistryEntryDto`) with its occurrences and its `decisions`, newest first; 404 when absent | unstable |
-| `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?, dry_run?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `mark_published`, `merge` or `edit`, checked against the lifecycle table and recorded with who made it (`by`, `by_name`). `publish` opens the contribution pull request (400 `failed_precondition` with no platform gear repository, nothing declaring the entry, a directory over 200 files / 2 MiB, or a repository read through a connection the organization only inherits, `CONNECTION_NOT_OWNED`; 503 without studio-product); with `dry_run: true` it writes and records nothing and answers `publish_preview` `{repo, base_branch, branch, path, files, skipped, title}` (a dry run is a publish's only; 400 otherwise); `mark_published` is a platform administrator's only. Answers the entry with its decisions, `contribution` and `consumers`. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
+| `POST` | `/registry/{name}/decisions` | A person's decision `{action, reason?, owner?, kind?, category?, capabilities?, description?, replaced_by?, merge_into?, version?, dry_run?}`: `register`, `reject`, `deprecate`, `restore`, `publish`, `mark_published`, `merge`, `edit`, `extract` or `complete_extraction`, checked against the lifecycle table and recorded with who made it (`by`, `by_name`). `publish` opens the contribution pull request (400 `failed_precondition` with no platform gear repository, nothing declaring the entry, a directory over 200 files / 2 MiB, or a repository read through a connection the organization only inherits, `CONNECTION_NOT_OWNED`; 503 without studio-product); with `dry_run: true` it writes and records nothing and answers `publish_preview` `{repo, base_branch, branch, path, files, skipped, title}` (a dry run is a publish's or an extract's only; 400 otherwise -- an `extract` dry run answers `extract_preview` `{crate_name, version, tag, gear_repo, gear_base, gear_path, gear_files, source_repo, source_base, source_files, source_deleted, branch, skipped, manifest}`; Extract's refusals are listed under Extract); `mark_published` is a platform administrator's only. Answers the entry with its decisions, `contribution` and `consumers`. 403 for anyone but an organization administrator (`component.registry`); 400 `failed_precondition` for a move the state does not allow | unstable |
 | `GET` | `/platform/publication-requests` | The platform's queue: every organization's open `request_publication`, oldest first, `{items: [{organization_id, organization_name, name, version, reason, requested_by, requested_by_name, at}]}`. 403 `PLATFORM_CURATOR_REQUIRED` for anyone but a platform curator | unstable |
 | `POST` | `/platform/publication-requests/{organization_id}/{name}/decisions` | A curator's answer, `publish` (`dry_run` previews) or `decline_publication` (`reason`), recorded on the organization's entry; 404 without an open request; 400 for another action | unstable |
 | `GET` / `PUT` | `/platform/curators` | The platform's gear curators `{items: [{id, name}], may_manage}`; a curator reads, a platform administrator replaces (403 `PLATFORM_ADMIN_REQUIRED`) | unstable |

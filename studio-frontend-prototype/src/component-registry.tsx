@@ -29,6 +29,7 @@ import type {
   RegistryDecisionInput,
   RegistryDeclareResult,
   RegistryEntry,
+  RegistryExtractPreview,
   RegistryProjectWalk,
   RegistryReadiness,
   RegistrySuggestion,
@@ -53,6 +54,9 @@ import {
   deprecationImpact,
   detectedProjects,
   evidenceLines,
+  extractPreviewLines,
+  extractionLine,
+  extractionOpen,
   filterEntries,
   isDuplicated,
   isOrphaned,
@@ -509,7 +513,26 @@ function RegistryRow({
               </div>
             )}
             <SuggestDescription token={token} entry={e} onApplied={onDecided} />
-            <ExtractReadiness token={token} entry={e} />
+            {e.extraction && (
+              <div data-registry-extraction>
+                <b>{extractionLine(e.extraction)}</b>
+                <div style={{ opacity: 0.8 }}>
+                  {[
+                    ["into the gear repository", e.extraction.gear_pr_url],
+                    ["into the project", e.extraction.source_pr_url],
+                  ].map(([what, url]) =>
+                    url ? (
+                      <span key={what ?? ""} style={{ marginRight: 8 }}>
+                        <a href={url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}>
+                          pull request {what}
+                        </a>
+                      </span>
+                    ) : null,
+                  )}
+                </div>
+              </div>
+            )}
+            <ExtractReadiness token={token} entry={e} onChanged={onDecided} />
             <div style={{ marginTop: 4 }}>
               <b>Found in</b>
             </div>
@@ -1132,10 +1155,57 @@ function SuggestDescription({
 /** Ready to leave its project? (ADR-0044 §1, phase 1): the checks that come
  *  before Extract, read from the component's code on request. Each failure
  *  names its files and lines; nothing is written. */
-function ExtractReadiness({ token, entry: e }: { token: string; entry: RegistryEntry }) {
+function ExtractReadiness({
+  token,
+  entry: e,
+  onChanged,
+}: {
+  token: string;
+  entry: RegistryEntry;
+  onChanged?: () => void;
+}) {
   const [result, setResult] = useState<RegistryReadiness | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<RegistryExtractPreview | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  // Extract (ADR-0044 §1): a preview first, then both pull requests; once
+  // both are merged, completing it checks them and tags the version.
+  const extract = async (dryRun: boolean) => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const after = await api.decideRegistry(token, e.name, { action: "extract", ...(dryRun ? { dry_run: true } : {}) });
+      if (dryRun) {
+        setPreview(after.extract_preview ?? null);
+      } else {
+        setPreview(null);
+        setDone(after.extraction ? extractionLine(after.extraction) : "Extraction opened.");
+        onChanged?.();
+      }
+    } catch (cause) {
+      setError(decisionRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const complete = async () => {
+    setBusy(true);
+    setError(null);
+    setDone(null);
+    try {
+      const after = await api.decideRegistry(token, e.name, { action: "complete_extraction" });
+      setDone(after.extraction ? extractionLine(after.extraction) : "Extracted.");
+      onChanged?.();
+    } catch (cause) {
+      setError(decisionRefusal(cause instanceof ApiError ? cause.status : undefined, errText(cause)));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const open = extractionOpen(e);
 
   const check = async () => {
     setBusy(true);
@@ -1202,6 +1272,44 @@ function ExtractReadiness({ token, entry: e }: { token: string; entry: RegistryE
               {result.dependencies.map((d) => (d.spec ? d.name : `${d.name} (not in the crate's)`)).join(", ")}
             </div>
           )}
+          {result.ready && e.state === "registered" && !open && (
+            <div style={{ marginTop: 6 }} data-registry-extract>
+              <button type="button" disabled={busy} onClick={() => void extract(true)}>
+                {preview ? "Preview again" : "Extract…"}
+              </button>{" "}
+              <span className="hint" style={{ fontSize: 12 }}>
+                moves it into the organization&apos;s gear repository as its own crate, with a pull request on each side
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      {preview && (
+        <div style={{ marginTop: 4, padding: 6, fontSize: 12 }} data-registry-extract-preview>
+          {extractPreviewLines(preview).map((l) => (
+            <div key={l}>{l}</div>
+          ))}
+          {preview.manifest && (
+            <pre style={{ margin: "4px 0", maxHeight: 160, overflow: "auto" }}>{preview.manifest}</pre>
+          )}
+          <button type="button" className="primary" disabled={busy} onClick={() => void extract(false)}>
+            Open both pull requests
+          </button>
+        </div>
+      )}
+      {open && e.state === "registered" && (
+        <div style={{ marginTop: 6 }} data-registry-extract-complete>
+          <button type="button" disabled={busy} onClick={() => void complete()}>
+            {ACTION_LABEL.complete_extraction}
+          </button>{" "}
+          <span className="hint" style={{ fontSize: 12 }}>
+            checks both pull requests are merged, tags the version, and marks it extracted
+          </span>
+        </div>
+      )}
+      {done && (
+        <div className="hint" style={{ fontSize: 12 }} data-registry-extract-done>
+          {done}
         </div>
       )}
     </div>

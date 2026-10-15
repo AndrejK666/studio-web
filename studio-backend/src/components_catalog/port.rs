@@ -454,13 +454,13 @@ pub fn organization_gears_of(
     Map<String, Value>,
     std::collections::BTreeMap<String, String>,
 ) {
-    use super::registry::{STATE_PUBLISHED, STATE_REGISTERED};
+    use super::registry::{STATE_EXTRACTED, STATE_PUBLISHED, STATE_REGISTERED};
     let mut nodes = Vec::new();
     let mut profiles = Map::new();
     let mut places = std::collections::BTreeMap::new();
     for entry in entries {
         let state = entry.entry.state.as_str();
-        if state != STATE_REGISTERED && state != STATE_PUBLISHED {
+        if state != STATE_REGISTERED && state != STATE_EXTRACTED && state != STATE_PUBLISHED {
             continue;
         }
         // A product is composed of gears: a registered FrontX package or kit

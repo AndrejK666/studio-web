@@ -35,7 +35,9 @@ use toolkit_security::SecurityContext;
 
 use super::candidates::kebab;
 use super::gts;
-use super::registry::{self, Contribution, OccurrenceRecord, RegistryEntry, STATE_REGISTERED};
+use super::registry::{
+    self, Contribution, OccurrenceRecord, RegistryEntry, STATE_EXTRACTED, STATE_REGISTERED,
+};
 use super::registry_decisions::{
     Action, DecideFailure, Decider, DecisionError, DecisionInput, DecisionRecord, transition,
 };
@@ -480,8 +482,10 @@ impl CatalogService {
             .registry_entry(ctx, wanted)
             .await?
             .ok_or_else(|| PublishFailure::Refused(PublishError::NotFound(wanted.to_owned())))?;
+        // An extracted gear is what the platform should get (ADR-0044 §5);
+        // a registered one still may.
         if transition(Action::Publish, &entry.entry.state, true).is_none()
-            || entry.entry.state != STATE_REGISTERED
+            || (entry.entry.state != STATE_REGISTERED && entry.entry.state != STATE_EXTRACTED)
         {
             return Err(PublishFailure::Refused(PublishError::NotRegistered {
                 state: entry.entry.state.clone(),

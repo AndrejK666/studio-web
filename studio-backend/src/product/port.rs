@@ -415,6 +415,37 @@ pub trait GearContributions: Send + Sync {
         files: &[DeclarationFile],
         text: &PullRequestText,
     ) -> anyhow::Result<DeclarationWritten>;
+
+    /// [`Self::contribute`], with `deleted` removed in the same commit: the
+    /// pull request Extract opens into the project a gear leaves
+    /// (ADR-0044). A writer that cannot delete refuses one that would.
+    async fn contribute_changes(
+        &self,
+        ctx: &SecurityContext,
+        target: &RepositoryTarget,
+        branch: &str,
+        files: &[DeclarationFile],
+        deleted: &[String],
+        text: &PullRequestText,
+    ) -> anyhow::Result<DeclarationWritten> {
+        if deleted.is_empty() {
+            return self.contribute(ctx, target, branch, files, text).await;
+        }
+        anyhow::bail!("this writer cannot delete files")
+    }
+
+    /// Tag the tip of the target's base branch as `tag` (Extract's version,
+    /// `<gear>/vX.Y.Z`); answers the commit tagged. A tag already there is
+    /// not an error.
+    async fn tag(
+        &self,
+        ctx: &SecurityContext,
+        target: &RepositoryTarget,
+        tag: &str,
+    ) -> anyhow::Result<String> {
+        let _ = (ctx, target, tag);
+        anyhow::bail!("this writer cannot create tags")
+    }
 }
 
 /// studio-product's [`GearContributions`]: the scaffold's writer.
@@ -454,6 +485,42 @@ impl GearContributions for Contributions {
             commit_sha: w.commit_sha,
             pr_url: w.pr_url,
         })
+    }
+
+    async fn contribute_changes(
+        &self,
+        ctx: &SecurityContext,
+        target: &RepositoryTarget,
+        branch: &str,
+        files: &[DeclarationFile],
+        deleted: &[String],
+        text: &PullRequestText,
+    ) -> anyhow::Result<DeclarationWritten> {
+        let files: Vec<super::scaffold::ScaffoldFile> = files
+            .iter()
+            .map(|f| super::scaffold::ScaffoldFile {
+                path: f.path.clone(),
+                content: f.content.clone(),
+            })
+            .collect();
+        let w = self
+            .service
+            .write_changes_to_repository(ctx, target, branch, &files, deleted, text)
+            .await?;
+        Ok(DeclarationWritten {
+            branch: w.branch,
+            commit_sha: w.commit_sha,
+            pr_url: w.pr_url,
+        })
+    }
+
+    async fn tag(
+        &self,
+        ctx: &SecurityContext,
+        target: &RepositoryTarget,
+        tag: &str,
+    ) -> anyhow::Result<String> {
+        self.service.tag_repository(ctx, target, tag).await
     }
 }
 

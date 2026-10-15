@@ -39,6 +39,32 @@ pub async fn write_scaffold(
     pr_title: Option<&str>,
     pr_body: Option<&str>,
 ) -> Result<ScaffoldWrite> {
+    write_changes(
+        repo,
+        base_branch,
+        branch,
+        files,
+        &[],
+        message,
+        pr_title,
+        pr_body,
+    )
+    .await
+}
+
+/// [`write_scaffold`], deleting `deleted` in the same commit: what code
+/// leaving a repository writes (ADR-0044 Extract).
+#[allow(clippy::too_many_arguments)]
+pub async fn write_changes(
+    repo: &Repository,
+    base_branch: &str,
+    branch: &str,
+    files: &[ScaffoldFile],
+    deleted: &[String],
+    message: &str,
+    pr_title: Option<&str>,
+    pr_body: Option<&str>,
+) -> Result<ScaffoldWrite> {
     let files: Vec<FileToWrite> = files
         .iter()
         .map(|f| FileToWrite {
@@ -47,7 +73,7 @@ pub async fn write_scaffold(
         })
         .collect();
     let commit_sha = repo
-        .commit_files(base_branch, branch, &files, message)
+        .commit_changes(base_branch, branch, &files, deleted, message)
         .await?;
     // Nothing to request when the commit is already on the base branch.
     let pr_url = match pr_title {

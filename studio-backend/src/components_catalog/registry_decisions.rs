@@ -14,7 +14,9 @@
 //! | `request_publication` | registered | registered, asking the platform to take it (optionally a `version` and a `reason`) |
 //! | `publish` | registered | registered, with the `contribution` it opened (ADR-0042 §4, `registry_publish.rs`; a platform curator, on a request) |
 //! | `decline_publication` | registered | registered, the request turned down (needs a `reason`; a platform curator) |
-//! | `mark_published` | registered | published (optionally a `version`; a platform curator) |
+//! | `mark_published` | registered, extracted | published (optionally a `version`; a platform curator) |
+//! | `extract` | registered | registered, with the two pull requests it opened (ADR-0044 §1, `registry_extract.rs`) |
+//! | `complete_extraction` | registered, extracting | extracted, at the version tagged once both are merged |
 //! | `merge` | anything but merged | merged, folded into `merge_into` |
 //! | `edit` | any | unchanged: owner, kind, category, capabilities, description |
 //!
@@ -45,7 +47,8 @@ use uuid::Uuid;
 use super::gts::{self, GtsEdge, GtsNode};
 use super::registry::{
     self, EntryRecord, OccurrenceRecord, Owner, RegistryEntry, STATE_CANDIDATE, STATE_DECLARED,
-    STATE_DEPRECATED, STATE_MERGED, STATE_PUBLISHED, STATE_REGISTERED, STATE_REJECTED,
+    STATE_DEPRECATED, STATE_EXTRACTED, STATE_MERGED, STATE_PUBLISHED, STATE_REGISTERED,
+    STATE_REJECTED,
 };
 use super::service::CatalogService;
 
@@ -62,10 +65,12 @@ pub enum Action {
     MarkPublished,
     Merge,
     Edit,
+    Extract,
+    CompleteExtraction,
 }
 
 /// Every action, as the route spells it.
-pub const ACTIONS: [&str; 10] = [
+pub const ACTIONS: [&str; 12] = [
     "register",
     "reject",
     "deprecate",
@@ -76,6 +81,8 @@ pub const ACTIONS: [&str; 10] = [
     "mark_published",
     "merge",
     "edit",
+    "extract",
+    "complete_extraction",
 ];
 
 impl Action {
@@ -91,6 +98,8 @@ impl Action {
             "mark_published" => Self::MarkPublished,
             "merge" => Self::Merge,
             "edit" => Self::Edit,
+            "extract" => Self::Extract,
+            "complete_extraction" => Self::CompleteExtraction,
             _ => return None,
         })
     }
@@ -107,6 +116,8 @@ impl Action {
             Self::MarkPublished => "mark_published",
             Self::Merge => "merge",
             Self::Edit => "edit",
+            Self::Extract => "extract",
+            Self::CompleteExtraction => "complete_extraction",
         }
     }
 }
@@ -118,7 +129,9 @@ pub fn transition(action: Action, from: &str, declared_somewhere: bool) -> Optio
     match (action, from) {
         (Action::Register, STATE_CANDIDATE | STATE_DECLARED) => Some(STATE_REGISTERED),
         (Action::Reject, STATE_CANDIDATE | STATE_DECLARED) => Some(STATE_REJECTED),
-        (Action::Deprecate, STATE_REGISTERED | STATE_PUBLISHED) => Some(STATE_DEPRECATED),
+        (Action::Deprecate, STATE_REGISTERED | STATE_EXTRACTED | STATE_PUBLISHED) => {
+            Some(STATE_DEPRECATED)
+        }
         (Action::Restore, STATE_REJECTED) => Some(if declared_somewhere {
             STATE_DECLARED
         } else {
@@ -128,11 +141,21 @@ pub fn transition(action: Action, from: &str, declared_somewhere: bool) -> Optio
         // Publishing opens a contribution; the platform's sync, or a
         // platform administrator's `mark_published`, makes it `published`.
         // Asking the platform, and its answer, leave the entry where it is.
-        (Action::RequestPublication | Action::DeclinePublication, STATE_REGISTERED) => {
-            Some(STATE_REGISTERED)
-        }
-        (Action::Publish, STATE_REGISTERED) => Some(STATE_REGISTERED),
-        (Action::MarkPublished, STATE_REGISTERED) => Some(STATE_PUBLISHED),
+        // An extracted gear is published the same way, and stays extracted
+        // until the platform has it (ADR-0044 §5).
+        (
+            Action::RequestPublication | Action::DeclinePublication | Action::Publish,
+            STATE_REGISTERED,
+        ) => Some(STATE_REGISTERED),
+        (
+            Action::RequestPublication | Action::DeclinePublication | Action::Publish,
+            STATE_EXTRACTED,
+        ) => Some(STATE_EXTRACTED),
+        (Action::MarkPublished, STATE_REGISTERED | STATE_EXTRACTED) => Some(STATE_PUBLISHED),
+        // Extract opens two pull requests and leaves the entry where it is;
+        // once both are merged and the version tagged, it is extracted.
+        (Action::Extract, STATE_REGISTERED) => Some(STATE_REGISTERED),
+        (Action::CompleteExtraction, STATE_REGISTERED) => Some(STATE_EXTRACTED),
         (Action::Merge, s) if s != STATE_MERGED => Some(STATE_MERGED),
         (Action::Edit, s) => registry::STATES.iter().find(|k| **k == s).copied(),
         _ => None,
@@ -155,7 +178,12 @@ pub struct DecisionInput {
     /// For `publish`: the pull request it opened into the platform's gear
     /// repository. Set by the service after opening it, never by a request.
     pub contribution: Option<super::registry::Contribution>,
-    /// For `publish` only: answer what would be written, write nothing.
+    /// For `extract`: the pull requests it opened; for
+    /// `complete_extraction`: the same, completed and tagged. Set by the
+    /// service, never by a request.
+    pub extraction: Option<super::registry::Extraction>,
+    /// For `publish` and `extract` only: answer what would be written,
+    /// write nothing.
     pub dry_run: bool,
     /// For `publish` only: the platform's gear repository it goes into, by
     /// source id (ADR-0046 phase 4); the one holding most gears of its
@@ -348,6 +376,39 @@ pub fn apply(
         }
         Action::Restore => {
             next.replaced_by = None;
+            // A deprecated gear that had left its project goes back to
+            // being extracted, not merely registered.
+            if from == STATE_DEPRECATED
+                && entry
+                    .extraction
+                    .as_ref()
+                    .is_some_and(|x| x.completed_at.is_some())
+            {
+                next.state = STATE_EXTRACTED.to_owned();
+            }
+        }
+        Action::Extract => {
+            let extraction = input.extraction.clone().ok_or(DecisionError::Invalid {
+                field: "action",
+                message: "extracting opens its two pull requests first".to_owned(),
+            })?;
+            details["extraction"] = json!(extraction);
+            next.extraction = Some(extraction);
+        }
+        Action::CompleteExtraction => {
+            let extraction = input
+                .extraction
+                .clone()
+                .filter(|x| x.completed_at.is_some())
+                .ok_or(DecisionError::Invalid {
+                    field: "action",
+                    message: "an extraction is complete once both of its pull requests are merged and its version is tagged".to_owned(),
+                })?;
+            next.version = Some(extraction.version.clone());
+            details["version"] = json!(extraction.version);
+            details["tag"] = json!(extraction.tag);
+            details["tagged_commit"] = json!(extraction.tagged_commit);
+            next.extraction = Some(extraction);
         }
         Action::Publish => {
             let contribution = input.contribution.clone().ok_or(DecisionError::Invalid {

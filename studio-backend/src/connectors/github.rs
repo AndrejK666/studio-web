@@ -1165,6 +1165,39 @@ impl ConnectorDriver for GitHubDriver {
         .await
     }
 
+    async fn commit_changes(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        deleted: &[String],
+        message: &str,
+    ) -> anyhow::Result<String> {
+        super::github_write::commit_changes(
+            self,
+            auth,
+            repo_full_path,
+            base_branch,
+            branch,
+            files,
+            deleted,
+            message,
+        )
+        .await
+    }
+
+    async fn create_tag(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        tag: &str,
+        sha: &str,
+    ) -> anyhow::Result<()> {
+        super::github_write::create_tag(self, auth, repo_full_path, tag, sha).await
+    }
+
     async fn create_repository(
         &self,
         auth: &ConnectionAuth,

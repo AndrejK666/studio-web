@@ -17,7 +17,7 @@ use crate::components_catalog::registry_suggest::{SuggestFailure, VocabularyEntr
 
 impl Catalog {
     /// Publish's writer, studio-product's: a 503 in an assembly without it.
-    fn contributions(&self) -> ApiResult<Arc<dyn crate::product::port::GearContributions>> {
+    pub(super) fn contributions(&self) -> ApiResult<Arc<dyn crate::product::port::GearContributions>> {
         self.hub
             .get::<dyn crate::product::port::GearContributions>()
             .map_err(|_| {

@@ -235,9 +235,12 @@ compose it yet.
 
 1. **The readiness check**, run over every declared and registered component,
    and shown on the registry: what is ready to extract and what blocks the
-   rest.
+   rest. *Built: the catalogue design's Readiness to leave the project.*
 2. **Extract**: the two pull requests, the tag, the `extracted` state and the
-   consumers list.
+   consumers list. *Built: the catalogue design's Extract
+   (`registry_extract.rs`); Publish now starts from `extracted` too (§5).
+   The consumers are the registry's existing ones (P4), by Cargo dependency
+   and product picks, without their versions yet.*
 3. **Use**: Add to product with a version, and behind.
 4. **Export within one Studio**, and the `imported` tier.
 5. **The `.gear` file**, with a signature.

@@ -52,6 +52,22 @@ pub(super) async fn commit_files(
     files: &[FileToWrite],
     message: &str,
 ) -> Result<String> {
+    commit_changes(gh, auth, repo, base_branch, branch, files, &[], message).await
+}
+
+/// See [`super::driver::ConnectorDriver::commit_changes`]: a deleted path is
+/// a tree entry with no blob.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn commit_changes(
+    gh: &GitHubDriver,
+    auth: &ConnectionAuth,
+    repo: &str,
+    base_branch: &str,
+    branch: &str,
+    files: &[FileToWrite],
+    deleted: &[String],
+    message: &str,
+) -> Result<String> {
     // 1. tip of the base branch.
     let base_ref: RefObj = get_json(
         gh,
@@ -70,6 +86,12 @@ pub(super) async fn commit_files(
     let tree_items: Vec<_> = files
         .iter()
         .map(|f| json!({ "path": f.path, "mode": "100644", "type": "blob", "content": f.content }))
+        .chain(
+            deleted
+                .iter()
+                .filter(|d| !files.iter().any(|f| &f.path == *d))
+                .map(|d| json!({ "path": d, "mode": "100644", "type": "blob", "sha": null })),
+        )
         .collect();
     let new_tree: NewSha = send_json(
         gh,
@@ -134,6 +156,41 @@ pub(super) async fn commit_files(
             Ok(tip.object.sha)
         }
         Err(e) => Err(anyhow!("create branch '{branch}': {e}")),
+    }
+}
+
+/// See [`super::driver::ConnectorDriver::create_tag`].
+pub(super) async fn create_tag(
+    gh: &GitHubDriver,
+    auth: &ConnectionAuth,
+    repo: &str,
+    tag: &str,
+    sha: &str,
+) -> Result<()> {
+    let created: Result<serde_json::Value> = send_json(
+        gh,
+        auth,
+        reqwest::Method::POST,
+        &format!("/repos/{repo}/git/refs"),
+        json!({ "ref": format!("refs/tags/{tag}"), "sha": sha }),
+    )
+    .await;
+    match created {
+        Ok(_) => Ok(()),
+        Err(e) if e.to_string().contains("Reference already exists") => {
+            let at: RefObj = get_json(gh, auth, &format!("/repos/{repo}/git/ref/tags/{tag}"))
+                .await
+                .map_err(|e| anyhow!("read existing tag '{tag}': {e}"))?;
+            if at.object.sha == sha {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "the tag '{tag}' already points at {}, not {sha}; nothing was moved",
+                    at.object.sha
+                ))
+            }
+        }
+        Err(e) => Err(anyhow!("create tag '{tag}': {e}")),
     }
 }
 

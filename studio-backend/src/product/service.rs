@@ -321,12 +321,65 @@ impl ProductService {
         files: &[super::scaffold::ScaffoldFile],
         pull_request: &super::port::PullRequestText,
     ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
+        self.write_changes_to_repository(ctx, target, branch, files, &[], pull_request)
+            .await
+    }
+
+    /// [`Self::write_to_repository`], deleting `deleted` in the same commit
+    /// (ADR-0044 Extract: the code leaves the project it came from).
+    pub async fn write_changes_to_repository(
+        &self,
+        ctx: &SecurityContext,
+        target: &super::port::RepositoryTarget,
+        branch: &str,
+        files: &[super::scaffold::ScaffoldFile],
+        deleted: &[String],
+        pull_request: &super::port::PullRequestText,
+    ) -> anyhow::Result<super::scaffold::ScaffoldWrite> {
+        let repo = self.open_owned(ctx, target).await?;
+        super::scaffold::write_changes(
+            &repo,
+            &target.base_branch,
+            branch,
+            files,
+            deleted,
+            &pull_request.message,
+            Some(&pull_request.title),
+            Some(&pull_request.body),
+        )
+        .await
+    }
+
+    /// Tag the tip of the target's base branch as `tag`, through the
+    /// target's connection; answers the commit tagged.
+    pub async fn tag_repository(
+        &self,
+        ctx: &SecurityContext,
+        target: &super::port::RepositoryTarget,
+        tag: &str,
+    ) -> anyhow::Result<String> {
+        let repo = self.open_owned(ctx, target).await?;
+        let sha = repo
+            .head_of(&target.base_branch)
+            .await?
+            .ok_or_else(|| anyhow!("{} has no branch `{}`", target.repo, target.base_branch))?;
+        repo.create_tag(tag, &sha).await?;
+        Ok(sha)
+    }
+
+    /// The target's repository, opened only when `ctx` may write through
+    /// its connection.
+    async fn open_owned(
+        &self,
+        ctx: &SecurityContext,
+        target: &super::port::RepositoryTarget,
+    ) -> anyhow::Result<Repository> {
         self.ensure_owned(ctx, ctx.subject_tenant_id(), target)
             .await?;
         let connectors = self
             .connector_service()
             .ok_or_else(|| anyhow!("connectors service unavailable"))?;
-        let repo = Repository::open(
+        Repository::open(
             &connectors,
             ctx,
             target.tenant,
@@ -334,16 +387,6 @@ impl ProductService {
             "github",
             &target.repo,
             None,
-        )
-        .await?;
-        super::scaffold::write_scaffold(
-            &repo,
-            &target.base_branch,
-            branch,
-            files,
-            &pull_request.message,
-            Some(&pull_request.title),
-            Some(&pull_request.body),
         )
         .await
     }

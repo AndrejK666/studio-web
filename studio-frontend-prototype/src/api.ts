@@ -532,7 +532,8 @@ export interface RegistryDecisionInput {
   replaced_by?: string;
   merge_into?: string;
   version?: string;
-  /** For `publish` only: answer `publish_preview`, write and record nothing. */
+  /** For `publish` and `extract` only: answer `publish_preview` or
+   *  `extract_preview`, write and record nothing. */
   dry_run?: boolean;
   /** For `publish` only: the platform's gear repository it goes into, by
    *  source id (ADR-0046 phase 4); the server's pick when absent. */
@@ -604,6 +605,10 @@ export interface RegistryEntry {
   /** The pull request that gave it to the platform (ADR-0042 §4); the entry
    *  stays `registered` until the platform's catalogue has it. */
   contribution?: RegistryContribution | null;
+  /** Extract (ADR-0044 §1): the two pull requests that move it into the
+   *  organization's gear repository; `completed_at` once both were merged
+   *  and the version tagged (the entry is then `extracted`). */
+  extraction?: RegistryExtraction | null;
   /** The projects that use it without declaring it (ADR-0041 P4). */
   consumers?: RegistryConsumer[];
   /** What a model last proposed for it; never a state change. */
@@ -621,9 +626,53 @@ export interface RegistryEntry {
   occurrences: RegistryOccurrence[];
   /** What a `publish` with `dry_run` would write; absent otherwise. */
   publish_preview?: RegistryPublishPreview | null;
+  /** What an `extract` with `dry_run: true` would write. */
+  extract_preview?: RegistryExtractPreview | null;
 }
 
 /** A gear given to the platform: the pull request into its gear repository. */
+/** A gear leaving its project for the organization's gear repository
+ *  (ADR-0044 §1). */
+export interface RegistryExtraction {
+  crate_name: string;
+  version: string;
+  /** `<gear>/v<version>`, made once both pull requests are merged. */
+  tag: string;
+  gear_repo: string;
+  gear_path: string;
+  gear_pr_url?: string | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  source_repo: string;
+  source_path: string;
+  source_pr_url?: string | null;
+  at: string;
+  by: string;
+  by_name?: string | null;
+  completed_at?: string | null;
+  tagged_commit?: string | null;
+}
+
+/** What Extract would write: an `extract` with `dry_run: true`. */
+export interface RegistryExtractPreview {
+  crate_name: string;
+  version: string;
+  tag: string;
+  gear_repo: string;
+  gear_base: string;
+  gear_path: string;
+  gear_files: string[];
+  source_repo: string;
+  source_base: string;
+  source_files: string[];
+  source_deleted: string[];
+  /** `extract/<name>`, in both. */
+  branch: string;
+  skipped: string[];
+  /** The new crate's `Cargo.toml`, as written. */
+  manifest?: string | null;
+}
+
 export interface RegistryContribution {
   repo: string;
   /** `contribute/<organization>/<name>`. */

@@ -22,6 +22,7 @@ mod registry_consumers;
 mod registry_curation;
 mod registry_decisions;
 mod registry_declare;
+mod registry_extract;
 mod registry_publish;
 mod registry_readiness;
 mod registry_suggest;

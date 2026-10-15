@@ -14,6 +14,9 @@ import {
   spotLabel,
   detectedProjects,
   evidenceLines,
+  extractPreviewLines,
+  extractionLine,
+  extractionOpen,
   decisionLine,
   decisionRefusal,
   decisionTargets,
@@ -363,5 +366,69 @@ describe("readiness", () => {
   it("explains a refusal", () => {
     expect(readinessRefusal(403, "x")).toContain("organization administrator");
     expect(readinessRefusal(500, "boom")).toBe("boom");
+  });
+});
+
+describe("extract (ADR-0044)", () => {
+  const x = {
+    crate_name: "billing",
+    version: "0.1.0",
+    tag: "billing/v0.1.0",
+    gear_repo: "acme/gears",
+    gear_path: "gears/billing",
+    gear_pr_url: "https://github.com/acme/gears/pull/1",
+    source_repo: "acme/app",
+    source_path: "app/src/billing",
+    source_pr_url: "https://github.com/acme/app/pull/2",
+    at: "t",
+    by: "ada",
+  };
+
+  it("sits between registered and published, and publishes from there", () => {
+    expect(REGISTRY_STATES.indexOf("extracted")).toBe(REGISTRY_STATES.indexOf("registered") + 1);
+    expect(STATE_LABEL.extracted).toContain("extracted");
+    expect(allowedActions("extracted")).toEqual(["request_publication", "deprecate", "merge", "edit"]);
+    expect(allowedActions("extracted", { curator: true, publicationPending: true })).toEqual([
+      "mark_published",
+      "deprecate",
+      "merge",
+      "edit",
+    ]);
+    expect(ACTION_LABEL.extract).toBe("Extract…");
+  });
+
+  it("says where an extraction stands", () => {
+    expect(extractionOpen({ extraction: x })).toBe(true);
+    expect(extractionOpen({ extraction: { ...x, completed_at: "t2" } })).toBe(false);
+    expect(extractionOpen({ extraction: null })).toBe(false);
+    expect(extractionLine(x)).toBe(
+      "Extracting into acme/gears at gears/billing: merge both pull requests, then complete it to tag billing/v0.1.0.",
+    );
+    expect(extractionLine({ ...x, completed_at: "t2" })).toBe(
+      "Extracted: billing 0.1.0 in acme/gears at gears/billing, tagged billing/v0.1.0.",
+    );
+  });
+
+  it("previews both sides", () => {
+    const lines = extractPreviewLines({
+      crate_name: "billing",
+      version: "0.1.0",
+      tag: "billing/v0.1.0",
+      gear_repo: "acme/gears",
+      gear_base: "main",
+      gear_path: "gears/billing",
+      gear_files: ["gears/billing/Cargo.toml", "gears/billing/src/lib.rs"],
+      source_repo: "acme/app",
+      source_base: "trunk",
+      source_files: ["app/Cargo.toml"],
+      source_deleted: ["app/src/billing/mod.rs"],
+      branch: "extract/billing",
+      skipped: [],
+    });
+    expect(lines).toEqual([
+      "Crate billing 0.1.0 into acme/gears@main at gears/billing (2 files), on extract/billing.",
+      "acme/app@trunk: 1 file deleted, app/Cargo.toml changed, on extract/billing.",
+      "Once both are merged, acme/gears is tagged billing/v0.1.0.",
+    ]);
   });
 });

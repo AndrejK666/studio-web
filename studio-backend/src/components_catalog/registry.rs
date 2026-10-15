@@ -44,6 +44,10 @@ pub const STATE_CANDIDATE: &str = "candidate";
 pub const STATE_DECLARED: &str = "declared";
 /// Accepted as the organization's component (P2, a person).
 pub const STATE_REGISTERED: &str = "registered";
+/// Its own crate in the organization's gear repository, at a tagged version,
+/// and the project it came from depends on it there (ADR-0044 §1). Set by
+/// `complete_extraction` once both of Extract's pull requests are merged.
+pub const STATE_EXTRACTED: &str = "extracted";
 /// Released for others to depend on (P2, a person).
 pub const STATE_PUBLISHED: &str = "published";
 /// A candidate the organization decided is not a gear (P2, a person).
@@ -56,10 +60,11 @@ pub const STATE_DEPRECATED: &str = "deprecated";
 pub const STATE_MERGED: &str = "merged";
 
 /// Every lifecycle state, in the order the lifecycle runs.
-pub const STATES: [&str; 7] = [
+pub const STATES: [&str; 8] = [
     STATE_CANDIDATE,
     STATE_DECLARED,
     STATE_REGISTERED,
+    STATE_EXTRACTED,
     STATE_PUBLISHED,
     STATE_REJECTED,
     STATE_DEPRECATED,
@@ -136,6 +141,12 @@ pub struct EntryRecord {
     /// platform's catalogue has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contribution: Option<Contribution>,
+    /// Extract (ADR-0044 §1): the two pull requests that move it out of its
+    /// project into the organization's gear repository, opened by an
+    /// `extract` decision; completed (and the entry `extracted`) once both
+    /// are merged and the version is tagged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction: Option<Extraction>,
     /// The projects that use it without declaring it: by a Cargo dependency
     /// or by their product's picks (P4). The walk keeps it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -167,6 +178,59 @@ pub struct Contribution {
     pub by: String,
     #[serde(default)]
     pub by_name: Option<String>,
+}
+
+/// A gear moving out of its project (ADR-0044 §1): its own crate in the
+/// organization's gear repository, and the project depending on it there.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Extraction {
+    /// The new crate's name, and the version and tag it is extracted at
+    /// (`<gear>/v0.1.0`).
+    pub crate_name: String,
+    pub version: String,
+    pub tag: String,
+    /// The organization's gear repository, `owner/name`, its base branch,
+    /// and the crate's directory there.
+    pub gear_repo: String,
+    #[serde(default)]
+    pub gear_base: String,
+    pub gear_path: String,
+    pub gear_branch: String,
+    #[serde(default)]
+    pub gear_pr_url: Option<String>,
+    /// The project the gear leaves: its repository, base branch, the
+    /// directory or file that moved out, and the pull request that removes
+    /// it and depends on the crate instead.
+    #[serde(default)]
+    pub project_id: Option<Uuid>,
+    #[serde(default)]
+    pub project_name: Option<String>,
+    pub source_repo: String,
+    #[serde(default)]
+    pub source_base: String,
+    pub source_path: String,
+    /// The file that tells the project's crate where the module is gone
+    /// (`mod x;` → `pub use <crate> as x;`), when one was found.
+    #[serde(default)]
+    pub source_top: Option<String>,
+    /// A file that moved out: gone from the project's base branch once its
+    /// pull request is merged.
+    #[serde(default)]
+    pub moved_file: String,
+    pub source_branch: String,
+    #[serde(default)]
+    pub source_pr_url: Option<String>,
+    /// RFC 3339; who opened it.
+    pub at: String,
+    pub by: String,
+    #[serde(default)]
+    pub by_name: Option<String>,
+    /// RFC 3339: when both were found merged and the version tagged.
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    /// The commit the tag points at.
+    #[serde(default)]
+    pub tagged_commit: Option<String>,
 }
 
 /// A project that uses an entry it does not declare (P4).
@@ -465,8 +529,9 @@ pub struct Plan {
     /// Rejected candidates whose code changed, proposed again.
     pub reproposed: usize,
     /// Contributed entries the platform's catalogue now has, now `published`:
-    /// `(entry id, name, version)`. The caller records a decision for each.
-    pub published: Vec<(String, String, Option<String>)>,
+    /// `(entry id, name, version, the state it left)`. The caller records a
+    /// decision for each.
+    pub published: Vec<(String, String, Option<String>, String)>,
 }
 
 /// Whether a stored `(project, repository)` pair is gone, by what the walk
@@ -909,11 +974,13 @@ pub fn plan(
         if let Some(platform) = &walk.platform
             && let Some(version) = super::registry_consumers::platform_version(platform, entry)
         {
-            if entry.state == STATE_REGISTERED && entry.contribution.is_some() {
-                entry.state = STATE_PUBLISHED.to_string();
+            if (entry.state == STATE_REGISTERED || entry.state == STATE_EXTRACTED)
+                && entry.contribution.is_some()
+            {
+                let from = std::mem::replace(&mut entry.state, STATE_PUBLISHED.to_string());
                 entry.version.clone_from(&version);
                 out.published
-                    .push((id.clone(), entry.name.clone(), version));
+                    .push((id.clone(), entry.name.clone(), version, from));
             } else if entry.state == STATE_PUBLISHED && version.is_some() {
                 entry.version = version;
             }
@@ -2376,14 +2443,14 @@ impl CatalogService {
         let mut plan = plan(&walk, &entries, &occurrences, &reads);
         // A contribution the platform took is `published` by the platform's
         // sync, and recorded as its decision (ADR-0042 §4).
-        for (entry_id, name, version) in &plan.published {
+        for (entry_id, name, version, from) in &plan.published {
             if let Some((node, edge)) = super::registry_decisions::decision_node(
                 super::registry_decisions::DecisionRecord {
                     organization_id: org,
                     entry: name.clone(),
                     entry_id: entry_id.clone(),
                     action: "published".to_owned(),
-                    from: STATE_REGISTERED.to_owned(),
+                    from: from.clone(),
                     to: STATE_PUBLISHED.to_owned(),
                     by: PLATFORM_SYNC.to_owned(),
                     by_name: Some("platform sync".to_owned()),

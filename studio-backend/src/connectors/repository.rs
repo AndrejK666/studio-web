@@ -120,6 +120,48 @@ impl Repository {
             .await
     }
 
+    /// [`Self::commit_files`], deleting `deleted` in the same commit
+    /// ([`ConnectorDriver::commit_changes`]).
+    pub async fn commit_changes(
+        &self,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        deleted: &[String],
+        message: &str,
+    ) -> Result<String> {
+        self.driver
+            .commit_changes(
+                &self.auth,
+                &self.repo,
+                base_branch,
+                branch,
+                files,
+                deleted,
+                message,
+            )
+            .await
+    }
+
+    /// The repository's default branch.
+    pub async fn default_branch(&self) -> Result<String> {
+        self.driver.default_branch(&self.auth, &self.repo).await
+    }
+
+    /// The commit `branch` points at; `None` when there is no such branch.
+    pub async fn head_of(&self, branch: &str) -> Result<Option<String>> {
+        self.driver
+            .branch_head(&self.auth, &self.repo, branch)
+            .await
+    }
+
+    /// Tag `sha` as `tag` ([`ConnectorDriver::create_tag`]).
+    pub async fn create_tag(&self, tag: &str, sha: &str) -> Result<()> {
+        self.driver
+            .create_tag(&self.auth, &self.repo, tag, sha)
+            .await
+    }
+
     /// Open a pull request from `head` into `base`, or return the one already
     /// open between them.
     pub async fn open_pull_request(

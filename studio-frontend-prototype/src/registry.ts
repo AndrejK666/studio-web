@@ -8,6 +8,8 @@ import type {
   RegistryDecision,
   RegistryDecisionInput,
   RegistryEntry,
+  RegistryExtractPreview,
+  RegistryExtraction,
   RegistryOwner,
   RegistryProjectWalk,
   RegistryPublishPreview,
@@ -17,12 +19,22 @@ import type {
 import { occurrencePlace } from "./org-gear-repository";
 
 /** The states in the order a component moves through them. */
-export const REGISTRY_STATES = ["candidate", "declared", "registered", "published", "deprecated", "rejected", "merged"] as const;
+export const REGISTRY_STATES = [
+  "candidate",
+  "declared",
+  "registered",
+  "extracted",
+  "published",
+  "deprecated",
+  "rejected",
+  "merged",
+] as const;
 
 export const STATE_LABEL: Record<string, string> = {
   candidate: "could become a gear",
   declared: "declared in a project",
   registered: "registered",
+  extracted: "extracted, at a version",
   published: "published",
   deprecated: "deprecated",
   rejected: "rejected",
@@ -34,6 +46,7 @@ export const STATE_TONE: Record<string, string> = {
   candidate: "info",
   declared: "warn",
   registered: "ok",
+  extracted: "ok",
   published: "ok",
   deprecated: "danger",
   rejected: "",
@@ -51,7 +64,9 @@ export type RegistryAction =
   | "decline_publication"
   | "mark_published"
   | "merge"
-  | "edit";
+  | "edit"
+  | "extract"
+  | "complete_extraction";
 
 /** The button for each action. */
 export const ACTION_LABEL: Record<RegistryAction, string> = {
@@ -65,6 +80,8 @@ export const ACTION_LABEL: Record<RegistryAction, string> = {
   mark_published: "Mark published",
   merge: "Merge into…",
   edit: "Edit",
+  extract: "Extract…",
+  complete_extraction: "Both merged: complete",
 };
 
 /** The past tense, for the decisions history. */
@@ -81,6 +98,8 @@ export const ACTION_DONE: Record<string, string> = {
   published: "found it on the platform",
   merge: "merged",
   edit: "edited",
+  extract: "opened the extraction of",
+  complete_extraction: "extracted",
 };
 
 /** The actions the server allows from a state, in the order the buttons
@@ -98,6 +117,15 @@ export function allowedActions(
       // Giving a gear to the platform is asked here and answered on the
       // platform (ADR-0042 §4): an organization requests it once, and only a
       // platform curator says by hand that the platform has it.
+      return [
+        ...(opts.publicationPending ? [] : (["request_publication"] as RegistryAction[])),
+        ...(opts.curator ? (["mark_published"] as RegistryAction[]) : []),
+        "deprecate",
+        "merge",
+        "edit",
+      ];
+    case "extracted":
+      // An extracted gear is what the platform should get (ADR-0044 §5).
       return [
         ...(opts.publicationPending ? [] : (["request_publication"] as RegistryAction[])),
         ...(opts.curator ? (["mark_published"] as RegistryAction[]) : []),
@@ -395,4 +423,32 @@ export function suggestRefusal(status: number | undefined, fallback: string): st
   if (status === 400) return `Add a model key to your profile, or connect one under Connections, to ask for a suggestion (${fallback}).`;
   if (status === 503) return `No suggestion this time (${fallback}).`;
   return fallback;
+}
+
+/** An extraction is open: its pull requests are not both merged. */
+export function extractionOpen(e: Pick<RegistryEntry, "extraction">): boolean {
+  return !!e.extraction && !e.extraction.completed_at;
+}
+
+/** Where an extraction stands, in a line. */
+export function extractionLine(x: RegistryExtraction): string {
+  if (x.completed_at) {
+    return `Extracted: ${x.crate_name} ${x.version} in ${x.gear_repo} at ${x.gear_path}, tagged ${x.tag}.`;
+  }
+  return `Extracting into ${x.gear_repo} at ${x.gear_path}: merge both pull requests, then complete it to tag ${x.tag}.`;
+}
+
+/** What Extract would write, line by line. */
+export function extractPreviewLines(p: RegistryExtractPreview): string[] {
+  const lines = [
+    `Crate ${p.crate_name} ${p.version} into ${p.gear_repo}@${p.gear_base} at ${p.gear_path} (${p.gear_files.length} file${
+      p.gear_files.length === 1 ? "" : "s"
+    }), on ${p.branch}.`,
+    `${p.source_repo}@${p.source_base}: ${p.source_deleted.length} file${
+      p.source_deleted.length === 1 ? "" : "s"
+    } deleted${p.source_files.length ? `, ${p.source_files.join(", ")} changed` : ""}, on ${p.branch}.`,
+    `Once both are merged, ${p.gear_repo} is tagged ${p.tag}.`,
+  ];
+  if (p.skipped.length) lines.push(`Not moved (not text): ${p.skipped.join(", ")}.`);
+  return lines;
 }
