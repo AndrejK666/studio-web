@@ -9,7 +9,7 @@
 // project's picks, which are crate names (`cf-gears-api-gateway`) as
 // everywhere else in the portal.
 
-import type { GearConfig, ProductPreview } from "./api";
+import type { GearConfig, GearExplanation, ProductPreview } from "./api";
 import { gearLabel } from "./product";
 
 /** An extension point, as much of the engine's `ExtensionPointDecl` as is read here. */
@@ -428,4 +428,69 @@ export function todos(c: Composition): Todo[] {
     for (const f of p.unset) out.push({ part: p.name, text: `${p.label}: set ${f}` });
   }
   return out;
+}
+
+// ── Explanations: a gear in plain words, kept per organization ────────────
+
+/** The organization's explanations, by the gear's engine id. */
+export type ExplanationIndex = ReadonlyMap<string, GearExplanation>;
+
+export function explanationIndex(items: readonly GearExplanation[] | null | undefined): Map<string, GearExplanation> {
+  return new Map((items ?? []).map((e) => [e.gear_id, e]));
+}
+
+/** What a person reads about a gear: the organization's explanation, else
+ *  the catalogue's description, else nothing. */
+export function plainWords(
+  g: Pick<CatalogueGear, "id" | "description"> | null | undefined,
+  explanations: ExplanationIndex,
+): string | null {
+  if (!g) return null;
+  return explanations.get(g.id)?.text.trim() || g.description?.trim() || null;
+}
+
+/** Gears with neither a description nor an explanation, plugins included:
+ *  what "Explain all without description" works through. */
+export function unexplained(index: CatalogueIndex, explanations: ExplanationIndex): CatalogueGear[] {
+  return index.gears.filter((g) => !g.description?.trim() && !explanations.get(g.id)?.text.trim());
+}
+
+/** How a run over many items went. */
+export interface BatchResult {
+  done: number;
+  failed: number;
+  /** Items never started, because `stop` said so. */
+  skipped: number;
+}
+
+/** Run `work` over `items`, at most `limit` at a time, in order. `onProgress`
+ *  hears after each item; once `stop()` is true no new item starts, and the
+ *  ones running finish. A failed item is counted, not thrown. */
+export async function inBatches<T>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<void>,
+  opts: { onProgress?: (r: BatchResult) => void; stop?: () => boolean } = {},
+): Promise<BatchResult> {
+  const r: BatchResult = { done: 0, failed: 0, skipped: 0 };
+  let next = 0;
+  const lane = async () => {
+    while (next < items.length) {
+      if (opts.stop?.()) {
+        r.skipped += items.length - next;
+        next = items.length;
+        break;
+      }
+      const item = items[next++];
+      try {
+        await work(item);
+        r.done++;
+      } catch {
+        r.failed++;
+      }
+      opts.onProgress?.({ ...r });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
+  return r;
 }

@@ -1011,6 +1011,94 @@ fn lamp(v: &str, s: &str) -> Value {
     serde_json::json!({ "v": v, "b": v, "s": s })
 }
 
+/// What the catalogue says of the gear `name` (engine id or crate name), as
+/// the facts an explanation is written from: its own words from the engine's
+/// raw descriptor (`display_name`, `description`, `category`, `maturity`) and
+/// what the parsed catalogue proves (host, choices, plugins, colocated
+/// gears). `None` for a gear the corpus does not describe. The README is
+/// read separately, from the checkout.
+pub fn gear_brief(
+    catalogue: &EngineCatalogue,
+    raw: &Value,
+    name: &str,
+) -> Option<super::explanations::GearBrief> {
+    let g = catalogue.find(name.trim())?;
+    let text_of = |id: &str, field: &str| {
+        raw.get("gears")
+            .and_then(|gs| gs.get(id))
+            .and_then(|d| d.get(field))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    // A gear as a person reads it: its display name, else its crate.
+    let label = |other: &EngineGear| {
+        text_of(&other.id, "display_name").unwrap_or_else(|| other.package.crate_name.clone())
+    };
+    let points = g
+        .extension_points
+        .iter()
+        .map(|p| {
+            p.trait_ident
+                .clone()
+                .unwrap_or_else(|| p.sdk.crate_name.clone())
+        })
+        .collect();
+    Some(super::explanations::GearBrief {
+        id: g.id.clone(),
+        crate_name: g.package.crate_name.clone(),
+        display_name: text_of(&g.id, "display_name"),
+        description: text_of(&g.id, "description"),
+        category: text_of(&g.id, "category"),
+        maturity: text_of(&g.id, "maturity"),
+        runtime_caps: g.runtime_caps.clone(),
+        host: g
+            .fills
+            .as_ref()
+            .and_then(|_| catalogue.host_of(g).map(label)),
+        points,
+        plugins: catalogue.implementers(g).into_iter().map(label).collect(),
+        brings: g
+            .colocated_deps
+            .iter()
+            .map(|d| catalogue.gears.get(d).map_or_else(|| d.clone(), label))
+            .collect(),
+        path: g.package.path.clone(),
+        readme: None,
+    })
+}
+
+/// The README of the crate at `path` (relative to the corpus at `dir`), at
+/// most `max` bytes; `None` when there is none or the path leaves the corpus.
+pub fn read_readme(dir: &Path, path: &str, max: usize) -> Option<String> {
+    let rel = Path::new(path.trim());
+    if rel.is_absolute()
+        || rel
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    // A package path may name the crate's manifest rather than its directory.
+    let crate_dir = if rel.extension().is_some_and(|e| e == "toml") {
+        rel.parent().unwrap_or(rel)
+    } else {
+        rel
+    };
+    ["README.md", "readme.md", "README"]
+        .iter()
+        .map(|f| dir.join(crate_dir).join(f))
+        .find(|f| f.is_file())
+        .and_then(|f| std::fs::File::open(f).ok())
+        .and_then(|f| {
+            let mut buf = Vec::new();
+            f.take(max as u64).read_to_end(&mut buf).ok()?;
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            (!text.trim().is_empty()).then_some(text)
+        })
+}
+
 /// Profile fields for every gear the corpus describes, keyed by crate name.
 /// The keys are the `gearbox` group of `field_schemas/gear.json`; a gear with
 /// no `gear.gdl` gets none, and its page says so through the group's empty
@@ -2019,6 +2107,29 @@ impl Gearbox {
         Ok((raw, corpus.commit.clone()))
     }
 
+    /// The facts an explanation of the gear `name` is written from, with its
+    /// crate's README from the checkout. `None` for a gear the corpus does
+    /// not describe.
+    pub async fn gear_brief(
+        &self,
+        name: &str,
+    ) -> anyhow::Result<Option<super::explanations::GearBrief>> {
+        let (dir, _, catalogue) = self.ensure_corpus().await?;
+        let (raw, _) = self.catalogue_json().await?;
+        let Some(mut brief) = gear_brief(&catalogue, &raw, name) else {
+            return Ok(None);
+        };
+        if let Some(path) = brief.path.clone() {
+            brief.readme = tokio::task::spawn_blocking(move || {
+                read_readme(&dir, &path, super::explanations::MAX_README_BYTES)
+            })
+            .await
+            .ok()
+            .flatten();
+        }
+        Ok(Some(brief))
+    }
+
     /// [`complete`] against the current corpus.
     pub async fn complete(
         &self,
@@ -2434,6 +2545,42 @@ mod tests {
 
     fn names(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn a_brief_says_what_the_catalogue_proves_in_a_person_s_names() {
+        let raw = json!({"gears": {
+            "authn-resolver": {"display_name": "Sign-in", "description": " ", "category": "security"},
+            "static-authn-plugin": {"display_name": "Static sign-in", "maturity": "beta"}
+        }});
+        let c = catalogue();
+        let host = gear_brief(&c, &raw, "cf-gears-authn-resolver").expect("found by crate");
+        assert_eq!(host.id, "authn-resolver");
+        assert_eq!(host.display_name.as_deref(), Some("Sign-in"));
+        // A blank description is none.
+        assert_eq!(host.description, None);
+        assert_eq!(host.category.as_deref(), Some("security"));
+        assert_eq!(host.points, names(&["cf-gears-authn-resolver-sdk"]));
+        let mut plugins = host.plugins.clone();
+        plugins.sort();
+        assert_eq!(
+            plugins,
+            names(&["Static sign-in", "cf-gears-oidc-authn-plugin"])
+        );
+        assert_eq!(host.host, None);
+
+        let plugin = gear_brief(&c, &raw, "static-authn-plugin").expect("found by id");
+        assert_eq!(plugin.host.as_deref(), Some("Sign-in"));
+        assert_eq!(plugin.maturity.as_deref(), Some("beta"));
+        assert!(gear_brief(&c, &raw, "nothing").is_none());
+    }
+
+    #[test]
+    fn a_readme_is_never_read_from_outside_the_corpus() {
+        let dir = Path::new("/no-such-corpus");
+        assert_eq!(read_readme(dir, "../etc", 100), None);
+        assert_eq!(read_readme(dir, "/etc", 100), None);
+        assert_eq!(read_readme(dir, "gears/x/Cargo.toml", 100), None);
     }
 
     /// A product with an audit store, and a candidate that brings its own.

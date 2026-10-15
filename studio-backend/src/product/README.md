@@ -29,6 +29,12 @@ This README is what you need to work in the directory.
   `ProjectProducts` / `Products`, a project's gear repository.
   [`sdk.rs`](sdk.rs) names the engine's types. Nothing here reads the
   catalogue.
+- An organization's plain explanations of gears (`/gear-explanations`) are
+  one account-management metadata row on the organization,
+  `cf.studio.product.gear_explanations.v1~`, declared in every
+  `config/*.yaml` and written only by this gear, as the service
+  (`studio_authz_plugin::GEAR_HELD_METADATA`). A generated one comes from
+  `llm_proxy::port::ModelProviders::complete` on the caller's key.
 - Repository writes go through a `connectors::sdk::Repository` opened on a
   connection from [`../connectors`](../connectors); the corpus checkout is
   `connectors::sdk::git_checkout`; the corpus relay reuses
@@ -45,6 +51,10 @@ This README is what you need to work in the directory.
   (`connectors/github_write.rs`).
 - `gearbox.rs` — the corpus checkout, the engine catalogue, extension points,
   completion, the preview, the corpus relay's upstream.
+- `explanations.rs` — gears in plain words: the stored row, the model's
+  question and the cleanup of its answer, and the rule that a model never
+  writes over a person's words unless asked. `explanations_rest.rs` (a child of
+  `rest.rs`) — its three routes.
 - `rest.rs` — the routes, including where a new `product.gdl` is written
   (`product_path_for`: `products/<id>/product.gdl`, or where it already is).
 

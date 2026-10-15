@@ -295,6 +295,7 @@ pub fn config_declared_types() -> Vec<(&'static str, &'static str)> {
             "studio-kits",
             crate::kit_registry::service::INSTALLATIONS_METADATA_TYPE,
         ),
+        ("studio-product", crate::product::EXPLANATIONS_METADATA_TYPE),
         // Declared by the profile and consumed by account-management and the
         // portal rather than by a constant in this crate: the three tenant types
         // below the platform root that shape the org / workspace / project

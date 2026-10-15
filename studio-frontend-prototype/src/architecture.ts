@@ -610,6 +610,9 @@ export const SURFACES: Surface[] = [
       "ProjectCandidate",
       "ProjectEnvironments",
       "StatusButton",
+      "ProductConfigurator",
+      "Explanation",
+      "ExplainAll",
     ],
     gears: [
       "studio-components-catalog",

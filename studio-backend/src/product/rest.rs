@@ -26,6 +26,9 @@ use super::service::ProductService;
 use crate::catalog_graph::gts::GtsNode;
 use crate::org_scope::OrgCtx;
 
+#[path = "explanations_rest.rs"]
+mod explanations_rest;
+
 /// Errors attributable to a product resource.
 #[resource_error(gts_id!("cf.studio._.product.v1~"))]
 pub struct StudioProductError;
@@ -1827,6 +1830,7 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = explanations_rest::register(router, openapi);
     let router = register_legacy_routes(router, openapi);
     router.layer(Extension(Product::new(service, hub, gearbox)))
 }
