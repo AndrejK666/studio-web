@@ -1525,8 +1525,10 @@ function ProductCard({
           </p>
         </div>
         <span className="hint" style={{ fontSize: 11 }}>
-          {gearbox?.engine_version ?? "gearbox"} · {gearbox?.corpus_ref}
-          {gearbox?.corpus_commit ? `@${gearbox.corpus_commit.slice(0, 7)}` : ""}
+          {gearbox?.engine_version ?? "gearbox"} ·{" "}
+          {gearbox?.sources?.length
+            ? gearbox.sources.map((s) => `${s.source_id}${s.commit ? `@${s.commit.slice(0, 7)}` : ""}`).join(", ")
+            : `${gearbox?.corpus_ref ?? ""}${gearbox?.corpus_commit ? `@${gearbox.corpus_commit.slice(0, 7)}` : ""}`}
         </span>
       </div>
 

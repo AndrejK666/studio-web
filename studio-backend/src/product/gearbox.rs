@@ -2177,7 +2177,7 @@ impl Gearbox {
                 .ok()
                 .flatten()
                 .filter(|o| o.success)
-                .map(|o| o.stdout.trim().to_string());
+                .map(|o| with_revision(o.stdout.trim(), engine_revision().as_deref()));
         let (commit, problem) = match self.ensure_corpus().await {
             Ok((_, commit, _)) => (commit, None),
             Err(e) => (None, Some(format!("{e:#}"))),
@@ -2574,6 +2574,31 @@ impl Gearbox {
             resolution,
             corpus_commit: commit,
         })
+    }
+}
+
+/// Where the image records the engine's commit: the `gearbox` stage writes it
+/// beside the binary it builds, because `gearbox --version` says only the
+/// crate's version, which has stayed `0.1.0` across every commit.
+const ENGINE_REVISION_FILE: &str = "/usr/local/share/gearbox/REVISION";
+
+/// The engine's commit: `STUDIO_GEARBOX_REV`, else the image's record.
+fn engine_revision() -> Option<String> {
+    std::env::var("STUDIO_GEARBOX_REV")
+        .ok()
+        .or_else(|| std::fs::read_to_string(ENGINE_REVISION_FILE).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// `gearbox 0.1.0` with its commit: `gearbox 0.1.0-ea964f9`, so two images
+/// with the same crate version say which engine each runs.
+fn with_revision(version: &str, revision: Option<&str>) -> String {
+    match revision {
+        Some(rev) if !version.contains(&rev[..rev.len().min(7)]) => {
+            format!("{version}-{}", &rev[..rev.len().min(7)])
+        }
+        _ => version.to_string(),
     }
 }
 
@@ -3800,5 +3825,19 @@ mod tests {
             "{gdl}"
         );
         assert!(gdl.contains("gearbox resolve --root ../../../gears-core --root ../../../gears-security --product"), "{gdl}");
+    }
+
+    #[test]
+    fn the_engines_version_says_which_commit_it_was_built_from() {
+        assert_eq!(
+            with_revision("gearbox 0.1.0", Some("ea964f94a59627ab818f4215d8251cbd64db098d")),
+            "gearbox 0.1.0-ea964f9"
+        );
+        assert_eq!(with_revision("gearbox 0.1.0", None), "gearbox 0.1.0");
+        // An engine that names its commit itself is left as it says.
+        assert_eq!(
+            with_revision("gearbox 0.2.0 (ea964f9)", Some("ea964f94a5")),
+            "gearbox 0.2.0 (ea964f9)"
+        );
     }
 }

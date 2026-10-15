@@ -190,6 +190,8 @@ RUN git init -q . \
 RUN CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
     cargo build --release --locked -p gearbox-cli \
     && install -m 0755 target/release/gearbox /usr/local/bin/gearbox \
+    && mkdir -p /usr/local/share/gearbox \
+    && git rev-parse HEAD > /usr/local/share/gearbox/REVISION \
     && gearbox --version
 
 # ── Runtime ──
@@ -336,6 +338,8 @@ USER node
 WORKDIR /app
 COPY --from=build --chown=node:node /app /app
 COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
+# Its commit, which `gearbox --version` does not say (studio-product reads it).
+COPY --from=gearbox /usr/local/share/gearbox/REVISION /usr/local/share/gearbox/REVISION
 COPY --chown=node:node docker/entrypoint.sh /entrypoint.sh
 COPY --chown=node:node docker/materialize-workspace.mjs /usr/local/lib/studio-materialize-workspace.mjs
 COPY --chown=node:node docker/git-credentials.mjs /usr/local/lib/studio-git-credentials.mjs

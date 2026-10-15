@@ -113,6 +113,8 @@ RUN git init -q . \
 RUN CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
     cargo build --release --locked -p gearbox-cli \
     && install -m 0755 target/release/gearbox /usr/local/bin/gearbox \
+    && mkdir -p /usr/local/share/gearbox \
+    && git rev-parse HEAD > /usr/local/share/gearbox/REVISION \
     && gearbox --version
 
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
@@ -134,6 +136,8 @@ ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 WORKDIR /app
 COPY --from=build /studio-backend /app/studio-backend
 COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
+# Its commit, which `gearbox --version` does not say (studio-product reads it).
+COPY --from=gearbox /usr/local/share/gearbox/REVISION /usr/local/share/gearbox/REVISION
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 COPY studio-backend/config/ /app/config/
 COPY studio-backend/docker/entrypoint.sh /usr/local/bin/entrypoint.sh

@@ -55,6 +55,8 @@ RUN git init -q . \
 RUN CARGO_PROFILE_RELEASE_DEBUG=0 CARGO_PROFILE_RELEASE_STRIP=true \
     cargo build --release --locked -p gearbox-cli \
     && install -m 0755 target/release/gearbox /usr/local/bin/gearbox \
+    && mkdir -p /usr/local/share/gearbox \
+    && git rev-parse HEAD > /usr/local/share/gearbox/REVISION \
     && gearbox --version
 
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
@@ -76,6 +78,8 @@ COPY config/ /app/config/
 COPY --from=onnxruntime /opt/onnxruntime/lib/libonnxruntime.so* /opt/onnxruntime/lib/
 # Inert until STUDIO_GEARBOX_WORKDIR is set (the chart's backend.gearbox).
 COPY --from=gearbox /usr/local/bin/gearbox /usr/local/bin/gearbox
+# Its commit, which `gearbox --version` does not say (studio-product reads it).
+COPY --from=gearbox /usr/local/share/gearbox/REVISION /usr/local/share/gearbox/REVISION
 COPY --from=helm /usr/local/bin/helm /usr/local/bin/helm
 ENV ORT_DYLIB_PATH=/opt/onnxruntime/lib/libonnxruntime.so
 RUN chmod +x /app/studio-backend && chown -R studio:studio /app

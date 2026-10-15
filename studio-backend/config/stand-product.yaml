@@ -1,0 +1,678 @@
+# Constructor Studio Backend — Postgres profile.
+# Usage:
+#   docker compose up -d graph-postgres
+#   cargo run -- --config config/postgres.yaml run
+#
+# Same gear assembly as dev.yaml; only the storage layer differs — one Postgres
+# server, one database per gear (matches the per-gear schema-ownership rule).
+# Password comes from the environment: export STUDIO_PG_PASSWORD=studio (compose default).
+
+server:
+  home_dir: "~/.cf-studio-backend"
+
+database:
+  # NB: this does NOT create missing Postgres databases, despite what it sounds
+  # like — toolkit-db only consults it to create SQLite parent directories
+  # (manager.rs, finalize_sqlite_paths).
+  #
+  # The databases come from `backend-bootstrap`, which reads `gears.*.database`
+  # out of config/docker.yaml on every compose start and creates the ones that
+  # are missing. This note used to point at docker/initdb/01-create-databases.sql
+  # instead; that file has since been emptied on purpose, and says so, precisely
+  # because a list that only runs on a new volume went stale every time a
+  # stateful gear was added.
+  #
+  # The consequence for THIS profile, which runs the backend on the host against
+  # that same server: a gear configured here needs its database to exist, and it
+  # will if docker.yaml configures the gear too. Adding a gear here and nowhere
+  # else gets a connection error on the first request, not at boot.
+  auto_provision: true
+  servers:
+    # One PostgreSQL for the whole assembly, and it is the graph image
+    # (PostgreSQL 19 + pgvector). graph-storage cannot run on anything else —
+    # its migrations need `CREATE EXTENSION vector`, `CREATE PROPERTY GRAPH`
+    # (SQL/PGQ, PG19+) and an HNSW index — and no other gear minds where it
+    # lives, so the second server entry was only ever a second name for the
+    # same instance. Each gear names its own `dbname`; that is what separates
+    # them, not the server.
+    #
+    # 5433 rather than 5432 because this profile runs the backend on the HOST:
+    # the container listens on 5432 and compose publishes it as 127.0.0.1:5433.
+    # In-network profiles use `graph-postgres:5432` instead.
+    pg_main:
+      engine: "postgres"
+      host: "127.0.0.1"
+      port: 5432
+      user: "studio"
+      password: "${STUDIO_PG_PASSWORD:-studio}"
+      dbname: "studio"            # admin/default db; gears override per-gear below
+      pool:
+        max_conns: 10
+        acquire_timeout: "30s"
+
+logging:
+  default:
+    console_level: info
+    file: "logs/studio-backend.log"
+    file_level: info
+  account_management:
+    console_level: debug
+    file: "logs/account-management.log"
+    file_level: debug
+
+gears:
+  # Wrapper over the external spec-quality detector service (bloat / purpose /
+  # leak / traceability). The service has its OWN bearer secret; it lives here
+  # (env STUDIO_SPEC_QUALITY_API_KEY) and never reaches the browser. Unset key
+  # = analysis calls 500 with a clear message; the backend still boots.
+  studio-spec-quality:
+    config:
+      base_url: "https://349ddd50986c491c844d92fdaefcadfe.constructor.pro"
+      api_key_env: "STUDIO_SPEC_QUALITY_API_KEY"
+
+  api-gateway:
+    config:
+      # Throttling zones the mini-chat create-chat route names (its ThrottlingSpec);
+      # api-gateway refuses to start when a route references an undefined zone.
+      # Values follow gears-rust config/mini-chat.yaml. `ip` keys everyone behind
+      # one ingress into one bucket — revisit if chat creation gets throttled.
+      rate_limit_zones:
+        rl_mini_chat_chat:
+          rate_limit: 10/s
+          burst_limit: 10
+          response_status_code: 429
+          response_retry_after: auto
+          key:
+            type: ip
+          max_keys: 10000
+      in_flight_limit_zones:
+        ifl_mini_chat_chat:
+          in_flight_limit: 100
+          backlog_limit: 0
+          backlog_timeout: 0s
+          response_status_code: 429
+          key:
+            type: ip
+          max_keys: 10000
+      bind_addr: "0.0.0.0:8090"
+      prefix_path: "/cf"
+      enable_docs: true
+      cors_enabled: false
+      openapi:
+        title: "Constructor Studio Backend (postgres)"
+        version: "0.1.0"
+        description: "Studio backend assembly — account-management demo"
+
+  gear-orchestrator:
+    config: {}
+
+  grpc-hub:
+    config:
+      listen_addr: "uds:///tmp/cf-studio-backend-grpc"
+
+  authn-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      mode: static_tokens
+      tokens:
+        - token: "studio-admin-token"
+          identity:
+            subject_id: "00000000-0000-0000-0000-00000000a001"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+        - token: "studio-user-token"
+          identity:
+            subject_id: "ac6ae8e2-b765-541b-8ecd-405addfaef21"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+      s2s_credentials:
+        # Explicit identity: without it the plugin's built-in default tenant id
+        # is used, which does not exist in OUR tenant tree -> the AM tenant-
+        # resolver plugin fails OAGW hierarchy resolution (TenantNotFound).
+        - client_id: "mini-chat"
+          client_secret: "mini-chat-dev-secret"
+          identity:
+            subject_id: "00000000-0000-0000-0000-00000000b001"
+            subject_tenant_id: "00000000-0000-0000-0000-000000000001"
+            token_scopes: ["*"]
+            subject_type: "gts.cf.core.security.subject_user.v1~"
+
+  authz-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  static-authz-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+
+  tenant-resolver:
+    config:
+      vendor: "constructorfabric"
+
+  types-registry:
+    database:
+      server: "pg_main"
+      dbname: "studio_types_registry"
+    config:
+      entities:
+        # The platform-root type (gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~)
+        # is not declared here: account-management registers it itself from
+        # `bootstrap.root_tenant_type`, and a second document under the same id is
+        # startup-fatal ("conflicts with the Account Management-owned definition").
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio organization tenant"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_type.v1~"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"]
+            idp_provisioning: false
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio workspace tenant (product-line context)"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_type.v1~"
+          x-gts-traits:
+            allowed_parent_types: ["gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"]
+            idp_provisioning: false
+        # Studio project tenant: a project is its own codebase context (sources,
+        # IDE session, artifact graph, spec-quality) — all of which are already
+        # tenant-scoped, so the id of this tenant is what the session/ingest/
+        # settings paths key on.
+        #
+        # Two allowed parents, not one. The portal's New project wizard has no
+        # workspace field (ADR-0028) and creates under the organization the
+        # session is in; workspace stays allowed so the Org → Workspace →
+        # Project shape remains available and already-seeded trees keep working.
+        - "$id": "gts://gts.cf.core.am.tenant_type.v1~cf.studio.tenant.project.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio project tenant (a codebase context inside an organization or a workspace)"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_type.v1~"
+          x-gts-traits:
+            allowed_parent_types:
+              - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
+              - "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.workspace.v1~"
+            idp_provisioning: false
+        # Connector driver contract (see oidc.yaml for the rationale).
+        - "$id": "gts://gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio source connector provider plugin specification"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.toolkit.plugins.plugin.v1~"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.connector.catalogue.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio source connections (free-form until gears issue #4)"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            # inherit: a workspace sees its organization's connections.
+            # The nearest row wins whole (AM does not merge across the
+            # chain), so a tenant with its own catalogue shadows its
+            # ancestors rather than adding to them.
+            inheritance_policy: "inherit"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.workspace.settings.v1~"
+          # Free-form payload: the GTS OP#12 narrowing check treats the base
+          # tenant_metadata envelope as a CLOSED empty object, so a derived
+          # schema may not declare typed properties at all (gears issue #4).
+          # Shape {automation_level, approved_worker_categories} is enforced
+          # client-side until the base schema is relaxed upstream.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio workspace settings (free-form until gears issue #4)"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~"
+          # Project attributes on the project tenant: {mode, stages[], status,
+          # source}. Free-form for the same gears issue #4 reason as the settings
+          # above; shape enforced client-side. Per-tenant (not inherited) —
+          # a project must not read its parent's attributes as its own.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio project attributes (mode, stages, status, source) — free-form until gears issue #4"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.project.kit_installations.v1~"
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Desired Constructor Studio kit installations for one project"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
+
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~"
+          # Organization access config (ADR-0009): {model, roles[]}. Free-form
+          # object like workspace.settings; shape enforced client-side until the
+          # base tenant_metadata schema is relaxed upstream (gears issue #4).
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio organization access model + roles (free-form)"
+          type: "object"
+          # Derived types must compose their base (gts 0.12 inclusion check):
+          # the base is a closed envelope with an open `payload` container.
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "inherit"
+
+  nodes-registry:
+    database:
+      server: "pg_main"
+      dbname: "studio_nodes_registry"
+    config: {}
+
+  resource-group:
+    database:
+      server: "pg_main"
+      dbname: "studio_resource_group"
+    config: {}
+
+  account-management:
+    database:
+      server: "pg_main"
+      dbname: "studio_account_management"
+    config:
+      bootstrap:
+        root_id: "00000000-0000-0000-0000-000000000001"
+        root_name: "Constructor Platform"
+        root_tenant_type: "gts.cf.core.am.tenant_type.v1~cf.core.am.platform.v1~"
+        strict: true
+      tr_plugin:
+        enabled: true
+
+  static-idp-plugin:
+    config:
+      vendor: "cf"
+      priority: 100
+
+  # The official keycloak-idp-plugin is linked in the binary but has no Keycloak
+  # to reach in this profile — keep it dormant so its init doesn't try (and fail)
+  # to pre-warm an admin token. static-idp (echo, vendor "cf") above stays the
+  # active IdP here.
+  keycloak-idp-plugin:
+    config:
+      enabled: false
+
+  # ── Feature gears: per-user settings, files, AI chat ──
+
+  simple-user-settings:
+    database:
+      server: "pg_main"
+      dbname: "studio_settings"
+    config:
+      max_field_length: 200
+
+  # Document types, journey stages, capabilities and the documents themselves
+  # (ADR-0014). Without this section the gear stands down and registers no
+  # routes -- not a boot error, just a portal where the catalogue endpoints
+  # 404. It was configured in docker.yaml, k8s.yaml and oidc.yaml and missing
+  # here, so a backend run from this profile silently lost the whole gear.
+  #
+  # PostgreSQL only: its migrations refuse any other backend, which is why
+  # dev.yaml (SQLite) has no counterpart to this and cannot.
+  studio-documents:
+    database:
+      server: "pg_main"
+      dbname: "studio_documents"
+
+  studio-user:
+    database:
+      server: "pg_main"
+      # Canonical identity store (users, logins, memberships, aliases).
+      # backend-bootstrap creates this database from config on start.
+      dbname: "studio_users"
+    config:
+      # Who administers this installation. Each subject listed here gets a
+      # membership of the platform root at every start, which is what being a
+      # platform administrator is (ADR-0018 §3) — and ADR-0011 §4 asks for a
+      # deliberately provisioned identity rather than whoever logs in first.
+      # The static-token admin below. Nothing else makes an administrator now:
+      # the token's tenant stopped being one (ADR-0018 §3), so an installation
+      # that names nobody here has no administrator at all — the gear says so at
+      # boot.
+      platform_admins:
+        - "00000000-0000-0000-0000-00000000a001"
+
+  file-storage:
+    database:
+      server: "pg_main"
+      dbname: "studio_file_storage"
+    config:
+      # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
+      # own for any shared environment).
+      signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
+
+  # LLM egress chain: mini-chat -> oagw -> provider; secrets via credstore
+  oagw:
+    config:
+      proxy_timeout_secs: 120
+
+  credstore:
+    database:
+      server: "pg_main"
+      dbname: "studio_credstore"
+    config:
+      vendor: "constructorfabric"
+
+  # No studio-credstore-pg section in this profile on purpose. The seeds below
+  # are real VALUES read from this file, and the persistent value store
+  # (issue #66) would win the vendor selection and orphan them — this profile
+  # has no studio-secrets-bootstrap to re-supply them from the environment.
+  # The profiles that do enable it (docker/oidc/k8s) get their values that way.
+  static-credstore-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      secrets:
+        # Shared secret (no tenant_id). Put your real OpenAI key here for the
+        # Ask AI feature; without it chats are created but streaming replies
+        # fail at the provider with 401.
+        - key: "openai-key"
+          value: "sk-REPLACE_ME"
+
+  # ── studio-tasks (durable background runs) ──
+  # Owns the queue every gear's background work goes through, plus the run
+  # history an operator reads. Its own database because the queue and that
+  # history are written in ONE transaction — the `studio_tasks_outbox_*` family
+  # is toolkit-db's transactional outbox and `studio_tasks_runs` is the record.
+  # Drop the block and the gear stands down: the runs API answers 503 and
+  # nothing is queued.
+  studio-tasks:
+    database:
+      server: "pg_main"
+      dbname: "studio_tasks"
+    config: {}
+
+  # ── studio-events (the push channel to the portal) ──
+  # The sequence and the replay window are rows, not process memory, which is
+  # what lets a second replica exist: an event published on one is read by all
+  # of them, and `?after_seq=` means the same thing whichever one a reconnect
+  # lands on. Drop the `database:` and the gear stands down — both endpoints
+  # answer 503 and nothing is published, which is deliberate: a channel that
+  # delivers to one replica's worth of users is worse than one that says it
+  # is off.
+  #
+  # `pool` is small on purpose. The traffic is one small insert per event and
+  # one indexed read per subscribed tenant per poll, and every connection here
+  # is counted against the budget on `pg_main` above.
+  studio-events:
+    database:
+      server: "pg_main"
+      dbname: "studio_events"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+    config: {}
+
+  # ── studio-artifact-ingest (the artifact index) ──
+  # A mirror of the artifact graph's listing fields — scope, repo, type,
+  # updated_at — as indexed columns, so a project's artifacts, specs and
+  # source activity are one query instead of a walk of the tenant's whole
+  # graph (src/artifact_ingest/index.rs). Filled from the graph on a tenant's
+  # first read and kept current by every ingest. Drop the block and nothing is
+  # lost but speed: every listing walks the graph as before.
+  #
+  # `pool` is small for the same reason as studio-events': each read is one
+  # indexed query, and every connection is counted against pg_main's budget.
+  studio-artifact-ingest:
+    database:
+      server: "pg_main"
+      dbname: "studio_artifact_index"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+    config: {}
+
+  # ── studio-scheduler (cron/interval schedules) ──
+  # Owns schedules and nothing else: each tick it enqueues due runs into
+  # studio-tasks. A tick runs under a PostgreSQL advisory lock, so a second
+  # replica does not double-fire.
+  #
+  # `owner_tenant_id` MUST match account-management's `bootstrap.root_id` below:
+  # the secure ORM has no cross-tenant read, so the ticker scans one tenant's
+  # schedules and schedules are therefore platform-level. A mismatch is not an
+  # error, it is a schedule list that is always empty.
+  #
+  # Drop the block and nothing fires on its own; the queue keeps working and
+  # `POST /studio-scheduler/v1/schedules/{id}/run-now` is unavailable.
+  studio-scheduler:
+    database:
+      server: "pg_main"
+      dbname: "studio_scheduler"
+    config:
+      owner_tenant_id: "00000000-0000-0000-0000-000000000001"
+      tick_seconds: 60
+      enabled: true
+
+  # ── studio-notify (queued notification delivery) ──
+  # No database: the run in studio-tasks IS the record, which is what keeps
+  # accepting a notification a single transaction. This gear validates the
+  # connection and enqueues a `notify.deliver` run; the outcome is read from
+  # GET /studio-tasks/v1/runs/{id}.
+  studio-notify:
+    config: {}
+
+  mini-chat:
+    database:
+      server: "pg_main"
+      dbname: "studio_mini_chat"
+    config:
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "mini-chat-dev-secret"
+      providers:
+        openai:
+          kind: openai_responses
+          storage_kind: openai
+          host: "api.openai.com"
+          auth_plugin_type: "gts.cf.core.oagw.auth_plugin.v1~cf.core.oagw.apikey.v1"
+          auth_config:
+            header: "Authorization"
+            prefix: "Bearer "
+            secret_ref: "openai-key"
+
+  static-mini-chat-model-policy-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 100
+      model_catalog:
+        - id: "gpt-5.2"
+          provider_model_id: "gpt-5.2"
+          display_name: "GPT-5.2"
+          tier: Standard
+          enabled: true
+          system_prompt: "You are the Constructor Studio workspace assistant. Be concise and practical."
+          thread_summary_prompt: ""
+          input_tokens_credit_multiplier_micro: 1000000
+          output_tokens_credit_multiplier_micro: 3000000
+          multimodal_capabilities: ["VISION_INPUT"]
+          context_window: 128000
+          max_output_tokens: 8192
+          max_input_tokens: 120000
+          description: "Default Studio assistant model"
+          version: "2025-01"
+          icon: ""
+          provider_display_name: "OpenAI"
+          multiplier_display: "1x"
+          provider_id: "openai"
+          max_num_results: 10
+          max_tool_calls: 2
+          estimation_budgets:
+            bytes_per_token_conservative: 4
+            fixed_overhead_tokens: 500
+            safety_margin_pct: 10
+            image_token_budget: 1000
+            tool_surcharge_tokens: 200
+            web_search_surcharge_tokens: 500
+            code_interpreter_surcharge_tokens: 1000
+            minimal_generation_floor: 100
+          preference:
+            is_default: true
+            sort_order: 1
+          general_config:
+            type: "chat"
+            available_from: "2025-01-01T00:00:00Z"
+            max_file_size_mb: 50
+            api_params:
+              temperature: 0.7
+              top_p: 1.0
+              frequency_penalty: 0.0
+              presence_penalty: 0.0
+              stop: []
+            features:
+              streaming: true
+              structured_output: true
+            tool_support:
+              web_search: false
+              file_search: false
+              image_generation: false
+              code_interpreter: false
+              mcp: false
+            supported_endpoints:
+              chat_completions: true
+              responses: true
+              embeddings: false
+              image_generation: false
+              audio_speech_generation: false
+              audio_transcription: false
+              audio_translation: false
+
+  # ── Studio's own gear: per-workspace Theia IDE sessions in containers ──
+  # Requires a Docker daemon; the CI-published image is pulled/refreshed
+  # automatically (docker login ghcr.io once if the package is private).
+  # Projects (ADR-0005 studio-project gear) retired: a project is now an AM
+  # tenant (type cf.studio.tenant.project.v1~) with its attributes in the
+  # cf.studio.project.config.v1~ tenant metadata — no separate project gear.
+
+  studio-session:
+    config:
+      image: "ghcr.io/constructorfabric/studio-web/cf-studio-theia:edge"
+      always_pull: true
+      workspaces_root: "~/.cf-studio-workspaces"
+      bind_host: "127.0.0.1"      # loopback only — the Theia PoC has no auth
+      public_host: "localhost"
+      # The IDE is on its own loopback port, so the local portals must be
+      # listed to frame it and talk to it (#324): Vite, compose's portal and
+      # its prototype.
+      allowed_origins: "http://localhost:5173,http://localhost:8080,http://localhost:8081"
+      port_range_start: 41000
+      port_range_end: 41099
+      max_session_secs: 14400     # 4h, then the reaper stops the container
+      git_mode: "disabled"
+
+  # oidc-authn-plugin is link-time active in every profile (gears discover
+  # via inventory), and it REQUIRES a config section. In this static-token
+  # profile it is configured valid but DEPRIORITIZED: static-authn-plugin
+  # (priority 100) wins the vendor selection, so this section is inert.
+  oidc-authn-plugin:
+    config:
+      vendor: "constructorfabric"
+      priority: 1000   # LOWER number wins vendor selection; static (100) stays in charge here
+      jwt:
+        supported_algorithms: ["RS256", "ES256"]
+        require_audience: false
+        trusted_issuers:
+          - issuer: "https://localhost:8443/realms/studio"
+        claim_mapping:
+          subject_id: "sub"
+          subject_tenant_id: "tenant_id"
+          token_scopes: "scope"
+      s2s_oauth:
+        discovery_url: "https://localhost:8443/realms/studio"
+        default_subject_type: "gts.cf.core.security.subject_service.v1~"
+
+  # Knowledge graph: typed multi-tenant nodes and edges, bounded traversal and
+  # hybrid retrieval. The one PostgreSQL is the PG19 + pgvector image this
+  # gear needs, so it shares it with everything else and only its
+  # `dbname` sets it apart.
+  graph-storage:
+    database:
+      server: "pg_main"
+      dbname: "graph_storage"
+      params:
+        # Vector search. pgvector filters AFTER the approximate HNSW scan, and
+        # every query this gear issues is filtered (tenant, deleted_at, embedding
+        # epoch, often a type set). At the default ef_search of 40 a filter that
+        # admits a tenth of the rows leaves ~4 candidates, so a small tenant
+        # sharing the index with a large one gets an EMPTY page while its own
+        # vectors are in the table (graph-storage README, "Vector search needs two
+        # session parameters"). Iterative scanning keeps reading until the
+        # filtered page is full. The gear cannot SET LOCAL per query
+        # (gears-rust #4871), so it is per connection, here.
+        hnsw.iterative_scan: "relaxed_order"
+        hnsw.ef_search: "200"
+    config:
+      # `pgq` runs each hop as a single SQL/PGQ `GRAPH_TABLE` statement. A
+      # request whose scope cannot be bounded to a set of tenants is served by
+      # `two_query` instead, so this is safe to leave on; `two_query` is the
+      # portable fallback and `cte` is deliberately absent while the pinned
+      # gears-rust revision predates the safe-CTE API it needs.
+      # The relation graph is read back by one traversal per 400 seeds, and the
+      # gear budgets a traversal by TOTAL NODES with the seeds counted in. The
+      # default of 1,000 would leave 600 for the expansion of 400 seeds, and an
+      # exhausted budget does not slow the read down — it TRUNCATES it, dropping
+      # relations with nothing in the response to say so. 10,000 is the ceiling
+      # the gear's own validation allows, and at it exactly three nodes on the
+      # dev graph are still clipped (5,944 of 79,184 relations) against 27,852
+      # under the per-node read this replaced.
+      traversal_max_nodes: 10000
+      traversal_hop: pgq
+      # Embedding provider for a backend run on the host. Defaults to the
+      # deterministic `fake` so `cargo run` needs no model artifacts; set
+      # STUDIO_EMBEDDING_PROVIDER=onnx with STUDIO_EMBED_MODEL_PATH /
+      # STUDIO_EMBED_TOKENIZER_PATH (and ORT_DYLIB_PATH) for the real model,
+      # or `remote` with the STUDIO_EMBED_* endpoint settings. One provider
+      # per deployment; see config/docker.yaml for the full note.
+      embedding_dimension: 384
+      embedding_provider: "${STUDIO_EMBEDDING_PROVIDER:-fake}"
+      embedding_model_path: "${STUDIO_EMBED_MODEL_PATH:-}"
+      embedding_tokenizer_path: "${STUDIO_EMBED_TOKENIZER_PATH:-}"
+      embedding_remote_base_url: "${STUDIO_EMBED_BASE_URL:-https://api.openai.com/v1}"
+      embedding_remote_model: "${STUDIO_EMBED_MODEL:-text-embedding-3-small}"
+      embedding_remote_api_key_env: "STUDIO_EMBED_API_KEY"
+  studio-secrets-bootstrap:
+    config:
+      secrets:
+        - ref: "stand-gh-token"
+          value_env: "E2E_GH_TOKEN"
+          sharing: "shared"

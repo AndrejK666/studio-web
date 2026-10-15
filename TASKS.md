@@ -1,3 +1,74 @@
+# 2026-10-15 — the project, its product, and where gears come from
+
+What #716, #742, #756, #774 and the combined #789 leave open. The designs:
+`docs/project-and-product.md`, `docs/spec-domain-model.md`, ADR-0044, ADR-0045,
+ADR-0046.
+
+- [x] Put main's tip on Dev @andrejk666
+
+  Dev runs ebf17a3b (helm revision 151, 2026-10-15): #742, #743, #727, #741,
+  #756, #765 and #772. The runners queued for hours that day; the manual helm
+  recipe deployed it.
+
+- [ ] Move Dev off the fork's gear corpus @andrejk666
+
+  After #774 is deployed, connect the platform's gear repositories in
+  Platform › Sources: the fork `MikeFalcon77/gears-rust` at `feature/gearbox`
+  until constructorfabric/gears-rust#4793 merges, then
+  `constructorfabric/gears-rust` at `main`. Then drop `corpusUrl` from
+  `values-dev`. #4793 waits on its author: it is 216 commits behind main, and
+  the merge breaks four things (reviews on #4793); an offer to open the merge
+  as a PR into `feature/gearbox` is in the review.
+
+- [ ] Look at #716, #742 and #756 on Dev's real data @andrejk666
+
+  - The Domain model tab on Insight: Glossary, Work, Against the code. Note
+    the noise -- subjects that should not be entries, work linked by an id it
+    only quotes, `product.missing` for a capability the code has under
+    another name -- and tune the rules before anyone else reads them.
+  - The Builds tab: a connection without Actions read shows "Studio could not
+    read the CI runs of …"; give the token that scope.
+  - The readiness check before Extract, and the organization's gears on the
+    project's Product tab.
+  - The Components readiness block in a running IDE (#510).
+
+- [ ] The rules that need a model key @andrejk666
+
+  Each waits for an Anthropic key on the stand (a workspace with a spend
+  limit; the key goes into the portal, never into the chat or a file in the
+  repository):
+
+  - `code.*`: entities and values the documents name, against the code's
+    identifiers, read through the glossary.
+  - Proposed work links: work that names no identifier gets a proposed
+    requirement, decided by a member like a finding. Projects without
+    `**ID**:` labels (plain `FR-12`) have no links until then.
+  - Goals, risks and open questions as facts of the domain model.
+  - The provider-key flows (#699/#700) with a live key.
+
+- [ ] The rest of the project's words @andrejk666
+
+  - `writing.long_noun` (a stack of nouns in a requirement) is not built.
+  - The assistant's instructions do not carry the writing rules yet, so what
+    it writes into a document is not held to them.
+  - Writing hints show only in the Documents perspective (TipTap); the
+    Workbench perspective opens markdown in MDXEditor, which has none.
+
+- [ ] Ask the Gearbox engine for what several gear repositories need @andrejk666
+
+  - Honour `use_gear(source = …)`: it is parsed and not read, so a gear id
+    declared in two repositories resolves by root order, not by the product.
+  - GBX0105 (a gear declared twice) names both roots.
+  - Release binaries and tags (gearbox#6): the crate version has stayed
+    `0.1.0` across every commit; Studio now shows `0.1.0-<commit>` from the
+    image.
+
+- [ ] "Get protoc" on an installed Windows desktop @andrejk666
+
+  #717 fetches protoc 36.2 into `~/ConstructorStudio/tools` and hands Build and
+  Run `PROTOC`. Not yet tried in an installed desktop build on a machine
+  without protoc. #718 was closed as its duplicate.
+
 # 2026-09-29 — desktop 0.3.0-beta.5
 
 What the release leaves open (its notes: `docs/desktop-release-notes.md`):
@@ -46,11 +117,10 @@ What the release leaves open (its notes: `docs/desktop-release-notes.md`):
 
   Drop each workaround with the engine pin that fixes it.
 
-- [ ] Point dev's Gearbox corpus at constructorfabric/gears-rust @andrejk666
+- [x] Point dev's Gearbox corpus at constructorfabric/gears-rust @andrejk666
 
-  `values-dev` names `MikeFalcon77/gears-rust` `feature/gearbox`, the branch
-  that carries `gear.gdl`, until constructorfabric/gears-rust#4793 merges
-  (#490).
+  Superseded: the corpus is the platform's gear repositories now (ADR-0046);
+  see "Move Dev off the fork's gear corpus" under 2026-10-15.
 
 - [ ] After the weftgraph deploy on studio-dev @andrejk666
 
