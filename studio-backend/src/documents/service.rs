@@ -875,7 +875,9 @@ impl DocumentsService {
         for d in &docs {
             let passed = analyses
                 .iter()
-                .filter(|a| a.document_id == Some(d.id) && a.state == AnalysisState::Passed.as_str())
+                .filter(|a| {
+                    a.document_id == Some(d.id) && a.state == AnalysisState::Passed.as_str()
+                })
                 .map(|a| a.detector.clone())
                 .collect();
             out.insert(d.id, (content_digest(&d.content), passed));

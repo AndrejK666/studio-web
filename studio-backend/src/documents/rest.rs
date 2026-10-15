@@ -3046,7 +3046,11 @@ fn spec_decision_dto(
     binding_of: &std::collections::BTreeMap<String, String>,
 ) -> SpecModelDecisionDto {
     let snap = d.snapshot.clone().unwrap_or(serde_json::Value::Null);
-    let text = |k: &str| snap.get(k).and_then(serde_json::Value::as_str).map(str::to_string);
+    let text = |k: &str| {
+        snap.get(k)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
     let sides: Vec<super::spec_model::finding::Side> = snap
         .get("sides")
         .cloned()
@@ -5560,7 +5564,10 @@ async fn create_review_request(
         .subject_versions(workspace_id, project_id)
         .await
         .unwrap_or_default();
-    let dto = with_version(review_dto(&review, time::OffsetDateTime::now_utc()), &versions);
+    let dto = with_version(
+        review_dto(&review, time::OffsetDateTime::now_utc()),
+        &versions,
+    );
     announce_review(&quality, &ctx, "review_request.created", &dto);
     Ok((StatusCode::CREATED, Json(dto)))
 }
@@ -5726,9 +5733,11 @@ async fn get_review_request_diff(
         .await
         .map_err(internal)?;
     let Some(this) = all.iter().find(|r| r.request.id == request_id) else {
-        return Err(DocumentsError::not_found("no such review request in this project")
-            .with_resource("review_request")
-            .create());
+        return Err(
+            DocumentsError::not_found("no such review request in this project")
+                .with_resource("review_request")
+                .create(),
+        );
     };
     let r = &this.request;
     let reader = quality.reader().ok();
