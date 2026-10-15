@@ -5031,9 +5031,10 @@ export const api = {
       token,
     ),
   /** The organization's plain explanations of gears, by engine id. Kept
-   *  per organization: the one on screen is named. */
+   *  per organization: the one on screen is named. `may_manage`: the caller
+   *  may change them (an organization or platform administrator). */
   gearExplanations: (token: string) =>
-    request<{ items: GearExplanation[]; total: number }>(
+    request<{ items: GearExplanation[]; total: number; may_manage?: boolean }>(
       withOrganization(`/studio-product/v1/gear-explanations`),
       token,
     ),

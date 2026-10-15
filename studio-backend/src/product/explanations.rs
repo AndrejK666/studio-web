@@ -10,7 +10,8 @@
 //!
 //! Kept as one account-management metadata row on the organization, keyed by
 //! the gear's engine id. Written only by this gear, as the service, after the
-//! caller was shown to reach the organization (`?organization_id=`): the PDP
+//! caller was shown to reach the organization (`?organization_id=`) and to
+//! administer it ([`may_explain`]; reading stays open to members): the PDP
 //! refuses anybody else's write of the row
 //! (`studio_authz_plugin::GEAR_HELD_METADATA`), so the length and source
 //! rules here are the only way it changes.
@@ -110,6 +111,29 @@ pub struct GearBrief {
     pub path: Option<String>,
     /// The crate's README, when it has one.
     pub readme: Option<String>,
+}
+
+/// The privilege that changes the organization's explanations: the one that
+/// curates its gear catalogue (ADR-0041 P2), since an explanation is how the
+/// catalogue reads to the organization's people. The role ladder gives it to
+/// owners and admins, never to editors or viewers.
+pub const EXPLAIN_PRIVILEGE: &str = "component.registry";
+
+/// May the caller change `org`'s explanations (save their words, or have a
+/// model write them)? An organization administrator or a platform
+/// administrator may, as studio-user answers it (ADR-0019 §3: the gear answers
+/// administration, never the PDP, whose tenant clamp admits every member).
+/// Without studio-user nobody can be shown to hold it, so nobody does.
+/// Reading them stays open to every member.
+pub async fn may_explain(
+    authority: Option<&dyn crate::user_profile::OrgAuthority>,
+    ctx: &SecurityContext,
+    org: Uuid,
+) -> bool {
+    match authority {
+        Some(authority) => authority.may_administer(ctx, org, EXPLAIN_PRIVILEGE).await,
+        None => false,
+    }
 }
 
 /// Whether a model may write `existing`'s explanation: always where there is
