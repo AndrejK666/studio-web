@@ -15,11 +15,12 @@ other files spend against, and an implicit ceiling is one nobody can check:
 | studio-backend, 13 gear pools | 52 | `pool.max_conns: 4` on `pg_main`, `studio-backend/config/k8s.yaml` |
 | studio-backend, graph-storage | 8 | that gear's own `pool` override |
 | studio-backend, studio-events | 2 | that gear's own `pool` override |
+| studio-backend, postgres-usage-collector-plugin | 3 | 1 on its toolkit `pool`, 2 on its own sqlx pool (`pool_size_max`) |
 | Keycloak | 10 | `keycloak.dbPoolMaxSize`, `deploy/helm/studio-web/values.yaml` |
 | backend-bootstrap Job | ~2 | transient, one pass per upgrade |
 | CloudNativePG + exporter | ~5 | the operator |
 | `superuser_reserved_connections` | 3 | PostgreSQL default |
-| **Total** | **~82** | |
+| **Total** | **~85** | |
 
 The thing to know before changing any of it: toolkit-db caches one pool **per
 gear**, not per server, so the `max_conns` on `pg_main` is multiplied by the
@@ -38,12 +39,18 @@ arithmetic, which is the whole reason for the number:
 
 | shared `max_conns` | per replica | two replicas | with everyone else | under 100? |
 |---|---|---|---|---|
-| 4 (today) | 64 | 128 | 148 | no |
-| 3 | 51 | 102 | 122 | no |
-| 2 | 38 | 76 | 96 | yes |
+| 4 (today) | 67 | 134 | 154 | no |
+| 3 | 54 | 108 | 128 | no |
+| 2 | 41 | 82 | 102 | no |
 
 (Per replica: thirteen gears on the shared pool, plus graph-storage's own 8,
-studio-events' 2 and studio-artifact-ingest's 2.)
+studio-events' 2, studio-artifact-ingest's 2 and the usage plugin's 3.)
+
+**Two replicas no longer fit in 150.** The usage plugin (issue #781) added three
+connections per replica, and two replicas now need 154. A second replica is
+blocked anyway while IDE sessions are on (see the Helm values), so 150 stays
+until one is actually wanted; raise `max_connections` to 160 in both templates
+— and `limits.memory` with it — in the same change that turns it on.
 
 Lowering the per-gear pool is therefore not the way to make room: three
 connections per gear still does not fit, and two — the only value that does —

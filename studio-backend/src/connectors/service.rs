@@ -942,12 +942,15 @@ impl ConnectorService {
     /// tenant when none is named -- and its ancestors, nearest first. One
     /// whose token the caller cannot read (somebody else's personal one, a
     /// removed secret) is skipped; it never fails the lookup.
+    ///
+    /// The key comes with the scope of the connection it was read from, so a
+    /// caller can say whose money a call spent (studio-usage, issue #781).
     pub async fn model_key_for(
         &self,
         ctx: &SecurityContext,
         workspace: Option<Uuid>,
         provider: &str,
-    ) -> Option<String> {
+    ) -> Option<ModelKey> {
         let from = workspace.unwrap_or_else(|| ctx.subject_tenant_id());
         let reachable = reachable_connections(self.am.as_ref(), ctx, from).await;
         let candidates = model_key_candidates(reachable, provider, workspace.is_some());
@@ -1273,9 +1276,17 @@ fn model_key_candidates(
     out
 }
 
+/// A model-provider key read from an AI connection, and that connection's
+/// scope (`personal` | `workspace` | `organization`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelKey {
+    pub token: String,
+    pub scope: String,
+}
+
 /// The first candidate whose token `read` returns, non-blank. A candidate
 /// that cannot be read is skipped, not fatal.
-async fn first_readable<F, Fut>(candidates: Vec<Connection>, read: F) -> Option<String>
+async fn first_readable<F, Fut>(candidates: Vec<Connection>, read: F) -> Option<ModelKey>
 where
     F: Fn(Connection) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<String>>,
@@ -1283,7 +1294,12 @@ where
     for c in candidates {
         let (label, scope) = (c.label.clone(), c.scope.clone());
         match read(c).await {
-            Ok(token) if !token.trim().is_empty() => return Some(token.trim().to_owned()),
+            Ok(token) if !token.trim().is_empty() => {
+                return Some(ModelKey {
+                    token: token.trim().to_owned(),
+                    scope,
+                });
+            }
             Ok(_) => {}
             Err(error) => tracing::debug!(
                 connection = %label,
@@ -1743,7 +1759,13 @@ mod default_connection_tests {
                 .iter()
                 .map(|l| conn(l, "anthropic", "workspace"))
                 .collect();
-            assert_eq!(first_readable(candidates, &read).await.as_deref(), expected);
+            assert_eq!(
+                first_readable(candidates, &read)
+                    .await
+                    .map(|k| k.token)
+                    .as_deref(),
+                expected
+            );
         }
     }
 

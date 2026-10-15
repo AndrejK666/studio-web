@@ -187,6 +187,16 @@ authz_resolver = { package = "cf-gears-authz-resolver", version = "0.2.5" }
 authz_resolver_sdk = { package = "cf-gears-authz-resolver-sdk", version = "0.5.2" }
 resource_group = { package = "cf-gears-resource-group", version = "0.4.5" }
 
+# ── Usage metering (issue #781) ──
+# The platform's metering store. Studio records what its model calls and IDE
+# sessions use through the SDK (src/usage); the records are kept by the storage
+# plugin, which is the published TimescaleDB plugin's code on a plain table
+# until the shared Postgres can have TimescaleDB (see its README).
+usage_collector = { package = "cf-gears-usage-collector", version = "0.4.0" }
+usage_collector_sdk = { package = "cf-gears-usage-collector-sdk", version = "0.3.14" }
+postgres_usage_collector_plugin = { package = "studio-postgres-usage-collector-plugin", path = "plugins/postgres-usage-collector-plugin" }
+rust_decimal = "1.39"
+
 # ── Dev plugins (static auth for the demo; replace with OIDC for real deployments) ──
 static_authn_plugin = { package = "cf-gears-static-authn-plugin", version = "0.3.18" }
 # Real login: OIDC JWT validation (used by config/oidc.yaml with Keycloak from compose)

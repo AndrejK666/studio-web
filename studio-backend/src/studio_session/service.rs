@@ -1369,6 +1369,48 @@ impl SessionService {
         Ok(self.refresh().await?.len())
     }
 
+    /// The usage records of every running session's completed windows, as of
+    /// `now` (see [`super::metering`]). Listed from the driver, like
+    /// [`Self::reap_expired`], so one pass covers what every replica launched.
+    ///
+    /// # Errors
+    ///
+    /// Only when the runtime cannot be listed.
+    pub async fn usage_of_running(
+        &self,
+        now: time::OffsetDateTime,
+    ) -> anyhow::Result<Vec<crate::usage::sdk::UsageRecord>> {
+        use super::metering::{Running, mebibytes, millicores, records_of};
+        let size = crate::usage::sdk::Runtime {
+            seconds: 0,
+            cpu_millicores: millicores(&self.cfg.k8s_session_cpu_request).unwrap_or(0),
+            memory_mib: mebibytes(&self.cfg.k8s_session_memory_request).unwrap_or(0),
+        };
+        let mut out = Vec::new();
+        for session in self.driver.list_adoptable().await? {
+            // Unknown age: no window can be told, and none is guessed.
+            if !session.running || session.created_at_epoch_secs == 0 {
+                continue;
+            }
+            let Ok(created_at) = time::OffsetDateTime::from_unix_timestamp(
+                i64::try_from(session.created_at_epoch_secs).unwrap_or(i64::MAX),
+            ) else {
+                continue;
+            };
+            let launch = match session.launch_id {
+                Some(id) => id.to_string(),
+                None => format!("{}@{}", session.handle, session.created_at_epoch_secs),
+            };
+            let running = Running {
+                tenant_id: session.workspace_id,
+                launch,
+                created_at,
+            };
+            out.extend(records_of(&running, now, &self.cfg.driver, size));
+        }
+        Ok(out)
+    }
+
     /// One reaping pass: stop every session past `max_session_secs`, and
     /// every one no browser has had open for `idle_session_secs`.
     ///

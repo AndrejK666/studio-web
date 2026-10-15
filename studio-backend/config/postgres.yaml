@@ -485,6 +485,38 @@ gears:
         max_lifetime: "30m"
     config: {}
 
+  # ── usage-collector (the platform's metering store, issue #781) ──
+  # What model calls and IDE sessions use is recorded here by studio-llm-proxy
+  # and studio-session; the records live with the storage plugin below.
+  usage-collector:
+    config:
+      vendor: "constructorfabric"
+
+  # ── postgres-usage-collector-plugin (usage-collector's storage) ──
+  # The TimescaleDB plugin's code on a plain table
+  # (studio-backend/plugins/postgres-usage-collector-plugin/README.md).
+  #
+  # It keeps its own sqlx pool on `database_url` (two connections: setup
+  # holds one under a lock while it uses the other). The `database:` block
+  # names the same database so the bootstrap creates it; its pool is the
+  # toolkit's and stays at one. Without `database_url` the plugin stands
+  # down and nothing is recorded.
+  postgres-usage-collector-plugin:
+    database:
+      server: "pg_main"
+      dbname: "studio_usage"
+      pool:
+        max_conns: 1
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+    config:
+      database_url: "postgres://studio:${STUDIO_PG_PASSWORD:-studio}@127.0.0.1:5433/studio_usage?sslmode=disable"
+      pool_size_min: 0
+      pool_size_max: 2
+      vendor: "constructorfabric"
+
   # ── studio-artifact-ingest (the artifact index) ──
   # A mirror of the artifact graph's listing fields — scope, repo, type,
   # updated_at — as indexed columns, so a project's artifacts, specs and

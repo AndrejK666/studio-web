@@ -52,6 +52,7 @@ mod tasks; // studio-tasks: durable background runs (queue + history + cancel)
 mod test_env; // one lock for the process environment, shared by every test that sets a variable
 #[cfg(test)]
 mod test_pg; // one PostgreSQL for the whole test process, shared by the suites that keep tables
+mod usage; // usage metering: what model calls and IDE sessions use, recorded with usage-collector
 mod user_profile; // studio-user: canonical user + profile + sign-in methods (identity mapper)
 
 use std::path::{Path, PathBuf};

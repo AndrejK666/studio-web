@@ -33,6 +33,7 @@ use async_trait::async_trait;
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 use super::service::SessionService;
+use crate::usage::sdk::Usage;
 
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "session.reap";
@@ -47,11 +48,33 @@ pub const CRON: &str = "*/5 * * * *";
 
 pub struct SessionReapTask {
     service: Arc<SessionService>,
+    /// Where each pass records what the running sessions used (issue #781).
+    usage: Usage,
 }
 
 impl SessionReapTask {
-    pub fn new(service: Arc<SessionService>) -> Self {
-        Self { service }
+    pub fn new(service: Arc<SessionService>, usage: Usage) -> Self {
+        Self { service, usage }
+    }
+
+    /// Record the running sessions' completed windows. Before reaping, so a
+    /// session about to be stopped is counted up to now. Never fails the pass:
+    /// metering is a record of the sessions, not a condition of stopping them.
+    async fn meter(&self, ctx: &TaskContext) {
+        let records = match self
+            .service
+            .usage_of_running(time::OffsetDateTime::now_utc())
+            .await
+        {
+            Ok(records) => records,
+            Err(e) => {
+                tracing::warn!("studio-session: running sessions could not be metered: {e:#}");
+                return;
+            }
+        };
+        if let Err(e) = self.usage.record(&ctx.security, records).await {
+            tracing::warn!("studio-session: session usage could not be recorded: {e:#}");
+        }
     }
 }
 
@@ -66,6 +89,8 @@ impl TaskHandler for SessionReapTask {
         // (`max_session_secs`), not of a firing. A schedule someone edited to
         // carry one is not an error worth failing over.
         let _ = &ctx.payload;
+
+        self.meter(ctx).await;
 
         match self.service.reap_expired().await {
             Ok(outcome) => {

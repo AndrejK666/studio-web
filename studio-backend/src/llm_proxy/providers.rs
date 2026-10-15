@@ -22,6 +22,12 @@
 //! implements [`super::port::ModelProviders`], so a gear that needs to reach a
 //! provider (the connector gear testing a key) goes out through here too — the
 //! one way out (ADR-0039).
+//!
+//! Every answer that comes back successful is metered on its way through
+//! ([`super::usage_tap`]): the tokens the provider reports, the model that
+//! answered, the caller, the tenant the request was made in and whose key paid
+//! are recorded with studio-usage (issue #781). Metering never holds up or
+//! changes an answer; a call it cannot record is logged and still served.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -32,11 +38,15 @@ use axum::extract::{Path, Request};
 use axum::http::{HeaderMap, HeaderName, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
+use time::OffsetDateTime;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::port::{Completion, CompletionError, CompletionRequest, ModelInfo, ModelProviders};
+use super::usage_tap::{Reported, Tapped, UsageScan};
 use crate::studio_session::sdk::WorkspaceAccess;
+use crate::usage::port::{Payer, Runtime, Source, TokenCounts, UsageRecord};
+use crate::usage::sdk::Usage;
 
 /// How a provider wants its key.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -139,7 +149,14 @@ pub trait KeySource: Send + Sync {
         ctx: &SecurityContext,
         provider: &ProviderConfig,
         workspace: Option<Uuid>,
-    ) -> anyhow::Result<Option<String>>;
+    ) -> anyhow::Result<Option<ProviderKey>>;
+}
+
+/// A key a call goes out on, and whose money that is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderKey {
+    pub value: String,
+    pub payer: Payer,
 }
 
 pub struct Providers {
@@ -148,13 +165,115 @@ pub struct Providers {
     pub keys: Arc<dyn KeySource>,
     /// Whether a caller reaches the workspace a request names.
     pub access: Arc<dyn WorkspaceAccess>,
+    /// Where what a call cost is recorded.
+    pub usage: Usage,
+}
+
+/// One call to a provider, as it is recorded once its answer has gone by.
+pub struct Call {
+    pub usage: Usage,
+    /// Who records it: the caller, acting in the workspace the request named
+    /// (already shown to be theirs) — the collector asks the PDP whether the
+    /// recorder reaches the record's tenant, and a person's home tenant is not
+    /// always the organization the workspace is in.
+    pub ctx: SecurityContext,
+    pub person: Uuid,
+    /// The workspace the request named, else the caller's home tenant.
+    pub tenant: Uuid,
+    pub payer: Payer,
+    pub provider: String,
+    /// The model the request asked for, kept for an answer that names none.
+    pub model: Option<String>,
+}
+
+impl Call {
+    fn new(
+        ctx: &SecurityContext,
+        workspace: Option<Uuid>,
+        provider: &str,
+        key: &ProviderKey,
+        usage: &Usage,
+    ) -> Self {
+        let tenant = workspace.unwrap_or_else(|| ctx.subject_tenant_id());
+        Self {
+            usage: usage.clone(),
+            ctx: crate::org_scope::acting_in(ctx, tenant).unwrap_or_else(|_| ctx.clone()),
+            person: ctx.subject_id(),
+            tenant,
+            payer: key.payer,
+            provider: provider.to_owned(),
+            model: None,
+        }
+    }
+
+    /// The record of this call, when its answer reported any usage.
+    pub fn record_of(
+        &self,
+        request_id: Option<String>,
+        reported: Option<Reported>,
+        now: OffsetDateTime,
+    ) -> Option<UsageRecord> {
+        let reported = reported?;
+        let t = reported.tokens;
+        Some(UsageRecord {
+            // The provider's id for the answer, else one of our own: every
+            // call is recorded once, from here.
+            key: format!(
+                "llm:{}:{}",
+                self.provider,
+                request_id.unwrap_or_else(|| Uuid::new_v4().to_string())
+            ),
+            tenant_id: self.tenant,
+            person_id: Some(self.person),
+            source: Source::Llm,
+            payer: self.payer,
+            item: reported
+                .model
+                .or_else(|| self.model.clone())
+                .unwrap_or_else(|| "unknown".to_owned()),
+            provider: self.provider.clone(),
+            occurred_at: now,
+            tokens: TokenCounts {
+                input: t.input,
+                output: t.output,
+                cache_read: t.cache_read,
+                cache_write: t.cache_write,
+            },
+            runtime: Runtime::default(),
+        })
+    }
+
+    /// Record this call in the background: the answer is already the
+    /// caller's, and a record that fails is a log line, not their error.
+    fn record(self, request_id: Option<String>, reported: Option<Reported>) {
+        let Some(record) = self.record_of(request_id, reported, OffsetDateTime::now_utc()) else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        runtime.spawn(async move {
+            if let Err(error) = self.usage.record(&self.ctx, vec![record]).await {
+                tracing::warn!(error = %format!("{error:#}"), "studio-llm-proxy: a call's usage could not be recorded");
+            }
+        });
+    }
+}
+
+/// The provider's id for one answer, when it sends one.
+fn request_id(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    ["request-id", "x-request-id"]
+        .iter()
+        .find_map(|name| headers.get(*name)?.to_str().ok())
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
 }
 
 /// The chat model a caller gets, and the key it goes out on.
 pub struct ChatChoice<'a> {
     pub provider: &'a ProviderConfig,
     pub model: String,
-    pub key: String,
+    pub key: ProviderKey,
 }
 
 /// What [`Providers::client_config`] tells an IDE.
@@ -171,10 +290,13 @@ pub struct ChatSettings {
 /// Request headers an agent's call needs upstream. The caller's own
 /// credentials (`authorization`, `x-api-key`) are Studio's, not the provider's,
 /// and are never forwarded.
-const FORWARD_REQUEST: [&str; 8] = [
+///
+/// Nor is `accept-encoding`: an answer has to arrive uncompressed for its
+/// usage to be read on the way through (issue #781). A model's answer is text
+/// streamed a few tokens at a time, so compression saved next to nothing.
+const FORWARD_REQUEST: [&str; 7] = [
     "content-type",
     "accept",
-    "accept-encoding",
     "user-agent",
     "anthropic-version",
     "anthropic-beta",
@@ -254,16 +376,30 @@ fn refuse(status: StatusCode, message: String) -> Response {
 /// caller's keys decide, so the model is that provider's, whatever the IDE was
 /// configured with before the caller's keys changed. `None` when the body is
 /// not a JSON object.
+///
+/// A streamed request is also made to ask for its usage
+/// (`stream_options.include_usage`): an OpenAI-compatible stream reports its
+/// tokens only when asked, and an answer that does not report them cannot be
+/// metered (issue #781). The client sees one more chunk at the end, with an
+/// empty `choices` — which the OpenAI clients expect when they ask themselves.
 pub fn with_model(body: &[u8], model: &str) -> Option<Vec<u8>> {
     let mut value: serde_json::Value = serde_json::from_slice(body).ok()?;
-    value
-        .as_object_mut()?
-        .insert("model".into(), serde_json::Value::String(model.into()));
+    let object = value.as_object_mut()?;
+    object.insert("model".into(), serde_json::Value::String(model.into()));
+    if object.get("stream") == Some(&serde_json::Value::Bool(true)) {
+        let options = object
+            .entry("stream_options")
+            .or_insert_with(|| serde_json::json!({}));
+        if let Some(options) = options.as_object_mut() {
+            options.insert("include_usage".into(), serde_json::Value::Bool(true));
+        }
+    }
     serde_json::to_vec(&value).ok()
 }
 
 /// The upstream's answer, streamed back with the headers a client reads.
-fn stream_back(provider: &str, answer: reqwest::Response) -> Response {
+/// A successful answer to a `call` is metered on its way through.
+fn stream_back(provider: &str, answer: reqwest::Response, call: Option<Call>) -> Response {
     let mut response = Response::builder().status(answer.status().as_u16());
     for (name, value) in answer.headers() {
         if forwards_response(name.as_str()) {
@@ -271,14 +407,27 @@ fn stream_back(provider: &str, answer: reqwest::Response) -> Response {
         }
     }
     // Streamed, not buffered: an answer is often a server-sent event stream.
-    response
-        .body(Body::from_stream(answer.bytes_stream()))
-        .unwrap_or_else(|_| {
-            refuse(
-                StatusCode::BAD_GATEWAY,
-                format!("{provider} sent an unreadable answer."),
-            )
-        })
+    let body = match call.filter(|_| answer.status().is_success()) {
+        Some(call) => {
+            let id = request_id(answer.headers());
+            let scan = UsageScan::new(
+                answer
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok()),
+            );
+            Body::from_stream(Tapped::new(answer.bytes_stream(), scan, move |reported| {
+                call.record(id, reported);
+            }))
+        }
+        None => Body::from_stream(answer.bytes_stream()),
+    };
+    response.body(body).unwrap_or_else(|_| {
+        refuse(
+            StatusCode::BAD_GATEWAY,
+            format!("{provider} sent an unreadable answer."),
+        )
+    })
 }
 
 impl Providers {
@@ -317,7 +466,7 @@ impl Providers {
                 format!("Studio has no model provider named {provider:?}."),
             );
         };
-        let key = match self.keys.key_for(ctx, config, workspace).await {
+        let key: ProviderKey = match self.keys.key_for(ctx, config, workspace).await {
             Ok(Some(key)) => key,
             Ok(None) => return refuse(StatusCode::FORBIDDEN, no_key_message(provider)),
             Err(error) => {
@@ -334,14 +483,17 @@ impl Providers {
         let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
             .unwrap_or(reqwest::Method::POST);
         let mut upstream = self.client.request(method, url);
-        for (name, value) in upstream_headers(&parts.headers, &config.key_header, &key) {
+        // A read (a model list, a batch's state) costs nothing to meter.
+        let call = (parts.method == axum::http::Method::POST)
+            .then(|| Call::new(ctx, workspace, provider, &key, &self.usage));
+        for (name, value) in upstream_headers(&parts.headers, &config.key_header, &key.value) {
             upstream = upstream.header(name.as_str(), value);
         }
         if parts.method != axum::http::Method::GET && parts.method != axum::http::Method::HEAD {
             upstream = upstream.body(reqwest::Body::wrap_stream(body.into_data_stream()));
         }
         match upstream.send().await {
-            Ok(answer) => stream_back(provider, answer),
+            Ok(answer) => stream_back(provider, answer, call),
             Err(error) => {
                 tracing::warn!(provider, error = %error.without_url(), "studio-llm-proxy: the provider is unreachable");
                 refuse(
@@ -476,9 +628,11 @@ impl Providers {
             );
         };
         let provider = choice.provider.name.as_str();
+        let mut call = Call::new(ctx, workspace, provider, &choice.key, &self.usage);
+        call.model = Some(choice.model.clone());
         let url = upstream_url(&choice.provider.base_url, &choice.provider.chat_path, None);
         let mut upstream = self.client.post(url);
-        for (name, value) in upstream_headers(incoming, &KeyHeader::Bearer, &choice.key) {
+        for (name, value) in upstream_headers(incoming, &KeyHeader::Bearer, &choice.key.value) {
             // The body is ours now (its model rewritten), so its type is too.
             if name != header::CONTENT_TYPE {
                 upstream = upstream.header(name.as_str(), value);
@@ -488,7 +642,7 @@ impl Providers {
             .header(header::CONTENT_TYPE.as_str(), "application/json")
             .body(body);
         match upstream.send().await {
-            Ok(answer) => stream_back(provider, answer),
+            Ok(answer) => stream_back(provider, answer, Some(call)),
             Err(error) => {
                 tracing::warn!(provider, error = %error.without_url(), "studio-llm-proxy: the provider is unreachable");
                 refuse(
@@ -573,10 +727,14 @@ impl ModelProviders for Providers {
             )));
         };
         let provider = choice.provider.name.clone();
+        let mut call = Call::new(ctx, None, &provider, &choice.key, &self.usage);
+        call.model = Some(choice.model.clone());
         let url = upstream_url(&choice.provider.base_url, &choice.provider.chat_path, None);
         let body = completion_body(&choice.model, request);
         let mut upstream = self.client.post(url);
-        for (name, value) in upstream_headers(&HeaderMap::new(), &KeyHeader::Bearer, &choice.key) {
+        for (name, value) in
+            upstream_headers(&HeaderMap::new(), &KeyHeader::Bearer, &choice.key.value)
+        {
             upstream = upstream.header(name.as_str(), value);
         }
         let answer = upstream
@@ -591,6 +749,7 @@ impl ModelProviders for Providers {
                 ))
             })?;
         let status = answer.status();
+        let id = request_id(answer.headers());
         let text = answer
             .text()
             .await
@@ -601,6 +760,11 @@ impl ModelProviders for Providers {
                 text.chars().take(200).collect::<String>()
             )));
         }
+        // Studio's own question, on the caller's key: theirs to see in the
+        // costs like any other call.
+        let mut scan = UsageScan::new(Some("application/json"));
+        scan.feed(text.as_bytes());
+        call.record(id, scan.finish());
         let content = completion_text(&text).ok_or_else(|| {
             CompletionError::Failed(anyhow::anyhow!("{provider} answered no message content"))
         })?;
@@ -722,12 +886,15 @@ mod tests {
             ctx: &SecurityContext,
             provider: &ProviderConfig,
             workspace: Option<Uuid>,
-        ) -> anyhow::Result<Option<String>> {
+        ) -> anyhow::Result<Option<ProviderKey>> {
             self.asked.lock().unwrap().push(ctx.subject_id());
             Ok(self
                 .keys
                 .get(&(ctx.subject_id(), provider.name.clone(), workspace))
-                .cloned())
+                .map(|value| ProviderKey {
+                    value: value.clone(),
+                    payer: Payer::Personal,
+                }))
         }
     }
 
@@ -747,6 +914,7 @@ mod tests {
             list,
             keys,
             access: Arc::new(Reach(reach)),
+            usage: Usage::none(),
         }
     }
 
@@ -1087,6 +1255,121 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&seen[0].2).unwrap();
         assert_eq!(body["model"], "claude-sonnet-5-5");
         assert_eq!(body["stream"], true);
+        // A stream reports its tokens only when asked (issue #781).
+        assert_eq!(body["stream_options"]["include_usage"], true);
+    }
+
+    /// What every recorded call was: kept by a recorder a test can read.
+    #[derive(Default)]
+    struct Recorded(Mutex<Vec<(Uuid, UsageRecord)>>);
+
+    #[async_trait]
+    impl crate::usage::sdk::UsageRecorder for Recorded {
+        async fn record(
+            &self,
+            ctx: &SecurityContext,
+            records: Vec<UsageRecord>,
+        ) -> anyhow::Result<()> {
+            let mut kept = self.0.lock().unwrap();
+            kept.extend(records.into_iter().map(|r| (ctx.subject_tenant_id(), r)));
+            Ok(())
+        }
+    }
+
+    /// End to end: an agent's streamed call through a workspace is recorded
+    /// once its answer has gone by — the tokens the provider reported, the
+    /// model that answered, the caller, the workspace, and that the key was
+    /// the caller's own. The answer reaches the caller unchanged.
+    #[tokio::test]
+    async fn a_call_through_a_workspace_is_recorded_with_what_it_used() {
+        const ANSWER: &str = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-5-5\",\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":40,\"output_tokens\":1}}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n";
+        let seen: Seen = Arc::new(Mutex::new(vec![]));
+        let address = serve(stand_in(seen.clone(), "/v1/messages", ANSWER)).await;
+        let ws = Uuid::from_u128(0xD2);
+        let recorded = Arc::new(Recorded::default());
+        let mut providers = providers_with(
+            vec![stand_in_provider("anthropic", address)],
+            Keys::of(&[(0x7A5, "anthropic", Some(ws), "sk-ant-vasil")]),
+            true,
+        );
+        providers.usage = Usage::fixed(recorded.clone());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .body(Body::from(r#"{"model":"claude-sonnet-5-5","stream":true}"#))
+            .unwrap();
+        let answer = providers
+            .forward(
+                &person(0x7A5),
+                Some(ws),
+                "anthropic",
+                "v1/messages",
+                request,
+            )
+            .await;
+        assert_eq!(answer.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(answer.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body, ANSWER.as_bytes());
+
+        // Recorded in the background once the stream ended.
+        for _ in 0..50 {
+            if !recorded.0.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let kept = recorded.0.lock().unwrap();
+        assert_eq!(kept.len(), 1);
+        let (recorder_tenant, record) = &kept[0];
+        // Recorded as the caller acting in the workspace, which the PDP
+        // admits; their home tenant may not be the workspace's organization.
+        assert_eq!(*recorder_tenant, ws);
+        assert_eq!(record.tenant_id, ws);
+        assert_eq!(record.person_id, Some(Uuid::from_u128(0x7A5)));
+        assert_eq!(record.payer, Payer::Personal);
+        assert_eq!(record.item, "claude-sonnet-5-5");
+        assert_eq!(
+            record.tokens,
+            TokenCounts {
+                input: 12,
+                output: 7,
+                cache_read: 40,
+                cache_write: 0
+            }
+        );
+    }
+
+    /// A read through the passthrough is not a model call and costs nothing.
+    #[tokio::test]
+    async fn a_read_is_not_recorded() {
+        let address = serve(axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(|| async { r#"{"data":[],"usage":{"input_tokens":9}}"# }),
+        ))
+        .await;
+        let recorded = Arc::new(Recorded::default());
+        let mut providers = providers_with(
+            vec![stand_in_provider("anthropic", address)],
+            Keys::of(&[(0x7A5, "anthropic", None, "sk-ant-vasil")]),
+            true,
+        );
+        providers.usage = Usage::fixed(recorded.clone());
+        let request = Request::builder()
+            .method("GET")
+            .uri("/v1/models")
+            .body(Body::empty())
+            .unwrap();
+        let answer = providers
+            .forward(&person(0x7A5), None, "anthropic", "v1/models", request)
+            .await;
+        let _ = axum::body::to_bytes(answer.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(recorded.0.lock().unwrap().is_empty());
     }
 
     #[test]

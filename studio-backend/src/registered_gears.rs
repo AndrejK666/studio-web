@@ -17,6 +17,11 @@ use nodes_registry as _;
 use resource_group as _;
 use tenant_resolver as _;
 use types_registry as _;
+// Usage metering (issue #781): the platform's collector and the storage plugin
+// it binds — the TimescaleDB plugin's code on plain PostgreSQL, vendored under
+// plugins/ until the shared Postgres can have TimescaleDB.
+use postgres_usage_collector_plugin as _;
+use usage_collector as _;
 
 // Dev auth plugins (static tokens; swap for OIDC plugins in production)
 use oidc_authn_plugin as _; // real login (config/oidc.yaml profile)

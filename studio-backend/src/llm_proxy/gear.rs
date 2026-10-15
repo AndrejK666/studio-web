@@ -17,6 +17,7 @@ use super::providers::Providers;
 use super::rest;
 use crate::connectors::sdk::Connectors;
 use crate::studio_session::sdk::{TenantMembership, WorkspaceAccess};
+use crate::usage::sdk::Usage;
 
 /// Workspace membership, asked of account-management when a request names a
 /// workspace. Resolved per use: Studio gears share one crate, so `deps` cannot
@@ -106,6 +107,9 @@ impl Gear for LlmProxyGear {
             list: cfg.providers.clone(),
             keys,
             access: Arc::new(HubMembership(ctx.client_hub())),
+            // What every call cost goes to studio-usage, resolved per call:
+            // an assembly without it simply records nothing.
+            usage: Usage::new(ctx.client_hub()),
         });
         // Studio's one way out to a provider (ADR-0039): other gears reach one
         // through this client, with a key they hand it.
