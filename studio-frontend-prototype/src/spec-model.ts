@@ -61,6 +61,10 @@ export interface SpecModelBuild {
   error?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
+  /** Seconds reading was estimated to take when the build started. */
+  estimated_seconds?: number | null;
+  /** The one document this build reads again, when it was asked for one. */
+  path?: string | null;
 }
 
 export interface SpecModel {

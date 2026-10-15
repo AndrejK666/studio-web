@@ -1043,6 +1043,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/build-estimate",
+      "operation_id": "studio_documents.get_spec_model_build_estimate",
+      "tag": "StudioDocuments",
+      "summary": "What a build of a project's model would read, and about how long it would take",
+      "authenticated": true,
+      "responses": [
+        "SpecModelBuildEstimateDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model/decisions",
       "operation_id": "studio_documents.list_spec_model_decisions",
       "tag": "StudioDocuments",

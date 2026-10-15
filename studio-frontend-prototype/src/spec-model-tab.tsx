@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Candidate, type SpecModelEntityEdit } from "./api";
+import { estimateLabel, etaLabel, readFraction, tokensLabel, type SpecModelBuildEstimate } from "./build-eta";
 import { ModelMapView, Prose, RequirementsView, ResolveView, SideLink } from "./domain-model-screens";
 import { gearRefs } from "./entity-gears";
 import { GlossaryScreen } from "./glossary-screen";
@@ -200,10 +201,26 @@ export function SpecModelTab({
     return () => window.clearInterval(t);
   }, [running, load]);
 
-  const startBuild = async () => {
+  // What the next build would read and how long it should take, read again
+  // whenever a build stops. A backend from before the estimate answers 404:
+  // the button then shows no estimate.
+  const [estimate, setEstimate] = useState<SpecModelBuildEstimate | null>(null);
+  useEffect(() => {
+    if (running) return;
+    let live = true;
+    api
+      .specModelBuildEstimate(token, projectId)
+      .then((e) => live && setEstimate(e))
+      .catch(() => live && setEstimate(null));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, running]);
+
+  const startBuild = async (path?: string) => {
     setStarting(true);
     try {
-      await api.startSpecModelBuild(token, projectId);
+      await api.startSpecModelBuild(token, projectId, path);
       await load();
     } catch (e) {
       setError(message(e));
@@ -272,13 +289,29 @@ export function SpecModelTab({
         </div>
         <div className="sm-build">
           {line && <span className={model?.build.error ? "sm-build-line sm-err" : "sm-build-line"}>{line}</span>}
+          {model && running && model.build.documents > 0 && model.build.done < model.build.documents && (
+            <span className="sm-build-progress" data-build-progress>
+              <progress value={readFraction(model.build)} max={1} />
+              {etaLabel(model.build, Date.now())}
+            </span>
+          )}
           <button
             className="primary"
             disabled={running || starting || model?.documents.length === 0}
             onClick={() => void startBuild()}
-            title="Reads every document not yet read at its current revision, on your own model key"
+            title={
+              "Reads every document not yet read at its current revision, on your own model key, " +
+              "four at once" +
+              (estimate && estimate.documents > 0
+                ? ` (${tokensLabel(estimate.input_tokens)}; ${estimate.measured ? "timed on earlier builds" : "a first guess"})`
+                : "")
+            }
           >
-            {running ? "Building…" : "Build on my key"}
+            {running
+              ? "Building…"
+              : estimate && estimate.documents > 0
+                ? `Build on my key · ${estimateLabel(estimate)}`
+                : "Build on my key"}
           </button>
         </div>
       </div>
@@ -355,7 +388,9 @@ export function SpecModelTab({
       )}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
       {view === "product" && <AgainstTheCode read={product} onOpenFile={onOpenFile} />}
-      {model && view === "coverage" && <Coverage model={model} />}
+      {model && view === "coverage" && (
+        <Coverage model={model} busy={running || starting} onRebuild={(path) => void startBuild(path)} />
+      )}
     </>
   );
 }
@@ -583,14 +618,25 @@ function Elsewhere({
   );
 }
 
-function Coverage({ model }: { model: SpecModel }) {
+function Coverage({
+  model,
+  busy,
+  onRebuild,
+}: {
+  model: SpecModel;
+  /** A build is running or starting: no second one. */
+  busy: boolean;
+  /** Read one document again, replacing only its facts. */
+  onRebuild: (path: string) => void;
+}) {
   const counts = coverageCounts(model.documents);
   return (
     <>
       <p className="hint">
         {counts.extracted} read at their current revision, {counts.failed} read part-way, {counts.stale} changed
         since they were read, {counts.pending} never read. A build reads only what is not read at its
-        revision, so an unchanged document is never paid for twice.
+        revision, so an unchanged document is never paid for twice. To read one document again, whatever its
+        state, rebuild from it: only its facts are replaced.
       </p>
       <table className="sm-table">
         <thead>
@@ -599,6 +645,7 @@ function Coverage({ model }: { model: SpecModel }) {
             <th>State</th>
             <th>Facts</th>
             <th>Dropped</th>
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -612,6 +659,18 @@ function Coverage({ model }: { model: SpecModel }) {
               </td>
               <td>{d.facts}</td>
               <td title="Facts the model gave that the text did not bear out">{d.dropped}</td>
+              <td>
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={busy}
+                  onClick={() => onRebuild(d.path)}
+                  title="Read this document again on your own model key; only its facts are replaced"
+                  data-rebuild={d.path}
+                >
+                  Rebuild from this document
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>

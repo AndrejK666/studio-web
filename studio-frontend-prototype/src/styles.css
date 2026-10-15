@@ -2162,6 +2162,8 @@ th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mar
 .sm-build { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .sm-build button { white-space: nowrap; flex-shrink: 0; }
 .sm-build-line { font-size: 13px; color: var(--muted-foreground); }
+.sm-build-progress { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-foreground); }
+.sm-build-progress progress { width: 140px; height: 6px; accent-color: var(--primary); }
 .sm-err { color: var(--destructive); }
 .sm-findings .card { margin-top: 0.75rem; }
 .sm-finding.sm-high { box-shadow: inset 3px 0 0 var(--destructive), 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent); }

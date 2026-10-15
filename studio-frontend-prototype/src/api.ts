@@ -23,6 +23,7 @@ import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./
 import { sectionBody, type MirrorSummary, type Plan, type PlanPeople, type PlanSection } from "./plan-model";
 import type { DomainEntity } from "./domain-model.gen";
 import type { DomainQuery, DomainQueryResult } from "./domain-query";
+import type { SpecModelBuildEstimate } from "./build-eta";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is /cf/openapi.json, shown grouped by component
@@ -2956,12 +2957,22 @@ export const api = {
     request<SpecModel>(`/studio-documents/v1/spec-model?project_id=${encodeURIComponent(projectId)}`, token),
   /** Read every document not yet read at its revision, on the caller's own
    *  model key, in the background. A build already running is answered with
-   *  its state. */
-  startSpecModelBuild: (token: string, projectId: string) =>
+   *  its state. With `path`, that one document is read again and only its
+   *  facts are replaced. */
+  startSpecModelBuild: (token: string, projectId: string, path?: string) =>
     request<SpecModelBuild>("/studio-documents/v1/spec-model/builds", token, {
       method: "POST",
-      body: JSON.stringify({ project_id: projectId }),
+      body: JSON.stringify(path ? { project_id: projectId, path } : { project_id: projectId }),
     }),
+  /** What a build would read now (or, with `path`, one document again), and
+   *  about how long it would take. No model is called. */
+  specModelBuildEstimate: (token: string, projectId: string, path?: string) =>
+    request<SpecModelBuildEstimate>(
+      `/studio-documents/v1/spec-model/build-estimate?project_id=${encodeURIComponent(projectId)}${
+        path ? `&path=${encodeURIComponent(path)}` : ""
+      }`,
+      token,
+    ),
   /** Where the documents disagree, or refer to what is not there, with each
    *  finding's decision. */
   specModelFindings: (token: string, projectId: string) =>
