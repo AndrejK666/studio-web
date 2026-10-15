@@ -3040,7 +3040,7 @@ fn finding_snapshot(f: &super::spec_model::finding::Finding) -> serde_json::Valu
 }
 
 /// A decision with the finding it was taken on, and whether that is still found.
-fn decision_dto(
+fn spec_decision_dto(
     d: super::entity::spec_decision::Model,
     present: Option<bool>,
     binding_of: &std::collections::BTreeMap<String, String>,
@@ -5136,7 +5136,7 @@ async fn decide_spec_model_finding(
         .map_err(invalid)?;
     Ok((
         StatusCode::CREATED,
-        Json(decision_dto(saved, present, &binding_of)),
+        Json(spec_decision_dto(saved, present, &binding_of)),
     ))
 }
 
@@ -5176,7 +5176,7 @@ async fn list_spec_model_decisions(
         .into_iter()
         .map(|d| {
             let present = current.as_ref().map(|c| c.contains(&d.fingerprint));
-            decision_dto(d, present, &binding_of)
+            spec_decision_dto(d, present, &binding_of)
         })
         .collect();
     Ok(Json(SpecModelDecisionListDto {
@@ -5283,7 +5283,7 @@ pub struct ReviewRequestDto {
     pub created_at: String,
     pub verdicts: Vec<ApprovalDto>,
     /// The version the document is at now: a binding's content digest, a
-    /// Studio document's SHA-256. `null` when the document is gone.
+    /// Studio document's content digest. `null` when the document is gone.
     pub current_version: Option<String>,
     /// The document changed since the version asked about.
     pub stale: bool,

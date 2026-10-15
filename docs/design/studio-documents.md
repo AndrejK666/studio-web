@@ -375,7 +375,7 @@ and by whom; insert only.
 **For the review card and document comparisons** (`m0023`). A review request
 keeps the text it was asked about (`reviewed_text`, at most 256 KiB); a request
 without a `version` is about the document as it is now. Every request carries
-`current_version` (a binding's content digest, a Studio document's SHA-256),
+`current_version` (a binding's content digest, a Studio document's content digest),
 `stale` when the document changed since, and `recorded_checks` (the detectors
 that pass on it now); the list adds `open`, `overdue` and `stale` counts.
 `GET /review-requests/{id}/diff` answers the reviewed text, the text now and
