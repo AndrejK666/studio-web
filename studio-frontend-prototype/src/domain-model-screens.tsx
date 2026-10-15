@@ -32,6 +32,7 @@ import {
   type ResolveItem,
   type ResolveType,
 } from "./domain-model-views";
+import { entityGears, type GearRef, type Keeper } from "./entity-gears";
 import {
   BASIS_LABEL,
   BASIS_ORDER,
@@ -317,11 +318,17 @@ export function ModelMapView({
   entities,
   onOpenFile,
   onSave,
+  gears,
+  onOpenProduct,
 }: {
   entities: Entity[];
   onOpenFile: OpenFile;
   /** Save an edited entity to the project's documentation. */
   onSave?: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
+  /** The gears that could keep a Domain entity; null while unknown, so no gap is claimed. */
+  gears?: GearRef[] | null;
+  /** Open the project's Product tab, where a gear is made. */
+  onOpenProduct?: () => void;
 }) {
   /** What was saved this visit, by entity: shown until the next build reads it. */
   const [saved, setSaved] = useState<Map<string, SpecModelWrite>>(new Map());
@@ -353,6 +360,16 @@ export function ModelMapView({
     return { rel, men };
   }, [shown, relations, allMentions]);
   const sel = entities.find((e) => e.key === selected) ?? null;
+  // Only what the product is about is kept by a gear; System and Deployment
+  // entities are the gears and where they run.
+  const keepers = useMemo(
+    () => (gears ? entityGears(entities.filter((e) => layerOfKey.get(e.key) === "domain"), gears).byEntity : null),
+    [entities, gears, layerOfKey],
+  );
+  const gaps = useMemo(
+    () => new Set(keepers ? [...keepers].filter(([, k]) => k === null).map(([key]) => key) : []),
+    [keepers],
+  );
 
   if (entities.length === 0) return <div className="empty">Nothing read yet. Build the model to read the documents.</div>;
 
@@ -413,7 +430,7 @@ export function ModelMapView({
             </span>
           </div>
           {mode === "diagram" ? (
-            <Diagram entities={shown} layer={layer} relations={edges.rel} mentions={edges.men} selected={selected} onSelect={setSelected} />
+            <Diagram entities={shown} layer={layer} relations={edges.rel} mentions={edges.men} selected={selected} onSelect={setSelected} gaps={gaps} />
           ) : (
             <div className="dm-list">
               {shown.map((e) => (
@@ -434,6 +451,14 @@ export function ModelMapView({
                 </svg>
                 a relation a document declares, named by its verb
               </span>
+              {layer === "domain" && gaps.size > 0 && (
+                <span>
+                  <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <circle cx="5" cy="5" r="3.5" className="nogear" style={{ fill: "none", stroke: "var(--warning)", strokeWidth: 1.6 }} />
+                  </svg>
+                  no gear keeps it yet
+                </span>
+              )}
               {mentions && (
                 <span>
                   <svg viewBox="0 0 26 8" width="26" height="8" aria-hidden="true">
@@ -462,6 +487,8 @@ export function ModelMapView({
                 })
               }
               layer={layerOfKey.get(sel.key) ?? null}
+              keeper={keepers?.get(sel.key)}
+              onOpenProduct={onOpenProduct}
               related={relations
                 .filter((r) => r.from === sel.key || r.to === sel.key)
                 .map((r) => ({ other: entities.find((e) => e.key === (r.from === sel.key ? r.to : r.from)), verbs: r.verbs }))
@@ -497,6 +524,7 @@ function Diagram({
   mentions,
   selected,
   onSelect,
+  gaps,
 }: {
   entities: Entity[];
   layer: Layer;
@@ -504,6 +532,8 @@ function Diagram({
   mentions: MapEdge[];
   selected: string | null;
   onSelect: (k: string | null) => void;
+  /** Entities no gear keeps: marked with a small hollow dot. */
+  gaps?: Set<string>;
 }) {
   const cards = useMemo(
     () =>
@@ -630,6 +660,11 @@ function Diagram({
             <text className="title" x={18} y={19}>
               {card.name}
             </text>
+            {gaps?.has(c.key) && (
+              <circle className="nogear" cx={c.w - 11} cy={15} r={4}>
+                <title>No gear keeps it yet</title>
+              </circle>
+            )}
             {card.fields.map((f, i) => (
               <text key={f} className="field" x={12} y={46 + 16 * i}>
                 • {f}
@@ -664,9 +699,14 @@ function EntityCard({
   onSave,
   onSelect,
   onOpenFile,
+  keeper,
+  onOpenProduct,
 }: {
   entity: Entity;
   layer: Layer | null;
+  /** The gear that keeps it; null when none does; undefined when not asked. */
+  keeper?: Keeper | null;
+  onOpenProduct?: () => void;
   related: { other: Entity; verbs: string[] }[];
   /** Every entity's name, for a relation's target. */
   names: string[];
@@ -695,6 +735,26 @@ function EntityCard({
         </div>
       </div>
       {definition && <blockquote className="sm-quote">{definition.text}</blockquote>}
+      {keeper && (
+        <div className="dm-keeper" data-keeper={keeper.gear.id}>
+          Kept by <b>{keeper.gear.label}</b>
+          {keeper.gear.origin === "project" ? " (this project's gear)" : ""}
+          <small>{keeper.why}</small>
+        </div>
+      )}
+      {keeper === null && (
+        <div className="dm-keeper gap" data-keeper="">
+          <b>No gear keeps it.</b> Nothing in the gear catalogue or this project is named for it or says it in its
+          description, so the product has nowhere to store it yet.
+          {onOpenProduct && (
+            <div style={{ marginTop: 4 }}>
+              <button type="button" className="dm-link" onClick={onOpenProduct}>
+                Create a gear for it
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       {related.length > 0 && (
         <section className="dm-rels">
           <div className="dm-h">How it relates</div>

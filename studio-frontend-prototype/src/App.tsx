@@ -5509,6 +5509,7 @@ function ProjectScreen({
             token={token}
             projectId={proj.id}
             onOpenFile={(path) => void studio?.openFile(proj, path)}
+            onOpenProduct={() => setTab("components")}
           />
         )}
         {tab === "specs" && (

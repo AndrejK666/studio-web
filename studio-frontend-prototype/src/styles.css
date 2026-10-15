@@ -2513,6 +2513,11 @@ div.dm-block { padding-left: 0; }
 .dm-layer-pill.dm-layer-system { background: var(--layer-system-soft); color: var(--layer-system); }
 .dm-layer-pill.dm-layer-deployment { background: var(--layer-deployment-soft); color: var(--layer-deployment); }
 .dm-rels { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+/* Which gear keeps an entity (entity-gears.ts); a hollow dot on a card no gear keeps. */
+.dm-cardnode .nogear { fill: var(--card); stroke: var(--warning); stroke-width: 1.6; }
+.dm-keeper { font-size: 13px; padding: 6px 9px; border-radius: 8px; background: var(--accent); }
+.dm-keeper.gap { background: var(--warning-soft); color: var(--warning-foreground); }
+.dm-keeper small { display: block; color: var(--muted-foreground); font-size: 11.5px; margin-top: 2px; }
 .dm-verbtext { color: var(--studio-ai-violet); font-weight: 600; }
 
 /* One line on top of each Domain model view: what a person does here. */

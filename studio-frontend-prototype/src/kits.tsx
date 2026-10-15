@@ -23,7 +23,7 @@ import { ProjectEnvironments } from "./environments-screen";
 import { When, useConfirm } from "./data-table";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
-import { ProductConfigurator, useGearCatalogue } from "./product-configurator-view";
+import { ProductConfigurator, useGearCatalogue, useKeptEntities } from "./product-configurator-view";
 import {
   PRODUCT_PROFILES,
   defaultPicks,
@@ -1468,6 +1468,7 @@ function ProductCard({
   // picks and settings otherwise.
   const catalogue = useGearCatalogue(token, product.composing);
   const map = catalogue && "index" in catalogue ? catalogue.index : null;
+  const kept = useKeptEntities(token, projectId, map);
 
   const inCode = code.report ? codeGears(code.report) : [];
   const diff = codeDiff(picks, inCode);
@@ -1506,6 +1507,7 @@ function ProductCard({
           busy={busy !== null}
           onBuild={() => void buildInTheia()}
           onOpen={nav ? (name) => nav.openComponent(name) : undefined}
+          kept={kept}
         />
       ) : (
         <>
