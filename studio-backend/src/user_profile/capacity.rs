@@ -89,6 +89,9 @@ pub struct Row {
     pub free_hours: f64,
 }
 
+/// What the plan says of a person: their name, team and power.
+type Known = (Option<String>, Option<String>, Option<f64>);
+
 /// Everybody's week: the plan's people, anyone with availability set, and
 /// anyone allocated; narrowed to the people allocated to `project` when given.
 /// Ordered by team, then name.
@@ -98,8 +101,7 @@ pub fn rows(
     allocations: &[Allocation],
     project: Option<&str>,
 ) -> Vec<Row> {
-    let mut people: BTreeMap<String, (Option<String>, Option<String>, Option<f64>)> =
-        BTreeMap::new();
+    let mut people: BTreeMap<String, Known> = BTreeMap::new();
     for p in plan {
         people.insert(
             p.key.clone(),

@@ -2436,6 +2436,7 @@ impl DocumentsService {
     }
 
     /// Record a member's ✓ (`confirmed`) or ✗ (`dismissed`) on a finding.
+    #[allow(clippy::too_many_arguments)]
     pub async fn put_spec_decision(
         &self,
         ctx: &SecurityContext,

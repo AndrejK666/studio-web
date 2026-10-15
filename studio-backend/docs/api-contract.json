@@ -46,6 +46,20 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-documents/v1/delivery-scopes/{scope_id}",
+      "operation_id": "studio_documents.delete_delivery_scope",
+      "tag": "StudioDocuments",
+      "summary": "Remove a delivery scope with its limits and history",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-documents/v1/organizations/{organization_id}/capabilities/{key}",
       "operation_id": "studio_documents.delete_organization_capability",
       "tag": "StudioDocuments",
@@ -402,6 +416,22 @@
         "RepoFilesResponse"
       ],
       "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-artifact-ingest/v1/runs",
+      "operation_id": "studio_artifact_ingest.list_ci_runs",
+      "tag": "StudioArtifactIngest",
+      "summary": "A project's CI runs, by revision or branch: execution evidence",
+      "authenticated": true,
+      "responses": [
+        "CiRunListDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "500"
       ]
@@ -876,6 +906,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/application-parts",
+      "operation_id": "studio_documents.list_application_parts",
+      "tag": "StudioDocuments",
+      "summary": "The application's configuration, storage and deployment parts beyond its gears",
+      "authenticated": true,
+      "responses": [
+        "ApplicationPartListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/decisions",
       "operation_id": "studio_documents.list_decisions",
       "tag": "StudioDocuments",
@@ -883,6 +930,40 @@
       "authenticated": true,
       "responses": [
         "DecisionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/delivery-scopes",
+      "operation_id": "studio_documents.list_delivery_scopes",
+      "tag": "StudioDocuments",
+      "summary": "A project's delivery scopes, with their limits and whether each is blocked",
+      "authenticated": true,
+      "responses": [
+        "DeliveryScopeListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/delivery-scopes/{scope_id}/history",
+      "operation_id": "studio_documents.list_delivery_scope_history",
+      "tag": "StudioDocuments",
+      "summary": "Earlier versions of a delivery scope, newest first",
+      "authenticated": true,
+      "responses": [
+        "DeliveryScopeHistoryDto"
       ],
       "errors": [
         "400",
@@ -1016,6 +1097,23 @@
       "authenticated": true,
       "responses": [
         "ReviewerSuggestionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/review-requests/{request_id}/diff",
+      "operation_id": "studio_documents.get_review_request_diff",
+      "tag": "StudioDocuments",
+      "summary": "What a review was asked about, the document now, and the last approved version",
+      "authenticated": true,
+      "responses": [
+        "ReviewDiffDto"
       ],
       "errors": [
         "400",
@@ -2487,6 +2585,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-user/v1/capacity",
+      "operation_id": "studio_user.list_capacity",
+      "tag": "StudioUser",
+      "summary": "An organization's capacity for one week: availability and allocation per person",
+      "authenticated": true,
+      "responses": [
+        "CapacityListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-user/v1/me",
       "operation_id": "studio_user.get_me",
       "tag": "StudioUser",
@@ -2709,6 +2824,42 @@
       "request": "PatchConnectionRequest",
       "responses": [
         "ConnectionTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/studio-documents/v1/delivery-scopes/{scope_id}",
+      "operation_id": "studio_documents.patch_delivery_scope",
+      "tag": "StudioDocuments",
+      "summary": "Change a delivery scope; the version it replaces is kept",
+      "authenticated": true,
+      "request": "DeliveryScopePatch",
+      "responses": [
+        "DeliveryScopeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/studio-documents/v1/delivery-scopes/{scope_id}/limits/{limit_id}",
+      "operation_id": "studio_documents.patch_delivery_limit",
+      "tag": "StudioDocuments",
+      "summary": "Resolve a limit, reopen it, or change whether it blocks",
+      "authenticated": true,
+      "request": "DeliveryLimitPatch",
+      "responses": [
+        "DeliveryLimitDto"
       ],
       "errors": [
         "400",
@@ -3145,6 +3296,42 @@
       "request": "DecisionInput",
       "responses": [
         "DecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/delivery-scopes",
+      "operation_id": "studio_documents.create_delivery_scope",
+      "tag": "StudioDocuments",
+      "summary": "Add a delivery scope to a project",
+      "authenticated": true,
+      "request": "DeliveryScopeInput",
+      "responses": [
+        "DeliveryScopeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/delivery-scopes/{scope_id}/limits",
+      "operation_id": "studio_documents.create_delivery_limit",
+      "tag": "StudioDocuments",
+      "summary": "Add a limit to a delivery scope: a limitation, an open question or a dependency",
+      "authenticated": true,
+      "request": "DeliveryLimitInput",
+      "responses": [
+        "DeliveryLimitDto"
       ],
       "errors": [
         "400",
@@ -4799,6 +4986,24 @@
     },
     {
       "method": "PUT",
+      "path": "/studio-documents/v1/application-parts",
+      "operation_id": "studio_documents.upsert_application_part",
+      "tag": "StudioDocuments",
+      "summary": "Record the owner, describing document, boundary and related parts of one part",
+      "authenticated": true,
+      "request": "ApplicationPartInput",
+      "responses": [
+        "ApplicationPartDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
       "path": "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}",
       "operation_id": "studio_documents.decide_binding",
       "tag": "StudioDocuments",
@@ -5066,6 +5271,36 @@
         "400",
         "401",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-user/v1/capacity/allocations",
+      "operation_id": "studio_user.update_capacity_allocation",
+      "tag": "StudioUser",
+      "summary": "Set or clear one person's hours on a project in a week",
+      "authenticated": true,
+      "request": "AllocationRequest",
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-user/v1/capacity/availability",
+      "operation_id": "studio_user.update_capacity_availability",
+      "tag": "StudioUser",
+      "summary": "Set or clear one person's available hours in a week",
+      "authenticated": true,
+      "request": "AvailabilityRequest",
+      "errors": [
+        "400",
+        "401",
+        "403",
         "500"
       ]
     },
