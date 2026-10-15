@@ -2391,6 +2391,43 @@ pub struct SpecRequirementListDto {
 #[toolkit_macros::api_dto(request)]
 pub struct SpecModelBuildRequest {
     pub project_id: String,
+    /// One document to read again, whatever its state: its facts replace
+    /// that document's facts only, and the rest of the model stays as it is.
+    /// Without it, every document not read at its revision is read.
+    pub path: Option<String>,
+}
+
+/// What a build would read, and about how long it would take.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelBuildEstimateDto {
+    /// Documents the build would read: changed or never read, or the one
+    /// asked for.
+    pub documents: u32,
+    /// Documents of the project's model, read or not.
+    pub total_documents: u32,
+    pub characters: u64,
+    /// Characters over four: a rule of thumb, not the provider's tokenizer.
+    pub input_tokens: u64,
+    /// Seconds reading them is expected to take; the judge's stage after it
+    /// is not counted.
+    pub seconds: u64,
+    /// Wall-clock seconds per document at `parallel` reads at once.
+    pub seconds_per_document: f64,
+    /// True when the pace was measured on the project's earlier builds,
+    /// false when it is a default.
+    pub measured: bool,
+    /// Documents read at once.
+    pub parallel: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SpecBuildEstimateQuery {
+    pub project_id: String,
+    /// One document to estimate reading again, as `POST /spec-model/builds`
+    /// with a `path` would.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// A project's build, as the process serving it knows it.
@@ -2409,6 +2446,12 @@ pub struct SpecModelBuildDto {
     pub error: Option<String>,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
+    /// Seconds reading the documents was estimated to take when it started:
+    /// the ETA until the first document is done, after which `done`,
+    /// `documents` and `started_at` give a better one.
+    pub estimated_seconds: Option<u64>,
+    /// The one document this build reads again, when it was asked for one.
+    pub path: Option<String>,
 }
 
 impl From<super::spec_model::build::BuildState> for SpecModelBuildDto {
@@ -2429,6 +2472,8 @@ impl From<super::spec_model::build::BuildState> for SpecModelBuildDto {
             error: s.error,
             started_at: at(s.started_at),
             finished_at: at(s.finished_at),
+            estimated_seconds: s.estimated_seconds,
+            path: s.path,
         }
     }
 }
@@ -2574,17 +2619,15 @@ async fn start_spec_model_build(
     let models = quality.models()?;
     let (sources, _, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
-    let wanted: std::collections::BTreeSet<&str> =
-        super::spec_model::to_read(&coverage).into_iter().collect();
-    let pending: Vec<super::spec_model::SourceText> = sources
-        .documents
-        .iter()
-        .filter(|d| wanted.contains(d.path.as_str()))
-        .cloned()
-        .collect();
+    let pending = spec_model_pending(&sources, &coverage, body.path.as_deref())?;
+    let estimate = spec_model_estimate(&service, workspace_id, project_id, &pending).await?;
     if !build::begin(project_id, pending.len()) {
         return Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())));
     }
+    build::update(project_id, |s| {
+        s.estimated_seconds = Some(estimate.seconds);
+        s.path.clone_from(&body.path);
+    });
     let findings_writer = quality.findings();
     let sources_for_record = super::spec_model::Sources {
         documents: sources.documents.clone(),
@@ -2594,31 +2637,26 @@ async fn start_spec_model_build(
     };
     let documents = sources.documents;
     tokio::spawn(async move {
-        for doc in pending {
-            build::update(project_id, |s| s.current = Some(doc.path.clone()));
-            let read = match build::read_document(
-                models.as_ref(),
-                &ctx,
-                &doc.path,
-                doc.doc_type.as_deref(),
-                &doc.text,
-            )
-            .await
-            {
-                Ok(read) => read,
-                Err(build::Stop(reason)) => {
-                    build::finish(project_id, Some(reason));
-                    return;
+        let service_ref = &service;
+        let read = build::read_all(
+            project_id,
+            models.as_ref(),
+            &ctx,
+            pending,
+            move |doc, read| async move {
+                let revision = super::spec_model::extract::revision(&doc.text);
+                if let Err(error) = service_ref
+                    .put_spec_extraction(workspace_id, project_id, &doc.path, &revision, &read)
+                    .await
+                {
+                    tracing::warn!(%error, path = %doc.path, "spec-model: an extraction could not be kept");
                 }
-            };
-            let revision = super::spec_model::extract::revision(&doc.text);
-            if let Err(error) = service
-                .put_spec_extraction(workspace_id, project_id, &doc.path, &revision, &read)
-                .await
-            {
-                tracing::warn!(%error, path = %doc.path, "spec-model: an extraction could not be kept");
-            }
-            build::update(project_id, |s| s.done += 1);
+            },
+        )
+        .await;
+        if let Err(build::Stop(reason)) = read {
+            build::finish(project_id, Some(reason));
+            return;
         }
         let reason = judge_new_candidates(
             &service,
@@ -2644,6 +2682,83 @@ async fn start_spec_model_build(
         build::finish(project_id, reason);
     });
     Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())))
+}
+
+/// The documents a build reads: every one not read at its revision, or the
+/// one named by `path` whatever its state (404 when it is not one of the
+/// model's documents).
+fn spec_model_pending(
+    sources: &super::spec_model::Sources,
+    coverage: &[super::spec_model::Coverage],
+    path: Option<&str>,
+) -> ApiResult<Vec<super::spec_model::SourceText>> {
+    if let Some(path) = path {
+        let doc = sources
+            .documents
+            .iter()
+            .find(|d| d.path == path)
+            .cloned()
+            .ok_or_else(|| {
+                DocumentsError::not_found("no such document in the project's model")
+                    .with_resource("document")
+                    .create()
+            })?;
+        return Ok(vec![doc]);
+    }
+    let wanted: std::collections::BTreeSet<&str> =
+        super::spec_model::to_read(coverage).into_iter().collect();
+    Ok(sources
+        .documents
+        .iter()
+        .filter(|d| wanted.contains(d.path.as_str()))
+        .cloned()
+        .collect())
+}
+
+/// What reading `pending` is expected to take, at the pace of the project's
+/// earlier builds when there were any.
+async fn spec_model_estimate(
+    service: &DocumentsService,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    pending: &[super::spec_model::SourceText],
+) -> ApiResult<super::spec_model::build::Estimate> {
+    use super::spec_model::build;
+    let rows = service
+        .spec_extractions(workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    let kept_at: Vec<time::OffsetDateTime> = rows.iter().map(|r| r.created_at).collect();
+    let texts: Vec<&str> = pending.iter().map(|d| d.text.as_str()).collect();
+    Ok(build::estimate(&texts, build::pace_from(&kept_at)))
+}
+
+/// What a build of the project would read now, and about how long it would
+/// take.
+async fn get_spec_model_build_estimate(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecBuildEstimateQuery>,
+) -> ApiResult<JsonBody<SpecModelBuildEstimateDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let (sources, _, coverage) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    let pending = spec_model_pending(&sources, &coverage, query.path.as_deref())?;
+    let e = spec_model_estimate(&service, workspace_id, project_id, &pending).await?;
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    Ok(Json(SpecModelBuildEstimateDto {
+        documents: count(e.documents),
+        total_documents: count(sources.documents.len()),
+        characters: u64::try_from(e.characters).unwrap_or(u64::MAX),
+        input_tokens: u64::try_from(e.input_tokens).unwrap_or(u64::MAX),
+        seconds: e.seconds,
+        seconds_per_document: e.seconds_per_document,
+        measured: e.measured,
+        parallel: count(super::spec_model::build::PARALLEL_READS),
+    }))
 }
 
 /// Today's candidates of the project's model and the judgements kept for
@@ -5811,14 +5926,45 @@ pub fn register_routes(
              `GET /spec-model`. Not a studio-tasks run, because the queue worker cannot act as \
              the caller. A build already running for the project is answered with its state. \
              A document already read at its revision is never read again, so a build stopped \
-             part-way resumes where it stopped.",
+             part-way resumes where it stopped. Up to four documents are read at once. With \
+             `path`, only that document is read again, whatever its state: its facts replace \
+             its own and the rest of the model stays (404 when it is not one of the model's \
+             documents).",
         )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
-        .json_request::<SpecModelBuildRequest>(openapi, "The project")
+        .json_request::<SpecModelBuildRequest>(openapi, "The project, and one document to read again")
         .handler(start_spec_model_build)
         .json_response_with_schema::<SpecModelBuildDto>(openapi, StatusCode::ACCEPTED, "The build")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/build-estimate")
+        .operation_id("studio_documents.get_spec_model_build_estimate")
+        .summary("What a build of a project's model would read, and about how long it would take")
+        .description(
+            "The documents `POST /spec-model/builds` would read now (changed or never read, or \
+             the one `path` names), their size in characters and approximate input tokens \
+             (characters over four), and the seconds reading them should take: at the pace of \
+             the project's earlier builds when there were any (`measured`), else a default. \
+             The judge's stage after the reading is not counted. No model is called.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose build to estimate")
+        .query_param("path", false, "One document to estimate reading again")
+        .handler(get_spec_model_build_estimate)
+        .json_response_with_schema::<SpecModelBuildEstimateDto>(
+            openapi,
+            StatusCode::OK,
+            "The estimate",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

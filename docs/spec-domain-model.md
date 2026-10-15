@@ -184,7 +184,7 @@ sequenceDiagram
     P->>D: POST /spec-model/builds {project_id}
     D-->>P: 202 the build's state
     D->>D: index, reference rules
-    loop each document with no extraction for its revision
+    loop each document with no extraction for its revision, four at once
         D->>L: complete (caller's key): facts with quotes and status
         D->>D: check quotes, store extraction
     end
@@ -246,7 +246,13 @@ or else anywhere in the piece, and moves it to the lines it is really on.
 `build.rs` reads the documents not read at their revision, asks an unreadable
 piece once more, keeps a piece that fails twice as the document's `error` (read
 again on the next build), and stops when the caller has no key. Kept in
-`studio_spec_model_extractions` (`m0015`). `POST /spec-model/builds` starts it;
+`studio_spec_model_extractions` (`m0015`). Up to four documents are read at
+once (`PARALLEL_READS`); each extraction is kept on its own, so the order they
+finish in changes nothing. `POST /spec-model/builds` starts it (with `path`, it
+reads that one document again and replaces only its facts), and
+`GET /spec-model/build-estimate?project_id=` says beforehand how many documents
+it would read, their approximate input tokens, and how long it should take at
+the pace of the earlier builds;
 `GET /spec-model` answers the facts of the current revisions, each document's
 state, and the build's progress as the replica answering knows it.
 
@@ -298,6 +304,7 @@ Under `/studio-documents/v1`, beside the gear's other routes:
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/spec-model/builds` | Build a project's model on the caller's key: `202` with the `task_run` to follow |
+| `GET` | `/spec-model/build-estimate?project_id=` | What a build would read now (or with `path`, one document), its approximate input tokens and seconds |
 | `GET` | `/spec-model?project_id=` | The assembled model: entities with their facts and sources, requirements, constraints, decisions; whether it is stale and which documents are not extracted yet |
 | `GET` | `/spec-model/findings?project_id=` | The findings with their sides, fix and decision, filterable by `rule` and `status` |
 | `POST` | `/spec-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
