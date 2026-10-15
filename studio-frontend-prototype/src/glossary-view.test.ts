@@ -3,7 +3,7 @@
 // searches instead of listing every word.
 import { describe, expect, it } from "vitest";
 
-import { filterRows, glossaryRows, mergeCandidates, similarPairs } from "./glossary-view";
+import { filterRows, glossaryRows, mergeCandidates, renameOffer, similarPairs } from "./glossary-view";
 import { entitiesOf, type GlossaryEntry, type SpecModelFact } from "./spec-model";
 
 const entry = (name: string, facts = 5, extra: Partial<GlossaryEntry> = {}): GlossaryEntry => ({
@@ -63,5 +63,19 @@ describe("merging", () => {
     const all = [entry("member", 9, { aliases: [{ key: "teammate", name: "teammate" }] }), entry("membership", 5), entry("teammate", 2)];
     expect(mergeCandidates(all[0], all, "")).toEqual([]);
     expect(mergeCandidates(all[0], all, "mem").map((e) => e.key)).toEqual(["membership"]);
+  });
+});
+
+describe("renameOffer", () => {
+  it("offers the documents' name, never a member's earlier choice", () => {
+    expect(renameOffer(entry("Member"), "Teammate")).toEqual({ from: "Member", to: "Teammate" });
+    expect(renameOffer(entry("Mate", 5, { chosen: true, spellings: ["member", "Mate"] }), "Teammate")).toEqual({
+      from: "member",
+      to: "Teammate",
+    });
+  });
+  it("offers nothing for the same word or an empty name", () => {
+    expect(renameOffer(entry("Member"), "member ")).toBeNull();
+    expect(renameOffer(entry("Member"), "  ")).toBeNull();
   });
 });

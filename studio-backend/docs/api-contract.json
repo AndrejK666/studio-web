@@ -3335,6 +3335,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/spec-model/entities",
+      "operation_id": "studio_documents.upsert_spec_model_entity",
+      "tag": "StudioDocuments",
+      "summary": "Save an entity of the domain model to the project's documentation",
+      "authenticated": true,
+      "request": "SpecModelEntityRequest",
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/spec-model/findings/{fingerprint}/decision",
       "operation_id": "studio_documents.decide_spec_model_finding",
       "tag": "StudioDocuments",
@@ -3353,6 +3371,23 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/spec-model/findings/{fingerprint}/proposals",
+      "operation_id": "studio_documents.create_spec_model_finding_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a finding's fix as a pull request on its document",
+      "authenticated": true,
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/spec-model/glossary/decisions",
       "operation_id": "studio_documents.decide_spec_model_glossary_entry",
       "tag": "StudioDocuments",
@@ -3361,6 +3396,24 @@
       "request": "GlossaryDecisionRequest",
       "responses": [
         "GlossaryDecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/spec-model/glossary/proposals",
+      "operation_id": "studio_documents.create_spec_model_glossary_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a glossary rename in the documents as one pull request",
+      "authenticated": true,
+      "request": "GlossaryRenameRequest",
+      "responses": [
+        "GlossaryRenameProposalDto"
       ],
       "errors": [
         "400",

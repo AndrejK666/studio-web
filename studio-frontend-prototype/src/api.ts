@@ -121,6 +121,15 @@ export interface SpecModelWrite {
   pr_url?: string | null;
 }
 
+/** The pull request that renames a word across the documents. */
+export interface GlossaryRenameProposal {
+  files: string[];
+  renamed: number;
+  branch: string;
+  commit_sha: string;
+  pr_url?: string | null;
+}
+
 /** An organization's logo, as `GET …/organizations/{id}/logo` answers. */
 export interface OrganizationLogo {
   content_type: string;
@@ -3052,6 +3061,14 @@ export const api = {
       "/studio-documents/v1/spec-model/glossary/decisions",
       token,
       { method: "POST", body: JSON.stringify({ project_id: projectId, key, ...decision }) },
+    ),
+  /** Propose a glossary rename in the documents: every whole-word use of
+   *  `from` in their prose becomes `to`, in one pull request. */
+  proposeGlossaryRename: (token: string, projectId: string, from: string, to: string) =>
+    request<GlossaryRenameProposal>(
+      `/studio-documents/v1/spec-model/glossary/proposals?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify({ from, to }) },
     ),
   /** A member's ✓ (confirmed) or ✗ (dismissed) on one finding. */
   /** A project's review requests, newest first; one document's with `subjectId`. */

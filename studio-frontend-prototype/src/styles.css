@@ -2524,6 +2524,7 @@ div.dm-block { padding-left: 0; }
 .gl-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .gl-bar input[type="search"] { flex: 0 1 280px; min-width: 0; }
 .gl-pairs { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.gl-offer { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .gl-pair { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .gl-pair:last-of-type { border-bottom: 0; }
 .gl-pair-actions { display: flex; gap: 6px; }

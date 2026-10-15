@@ -303,6 +303,7 @@ Under `/studio-documents/v1`, beside the gear's other routes:
 | `POST` | `/spec-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
 | `GET` | `/spec-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
 | `POST` | `/spec-model/glossary/decisions` | Name an entry, or make it an alias of another; `201` with the decision |
+| `POST` | `/spec-model/glossary/proposals?project_id=` | Rename `from` to `to` in the documents' prose (whole words, first letter's case kept; code, links and front matter untouched) as one pull request; `201` with the files and the pull request, `400` when no document uses `from` |
 | `GET` | `/spec-model/work?project_id=` | The identifiers the documents define with a label, with the synced issues, pull requests and commits that name them ([the links](project-and-product.md#the-links)) |
 | `GET` | `/spec-model/requirements?project_id=` | Every labelled requirement with its statement and the basis its block states ([below](#requirements-and-their-basis)) |
 | `GET` | `/spec-model/decisions?project_id=` | Every ✓/✗ recorded on the project's findings, the model's and the Spec Quality detectors' alike |

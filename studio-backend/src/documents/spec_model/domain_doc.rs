@@ -152,9 +152,54 @@ pub fn apply_edit(text: &str, replace: &str, with: &str) -> Option<String> {
     Some(format!("{}{}{}", &text[..start], with, &text[end..]))
 }
 
+/// The type the model reads a project file as, or `None` when it is not
+/// documentation: a file whose type is settled, as that type; and Studio's
+/// own [`DOMAIN_DOC_PATH`] whatever its binding says, because Studio writes
+/// it as a design document -- nobody has to bind it by hand for an edit on
+/// the Domain model tab to count.
+pub fn read_as(path: &str, typed: bool, type_key: Option<&str>) -> Option<Option<String>> {
+    if path == DOMAIN_DOC_PATH {
+        let settled = type_key.filter(|_| typed).unwrap_or(DOMAIN_DOC_TYPE);
+        return Some(Some(settled.to_owned()));
+    }
+    typed.then(|| type_key.map(str::to_owned))
+}
+
+/// The type [`DOMAIN_DOC_PATH`]'s front matter declares.
+pub const DOMAIN_DOC_TYPE: &str = "design";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_domain_doc_is_documentation_without_a_binding_decision() {
+        assert_eq!(
+            read_as(DOMAIN_DOC_PATH, false, None),
+            Some(Some("design".to_owned()))
+        );
+        assert_eq!(
+            read_as(DOMAIN_DOC_PATH, false, Some("prd")),
+            Some(Some("design".to_owned())),
+            "a detector's guess does not retype it"
+        );
+        assert_eq!(
+            read_as(DOMAIN_DOC_PATH, true, Some("adr")),
+            Some(Some("adr".to_owned())),
+            "a person's type stands"
+        );
+        assert!(HEAD.contains(&format!("type: {DOMAIN_DOC_TYPE}")));
+    }
+
+    #[test]
+    fn other_files_count_once_their_type_is_settled() {
+        assert_eq!(read_as("docs/prd.md", false, Some("prd")), None);
+        assert_eq!(
+            read_as("docs/prd.md", true, Some("prd")),
+            Some(Some("prd".to_owned()))
+        );
+        assert_eq!(read_as("docs/other/domain-model.md", false, None), None);
+    }
 
     fn project() -> EntityEdit {
         EntityEdit {

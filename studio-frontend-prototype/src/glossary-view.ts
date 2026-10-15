@@ -96,3 +96,13 @@ export function mergeCandidates(entry: GlossaryEntry, entries: GlossaryEntry[], 
     .sort((a, b) => b.facts - a.facts)
     .slice(0, max);
 }
+
+/** A rename to offer to carry into the documents once `entry` is called
+ *  `to`: from the name the documents use for it (a member's earlier choice is
+ *  not in them), or null when that is the same word. */
+export function renameOffer(entry: GlossaryEntry, to: string): { from: string; to: string } | null {
+  const name = to.trim();
+  if (!name) return null;
+  const from = entry.chosen ? (entry.spellings.find((s) => s.toLowerCase() !== name.toLowerCase()) ?? entry.name) : entry.name;
+  return from.toLowerCase() === name.toLowerCase() ? null : { from, to: name };
+}
