@@ -61,6 +61,7 @@ import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
 import { SpecModelTab } from "./spec-model-tab";
 import { ProjectBuilds } from "./builds-tab";
+import { ProjectTabHowto } from "./project-path-view";
 import { GearsTable, PermissionsTable } from "./system-tables";
 import {
   StudioBridgeProvider,
@@ -120,6 +121,7 @@ import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
+import type { GearDraft } from "./gear-from-entity";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
@@ -5507,6 +5509,9 @@ function ProjectScreen({
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const studio = useStudioBridge();
+  /** A gear the Domain model asked for, carried to the Product tab, whose
+   *  scaffold dialog takes it (and clears it) when it opens. */
+  const [pendingGear, setPendingGear] = useState<GearDraft | null>(null);
 
   // Someone who opens a project is likely to open one of its documents next:
   // start its IDE now, so that click is not also the wait for a session.
@@ -5558,6 +5563,7 @@ function ProjectScreen({
   return (
     <>
       <div className="proj-content">
+        <ProjectTabHowto tab={tab} />
         {tab === "overview" && (
           <ProjectOverview
             token={token}
@@ -5576,6 +5582,8 @@ function ProjectScreen({
             projectId={proj.id}
             projectName={proj.name}
             workspaceId={workspace.id}
+            pendingGear={pendingGear}
+            onPendingGearTaken={() => setPendingGear(null)}
           />
         )}
         {tab === "builds" && <ProjectBuilds token={token} projectId={proj.id} />}
@@ -5609,6 +5617,10 @@ function ProjectScreen({
             token={token}
             projectId={proj.id}
             onOpenFile={(path) => void studio?.openFile(proj, path)}
+            onCreateGear={(draft) => {
+              setPendingGear(draft);
+              setTab("components");
+            }}
           />
         )}
         {tab === "specs" && (
@@ -7813,7 +7825,7 @@ function ProjectSources({
         }
         empty={{
           title: "No repositories attached yet.",
-          body: "Pick one from a connector below.",
+          body: "Pick one from a connector below. It is the project's first step: its sync brings in the documents to type.",
         }}
         columns={[
           {

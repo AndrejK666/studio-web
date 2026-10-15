@@ -15,6 +15,7 @@
 //! [`port`].
 
 mod gear_roots;
+mod explanations;
 mod gearbox;
 mod new_gear;
 pub mod port;
@@ -35,6 +36,10 @@ use tracing::info;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
 use service::ProductService;
+
+/// The metadata row an organization's plain explanations of gears are kept
+/// in. Only this gear writes it (`studio_authz_plugin::GEAR_HELD_METADATA`).
+pub use explanations::EXPLANATIONS_METADATA_TYPE;
 
 #[toolkit::gear(
     name = "studio-product",
@@ -108,6 +113,12 @@ impl RestApiCapability for StudioProductGear {
         ctx.client_hub().register::<dyn port::ProjectProducts>(
             Arc::clone(&service) as Arc<dyn port::ProjectProducts>
         );
+        // Writing into a project's repository the way it takes changes, for
+        // the documents gear's domain model (docs/spec-domain-model.md).
+        ctx.client_hub()
+            .register::<dyn port::ProjectFiles>(
+                Arc::new(port::Files::new(Arc::clone(&service))) as Arc<dyn port::ProjectFiles>
+            );
         ctx.client_hub()
             .register::<dyn port::GearDeclarations>(Arc::new(port::Declarations::new(
                 Arc::clone(&service),

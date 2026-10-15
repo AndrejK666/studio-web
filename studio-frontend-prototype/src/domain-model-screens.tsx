@@ -3,9 +3,11 @@
  * requirement followed from its passage to its code. */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 
+import type { SpecModelEntityEdit, SpecModelWrite } from "./api";
 import {
   cardFields,
   cardSize,
+  entityDraft,
   LAYER_TITLE,
   LAYER_WHAT,
   layerOf,
@@ -30,6 +32,10 @@ import {
   type ResolveItem,
   type ResolveType,
 } from "./domain-model-views";
+import { DOC_QUALITY_LABEL, docQuality, type DocQualityItem, type DocQualityType } from "./doc-quality";
+import { PROVISIONAL_NOTE } from "./saved-entities";
+import { entityGears, type GearRef, type Keeper } from "./entity-gears";
+import { gearDraftFrom, type GearDraft } from "./gear-from-entity";
 import {
   BASIS_LABEL,
   BASIS_ORDER,
@@ -39,6 +45,7 @@ import {
   workLabel,
   workState,
   type Entity,
+  type GlossaryEntry,
   type RequirementTraces,
   type SpecModelFact,
   type SpecModelFinding,
@@ -79,6 +86,7 @@ export function FactRow({ fact, onOpenFile }: { fact: SpecModelFact; onOpenFile?
             {fact.status}
           </span>
         )}
+        {fact.provisional && <span className="sm-status dm-provisional">{PROVISIONAL_NOTE}</span>}
       </div>
       {fact.value && fact.text && <div className="hint">{fact.text}</div>}
       <SideLink side={fact.source} onOpenFile={onOpenFile} />
@@ -91,24 +99,46 @@ export function FactRow({ fact, onOpenFile }: { fact: SpecModelFact; onOpenFile?
 export function ResolveView({
   findings,
   requirements,
+  entities = [],
+  glossary = [],
   onDecide,
+  onPropose,
+  onSave,
+  onSameThing,
   onTrace,
   onOpenFile,
   built,
 }: {
   findings: SpecModelFinding[];
   requirements: SpecRequirements | null;
+  /** The model's entities, saved edits laid over: what the documentation
+   *  could say better is read off them. */
+  entities?: Entity[];
+  glossary?: GlossaryEntry[];
+  /** Save an entity's section of docs/domain-model.md. */
+  onSave?: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
+  /** Read the second word as the first everywhere (the glossary's merge). */
+  onSameThing?: (alias: string, of: string) => Promise<void>;
   onDecide: (f: SpecModelFinding, d: "confirmed" | "dismissed") => void;
+  /** Open a pull request with a finding's fix on its document. */
+  onPropose?: (f: SpecModelFinding) => Promise<SpecModelWrite>;
   /** Follow a requirement in the Requirements view. */
   onTrace: (id: string) => void;
   onOpenFile: OpenFile;
   built: boolean;
 }) {
-  const [only, setOnly] = useState<ResolveType | "all">("all");
+  const [only, setOnly] = useState<Only>("all");
   const queue = useMemo(() => resolveQueue(findings, requirements?.items ?? []), [findings, requirements]);
+  // Kept apart from the queue's readiness: a thin passage does not stop a
+  // build, it makes the next reader's job harder.
+  const better = useMemo(() => docQuality(entities, glossary), [entities, glossary]);
   const ready = readiness(queue, requirements?.by_basis ?? {}, requirements?.total ?? 0);
   const count = (t: ResolveType) => queue.filter((i) => i.type === t && !i.done).length;
-  const shown = queue.filter((i) => only === "all" || i.type === only);
+  const countDoc = (t: DocQualityType) => better.filter((i) => i.type === t).length;
+  const isDoc = (o: Only): o is DocQualityType => o in DOC_QUALITY_LABEL;
+  const shown = isDoc(only) ? [] : queue.filter((i) => only === "all" || i.type === only);
+  const shownDoc = only === "all" ? better : isDoc(only) ? better.filter((i) => i.type === only) : [];
+  const room = Math.max(0, 80 - shown.length);
   const pct = (n: number) => (ready.total ? `${(n / ready.total) * 100}%` : "0%");
 
   return (
@@ -136,30 +166,53 @@ export function ResolveView({
         <Tile type="assumption" n={count("assumption")} label="assumptions to confirm" tone="warn" only={only} setOnly={setOnly} />
         <Tile type="nobasis" n={count("nobasis")} label="requirements with no basis" tone="warn" only={only} setOnly={setOnly} />
       </div>
+      {better.length > 0 && (
+        <div className="dm-ready dm-ready-docs">
+          <div className="dm-tile dm-verdict">
+            <b>Make the documentation better</b>
+            <span>
+              {better.length} change{better.length === 1 ? "" : "s"} ready to save. None blocks a build; each makes the model
+              clearer to the next reader.
+            </span>
+          </div>
+          <Tile type="onlyadr" n={countDoc("onlyadr")} label="only in an ADR or a feature" tone="warn" only={only} setOnly={setOnly} />
+          <Tile type="nodefinition" n={countDoc("nodefinition")} label="things with no definition" tone="warn" only={only} setOnly={setOnly} />
+          <Tile type="onesided" n={countDoc("onesided")} label="one-sided relations" tone="warn" only={only} setOnly={setOnly} />
+          <Tile type="twonames" n={countDoc("twonames")} label="two names for one thing" tone="warn" only={only} setOnly={setOnly} />
+        </div>
+      )}
 
       <div className="dm-queue-head">
-        <b>{only === "all" ? "Everything to decide, most blocking first" : RESOLVE_LABEL[only]}</b>
+        <b>{only === "all" ? "Everything to decide, most blocking first" : isDoc(only) ? DOC_QUALITY_LABEL[only] : RESOLVE_LABEL[only]}</b>
         {only !== "all" && (
           <button type="button" className="dm-link" onClick={() => setOnly("all")}>
             show all
           </button>
         )}
-        <span className="hint">{shown.length} shown</span>
+        <span className="hint">{shown.length + shownDoc.length} shown</span>
       </div>
-      {shown.length === 0 && (
+      {shown.length + shownDoc.length === 0 && (
         <div className="empty">
           {built ? "Nothing to decide here." : "Every reference resolves. Build the model to look for disagreements between documents."}
         </div>
       )}
       <div className="dm-queue">
         {shown.slice(0, 80).map((i) => (
-          <QueueItem key={i.key} item={i} onDecide={onDecide} onTrace={onTrace} onOpenFile={onOpenFile} />
+          <QueueItem key={i.key} item={i} onDecide={onDecide} onPropose={onPropose} onTrace={onTrace} onOpenFile={onOpenFile} />
         ))}
-        {shown.length > 80 && <p className="hint">and {shown.length - 80} more; pick a tile above to narrow it.</p>}
+        {shownDoc.slice(0, room).map((i) => (
+          <DocItem key={i.key} item={i} onSave={onSave} onSameThing={onSameThing} onOpenFile={onOpenFile} />
+        ))}
+        {shown.length + shownDoc.length > 80 && (
+          <p className="hint">and {shown.length + shownDoc.length - 80} more; pick a tile above to narrow it.</p>
+        )}
       </div>
     </div>
   );
 }
+
+/** What a tile narrows the list to. */
+type Only = ResolveType | DocQualityType | "all";
 
 function Tile({
   type,
@@ -169,12 +222,12 @@ function Tile({
   only,
   setOnly,
 }: {
-  type: ResolveType;
+  type: ResolveType | DocQualityType;
   n: number;
   label: string;
   tone: "bad" | "warn";
-  only: ResolveType | "all";
-  setOnly: (t: ResolveType | "all") => void;
+  only: Only;
+  setOnly: (t: Only) => void;
 }) {
   return (
     <button type="button" className={`dm-tile dm-${tone}`} aria-pressed={only === type} onClick={() => setOnly(only === type ? "all" : type)}>
@@ -187,15 +240,27 @@ function Tile({
 function QueueItem({
   item,
   onDecide,
+  onPropose,
   onTrace,
   onOpenFile,
 }: {
   item: ResolveItem;
   onDecide: (f: SpecModelFinding, d: "confirmed" | "dismissed") => void;
+  onPropose?: (f: SpecModelFinding) => Promise<SpecModelWrite>;
   onTrace: (id: string) => void;
   onOpenFile: OpenFile;
 }) {
   const f = item.finding;
+  const [proposal, setProposal] = useState<{ busy: boolean; done?: SpecModelWrite; error?: string } | null>(null);
+  const propose = async () => {
+    if (!f || !onPropose) return;
+    setProposal({ busy: true });
+    try {
+      setProposal({ busy: false, done: await onPropose(f) });
+    } catch (e) {
+      setProposal({ busy: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  };
   const r = item.requirement;
   return (
     <article className={`card dm-item${item.done ? " dm-done" : ""}`} data-item={item.key}>
@@ -244,8 +309,26 @@ function QueueItem({
             </>
           ) : (
             <>
+              {f.edit && onPropose && !proposal?.done && (
+                <button type="button" className="primary" disabled={proposal?.busy} onClick={() => void propose()} title="Open a pull request with this change on the document">
+                  {proposal?.busy ? "Proposing…" : "Propose this change"}
+                </button>
+              )}
+              {proposal?.done && (
+                <span className="dm-saved">
+                  ✓ Proposed{" "}
+                  {proposal.done.pr_url ? (
+                    <a href={proposal.done.pr_url} target="_blank" rel="noreferrer">
+                      as a pull request
+                    </a>
+                  ) : (
+                    <>on {proposal.done.branch}</>
+                  )}
+                </span>
+              )}
+              {proposal?.error && <span className="error-inline">{proposal.error}</span>}
               {f.sides[0] && onOpenFile && (
-                <button type="button" className="primary" onClick={() => onOpenFile(f.sides[0].path)}>
+                <button type="button" className={f.edit && onPropose ? "ghost" : "primary"} onClick={() => onOpenFile(f.sides[0].path)}>
                   Fix it in the editor
                 </button>
               )}
@@ -273,12 +356,116 @@ function QueueItem({
   );
 }
 
+/** A change that makes the documentation better, ready to save. The text it
+ *  proposes is editable first; saving it goes through the same call as the
+ *  model map's editor, and the item leaves the list at once because the tab
+ *  lays the saved entity over the model (saved-entities.ts). */
+function DocItem({
+  item,
+  onSave,
+  onSameThing,
+  onOpenFile,
+}: {
+  item: DocQualityItem;
+  onSave?: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
+  onSameThing?: (alias: string, of: string) => Promise<void>;
+  onOpenFile: OpenFile;
+}) {
+  const [edit, setEdit] = useState(item.edit ?? null);
+  const [state, setState] = useState<{ busy: boolean; error?: string }>({ busy: false });
+  const run = async (act: () => Promise<unknown>) => {
+    setState({ busy: true });
+    try {
+      await act();
+      setState({ busy: false });
+    } catch (e) {
+      setState({ busy: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  // The relation a one-sided item adds is the last of the draft's.
+  const added = item.type === "onesided" && edit ? edit.relations[edit.relations.length - 1] : null;
+  const pair = item.pair;
+  return (
+    <article className="card dm-item" data-item={item.key}>
+      <header>
+        <span className="dm-pill dm-warn">{DOC_QUALITY_LABEL[item.type]}</span>
+        <b>{item.title}</b>
+      </header>
+      <div className="hint">{item.hint}</div>
+      {item.sides.length > 0 && (
+        <div className="sm-sides sm-two">
+          {item.sides.map((s, i) => (
+            <SideLink key={i} side={s} onOpenFile={onOpenFile} />
+          ))}
+        </div>
+      )}
+      {edit && !added && (
+        <label className="dm-field">
+          <span>What it is, as {edit.name}&apos;s section of docs/domain-model.md will say</span>
+          <textarea rows={2} value={edit.definition ?? ""} onChange={(e) => setEdit({ ...edit, definition: e.target.value })} />
+        </label>
+      )}
+      {edit && added && (
+        <div className="dm-field">
+          <span>Added to {edit.name}&apos;s section of docs/domain-model.md</span>
+          <div className="dm-inverse">
+            <b>{edit.name}</b>
+            <input
+              aria-label="Verb"
+              value={added.verb}
+              onChange={(e) => setEdit({ ...edit, relations: edit.relations.map((r) => (r === added ? { ...r, verb: e.target.value } : r)) })}
+            />
+            <b>{added.target}</b>
+          </div>
+        </div>
+      )}
+      <div className="dm-actions">
+        {edit && onSave && (
+          <button
+            type="button"
+            className="primary"
+            disabled={state.busy || (added ? !added.verb.trim() : !edit.definition?.trim())}
+            onClick={() => void run(() => onSave({ ...edit, definition: edit.definition?.trim() || null }))}
+            title="Save the entity's section of docs/domain-model.md, the way the repository takes changes"
+          >
+            {state.busy ? "Saving…" : item.type === "nodefinition" ? "Save definition" : item.type === "onesided" ? "Add the other side" : "Add to the domain model"}
+          </button>
+        )}
+        {pair && onSameThing && (
+          <button type="button" className="primary" disabled={state.busy} onClick={() => void run(() => onSameThing(pair.b.key, pair.a.key))} title={`Read “${pair.b.name}” as “${pair.a.name}”`}>
+            Same thing
+          </button>
+        )}
+        {state.error && <span className="error-inline">{state.error}</span>}
+      </div>
+    </article>
+  );
+}
+
 // ── 2 · Model map ───────────────────────────────────────────────────────────
 
 /** How many entities a layer shows at first: few enough to read. */
 const SHOW_STEPS = [25, 40, 80, Infinity] as const;
 
-export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onOpenFile: OpenFile }) {
+export function ModelMapView({
+  entities,
+  onOpenFile,
+  onSave,
+  saved = new Map(),
+  gears,
+  onCreateGear,
+}: {
+  entities: Entity[];
+  onOpenFile: OpenFile;
+  /** Save an edited entity to the project's documentation. */
+  onSave?: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
+  /** What was saved this visit, by key: shown until the next build reads it. */
+  saved?: Map<string, SpecModelWrite>;
+  /** The gears that could keep a Domain entity; null while unknown, so no gap is claimed. */
+  gears?: GearRef[] | null;
+  /** Open the project's Product tab with a gear for an entity drafted. */
+  onCreateGear?: (draft: GearDraft) => void;
+}) {
   const [layer, setLayer] = useState<Layer>("domain");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -307,6 +494,22 @@ export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onO
     return { rel, men };
   }, [shown, relations, allMentions]);
   const sel = entities.find((e) => e.key === selected) ?? null;
+  // Only what the product is about is kept by a gear; System and Deployment
+  // entities are the gears and where they run.
+  const keepers = useMemo(
+    () => (gears ? entityGears(entities.filter((e) => layerOfKey.get(e.key) === "domain"), gears).byEntity : null),
+    [entities, gears, layerOfKey],
+  );
+  const gaps = useMemo(
+    () => new Set(keepers ? [...keepers].filter(([, k]) => k === null).map(([key]) => key) : []),
+    [keepers],
+  );
+  // The gaps as a list, the most described first: the ones a gear is most
+  // clearly owed.
+  const gapEntities = useMemo(
+    () => entities.filter((e) => gaps.has(e.key)).sort((a, b) => weight(b) - weight(a)),
+    [entities, gaps],
+  );
 
   if (entities.length === 0) return <div className="empty">Nothing read yet. Build the model to read the documents.</div>;
 
@@ -340,6 +543,26 @@ export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onO
         Left out: {counts.hidden} words that are not things the product has — identifiers such as ADR-0007 or cpt-…, a word
         used once in passing, what a kit&apos;s templates and examples say. They stay in Requirements and the Glossary.
       </p>
+      {layer === "domain" && onCreateGear && gapEntities.length > 1 && (
+        <details className="dm-gaps hint" style={{ margin: "0 0 8px" }}>
+          <summary style={{ cursor: "pointer" }}>
+            {gapEntities.length} entities have no gear — create gears
+          </summary>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            {gapEntities.map((e) => (
+              <li key={e.key} data-gap={e.key}>
+                <button type="button" className="dm-link" onClick={() => setSelected(e.key)}>
+                  {e.name}
+                </button>{" "}
+                ·{" "}
+                <button type="button" className="dm-link" onClick={() => onCreateGear(gearDraftFrom(e))}>
+                  Create a gear for it
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <div className="dm-map2">
         <div className="card dm-canvas">
           <div className="dm-mapbar">
@@ -367,7 +590,7 @@ export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onO
             </span>
           </div>
           {mode === "diagram" ? (
-            <Diagram entities={shown} layer={layer} relations={edges.rel} mentions={edges.men} selected={selected} onSelect={setSelected} />
+            <Diagram entities={shown} layer={layer} relations={edges.rel} mentions={edges.men} selected={selected} onSelect={setSelected} gaps={gaps} />
           ) : (
             <div className="dm-list">
               {shown.map((e) => (
@@ -388,6 +611,14 @@ export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onO
                 </svg>
                 a relation a document declares, named by its verb
               </span>
+              {layer === "domain" && gaps.size > 0 && (
+                <span>
+                  <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+                    <circle cx="5" cy="5" r="3.5" className="nogear" style={{ fill: "none", stroke: "var(--warning)", strokeWidth: 1.6 }} />
+                  </svg>
+                  no gear keeps it yet
+                </span>
+              )}
               {mentions && (
                 <span>
                   <svg viewBox="0 0 26 8" width="26" height="8" aria-hidden="true">
@@ -403,8 +634,14 @@ export function ModelMapView({ entities, onOpenFile }: { entities: Entity[]; onO
         <aside className="card dm-card" aria-label="The selected entity">
           {sel ? (
             <EntityCard
+              key={sel.key}
               entity={sel}
+              names={entities.filter((e) => layerOfKey.get(e.key)).map((e) => e.name)}
+              saved={sel.keys.map((k) => saved.get(k)).find((w) => !!w) ?? null}
+              onSave={onSave}
               layer={layerOfKey.get(sel.key) ?? null}
+              keeper={keepers?.get(sel.key)}
+              onCreateGear={onCreateGear}
               related={relations
                 .filter((r) => r.from === sel.key || r.to === sel.key)
                 .map((r) => ({ other: entities.find((e) => e.key === (r.from === sel.key ? r.to : r.from)), verbs: r.verbs }))
@@ -440,6 +677,7 @@ function Diagram({
   mentions,
   selected,
   onSelect,
+  gaps,
 }: {
   entities: Entity[];
   layer: Layer;
@@ -447,6 +685,8 @@ function Diagram({
   mentions: MapEdge[];
   selected: string | null;
   onSelect: (k: string | null) => void;
+  /** Entities no gear keeps: marked with a small hollow dot. */
+  gaps?: Set<string>;
 }) {
   const cards = useMemo(
     () =>
@@ -573,6 +813,11 @@ function Diagram({
             <text className="title" x={18} y={19}>
               {card.name}
             </text>
+            {gaps?.has(c.key) && (
+              <circle className="nogear" cx={c.w - 11} cy={15} r={4}>
+                <title>No gear keeps it yet</title>
+              </circle>
+            )}
             {card.fields.map((f, i) => (
               <text key={f} className="field" x={12} y={46 + 16 * i}>
                 • {f}
@@ -602,26 +847,72 @@ function EntityCard({
   entity,
   layer,
   related,
+  names,
+  saved,
+  onSave,
   onSelect,
   onOpenFile,
+  keeper,
+  onCreateGear,
 }: {
   entity: Entity;
   layer: Layer | null;
+  /** The gear that keeps it; null when none does; undefined when not asked. */
+  keeper?: Keeper | null;
+  onCreateGear?: (draft: GearDraft) => void;
   related: { other: Entity; verbs: string[] }[];
+  /** Every entity's name, for a relation's target. */
+  names: string[];
+  saved: SpecModelWrite | null;
+  onSave?: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
   onSelect: (k: string) => void;
   onOpenFile: OpenFile;
 }) {
   const definition = entity.facts.find((f) => f.kind === "entity");
+  const [editing, setEditing] = useState(false);
+  if (editing && onSave)
+    return <EntityEditor entity={entity} names={names} onSave={onSave} onDone={() => setEditing(false)} />;
   return (
     <>
       <div>
         {layer && <span className={`dm-layer-pill dm-layer-${layer}`}>{LAYER_TITLE[layer]}</span>}
+        {onSave && (
+          <button type="button" className="ghost" style={{ float: "right" }} onClick={() => setEditing(true)} title="Correct what it is, what it holds or how it relates">
+            Edit
+          </button>
+        )}
         <h2 style={{ margin: "4px 0 0" }}>{entity.name}</h2>
+        {saved && <SavedNote saved={saved} />}
         <div className="hint">
           {entity.facts.length} facts from {entity.documents} document{entity.documents === 1 ? "" : "s"}
         </div>
       </div>
-      {definition && <blockquote className="sm-quote">{definition.text}</blockquote>}
+      {definition && (
+        <blockquote className="sm-quote">
+          {definition.text}
+          {definition.provisional && <span className="sm-status dm-provisional">{PROVISIONAL_NOTE}</span>}
+        </blockquote>
+      )}
+      {keeper && (
+        <div className="dm-keeper" data-keeper={keeper.gear.id}>
+          Kept by <b>{keeper.gear.label}</b>
+          {keeper.gear.origin === "project" ? " (this project's gear)" : ""}
+          <small>{keeper.why}</small>
+        </div>
+      )}
+      {keeper === null && (
+        <div className="dm-keeper gap" data-keeper="">
+          <b>No gear keeps it.</b> Nothing in the gear catalogue or this project is named for it or says it in its
+          description, so the product has nowhere to store it yet.
+          {onCreateGear && (
+            <div style={{ marginTop: 4 }}>
+              <button type="button" className="dm-link" onClick={() => onCreateGear(gearDraftFrom(entity))}>
+                Create a gear for it
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       {related.length > 0 && (
         <section className="dm-rels">
           <div className="dm-h">How it relates</div>
@@ -646,6 +937,122 @@ function EntityCard({
         </section>
       ))}
     </>
+  );
+}
+
+/** Where a saved edit went, and when the model will show it. */
+function SavedNote({ saved }: { saved: SpecModelWrite }) {
+  return (
+    <div className="dm-saved">
+      ✓ Saved to <code>{saved.path}</code>{" "}
+      {saved.pr_url ? (
+        <a href={saved.pr_url} target="_blank" rel="noreferrer">
+          as a pull request
+        </a>
+      ) : (
+        <>on {saved.branch}</>
+      )}
+      . The model reads it on its next build.
+    </div>
+  );
+}
+
+/** Correct an entity: what it is, what it holds, how it relates. Saved as
+ *  its section of docs/domain-model.md, the way the repository takes changes. */
+function EntityEditor({
+  entity,
+  names,
+  onSave,
+  onDone,
+}: {
+  entity: Entity;
+  names: string[];
+  onSave: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
+  onDone: () => void;
+}) {
+  const [draft, setDraft] = useState(() => entityDraft(entity));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const listId = `dm-names-${entity.key.replace(/\W+/g, "-")}`;
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onSave({
+        name: draft.name,
+        definition: draft.definition.trim() || null,
+        fields: draft.fields.filter((f) => f.name.trim()),
+        relations: draft.relations.filter((r) => r.verb.trim() && r.target.trim()),
+      });
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form
+      className="dm-editor"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <div className="dm-h">Edit {entity.name}</div>
+      <p className="hint" style={{ margin: 0 }}>
+        Saved to <code>docs/domain-model.md</code> in the project&apos;s repository, one section per entity. The model reads
+        it on its next build.
+      </p>
+      <label className="dm-field">
+        <span>What it is</span>
+        <textarea rows={3} value={draft.definition} onChange={(e) => setDraft({ ...draft, definition: e.target.value })} placeholder={`A ${entity.name} is …`} />
+      </label>
+      <div className="dm-field">
+        <span>What it holds</span>
+        {draft.fields.map((f, i) => (
+          <div key={i} className="dm-row2">
+            <input aria-label="Field" value={f.name} placeholder="field" onChange={(e) => setDraft({ ...draft, fields: draft.fields.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+            <input aria-label="What it holds" value={f.meaning} placeholder="what it holds" onChange={(e) => setDraft({ ...draft, fields: draft.fields.map((x, j) => (j === i ? { ...x, meaning: e.target.value } : x)) })} />
+            <button type="button" className="ghost" aria-label="Remove field" onClick={() => setDraft({ ...draft, fields: draft.fields.filter((_, j) => j !== i) })}>
+              ×
+            </button>
+          </div>
+        ))}
+        <button type="button" className="dm-link" onClick={() => setDraft({ ...draft, fields: [...draft.fields, { name: "", meaning: "" }] })}>
+          + field
+        </button>
+      </div>
+      <div className="dm-field">
+        <span>How it relates</span>
+        <datalist id={listId}>
+          {names.map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
+        {draft.relations.map((r, i) => (
+          <div key={i} className="dm-row2">
+            <input aria-label="Verb" value={r.verb} placeholder="belongs to" onChange={(e) => setDraft({ ...draft, relations: draft.relations.map((x, j) => (j === i ? { ...x, verb: e.target.value } : x)) })} />
+            <input aria-label="Entity" list={listId} value={r.target} placeholder="entity" onChange={(e) => setDraft({ ...draft, relations: draft.relations.map((x, j) => (j === i ? { ...x, target: e.target.value } : x)) })} />
+            <button type="button" className="ghost" aria-label="Remove relation" onClick={() => setDraft({ ...draft, relations: draft.relations.filter((_, j) => j !== i) })}>
+              ×
+            </button>
+          </div>
+        ))}
+        <button type="button" className="dm-link" onClick={() => setDraft({ ...draft, relations: [...draft.relations, { verb: "", target: "" }] })}>
+          + relation
+        </button>
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="dm-actions">
+        <button type="submit" className="primary" disabled={busy}>
+          {busy ? "Saving…" : "Save to the documentation"}
+        </button>
+        <button type="button" className="ghost" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 

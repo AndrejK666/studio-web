@@ -4,7 +4,9 @@
 // Three views, each one person's question (domain-model-screens.tsx):
 // - To resolve: can we build from these documents? Everything to decide,
 //   most blocking first: the documents' problems, open questions,
-//   assumptions, and buildable requirements that state no basis.
+//   assumptions, and buildable requirements that state no basis. Below them,
+//   changes that make the documentation better, each ready to save
+//   (doc-quality.ts); a save shows at once (saved-entities.ts).
 // - Model map: what is this application? The entities as a graph of how they
 //   connect, each with every fact and the passage it rests on.
 // - Requirements: where does this come from, how far did it get? Each
@@ -16,9 +18,14 @@
 // read). A build runs on the viewer's own model key, so the button says so.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "./api";
+import { api, type Candidate, type SpecModelEntityEdit } from "./api";
+import { estimateLabel, etaLabel, readFraction, tokensLabel, type SpecModelBuildEstimate } from "./build-eta";
 import { ModelMapView, Prose, RequirementsView, ResolveView, SideLink } from "./domain-model-screens";
+import { gearRefs } from "./entity-gears";
+import type { GearDraft } from "./gear-from-entity";
 import { GlossaryScreen } from "./glossary-screen";
+import { overlaySaved, pruneSaved, savedWrites, withSaved, type SavedEdit } from "./saved-entities";
+import { useGearCatalogue } from "./product-configurator-view";
 import {
   buildLine,
   coverageCounts,
@@ -56,11 +63,14 @@ export function SpecModelTab({
   token,
   projectId,
   onOpenFile,
+  onCreateGear,
 }: {
   token: string;
   projectId: string;
   /** Open a document in the project's IDE session. */
   onOpenFile?: (path: string) => void;
+  /** Open the project's Product tab with a gear for an entity drafted, ready to scaffold. */
+  onCreateGear?: (draft: GearDraft) => void;
 }) {
   const [model, setModel] = useState<SpecModel | null>(null);
   const [findings, setFindings] = useState<SpecModelFinding[]>([]);
@@ -75,6 +85,9 @@ export function SpecModelTab({
   const [requirements, setRequirements] = useState<SpecRequirements | { error: string } | null>(null);
   const [related, setRelated] = useState<RelatedRequirements | { error: string } | null>(null);
   const [traces, setTraces] = useState<RequirementTraces | { error: string } | null>(null);
+  /** Entities saved this visit, laid over the model until a build reads them,
+   *  so the map, the cards and the queue all show a save at once. */
+  const [saved, setSaved] = useState<SavedEdit[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -85,6 +98,7 @@ export function SpecModelTab({
         api.glossary(token, projectId).catch(() => ({ items: [] as GlossaryEntry[], total: 0 })),
       ]);
       setModel(m);
+      setSaved((s) => pruneSaved(s, m.build));
       setFindings(f.items);
       setGlossary(g.items);
       setError(null);
@@ -136,6 +150,23 @@ export function SpecModelTab({
     };
   }, [token, projectId]);
 
+  // The project's own gears, which keep entities the catalogue does not: the
+  // plan's candidates its repositories declare. Read once the map is opened,
+  // and quietly left out when the plan cannot be read.
+  const [ownGears, setOwnGears] = useState<Candidate[]>([]);
+  const mapOpened = view === "map";
+  useEffect(() => {
+    if (!mapOpened) return;
+    let live = true;
+    api
+      .projectPlan(token, projectId)
+      .then((r) => live && setOwnGears(r.items.flatMap((row) => row.candidates).filter((c) => c.origin === "project")))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, mapOpened]);
+
   // Read when the view is opened: it reads every code file of the checkouts.
   useEffect(() => {
     if (view !== "reqs" || traces !== null) return;
@@ -171,10 +202,26 @@ export function SpecModelTab({
     return () => window.clearInterval(t);
   }, [running, load]);
 
-  const startBuild = async () => {
+  // What the next build would read and how long it should take, read again
+  // whenever a build stops. A backend from before the estimate answers 404:
+  // the button then shows no estimate.
+  const [estimate, setEstimate] = useState<SpecModelBuildEstimate | null>(null);
+  useEffect(() => {
+    if (running) return;
+    let live = true;
+    api
+      .specModelBuildEstimate(token, projectId)
+      .then((e) => live && setEstimate(e))
+      .catch(() => live && setEstimate(null));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, running]);
+
+  const startBuild = async (path?: string) => {
     setStarting(true);
     try {
-      await api.startSpecModelBuild(token, projectId);
+      await api.startSpecModelBuild(token, projectId, path);
       await load();
     } catch (e) {
       setError(message(e));
@@ -201,7 +248,20 @@ export function SpecModelTab({
     }
   };
 
-  const entities = useMemo(() => entitiesOf(model?.facts ?? [], glossary), [model, glossary]);
+  const saveEntity = async (edit: SpecModelEntityEdit) => {
+    const write = await api.saveSpecModelEntity(token, projectId, edit);
+    setSaved((s) => withSaved(s, { edit, write, at: Date.now() }));
+    return write;
+  };
+
+  const facts = useMemo(() => overlaySaved(model?.facts ?? [], saved), [model, saved]);
+  const writes = useMemo(() => savedWrites(saved), [saved]);
+  const entities = useMemo(() => entitiesOf(facts, glossary), [facts, glossary]);
+  // Which gear keeps each Domain entity: read when the map is first opened.
+  // Without the catalogue no gear is known, so no gap is claimed either.
+  const catalogue = useGearCatalogue(token, view === "map");
+  const index = catalogue && "index" in catalogue ? catalogue.index : null;
+  const gears = useMemo(() => (index ? gearRefs(index, ownGears) : null), [index, ownGears]);
   const ordered = useMemo(() => orderFindings(findings), [findings]);
   const open = ordered.filter((f) => f.decision !== "dismissed").length;
   const line = model ? buildLine(model.build) : "";
@@ -230,13 +290,29 @@ export function SpecModelTab({
         </div>
         <div className="sm-build">
           {line && <span className={model?.build.error ? "sm-build-line sm-err" : "sm-build-line"}>{line}</span>}
+          {model && running && model.build.documents > 0 && model.build.done < model.build.documents && (
+            <span className="sm-build-progress" data-build-progress>
+              <progress value={readFraction(model.build)} max={1} />
+              {etaLabel(model.build, Date.now())}
+            </span>
+          )}
           <button
             className="primary"
             disabled={running || starting || model?.documents.length === 0}
             onClick={() => void startBuild()}
-            title="Reads every document not yet read at its current revision, on your own model key"
+            title={
+              "Reads every document not yet read at its current revision, on your own model key, " +
+              "four at once" +
+              (estimate && estimate.documents > 0
+                ? ` (${tokensLabel(estimate.input_tokens)}; ${estimate.measured ? "timed on earlier builds" : "a first guess"})`
+                : "")
+            }
           >
-            {running ? "Building…" : "Build on my key"}
+            {running
+              ? "Building…"
+              : estimate && estimate.documents > 0
+                ? `Build on my key · ${estimateLabel(estimate)}`
+                : "Build on my key"}
           </button>
         </div>
       </div>
@@ -275,7 +351,12 @@ export function SpecModelTab({
         <ResolveView
           findings={ordered}
           requirements={requirements && "items" in requirements ? requirements : null}
+          entities={entities}
+          glossary={glossary}
           onDecide={decide}
+          onSave={saveEntity}
+          onSameThing={(alias, of) => decideTerm(alias, { name: null, alias_of: of })}
+          onPropose={(f) => api.proposeSpecModelFix(token, projectId, f.fingerprint)}
           onTrace={(id) => {
             setTraced(id);
             setView("reqs");
@@ -284,15 +365,33 @@ export function SpecModelTab({
           built={model.facts.length > 0}
         />
       )}
-      {model && view === "map" && <ModelMapView entities={entities} onOpenFile={onOpenFile} />}
+      {model && view === "map" && (
+        <ModelMapView
+          entities={entities}
+          onOpenFile={onOpenFile}
+          onSave={saveEntity}
+          saved={writes}
+          gears={gears}
+          onCreateGear={onCreateGear}
+        />
+      )}
       {view === "reqs" && (
         <RequirementsView read={requirements} traces={traces} work={work} selected={traced} onSelect={setTraced} onOpenFile={onOpenFile} />
       )}
       {view === "elsewhere" && <Elsewhere read={related} onOpenFile={onOpenFile} />}
-      {model && view === "glossary" && <GlossaryScreen entries={glossary} entities={entities} onDecide={decideTerm} />}
+      {model && view === "glossary" && (
+        <GlossaryScreen
+          entries={glossary}
+          entities={entities}
+          onDecide={decideTerm}
+          onProposeRename={(from, to) => api.proposeGlossaryRename(token, projectId, from, to)}
+        />
+      )}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
       {view === "product" && <AgainstTheCode read={product} onOpenFile={onOpenFile} />}
-      {model && view === "coverage" && <Coverage model={model} />}
+      {model && view === "coverage" && (
+        <Coverage model={model} busy={running || starting} onRebuild={(path) => void startBuild(path)} />
+      )}
     </>
   );
 }
@@ -520,14 +619,25 @@ function Elsewhere({
   );
 }
 
-function Coverage({ model }: { model: SpecModel }) {
+function Coverage({
+  model,
+  busy,
+  onRebuild,
+}: {
+  model: SpecModel;
+  /** A build is running or starting: no second one. */
+  busy: boolean;
+  /** Read one document again, replacing only its facts. */
+  onRebuild: (path: string) => void;
+}) {
   const counts = coverageCounts(model.documents);
   return (
     <>
       <p className="hint">
         {counts.extracted} read at their current revision, {counts.failed} read part-way, {counts.stale} changed
         since they were read, {counts.pending} never read. A build reads only what is not read at its
-        revision, so an unchanged document is never paid for twice.
+        revision, so an unchanged document is never paid for twice. To read one document again, whatever its
+        state, rebuild from it: only its facts are replaced.
       </p>
       <table className="sm-table">
         <thead>
@@ -536,6 +646,7 @@ function Coverage({ model }: { model: SpecModel }) {
             <th>State</th>
             <th>Facts</th>
             <th>Dropped</th>
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -549,6 +660,18 @@ function Coverage({ model }: { model: SpecModel }) {
               </td>
               <td>{d.facts}</td>
               <td title="Facts the model gave that the text did not bear out">{d.dropped}</td>
+              <td>
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={busy}
+                  onClick={() => onRebuild(d.path)}
+                  title="Read this document again on your own model key; only its facts are replaced"
+                  data-rebuild={d.path}
+                >
+                  Rebuild from this document
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>

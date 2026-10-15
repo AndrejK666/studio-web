@@ -23,6 +23,7 @@ import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from "./
 import { sectionBody, type MirrorSummary, type Plan, type PlanPeople, type PlanSection } from "./plan-model";
 import type { DomainEntity } from "./domain-model.gen";
 import type { DomainQuery, DomainQueryResult } from "./domain-query";
+import type { SpecModelBuildEstimate } from "./build-eta";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is /cf/openapi.json, shown grouped by component
@@ -105,6 +106,31 @@ export interface MemberDirectory {
 
 /** Somebody the caller shares an organization with, as any member sees them
  *  (ADR-0036): no addresses and no sign-ins. One row per organization. */
+/** An entity of the domain model as a person edits it on the tab. */
+export interface SpecModelEntityEdit {
+  name: string;
+  definition?: string | null;
+  fields: { name: string; meaning: string }[];
+  relations: { verb: string; target: string }[];
+}
+
+/** Where a change to the documents landed. */
+export interface SpecModelWrite {
+  path: string;
+  branch: string;
+  commit_sha: string;
+  pr_url?: string | null;
+}
+
+/** The pull request that renames a word across the documents. */
+export interface GlossaryRenameProposal {
+  files: string[];
+  renamed: number;
+  branch: string;
+  commit_sha: string;
+  pr_url?: string | null;
+}
+
 /** An organization's logo, as `GET …/organizations/{id}/logo` answers. */
 export interface OrganizationLogo {
   content_type: string;
@@ -2679,6 +2705,18 @@ export interface GearConfigField {
   derived: boolean;
 }
 
+/** An organization's plain explanation of a gear: what it is, what a
+ *  product gets from it, when to pick it. `generated` by a model, or
+ *  `edited` by a person -- a model never writes over a person's words unless
+ *  asked to. */
+export interface GearExplanation {
+  /** The gear's engine id, as the catalogue keys it. */
+  gear_id: string;
+  text: string;
+  source: "generated" | "edited";
+  updated_at: string;
+}
+
 /** A gear's config schema, keyed by the name it was asked for. */
 export interface GearConfigSchema {
   gear: string;
@@ -2804,6 +2842,13 @@ export interface SpecQualityVerdict {
   recognised?: boolean | null;
   /** What the detector found, each placed in the text. */
   findings?: SpecFindingItem[];
+}
+
+/** `path` naming the organization on screen, for a route that keeps data per
+ *  organization; `path` itself when none is known. The path stays one literal,
+ *  so the application map (scripts/prototype-api-map.mjs) reads it whole. */
+function withOrganization(path: string): string {
+  return `${path}${orgQuery(currentOrganization, path.includes("?") ? "&" : "?")}`;
 }
 
 /** `?organization_id=` for a reports call, or nothing when no organization is known. */
@@ -2934,12 +2979,22 @@ export const api = {
     request<SpecModel>(`/studio-documents/v1/spec-model?project_id=${encodeURIComponent(projectId)}`, token),
   /** Read every document not yet read at its revision, on the caller's own
    *  model key, in the background. A build already running is answered with
-   *  its state. */
-  startSpecModelBuild: (token: string, projectId: string) =>
+   *  its state. With `path`, that one document is read again and only its
+   *  facts are replaced. */
+  startSpecModelBuild: (token: string, projectId: string, path?: string) =>
     request<SpecModelBuild>("/studio-documents/v1/spec-model/builds", token, {
       method: "POST",
-      body: JSON.stringify({ project_id: projectId }),
+      body: JSON.stringify(path ? { project_id: projectId, path } : { project_id: projectId }),
     }),
+  /** What a build would read now (or, with `path`, one document again), and
+   *  about how long it would take. No model is called. */
+  specModelBuildEstimate: (token: string, projectId: string, path?: string) =>
+    request<SpecModelBuildEstimate>(
+      `/studio-documents/v1/spec-model/build-estimate?project_id=${encodeURIComponent(projectId)}${
+        path ? `&path=${encodeURIComponent(path)}` : ""
+      }`,
+      token,
+    ),
   /** Where the documents disagree, or refer to what is not there, with each
    *  finding's decision. */
   specModelFindings: (token: string, projectId: string) =>
@@ -3059,6 +3114,14 @@ export const api = {
       token,
       { method: "POST", body: JSON.stringify({ project_id: projectId, key, ...decision }) },
     ),
+  /** Propose a glossary rename in the documents: every whole-word use of
+   *  `from` in their prose becomes `to`, in one pull request. */
+  proposeGlossaryRename: (token: string, projectId: string, from: string, to: string) =>
+    request<GlossaryRenameProposal>(
+      `/studio-documents/v1/spec-model/glossary/proposals?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify({ from, to }) },
+    ),
   /** A member's ✓ (confirmed) or ✗ (dismissed) on one finding. */
   /** A project's review requests, newest first; one document's with `subjectId`. */
   reviewRequests: (token: string, projectId: string, subjectId?: string) =>
@@ -3111,6 +3174,20 @@ export const api = {
       items: { fingerprint: string; decision: "confirmed" | "dismissed"; decided_by: string; decided_at: string }[];
       total: number;
     }>(`/studio-documents/v1/spec-model/decisions?project_id=${encodeURIComponent(projectId)}`, token),
+  /** Save one entity of the domain model as a person edited it: its section
+   *  of docs/domain-model.md, written the way the repository takes changes. */
+  saveSpecModelEntity: (token: string, projectId: string, entity: SpecModelEntityEdit) =>
+    request<SpecModelWrite>(`/studio-documents/v1/spec-model/entities?project_id=${encodeURIComponent(projectId)}`, token, {
+      method: "POST",
+      body: JSON.stringify(entity),
+    }),
+  /** Propose a finding's fix as a pull request on the document it names. */
+  proposeSpecModelFix: (token: string, projectId: string, fingerprint: string) =>
+    request<SpecModelWrite>(
+      `/studio-documents/v1/spec-model/findings/${encodeURIComponent(fingerprint)}/proposals?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST" },
+    ),
   decideSpecModelFinding: (
     token: string,
     projectId: string,
@@ -4976,6 +5053,30 @@ export const api = {
     request<{ catalogue: GearCatalogue; corpus_ref: string; corpus_commit?: string | null }>(
       `/studio-product/v1/gearbox/catalogue`,
       token,
+    ),
+  /** The organization's plain explanations of gears, by engine id. Kept
+   *  per organization: the one on screen is named. `may_manage`: the caller
+   *  may change them (an organization or platform administrator). */
+  gearExplanations: (token: string) =>
+    request<{ items: GearExplanation[]; total: number; may_manage?: boolean }>(
+      withOrganization(`/studio-product/v1/gear-explanations`),
+      token,
+    ),
+  /** Keep a person's explanation of a gear (marked `edited`). */
+  updateGearExplanation: (token: string, gearId: string, text: string) =>
+    request<GearExplanation>(
+      withOrganization(`/studio-product/v1/gear-explanations/${encodeURIComponent(gearId)}`),
+      token,
+      { method: "PUT", body: JSON.stringify({ text }) },
+    ),
+  /** Have a model explain a gear on the caller's own key, and keep it. 400
+   *  `EXPLANATION_EDITED` over a person's words unless `force`; 400
+   *  `PROVIDER_KEY_REQUIRED` without a model key. */
+  generateGearExplanation: (token: string, gearId: string, force = false) =>
+    request<GearExplanation>(
+      withOrganization(`/studio-product/v1/gear-explanations/${encodeURIComponent(gearId)}/generations`),
+      token,
+      { method: "POST", body: JSON.stringify({ force }) },
     ),
   /** Whether product previews can run, and against which gear corpus. */
   gearboxStatus: (token: string, refresh = false) =>

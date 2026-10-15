@@ -1141,6 +1141,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/build-estimate",
+      "operation_id": "studio_documents.get_spec_model_build_estimate",
+      "tag": "StudioDocuments",
+      "summary": "What a build of a project's model would read, and about how long it would take",
+      "authenticated": true,
+      "responses": [
+        "SpecModelBuildEstimateDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model/decisions",
       "operation_id": "studio_documents.list_spec_model_decisions",
       "tag": "StudioDocuments",
@@ -2022,6 +2039,22 @@
       ],
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gear-explanations",
+      "operation_id": "studio_product.list_gear_explanations",
+      "tag": "StudioProduct",
+      "summary": "The organization's plain explanations of gears",
+      "authenticated": true,
+      "responses": [
+        "GearExplanationListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
         "500"
       ]
     },
@@ -3522,6 +3555,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/spec-model/entities",
+      "operation_id": "studio_documents.upsert_spec_model_entity",
+      "tag": "StudioDocuments",
+      "summary": "Save an entity of the domain model to the project's documentation",
+      "authenticated": true,
+      "request": "SpecModelEntityRequest",
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/spec-model/findings/{fingerprint}/decision",
       "operation_id": "studio_documents.decide_spec_model_finding",
       "tag": "StudioDocuments",
@@ -3540,6 +3591,23 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/spec-model/findings/{fingerprint}/proposals",
+      "operation_id": "studio_documents.create_spec_model_finding_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a finding's fix as a pull request on its document",
+      "authenticated": true,
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/spec-model/glossary/decisions",
       "operation_id": "studio_documents.decide_spec_model_glossary_entry",
       "tag": "StudioDocuments",
@@ -3548,6 +3616,24 @@
       "request": "GlossaryDecisionRequest",
       "responses": [
         "GlossaryDecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/spec-model/glossary/proposals",
+      "operation_id": "studio_documents.create_spec_model_glossary_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a glossary rename in the documents as one pull request",
+      "authenticated": true,
+      "request": "GlossaryRenameRequest",
+      "responses": [
+        "GlossaryRenameProposalDto"
       ],
       "errors": [
         "400",
@@ -4246,6 +4332,25 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/gear-explanations/{gear_id}/generations",
+      "operation_id": "studio_product.create_gear_explanation_generation",
+      "tag": "StudioProduct",
+      "summary": "Have a model explain a gear in plain words, and keep it",
+      "authenticated": true,
+      "request": "CreateGearExplanationGenerationRequest",
+      "responses": [
+        "GearExplanationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
@@ -5121,6 +5226,25 @@
       "request": "UpsertOrganizationLogoRequest",
       "responses": [
         "OrganizationLogoDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/gear-explanations/{gear_id}",
+      "operation_id": "studio_product.update_gear_explanation",
+      "tag": "StudioProduct",
+      "summary": "Save a person's plain explanation of a gear",
+      "authenticated": true,
+      "request": "UpdateGearExplanationRequest",
+      "responses": [
+        "GearExplanationDto"
       ],
       "errors": [
         "400",

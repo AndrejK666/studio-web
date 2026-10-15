@@ -322,6 +322,15 @@ gears:
             - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.product.gear_explanations.v1~"
+          # Gears in plain words, per organization. Written only by studio-product.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio gear explanations of an organization (free-form until gears issue #4)"
+          type: "object"
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.environment.list.v1~"
           # An organization's deployment environments (ADR-0043): cluster
           # connection, registry, namespace pattern, protection. Written only by

@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) mod build;
+pub(crate) mod domain_doc;
 pub(crate) mod extract;
 pub(crate) mod finding;
 pub(crate) mod glossary;
@@ -18,6 +19,7 @@ pub(crate) mod judge;
 pub(crate) mod questions;
 pub(crate) mod record;
 pub(crate) mod related;
+pub(crate) mod rename;
 pub(crate) mod requirements;
 pub(crate) mod rules;
 pub(crate) mod trace;

@@ -2177,6 +2177,8 @@ th[aria-sort="ascending"] .dt-sort-mark, th[aria-sort="descending"] .dt-sort-mar
 .sm-build { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .sm-build button { white-space: nowrap; flex-shrink: 0; }
 .sm-build-line { font-size: 13px; color: var(--muted-foreground); }
+.sm-build-progress { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-foreground); }
+.sm-build-progress progress { width: 140px; height: 6px; accent-color: var(--primary); }
 .sm-err { color: var(--destructive); }
 .sm-findings .card { margin-top: 0.75rem; }
 .sm-finding.sm-high { box-shadow: inset 3px 0 0 var(--destructive), 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent); }
@@ -2528,17 +2530,38 @@ div.dm-block { padding-left: 0; }
 .dm-layer-pill.dm-layer-system { background: var(--layer-system-soft); color: var(--layer-system); }
 .dm-layer-pill.dm-layer-deployment { background: var(--layer-deployment-soft); color: var(--layer-deployment); }
 .dm-rels { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+/* Which gear keeps an entity (entity-gears.ts); a hollow dot on a card no gear keeps. */
+.dm-cardnode .nogear { fill: var(--card); stroke: var(--warning); stroke-width: 1.6; }
+.dm-keeper { font-size: 13px; padding: 6px 9px; border-radius: 8px; background: var(--accent); }
+.dm-keeper.gap { background: var(--warning-soft); color: var(--warning-foreground); }
+.dm-keeper small { display: block; color: var(--muted-foreground); font-size: 11.5px; margin-top: 2px; }
 .dm-verbtext { color: var(--studio-ai-violet); font-weight: 600; }
 
 /* One line on top of each Domain model view: what a person does here. */
 .dm-howto { margin: 0 0 10px; padding: 8px 12px; border-radius: var(--radius-md, 8px); background: var(--accent); font-size: 13px; color: var(--foreground); }
 .dm-howto b { margin-right: 4px; }
 
+/* The project's path on Overview (project-path-view.tsx): six steps, the
+   current one lifted so the eye lands on what to do next. */
+.ppath { margin-bottom: 16px; }
+.ppath-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ppath-step { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--radius-md, 8px); border: 1px solid transparent; }
+.ppath-step.current { border-color: var(--primary); background: var(--accent); }
+.ppath-step.todo, .ppath-step.unknown { opacity: .75; }
+.ppath-mark { flex: none; width: 24px; height: 24px; border-radius: var(--radius-full, 999px); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; border: 1px solid var(--border); color: var(--muted-foreground); }
+.ppath-step.done .ppath-mark { background: var(--success); border-color: var(--success); color: var(--primary-foreground); }
+.ppath-step.current .ppath-mark { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+.ppath-body { flex: 1; min-width: 0; }
+.ppath-title { font-weight: 600; font-size: 14px; display: flex; gap: 6px; align-items: center; }
+.ppath-status { font-size: 13px; color: var(--muted-foreground); }
+.ppath-step button { flex: none; }
+
 /* The glossary (glossary-screen.tsx). */
 .gl { display: flex; flex-direction: column; gap: 10px; }
 .gl-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .gl-bar input[type="search"] { flex: 0 1 280px; min-width: 0; }
 .gl-pairs { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.gl-offer { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .gl-pair { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .gl-pair:last-of-type { border-bottom: 0; }
 .gl-pair-actions { display: flex; gap: 6px; }
@@ -2554,3 +2577,18 @@ div.dm-block { padding-left: 0; }
 .gl-inline input { flex: 1 1 160px; min-width: 0; }
 .gl-merge { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding-top: 6px; border-top: 1px dashed var(--border); }
 .gl-merge input { flex: 1 1 100%; min-width: 0; }
+
+/* Editing the domain model (domain-model-screens.tsx). */
+.dm-editor { display: flex; flex-direction: column; gap: 10px; }
+.dm-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.dm-field > span { font-weight: 600; font-size: 12px; color: var(--muted-foreground); }
+.dm-field textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.dm-row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 4px; }
+.dm-row2 input { min-width: 0; }
+/* The queue's documentation changes (doc-quality.ts), and what a save shows
+   before the next build reads it (saved-entities.ts). */
+.dm-ready-docs { margin-top: 8px; }
+.dm-inverse { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dm-inverse input { width: 12em; max-width: 100%; }
+.sm-status.dm-provisional { color: var(--success, #16a34a); margin-left: 6px; }
+.dm-saved { font-size: 12.5px; color: var(--success, #16a34a); margin-top: 4px; }

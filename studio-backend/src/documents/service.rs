@@ -1874,11 +1874,18 @@ impl DocumentsService {
         project_id: Uuid,
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
     ) -> Result<super::spec_model::Sources> {
-        let rows: Vec<DocumentBinding> = self
-            .all_bindings(workspace_id, Some(project_id))
-            .await?
+        use super::spec_model::domain_doc::{DOMAIN_DOC_PATH, DOMAIN_DOC_TYPE, read_as};
+        let all = self.all_bindings(workspace_id, Some(project_id)).await?;
+        let domain_doc_bound = all.iter().any(|row| row.path == DOMAIN_DOC_PATH);
+        // The documentation: every typed binding, and Studio's own domain
+        // model document whatever its binding says.
+        let rows: Vec<DocumentBinding> = all
             .into_iter()
-            .filter(|row| row.state.is_typed())
+            .filter_map(|mut row| {
+                let doc_type = read_as(&row.path, row.state.is_typed(), row.type_key.as_deref())?;
+                row.type_key = doc_type;
+                Some(row)
+            })
             .collect();
         if rows.is_empty() {
             return Ok(super::spec_model::Sources::default());
@@ -1892,6 +1899,17 @@ impl DocumentsService {
         // template or an image resolves as surely as one to a document.
         let mut by_path = self.checkout_listing(ctx, &tenants, reader).await;
         let tree = by_path.keys().cloned().collect();
+        // Written by Studio but not synced yet: no binding, so no graph node
+        // to record a verdict on, but read all the same.
+        let unbound_domain_doc = (!domain_doc_bound)
+            .then(|| by_path.remove(DOMAIN_DOC_PATH).flatten())
+            .flatten()
+            .map(|text| super::spec_model::SourceText {
+                path: DOMAIN_DOC_PATH.to_owned(),
+                text,
+                doc_type: Some(DOMAIN_DOC_TYPE.to_owned()),
+                node: String::new(),
+            });
         let documents = rows
             .into_iter()
             .filter_map(|row| {
@@ -1906,6 +1924,7 @@ impl DocumentsService {
                         node: row.node_id,
                     })
             })
+            .chain(unbound_domain_doc)
             .collect();
         let files = by_path
             .into_iter()

@@ -17,6 +17,7 @@ fn side(path: &str, line: usize, value: &str, quote: &str) -> Fact {
         line_start: line,
         line_end: line,
         quote: quote.into(),
+        layer: None,
     }
 }
 

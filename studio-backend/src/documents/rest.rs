@@ -2363,6 +2363,52 @@ impl From<super::spec_model::finding::Finding> for SpecModelFindingDto {
     }
 }
 
+/// One field of an entity, as a person wrote it on the Domain model tab.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelFieldInput {
+    pub name: String,
+    /// What it holds, in a few words.
+    #[serde(default)]
+    pub meaning: String,
+}
+
+/// One relation of an entity: "belongs to" Workspace.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelRelationInput {
+    pub verb: String,
+    /// The entity it relates to, by name.
+    pub target: String,
+}
+
+/// An entity of the domain model as a person edited it: what it is, what it
+/// holds, how it relates. It replaces the entity's section of
+/// `docs/domain-model.md`.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelEntityRequest {
+    pub name: String,
+    #[serde(default)]
+    pub definition: Option<String>,
+    #[serde(default)]
+    pub fields: Vec<SpecModelFieldInput>,
+    #[serde(default)]
+    pub relations: Vec<SpecModelRelationInput>,
+}
+
+/// Where a change to the documents landed.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelWriteDto {
+    /// The file written, from the repository's root.
+    pub path: String,
+    pub branch: String,
+    pub commit_sha: String,
+    /// Set when the change went as a pull request.
+    pub pr_url: Option<String>,
+}
+
 /// A member's ✓ or ✗ on one finding.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -2447,6 +2493,31 @@ pub struct GlossaryDecisionRequest {
     /// The `key` of the entry this one is another name of; `null` keeps it an
     /// entry of its own.
     pub alias_of: Option<String>,
+}
+
+/// A glossary rename to carry into the documents: the name they use and the
+/// name the project chose.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct GlossaryRenameRequest {
+    /// The old name, as the documents spell it (any case).
+    pub from: String,
+    /// The project's name for it.
+    pub to: String,
+}
+
+/// The pull request that renames a word across the documents.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GlossaryRenameProposalDto {
+    /// Every file changed, from the repository's root.
+    pub files: Vec<String>,
+    /// How many uses were renamed, across the files.
+    pub renamed: u32,
+    pub branch: String,
+    pub commit_sha: String,
+    /// Set when the change went as a pull request.
+    pub pr_url: Option<String>,
 }
 
 #[derive(Debug)]
@@ -2547,6 +2618,43 @@ pub struct SpecRequirementListDto {
 #[toolkit_macros::api_dto(request)]
 pub struct SpecModelBuildRequest {
     pub project_id: String,
+    /// One document to read again, whatever its state: its facts replace
+    /// that document's facts only, and the rest of the model stays as it is.
+    /// Without it, every document not read at its revision is read.
+    pub path: Option<String>,
+}
+
+/// What a build would read, and about how long it would take.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelBuildEstimateDto {
+    /// Documents the build would read: changed or never read, or the one
+    /// asked for.
+    pub documents: u32,
+    /// Documents of the project's model, read or not.
+    pub total_documents: u32,
+    pub characters: u64,
+    /// Characters over four: a rule of thumb, not the provider's tokenizer.
+    pub input_tokens: u64,
+    /// Seconds reading them is expected to take; the judge's stage after it
+    /// is not counted.
+    pub seconds: u64,
+    /// Wall-clock seconds per document at `parallel` reads at once.
+    pub seconds_per_document: f64,
+    /// True when the pace was measured on the project's earlier builds,
+    /// false when it is a default.
+    pub measured: bool,
+    /// Documents read at once.
+    pub parallel: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SpecBuildEstimateQuery {
+    pub project_id: String,
+    /// One document to estimate reading again, as `POST /spec-model/builds`
+    /// with a `path` would.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// A project's build, as the process serving it knows it.
@@ -2565,6 +2673,12 @@ pub struct SpecModelBuildDto {
     pub error: Option<String>,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
+    /// Seconds reading the documents was estimated to take when it started:
+    /// the ETA until the first document is done, after which `done`,
+    /// `documents` and `started_at` give a better one.
+    pub estimated_seconds: Option<u64>,
+    /// The one document this build reads again, when it was asked for one.
+    pub path: Option<String>,
 }
 
 impl From<super::spec_model::build::BuildState> for SpecModelBuildDto {
@@ -2585,6 +2699,8 @@ impl From<super::spec_model::build::BuildState> for SpecModelBuildDto {
             error: s.error,
             started_at: at(s.started_at),
             finished_at: at(s.finished_at),
+            estimated_seconds: s.estimated_seconds,
+            path: s.path,
         }
     }
 }
@@ -2619,6 +2735,9 @@ pub struct SpecModelFactDto {
     /// `evidence`.
     pub status: String,
     pub status_because: String,
+    /// `domain`, `system` or `deployment` when the extractor stated where an
+    /// `entity` sits; absent otherwise.
+    pub layer: Option<String>,
     pub source: SpecModelSideDto,
 }
 
@@ -2703,6 +2822,7 @@ async fn get_spec_model(
                 text: f.text,
                 status: f.status,
                 status_because: f.status_because,
+                layer: f.layer,
                 source: SpecModelSideDto {
                     path: f.path,
                     line_start: u32::try_from(f.line_start).ok(),
@@ -2731,17 +2851,15 @@ async fn start_spec_model_build(
     let models = quality.models()?;
     let (sources, _, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
-    let wanted: std::collections::BTreeSet<&str> =
-        super::spec_model::to_read(&coverage).into_iter().collect();
-    let pending: Vec<super::spec_model::SourceText> = sources
-        .documents
-        .iter()
-        .filter(|d| wanted.contains(d.path.as_str()))
-        .cloned()
-        .collect();
+    let pending = spec_model_pending(&sources, &coverage, body.path.as_deref())?;
+    let estimate = spec_model_estimate(&service, workspace_id, project_id, &pending).await?;
     if !build::begin(project_id, pending.len()) {
         return Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())));
     }
+    build::update(project_id, |s| {
+        s.estimated_seconds = Some(estimate.seconds);
+        s.path.clone_from(&body.path);
+    });
     let findings_writer = quality.findings();
     let sources_for_record = super::spec_model::Sources {
         documents: sources.documents.clone(),
@@ -2751,31 +2869,26 @@ async fn start_spec_model_build(
     };
     let documents = sources.documents;
     tokio::spawn(async move {
-        for doc in pending {
-            build::update(project_id, |s| s.current = Some(doc.path.clone()));
-            let read = match build::read_document(
-                models.as_ref(),
-                &ctx,
-                &doc.path,
-                doc.doc_type.as_deref(),
-                &doc.text,
-            )
-            .await
-            {
-                Ok(read) => read,
-                Err(build::Stop(reason)) => {
-                    build::finish(project_id, Some(reason));
-                    return;
+        let service_ref = &service;
+        let read = build::read_all(
+            project_id,
+            models.as_ref(),
+            &ctx,
+            pending,
+            move |doc, read| async move {
+                let revision = super::spec_model::extract::revision(&doc.text);
+                if let Err(error) = service_ref
+                    .put_spec_extraction(workspace_id, project_id, &doc.path, &revision, &read)
+                    .await
+                {
+                    tracing::warn!(%error, path = %doc.path, "spec-model: an extraction could not be kept");
                 }
-            };
-            let revision = super::spec_model::extract::revision(&doc.text);
-            if let Err(error) = service
-                .put_spec_extraction(workspace_id, project_id, &doc.path, &revision, &read)
-                .await
-            {
-                tracing::warn!(%error, path = %doc.path, "spec-model: an extraction could not be kept");
-            }
-            build::update(project_id, |s| s.done += 1);
+            },
+        )
+        .await;
+        if let Err(build::Stop(reason)) = read {
+            build::finish(project_id, Some(reason));
+            return;
         }
         let reason = judge_new_candidates(
             &service,
@@ -2801,6 +2914,83 @@ async fn start_spec_model_build(
         build::finish(project_id, reason);
     });
     Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())))
+}
+
+/// The documents a build reads: every one not read at its revision, or the
+/// one named by `path` whatever its state (404 when it is not one of the
+/// model's documents).
+fn spec_model_pending(
+    sources: &super::spec_model::Sources,
+    coverage: &[super::spec_model::Coverage],
+    path: Option<&str>,
+) -> ApiResult<Vec<super::spec_model::SourceText>> {
+    if let Some(path) = path {
+        let doc = sources
+            .documents
+            .iter()
+            .find(|d| d.path == path)
+            .cloned()
+            .ok_or_else(|| {
+                DocumentsError::not_found("no such document in the project's model")
+                    .with_resource("document")
+                    .create()
+            })?;
+        return Ok(vec![doc]);
+    }
+    let wanted: std::collections::BTreeSet<&str> =
+        super::spec_model::to_read(coverage).into_iter().collect();
+    Ok(sources
+        .documents
+        .iter()
+        .filter(|d| wanted.contains(d.path.as_str()))
+        .cloned()
+        .collect())
+}
+
+/// What reading `pending` is expected to take, at the pace of the project's
+/// earlier builds when there were any.
+async fn spec_model_estimate(
+    service: &DocumentsService,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    pending: &[super::spec_model::SourceText],
+) -> ApiResult<super::spec_model::build::Estimate> {
+    use super::spec_model::build;
+    let rows = service
+        .spec_extractions(workspace_id, project_id)
+        .await
+        .map_err(internal)?;
+    let kept_at: Vec<time::OffsetDateTime> = rows.iter().map(|r| r.created_at).collect();
+    let texts: Vec<&str> = pending.iter().map(|d| d.text.as_str()).collect();
+    Ok(build::estimate(&texts, build::pace_from(&kept_at)))
+}
+
+/// What a build of the project would read now, and about how long it would
+/// take.
+async fn get_spec_model_build_estimate(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecBuildEstimateQuery>,
+) -> ApiResult<JsonBody<SpecModelBuildEstimateDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let (sources, _, coverage) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    let pending = spec_model_pending(&sources, &coverage, query.path.as_deref())?;
+    let e = spec_model_estimate(&service, workspace_id, project_id, &pending).await?;
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    Ok(Json(SpecModelBuildEstimateDto {
+        documents: count(e.documents),
+        total_documents: count(sources.documents.len()),
+        characters: u64::try_from(e.characters).unwrap_or(u64::MAX),
+        input_tokens: u64::try_from(e.input_tokens).unwrap_or(u64::MAX),
+        seconds: e.seconds,
+        seconds_per_document: e.seconds_per_document,
+        measured: e.measured,
+        parallel: count(super::spec_model::build::PARALLEL_READS),
+    }))
 }
 
 /// Today's candidates of the project's model and the judgements kept for
@@ -5144,6 +5334,372 @@ async fn decide_spec_model_finding(
     ))
 }
 
+/// studio-product's writer into the project's repository.
+fn project_files(quality: &Quality) -> ApiResult<Arc<dyn crate::product::port::ProjectFiles>> {
+    quality
+        .hub
+        .get::<dyn crate::product::port::ProjectFiles>()
+        .map_err(|_| {
+            CanonicalError::service_unavailable()
+                .with_detail(
+                    "studio-product is not running, so nothing can be written to a repository",
+                )
+                .create()
+        })
+}
+
+/// A branch name's part made of `name`: lowercase letters, digits, dashes.
+fn branch_part(name: &str) -> String {
+    let slug: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let slug = slug
+        .split('-')
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    slug.chars().take(40).collect()
+}
+
+/// The first hex digits of `text`'s SHA-256: a branch for each new content,
+/// so saving the same thing twice lands on the same branch.
+fn content_tag(text: &str) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(text.as_bytes()))[..6].to_owned()
+}
+
+/// Save one entity of the domain model as a person edited it: its section of
+/// `docs/domain-model.md` in the project's repository, the way the repository
+/// takes changes. The model reads it like any other document once its type is
+/// settled, on the next build.
+async fn upsert_spec_model_entity(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+    Json(body): Json<SpecModelEntityRequest>,
+) -> ApiResult<JsonBody<SpecModelWriteDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    parent_workspace(&service, &ctx, project_id).await?;
+    let invalid = |field: &str, why: &str| {
+        DocumentsError::invalid_argument()
+            .with_field_violation(field, why.to_owned(), "INVALID")
+            .create()
+    };
+    let name = body.name.trim();
+    if name.is_empty() || name.len() > GLOSSARY_TEXT_MAX {
+        return Err(invalid("name", "must be a name of at most 200 bytes"));
+    }
+    let definition = body
+        .definition
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty());
+    if definition.is_some_and(|d| d.len() > 4000) {
+        return Err(invalid("definition", "must be at most 4000 bytes"));
+    }
+    if body.fields.len() > 60 || body.relations.len() > 60 {
+        return Err(invalid("fields", "at most 60 fields and 60 relations"));
+    }
+    let short = |s: &str| !s.trim().is_empty() && s.len() <= GLOSSARY_TEXT_MAX;
+    if !body
+        .fields
+        .iter()
+        .all(|f| short(&f.name) && f.meaning.len() <= 1000)
+    {
+        return Err(invalid(
+            "fields",
+            "each field needs a name of at most 200 bytes",
+        ));
+    }
+    if !body
+        .relations
+        .iter()
+        .all(|r| short(&r.verb) && short(&r.target))
+    {
+        return Err(invalid(
+            "relations",
+            "each relation needs a verb and a target",
+        ));
+    }
+    let edit = super::spec_model::domain_doc::EntityEdit {
+        name: name.to_owned(),
+        definition: definition.map(str::to_owned),
+        fields: body
+            .fields
+            .iter()
+            .map(|f| (f.name.trim().to_owned(), f.meaning.trim().to_owned()))
+            .collect(),
+        relations: body
+            .relations
+            .iter()
+            .map(|r| (r.verb.trim().to_owned(), r.target.trim().to_owned()))
+            .collect(),
+    };
+    let files = project_files(&quality)?;
+    let path = super::spec_model::domain_doc::DOMAIN_DOC_PATH;
+    let project = project_id.to_string();
+    let current = files
+        .read(&ctx, &project, path)
+        .await
+        .map_err(invalid_or_internal)?;
+    let content = super::spec_model::domain_doc::upsert(current.as_deref(), &edit);
+    let branch = format!(
+        "domain-model/{}-{}",
+        branch_part(name),
+        content_tag(&content)
+    );
+    let written = files
+        .write(
+            &ctx,
+            &project,
+            &branch,
+            &[crate::product::port::DeclarationFile { path: path.to_owned(), content }],
+            &crate::product::port::PullRequestText {
+                message: format!("docs(domain-model): {name}"),
+                title: format!("Domain model: {name}"),
+                body: format!(
+                    "What `{name}` is, what it holds and how it relates, as edited on the Domain model tab. \
+                     Studio keeps `{path}` one section per entity; the model reads it on its next build."
+                ),
+            },
+            false,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok(Json(SpecModelWriteDto {
+        path: path.to_owned(),
+        branch: written.branch,
+        commit_sha: written.commit_sha,
+        pr_url: written.pr_url,
+    }))
+}
+
+/// Most files one rename proposes changes to: a word used in more is a
+/// review nobody finishes.
+const GLOSSARY_RENAME_FILES_MAX: usize = 100;
+
+/// Propose a glossary rename in the documents: every whole-word use of the
+/// old name in their prose replaced by the project's name, in one pull
+/// request over every file that uses it.
+async fn create_glossary_rename_proposal(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+    Json(body): Json<GlossaryRenameRequest>,
+) -> ApiResult<(StatusCode, JsonBody<GlossaryRenameProposalDto>)> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let invalid = |field: &str, why: &str| {
+        DocumentsError::invalid_argument()
+            .with_field_violation(field, why.to_owned(), "INVALID")
+            .create()
+    };
+    let from = body.from.trim();
+    let to = body.to.trim();
+    if from.is_empty() || from.len() > GLOSSARY_TEXT_MAX {
+        return Err(invalid("from", "must be a name of at most 200 bytes"));
+    }
+    if to.is_empty() || to.len() > GLOSSARY_TEXT_MAX {
+        return Err(invalid("to", "must be a name of at most 200 bytes"));
+    }
+    if from.to_lowercase() == to.to_lowercase() {
+        return Err(invalid("to", "must differ from `from` by more than case"));
+    }
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let using: Vec<&str> = sources
+        .documents
+        .iter()
+        .filter(|d| super::spec_model::rename::rename(&d.text, from, to).is_some())
+        .map(|d| d.path.as_str())
+        .collect();
+    let unused = || {
+        DocumentsError::invalid_argument()
+            .with_constraint(format!(
+                "no document of the project uses \"{from}\" as a word outside code and links"
+            ))
+            .create()
+    };
+    if using.is_empty() {
+        return Err(unused());
+    }
+    if using.len() > GLOSSARY_RENAME_FILES_MAX {
+        return Err(DocumentsError::invalid_argument()
+            .with_constraint(format!(
+                "\"{from}\" is used in {} documents; one proposal changes at most {GLOSSARY_RENAME_FILES_MAX}",
+                using.len()
+            ))
+            .create());
+    }
+    // The repository's text, not the checkout's: the change is made to what
+    // the branch holds now.
+    let files = project_files(&quality)?;
+    let project = project_id.to_string();
+    let mut changed: Vec<crate::product::port::DeclarationFile> = Vec::new();
+    let mut renamed = 0usize;
+    for path in using {
+        let Some(text) = files
+            .read(&ctx, &project, path)
+            .await
+            .map_err(invalid_or_internal)?
+        else {
+            continue;
+        };
+        if let Some((content, n)) = super::spec_model::rename::rename(&text, from, to) {
+            renamed += n;
+            changed.push(crate::product::port::DeclarationFile {
+                path: path.to_owned(),
+                content,
+            });
+        }
+    }
+    if changed.is_empty() {
+        return Err(unused());
+    }
+    let tag = content_tag(
+        &changed
+            .iter()
+            .map(|f| format!("{}\n{}", f.path, f.content))
+            .collect::<String>(),
+    );
+    let branch = format!(
+        "glossary/{}-to-{}-{tag}",
+        branch_part(from),
+        branch_part(to)
+    );
+    let paths: Vec<String> = changed.iter().map(|f| f.path.clone()).collect();
+    let listed = paths
+        .iter()
+        .map(|p| format!("- `{p}`"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let written = files
+        .write(
+            &ctx,
+            &project,
+            &branch,
+            &changed,
+            &crate::product::port::PullRequestText {
+                message: format!("docs: call \"{from}\" \"{to}\""),
+                title: format!("Glossary: \"{from}\" is \"{to}\""),
+                body: format!(
+                    "The project's glossary calls \"{from}\" \"{to}\". {renamed} uses renamed in prose \
+                     (code, links and front matter left as they are):\n\n{listed}\n\n\
+                     Proposed from the Glossary."
+                ),
+            },
+            true,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(GlossaryRenameProposalDto {
+            files: paths,
+            renamed: u32::try_from(renamed).unwrap_or(u32::MAX),
+            branch: written.branch,
+            commit_sha: written.commit_sha,
+            pr_url: written.pr_url,
+        }),
+    ))
+}
+
+/// A write refused for a reason the caller can act on (no repository, a
+/// connection the organization does not own) as such; anything else is ours.
+fn invalid_or_internal(error: anyhow::Error) -> CanonicalError {
+    let text = format!("{error:#}");
+    if text.contains("repository") || text.contains("connection") || text.contains("not owned") {
+        DocumentsError::invalid_argument()
+            .with_constraint(text)
+            .create()
+    } else {
+        internal(error)
+    }
+}
+
+/// Propose a finding's smallest fix as a pull request on the document it
+/// names: its passage replaced, matched the way the finding was checked.
+async fn create_spec_model_finding_proposal(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Path(fingerprint): Path<String>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<(StatusCode, JsonBody<SpecModelWriteDto>)> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let (findings, _) = spec_model_findings(&service, workspace_id, project_id, &sources)
+        .await
+        .map_err(internal)?;
+    let gone = || {
+        DocumentsError::not_found("no such finding now: the documents changed since it was shown")
+            .with_resource(fingerprint.clone())
+            .create()
+    };
+    let finding = findings
+        .into_iter()
+        .find(|f| f.fingerprint == fingerprint)
+        .ok_or_else(gone)?;
+    let edit = finding.edit.clone().ok_or_else(|| {
+        DocumentsError::invalid_argument()
+            .with_constraint("this finding names no edit: it needs a person's decision, not a fix")
+            .create()
+    })?;
+    let files = project_files(&quality)?;
+    let project = project_id.to_string();
+    let text = files
+        .read(&ctx, &project, &edit.path)
+        .await
+        .map_err(invalid_or_internal)?
+        .ok_or_else(gone)?;
+    let changed = super::spec_model::domain_doc::apply_edit(&text, &edit.replace, &edit.with).ok_or_else(|| {
+        DocumentsError::invalid_argument()
+            .with_constraint("the passage is no longer in the document as the finding saw it, or is there twice")
+            .create()
+    })?;
+    let branch = format!("fix/{}", &fingerprint[..fingerprint.len().min(12)]);
+    let title: String = finding.message.chars().take(70).collect();
+    let written = files
+        .write(
+            &ctx,
+            &project,
+            &branch,
+            &[crate::product::port::DeclarationFile { path: edit.path.clone(), content: changed }],
+            &crate::product::port::PullRequestText {
+                message: format!("docs: {title}"),
+                title: format!("Fix: {title}"),
+                body: format!(
+                    "{}\n\nIn `{}`:\n\n```diff\n- {}\n+ {}\n```\n\nProposed from the Domain model tab.",
+                    finding.message, edit.path, edit.replace, edit.with
+                ),
+            },
+            true,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(SpecModelWriteDto {
+            path: edit.path,
+            branch: written.branch,
+            commit_sha: written.commit_sha,
+            pr_url: written.pr_url,
+        }),
+    ))
+}
+
 /// Every decision members recorded on the project's findings, of the model
 /// and of the Spec Quality detectors alike: both are keyed by fingerprint.
 async fn list_spec_model_decisions(
@@ -6588,14 +7144,48 @@ pub fn register_routes(
              `GET /spec-model`. Not a studio-tasks run, because the queue worker cannot act as \
              the caller. A build already running for the project is answered with its state. \
              A document already read at its revision is never read again, so a build stopped \
-             part-way resumes where it stopped.",
+             part-way resumes where it stopped. Up to four documents are read at once. With \
+             `path`, only that document is read again, whatever its state: its facts replace \
+             its own and the rest of the model stays (404 when it is not one of the model's \
+             documents).",
         )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
-        .json_request::<SpecModelBuildRequest>(openapi, "The project")
+        .json_request::<SpecModelBuildRequest>(
+            openapi,
+            "The project, and one document to read again",
+        )
         .handler(start_spec_model_build)
         .json_response_with_schema::<SpecModelBuildDto>(openapi, StatusCode::ACCEPTED, "The build")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/build-estimate")
+        .operation_id("studio_documents.get_spec_model_build_estimate")
+        .summary("What a build of a project's model would read, and about how long it would take")
+        .description(
+            "The documents `POST /spec-model/builds` would read now (changed or never read, or \
+             the one `path` names), their size in characters and approximate input tokens \
+             (characters over four), and the seconds reading them should take: at the pace of \
+             the project's earlier builds when there were any (`measured`), else a default. \
+             The judge's stage after the reading is not counted. No model is called.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose build to estimate")
+        .query_param("path", false, "One document to estimate reading again")
+        .handler(get_spec_model_build_estimate)
+        .json_response_with_schema::<SpecModelBuildEstimateDto>(
+            openapi,
+            StatusCode::OK,
+            "The estimate",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -6654,6 +7244,56 @@ pub fn register_routes(
             .error_500(openapi)
             .register(router, openapi);
 
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/entities")
+        .operation_id("studio_documents.upsert_spec_model_entity")
+        .summary("Save an entity of the domain model to the project's documentation")
+        .description(
+            "What the entity is, what it holds and how it relates, as a person edited it. It \
+             replaces the entity's section of `docs/domain-model.md` in the project's repository, \
+             which Studio keeps one section per entity and which the model reads like any other \
+             document once its type is settled. Written the way the repository takes changes: \
+             onto its branch, or on a `domain-model/…` branch with a pull request.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose model it is")
+        .json_request::<SpecModelEntityRequest>(openapi, "The entity as edited")
+        .handler(upsert_spec_model_entity)
+        .json_response_with_schema::<SpecModelWriteDto>(openapi, StatusCode::OK, "Where it landed")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router =
+        OperationBuilder::post("/studio-documents/v1/spec-model/findings/{fingerprint}/proposals")
+            .operation_id("studio_documents.create_spec_model_finding_proposal")
+            .summary("Propose a finding's fix as a pull request on its document")
+            .description(
+                "The finding's smallest edit applied to the passage it names, matched across line \
+         breaks the way it was checked, on a `fix/…` branch with a pull request: a proposal, \
+         never a commit onto the document's branch. 404 when the finding is gone; 400 when it \
+         names no edit or its passage is no longer in the document.",
+            )
+            .tag("StudioDocuments")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("fingerprint", "The finding's fingerprint")
+            .query_param("project_id", true, "The project the finding is in")
+            .handler(create_spec_model_finding_proposal)
+            .json_response_with_schema::<SpecModelWriteDto>(
+                openapi,
+                StatusCode::CREATED,
+                "The pull request",
+            )
+            .error_400(openapi)
+            .error_401(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
     router = OperationBuilder::get("/studio-documents/v1/spec-model/glossary")
         .operation_id("studio_documents.get_spec_model_glossary")
         .summary("The project's glossary: what its documents name, and by which names")
@@ -6701,6 +7341,34 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/glossary/proposals")
+        .operation_id("studio_documents.create_spec_model_glossary_proposal")
+        .summary("Propose a glossary rename in the documents as one pull request")
+        .description(
+            "Every whole-word use of `from` (any case) in the prose of the project's documents \
+             replaced by `to`, the first letter keeping its case; code, links' destinations and \
+             front matter are left as they are. One pull request on a `glossary/…` branch over \
+             every file that uses it: a proposal, never a commit onto the documents' branch. 400 \
+             when no document uses the name.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose documents to change")
+        .json_request::<GlossaryRenameRequest>(openapi, "The old name and the project's name")
+        .handler(create_glossary_rename_proposal)
+        .json_response_with_schema::<GlossaryRenameProposalDto>(
+            openapi,
+            StatusCode::CREATED,
+            "The pull request",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::post("/studio-documents/v1/review-requests")

@@ -2,7 +2,9 @@
 // serves it (System) and where that runs (Deployment), each drawn as a
 // diagram of entity cards and the relations the documents declare.
 //
-// A layer is read off the entity's name and where it is described: a name
+// A layer is what the extractor stated on the entity's `entity` facts, the
+// one most of them name. When none states one, it is read off the entity's
+// name and where it is described: a name
 // that says it is a screen, a gear or an API is System; one that says it is a
 // cluster, an image or a pipeline, or a thing described almost only in
 // deployment documents, is Deployment; the rest is the subject itself. Not
@@ -37,6 +39,20 @@ const DEPLOY_NAME =
   /\b(k8s|kubernetes|helm|cluster|namespace|pod|keycloak|postgres|pg|cnpg|docker|compose|ci|cd|pipeline|workflow|image|ingress|secret|env|deploy|deployment|rollout|replica|volume|s3|bucket|dns|tls|certificate|vault|backup|hook|runner|ghcr|realm)\b/i;
 const NOT_ENTITY = /^(adr[- ]?\d+|cpt-|https?:|\/|`)/i;
 
+const LAYERS: Layer[] = ["domain", "system", "deployment"];
+
+/** The layer most of the `entity` facts state (a tie goes to the earlier of
+ *  domain, system, deployment), or null when none states one. */
+function statedLayer(facts: SpecModelFact[]): Layer | null {
+  const count = new Map<Layer, number>();
+  for (const f of facts) {
+    if (f.kind === "entity" && f.layer && LAYERS.includes(f.layer)) count.set(f.layer, (count.get(f.layer) ?? 0) + 1);
+  }
+  let best: Layer | null = null;
+  for (const l of LAYERS) if ((count.get(l) ?? 0) > (best ? count.get(best)! : 0)) best = l;
+  return best;
+}
+
 /** Which layer an entity belongs to, or null when it is not an entity of the
  *  product at all. Facts from a kit's templates do not count. */
 export function layerOf(e: Pick<Entity, "name" | "facts">): Layer | null {
@@ -45,6 +61,8 @@ export function layerOf(e: Pick<Entity, "name" | "facts">): Layer | null {
   if (facts.length === 0) return null;
   // A word used in passing: nothing says what it is, and little about it.
   if (!facts.some((f) => f.kind === "entity") && facts.length < 3) return null;
+  const stated = statedLayer(facts);
+  if (stated) return stated;
   if (SYSTEM_NAME.test(e.name)) return "system";
   const deploy = facts.filter((f) => isDeployPath(f.source.path)).length;
   if (DEPLOY_NAME.test(e.name) || deploy > facts.length - deploy) return "deployment";
@@ -75,6 +93,17 @@ export function cardSize(name: string, fields: string[]): { w: number; h: number
   return { w: Math.round(Math.min(230, Math.max(130, 18 + 7.2 * longest))), h: 30 + (fields.length ? 6 + 16 * fields.length : 0) };
 }
 
+/** The entity a relation fact points at: its value folded to an entity's key,
+ *  or a longer phrase that starts or ends with one ("the owning workspace").
+ *  Never the entity itself. */
+export function relationTarget(e: Entity, f: SpecModelFact, entities: Entity[], byKey?: Map<string, Entity>): Entity | null {
+  const tk = subjectKey(f.value);
+  const target =
+    (byKey ?? new Map(entities.map((x) => [x.key, x]))).get(tk) ??
+    entities.find((o) => o.key !== e.key && o.key.length > 3 && (o.keys.includes(tk) || tk.startsWith(`${o.key} `) || tk.endsWith(` ${o.key}`)));
+  return target && target.key !== e.key ? target : null;
+}
+
 /** A line of the diagram: a relation a document declares, with its verbs. */
 export interface DiagramEdge extends MapEdge {
   verbs: string[];
@@ -88,11 +117,8 @@ export function relationEdges(entities: Entity[]): DiagramEdge[] {
   for (const e of entities) {
     for (const f of e.facts as SpecModelFact[]) {
       if (f.kind !== "relation") continue;
-      const tk = subjectKey(f.value);
-      const target =
-        byKey.get(tk) ??
-        entities.find((o) => o.key !== e.key && o.key.length > 3 && (o.keys.includes(tk) || tk.startsWith(`${o.key} `) || tk.endsWith(` ${o.key}`)));
-      if (!target || target.key === e.key) continue;
+      const target = relationTarget(e, f, entities, byKey);
+      if (!target) continue;
       const id = [e.key, target.key].sort().join("|");
       const had = out.get(id);
       const verb = f.aspect.trim();
@@ -190,4 +216,25 @@ export function placeCards(cards: Card[], edges: MapEdge[]): { cards: PlacedCard
     height: Math.max(...placed.map((c) => c.y + c.h / 2)),
     looseTop: looseTop === null ? null : looseTop - top,
   };
+}
+
+/** An entity as the editor starts it: what the model already knows, each
+ *  field and relation once, so a person corrects rather than retypes. */
+export function entityDraft(e: Pick<Entity, "name" | "facts">): {
+  name: string;
+  definition: string;
+  fields: { name: string; meaning: string }[];
+  relations: { verb: string; target: string }[];
+} {
+  const fields: { name: string; meaning: string }[] = [];
+  const relations: { verb: string; target: string }[] = [];
+  for (const f of e.facts) {
+    if (f.kind === "attribute" && f.aspect.trim() && !fields.some((x) => x.name === f.aspect.trim()))
+      fields.push({ name: f.aspect.trim(), meaning: f.value.trim() });
+    if (f.kind === "relation" && f.aspect.trim() && f.value.trim()) {
+      const r = { verb: f.aspect.trim(), target: f.value.trim() };
+      if (!relations.some((x) => x.verb === r.verb && x.target.toLowerCase() === r.target.toLowerCase())) relations.push(r);
+    }
+  }
+  return { name: e.name, definition: e.facts.find((f) => f.kind === "entity")?.text ?? "", fields, relations };
 }

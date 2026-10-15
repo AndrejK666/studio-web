@@ -17,6 +17,10 @@
       "type_id": "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.kit_installations.v1~"
     },
     {
+      "gear": "studio-product",
+      "type_id": "gts.cf.core.am.tenant_metadata.v1~cf.studio.product.gear_explanations.v1~"
+    },
+    {
       "gear": "account-management",
       "type_id": "gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~"
     },

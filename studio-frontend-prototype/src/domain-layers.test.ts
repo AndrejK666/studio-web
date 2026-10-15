@@ -3,7 +3,7 @@
 // relation, and that no two cards overlap.
 import { describe, expect, it } from "vitest";
 
-import { cardFields, cardSize, layerOf, placeCards, relationEdges, weight } from "./domain-layers";
+import { cardFields, cardSize, entityDraft, layerOf, placeCards, relationEdges, weight } from "./domain-layers";
 import { entitiesOf, type SpecModelFact } from "./spec-model";
 
 const fact = (subject: string, kind: SpecModelFact["kind"], extra: Partial<SpecModelFact> = {}): SpecModelFact => ({
@@ -26,6 +26,28 @@ describe("a layer", () => {
     expect(layerOf(one([fact("Keycloak realm", "entity")]))).toBe("deployment");
     // Described only in deployment documents.
     expect(layerOf(one([fact("Stage", "entity", { source: { path: "deploy/PIPELINES.md" } })]))).toBe("deployment");
+  });
+
+  it("is the one the extractor stated most, over a guess from the name", () => {
+    // The name says System; the extractor said Domain.
+    expect(layerOf(one([fact("Session", "entity", { layer: "domain" })]))).toBe("domain");
+    expect(
+      layerOf(
+        one([
+          fact("Build", "entity", { layer: "deployment" }),
+          fact("Build", "entity", { layer: "system" }),
+          fact("Build", "entity", { layer: "deployment" }),
+          // Only an entity fact states a layer.
+          fact("Build", "attribute", { layer: "system" }),
+          fact("Build", "attribute", { layer: "system" }),
+        ]),
+      ),
+    ).toBe("deployment");
+  });
+
+  it("is guessed when no entity fact states one, and still none for an identifier", () => {
+    expect(layerOf(one([fact("IDE session", "entity", { layer: null }), fact("IDE session", "entity")]))).toBe("system");
+    expect(layerOf(one([fact("ADR-0007", "entity", { layer: "domain" })]))).toBeNull();
   });
 
   it("is none for an identifier, a passing word, or a kit's template", () => {
@@ -83,5 +105,23 @@ describe("the diagram", () => {
     expect(note.loose).toBe(true);
     expect(note.y - note.h / 2).toBeGreaterThan(looseTop!);
     expect(placeCards(cards, relationEdges(entities))).toEqual(placeCards(cards, relationEdges(entities)));
+  });
+});
+
+describe("the editor's draft", () => {
+  it("starts from what the model knows, each field and relation once", () => {
+    const e = one([
+      fact("Project", "entity", { text: "A project is a unit of work." }),
+      fact("Project", "attribute", { aspect: "type", value: "product" }),
+      fact("Project", "attribute", { aspect: "type", value: "library" }),
+      fact("Project", "relation", { aspect: "belongs to", value: "Workspace" }),
+      fact("Project", "relation", { aspect: "belongs to", value: "workspace" }),
+    ]);
+    expect(entityDraft(e)).toEqual({
+      name: "Project",
+      definition: "A project is a unit of work.",
+      fields: [{ name: "type", meaning: "product" }],
+      relations: [{ verb: "belongs to", target: "Workspace" }],
+    });
   });
 });

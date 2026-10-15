@@ -84,10 +84,46 @@ fn is_tooling_path(path: &str) -> bool {
     TOOLING_FILES.contains(&first.to_ascii_lowercase().as_str())
 }
 
+/// Directories inside a kit that hold its scaffolding: the artifact
+/// templates a kit generates documents from, and the examples it shows.
+const KIT_SCAFFOLDING_DIRS: &[&str] = &["artifacts", "templates", "examples"];
+
+/// True when `path` is a kit's own scaffolding rather than the project's
+/// writing: anything under `kits/<kit>/artifacts/`, `kits/<kit>/**/templates/`
+/// or `kits/<kit>/**/examples/`, and any `template.md` inside a kit.
+///
+/// [`TOOLING_DIRS`] catches a kit vendored under `.cf-studio/`; this catches
+/// the same kit wherever else a repository keeps it (`kits/` at the root,
+/// `docs/kits/`, a monorepo package). A kit's example ADR declares its type
+/// and fills every section, so the classifier bound it as one of the
+/// project's decisions and a person had to reject each one by hand.
+pub fn is_kit_scaffolding(path: &str) -> bool {
+    let segments: Vec<String> = path
+        .split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let Some(kits) = segments.iter().position(|s| s == "kits") else {
+        return false;
+    };
+    // `kits/<kit>/.../<file>`: the kit's name, then at least the file.
+    let inside = &segments[kits + 1..];
+    let Some((file, dirs)) = inside.split_last() else {
+        return false;
+    };
+    if dirs.is_empty() {
+        return false;
+    }
+    file == "template.md"
+        || dirs[1..]
+            .iter()
+            .any(|d| KIT_SCAFFOLDING_DIRS.contains(&d.as_str()))
+}
+
 /// True when a path looks like it could hold a specification document: prose
-/// by its extension, and not tool configuration.
+/// by its extension, and neither tool configuration nor a kit's scaffolding.
 pub fn is_prose_path(path: &str) -> bool {
-    if is_tooling_path(path) {
+    if is_tooling_path(path) || is_kit_scaffolding(path) {
         return false;
     }
     let ext = path
@@ -366,6 +402,37 @@ mod tests {
             "docs/github/setup.md",
             "README.md",
         ] {
+            assert!(is_prose_path(path), "{path} is a document path");
+        }
+    }
+
+    /// The same kit outside `.cf-studio/` is still scaffolding, and a
+    /// project's own `docs/templates/` or `examples/` outside a kit is not.
+    #[test]
+    fn a_kits_templates_and_examples_are_not_documents_wherever_it_lives() {
+        for path in [
+            "kits/sdlc/artifacts/ADR/template.md",
+            "kits/sdlc/artifacts/ADR/examples/example.md",
+            "kits/sdlc/artifacts/PRD/rules.md",
+            "docs/kits/sdlc/templates/feature.md",
+            "packages/x/kits/acme/guides/examples/one.md",
+            "kits\\sdlc\\artifacts\\ADR\\template.md",
+            "Kits/SDLC/Artifacts/ADR/Template.md",
+            "kits/sdlc/template.md",
+        ] {
+            assert!(is_kit_scaffolding(path), "{path} is kit scaffolding");
+            assert!(!is_prose_path(path), "{path} is not a document path");
+        }
+        for path in [
+            "docs/templates/feature.md",
+            "examples/usage.md",
+            "docs/adr/template.md",
+            "kits/README.md",
+            "kits/sdlc/README.md",
+            "kits/sdlc/guides/overview.md",
+            "docs/toolkits/artifacts/a.md",
+        ] {
+            assert!(!is_kit_scaffolding(path), "{path} is not kit scaffolding");
             assert!(is_prose_path(path), "{path} is a document path");
         }
     }

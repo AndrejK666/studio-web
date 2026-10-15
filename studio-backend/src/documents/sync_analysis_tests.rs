@@ -697,9 +697,15 @@ async fn tool_configuration_is_not_a_document_unless_a_person_says_so() {
     let rig = Rig::new(Some(50)).await;
     let kit = ".cf-studio/config/kits/sdlc/artifacts/ADR/examples/example.md";
     let skill = ".claude/skills/review/SKILL.md";
+    // The same kit kept at the repository root rather than under
+    // `.cf-studio/`: its template and its example are scaffolding too.
+    let root_template = "kits/sdlc/artifacts/PRD/template.md";
+    let root_example = "kits/sdlc/artifacts/PRD/examples/example.md";
     let files = [
         (kit, prd("an example")),
         (skill, prd("a prompt")),
+        (root_template, prd("a template")),
+        (root_example, prd("another example")),
         ("docs/a.md", prd("ours")),
     ];
     let files: Vec<(&str, &str)> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
@@ -727,7 +733,25 @@ async fn tool_configuration_is_not_a_document_unless_a_person_says_so() {
     };
     assert_eq!(state_of(kit).await, BindingState::NotADocument);
     assert_eq!(state_of(skill).await, BindingState::NotADocument);
+    assert_eq!(state_of(root_template).await, BindingState::NotADocument);
+    assert_eq!(state_of(root_example).await, BindingState::NotADocument);
 
+    rig.service
+        .decide_binding(
+            &rig.ctx,
+            rig.workspace,
+            rig.binding(root_example),
+            BindingDecision {
+                action: BindingAction::Set {
+                    type_key: "prd".to_owned(),
+                },
+                source: None,
+                confidence: None,
+                content: None,
+            },
+        )
+        .await
+        .unwrap();
     rig.service
         .decide_binding(
             &rig.ctx,
@@ -747,4 +771,6 @@ async fn tool_configuration_is_not_a_document_unless_a_person_says_so() {
     rig.sync(&files).await;
     assert_eq!(state_of(skill).await, BindingState::Manual);
     assert_eq!(state_of(kit).await, BindingState::NotADocument);
+    assert_eq!(state_of(root_example).await, BindingState::Manual);
+    assert_eq!(state_of(root_template).await, BindingState::NotADocument);
 }

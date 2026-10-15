@@ -23,7 +23,8 @@ import { ProjectEnvironments } from "./environments-screen";
 import { When, useConfirm } from "./data-table";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
-import { ProductConfigurator, useGearCatalogue } from "./product-configurator-view";
+import { gearProblemFrom, nameWarning, type GearDraft } from "./gear-from-entity";
+import { ProductConfigurator, useGearCatalogue, useKeptEntities } from "./product-configurator-view";
 import {
   PRODUCT_PROFILES,
   defaultPicks,
@@ -73,6 +74,8 @@ export function ProjectKits({
   projectName,
   workspaceId,
   section = "components",
+  pendingGear,
+  onPendingGearTaken,
 }: {
   token: string;
   projectId: string;
@@ -83,7 +86,20 @@ export function ProjectKits({
   /** Which tab this is: the specs-to-product journey, or the project's kits.
    *  One component, because both read the project's IDE repositories. */
   section?: "components" | "kits";
+  /** A gear asked for elsewhere (the Domain model's "Create a gear for it"):
+   *  the scaffold dialog opens with it filled in. */
+  pendingGear?: GearDraft | null;
+  /** Called once the dialog has it, so a later visit does not open it again. */
+  onPendingGearTaken?: () => void;
 }) {
+  const [entityGear, setEntityGear] = useState<GearDraft | null>(null);
+  useEffect(() => {
+    if (!pendingGear || section !== "components") return;
+    setEntityGear(pendingGear);
+    onPendingGearTaken?.();
+    // Taken once per request; the callback's identity does not matter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingGear, section]);
   const [catalog, setCatalog] = useState<StudioKit[] | null>(null);
   const [installed, setInstalled] = useState<KitInstallation[]>([]);
   const [versions, setVersions] = useState<Record<string, string>>({});
@@ -320,6 +336,20 @@ export function ProjectKits({
         onFlow={setFlow}
       />
       <BeyondGears token={token} projectId={projectId} />
+      {entityGear && (
+        <ScaffoldModal
+          key={entityGear.entityKey}
+          capability={entityGear.name}
+          token={token}
+          projectTenantId={projectId}
+          problem={gearProblemFrom(entityGear)}
+          origin={entityGear.origin}
+          editable
+          lead={`A gear to keep “${entityGear.entityName}”, which no gear keeps in the Domain model. Once it is merged and the project's repositories declare it, the Domain model shows it as this project's gear.`}
+          nameWarning={(name) => nameWarning(entityGear.entityKey, entityGear.entityName, name)}
+          onClose={() => setEntityGear(null)}
+        />
+      )}
       {product.composing && (
         <ProductCard
           token={token}
@@ -363,7 +393,10 @@ export function ProjectKits({
       {catalog === null ? (
         <p className="empty">Loading kit registry…</p>
       ) : catalog.length === 0 ? (
-        <p className="empty">No kits are published in this registry.</p>
+        <p className="empty">
+          No kits are published in this registry yet. Next: ask an organization admin to publish one; the project
+          works without kits meanwhile.
+        </p>
       ) : (
         <div className="kit-grid">
           {catalog.map((kit) => {
@@ -715,7 +748,7 @@ function SuggestedComponents({
         (plan.length === 0 ? (
           <p className="empty" style={{ fontSize: 13 }}>
             {docCount === 0
-              ? "No specification in this project says what it needs yet. This reads the functional requirements of the project's PRDs, as they are written, and of the documents Studio holds; sync the repository if its specs are not on the Specs tab yet."
+              ? "No specification says what the product needs yet. Next: connect a repository on Sources and type its documents on Specs; the functional requirements they hold are read here as written."
               : "The documents declare no capabilities to match."}
           </p>
         ) : (
@@ -1468,6 +1501,7 @@ function ProductCard({
   // picks and settings otherwise.
   const catalogue = useGearCatalogue(token, product.composing);
   const map = catalogue && "index" in catalogue ? catalogue.index : null;
+  const kept = useKeptEntities(token, projectId, map);
 
   const inCode = code.report ? codeGears(code.report) : [];
   const diff = codeDiff(picks, inCode);
@@ -1506,6 +1540,7 @@ function ProductCard({
           busy={busy !== null}
           onBuild={() => void buildInTheia()}
           onOpen={nav ? (name) => nav.openComponent(name) : undefined}
+          kept={kept}
         />
       ) : (
         <>
