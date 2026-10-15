@@ -1,7 +1,7 @@
 // "Check open pull requests" on the Specs tab, and "Beyond gears" on the
 // Components tab.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import {
   READINESS_LABEL,
@@ -94,12 +94,21 @@ export function BeyondGears({ token, projectId }: { token: string; projectId: st
   const [read, setRead] = useState<{ items: ProjectComponent[]; repos: number } | { error: string } | "loading" | null>(
     null,
   );
+  // Another project is another question: what was read for the last one goes,
+  // and an answer still on its way for it is dropped (#744).
+  const asking = useRef(projectId);
+  useEffect(() => {
+    asking.current = projectId;
+    setRead(null);
+  }, [token, projectId]);
   const load = async () => {
+    const forProject = projectId;
     setRead("loading");
     try {
-      setRead(await api.projectComponents(token, projectId));
+      const r = await api.projectComponents(token, forProject);
+      if (asking.current === forProject) setRead(r);
     } catch (e) {
-      setRead({ error: errText(e) });
+      if (asking.current === forProject) setRead({ error: errText(e) });
     }
   };
   return (

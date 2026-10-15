@@ -130,7 +130,7 @@ export function WaitingOnYou<W extends OnMeWorkspace>({
     };
   }, [token, me]);
 
-  const { open, hidden } = useMemo(
+  const { open, hidden, hiddenItems } = useMemo(
     () => inboxItems(reviews, pulls ?? [], marks, new Date()),
     [reviews, pulls, marks],
   );
@@ -152,6 +152,20 @@ export function WaitingOnYou<W extends OnMeWorkspace>({
     [token],
   );
 
+  // "Unmark all": the hidden items' marks only, every request awaited; on
+  // any failure the marks are read again rather than shown cleared (#744).
+  const unmarkHidden = useCallback(async () => {
+    const keys = hiddenItems.map((i) => i.key);
+    const results = await Promise.allSettled(keys.map((k) => api.markInboxItem(token, k, "open", null)));
+    if (results.some((r) => r.status === "rejected")) {
+      setTick((t) => t + 1);
+    } else {
+      setMarks((all) => all.filter((m) => !keys.includes(m.item_key)));
+    }
+    setShowHidden(false);
+  }, [hiddenItems, token]);
+
+  const shown = showHidden ? [...open, ...hiddenItems] : open;
   const wsName = (id: string) => workspaces.find((w) => w.id === id)?.name ?? "";
   const wsOf = (id: string) => workspaces.find((w) => w.id === id);
   const reviewCount = open.filter((i) => i.kind === "review").length;
@@ -175,7 +189,7 @@ export function WaitingOnYou<W extends OnMeWorkspace>({
       </p>
       {pulls === null ? (
         <p className="empty">Reading what waits for you…</p>
-      ) : open.length === 0 ? (
+      ) : shown.length === 0 ? (
         <p className="empty">
           {failed.length === workspaces.length && failed.length > 0
             ? `Pull requests could not be read: ${failed[0]}`
@@ -185,8 +199,8 @@ export function WaitingOnYou<W extends OnMeWorkspace>({
         </p>
       ) : (
         <ul className="rows">
-          {open.map((item) => (
-            <li key={item.key}>
+          {shown.map((item) => (
+            <li key={item.key} data-hidden-item={hiddenItems.includes(item) || undefined}>
               <div className="grow">
                 {item.kind === "review" ? (
                   <>
@@ -236,33 +250,37 @@ export function WaitingOnYou<W extends OnMeWorkspace>({
                 </button>
               )}
               <span className="wo-marks">
-                <button className="linklike" title="Hide it until it changes" onClick={() => void mark(item, "done")}>
-                  Done
-                </button>
-                <button className="linklike" title="Hide it until this time tomorrow" onClick={() => void mark(item, "snoozed")}>
-                  Snooze 1 day
-                </button>
+                {hiddenItems.includes(item) ? (
+                  <button className="linklike" title="Show it again" onClick={() => void mark(item, "open")}>
+                    Unmark
+                  </button>
+                ) : (
+                  <>
+                    <button className="linklike" title="Hide it until it changes" onClick={() => void mark(item, "done")}>
+                      Done
+                    </button>
+                    <button
+                      className="linklike"
+                      title="Hide it until this time tomorrow"
+                      onClick={() => void mark(item, "snoozed")}
+                    >
+                      Snooze 1 day
+                    </button>
+                  </>
+                )}
               </span>
             </li>
           ))}
         </ul>
       )}
-      {hidden > 0 && open.length > 0 && (
+      {pulls !== null && hidden > 0 && (
         <p className="hint">
           {hidden} done or snoozed.{" "}
           <button className="linklike" onClick={() => setShowHidden((s) => !s)}>
-            {showHidden ? "Keep them hidden" : "Bring them back"}
+            {showHidden ? "Hide them again" : "Show them"}
           </button>
           {showHidden && (
-            <button
-              className="linklike"
-              style={{ marginLeft: 8 }}
-              onClick={() => {
-                for (const m of marks) void api.markInboxItem(token, m.item_key, "open", null);
-                setMarks([]);
-                setShowHidden(false);
-              }}
-            >
+            <button className="linklike" style={{ marginLeft: 8 }} onClick={() => void unmarkHidden()}>
               Unmark all
             </button>
           )}

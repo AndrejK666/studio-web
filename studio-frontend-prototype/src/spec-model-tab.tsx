@@ -166,6 +166,12 @@ export function SpecModelTab({
       live = false;
     };
   }, [token, projectId, mapOpened]);
+  // The two views read on opening keep what they read for one project only:
+  // another project starts them again, and their tab counts with them (#744).
+  useEffect(() => {
+    setTraces(null);
+    setRelated(null);
+  }, [token, projectId]);
 
   // Read when the view is opened: it reads every code file of the checkouts.
   useEffect(() => {

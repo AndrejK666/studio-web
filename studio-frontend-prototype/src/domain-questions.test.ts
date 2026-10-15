@@ -9,6 +9,10 @@ describe("domain questions", () => {
     expect(questionSentence({ entity: "L", because_of: ["A", "B", "C"], facts: 1, documents: [] })).toContain(
       "A, B and C",
     );
+    // #744: nothing to name is not " and undefined".
+    expect(questionSentence({ entity: "Ledger", because_of: [], facts: 1, documents: [] })).toBe(
+      "The project relates this document to Ledger. What does it do with Ledger?",
+    );
   });
 
   it("describes an expert by their changes", () => {

@@ -2038,7 +2038,11 @@ function IngestedDocumentsView({
                   >
                     Edit in the IDE →
                   </button>
+                  {/* Keyed by the document: picking another tile is another
+                      document, and no panel may carry the last one's state
+                      -- a brief, or a remark recorded under the new path (#744). */}
                   <ReviewPanel
+                    key={`review:${selected.id}`}
                     token={token}
                     projectId={projectTenantId}
                     subject={{
@@ -2050,9 +2054,19 @@ function IngestedDocumentsView({
                     }}
                     onChanged={() => void reload()}
                   />
-                  <BriefPanel token={token} projectId={projectTenantId} path={selected.path} />
-                  <RemarksPanel token={token} projectId={projectTenantId} path={selected.path} />
-                  <DomainQuestionsPanel token={token} projectId={projectTenantId} path={selected.path} />
+                  <BriefPanel key={`brief:${selected.id}`} token={token} projectId={projectTenantId} path={selected.path} />
+                  <RemarksPanel
+                    key={`remarks:${selected.id}`}
+                    token={token}
+                    projectId={projectTenantId}
+                    path={selected.path}
+                  />
+                  <DomainQuestionsPanel
+                    key={`questions:${selected.id}`}
+                    token={token}
+                    projectId={projectTenantId}
+                    path={selected.path}
+                  />
                   {/* What the Analysis view used to be for, asked of this one
                       file: its findings land in the Analysis card beside. */}
                   <div className="ing-send">

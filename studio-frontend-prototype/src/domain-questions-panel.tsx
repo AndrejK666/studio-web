@@ -2,7 +2,7 @@
 // domain, the words it uses where the project named things otherwise, and,
 // for each entity asked about, who changed the documents that describe it.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { expertLine, questionSentence, type DomainExpert, type DomainQuestions, type TermDrift } from "./domain-questions";
 
@@ -10,10 +10,15 @@ export function DomainQuestionsPanel({ token, projectId, path }: { token: string
   const [read, setRead] = useState<DomainQuestions | { error: string } | null>(null);
   const [drift, setDrift] = useState<TermDrift[]>([]);
   const [experts, setExperts] = useState<Record<string, DomainExpert[] | "loading" | { error: string }>>({});
+  // Which document the panel shows: an answer for an earlier one is dropped,
+  // because the same entity can be asked about under the next (#744).
+  const shownFor = useRef(0);
 
   useEffect(() => {
     let live = true;
+    shownFor.current += 1;
     setRead(null);
+    setExperts({});
     api
       .domainQuestions(token, projectId, path)
       .then((r) => live && setRead(r))
@@ -28,12 +33,14 @@ export function DomainQuestionsPanel({ token, projectId, path }: { token: string
   }, [token, projectId, path]);
 
   const ask = async (entity: string) => {
+    const asked = shownFor.current;
     setExperts((x) => ({ ...x, [entity]: "loading" }));
     try {
       const r = await api.domainExperts(token, projectId, entity);
-      setExperts((x) => ({ ...x, [entity]: r.items }));
+      if (asked === shownFor.current) setExperts((x) => ({ ...x, [entity]: r.items }));
     } catch (e) {
-      setExperts((x) => ({ ...x, [entity]: { error: e instanceof Error ? e.message : String(e) } }));
+      if (asked === shownFor.current)
+        setExperts((x) => ({ ...x, [entity]: { error: e instanceof Error ? e.message : String(e) } }));
     }
   };
 

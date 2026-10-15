@@ -1002,6 +1002,7 @@ function SuggestedComponents({
                                 <button
                                   type="button"
                                   title="What adding it would bring into the product with it"
+                                  aria-label={`What ${c.name} brings with it`}
                                   aria-expanded={bringing?.name === c.name && bringing.capability === row.capability}
                                   onClick={() =>
                                     setBringing((b) =>

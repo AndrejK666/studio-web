@@ -29,9 +29,11 @@ export function BringsWithIt({
     return () => {
       live = false;
     };
-    // The picks as a key: a new array of the same gears is the same question.
+    // The picks and the configuration as keys: a new array or object with the
+    // same content is the same question, and an edited configuration is a new
+    // one -- it decides vendors and what completion drops (#744).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, candidate, picks.join("\n")]);
+  }, [token, candidate, picks.join("\n"), JSON.stringify(config)]);
 
   return (
     <div className="gb-panel" role="region" aria-label={`What ${candidate} brings with it`}>
@@ -50,8 +52,8 @@ export function BringsWithIt({
             <ul className="gb-list gb-warn">
               {read.overlaps.map((o) => (
                 <li key={o.contract}>
-                  <b>{contractLabel(o.contract)}</b> would come from {o.brought.join(", ")} and is already provided by{" "}
-                  {o.already.join(", ")}.
+                  <b>{contractLabel(o.contract)}</b> would come from {o.brought.join(", ")}
+                  {o.already.length > 0 ? <> and is already provided by {o.already.join(", ")}</> : <>, twice</>}.
                 </li>
               ))}
             </ul>

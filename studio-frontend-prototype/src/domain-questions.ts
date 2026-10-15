@@ -33,6 +33,9 @@ export interface DomainExpert {
 
 /** The question as its author reads it. */
 export function questionSentence(q: DomainQuestion): string {
+  if (q.because_of.length === 0) {
+    return `The project relates this document to ${q.entity}. What does it do with ${q.entity}?`;
+  }
   const about = q.because_of.length === 1 ? q.because_of[0] : `${q.because_of.slice(0, -1).join(", ")} and ${q.because_of[q.because_of.length - 1]}`;
   return `This document speaks of ${about}, which the project relates to ${q.entity}. What does it do with ${q.entity}?`;
 }

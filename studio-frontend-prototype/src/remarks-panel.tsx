@@ -127,6 +127,7 @@ export function RemarksPanel({ token, projectId, path }: { token: string; projec
 
   const send = async (r: Remark) => {
     setBusy(true);
+    setErr(null);
     try {
       await api.replyToRemark(token, projectId, r.repo, r.thread_id, reply);
       setReply("");
@@ -144,6 +145,7 @@ export function RemarksPanel({ token, projectId, path }: { token: string; projec
     const statement = window.prompt("The decision, as it should be recorded", draft.statement);
     if (!statement) return;
     setBusy(true);
+    setErr(null);
     try {
       await api.createDecision(token, { project_id: projectId, ...draft, statement });
       await load();

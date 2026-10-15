@@ -59,14 +59,16 @@ describe("the inbox", () => {
       { item_key: reviewKey(review("c")), state: "snoozed", until: "2026-10-13T11:00:00Z", updated_at: "" },
       { item_key: pullKey(pull("p1")), state: "done", updated_at: "" },
     ];
-    const { open, hidden } = inboxItems(
+    const { open, hidden, hiddenItems } = inboxItems(
       [{ workspace: "w", items: [review("a"), review("b"), review("c")] }],
       [{ workspace: "w", items: [pull("p1")] }],
-      marks,
+      [...marks, { item_key: "review:gone", state: "done", updated_at: "" }],
       NOW,
     );
     expect(open.map((i) => i.key)).toEqual(["review:c"]);
     expect(hidden).toBe(3);
+    // Only items still on a list: a mark for one that is gone is not "hidden".
+    expect(hiddenItems.map((i) => i.key)).toEqual(["review:a", "review:b", pullKey(pull("p1"))]);
   });
 
   it("brings a pull request back when it moves again", () => {

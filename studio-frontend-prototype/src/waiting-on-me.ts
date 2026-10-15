@@ -41,7 +41,7 @@ export function inboxItems(
   pulls: { workspace: string; items: OpenPullRequest[] }[],
   marks: InboxMark[],
   now: Date,
-): { open: InboxItem[]; hidden: number } {
+): { open: InboxItem[]; hidden: number; hiddenItems: InboxItem[] } {
   const marked = new Map(marks.map((m) => [m.item_key, m]));
   const hides = (key: string) => {
     const m = marked.get(key);
@@ -77,7 +77,11 @@ export function inboxItems(
     for (let k = 0; k < x.length; k++) if (x[k] !== y[k]) return x[k] - y[k];
     return a.n - b.n;
   });
-  return { open: indexed.map((x) => x.item), hidden: all.length - open.length };
+  // What the marks hide, in the list's own order: "Bring them back" shows
+  // these, and "Unmark all" clears exactly these marks -- never one for an
+  // item no longer on any list (#744).
+  const hiddenItems = all.filter((i) => hides(i.key));
+  return { open: indexed.map((x) => x.item), hidden: hiddenItems.length, hiddenItems };
 }
 
 /** When a snooze of `days` from `now` ends, as the API takes it. */

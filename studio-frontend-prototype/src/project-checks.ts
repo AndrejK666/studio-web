@@ -41,6 +41,8 @@ export interface ProjectComponent {
   owners: string[];
   last_change?: string | null;
   open_pulls: number;
+  /** `open_pulls` is a lower bound: not every open pull request was read. */
+  open_pulls_partial?: boolean;
   readiness: "ready" | "caution" | "not_ready";
   reasons: string[];
 }
