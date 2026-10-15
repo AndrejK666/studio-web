@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 246,
+  "open_violations": 256,
   "operations": [
     {
       "method": "DELETE",
@@ -2104,6 +2104,20 @@
     },
     {
       "method": "GET",
+      "path": "/studio-product/v1/gearbox/corpus/{source_id}/info/refs",
+      "operation_id": "studio_product.get_root_refs",
+      "tag": "StudioProduct",
+      "summary": "Git smart-HTTP ref advertisement for one of the platform's gear repositories",
+      "authenticated": false,
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-product/v1/gearbox/extension-points",
       "operation_id": "studio_product.list_extension_points",
       "tag": "StudioProduct",
@@ -2114,6 +2128,20 @@
       ],
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/organizations/{organization_id}/gearbox/corpus/{source_id}/info/refs",
+      "operation_id": "studio_product.get_org_root_refs",
+      "tag": "StudioProduct",
+      "summary": "Git smart-HTTP ref advertisement for one of an organization's gear repositories",
+      "authenticated": false,
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -2951,6 +2979,42 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-artifact-ingest/v1/projects/{project_id}/builds",
+      "operation_id": "studio_artifact_ingest.report_build",
+      "tag": "StudioArtifactIngest",
+      "summary": "Record a build the IDE ran: its start, or its end",
+      "authenticated": true,
+      "request": "BuildReportRequest",
+      "responses": [
+        "ArtifactNodeDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-artifact-ingest/v1/projects/{project_id}/builds/dispatch",
+      "operation_id": "studio_artifact_ingest.dispatch_build",
+      "tag": "StudioArtifactIngest",
+      "summary": "Start the project's build workflow in CI",
+      "authenticated": true,
+      "request": "BuildDispatchRequest",
+      "responses": [
+        "BuildDispatchedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -4411,6 +4475,32 @@
       "operation_id": "studio_product.pull_corpus_pack",
       "tag": "StudioProduct",
       "summary": "Git smart-HTTP upload-pack (clone and fetch) for the gear corpus",
+      "authenticated": false,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/gearbox/corpus/{source_id}/git-upload-pack",
+      "operation_id": "studio_product.pull_root_pack",
+      "tag": "StudioProduct",
+      "summary": "Git smart-HTTP upload-pack for one of the platform's gear repositories",
+      "authenticated": false,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/organizations/{organization_id}/gearbox/corpus/{source_id}/git-upload-pack",
+      "operation_id": "studio_product.pull_org_root_pack",
+      "tag": "StudioProduct",
+      "summary": "Git smart-HTTP upload-pack for one of an organization's gear repositories",
       "authenticated": false,
       "errors": [
         "401",
