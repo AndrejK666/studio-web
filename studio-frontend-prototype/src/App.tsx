@@ -61,6 +61,7 @@ import { ProjectOverview, type ProjTab } from "./project-overview";
 import { makeZip } from "./zip";
 import { SpecModelTab } from "./spec-model-tab";
 import { ProjectBuilds } from "./builds-tab";
+import { ProjectTabHowto } from "./project-path-view";
 import { GearsTable, PermissionsTable } from "./system-tables";
 import {
   StudioBridgeProvider,
@@ -5458,6 +5459,7 @@ function ProjectScreen({
   return (
     <>
       <div className="proj-content">
+        <ProjectTabHowto tab={tab} />
         {tab === "overview" && (
           <ProjectOverview
             token={token}
@@ -7713,7 +7715,7 @@ function ProjectSources({
         }
         empty={{
           title: "No repositories attached yet.",
-          body: "Pick one from a connector below.",
+          body: "Pick one from a connector below. It is the project's first step: its sync brings in the documents to type.",
         }}
         columns={[
           {

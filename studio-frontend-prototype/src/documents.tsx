@@ -1379,7 +1379,12 @@ function IngestedDocumentsView({
           </div>
         ) : (
           <div className="dt-state dt-empty">
-            <div className="dt-empty-title">Nothing matches.</div>
+            {/* An emptied review queue is progress, not a dead end: say what comes next. */}
+            <div className="dt-empty-title">
+              {filter === "needs-review" && !needle
+                ? "Nothing waits for review. Next: build the domain model on the Domain model tab."
+                : "Nothing matches."}
+            </div>
             <button className="ghost" onClick={listCtl.clearFilters}>
               Clear filters
             </button>

@@ -369,7 +369,7 @@ export function PeopleView({
             rows={teamGrants}
             rowKey={(g) => g.id}
             rowLabel={(g) => personName(g)}
-            empty={{ title: "Nobody on the team yet.", body: "Add someone from the organization below." }}
+            empty={{ title: "Nobody on the team yet.", body: "Add someone from the organization below, so they can review specs and open the IDE." }}
             columns={[
               {
                 id: "name",

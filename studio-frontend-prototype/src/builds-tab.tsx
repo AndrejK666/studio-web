@@ -80,8 +80,8 @@ export function ProjectBuilds({ token, projectId }: { token: string; projectId: 
       {!error && runs === null && <div className="empty">Loading…</div>}
       {runs && runs.length === 0 && (
         <div className="empty" data-builds-empty>
-          No CI runs yet. They arrive with the next sync of the project&apos;s sources, if the connection can read the
-          repository&apos;s Actions.
+          No CI runs yet. Next: push the composed product to a repository with a CI workflow, then sync it on
+          Sources; runs arrive if the connection can read the repository&apos;s Actions.
         </div>
       )}
       {runs && runs.length > 0 && (
