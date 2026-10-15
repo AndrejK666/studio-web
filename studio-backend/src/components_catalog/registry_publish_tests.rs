@@ -250,6 +250,45 @@ fn publish() -> DecisionInput {
 }
 
 #[test]
+fn a_gear_goes_where_its_category_already_lives_unless_the_curator_names_another() {
+    let t = |id: &str, n: usize| PublishTarget {
+        source_id: id.into(),
+        repo: format!("cf/{id}"),
+        gears_in_category: n,
+    };
+    let targets = vec![t("gears-core", 2), t("gears-bss", 5), t("gears-ai", 5)];
+    // Most gears of its category; the first added on a tie.
+    assert_eq!(choose_target(&targets, None).unwrap().unwrap().source_id, "gears-bss");
+    assert_eq!(
+        choose_target(&targets, Some("gears-core")).unwrap().unwrap().source_id,
+        "gears-core"
+    );
+    assert_eq!(
+        choose_target(&targets, Some("gears-x")),
+        Err(PublishError::UnknownTarget("gears-x".into()))
+    );
+    assert_eq!(choose_target(&[], None), Ok(None));
+    // None in its category anywhere: the first.
+    let flat = vec![t("a", 0), t("b", 0)];
+    assert_eq!(choose_target(&flat, None).unwrap().unwrap().source_id, "a");
+}
+
+#[test]
+fn the_engine_says_which_root_holds_the_gears_of_a_category() {
+    let catalogue = serde_json::json!({ "gears": {
+        "ledger": {"source": "gears-bss", "category": "bss"},
+        "billing": {"source": "gears-bss", "category": "BSS"},
+        "api-gateway": {"source": "gears-core", "category": "system"},
+        "loose": {"category": "bss"},
+    }});
+    let bss = gears_in_category(&catalogue, Some("bss"));
+    assert_eq!(bss.get("gears-bss"), Some(&2));
+    assert_eq!(bss.get("gears-core"), None);
+    let all = gears_in_category(&catalogue, None);
+    assert_eq!(all.get("gears-core"), Some(&1));
+}
+
+#[test]
 fn the_platforms_parent_for_gears_is_where_most_of_its_gears_are() {
     assert_eq!(contribution_parent(&[]), "gears");
     assert_eq!(

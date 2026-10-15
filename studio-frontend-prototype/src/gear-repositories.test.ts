@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Connection, GearboxStatus } from "./api";
 import {
+  createTargetOf,
   defaultSourceId,
   deploymentCorpus,
   gearRepositoryRows,
@@ -89,5 +90,28 @@ describe("gear repositories", () => {
     expect(rows[0]).toMatchObject({ connection: null, sourceId: "gears-core", ref: "v2" });
     expect(readLine(rows[0].read)).toBe("3 gears at abc");
     expect(gearRepositoryRowsFromStatus(null)).toEqual([]);
+  });
+
+  it("tells an organization's rows from the platform's, and which one new gears go into", () => {
+    const status: GearboxStatus = {
+      enabled: true,
+      source_id: "gears-core",
+      profiles: [],
+      sources: [
+        { source_id: "gears-core", repo: "cf/gears-core", git_ref: "", gears: 3, connection_id: "p1", tier: "platform" },
+        { source_id: "acme", repo: "acme/gears", git_ref: "", gears: 1, connection_id: "o1", tier: "organization" },
+      ],
+    };
+    expect(gearRepositoryRowsFromStatus(status, "platform").map((r) => r.sourceId)).toEqual(["gears-core"]);
+    expect(gearRepositoryRowsFromStatus(status, "organization").map((r) => r.sourceId)).toEqual(["acme"]);
+
+    const ORG = "org-acme";
+    const first = conn("o1", "https://github.com/acme/gears", 1, { source_id: "acme" }, ORG);
+    const second = conn("o2", "https://github.com/acme/more", 2, { source_id: "more" }, ORG);
+    // None marked: the first added.
+    expect(createTargetOf(gearRepositoryRows([second, first], ORG, status))).toBe("o1");
+    const marked = { ...second, options: { source_id: "more", create_target: "true" } };
+    expect(createTargetOf(gearRepositoryRows([first, marked], ORG, status))).toBe("o2");
+    expect(createTargetOf([])).toBeNull();
   });
 });

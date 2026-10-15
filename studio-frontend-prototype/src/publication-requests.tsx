@@ -35,6 +35,9 @@ export function PublicationRequests({
   const [refused, setRefused] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previews, setPreviews] = useState<Record<string, RegistryPublishPreview>>({});
+  // The platform gear repository each request goes into, by source id, as the
+  // curator picked it (ADR-0046 phase 4); the server's pick until then.
+  const [targets, setTargets] = useState<Record<string, string>>({});
   const [declining, setDeclining] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -61,14 +64,20 @@ export function PublicationRequests({
     setError(null);
     setDone(null);
     try {
+      const target = action === "publish" ? targets[key] : undefined;
       const after = await api.answerPublication(token, r.organization_id, r.name, {
         action,
         ...(dryRun ? { dry_run: true } : {}),
+        ...(target ? { target } : {}),
         ...(action === "decline_publication" ? { reason: reason.trim() } : {}),
         ...(r.version ? { version: r.version } : {}),
       });
       if (dryRun) {
-        if (after.publish_preview) setPreviews((p) => ({ ...p, [key]: after.publish_preview as RegistryPublishPreview }));
+        if (after.publish_preview) {
+          const preview = after.publish_preview as RegistryPublishPreview;
+          setPreviews((p) => ({ ...p, [key]: preview }));
+          if (preview.source_id) setTargets((t) => ({ ...t, [key]: preview.source_id as string }));
+        }
         else setError("This backend cannot preview a publish.");
         return;
       }
@@ -130,6 +139,30 @@ export function PublicationRequests({
                           <div key={line}>{line}</div>
                         ))}
                       </div>
+                    )}
+                    {preview && (preview.targets?.length ?? 0) > 1 && (
+                      <label className="pubreq-actions" data-publication-target>
+                        Into
+                        <select
+                          value={targets[key] ?? preview.source_id ?? ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setTargets((t) => ({ ...t, [key]: value }));
+                            // Another repository is another pull request: preview it again.
+                            setPreviews((p) => {
+                              const next = { ...p };
+                              delete next[key];
+                              return next;
+                            });
+                          }}
+                        >
+                          {(preview.targets ?? []).map((t) => (
+                            <option key={t.source_id} value={t.source_id}>
+                              {t.source_id} ({t.repo}) · {t.gears_in_category} of its category
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     )}
                     <div className="pubreq-actions">
                       <button type="button" disabled={busy === key} onClick={() => void answer(r, "publish", true)}>

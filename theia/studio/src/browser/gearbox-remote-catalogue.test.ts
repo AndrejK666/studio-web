@@ -53,6 +53,51 @@ describe('loadRemoteGearCatalogue', () => {
         expect(remote?.origin?.clonePath).toBe('/studio-product/v1/gearbox/corpus');
     });
 
+    it('names every gear repository the corpus is read from, each under its source id (ADR-0046)', async () => {
+        const remote = await loadRemoteGearCatalogue(answer(200, {
+            source_id: 'gears-core',
+            corpus: 'cf/gears-core, acme/gears',
+            corpus_url: 'https://github.com/cf/gears-core.git',
+            corpus_commit: 'a'.repeat(40),
+            roots: [
+                { source_id: 'gears-core', url: 'https://github.com/cf/gears-core.git', commit: 'a'.repeat(40), needs_token: false },
+                {
+                    source_id: 'acme',
+                    url: 'https://github.com/acme/gears.git',
+                    commit: 'b'.repeat(40),
+                    needs_token: true,
+                    clone_path: '/studio-product/v1/organizations/o1/gearbox/corpus/acme',
+                },
+            ],
+            catalogue: { gears: { g: { id: 'g' } } },
+        }));
+
+        expect(remote?.origin?.sourceId).toBe('gears-core');
+        expect(remote?.origins).toEqual([
+            { sourceId: 'gears-core', url: 'https://github.com/cf/gears-core.git', rev: 'a'.repeat(40), needsToken: false },
+            {
+                sourceId: 'acme',
+                url: 'https://github.com/acme/gears.git',
+                rev: 'b'.repeat(40),
+                needsToken: true,
+                clonePath: '/studio-product/v1/organizations/o1/gearbox/corpus/acme',
+            },
+        ]);
+    });
+
+    it('offers no repositories to bring while one of them has not been read yet', async () => {
+        const remote = await loadRemoteGearCatalogue(answer(200, {
+            corpus: 'x',
+            roots: [
+                { source_id: 'a', url: 'https://github.com/o/a.git', commit: 'a'.repeat(40) },
+                { source_id: 'b', url: 'https://github.com/o/b.git', commit: null },
+            ],
+            catalogue: { gears: { g: { id: 'g' } } },
+        }));
+
+        expect(remote?.origins).toBeUndefined();
+    });
+
     it('asks a backend from before studio-product at the catalogue\'s path', async () => {
         const fetchApi = jest.fn(async (path: string) => path.startsWith('/studio-product/')
             ? answer(404, {})()

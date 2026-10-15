@@ -590,9 +590,14 @@ the request out of the queue. `publish` without an open request is refused
 `PLATFORM_CURATOR_REQUIRED`.
 
 `publish` on a `registered` entry gives the gear to the platform
-(`registry_publish.rs`). It reads the platform's
-catalogue sources in the root tenant and takes the first in mode `gears` as
-the platform's gear repository; without one it is refused (400
+(`registry_publish.rs`). It goes into one of the platform's gear repositories
+(ADR-0046 phase 4): the one the curator names (`target`, a source id; an
+unknown one is 400 `PLATFORM_NO_SUCH_GEAR_REPOSITORY`), else the one holding
+most gears of the entry's category, as the engine attributes them; the dry
+run lists every candidate (`publish_preview.targets`) and the pick
+(`source_id`). While the platform has no gear repository, it reads the
+platform's catalogue sources in the root tenant and takes the first in mode
+`gears` as the platform's gear repository; without one it is refused (400
 `failed_precondition`, `PLATFORM_NO_GEAR_REPOSITORY`: "the platform has no
 gear repository to contribute to"), and one whose source names a connection
 outside the root is refused too (`PLATFORM_CONNECTION_NOT_OWNED`): the
@@ -756,8 +761,10 @@ The platform's components and the organization's, read together
   `GearContributions`): publishing as a pull request into the platform's gear
   repository, `published` once the platform's sync finds it (see Registry,
   Publishing).
-- [ ] **Phase 4**: several corpora and pinned versions, once the engine has
-  them.
+- [x] **Phase 4** (ADR-0046, studio-product's `gear_roots.rs`): several
+  corpora -- the platform's gear repositories, then an organization's own --
+  each pinned at its commit in `product.gdl`; Publish picks the platform
+  repository it goes into. Versions per gear and forks wait on the engine.
 
 ##### Why this component exists
 
@@ -931,7 +938,7 @@ than one corpus are later phases.
 | `POST` | `/registry/{name}/suggest` | A model's `{description, category, capabilities, at, model}` for the entry, on the caller's own key through studio-llm-proxy, capabilities bounded by the organization's vocabulary; stored as the entry's `suggestion`, never a state change. 403 for anyone but an organization administrator; 400 `failed_precondition` (`PROVIDER_KEY_REQUIRED`) without a model key; 503 when the model cannot be asked or answers no usable JSON, or without studio-llm-proxy | unstable |
 | `POST` | `/registry/{name}/declare` | Declare it, for a `candidate`: `{description?, capabilities?, category?, project_id?, dry_run?}` (all optional) → `{branch, pr_url, files, repo, path, dry_run, manifest}`: a pull request adding the module's manifest in its directory on `declare/<name>` — the engine's `gear.gdl` when the Gearbox engine is configured, else (and always inside a crate's `src/`) a `gear.toml`; `manifest` says which — recorded as a `declare` decision. 403 for anyone but an organization administrator; 400 `failed_precondition` for an entry that is not a candidate, or a repository read through a connection the organization only inherits (`CONNECTION_NOT_OWNED`); 503 without studio-product | unstable |
 | `GET` | `/registry/projects` | What the last walk saw of each project: per repository `read`, `unchanged` or `failed`, its components, and for a failure what to do. The organization's gear repository is one more row, keyed by the organization | unstable |
-| `GET` | `/registry/gear-repository` | The organization's gear repository (ADR-0042 §2): `{gear_repository: {tenant, connection_id, connection_label, repo, branch, set_by, set_at} \| null, may_manage}`. Every member | unstable |
+| `GET` | `/registry/gear-repository` | The organization's gear repository (ADR-0042 §2): `{gear_repository: {tenant, connection_id, connection_label, repo, branch, set_by, set_at, from_sources} \| null, may_manage}`. With a gear repository of its own on its Sources (ADR-0046 phase 3), that one -- the one marked for new gears, else the first -- with `from_sources`; the setting below is read only while it has none. Every member | unstable |
 | `PUT` | `/registry/gear-repository` | Set it: `{connection_id, repo, branch?}`. The connection must be the organization's own (400 `CONNECTION_NOT_OWNED` for one inherited from the platform's root) and organization-scoped (400 `CONNECTION_NOT_SHARED`, saying why), and the repository readable at the branch through it (400 `GEAR_REPOSITORY_UNREADABLE`, with the provider's error). Queues a walk. 403 for anyone but an organization administrator | unstable |
 | `DELETE` | `/registry/gear-repository` | Unset it; the next full walk retires what was found there. 403 for anyone but an organization administrator | unstable |
 | `POST` | `/registry/gear-repository/create` | Create a repository through an organization-scoped connection of the organization's own (`{connection_id, name, owner?, is_org?, private?}`; 400 `CONNECTION_NOT_OWNED` before anything is created otherwise) and set it; 201. 403 for anyone but an organization administrator | unstable |

@@ -157,6 +157,10 @@ pub struct DecisionInput {
     pub contribution: Option<super::registry::Contribution>,
     /// For `publish` only: answer what would be written, write nothing.
     pub dry_run: bool,
+    /// For `publish` only: the platform's gear repository it goes into, by
+    /// source id (ADR-0046 phase 4); the one holding most gears of its
+    /// category when absent.
+    pub target: Option<String>,
 }
 
 /// Why a decision was refused.

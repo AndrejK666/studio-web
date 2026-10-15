@@ -147,6 +147,7 @@ fn mark(version: Option<&str>) -> RegistryDecisionRequest {
         merge_into: None,
         version: version.map(str::to_owned),
         dry_run: None,
+        target: None,
     }
 }
 

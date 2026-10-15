@@ -166,6 +166,11 @@ export function OrgGearRepositoryCard({
               @{current.branch}
               {current.connection_label ? ` · via ${current.connection_label}` : ""}
             </span>
+            {current.from_sources && (
+              <span className="badge" data-gear-repository-from-sources>
+                from Sources
+              </span>
+            )}
           </>
         ) : (
           <span style={{ opacity: 0.75 }}>not set</span>
@@ -177,22 +182,29 @@ export function OrgGearRepositoryCard({
                 New gear
               </button>
             )}
-            <button type="button" onClick={startSet}>
-              {current ? "Change" : "Set"}
-            </button>
-            <button type="button" onClick={startCreate}>
-              Create new
-            </button>
-            {current && (
-              <button type="button" className="ghost" onClick={remove} disabled={busy}>
-                Remove
-              </button>
+            {/* Taken from Sources (ADR-0046 phase 3): changed there, not here. */}
+            {!current?.from_sources && (
+              <>
+                <button type="button" onClick={startSet}>
+                  {current ? "Change" : "Set"}
+                </button>
+                <button type="button" onClick={startCreate}>
+                  Create new
+                </button>
+                {current && (
+                  <button type="button" className="ghost" onClick={remove} disabled={busy}>
+                    Remove
+                  </button>
+                )}
+              </>
             )}
           </span>
         )}
       </div>
       <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.8 }}>
-        {current
+        {current?.from_sources
+          ? "The organization's gear repository marked for new gears on its Sources page: “Create a gear” writes there for a project without one of its own, and the registry reads it. Change it on Sources."
+          : current
           ? "Where “Create a gear” writes for a project without a gear repository of its own. The registry reads it too, so its gears are the organization's."
           : "The organization has no gear repository: “Create a gear” writes into each project's own repository. Name one so the organization's gears live together."}
       </p>

@@ -114,10 +114,24 @@ and the corpus relay need `STUDIO_GEARBOX_WORKDIR`. The corpus is the
 platform's gears (ADR-0042), read from the platform's **gear repositories**
 (ADR-0046): connections of the `gear-repository` kind held by the root tenant,
 in the order they were added (`gear_roots.rs`). Each is checked out at
-`gearbox-roots/<connection>/<source id>` under the engine's working directory
-and passed as its own `--root`: the engine names a root by its directory when
-there are several, and it follows links to the real one, so the checkout
-itself carries the id. They are always read together,
+`gearbox-roots/<key>/<source id>` under the engine's working directory -- the
+key a hash of its URL and ref, so the same repository connected by the
+platform and by an organization is one clone, each directory behind its own
+lock -- and passed as its own `--root`: the engine names a root by its
+directory when there are several, and it follows links to the real one, so the
+checkout itself carries the id.
+
+**An organization's corpus** (phase 3) is the platform's roots, then the
+organization's own gear repositories, in a corpus of its own (one per
+organization, each behind its own lock). A request about an organization --
+named by `?organization_id=`, else the caller's own, else a project's --
+reads that organization's corpus: the catalogue, extension points,
+completion, config schemas, previews, Create a gear and the status
+(`gearbox::Scope`). An organization with none of its own reads the platform's
+corpus. Its own repositories are listed when such a request comes, at most
+once a minute; one whose source id a platform repository already has is left
+out and named in the status (`shadowed`). The components reference, the
+catalogue sync's facts and spec-mapping's completion read the platform's. They are always read together,
 because a gear in one may use a gear in another; where two declare the same
 gear, the first wins. The list is read on the way into a route of this gear or
 the catalogue's, at most once a minute (`GET /studio-product/v1/gearbox?refresh=true`
@@ -135,9 +149,17 @@ a deployment.
 A generated `product.gdl` declares one `source` per gear repository, each at
 the commit it was checked against, and each `use_gear` names the repository the
 engine found the gear in (`render_product_gdl_from`). The status
-(`GET /studio-product/v1/gearbox`) lists every root with its commit and gear
-count (`sources`); the corpus relay and the catalogue DTO still name the first
-root only, until the relay per repository (ADR-0046 phase 2).
+(`GET /studio-product/v1/gearbox`) lists every root with its commit, gear
+count and tier (`sources`). The catalogue (`GET /gearbox/catalogue`) lists
+every root (`roots`: source id, URL, ref, commit, whether it takes a token,
+and the path to clone a private one through this backend), and the relay
+serves each: the platform's at `/gearbox/corpus/{source_id}`, an
+organization's own at `/organizations/{organization_id}/gearbox/corpus/{source_id}`
+to its members only (404 for anyone else). The old single-root fields and
+route stay, naming the first root, for IDEs that read one. The IDE
+(`gearbox-studio`) brings the roots in all or none -- half a corpus would list
+gears whose hosts are missing -- each under its source id in the per-machine
+cache, and opens every engine on all of them.
 
 #### A project writes only through its organization's own connections
 
@@ -366,6 +388,10 @@ which calls this engine; moving it here is a follow-up.
 | `POST` | `/gear-explanations/{gear_id}/generations` | A model's explanation on the caller's key, from the catalogue entry and README; never over an `edited` one unless `force` | unstable |
 | `GET` | `/gearbox/corpus/info/refs` | Git smart-HTTP ref advertisement for the corpus | unstable |
 | `POST` | `/gearbox/corpus/git-upload-pack` | Git smart-HTTP upload-pack, fetch only | unstable |
+| `GET` | `/gearbox/corpus/{source_id}/info/refs` | The same, for one of the platform's gear repositories (ADR-0046 phase 2) | unstable |
+| `POST` | `/gearbox/corpus/{source_id}/git-upload-pack` | The same, for one of the platform's gear repositories | unstable |
+| `GET` | `/organizations/{organization_id}/gearbox/corpus/{source_id}/info/refs` | The same, for one of an organization's own gear repositories, to its members only | unstable |
+| `POST` | `/organizations/{organization_id}/gearbox/corpus/{source_id}/git-upload-pack` | The same, for one of an organization's own gear repositories | unstable |
 
 The two corpus routes are `.anonymous().exposed()`, because `git` sends Basic
 credentials that the gateway's Bearer-only layer would refuse before they

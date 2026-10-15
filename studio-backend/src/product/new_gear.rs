@@ -3,7 +3,7 @@
 //! repository (the catalogue's `POST /registry/scaffold`, through
 //! `port::GearScaffolds`). One generator, so the two cannot drift.
 
-use super::gearbox::Gearbox;
+use super::gearbox::{Gearbox, Scope};
 use super::port::{NewGear, ScaffoldFailure};
 use super::scaffold::ScaffoldFile;
 
@@ -11,11 +11,12 @@ use super::scaffold::ScaffoldFile;
 /// the engine's `gear.gdl` when an engine is configured.
 pub(super) async fn files(
     gearbox: Option<&Gearbox>,
+    scope: Scope,
     target_repo: &str,
     gear: &NewGear,
 ) -> Result<Vec<ScaffoldFile>, ScaffoldFailure> {
     let parent_dir = gear.parent_dir.clone().unwrap_or_default();
-    let (gear_gdl, plugin) = describe(gearbox, target_repo, gear, &parent_dir).await?;
+    let (gear_gdl, plugin) = describe(gearbox, scope, target_repo, gear, &parent_dir).await?;
     Ok(super::skeleton::generate(&super::skeleton::SkeletonSpec {
         capability: gear.slug.clone(),
         app_title: gear.app_title.clone().unwrap_or_default(),
@@ -35,6 +36,7 @@ pub(super) async fn files(
 /// does not describe, is the caller's mistake and says so.
 async fn describe(
     gearbox: Option<&Gearbox>,
+    scope: Scope,
     target_repo: &str,
     gear: &NewGear,
     parent_dir: &str,
@@ -60,14 +62,8 @@ async fn describe(
                     "a plugin needs `plugin_host`, the gear whose extension point it fills".into(),
                 )
             })?;
-        // Which repository the gear goes into decides how the SDK is reached
-        // from it: inside the corpus, a path within the repository; in any
-        // other, the `gears-rust` checkout beside it. The plugin's
-        // `gear.gdl` names its point by spec (`fills = "..."`), which the
-        // engine joins across sources, so either validates.
-        let in_corpus = gearbox.is_corpus_repo(&super::gearbox::repo_key(target_repo));
         let points = gearbox
-            .extension_points()
+            .extension_points(scope)
             .await
             .map_err(ScaffoldFailure::Failed)?;
         let wanted_spec = gear
@@ -92,6 +88,17 @@ async fn describe(
                 "`{host}` has no such extension point the Gearbox engine knows of"
             ))
         })?;
+        // Which repository the gear goes into decides how the SDK is reached
+        // from it: inside the host's own gear repository, a path within it;
+        // in any other, the checkout of the host's repository beside it,
+        // under its source id (ADR-0046). The plugin's `gear.gdl` names its
+        // point by spec (`fills = "..."`), which the engine joins across
+        // sources, so either validates.
+        let target = super::gearbox::repo_key(target_repo);
+        let in_corpus = gearbox
+            .roots_in(scope)
+            .iter()
+            .any(|r| r.id == point.source && super::gearbox::repo_key(&r.source.url) == target);
         Some(super::gearbox::SdkLocator {
             spec: super::gearbox::spec_segment(&point.spec).to_string(),
             trait_ident: point.trait_ident,
@@ -100,7 +107,7 @@ async fn describe(
             path: if in_corpus {
                 super::gearbox::sdk_path_in_repo(parent_dir, &point.sdk_path)
             } else {
-                super::gearbox::sdk_path_beside(parent_dir, &point.sdk_path)
+                super::gearbox::sdk_path_beside(parent_dir, &point.source, &point.sdk_path)
             },
         })
     } else {

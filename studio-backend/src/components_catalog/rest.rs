@@ -1243,8 +1243,9 @@ fn engine_cache_file(gearbox: &Gearbox) -> std::path::PathBuf {
 /// Read the engine's catalogue into the cache, and keep a copy on disk so the
 /// first reference after a restart does not wait for a fetch and an engine run.
 async fn load_engine(gearbox: &Gearbox) -> anyhow::Result<EngineHit> {
-    let (raw, commit) = gearbox.catalogue_json().await?;
-    let mut label = gearbox.corpus_label();
+    // The platform's corpus: the reference is the common set.
+    let (raw, commit) = gearbox.catalogue_json(None).await?;
+    let mut label = gearbox.corpus_label(None);
     if let Some(c) = &commit {
         label = format!("{label} ({})", &c[..c.len().min(7)]);
     }
@@ -1277,7 +1278,7 @@ async fn load_engine_from_disk(gearbox: &Gearbox) -> Option<EngineHit> {
         label: saved
             .get("label")
             .and_then(Value::as_str)
-            .map_or_else(|| gearbox.corpus_label(), str::to_string),
+            .map_or_else(|| gearbox.corpus_label(None), str::to_string),
         at: std::time::Instant::now()
             .checked_sub(ENGINE_TTL)
             .unwrap_or_else(std::time::Instant::now),
@@ -1921,6 +1922,10 @@ pub struct RegistryDecisionRequest {
     /// For `publish` only: answer the target repository, branch, path and
     /// files in `publish_preview`, writing and recording nothing.
     pub dry_run: Option<bool>,
+    /// For `publish` only: which of the platform's gear repositories it goes
+    /// into, by source id (ADR-0046 phase 4). Absent: the one holding most
+    /// gears of the entry's category, as `publish_preview.targets` shows.
+    pub target: Option<String>,
 }
 
 /// One component of the organization's registry.
@@ -1993,6 +1998,24 @@ pub struct RegistryPublishPreviewDto {
     pub skipped: Vec<String>,
     /// The pull request's title.
     pub title: String,
+    /// The platform's gear repository it goes into, by source id; absent
+    /// while the platform names its gear repository the old way (a catalogue
+    /// source).
+    pub source_id: Option<String>,
+    /// Every gear repository of the platform it could go into, with how many
+    /// gears of the entry's category each holds (ADR-0046 phase 4).
+    pub targets: Vec<RegistryPublishTargetDto>,
+}
+
+/// One of the platform's gear repositories a published gear can go into.
+#[derive(Debug, Clone, PartialEq)]
+#[toolkit_macros::api_dto(response)]
+pub struct RegistryPublishTargetDto {
+    pub source_id: String,
+    /// `owner/name`.
+    pub repo: String,
+    /// Gears of the entry's category the engine found in it.
+    pub gears_in_category: u32,
 }
 
 /// A gear given to the platform: the pull request into the platform's gear
@@ -2249,6 +2272,16 @@ pub(crate) fn publish_preview_dto(
         files: p.files.into_iter().map(|f| f.path).collect(),
         skipped: p.skipped,
         title: p.text.title,
+        source_id: p.source_id,
+        targets: p
+            .targets
+            .into_iter()
+            .map(|t| RegistryPublishTargetDto {
+                source_id: t.source_id,
+                repo: t.repo,
+                gears_in_category: u32::try_from(t.gears_in_category).unwrap_or(u32::MAX),
+            })
+            .collect(),
     }
 }
 
@@ -2309,6 +2342,10 @@ fn decision_input(body: RegistryDecisionRequest) -> super::registry_decisions::D
         version: body.version,
         contribution: None,
         dry_run: body.dry_run.unwrap_or(false),
+        target: body
+            .target
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty()),
     }
 }
 

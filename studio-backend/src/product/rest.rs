@@ -21,7 +21,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput};
+use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput, Scope};
 use super::service::ProductService;
 use crate::catalog_graph::gts::GtsNode;
 use crate::org_scope::OrgCtx;
@@ -97,6 +97,16 @@ impl Product {
             hub,
             gearbox,
         }
+    }
+
+    /// The corpus a request in `tenant` reads (ADR-0046): its organization's,
+    /// with the organization's own gear repositories read in when due (or
+    /// `now`), else the platform's.
+    async fn scope(&self, ctx: &SecurityContext, tenant: Uuid, now: bool) -> Scope {
+        let gearbox = self.gearbox.as_ref()?;
+        let org = self.service.organization_of_project(ctx, tenant).await;
+        let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&self.hub));
+        super::gear_roots::scope_for(gearbox, &connectors, ctx, org, now).await
     }
 
     fn gearbox(&self) -> ApiResult<&Arc<Gearbox>> {
@@ -227,6 +237,10 @@ pub struct GearboxCatalogueDto {
     /// this backend with the member's Studio token, the corpus's own token
     /// attached upstream. Read-only.
     pub corpus_clone_path: Option<String>,
+    /// Every root the catalogue was read from, in the engine's order
+    /// (ADR-0046): an IDE brings in each under its `source_id`. The `corpus_*`
+    /// fields above are the first, for an IDE that reads one.
+    pub roots: Vec<GearboxRootDto>,
     /// `gearbox catalogue --format json` verbatim: `gears` by id, each a
     /// `GearDescriptor`, plus `contracts`, `sources` and `diagnostics`.
     pub catalogue: Value,
@@ -249,8 +263,12 @@ pub struct GearboxStatusDto {
     /// Why previews will fail, when they will.
     pub problem: Option<String>,
     /// Every gear repository the engine reads, in its order (ADR-0046): the
-    /// platform's, or the deployment's corpus while it has none.
+    /// platform's, or the deployment's corpus while it has none, then the
+    /// organization's own.
     pub sources: Vec<GearboxSourceDto>,
+    /// The organization's repositories left out because a platform
+    /// repository has the same source id, by source id.
+    pub shadowed: Vec<String>,
 }
 
 /// One gear repository as the engine last read it.
@@ -270,6 +288,31 @@ pub struct GearboxSourceDto {
     /// deployment's corpus.
     #[schema(value_type = Option<String>)]
     pub connection_id: Option<Uuid>,
+    /// `platform`, or `organization` for the organization's own.
+    pub tier: String,
+}
+
+/// One root of the corpus as an IDE brings it in (ADR-0046 phase 2): cloned
+/// under `source_id`, at `commit`.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GearboxRootDto {
+    /// The directory name the engine and `product.gdl` know it by.
+    pub source_id: String,
+    /// The repository, without credentials.
+    pub url: String,
+    /// Empty: the repository's default branch.
+    pub git_ref: String,
+    pub commit: Option<String>,
+    /// Whether cloning it takes a token, which this backend never hands out.
+    pub needs_token: bool,
+    /// Set when it does: the gateway-rooted path to clone it through this
+    /// backend with the member's Studio token. Read-only.
+    pub clone_path: Option<String>,
+    /// `platform`, or `organization` for the organization's own.
+    pub tier: String,
+    /// Gears the engine found in it.
+    pub gears: u32,
 }
 
 /// Save what a project's product is made of. Every field is optional and
@@ -774,9 +817,12 @@ async fn scaffold_gear(
                 content: f.content,
             })
             .collect(),
-        None => super::new_gear::files(product.gearbox.as_deref(), &target_repo, &gear)
-            .await
-            .map_err(scaffold_problem)?,
+        None => {
+            let scope = product.scope(&ctx, project_id, false).await;
+            super::new_gear::files(product.gearbox.as_deref(), scope, &target_repo, &gear)
+                .await
+                .map_err(scaffold_problem)?
+        }
     };
     let written: Vec<ScaffoldFileDto> = files
         .iter()
@@ -936,11 +982,13 @@ pub struct ExtensionPointListDto {
 }
 
 async fn extension_points(
+    OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
 ) -> ApiResult<JsonBody<ExtensionPointListDto>> {
+    let scope = product.scope(&ctx, ctx.subject_tenant_id(), false).await;
     let points = product
         .gearbox()?
-        .extension_points()
+        .extension_points(scope)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let items: Vec<ExtensionPointDto> = points
@@ -959,9 +1007,11 @@ async fn extension_points(
 }
 
 async fn complete_product(
+    OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
     Json(body): Json<CompleteProductRequest>,
 ) -> ApiResult<JsonBody<CompleteProductDto>> {
+    let scope = product.scope(&ctx, ctx.subject_tenant_id(), false).await;
     let config = super::gearbox::gear_config_from(body.config.as_ref()).map_err(|e| {
         StudioProductError::invalid_argument()
             .with_constraint(format!("{e:#}"))
@@ -969,7 +1019,7 @@ async fn complete_product(
     })?;
     let completion = product
         .gearbox()?
-        .complete(&body.gears, &config)
+        .complete(scope, &body.gears, &config)
         .await
         .map_err(|e| {
             StudioProductError::invalid_argument()
@@ -992,9 +1042,11 @@ async fn complete_product(
 }
 
 async fn gear_brings(
+    OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
     Json(body): Json<GearBringsRequest>,
 ) -> ApiResult<JsonBody<GearBringsDto>> {
+    let scope = product.scope(&ctx, ctx.subject_tenant_id(), false).await;
     let invalid = |why: String| {
         StudioProductError::invalid_argument()
             .with_constraint(why)
@@ -1007,7 +1059,7 @@ async fn gear_brings(
         .map_err(|e| invalid(format!("{e:#}")))?;
     let b = product
         .gearbox()?
-        .brings(&body.gears, &body.candidate, &config)
+        .brings(scope, &body.gears, &body.candidate, &config)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     Ok(Json(GearBringsDto {
@@ -1043,9 +1095,11 @@ async fn gear_brings(
 }
 
 async fn gear_config_schemas(
+    OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
     Json(body): Json<GearConfigSchemaRequest>,
 ) -> ApiResult<JsonBody<GearConfigSchemaListDto>> {
+    let scope = product.scope(&ctx, ctx.subject_tenant_id(), false).await;
     if body.gears.len() > MAX_SCHEMA_GEARS {
         return Err(StudioProductError::invalid_argument()
             .with_constraint(format!(
@@ -1056,7 +1110,7 @@ async fn gear_config_schemas(
     }
     let schemas = product
         .gearbox()?
-        .config_schemas(&body.gears)
+        .config_schemas(scope, &body.gears)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let items: Vec<GearConfigSchemaDto> = schemas
@@ -1081,29 +1135,69 @@ async fn gear_config_schemas(
 }
 
 async fn gearbox_catalogue(
+    OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
 ) -> ApiResult<JsonBody<GearboxCatalogueDto>> {
     let gearbox = product.gearbox()?;
+    let scope = product.scope(&ctx, ctx.subject_tenant_id(), false).await;
     let (raw, commit) = gearbox
-        .catalogue_json()
+        .catalogue_json(scope)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    let (corpus_url, corpus_ref, corpus_needs_token) = gearbox.corpus_origin();
+    let (corpus_url, corpus_ref, corpus_needs_token) = gearbox.corpus_origin(scope);
+    let roots = gearbox
+        .read_roots(scope)
+        .await
+        .into_iter()
+        .map(|r| catalogue_root(scope, r))
+        .collect();
     Ok(Json(GearboxCatalogueDto {
-        source_id: gearbox.corpus_source_id(),
-        corpus: gearbox.corpus_label(),
+        source_id: gearbox.corpus_source_id(scope),
+        corpus: gearbox.corpus_label(scope),
         corpus_url,
         corpus_ref,
         corpus_commit: commit,
         corpus_clone_path: corpus_needs_token.then(|| CORPUS_GIT_PATH.to_string()),
         corpus_needs_token,
+        roots,
         catalogue: Value::clone(&raw),
     }))
 }
 
-/// Where the corpus is cloned from through this backend; `git` appends the
-/// protocol paths (`/info/refs`, `/git-upload-pack`).
+/// One root as an IDE brings it in: where to clone it from, at which commit,
+/// under which directory name.
+fn catalogue_root(scope: Scope, r: super::gearbox::ReadRoot) -> GearboxRootDto {
+    let needs_token = !r.root.source.token.is_empty();
+    GearboxRootDto {
+        clone_path: needs_token.then(|| corpus_git_path(scope, &r.root)),
+        source_id: r.root.id,
+        url: r.root.source.url,
+        git_ref: r.root.source.git_ref,
+        commit: r.commit,
+        needs_token,
+        tier: if r.root.organization {
+            "organization".to_string()
+        } else {
+            "platform".to_string()
+        },
+        gears: u32::try_from(r.gears).unwrap_or(u32::MAX),
+    }
+}
+
+/// Where the corpus's first root is cloned from through this backend; `git`
+/// appends the protocol paths (`/info/refs`, `/git-upload-pack`). Kept for
+/// IDEs that read one root.
 const CORPUS_GIT_PATH: &str = "/studio-product/v1/gearbox/corpus";
+
+/// Where root `root` of `scope` is cloned from through this backend: the
+/// platform's under `/gearbox/corpus/{source_id}`, an organization's own under
+/// `/organizations/{org}/gearbox/corpus/{source_id}` (ADR-0046 phase 2).
+fn corpus_git_path(scope: Scope, root: &super::gearbox::GearRoot) -> String {
+    match scope.filter(|_| root.organization) {
+        Some(org) => format!("/studio-product/v1/organizations/{org}/gearbox/corpus/{}", root.id),
+        None => format!("{CORPUS_GIT_PATH}/{}", root.id),
+    }
+}
 
 #[derive(Debug, serde::Deserialize)]
 pub struct CorpusRefsQuery {
@@ -1130,6 +1224,7 @@ fn corpus_client() -> &'static reqwest::Client {
 /// token upstream would allow.
 async fn corpus_git(
     product: &Product,
+    root: CorpusRoot,
     protocol_path: &str,
     service: crate::git_proxy::sdk::Service,
     request: Request,
@@ -1146,9 +1241,10 @@ async fn corpus_git(
             "Studio cannot check sign-ins right now; try again.",
         );
     };
-    if let Err(refused) = authenticate_member(authn.as_ref(), request.headers()).await {
-        return refused;
-    }
+    let ctx = match authenticate_member(authn.as_ref(), request.headers()).await {
+        Ok(ctx) => ctx,
+        Err(refused) => return refused,
+    };
     let Some(gearbox) = product.gearbox.as_ref() else {
         return refuse(StatusCode::NOT_FOUND, "This Studio keeps no gear corpus.");
     };
@@ -1158,7 +1254,29 @@ async fn corpus_git(
             "The gear corpus is read-only through Studio.",
         );
     }
-    let (url, token) = gearbox.corpus_fetch();
+    // An organization's own repository is relayed to its members only; "not
+    // yours" and "not there" are one answer.
+    let scope = match root.organization {
+        None => None,
+        Some(org) => {
+            let reaches = match request.extensions().get::<crate::org_scope::OrgAccess>() {
+                Some(access) => access.0.may_reach(&ctx, org).await,
+                None => false,
+            };
+            let octx = crate::org_scope::acting_in(&ctx, org).ok();
+            let (true, Some(octx)) = (reaches, octx) else {
+                return refuse(
+                    StatusCode::NOT_FOUND,
+                    "No such gear repository, or you are not a member of its organization.",
+                );
+            };
+            let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&product.hub));
+            super::gear_roots::scope_for(gearbox, &connectors, &octx, Some(org), false).await
+        }
+    };
+    let Some((url, token)) = gearbox.corpus_fetch(scope, root.source_id.as_deref()) else {
+        return refuse(StatusCode::NOT_FOUND, "No such gear repository.");
+    };
     let Some(url) = upstream_url(&url, protocol_path) else {
         return refuse(
             StatusCode::NOT_FOUND,
@@ -1182,10 +1300,19 @@ async fn corpus_git(
     }
 }
 
-/// GET …/gearbox/corpus/info/refs?service= — the first request of a clone.
-async fn corpus_refs(
-    Extension(product): Extension<Product>,
-    Query(query): Query<CorpusRefsQuery>,
+/// Which root a relay request is for: the first (the routes kept for IDEs that
+/// read one), one of the platform's by source id, or one of an
+/// organization's own.
+#[derive(Default)]
+struct CorpusRoot {
+    organization: Option<Uuid>,
+    source_id: Option<String>,
+}
+
+async fn corpus_refs_of(
+    product: &Product,
+    root: CorpusRoot,
+    query: CorpusRefsQuery,
     request: Request,
 ) -> Response {
     use crate::git_proxy::sdk::Service;
@@ -1195,13 +1322,13 @@ async fn corpus_refs(
             "Only the smart HTTP protocol is served (service=git-upload-pack).",
         );
     };
-    corpus_git(&product, "info/refs", service, request).await
+    corpus_git(product, root, "info/refs", service, request).await
 }
 
-/// POST …/gearbox/corpus/git-upload-pack — the pack a clone downloads.
-async fn corpus_pack(Extension(product): Extension<Product>, request: Request) -> Response {
+async fn corpus_pack_of(product: &Product, root: CorpusRoot, request: Request) -> Response {
     corpus_git(
-        &product,
+        product,
+        root,
         "git-upload-pack",
         crate::git_proxy::sdk::Service::UploadPack,
         request,
@@ -1209,8 +1336,85 @@ async fn corpus_pack(Extension(product): Extension<Product>, request: Request) -
     .await
 }
 
-async fn gearbox_status(
+/// GET …/gearbox/corpus/info/refs?service= — the first request of a clone.
+async fn corpus_refs(
     Extension(product): Extension<Product>,
+    Query(query): Query<CorpusRefsQuery>,
+    request: Request,
+) -> Response {
+    corpus_refs_of(&product, CorpusRoot::default(), query, request).await
+}
+
+/// POST …/gearbox/corpus/git-upload-pack — the pack a clone downloads.
+async fn corpus_pack(Extension(product): Extension<Product>, request: Request) -> Response {
+    corpus_pack_of(&product, CorpusRoot::default(), request).await
+}
+
+/// GET …/gearbox/corpus/{source_id}/info/refs — one of the platform's roots.
+async fn root_refs(
+    Extension(product): Extension<Product>,
+    Path(source_id): Path<String>,
+    Query(query): Query<CorpusRefsQuery>,
+    request: Request,
+) -> Response {
+    let root = CorpusRoot {
+        organization: None,
+        source_id: Some(source_id),
+    };
+    corpus_refs_of(&product, root, query, request).await
+}
+
+/// POST …/gearbox/corpus/{source_id}/git-upload-pack.
+async fn root_pack(
+    Extension(product): Extension<Product>,
+    Path(source_id): Path<String>,
+    request: Request,
+) -> Response {
+    let root = CorpusRoot {
+        organization: None,
+        source_id: Some(source_id),
+    };
+    corpus_pack_of(&product, root, request).await
+}
+
+/// GET …/organizations/{org}/gearbox/corpus/{source_id}/info/refs — one of an
+/// organization's own roots.
+async fn org_root_refs(
+    Extension(product): Extension<Product>,
+    Path((org, source_id)): Path<(Uuid, String)>,
+    Query(query): Query<CorpusRefsQuery>,
+    request: Request,
+) -> Response {
+    let root = CorpusRoot {
+        organization: Some(org),
+        source_id: Some(source_id),
+    };
+    corpus_refs_of(&product, root, query, request).await
+}
+
+/// POST …/organizations/{org}/gearbox/corpus/{source_id}/git-upload-pack.
+async fn org_root_pack(
+    Extension(product): Extension<Product>,
+    Path((org, source_id)): Path<(Uuid, String)>,
+    request: Request,
+) -> Response {
+    let root = CorpusRoot {
+        organization: Some(org),
+        source_id: Some(source_id),
+    };
+    corpus_pack_of(&product, root, request).await
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct StatusQuery {
+    #[serde(default)]
+    pub refresh: Option<bool>,
+}
+
+async fn gearbox_status(
+    OrgCtx(ctx): OrgCtx,
+    Extension(product): Extension<Product>,
+    Query(query): Query<StatusQuery>,
 ) -> ApiResult<JsonBody<GearboxStatusDto>> {
     let profiles = PROFILES.iter().map(|p| (*p).to_string()).collect();
     let Some(gearbox) = product.gearbox.as_ref() else {
@@ -1224,18 +1428,23 @@ async fn gearbox_status(
             profiles,
             problem: Some("STUDIO_GEARBOX_WORKDIR is not set".to_string()),
             sources: Vec::new(),
+            shadowed: Vec::new(),
         }));
     };
-    let status = gearbox.status().await;
+    let scope = product
+        .scope(&ctx, ctx.subject_tenant_id(), query.refresh.unwrap_or(false))
+        .await;
+    let status = gearbox.status(scope).await;
     Ok(Json(GearboxStatusDto {
         enabled: true,
         engine_version: status.engine_version,
         corpus_url: Some(status.corpus_url),
         corpus_ref: Some(status.corpus_ref),
         corpus_commit: status.corpus_commit,
-        source_id: gearbox.corpus_source_id(),
+        source_id: gearbox.corpus_source_id(scope),
         profiles,
         problem: status.problem,
+        shadowed: status.shadowed,
         sources: status
             .sources
             .into_iter()
@@ -1246,6 +1455,7 @@ async fn gearbox_status(
                 commit: s.commit,
                 gears: u32::try_from(s.gears).unwrap_or(u32::MAX),
                 connection_id: s.connection_id,
+                tier: s.tier.to_string(),
             })
             .collect(),
     }))
@@ -1300,8 +1510,9 @@ async fn preview_product(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let product_path = product_path_for(record.as_ref().map(|n| &n.value), &body.product_id);
+    let scope = product.scope(&ctx, project_id, false).await;
     let preview = gearbox
-        .preview(PreviewInput {
+        .preview(scope, PreviewInput {
             product_id: body.product_id.clone(),
             product_path: product_path.clone(),
             name,
@@ -1679,6 +1890,7 @@ pub fn register_routes(
         .tag("StudioProduct")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(extension_points)
         .json_response_with_schema::<ExtensionPointListDto>(
             openapi,
@@ -1702,6 +1914,7 @@ pub fn register_routes(
         .tag("StudioProduct")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(complete_product)
         .json_request::<CompleteProductRequest>(openapi, "Picked gears")
         .json_response_with_schema::<CompleteProductDto>(openapi, StatusCode::OK, "Completed picks")
@@ -1724,6 +1937,7 @@ pub fn register_routes(
         .tag("StudioProduct")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(gear_brings)
         .json_request::<GearBringsRequest>(openapi, "The product's gears and the candidate")
         .json_response_with_schema::<GearBringsDto>(openapi, StatusCode::OK, "What it brings")
@@ -1745,6 +1959,7 @@ pub fn register_routes(
         .tag("StudioProduct")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(gear_config_schemas)
         .json_request::<GearConfigSchemaRequest>(openapi, "Gears to describe")
         .json_response_with_schema::<GearConfigSchemaListDto>(
@@ -1761,11 +1976,16 @@ pub fn register_routes(
         .operation_id("studio_product.get_gearbox_catalogue")
         .summary("The gear corpus's catalogue, as the Gearbox engine reads it")
         .description(
-            "Every gear the corpus describes, read by the engine from the one              checkout this backend keeps. An IDE whose workspace holds no gear              corpus lists the gears from here instead of cloning it.",
+            "Every gear the corpus describes, read by the engine from the gear \
+             repositories this backend keeps checked out, with each repository in \
+             `roots`. An IDE whose workspace holds no gear corpus lists the gears \
+             from here instead of cloning it, and brings each repository in when \
+             asked.",
         )
         .tag("StudioProduct")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(gearbox_catalogue)
         .json_response_with_schema::<GearboxCatalogueDto>(openapi, StatusCode::OK, "Catalogue")
         .error_401(openapi)
@@ -1820,6 +2040,107 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    // One relay per root (ADR-0046 phase 2): the platform's by source id, and
+    // an organization's own under the organization, for its members only.
+    let router = OperationBuilder::get("/studio-product/v1/gearbox/corpus/{source_id}/info/refs")
+        .operation_id("studio_product.get_root_refs")
+        .summary("Git smart-HTTP ref advertisement for one of the platform's gear repositories")
+        .description(
+            "The first request of a clone of the platform's gear repository \
+             `source_id` through this backend, its token attached upstream. \
+             Authenticated like the corpus relay. Fetch only.",
+        )
+        .tag("StudioProduct")
+        .anonymous()
+        .exposed()
+        .path_param("source_id", "The gear repository's source id")
+        .handler(root_refs)
+        .text_response(
+            StatusCode::OK,
+            "Ref advertisement",
+            "application/x-git-upload-pack-advertisement",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router =
+        OperationBuilder::post("/studio-product/v1/gearbox/corpus/{source_id}/git-upload-pack")
+            .operation_id("studio_product.pull_root_pack")
+            .summary("Git smart-HTTP upload-pack for one of the platform's gear repositories")
+            .description(
+                "Streams the negotiation to the repository's host with its token \
+                 attached, and streams the pack back.",
+            )
+            .tag("StudioProduct")
+            .anonymous()
+            .exposed()
+            .path_param("source_id", "The gear repository's source id")
+            .handler(root_pack)
+            .text_response(
+                StatusCode::OK,
+                "Pack",
+                "application/x-git-upload-pack-result",
+            )
+            .error_401(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
+
+    let router = OperationBuilder::get(
+        "/studio-product/v1/organizations/{organization_id}/gearbox/corpus/{source_id}/info/refs",
+    )
+    .operation_id("studio_product.get_org_root_refs")
+    .summary("Git smart-HTTP ref advertisement for one of an organization's gear repositories")
+    .description(
+        "The first request of a clone of the organization's own gear repository \
+         `source_id`, for the organization's members; 404 for anyone else. Fetch \
+         only.",
+    )
+    .tag("StudioProduct")
+    .anonymous()
+    .exposed()
+    .path_param("organization_id", "The organization")
+    .path_param("source_id", "The gear repository's source id")
+    .handler(org_root_refs)
+    .text_response(
+        StatusCode::OK,
+        "Ref advertisement",
+        "application/x-git-upload-pack-advertisement",
+    )
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    let router = OperationBuilder::post(
+        "/studio-product/v1/organizations/{organization_id}/gearbox/corpus/{source_id}/git-upload-pack",
+    )
+    .operation_id("studio_product.pull_org_root_pack")
+    .summary("Git smart-HTTP upload-pack for one of an organization's gear repositories")
+    .description(
+        "Streams the negotiation to the repository's host with its token attached, \
+         for the organization's members.",
+    )
+    .tag("StudioProduct")
+    .anonymous()
+    .exposed()
+    .path_param("organization_id", "The organization")
+    .path_param("source_id", "The gear repository's source id")
+    .handler(org_root_pack)
+    .text_response(
+        StatusCode::OK,
+        "Pack",
+        "application/x-git-upload-pack-result",
+    )
+    .error_401(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
     let router = OperationBuilder::get("/studio-product/v1/gearbox")
         .operation_id("studio_product.get_gearbox_status")
         .summary("Whether product previews can run, and against which gear corpus")
@@ -1838,6 +2159,7 @@ pub fn register_routes(
             "`true`: list the platform's gear repositories again now, rather than \
              within the minute",
         )
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(gearbox_status)
         .json_response_with_schema::<GearboxStatusDto>(openapi, StatusCode::OK, "Engine status")
         .error_401(openapi)
@@ -1893,6 +2215,7 @@ fn register_legacy_routes(router: Router, openapi: &dyn OpenApiRegistry) -> Rout
         .tag("StudioComponentsCatalog")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(gearbox_catalogue)
         .json_response_with_schema::<GearboxCatalogueDto>(openapi, StatusCode::OK, "Catalogue")
         .error_401(openapi)

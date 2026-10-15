@@ -93,6 +93,9 @@ pub(super) fn publish_problem(e: PublishError) -> CanonicalError {
         PublishError::NoPlatformRepository => {
             precondition("platform".to_owned(), "PLATFORM_NO_GEAR_REPOSITORY")
         }
+        PublishError::UnknownTarget(id) => {
+            precondition(format!("target:{id}"), "PLATFORM_NO_SUCH_GEAR_REPOSITORY")
+        }
         PublishError::NoOccurrence => {
             precondition("occurrence".to_owned(), "REGISTRY_NO_OCCURRENCE")
         }

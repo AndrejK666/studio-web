@@ -43,6 +43,7 @@ export const VIEW_PATHS = {
   platform: "platform",
   publications: "publication-requests",
   "platform-sources": "platform-sources",
+  "org-sources": "sources",
   org: "organization",
   reports: "reports",
   tasks: "background-work",

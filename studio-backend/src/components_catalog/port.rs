@@ -278,7 +278,7 @@ impl ComponentCatalog for CatalogComponents {
         let gearbox = self.gearbox.as_ref()?;
         Some(
             gearbox
-                .complete(gears, &crate::product::sdk::GearConfig::new())
+                .complete(None, gears, &crate::product::sdk::GearConfig::new())
                 .await
                 .map(|done| {
                     done.changes

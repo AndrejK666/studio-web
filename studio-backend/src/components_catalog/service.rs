@@ -340,7 +340,7 @@ pub struct CatalogService {
     /// The Gearbox engine, when previews are configured: a sync writes what it
     /// knows about each gear into the gear's profile. Set once, after
     /// construction, because the engine is configured separately.
-    gearbox: std::sync::OnceLock<Arc<crate::product::sdk::Gearbox>>,
+    pub(super) gearbox: std::sync::OnceLock<Arc<crate::product::sdk::Gearbox>>,
     /// A project's gear repository, which `studio-product` keeps.
     pub(super) products: std::sync::OnceLock<crate::product::port::Products>,
     /// Reads a project's own sources, for a project with no gear repository.
@@ -543,7 +543,7 @@ impl CatalogService {
     async fn gearbox_facts(&self, progress: &SyncReporter) -> Option<BTreeMap<String, Value>> {
         let gearbox = self.gearbox.get()?;
         progress.set("asking the Gearbox engine about the gears…");
-        match gearbox.facts().await {
+        match gearbox.facts(None).await {
             Ok((corpus, facts)) => {
                 tracing::info!(corpus = %corpus, gears = facts.len(), "components-catalog: Gearbox facts");
                 Some(facts)

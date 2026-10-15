@@ -39,6 +39,7 @@ import type { LogParams } from "../common/generated/LogParams";
 import type { ProductEdit } from "../common/generated/ProductEdit";
 import type { ProductLoadResult } from "../common/generated/ProductLoadResult";
 import type {
+  CorpusOrigin,
   GitCloneReview,
   ScanHint,
   StudioCatalogueLoad,
@@ -204,15 +205,14 @@ export class GearboxServiceImpl implements GearboxService {
     return sourceRoots(process.env, workspace);
   }
 
-  /** The shared corpus adopted by `useSharedCorpus`, if any. */
-  protected sharedCorpus: string | undefined;
+  /** The shared corpus adopted by `useSharedCorpora`: one directory per gear
+   *  repository, each named by its source id, in the engine's order. */
+  protected sharedCorpora: string[] = [];
 
   /** What an engine opens by default: the workspace's own roots, and the shared corpus. */
   protected engineRoots(): string[] {
     const roots = this.defaultRoots();
-    return this.sharedCorpus !== undefined && !roots.includes(this.sharedCorpus)
-      ? [...roots, this.sharedCorpus]
-      : roots;
+    return [...roots, ...this.sharedCorpora.filter((dir) => !roots.includes(dir))];
   }
 
   protected client: GearboxClient | undefined;
@@ -631,7 +631,7 @@ export class GearboxServiceImpl implements GearboxService {
   }
 
   async corpusCopy(): Promise<{ id: string; path: string } | undefined> {
-    const dir = this.sharedCorpus;
+    const dir = this.sharedCorpora[0];
     if (dir !== undefined && fs.existsSync(dir)) return { id: path.basename(dir), path: dir };
     // Nothing adopted -- signed out, so the backend was never asked which
     // commit it lists -- but a copy on disk needs no backend.
@@ -646,23 +646,38 @@ export class GearboxServiceImpl implements GearboxService {
     fetch: boolean,
     clonePath?: string,
   ): Promise<string | undefined> {
-    const via = clonePath === undefined ? undefined : corpusRelay(clonePath);
-    if (fetch && clonePath !== undefined && via === undefined) {
-      throw new Error("this corpus can only be cloned through Studio, from the desktop app while signed in");
+    const dirs = await this.useSharedCorpora(
+      [{ sourceId: id, url, rev, needsToken: clonePath !== undefined, ...(clonePath ? { clonePath } : {}) }],
+      fetch,
+    );
+    return dirs?.[0];
+  }
+
+  async useSharedCorpora(origins: readonly CorpusOrigin[], fetch: boolean): Promise<string[] | undefined> {
+    if (origins.length === 0) return undefined;
+    const dirs: string[] = [];
+    for (const origin of origins) {
+      const via = origin.clonePath === undefined ? undefined : corpusRelay(origin.clonePath);
+      if (fetch && origin.clonePath !== undefined && via === undefined) {
+        throw new Error(
+          `${origin.sourceId} can only be cloned through Studio, from the desktop app while signed in`,
+        );
+      }
+      let dir: string | undefined;
+      try {
+        dir = await materializeSharedCorpus(corpusCacheRoot(), origin.sourceId, origin.url, origin.rev, fetch, via);
+      } catch (error) {
+        this.logger.warn(`gearbox: could not bring the corpus ${origin.url}@${origin.rev} here: ${String(error)}`);
+        throw new Error(`the corpus could not be cloned from ${origin.url}: ${messageOfGit(error)}`);
+      }
+      // All or none: half a corpus lists gears whose hosts are missing.
+      if (dir === undefined) return undefined;
+      dirs.push(dir);
     }
-    let dir: string | undefined;
-    try {
-      dir = await materializeSharedCorpus(corpusCacheRoot(), id, url, rev, fetch, via);
-    } catch (error) {
-      this.logger.warn(`gearbox: could not bring the corpus ${url}@${rev} here: ${String(error)}`);
-      throw new Error(`the corpus could not be cloned from ${url}: ${messageOfGit(error)}`);
-    }
-    if (dir !== undefined) {
-      this.sharedCorpus = dir;
-      // Constructor Studio: read it ahead now, at start, before any load asks.
-      void this.prewarm([dir]);
-    }
-    return dir;
+    this.sharedCorpora = dirs;
+    // Constructor Studio: read it ahead now, at start, before any load asks.
+    void this.prewarm(dirs);
+    return dirs;
   }
 
   async loadProduct(path: string): Promise<ProductLoadResult> {

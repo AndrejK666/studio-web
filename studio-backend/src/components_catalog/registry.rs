@@ -1125,6 +1125,10 @@ pub struct GearRepository {
     pub set_by: Option<String>,
     #[serde(default)]
     pub set_at: Option<String>,
+    /// Taken from the organization's Sources (ADR-0046 phase 3): one of its
+    /// own gear-repository connections, not this setting. Never stored.
+    #[serde(default, skip_serializing)]
+    pub from_sources: bool,
 }
 
 /// What a request asks the gear repository to be.
@@ -1271,6 +1275,7 @@ pub fn gear_repository_of(
         connection_label: Some(label.to_owned()).filter(|l| !l.is_empty()),
         set_by: by,
         set_at: Some(at),
+        from_sources: false,
     })
 }
 
@@ -1700,6 +1705,9 @@ impl CatalogService {
         &self,
         ctx: &SecurityContext,
     ) -> anyhow::Result<Option<GearRepository>> {
+        if let Some(own) = self.gear_repository_from_sources(ctx).await {
+            return Ok(Some(own));
+        }
         let org = ctx.subject_tenant_id();
         Ok(self.settings(ctx).await?.gear_repository.filter(|r| {
             let owned = r.tenant == org;
@@ -1708,6 +1716,55 @@ impl CatalogService {
             }
             owned
         }))
+    }
+
+    /// The organization's gear repository as its Sources keep it (ADR-0046
+    /// phase 3): its own gear-repository connection marked `create_target`,
+    /// else the first it added. `None` when it holds none -- the setting of
+    /// ADR-0042 §2 is read then, so an organization that set one before keeps
+    /// it until it connects a gear repository.
+    async fn gear_repository_from_sources(&self, ctx: &SecurityContext) -> Option<GearRepository> {
+        let org = ctx.subject_tenant_id();
+        if super::tiers::is_platform(ctx) {
+            return None;
+        }
+        let connectors = self.connector_service()?;
+        let own = match connectors.gear_repositories(ctx, org).await {
+            Ok(own) => own,
+            Err(e) => {
+                tracing::warn!(organization_id = %org, error = %format!("{e:#}"), "components-catalog: the organization's gear repositories could not be read");
+                return None;
+            }
+        };
+        let pick = own.iter().find(|r| r.create_target).or_else(|| own.first())?;
+        let branch = if pick.git_ref.is_empty() {
+            match crate::connectors::sdk::Repository::open(
+                &connectors,
+                ctx,
+                org,
+                Some(pick.connection_id),
+                crate::connectors::sdk::GEAR_REPOSITORY_PROVIDER,
+                &pick.repo,
+                None,
+            )
+            .await
+            {
+                Ok(repo) => repo.default_branch().await.unwrap_or_else(|_| "main".into()),
+                Err(_) => "main".into(),
+            }
+        } else {
+            pick.git_ref.clone()
+        };
+        Some(GearRepository {
+            tenant: org,
+            connection_id: pick.connection_id,
+            repo: pick.repo.clone(),
+            branch,
+            connection_label: Some(pick.source_id.clone()),
+            set_by: None,
+            set_at: None,
+            from_sources: true,
+        })
     }
 
     /// Store `repo` as the organization's gear repository, or clear it with

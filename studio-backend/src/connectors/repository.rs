@@ -71,6 +71,11 @@ impl Repository {
         self.connection_id
     }
 
+    /// The repository's default branch.
+    pub async fn default_branch(&self) -> Result<String> {
+        self.driver.default_branch(&self.auth, &self.repo).await
+    }
+
     /// Every file and directory at the ref, and whether the provider cut the
     /// listing short.
     pub async fn tree(&self) -> Result<RemoteFileList> {

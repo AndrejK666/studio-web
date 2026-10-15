@@ -40,10 +40,18 @@ impl GitHubDriver {
         rb: reqwest::RequestBuilder,
         auth: &ConnectionAuth,
     ) -> reqwest::RequestBuilder {
-        rb.header("Authorization", format!("Bearer {}", auth.token))
+        let rb = rb
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "constructor-studio")
+            .header("User-Agent", "constructor-studio");
+        // A public gear repository (ADR-0046) is read with no token: GitHub
+        // answers an empty bearer with 401, and an anonymous request with the
+        // repository.
+        if auth.token.trim().is_empty() {
+            rb
+        } else {
+            rb.header("Authorization", format!("Bearer {}", auth.token))
+        }
     }
 }
 

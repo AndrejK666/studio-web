@@ -138,6 +138,8 @@ pub struct GearRepositorySource {
     pub username: String,
     /// Empty for a public repository. Never logged or returned.
     pub token: String,
+    /// Where "Create a gear" writes in this tenant (ADR-0046 phase 3).
+    pub create_target: bool,
 }
 
 impl std::fmt::Debug for GearRepositorySource {
@@ -267,37 +269,23 @@ fn resolve_base_url(
     Ok(url.as_str().trim_end_matches('/').to_string())
 }
 
-/// Refuse to move a connection to a different address unless its token comes
-/// with the request.
-///
-/// The token is never returned by any route, but it is *used*: a sync clones
-/// from `{base_url}/{repo}.git`, and git hands the credential to whatever host
-/// that names. So a tenant member could point an organization's connection at
-/// a host of their own and read the organization's token out of their own
-/// access log.
-///
-/// The scope guard in `update` does not stop that, and should not: it protects
-/// personal connections only, because a shared connection is shared — everyone
-/// in the tenant may edit it. What must not be shared is the credential, and
-/// the credential is what moving the address gives away.
-///
-/// Requiring the token alongside the address closes it without inventing a
-/// permission. Whoever supplies the credential already holds it, so the move
-/// discloses nothing new — and rotating while relocating is what a real
-/// migration looks like anyway.
-/// A gear repository is the platform's for now: the engine reads the root
-/// tenant's, and an organization's own arrive with ADR-0046 phase 3. One held
-/// anywhere else would be a connection nothing reads.
-fn platform_only(provider: &str, owner_tenant: Uuid) -> anyhow::Result<()> {
-    if provider == super::gear_repository::PROVIDER
-        && owner_tenant != super::ownership::PLATFORM_ROOT_TENANT
-    {
-        return Err(anyhow!(
-            "a gear repository is connected on the platform (Platform › Sources); an \
-             organization's own gear repositories are not read yet"
-        ));
+/// Marking a gear repository where "Create a gear" writes unmarks the
+/// tenant's other gear repositories: there is one such place. `keep` is the
+/// connection being marked.
+fn single_create_target(items: &mut [Connection], keep: Uuid) {
+    use super::gear_repository::{OPTION_CREATE_TARGET, PROVIDER, is_create_target};
+    let marked = items
+        .iter()
+        .any(|c| c.id == keep && is_create_target(&c.options));
+    if !marked {
+        return;
     }
-    Ok(())
+    for c in items
+        .iter_mut()
+        .filter(|c| c.provider == PROVIDER && c.id != keep)
+    {
+        c.options.remove(OPTION_CREATE_TARGET);
+    }
 }
 
 /// What a refused test is put down to: the credential, unless the connection
@@ -335,6 +323,24 @@ fn unique_source_id(
     Ok(())
 }
 
+/// Refuse to move a connection to a different address unless its token comes
+/// with the request.
+///
+/// The token is never returned by any route, but it is *used*: a sync clones
+/// from `{base_url}/{repo}.git`, and git hands the credential to whatever host
+/// that names. So a tenant member could point an organization's connection at
+/// a host of their own and read the organization's token out of their own
+/// access log.
+///
+/// The scope guard in `update` does not stop that, and should not: it protects
+/// personal connections only, because a shared connection is shared — everyone
+/// in the tenant may edit it. What must not be shared is the credential, and
+/// the credential is what moving the address gives away.
+///
+/// Requiring the token alongside the address closes it without inventing a
+/// permission. Whoever supplies the credential already holds it, so the move
+/// discloses nothing new — and rotating while relocating is what a real
+/// migration looks like anyway.
 fn address_change_needs_token(
     new_base_url: &str,
     existing_base_url: &str,
@@ -508,6 +514,7 @@ impl ConnectorService {
                 repo: super::gear_repository::repository_of(&c.base_url)?,
                 url,
                 git_ref: c.options.get(OPTION_REF).cloned().unwrap_or_default(),
+                create_target: super::gear_repository::is_create_target(&c.options),
                 username: username.to_string(),
                 token,
             });
@@ -700,7 +707,6 @@ impl ConnectorService {
         let base_url = resolve_base_url(driver.as_ref(), base_url)?;
         let scope = ConnectionScope::parse(scope)?;
         let options = driver.check_options(&base_url, &options)?;
-        platform_only(provider, owner_tenant)?;
         let mut catalogue = self.load_own(ctx, owner_tenant).await?;
         unique_source_id(&catalogue.items, provider, &options, None)?;
 
@@ -751,6 +757,7 @@ impl ConnectorService {
             options,
         };
         catalogue.items.push(connection.clone());
+        single_create_target(&mut catalogue.items, connection.id);
         self.store(ctx, owner_tenant, &catalogue).await?;
         Ok((connection, identity))
     }
@@ -1022,6 +1029,7 @@ impl ConnectorService {
         // notices until it matters.
         slot.account = identity.account.clone();
         let updated = slot.clone();
+        single_create_target(&mut catalogue.items, updated.id);
         self.store(ctx, owner, &catalogue).await?;
         Ok((updated, identity))
     }
@@ -1862,19 +1870,20 @@ mod default_connection_tests {
     }
 
     #[test]
-    fn a_gear_repository_is_connected_on_the_platform_only_for_now() {
-        let org = Uuid::new_v4();
-        let refused = platform_only("gear-repository", org).expect_err("an organization's");
-        assert!(
-            refused.to_string().contains("Platform › Sources"),
-            "{refused}"
-        );
-        platform_only(
-            "gear-repository",
-            super::super::ownership::PLATFORM_ROOT_TENANT,
-        )
-        .expect("the platform's");
-        platform_only("github", org).expect("any other kind anywhere");
+    fn one_gear_repository_of_a_tenant_is_where_new_gears_go() {
+        let mut a = conn("a", "gear-repository", "organization");
+        a.options = [("create_target".to_string(), "true".to_string())].into();
+        let mut b = conn("b", "gear-repository", "organization");
+        b.options = [("create_target".to_string(), "true".to_string())].into();
+        let other = conn("gh", "github", "organization");
+        let mut items = vec![a.clone(), b.clone(), other];
+        single_create_target(&mut items, b.id);
+        assert!(!items[0].options.contains_key("create_target"));
+        assert_eq!(items[1].options.get("create_target").map(String::as_str), Some("true"));
+        // Saving one that is not marked leaves the marked one alone.
+        let mut items2 = items.clone();
+        single_create_target(&mut items2, a.id);
+        assert_eq!(items2[1].options.get("create_target").map(String::as_str), Some("true"));
     }
 
     #[test]

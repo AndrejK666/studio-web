@@ -35,6 +35,7 @@ import {
   keyFor,
 } from "../common/protocol";
 import { remoteKey } from "../common/git-remote";
+import { originsOf, unbringable } from "./corpus-origins";
 import { announceOpenedWorkspace } from "./shell/opened-workspace";
 
 /**
@@ -699,13 +700,14 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
       completed: remote.gears.length,
       remote: remote.corpus,
     };
-    this.remoteOrigin = remote.origin;
-    this.knownOrigin = remote.origin ?? this.knownOrigin;
-    // A copy of this very commit may already be on this machine, brought by
+    const origins = originsOf(remote);
+    this.remoteOrigins = origins;
+    if (origins.length > 0) this.knownOrigins = origins;
+    // A copy of these very commits may already be on this machine, brought by
     // another project. Then there is no reason to stay read-only: adopt it and
-    // reload onto it. Only a copy already there -- nothing is fetched unasked.
-    if (remote.origin !== undefined && (!remote.origin.needsToken || remote.origin.clonePath !== undefined)) {
-      void this.adoptSharedCorpus(remote.origin, false);
+    // reload onto it. Only copies already there -- nothing is fetched unasked.
+    if (origins.length > 0 && origins.every((o) => !o.needsToken || o.clonePath !== undefined)) {
+      void this.adoptSharedCorpora(origins, false);
     }
     return true;
   }
@@ -713,17 +715,19 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
   /** Why the Studio backend could not be asked on the last load, if it could not. */
   protected remoteUnavailable: string | undefined;
 
-  /** Where the listed corpus comes from, while the rows are the backend's. */
-  protected remoteOrigin: CorpusOrigin | undefined;
-  /** The last corpus origin the backend named, kept after a copy is adopted. */
-  protected knownOrigin: CorpusOrigin | undefined;
+  /** Where the listed corpus comes from -- each of its gear repositories --
+   *  while the rows are the backend's. */
+  protected remoteOrigins: readonly CorpusOrigin[] = [];
+  /** The last gear repositories the backend named, kept after a copy is adopted. */
+  protected knownOrigins: readonly CorpusOrigin[] = [];
 
   /**
    * Where the listed corpus can be brought from, while the rows are the
-   * backend's and no copy is here yet. What New Product offers inline.
+   * backend's and no copy is here yet: its first gear repository. What New
+   * Product offers inline; bringing it brings every one.
    */
   get corpusToBring(): CorpusOrigin | undefined {
-    return this.state.remote === undefined ? undefined : this.remoteOrigin;
+    return this.state.remote === undefined ? undefined : this.remoteOrigins[0];
   }
 
   /**
@@ -733,15 +737,15 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    * never did); undefined when there is no backend or it names another corpus.
    */
   async corpusOriginFor(url: string): Promise<CorpusOrigin | undefined> {
-    if (this.knownOrigin === undefined && this.remote !== undefined) {
+    if (this.knownOrigins.length === 0 && this.remote !== undefined) {
       try {
-        this.knownOrigin = (await this.remote.load())?.origin;
+        const remote = await this.remote.load();
+        this.knownOrigins = remote === undefined ? [] : originsOf(remote);
       } catch {
         // No Studio backend to ask: the source is fetched as its URL says.
       }
     }
-    const origin = this.knownOrigin;
-    return origin !== undefined && remoteKey(origin.url) === remoteKey(url) ? origin : undefined;
+    return this.knownOrigins.find((o) => remoteKey(o.url) === remoteKey(url));
   }
   protected bringingState: { readonly busy: boolean; readonly error?: string } = { busy: false };
 
@@ -750,11 +754,8 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    * nothing to bring, otherwise the reason it cannot be, or `true`.
    */
   get corpusBringable(): true | string | undefined {
-    if (this.state.remote === undefined || this.remoteOrigin === undefined) return undefined;
-    if (this.remoteOrigin.needsToken && this.remoteOrigin.clonePath === undefined) {
-      return "This corpus is private, and this Studio does not relay it.";
-    }
-    return true;
+    if (this.state.remote === undefined || this.remoteOrigins.length === 0) return undefined;
+    return unbringable(this.remoteOrigins) ?? true;
   }
 
   get corpusBringing(): { readonly busy: boolean; readonly error?: string } {
@@ -767,31 +768,31 @@ export class CatalogueStore implements Omit<GearboxClient, "onDocumentDiagnostic
    * product resolves and generates.
    */
   async bringCorpusHere(): Promise<void> {
-    const origin = this.remoteOrigin;
-    if (origin === undefined || this.corpusBringable !== true || this.bringingState.busy) return;
+    const origins = this.remoteOrigins;
+    if (origins.length === 0 || this.corpusBringable !== true || this.bringingState.busy) return;
     this.bringingState = { busy: true };
     this.onChangedEmitter.fire();
-    await this.adoptSharedCorpus(origin, true);
+    await this.adoptSharedCorpora(origins, true);
   }
 
-  protected async adoptSharedCorpus(origin: CorpusOrigin, fetch: boolean): Promise<void> {
-    let dir: string | undefined;
+  protected async adoptSharedCorpora(origins: readonly CorpusOrigin[], fetch: boolean): Promise<void> {
+    let dirs: string[] | undefined;
     try {
-      dir = await this.service.useSharedCorpus(origin.sourceId, origin.url, origin.rev, fetch, origin.clonePath);
+      dirs = await this.service.useSharedCorpora(origins, fetch);
     } catch (error) {
       this.bringingState = { busy: false, error: describe(error) };
       this.onChangedEmitter.fire();
       return;
     }
     this.bringingState = { busy: false };
-    if (dir === undefined) {
+    if (dirs === undefined) {
       if (fetch) {
         this.bringingState = { busy: false, error: "the corpus could not be brought here" };
       }
       this.onChangedEmitter.fire();
       return;
     }
-    this.remoteOrigin = undefined;
+    this.remoteOrigins = [];
     await this.load();
   }
 

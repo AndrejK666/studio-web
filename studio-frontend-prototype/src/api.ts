@@ -452,6 +452,9 @@ export interface OrgGearRepository {
   branch: string;
   set_by?: string | null;
   set_at?: string | null;
+  /** Taken from the organization's Sources (ADR-0046 phase 3): its gear
+   *  repository marked for new gears, changed there. */
+  from_sources?: boolean;
 }
 
 /** `GET /registry/gear-repository`: the setting, and whether the caller may
@@ -531,6 +534,9 @@ export interface RegistryDecisionInput {
   version?: string;
   /** For `publish` only: answer `publish_preview`, write and record nothing. */
   dry_run?: boolean;
+  /** For `publish` only: the platform's gear repository it goes into, by
+   *  source id (ADR-0046 phase 4); the server's pick when absent. */
+  target?: string;
 }
 
 /** An organization's request that the platform take one of its gears
@@ -569,6 +575,12 @@ export interface RegistryPublishPreview {
   /** Not copied (not text), relative to the gear's directory. */
   skipped: string[];
   title: string;
+  /** The platform's gear repository it goes into, by source id; absent while
+   *  the platform names its repository by a catalogue source. */
+  source_id?: string | null;
+  /** Every platform gear repository it could go into, with how many gears of
+   *  its category each holds (ADR-0046 phase 4). */
+  targets?: { source_id: string; repo: string; gears_in_category: number }[];
 }
 
 /** One component of the organization's registry (ADR-0041). */
@@ -2647,6 +2659,9 @@ export interface GearboxStatus {
   /** Every gear repository the engine reads, in its order (ADR-0046): the
    *  platform's, or the deployment's corpus while it has none. */
   sources?: GearboxSource[];
+  /** The organization's repositories left out: a platform repository has
+   *  the same source id. */
+  shadowed?: string[];
 }
 
 /** One gear repository as the engine last read it. */
@@ -2660,6 +2675,8 @@ export interface GearboxSource {
   gears: number;
   /** The gear repository connection; absent for the deployment's corpus. */
   connection_id?: string | null;
+  /** The platform's, or the organization's own (ADR-0046 phase 3). */
+  tier?: "platform" | "organization";
 }
 
 export interface GearboxDiagnostic {
@@ -3712,7 +3729,7 @@ export const api = {
   patchConnection: (
     token: string,
     id: string,
-    input: { label?: string; base_url?: string; token?: string },
+    input: { label?: string; base_url?: string; token?: string; options?: Record<string, string> },
     tenantId?: string,
   ) =>
     request<ConnectionTest>(
@@ -5079,8 +5096,15 @@ export const api = {
       { method: "POST", body: JSON.stringify({ force }) },
     ),
   /** Whether product previews can run, and against which gear corpus. */
-  gearboxStatus: (token: string, refresh = false) =>
-    request<GearboxStatus>(`/studio-product/v1/gearbox${refresh ? "?refresh=true" : ""}`, token),
+  /** `organizationId`: that organization's corpus -- the platform's gear
+   *  repositories, then its own (ADR-0046 phase 3). */
+  gearboxStatus: (token: string, refresh = false, organizationId?: string) => {
+    const q = [
+      refresh ? "refresh=true" : "",
+      organizationId ? `organization_id=${encodeURIComponent(organizationId)}` : "",
+    ].filter(Boolean);
+    return request<GearboxStatus>(`/studio-product/v1/gearbox${q.length ? `?${q.join("&")}` : ""}`, token);
+  },
   /** Compose a product.gdl from picked gears and resolve it with the Gearbox
    *  engine. `write` also commits it to the project's repository -- where its
    *  source's share mode says (onto the base branch, or a `product/…` branch

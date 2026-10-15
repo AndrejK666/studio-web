@@ -126,7 +126,7 @@ import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
 import { OrgEnvironments } from "./environments-screen";
-import { PlatformSources } from "./platform-sources";
+import { OrgSources, PlatformSources } from "./platform-sources";
 import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
@@ -603,6 +603,7 @@ type View =
   | "platform"
   | "publications"
   | "platform-sources"
+  | "org-sources"
   | "org"
   | "reports"
   | "tasks"
@@ -746,6 +747,8 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     { id: "environments", icon: "layers", label: "Environments" },
     // What its projects build: the registry, candidates, its gear repository.
     { id: "gears", icon: "package", label: "Components" },
+    // Its own gear repositories, read after the platform's (ADR-0046).
+    { id: "org-sources", icon: "plug", label: "Sources" },
     // Every report the Studio draws, configured once for the organization.
     { id: "reports", icon: "activity", label: "Reports" },
     // Its studio-tasks runs and studio-scheduler schedules.
@@ -2690,6 +2693,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         )}
         {view === "publications" && <PublicationRequests token={token} orgId={orgAsSpace?.id} />}
         {view === "platform-sources" && <PlatformSources token={token} isPlatformAdmin={showPlatform} />}
+        {view === "org-sources" && <OrgSources token={token} orgId={orgAsSpace?.id} />}
         {view === "environments" && orgAsSpace && (
           <OrgEnvironments
             key={orgAsSpace.id}

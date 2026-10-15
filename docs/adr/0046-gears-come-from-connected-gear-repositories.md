@@ -193,12 +193,24 @@ as today.
    deployment's setting as the fallback while there are none. Show status per
    repository. *Built: see studio-product's design, and the connector's.*
 2. **`product.gdl` with a source per repository**, pinned commits, and the IDE
-   relay per source id.
+   relay per source id. *Built: `product.gdl` names a pinned source per
+   repository (phase 1); the catalogue answers every root (`roots`), the
+   relay serves each by source id, and the IDE brings all of them in, all or
+   none, each under its source id.*
 3. **The organization's gear repositories:** Organization › Sources, the
    organization's corpus (platform then organization), the default for
    Create a gear. Migrate the catalogue's `gears` sources and ADR-0042 §2's
-   setting, once.
-4. **Publishing picks its repository.**
+   setting, once. *Built: an organization holds gear-repository connections;
+   its corpus is the platform's roots then its own (one clash of source ids
+   leaves its repository out, and says so); the one marked `create_target`,
+   else the first, is its gear repository for Create a gear and the registry
+   walk. ADR-0042 §2's setting is still read while an organization has no
+   gear repository of its own -- that is the migration path, and nothing is
+   rewritten. The catalogue's `gears` sources stay what the catalogue sync
+   reads.*
+4. **Publishing picks its repository.** *Built: the curator picks one of the
+   platform's gear repositories (`target`); the default is the one holding
+   most gears of the entry's category.*
 
 ## Traceability
 

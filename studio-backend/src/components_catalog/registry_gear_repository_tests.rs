@@ -108,6 +108,7 @@ fn stored() -> GearRepository {
         connection_label: Some("Acme GitHub".into()),
         set_by: Some("u7".into()),
         set_at: Some("2026-10-09T10:00:00Z".into()),
+        from_sources: false,
     }
 }
 

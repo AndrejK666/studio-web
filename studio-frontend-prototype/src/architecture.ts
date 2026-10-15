@@ -682,8 +682,16 @@ export const SURFACES: Surface[] = [
     area: "organization",
     title: "Platform sources",
     does: "List the platform's gear repositories, which the Gearbox engine reads together as the corpus every organization builds on; a platform administrator adds one (a gear-repository connection, tested first) or removes it.",
-    components: ["PlatformSources", "AddGearRepository"],
+    components: ["GearSources", "AddGearRepository"],
     gears: ["studio-connector", "studio-product"],
+  },
+  {
+    id: "org-sources",
+    area: "organization",
+    title: "Organization sources",
+    does: "List the organization's own gear repositories, read after the platform's in its corpus (ADR-0046 phase 3): add or remove one, see what the engine read, and pick the one Create a gear writes into.",
+    components: ["OrgSources", "GearSources", "AddGearRepository"],
+    gears: ["studio-components-catalog", "studio-connector", "studio-product"],
   },
   {
     id: "organization-dashboard",

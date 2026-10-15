@@ -8,10 +8,15 @@
 //! repository's name when blank). The token is optional: a public repository
 //! is read without one, a private one with a read token.
 //!
-//! Studio reads it by cloning (the engine needs the files on disk), so the
-//! driver only answers the test -- is the repository there, at that ref, and
-//! how many `gear.gdl` files does it hold -- and the clone URL. GitHub only for
-//! now; GitLab and Bitbucket follow the same shape.
+//! The engine reads it from a clone, so the driver answers the test -- is the
+//! repository there, at that ref, and how many `gear.gdl` files does it hold
+//! -- and the clone URL. A connection can also be where an organization's new
+//! gears are written (`create_target`) and where the platform takes a
+//! published one (ADR-0046 phases 3 and 4): the repository-level operations
+//! (files, branches, pull requests) are GitHub's driver's, called with the API
+//! root in place of the repository's address, and only ever for this
+//! connection's own repository. GitHub only for now; GitLab and Bitbucket
+//! follow the same shape.
 
 use std::collections::BTreeMap;
 
@@ -19,7 +24,11 @@ use anyhow::{Context, anyhow, bail};
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use super::driver::{ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity};
+use super::driver::{
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, FileToWrite,
+    OpenedPullRequest, RemoteCommit, RemoteFileList, RemoteFileText, RepoTree, WrittenFile,
+};
+use super::github::GitHubDriver;
 use super::url_guard::HostRule;
 
 /// The provider key a gear repository connection is stored under.
@@ -28,16 +37,37 @@ pub const PROVIDER: &str = "gear-repository";
 pub const OPTION_REF: &str = "ref";
 /// The option naming the repository for the engine (its root's directory).
 pub const OPTION_SOURCE_ID: &str = "source_id";
+/// The option marking an organization's repository as where "Create a gear"
+/// writes (`"true"`); at most one per tenant.
+pub const OPTION_CREATE_TARGET: &str = "create_target";
 
 const API: &str = "https://api.github.com";
 
 pub struct GearRepositoryDriver {
     http: reqwest::Client,
+    github: GitHubDriver,
 }
 
 impl GearRepositoryDriver {
     pub fn new(http: reqwest::Client) -> Self {
-        Self { http }
+        Self {
+            github: GitHubDriver::new(http.clone()),
+            http,
+        }
+    }
+
+    /// GitHub's credentials for `repo`, which must be this connection's own:
+    /// the connection is one repository, and its token is not lent to any
+    /// other.
+    fn api(&self, auth: &ConnectionAuth, repo: &str) -> anyhow::Result<ConnectionAuth> {
+        let own = repository_of(&auth.base_url)?;
+        if !own.eq_ignore_ascii_case(repo.trim().trim_matches('/')) {
+            bail!("this gear repository connection reads {own}, not {repo}");
+        }
+        Ok(ConnectionAuth {
+            base_url: API.to_string(),
+            token: auth.token.clone(),
+        })
     }
 
     fn get(&self, url: &str, token: &str) -> reqwest::RequestBuilder {
@@ -118,9 +148,9 @@ pub fn normalize_options(
 ) -> anyhow::Result<BTreeMap<String, String>> {
     if let Some(k) = given
         .keys()
-        .find(|k| *k != OPTION_REF && *k != OPTION_SOURCE_ID)
+        .find(|k| *k != OPTION_REF && *k != OPTION_SOURCE_ID && *k != OPTION_CREATE_TARGET)
     {
-        bail!("a gear repository takes `ref` and `source_id`, not `{k}`");
+        bail!("a gear repository takes `ref`, `source_id` and `create_target`, not `{k}`");
     }
     let repo = repository_of(base_url)?;
     let mut out = BTreeMap::new();
@@ -161,7 +191,19 @@ pub fn normalize_options(
         );
     }
     out.insert(OPTION_SOURCE_ID.to_string(), source_id);
+    match given.get(OPTION_CREATE_TARGET).map(|v| v.trim()) {
+        None | Some("" | "false") => {}
+        Some("true") => {
+            out.insert(OPTION_CREATE_TARGET.to_string(), "true".to_string());
+        }
+        Some(other) => bail!("`create_target` is `true` or `false`, not `{other}`"),
+    }
     Ok(out)
+}
+
+/// Whether a connection's options mark it where "Create a gear" writes.
+pub fn is_create_target(options: &BTreeMap<String, String>) -> bool {
+    options.get(OPTION_CREATE_TARGET).map(String::as_str) == Some("true")
 }
 
 #[async_trait]
@@ -276,6 +318,152 @@ impl ConnectorDriver for GearRepositoryDriver {
             repository_of(base_url)?
         ))
     }
+
+    async fn list_files(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        git_ref: Option<&str>,
+    ) -> anyhow::Result<RemoteFileList> {
+        self.github
+            .list_files(&self.api(auth, repo)?, repo, git_ref)
+            .await
+    }
+
+    async fn repo_tree(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        git_ref: Option<&str>,
+    ) -> anyhow::Result<RepoTree> {
+        self.github
+            .repo_tree(&self.api(auth, repo)?, repo, git_ref)
+            .await
+    }
+
+    async fn read_file(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        path: &str,
+        git_ref: Option<&str>,
+    ) -> anyhow::Result<Option<RemoteFileText>> {
+        self.github
+            .read_file(&self.api(auth, repo)?, repo, path, git_ref)
+            .await
+    }
+
+    async fn path_history(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        path: &str,
+        git_ref: Option<&str>,
+        limit: u32,
+    ) -> anyhow::Result<Vec<RemoteCommit>> {
+        self.github
+            .path_history(&self.api(auth, repo)?, repo, path, git_ref, limit)
+            .await
+    }
+
+    async fn list_tags(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<String>> {
+        self.github
+            .list_tags(&self.api(auth, repo)?, repo, page, per_page)
+            .await
+    }
+
+    async fn put_file(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        branch: Option<&str>,
+        path: &str,
+        content: &str,
+        message: &str,
+    ) -> anyhow::Result<WrittenFile> {
+        self.github
+            .put_file(&self.api(auth, repo)?, repo, branch, path, content, message)
+            .await
+    }
+
+    async fn default_branch(&self, auth: &ConnectionAuth, repo: &str) -> anyhow::Result<String> {
+        self.github
+            .default_branch(&self.api(auth, repo)?, repo)
+            .await
+    }
+
+    async fn branch_head(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        branch: &str,
+    ) -> anyhow::Result<Option<String>> {
+        self.github
+            .branch_head(&self.api(auth, repo)?, repo, branch)
+            .await
+    }
+
+    async fn create_branch(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        branch: &str,
+        from_sha: &str,
+    ) -> anyhow::Result<()> {
+        self.github
+            .create_branch(&self.api(auth, repo)?, repo, branch, from_sha)
+            .await
+    }
+
+    async fn commit_files(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        message: &str,
+    ) -> anyhow::Result<String> {
+        self.github
+            .commit_files(&self.api(auth, repo)?, repo, base_branch, branch, files, message)
+            .await
+    }
+
+    async fn open_pull_request(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: Option<&str>,
+    ) -> anyhow::Result<OpenedPullRequest> {
+        self.github
+            .open_pull_request(&self.api(auth, repo)?, repo, head, base, title, body)
+            .await
+    }
+
+    fn supports_pull_requests(&self) -> bool {
+        true
+    }
+
+    async fn find_open_pull_request(
+        &self,
+        auth: &ConnectionAuth,
+        repo: &str,
+        head: &str,
+        base: &str,
+    ) -> anyhow::Result<Option<OpenedPullRequest>> {
+        self.github
+            .find_open_pull_request(&self.api(auth, repo)?, repo, head, base)
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -321,6 +509,29 @@ mod tests {
             o,
             opts(&[("ref", "feature/gearbox"), ("source_id", "platform-core")])
         );
+    }
+
+    #[test]
+    fn create_target_is_kept_only_when_true() {
+        let url = "https://github.com/acme/gears";
+        let o = normalize_options(url, &opts(&[("create_target", "true")])).unwrap();
+        assert!(is_create_target(&o));
+        let o = normalize_options(url, &opts(&[("create_target", "false")])).unwrap();
+        assert!(!is_create_target(&o) && !o.contains_key("create_target"));
+        assert!(normalize_options(url, &opts(&[("create_target", "yes")])).is_err());
+    }
+
+    #[test]
+    fn the_connection_lends_its_token_to_its_own_repository_only() {
+        let d = GearRepositoryDriver::new(reqwest::Client::new());
+        let auth = ConnectionAuth {
+            base_url: "https://github.com/acme/gears".into(),
+            token: "t".into(),
+        };
+        let api = d.api(&auth, "Acme/Gears").expect("its own, in any case");
+        assert_eq!(api.base_url, API);
+        assert_eq!(api.token, "t");
+        assert!(d.api(&auth, "acme/other").is_err());
     }
 
     #[test]

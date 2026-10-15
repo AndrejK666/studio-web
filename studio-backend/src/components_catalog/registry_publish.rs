@@ -3,8 +3,11 @@
 //!
 //! `POST /registry/{name}/decisions` with `action: publish`, on a
 //! `registered` entry, opens a pull request into the platform's gear
-//! repository -- the platform's catalogue source in mode `gears`, as a
-//! platform administrator saved it in the root tenant. It copies the files of
+//! repository -- one of the platform's gear repositories (ADR-0046 phase 4):
+//! the one the curator names (`target`, a source id), else the one holding
+//! most gears of the entry's category; while the platform has none, its
+//! catalogue source in mode `gears`, as a platform administrator saved it in
+//! the root tenant. It copies the files of
 //! the directory the entry is declared in (bounded: [`MAX_FILES`] files and
 //! [`MAX_BYTES`] in all, by the tree listing's sizes, refused larger) under
 //! the platform's own parent directory for gears -- the one most of its
@@ -60,6 +63,8 @@ pub enum PublishError {
     },
     /// The platform has no catalogue source in mode `gears`.
     NoPlatformRepository,
+    /// `target` names none of the platform's gear repositories.
+    UnknownTarget(String),
     /// Nothing declares the entry: there is no directory to give.
     NoOccurrence,
     /// The occurrence was recorded before the walk kept its connection.
@@ -97,6 +102,10 @@ impl std::fmt::Display for PublishError {
             Self::NoPlatformRepository => {
                 write!(f, "the platform has no gear repository to contribute to")
             }
+            Self::UnknownTarget(id) => write!(
+                f,
+                "the platform has no gear repository `{id}`; pick one of those Platform › Sources lists"
+            ),
             Self::NoOccurrence => write!(
                 f,
                 "no repository declares this component, so there is nothing to give"
@@ -208,6 +217,62 @@ pub fn platform_gear_source(sources: &[RepoSource]) -> Option<&RepoSource> {
         let mode = s.mode.trim();
         (mode.is_empty() || mode.eq_ignore_ascii_case("gears")) && !s.repo.trim().is_empty()
     })
+}
+
+/// One of the platform's gear repositories a published gear can go into,
+/// with how many gears of the entry's category it holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublishTarget {
+    pub source_id: String,
+    /// `owner/name`.
+    pub repo: String,
+    pub gears_in_category: usize,
+}
+
+/// The repository a gear goes into: the one `named`, refused when there is
+/// none such; else the one holding most gears of its category, the first
+/// added on a tie. `None` when there are none to pick from.
+pub fn choose_target<'a>(
+    targets: &'a [PublishTarget],
+    named: Option<&str>,
+) -> Result<Option<&'a PublishTarget>, PublishError> {
+    if let Some(id) = named {
+        return targets
+            .iter()
+            .find(|t| t.source_id == id)
+            .map(Some)
+            .ok_or_else(|| PublishError::UnknownTarget(id.to_owned()));
+    }
+    let mut best: Option<&PublishTarget> = None;
+    for t in targets {
+        if best.is_none_or(|b| t.gears_in_category > b.gears_in_category) {
+            best = Some(t);
+        }
+    }
+    Ok(best)
+}
+
+/// How many gears of `category` the engine found in each root, by source id.
+/// Engine gears name their category (`gear.gdl`'s `category`); a registry
+/// entry with none counts every gear.
+pub fn gears_in_category(catalogue: &serde_json::Value, category: Option<&str>) -> BTreeMap<String, usize> {
+    let wanted = category.map(str::trim).filter(|c| !c.is_empty());
+    let mut counts = BTreeMap::new();
+    for g in catalogue
+        .get("gears")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|m| m.values())
+    {
+        let Some(source) = g.get("source").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let theirs = g.get("category").and_then(serde_json::Value::as_str);
+        if wanted.is_none_or(|w| theirs.is_some_and(|c| c.eq_ignore_ascii_case(w))) {
+            *counts.entry(source.to_owned()).or_insert(0) += 1;
+        }
+    }
+    counts
 }
 
 /// The occurrence whose directory is given: one that declares the entry
@@ -391,6 +456,11 @@ pub struct PublishPlan {
     /// What is not copied (not text), relative to the gear's directory.
     pub skipped: Vec<String>,
     pub text: PullRequestText,
+    /// The platform's gear repository it goes into, by source id; `None`
+    /// when the platform names its repository by a catalogue source.
+    pub source_id: Option<String>,
+    /// Every gear repository of the platform it could go into.
+    pub targets: Vec<PublishTarget>,
 }
 
 impl CatalogService {
@@ -418,14 +488,15 @@ impl CatalogService {
             }));
         }
 
-        // The platform's gear repository, as its administrator saved it --
-        // and written only through the platform's own connection, in the
-        // root: a source naming any other tenant's is not the platform's.
+        // The platform's gear repository: one of its gear repositories
+        // (ADR-0046 phase 4), else its catalogue source as its administrator
+        // saved it -- and written only through the platform's own connection,
+        // in the root: a source naming any other tenant's is not the
+        // platform's.
         let pctx = platform_ctx(ctx)?;
-        let sources = self.list_sources(&pctx).await?;
-        let source = platform_gear_source(&sources)
-            .cloned()
-            .ok_or(PublishFailure::Refused(PublishError::NoPlatformRepository))?;
+        let (source, source_id, targets) = self
+            .publish_target(&pctx, entry.entry.category.as_deref(), input.target.as_deref())
+            .await?;
         if source.tenant != super::tiers::PLATFORM_TENANT {
             return Err(PublishFailure::Refused(
                 PublishError::PlatformConnectionNotOwned {
@@ -541,8 +612,97 @@ impl CatalogService {
                 files: placed,
                 skipped,
                 text,
+                source_id,
+                targets,
             },
         ))
+    }
+
+    /// Where a published gear goes: one of the platform's gear repositories
+    /// -- `named`, else the one holding most gears of `category` -- as a
+    /// source in the root, with its id and every repository it could have
+    /// gone into; else, while the platform has none, its catalogue source in
+    /// mode `gears`. `pctx` acts in the root.
+    async fn publish_target(
+        &self,
+        pctx: &SecurityContext,
+        category: Option<&str>,
+        named: Option<&str>,
+    ) -> Result<(RepoSource, Option<String>, Vec<PublishTarget>), PublishFailure> {
+        let repositories = match self.connector_service() {
+            Some(connectors) => connectors
+                .gear_repositories(pctx, super::tiers::PLATFORM_TENANT)
+                .await
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        if repositories.is_empty() {
+            if let Some(id) = named {
+                return Err(PublishFailure::Refused(PublishError::UnknownTarget(
+                    id.to_owned(),
+                )));
+            }
+            let sources = self.list_sources(pctx).await?;
+            let source = platform_gear_source(&sources)
+                .cloned()
+                .ok_or(PublishFailure::Refused(PublishError::NoPlatformRepository))?;
+            return Ok((source, None, Vec::new()));
+        }
+        let counts = match self.gearbox.get() {
+            Some(gearbox) => match gearbox.catalogue_json(None).await {
+                Ok((raw, _)) => gears_in_category(&raw, category),
+                Err(_) => BTreeMap::new(),
+            },
+            None => BTreeMap::new(),
+        };
+        let targets: Vec<PublishTarget> = repositories
+            .iter()
+            .map(|r| PublishTarget {
+                source_id: r.source_id.clone(),
+                repo: r.repo.clone(),
+                gears_in_category: counts.get(&r.source_id).copied().unwrap_or(0),
+            })
+            .collect();
+        let chosen = choose_target(&targets, named)
+            .map_err(PublishFailure::Refused)?
+            .ok_or(PublishFailure::Refused(PublishError::NoPlatformRepository))?
+            .source_id
+            .clone();
+        let repo = repositories
+            .iter()
+            .find(|r| r.source_id == chosen)
+            .ok_or(PublishFailure::Refused(PublishError::NoPlatformRepository))?;
+        // A gear repository read at its default branch takes the pull
+        // request there too.
+        let git_ref = if repo.git_ref.is_empty() {
+            match self.connector_service() {
+                Some(connectors) => match crate::connectors::sdk::Repository::open(
+                    &connectors,
+                    pctx,
+                    super::tiers::PLATFORM_TENANT,
+                    Some(repo.connection_id),
+                    crate::connectors::sdk::GEAR_REPOSITORY_PROVIDER,
+                    &repo.repo,
+                    None,
+                )
+                .await
+                {
+                    Ok(r) => r.default_branch().await.unwrap_or_default(),
+                    Err(_) => String::new(),
+                },
+                None => String::new(),
+            }
+        } else {
+            repo.git_ref.clone()
+        };
+        let source = RepoSource {
+            tenant: super::tiers::PLATFORM_TENANT,
+            connection_id: Some(repo.connection_id),
+            repo: repo.repo.clone(),
+            git_ref,
+            mode: "gears".to_owned(),
+        };
+        Ok((source, Some(chosen), targets))
     }
 
     /// Publish the registered entry `name`: plan it ([`Self::plan_publish`]),

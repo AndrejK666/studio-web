@@ -34,6 +34,9 @@ pub struct GearRepositoryDto {
     pub set_by: Option<String>,
     /// RFC 3339.
     pub set_at: Option<String>,
+    /// Taken from the organization's Sources (ADR-0046 phase 3): its gear
+    /// repository marked for new gears. Changed there, not here.
+    pub from_sources: bool,
 }
 
 /// The setting, and whether the caller may change it.
@@ -126,6 +129,7 @@ fn gear_repository_dto(r: GearRepository) -> GearRepositoryDto {
         branch: r.branch,
         set_by: r.set_by,
         set_at: r.set_at,
+        from_sources: r.from_sources,
     }
 }
 

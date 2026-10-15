@@ -28,6 +28,7 @@ pub use super::driver::{
     PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList, RemoteIssue,
     RemotePullRequest, RemoteWorkflowRun,
 };
+pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
 pub use super::kubernetes::ClusterAccess;
 pub use super::repository::{Repository, create_repository};
 pub use super::service::{

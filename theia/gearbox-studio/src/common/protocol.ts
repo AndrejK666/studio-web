@@ -299,6 +299,15 @@ export interface GearboxService {
     clonePath?: string,
   ): Promise<string | undefined>;
 
+  /**
+   * Constructor Studio: [`useSharedCorpus`] for every gear repository the
+   * backend's corpus reads (ADR-0046), all or none: each becomes a source root,
+   * under its source id, only when every one is here (`fetch` false) or could
+   * be brought (`fetch` true) -- half a corpus would list gears whose hosts
+   * are missing. The directories in order, or `undefined` when one is not.
+   */
+  useSharedCorpora(origins: readonly CorpusOrigin[], fetch: boolean): Promise<string[] | undefined>;
+
   /** Evaluate a `product.gdl`. Evaluation only; nothing is joined against the
    * catalogue. */
   loadProduct(path: string): Promise<ProductLoadResult>;
@@ -740,8 +749,12 @@ export interface RemoteCatalogue {
   /** `owner/repo@ref`, as a person reads it. */
   readonly corpus: string;
   readonly gears: readonly GearDescriptor[];
-  /** Where the corpus can be had from, when the backend says. */
+  /** Where the corpus can be had from, when the backend says: its first gear
+   *  repository. */
   readonly origin?: CorpusOrigin;
+  /** Every gear repository the corpus is read from, in the engine's order
+   *  (ADR-0046 phase 2); absent from a backend that names one. */
+  readonly origins?: readonly CorpusOrigin[];
 }
 export interface CorpusOrigin {
   /** The source id its gears name, and the directory a copy is kept under. */

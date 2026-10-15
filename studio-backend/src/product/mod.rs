@@ -73,7 +73,7 @@ impl Gear for StudioProductGear {
             // first preview or components reference does not pay for a clone.
             if let Ok(rt) = tokio::runtime::Handle::try_current() {
                 rt.spawn(async move {
-                    if let Err(e) = engine.catalogue_json().await {
+                    if let Err(e) = engine.catalogue_json(None).await {
                         tracing::warn!(error = %format!("{e:#}"), "studio-product: corpus warm-up failed");
                     }
                 });

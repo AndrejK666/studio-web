@@ -108,6 +108,24 @@ pub fn engine(hub: &ClientHub) -> Option<Arc<Gearbox>> {
     hub.get::<Gearbox>().ok()
 }
 
+/// Which corpus a request in `tenant` reads (ADR-0046): its organization's --
+/// the platform's gear repositories, then the organization's own, read into
+/// the engine when due -- or the platform's when `tenant` is in none. The
+/// caller has already shown that `ctx` reaches `tenant`.
+pub async fn engine_scope(
+    hub: &Arc<ClientHub>,
+    ctx: &SecurityContext,
+    tenant: Uuid,
+) -> super::gearbox::Scope {
+    let gearbox = engine(hub)?;
+    let am = hub
+        .get::<dyn account_management_sdk::AccountManagementClient>()
+        .ok()?;
+    let org = crate::organizations::sdk::organization_of(am.as_ref(), ctx, tenant).await;
+    let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(hub));
+    super::gear_roots::scope_for(&gearbox, &connectors, ctx, org, false).await
+}
+
 /// `router` with the platform's gear repositories read into the engine on the
 /// way into a route that may run it (ADR-0046). A gear whose routes use the
 /// engine wraps them with this; without an engine it is `router` unchanged.
@@ -526,7 +544,8 @@ impl GearScaffolds for Scaffolds {
         gear: &NewGear,
     ) -> Result<ScaffoldOutcome, ScaffoldFailure> {
         let gearbox = engine(&self.hub);
-        let files = super::new_gear::files(gearbox.as_deref(), &target.repo, gear).await?;
+        let scope = engine_scope(&self.hub, ctx, ctx.subject_tenant_id()).await;
+        let files = super::new_gear::files(gearbox.as_deref(), scope, &target.repo, gear).await?;
         let listed: Vec<DeclarationFile> = files
             .iter()
             .map(|f| DeclarationFile {

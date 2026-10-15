@@ -53,12 +53,16 @@ default, unique among the tenant's gear repositories). Its token is optional
 (`token_optional` on the provider): a public repository is stored without one,
 and then no credstore secret is written and `secret_ref` is empty. The test
 reads the repository and the ref and counts its `gear.gdl` files ("59 gear.gdl files at
-main"). Only the root tenant may hold one for now: an organization's own gear
-repositories are ADR-0046 phase 3, and until then one would be read by nothing.
-The platform's gear repositories are the root tenant's; studio-product
-lists them (`ConnectorService::gear_repositories`) and checks them out for the
-engine. Options are a driver's to check (`ConnectorDriver::check_options`); a
-driver that takes none refuses any.
+main"). The platform's gear repositories are the root tenant's, an
+organization's own are the organization's (ADR-0046 phase 3); studio-product
+lists a tenant's (`ConnectorService::gear_repositories`) and checks them out
+for the engine. One of an organization's may be marked where Create a gear
+writes (`create_target: "true"`); marking one unmarks the others. A
+connection also reads and writes its own repository -- files, branches, pull
+requests, for Create a gear, the registry walk and Publish -- through GitHub's
+driver with the API root in place of its address, and refuses any other
+repository: its token is not lent. Options are a driver's to check
+(`ConnectorDriver::check_options`); a driver that takes none refuses any.
 
 A model-provider driver does not call its provider. `studio-llm-proxy` is
 Studio's one way out to a model provider (ADR-0039): the Anthropic and OpenAI
