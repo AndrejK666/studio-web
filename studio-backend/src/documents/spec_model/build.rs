@@ -443,6 +443,7 @@ mod tests {
             text: TEXT.into(),
             doc_type: None,
             node: String::new(),
+            binding: None,
         }
     }
 

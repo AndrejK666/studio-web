@@ -2384,14 +2384,18 @@ impl Gearbox {
         &self,
         name: &str,
     ) -> anyhow::Result<Option<super::explanations::GearBrief>> {
-        let (dir, _, catalogue) = self.ensure_corpus().await?;
+        let (roots, _, catalogue) = self.ensure_corpus().await?;
         let (raw, _) = self.catalogue_json().await?;
         let Some(mut brief) = gear_brief(&catalogue, &raw, name) else {
             return Ok(None);
         };
         if let Some(path) = brief.path.clone() {
+            // The catalogue does not say which repository a gear came from,
+            // so the README is looked for under each root in turn.
             brief.readme = tokio::task::spawn_blocking(move || {
-                read_readme(&dir, &path, super::explanations::MAX_README_BYTES)
+                roots.iter().find_map(|(_, dir)| {
+                    read_readme(dir, &path, super::explanations::MAX_README_BYTES)
+                })
             })
             .await
             .ok()

@@ -1909,6 +1909,7 @@ impl DocumentsService {
                 text,
                 doc_type: Some(DOMAIN_DOC_TYPE.to_owned()),
                 node: String::new(),
+                binding: None,
             });
         let documents = rows
             .into_iter()
