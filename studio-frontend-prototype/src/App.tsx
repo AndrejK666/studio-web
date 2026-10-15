@@ -514,8 +514,6 @@ type View =
   | "publications"
   | "org"
   | "reports"
-  | "objects"
-  | "views"
   | "tasks"
   | "system"
   | "profile";
@@ -657,9 +655,6 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     { id: "gears", icon: "package", label: "Components" },
     // Every report the Studio draws, configured once for the organization.
     { id: "reports", icon: "activity", label: "Reports" },
-    // The type catalogue, and the lists of its objects people save.
-    { id: "objects", icon: "grid", label: "Objects" },
-    { id: "views", icon: "grid", label: "Views" },
     // Its studio-tasks runs and studio-scheduler schedules.
     { id: "tasks", icon: "scan", label: "Background work" },
   ],
@@ -682,7 +677,9 @@ type AdminView =
   | "connectors"
   | "secrets"
   | "tenants"
-  | "workspaces";
+  | "workspaces"
+  | "objects"
+  | "views";
 
 /** Administration that survives concept v2: people, the shared catalogue,
  *  credentials. The tenant hierarchy (organizations, the raw workspace list)
@@ -695,6 +692,11 @@ const ADMIN_NAV: { id: AdminView; icon: string; label: string }[] = [
   { id: "access", icon: "shield", label: "Access" },
   { id: "connectors", icon: "plug", label: "Integrations" },
   { id: "secrets", icon: "key", label: "Secrets" },
+  // The type catalogue and the saved lists of its objects. They shape what
+  // the organization's screens show, so they are set up here, once, rather
+  // than sitting among the sections people work in.
+  { id: "objects", icon: "grid", label: "Objects" },
+  { id: "views", icon: "grid", label: "Views" },
 ];
 
 const PLATFORM_NAV: { id: AdminView; icon: string; label: string }[] = [
@@ -897,7 +899,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   useDismiss(productMenuRef, productMenu, closeProductMenu);
   // What sits above PLATFORM in the rail. Persisted per browser; see pins.ts
   // for why the group it replaced had stopped meaning anything.
-  const [pins, setPins] = useState<Pin[]>(() => loadPins());
+  // A pin to a section that has since moved (Objects and Views went to
+  // administration) would open nothing, so it is dropped on load.
+  const [pins, setPins] = useState<Pin[]>(() =>
+    loadPins().filter(
+      (p) => p.kind !== "view" || NAV_SECTIONS.some((s) => s.items.some((i) => i.id === p.id)),
+    ),
+  );
   const [pinPicker, setPinPicker] = useState(false);
   const setPinned = (next: Pin[]) => {
     setPins(next);
@@ -2545,6 +2553,8 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
                 </div>
               ))}
             {adminView === "secrets" && <SecretsView token={token} workspaces={workspaces} filters={filters} />}
+            {adminView === "objects" && <ObjectTypes token={token} query={filters.query} />}
+            {adminView === "views" && <ViewsScreen token={token} />}
           </>
         ) : dash ? (
           <WorkspaceDashboard
@@ -2668,8 +2678,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             projects={workspaces.filter((w) => w.orgId === orgAsSpace?.id).map((w) => ({ id: w.id, name: w.name }))}
           />
         )}
-        {view === "objects" && <ObjectTypes token={token} query={filters.query} />}
-        {view === "views" && <ViewsScreen token={token} />}
         {view === "tasks" && <BackgroundWork token={token} query={filters.query} />}
         {view === "system" && (
           <SystemView token={token} filters={filters} tenant={orgAsSpace} meId={me.subject_id} />
