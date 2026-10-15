@@ -1,9 +1,10 @@
-/* The project's builds (ADR-0045, phase 1): the CI runs the artifact sync
- * reads from the project's repositories, as build records.
+/* The project's builds (ADR-0045): the CI runs the artifact sync reads from
+ * the project's repositories (phase 1), and the builds the IDE ran and
+ * reported -- in a member's desktop or a session (phase 2).
  *
  * The portal does not build. CI and the IDE do; this is what was built,
- * where, and how it went. Phase 1 reads CI runs only; builds the IDE reports,
- * and the Build and Deploy actions, come later. */
+ * where, and how it went. Build starts the project's build workflow in CI
+ * (phase 3). */
 
 import type { ArtifactNode } from "./api";
 
@@ -24,6 +25,10 @@ export interface BuildRun {
   createdAt: string | null;
   startedAt: string | null;
   updatedAt: string | null;
+  /** `.github/workflows/build.yml`: what Build starts it by. */
+  workflowPath: string | null;
+  /** The repository node it belongs to. */
+  repoNode: string | null;
 }
 
 export type BuildStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "skipped" | "unknown";
@@ -73,6 +78,8 @@ export function buildsOf(nodes: readonly ArtifactNode[]): BuildRun[] {
       createdAt: str(v.created_at),
       startedAt: str(v.started_at),
       updatedAt: str(v.updated_at),
+      workflowPath: str(v.workflow_path),
+      repoNode: str(v.repo),
     };
   });
   return runs.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
@@ -147,6 +154,123 @@ export function ciReadFailures(repos: readonly ArtifactNode[]): { repo: string; 
     if (!error) return [];
     return [{ repo: str(n.value.full_path) ?? str(n.value.name) ?? n.instance_id, error }];
   });
+}
+
+/** The project's build workflow, as `project.config` names it. */
+export interface BuildWorkflow {
+  repo: string;
+  workflow: string;
+}
+
+/** A workflow's file name from its path: what GitHub starts it by. */
+export function workflowFile(path: string | null): string | null {
+  if (!path) return null;
+  const name = path.split("/").pop() ?? "";
+  return /\.ya?ml$/.test(name) ? name : null;
+}
+
+/** The setting that would make `workflow` the project's build workflow:
+ *  its file, in the repository its runs come from. Null when its runs name
+ *  no file or no repository the project lists. */
+export function buildWorkflowOf(
+  runs: readonly BuildRun[],
+  workflow: string,
+  repoPaths: ReadonlyMap<string, string>,
+): BuildWorkflow | null {
+  const run = runs.find((r) => r.workflow === workflow && workflowFile(r.workflowPath) && r.repoNode);
+  if (!run) return null;
+  const repo = repoPaths.get(run.repoNode ?? "");
+  const file = workflowFile(run.workflowPath);
+  return repo && file ? { repo, workflow: file } : null;
+}
+
+/** Whether `workflow` (by name) is the project's build workflow. */
+export function isBuildWorkflow(
+  setting: BuildWorkflow | null | undefined,
+  candidate: BuildWorkflow | null,
+): boolean {
+  return (
+    !!setting &&
+    !!candidate &&
+    setting.workflow === candidate.workflow &&
+    setting.repo.toLowerCase() === candidate.repo.toLowerCase()
+  );
+}
+
+/** The repositories' `owner/repo`, by node id: what a run's `repo` names. */
+export function repoPathsOf(repos: readonly ArtifactNode[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const n of repos) {
+    const path = str(n.value.full_path);
+    if (path) out.set(n.instance_id, path);
+  }
+  return out;
+}
+
+/** One build the IDE ran and reported (ADR-0045 phase 2). */
+export interface IdeBuild {
+  id: string;
+  buildId: string;
+  where: "desktop" | "session" | string;
+  action: "build" | "run" | string;
+  status: BuildStatus;
+  product: string | null;
+  profile: string | null;
+  commit: string | null;
+  shortSha: string | null;
+  branch: string | null;
+  by: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+  failure: string | null;
+  failureStep: string | null;
+  outputs: string[];
+}
+
+/** The `build` nodes as builds, newest first. */
+export function ideBuildsOf(nodes: readonly ArtifactNode[]): IdeBuild[] {
+  const statusOf = (s: string | null): BuildStatus =>
+    s === "running" || s === "passed" || s === "failed" || s === "cancelled" ? s : "unknown";
+  return nodes
+    .map((n): IdeBuild => {
+      const v = n.value;
+      return {
+        id: n.instance_id,
+        buildId: str(v.build_id) ?? n.instance_id,
+        where: str(v.where) ?? "desktop",
+        action: str(v.action) ?? "build",
+        status: statusOf(str(v.status)),
+        product: str(v.product),
+        profile: str(v.profile),
+        commit: str(v.commit),
+        shortSha: str(v.short_sha),
+        branch: str(v.branch),
+        by: str(v.reported_by),
+        startedAt: str(v.started_at),
+        finishedAt: str(v.finished_at),
+        durationMs: num(v.duration_ms),
+        failure: str(v.failure),
+        failureStep: str(v.failure_step),
+        outputs: Array.isArray(v.outputs) ? v.outputs.filter((o): o is string => typeof o === "string") : [],
+      };
+    })
+    .sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));
+}
+
+/** How long an IDE build took, or has been running. */
+export function ideBuildDuration(b: IdeBuild, now = Date.now()): string | null {
+  return buildDuration(
+    {
+      status: b.status,
+      startedAt: b.startedAt,
+      updatedAt:
+        b.durationMs !== null && b.startedAt
+          ? new Date(Date.parse(b.startedAt) + b.durationMs).toISOString()
+          : b.finishedAt,
+    },
+    now,
+  );
 }
 
 /** The badge tone for a status, in the portal's badge classes. */

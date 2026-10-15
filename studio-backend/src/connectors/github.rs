@@ -1418,6 +1418,33 @@ impl ConnectorDriver for GitHubDriver {
         })
     }
 
+    async fn dispatch_workflow(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        workflow: &str,
+        git_ref: &str,
+    ) -> anyhow::Result<()> {
+        let url = format!(
+            "{}/repos/{repo_full_path}/actions/workflows/{workflow}/dispatches",
+            auth.root()
+        );
+        let res = self
+            .headers(self.http.post(&url), auth)
+            .json(&serde_json::json!({ "ref": git_ref }))
+            .send()
+            .await?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub {status} starting {workflow} on {repo_full_path}@{git_ref}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        Ok(())
+    }
+
     async fn default_branch(
         &self,
         auth: &ConnectionAuth,

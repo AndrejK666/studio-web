@@ -7,6 +7,7 @@
 
 import { FileUri } from "@theia/core/lib/common/file-uri";
 import { inject, injectable } from "@theia/core/shared/inversify";
+import type { TerminalWidget } from "@theia/terminal/lib/browser/base/terminal-widget";
 import { TerminalService } from "@theia/terminal/lib/browser/base/terminal-service";
 
 export type ProductTerminalKind = "build" | "run" | "deploy";
@@ -24,7 +25,8 @@ export class ProductTerminals {
 
   /**
    * Type `command` into the product's `kind` terminal, opened in `cwd` with
-   * `env` if it has to be created. Returns once the text is sent.
+   * `env` if it has to be created. Returns the terminal, once the text is
+   * sent: Build and Run read how the build went off what it prints.
    */
   async send(
     kind: ProductTerminalKind,
@@ -32,7 +34,7 @@ export class ProductTerminals {
     cwd: string,
     command: string,
     env: Record<string, string> = {},
-  ): Promise<void> {
+  ): Promise<TerminalWidget> {
     const id = productTerminalId(kind, product);
     let terminal = this.terminals.getById(id);
     // A terminal opened before the environment changed (protoc fetched, a tool
@@ -57,5 +59,6 @@ export class ProductTerminals {
     await this.terminals.open(terminal, { mode: "activate" });
     if (reused && kind === "run") terminal.sendText("\x03");
     terminal.sendText(`${command}\r`);
+    return terminal;
   }
 }

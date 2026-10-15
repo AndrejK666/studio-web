@@ -50,7 +50,7 @@ Postgres table of this gear's, and scoped reads are one indexed query each.
 
 | Requirement | Design Response |
 |-------------|------------------|
-| `cpt-studio-fr-artifact-ingest` | `POST /sync` queues an `artifact.ingest` run that upserts nodes keyed on uuid5 instance ids; `/nodes`, `/edges`, `/activity`, `/source-activity`, `/open-pull-requests`, `/search`, `/quality` and `/files` serve and extend what it wrote. |
+| `cpt-studio-fr-artifact-ingest` | `POST /sync` queues an `artifact.ingest` run that upserts nodes keyed on uuid5 instance ids; `/nodes`, `/edges`, `/activity`, `/source-activity`, `/open-pull-requests`, `/search`, `/quality`, `/files` and a project's `/builds` serve and extend what it wrote. |
 | `cpt-studio-fr-repository-documents` | The run hands each prose file's path and text to `documents::port::DocumentClassifier` and forgets the bindings of files the repository no longer has. |
 
 #### NFR Allocation
@@ -175,10 +175,20 @@ cap closes.
 
 - [x] `p2` - **ID**: `cpt-studio-entity-artifact-node`
 
-Node types `gts.cf.studio.artifact.{repo,issue,pull_request,file,user,spec_finding,comment,commit,file_content,mapping_decision,workflow_run}.v1~`;
+Node types `gts.cf.studio.artifact.{repo,issue,pull_request,file,user,spec_finding,comment,commit,file_content,mapping_decision,workflow_run,build}.v1~`;
 `workflow_run` is one CI run of one workflow on one commit, keyed by the
 provider's run id (a re-run upserts over it), and is what a project's Builds
 tab reads (ADR-0045);
+`build` is one build the IDE ran -- Build or Run in a member's desktop or a
+session -- as it reported it (ADR-0045 phase 2, `builds.rs`): keyed by
+(project, the IDE's build id), so the report of its end lands on its start;
+`where`, `action`, `status` (`running`, then `passed`, `failed` or
+`cancelled`), the product and profile, the commit and branch, `started_at`,
+`finished_at`, `duration_ms`, the first error and its step when it failed,
+the images it built, and `reported_by`, which keeps the starter. A finished
+build is not changed: a further report is 400 `BUILD_FINISHED`. It carries
+`project_id` and `workspace_id` like a finding, and no `repo`, so a sync's
+pruning never takes it;
 `repo`, `file`, `issue` and `pull_request` are listed by default and the rest
 only when asked for by type. Edge types
 `gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of,decision_on,reviewed_by,assigned_to}.v1~`.
@@ -327,6 +337,8 @@ and unscoped listings.
 | `POST` | `/studio-artifact-ingest/v1/quality` | Upsert `spec_finding` nodes and derived `duplicates`/`traces_to` edges | unstable |
 | `POST` | `/studio-artifact-ingest/v1/search` | Hybrid retrieval when embeddings exist, else lexical | unstable |
 | `POST` | `/studio-artifact-ingest/v1/files` | Register a file-storage object reference as a `file` node, idempotent by (project, path) | unstable |
+| `POST` | `/studio-artifact-ingest/v1/projects/{project_id}/builds` | Record a build the IDE ran: its start, or its end over its start (ADR-0045 phase 2); 404 when the caller does not reach the project | unstable |
+| `POST` | `/studio-artifact-ingest/v1/projects/{project_id}/builds/dispatch` | Build in CI: start the project's build workflow (`project.config` `build`) or the one named, through that repository's connection -- only one the organization owns (`CONNECTION_NOT_OWNED`); a provider's refusal is 400 `CI_REFUSED` (ADR-0045 phase 3) | unstable |
 
 Without a connector driver linked the routes stay mounted and answer 503 with
 the reason. In process the gear

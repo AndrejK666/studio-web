@@ -132,6 +132,11 @@ describe("the organization's environments", () => {
       chart: "H4sI",
     });
     expect(deployRequest({ environment: prod, profile: "prod", product: "p", commit: "main", script, chart: "" }).commit).toBeUndefined();
+    // The build it came from (ADR-0045 §4), when it is an id the server takes.
+    expect(deployRequest({ environment: prod, profile: "prod", product: "p", build: "b-mfx1-0a0b0c0d", script, chart: "" }).build).toBe(
+      "b-mfx1-0a0b0c0d",
+    );
+    expect(deployRequest({ environment: prod, profile: "prod", product: "p", build: "no", script, chart: "" }).build).toBeUndefined();
   });
 
   it("say whether the deploy waits for an approval", () => {

@@ -5590,7 +5590,9 @@ function ProjectScreen({
             onPendingGearTaken={() => setPendingGear(null)}
           />
         )}
-        {tab === "builds" && <ProjectBuilds token={token} projectId={proj.id} />}
+        {tab === "builds" && (
+          <ProjectBuilds token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />
+        )}
         {tab === "kits" && (
           <ProjectKits
             token={token}

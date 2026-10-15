@@ -239,6 +239,8 @@ pub struct DeploymentDto {
     pub product: String,
     pub commit: Option<String>,
     pub lock_hash: Option<String>,
+    /// The build it came from (ADR-0045 §4), when the IDE deployed one.
+    pub build: Option<String>,
     pub images: Vec<ImageDto>,
     pub namespace: String,
     pub chart_sha256: String,
@@ -268,6 +270,7 @@ fn deployment_dto(d: Deployment) -> DeploymentDto {
         product: d.product,
         commit: d.commit,
         lock_hash: d.lock_hash,
+        build: d.build,
         images: d
             .images
             .into_iter()
@@ -319,6 +322,9 @@ pub struct CreateDeploymentRequest {
     pub commit: Option<String>,
     #[serde(default)]
     pub lock_hash: Option<String>,
+    /// The build it came from: the IDE's build id (ADR-0045 §4).
+    #[serde(default)]
+    pub build: Option<String>,
     #[serde(default)]
     pub images: Vec<DeployImageItem>,
     /// The generated chart, packaged (`.tgz`), base64; at most 512 KiB.
@@ -522,6 +528,7 @@ async fn create_deployment(
         product: body.product,
         commit: body.commit,
         lock_hash: body.lock_hash,
+        build: body.build,
         images: body
             .images
             .into_iter()

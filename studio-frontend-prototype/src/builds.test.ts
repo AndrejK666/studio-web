@@ -4,11 +4,17 @@ import type { ArtifactNode } from "./api";
 import {
   buildDuration,
   buildStatus,
+  buildWorkflowOf,
   buildsHeadline,
   buildsOf,
   ciReadFailures,
+  ideBuildDuration,
+  ideBuildsOf,
+  isBuildWorkflow,
   latestFinished,
   mainBranch,
+  repoPathsOf,
+  workflowFile,
   workflowsOf,
 } from "./builds";
 
@@ -76,5 +82,49 @@ describe("builds", () => {
         node("r2", { full_path: "o/b", ci_runs: 12 }),
       ]),
     ).toEqual([{ repo: "o/a", error: "GitHub 403 Forbidden" }]);
+  });
+
+  it("names the workflow Build starts by its file, in the repository its runs come from", () => {
+    expect(workflowFile(".github/workflows/studio-delivery.yml")).toBe("studio-delivery.yml");
+    expect(workflowFile("dynamic/pages")).toBeNull();
+    expect(workflowFile(null)).toBeNull();
+    const repos = repoPathsOf([node("r1", { full_path: "acme/shop" }), node("r2", {})]);
+    expect([...repos.entries()]).toEqual([["r1", "acme/shop"]]);
+    const withPath = buildsOf([
+      node("x", { workflow: "Delivery", workflow_path: ".github/workflows/delivery.yml", repo: "r1", sha: "1234567" }),
+      node("y", { workflow: "Pages", workflow_path: "dynamic/pages", repo: "r1", sha: "1234567" }),
+    ]);
+    const delivery = buildWorkflowOf(withPath, "Delivery", repos);
+    expect(delivery).toEqual({ repo: "acme/shop", workflow: "delivery.yml" });
+    expect(buildWorkflowOf(withPath, "Pages", repos)).toBeNull();
+    expect(isBuildWorkflow({ repo: "Acme/Shop", workflow: "delivery.yml" }, delivery)).toBe(true);
+    expect(isBuildWorkflow({ repo: "acme/shop", workflow: "other.yml" }, delivery)).toBe(false);
+    expect(isBuildWorkflow(null, delivery)).toBe(false);
+  });
+
+  it("reads the IDE's builds, newest first, with their first error and how long they took", () => {
+    const builds = ideBuildsOf([
+      node("1", {
+        build_id: "b-1",
+        where: "desktop",
+        status: "failed",
+        product: "shop",
+        profile: "local",
+        short_sha: "abcdef1",
+        started_at: "2026-10-15T10:00:00Z",
+        finished_at: "2026-10-15T10:06:10Z",
+        duration_ms: 370000,
+        failure: "Could not find `protoc`",
+        failure_step: "protoc",
+      }),
+      node("2", { build_id: "b-2", where: "session", status: "running", started_at: "2026-10-15T11:00:00Z", outputs: ["shop:1", 3] }),
+      node("3", { build_id: "b-3", status: "odd" }),
+    ]);
+    expect(builds.map((b) => b.buildId)).toEqual(["b-2", "b-1", "b-3"]);
+    expect(builds[1]).toMatchObject({ status: "failed", failure: "Could not find `protoc`", failureStep: "protoc", where: "desktop" });
+    expect(builds[0].outputs).toEqual(["shop:1"]);
+    expect(builds[2].status).toBe("unknown");
+    expect(ideBuildDuration(builds[1])).toBe("6 min");
+    expect(ideBuildDuration(builds[0], Date.parse("2026-10-15T11:00:40Z"))).toBe("40 s");
   });
 });

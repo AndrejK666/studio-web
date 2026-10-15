@@ -25,7 +25,9 @@ import { SelectionService } from "../shell/selection-service";
 import { ProductStore } from "../product-store";
 import { SHOW_PRODUCT } from "../shell/session-command-ids";
 import { GenerateService } from "./generate-service";
-import { DeployEnvironmentsSource, GearboxService } from "../../common/protocol";
+import { BuildReports, DeployEnvironmentsSource, GearboxService } from "../../common/protocol";
+import { BuildWatcher, newBuildId, type BuildOutcome, type BuildReport } from "../../common/build-report";
+import type { TerminalWidget } from "@theia/terminal/lib/browser/base/terminal-widget";
 import {
   LOCAL_POSTGRES,
   LOCAL_POSTGRES_PASSWORD,
@@ -135,6 +137,13 @@ export class GenerateWidget extends ReactWidget {
   // Constructor Studio: the organization's environments (ADR-0043); absent
   // in Gearbox Studio proper, where Deploy offers the kube contexts alone.
   @inject(DeployEnvironmentsSource) @optional() protected readonly environments?: DeployEnvironmentsSource;
+  // Constructor Studio: where a build's start and end are reported (ADR-0045);
+  // absent in Gearbox Studio proper.
+  @inject(BuildReports) @optional() protected readonly buildReports?: BuildReports;
+  /** The build being read off each product's Build and Run terminals. */
+  protected readonly tracking = new Map<string, (cancelled: boolean) => void>();
+  /** The newest build of each product that passed: Deploy names it. */
+  protected readonly passedBuilds = new Map<string, { readonly id: string; readonly commit?: string }>();
 
   protected toolchain: BuildToolchain | undefined;
   protected askingToolchain = false;
@@ -250,7 +259,72 @@ export class GenerateWidget extends ReactWidget {
   protected async build(target: RunTarget): Promise<void> {
     const context = this.runContext();
     if (context === undefined) return;
-    await this.terminals.send("build", context.product, context.cwd, buildCommand(target), this.terminalEnv(target));
+    const terminal = await this.terminals.send("build", context.product, context.cwd, buildCommand(target), this.terminalEnv(target));
+    void this.reportBuild("build", context.product, terminal);
+  }
+
+  /**
+   * Constructor Studio: tell the Studio server a build started, and how it
+   * ended, read off the terminal it runs in (`common/build-report.ts`). A
+   * second press of the same button ends the first as cancelled; so does
+   * closing the terminal. Best effort: a server that cannot be told does not
+   * stop the build.
+   */
+  protected async reportBuild(action: "build" | "run", product: string, terminal: TerminalWidget): Promise<void> {
+    const sink = this.buildReports;
+    const file = this.product.current.open?.path;
+    if (sink === undefined || file === undefined) return;
+    const key = `${action}:${product}`;
+    this.tracking.get(key)?.(true);
+    const commit = await this.service.headCommitOf(file).catch(() => undefined);
+    const profile = this.product.current.profile;
+    const base = {
+      build_id: newBuildId(),
+      action,
+      product,
+      ...(profile ? { profile } : {}),
+      ...(commit !== undefined ? { commit } : {}),
+      started_at: new Date().toISOString(),
+    };
+    const send = (report: BuildReport): void => {
+      sink.report(file, report).catch((error) => console.warn("Studio: a build report was not taken", error));
+    };
+    send({ ...base, status: "running" });
+    const watcher = new BuildWatcher(action);
+    let quiet: ReturnType<typeof setTimeout> | undefined;
+    const subscriptions: { dispose(): void }[] = [];
+    const finish = (outcome: BuildOutcome | undefined, cancelled: boolean): void => {
+      if (this.tracking.get(key) !== end) return;
+      this.tracking.delete(key);
+      if (quiet !== undefined) clearTimeout(quiet);
+      subscriptions.forEach((s) => s.dispose());
+      const status = cancelled || outcome === undefined ? "cancelled" : outcome.status;
+      send({
+        ...base,
+        status,
+        finished_at: new Date().toISOString(),
+        ...(outcome?.failure !== undefined ? { failure: outcome.failure } : {}),
+        ...(outcome?.failureStep !== undefined ? { failure_step: outcome.failureStep } : {}),
+      });
+      if (status === "passed") this.passedBuilds.set(product, { id: base.build_id, commit });
+    };
+    const end = (cancelled: boolean): void => finish(undefined, cancelled);
+    this.tracking.set(key, end);
+    subscriptions.push(
+      terminal.onOutput((chunk) => {
+        const outcome = watcher.feed(chunk);
+        if (outcome !== undefined) {
+          finish(outcome, false);
+          return;
+        }
+        if (quiet !== undefined) clearTimeout(quiet);
+        quiet = setTimeout(() => {
+          const idle = watcher.idle();
+          if (idle !== undefined) finish(idle, false);
+        }, 5000);
+      }),
+      terminal.onTerminalDidClose(() => end(true)),
+    );
   }
 
   protected async linkedGears(target: RunTarget): Promise<void> {
@@ -273,7 +347,8 @@ export class GenerateWidget extends ReactWidget {
       this.messages.error(`The run configuration could not be written: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    await this.terminals.send("run", context.product, context.cwd, runCommand(target, config), this.terminalEnv(target));
+    const terminal = await this.terminals.send("run", context.product, context.cwd, runCommand(target, config), this.terminalEnv(target));
+    void this.reportBuild("run", context.product, terminal);
   }
 
   protected async createDatabases(target: RunTarget): Promise<void> {
@@ -421,6 +496,9 @@ export class GenerateWidget extends ReactWidget {
       const chart = await this.service.packChart(context.cwd, deploy.chart);
       const file = this.product.current.open?.path;
       const commit = file !== undefined ? await this.service.headCommitOf(file) : undefined;
+      // The build this deploy came from: the newest that passed here, at this commit.
+      const built = this.passedBuilds.get(context.product);
+      const build = built !== undefined && (built.commit === undefined || built.commit === commit) ? built.id : undefined;
       const answer = await source.requestDeploy(
         this.deployTargets.projectId,
         deployRequest({
@@ -428,6 +506,7 @@ export class GenerateWidget extends ReactWidget {
           profile: this.product.current.profile ?? "",
           product: context.product,
           ...(commit !== undefined ? { commit } : {}),
+          ...(build !== undefined ? { build } : {}),
           script: deploy.script,
           chart,
         }),

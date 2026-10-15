@@ -141,10 +141,29 @@ made of, what was built, where it runs.
 **Phases:**
 
 1. **CI runs in the sync, and the Builds tab, read only.** Nothing in the
-   IDE changes, so this shows the moment it is deployed.
-2. **Builds reported by the IDE**, desktop and session.
+   IDE changes, so this shows the moment it is deployed. *Built.*
+2. **Builds reported by the IDE**, desktop and session. *Built: Build and
+   Run in the Generate view read how the build ended off their terminal
+   (`gearbox-studio` `common/build-report.ts`: cargo's `Finished`, `Running`,
+   `error: could not compile`, the first `error` line, a missing protoc) and
+   report its start and end through the Studio extension
+   (`gearbox-build-reports.ts`) to
+   `POST /studio-artifact-ingest/v1/projects/{id}/builds`, a `build` node per
+   build; the Builds tab lists them under "In the IDE", a failed one with its
+   first error. Reported over REST rather than the events channel: the
+   channel carries the portal's pushes to the IDE, and a report needs an
+   answer. Outputs are not read yet: the IDE does not know which images a
+   build pushed.*
 3. **Build and Deploy actions**: dispatch CI, open in the IDE, hand a passed
-   build to Deploy.
+   build to Deploy. *Built: the project's build workflow is a setting
+   (`project.config` `build`, `{repo, workflow}`), made from the Builds tab;
+   **Build in CI** dispatches it (`workflow_dispatch`) through the connection
+   of that project repository, the organization's own only; **Open in the
+   IDE** opens the project. Deploy stays in the IDE's Generate view, which
+   makes the chart a deploy needs; a deploy from there names the newest
+   build that passed at that commit (`build` on the deployment, ADR-0043).
+   Left: a portal Deploy of a CI build, which needs the chart from CI's
+   outputs.*
 
 **From the engine:** a generated product that carries its own CI workflow
 (build, push to the environment's registry) would make phase 1 work without

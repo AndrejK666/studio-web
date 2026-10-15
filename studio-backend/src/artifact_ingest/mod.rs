@@ -12,6 +12,7 @@
 //! `hypothesis/graph-storage` adapter lands).
 
 mod activity;
+mod builds; // builds the IDE reports, and Build in CI (ADR-0045)
 mod ci_runs;
 mod comment_threads;
 mod entity;

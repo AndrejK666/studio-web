@@ -77,6 +77,8 @@ pub struct DeployRequest {
     pub product: String,
     pub commit: Option<String>,
     pub lock_hash: Option<String>,
+    /// The build it came from, when the IDE deploys one it built.
+    pub build: Option<String>,
     pub images: Vec<DeployImage>,
     /// The chart, a `.tgz`, base64.
     pub chart: String,
@@ -102,6 +104,18 @@ fn check_hash(field: &'static str, v: Option<String>) -> Result<Option<String>> 
         Ok(Some(v))
     } else {
         Err(Refusal::Invalid(format!("{field} '{v}' is not a hex hash")))
+    }
+}
+
+/// A build id as the IDE makes one: 8 to 64 letters, digits and hyphens.
+fn check_build(v: Option<String>) -> Result<Option<String>> {
+    let Some(v) = v.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if (8..=64).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        Ok(Some(v))
+    } else {
+        Err(Refusal::Invalid(format!("build '{v}' is not a build id")))
     }
 }
 
@@ -514,6 +528,7 @@ impl EnvironmentService {
             product,
             commit: check_hash("commit", req.commit)?,
             lock_hash: check_hash("lock_hash", req.lock_hash)?,
+            build: check_build(req.build)?,
             images: req.images,
             namespace,
             chart_sha256: hex::encode(Sha256::digest(&chart)),

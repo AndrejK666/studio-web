@@ -20,7 +20,7 @@ All under `/studio-environments/v1`. An organization is named with
 | `POST /environments/{environment_id}/test` | admin | ask the cluster for its version with the environment's connection |
 | `GET /targets?project_id=` | member | the environments the project may deploy to, its namespace in each, its bindings |
 | `PUT /bindings?project_id=` | member | bind the product's kubernetes profiles to environments |
-| `POST /deployments?project_id=` | member | ask for a deploy: the chart (`.tgz`, base64), the images, the commit; 202 `queued` or `awaiting_approval` |
+| `POST /deployments?project_id=` | member | ask for a deploy: the chart (`.tgz`, base64), the images, the commit, and the build it came from (`build`, the IDE's build id, ADR-0045 §4); 202 `queued` or `awaiting_approval` |
 | `GET /deployments` | member | the history, newest first; filter by `project_id`, `environment_id` |
 | `POST /deployments/{deployment_id}/decisions` | admin | `approve` or `decline` (with a reason) a deploy to a protected environment |
 | `GET /deployments/{deployment_id}/status` | member | the release's workloads and ingress hosts, read from the cluster now |

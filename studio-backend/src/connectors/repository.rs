@@ -98,6 +98,22 @@ impl Repository {
             .await
     }
 
+    /// Start a run of `workflow` on `git_ref`, or on the repository's default
+    /// branch when none is given; returns the ref it was started on.
+    pub async fn dispatch_workflow(&self, workflow: &str, git_ref: Option<&str>) -> Result<String> {
+        let git_ref = match git_ref.map(str::trim).filter(|r| !r.is_empty()) {
+            Some(r) => r.to_string(),
+            None => match self.git_ref() {
+                Some(r) => r.to_string(),
+                None => self.driver.default_branch(&self.auth, &self.repo).await?,
+            },
+        };
+        self.driver
+            .dispatch_workflow(&self.auth, &self.repo, workflow, &git_ref)
+            .await?;
+        Ok(git_ref)
+    }
+
     /// One page of tag names.
     pub async fn tags(&self, page: u32, per_page: u32) -> Result<Vec<String>> {
         self.driver

@@ -2166,6 +2166,110 @@ impl IngestService {
     ///
     /// Deciding the same (document, section, capability, gear) again replaces
     /// the decision. The instance id is returned.
+    /// Record one report of a build the IDE ran (ADR-0045 phase 2) in
+    /// `project`'s graph: its start, or its end over its start. The caller
+    /// has checked that `ctx` reaches the project.
+    pub async fn record_build(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        workspace_id: Option<&str>,
+        report: &super::builds::BuildReport,
+    ) -> Result<GtsNode, super::builds::BuildRefusal> {
+        use super::{builds, gts};
+        let id = builds::checked_id(report)?;
+        let instance = gts::build_instance_id(project_id, &id);
+        // The project's builds, not the tenant's graph: one indexed read.
+        let earlier = self
+            .graph
+            .list_in_scope(ctx, Some(gts::BUILD_TYPE), project_id)
+            .await?
+            .into_iter()
+            .find(|n| n.instance_id == instance);
+        let value = builds::record(
+            report,
+            project_id,
+            workspace_id,
+            &ctx.subject_id().to_string(),
+            time::OffsetDateTime::now_utc(),
+            earlier.as_ref().map(|n| &n.value),
+        )?;
+        let node = gts::build_node(project_id, &id, value);
+        self.graph
+            .upsert_nodes(ctx, std::slice::from_ref(&node))
+            .await?;
+        Ok(node)
+    }
+
+    /// Build in CI (ADR-0045 phase 3): start the project's build workflow --
+    /// or the one `req` names -- through the connection of the project's
+    /// repository it is in, on `req`'s ref or that repository's branch.
+    /// Only a connection the project's organization owns is used. Returns
+    /// the repository, workflow and ref it was started on.
+    pub async fn dispatch_build(
+        &self,
+        ctx: &SecurityContext,
+        am: &dyn account_management_sdk::AccountManagementClient,
+        project: Uuid,
+        req: &super::builds::BuildDispatch,
+    ) -> Result<(String, String, String), super::builds::BuildRefusal> {
+        use super::builds::{self, BuildRefusal};
+        let config = crate::project_sources::read_config(am, ctx, project)
+            .await
+            .ok_or_else(|| BuildRefusal::NotFound(format!("project {project} is not found")))?;
+        let setting = crate::project_sources::build_workflow(&config);
+        let pick = |given: &Option<String>, set: Option<&str>| {
+            given
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .or(set)
+                .map(str::to_owned)
+        };
+        let repo = pick(&req.repo, setting.as_ref().map(|s| s.repo.as_str()));
+        let workflow = pick(&req.workflow, setting.as_ref().map(|s| s.workflow.as_str()));
+        let (Some(repo), Some(workflow)) = (repo, workflow) else {
+            return Err(BuildRefusal::Invalid(
+                "the project names no build workflow: pick the workflow that builds the product \
+                 on its Builds tab"
+                    .into(),
+            ));
+        };
+        let workflow = builds::workflow_file(&workflow)?;
+        let git_ref = builds::checked_ref(req.git_ref.as_deref())?;
+        let source = crate::project_sources::parse(&config)
+            .into_iter()
+            .find(|s| s.full_path.eq_ignore_ascii_case(repo.trim()))
+            .ok_or_else(|| {
+                BuildRefusal::NotFound(format!("{repo} is not one of the project's repositories"))
+            })?;
+        let service = self
+            .connectors
+            .as_ref()
+            .and_then(crate::connectors::sdk::Connectors::get)
+            .ok_or_else(|| BuildRefusal::Internal(anyhow::anyhow!("no connector service")))?;
+        service
+            .ensure_owned(ctx, project, project, source.connection_id, "github")
+            .await
+            .map_err(BuildRefusal::NotOwned)?;
+        let repository = crate::connectors::sdk::Repository::open(
+            &service,
+            ctx,
+            project,
+            source.connection_id,
+            "github",
+            &source.full_path,
+            source.branch.as_deref(),
+        )
+        .await
+        .map_err(|e| BuildRefusal::Provider(format!("{e:#}")))?;
+        let started_on = repository
+            .dispatch_workflow(&workflow, git_ref.as_deref())
+            .await
+            .map_err(|e| BuildRefusal::Provider(format!("{e:#}")))?;
+        Ok((source.full_path, workflow, started_on))
+    }
+
     pub async fn record_mapping_decision(
         &self,
         ctx: &SecurityContext,

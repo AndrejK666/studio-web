@@ -207,6 +207,37 @@ pub async fn read(
     Some(parse(&entry.value))
 }
 
+/// The workflow that builds the project's product (ADR-0045): `build` in
+/// `project.config`, `{ "repo": "acme/api", "workflow": "build.yml" }`, set
+/// from the project's Builds tab. Build starts it, and the tab speaks of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildWorkflow {
+    pub repo: String,
+    pub workflow: String,
+}
+
+/// The project's build workflow, when its config names one in full.
+pub fn build_workflow(config: &Value) -> Option<BuildWorkflow> {
+    let build = config.get("build")?;
+    Some(BuildWorkflow {
+        repo: text(build, "repo")?.to_owned(),
+        workflow: text(build, "workflow")?.to_owned(),
+    })
+}
+
+/// The project's config as it is stored, read under the caller's identity.
+/// `None` when it cannot be read, as [`read`].
+pub async fn read_config(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    project: Uuid,
+) -> Option<Value> {
+    am.get_metadata(ctx, project, GtsTypeId::new(PROJECT_CONFIG_TYPE))
+        .await
+        .ok()
+        .map(|entry| entry.value)
+}
+
 /// A source with what its connection says about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resolved {

@@ -213,6 +213,8 @@ export interface DeployRequestBody {
   readonly profile: string;
   readonly product: string;
   readonly commit?: string;
+  /** The build it came from (ADR-0045 §4): the id Build reported it under. */
+  readonly build?: string;
   readonly images: readonly { readonly app: string; readonly image: string }[];
   /** The chart, packaged (`.tgz`), base64. */
   readonly chart: string;
@@ -223,6 +225,7 @@ export function deployRequest(input: {
   readonly profile: string;
   readonly product: string;
   readonly commit?: string;
+  readonly build?: string;
   readonly script: BuildScript;
   readonly chart: string;
 }): DeployRequestBody {
@@ -231,6 +234,7 @@ export function deployRequest(input: {
     profile: input.profile,
     product: input.product,
     ...(input.commit !== undefined && /^[0-9a-f]{7,64}$/.test(input.commit) ? { commit: input.commit } : {}),
+    ...(input.build !== undefined && /^[A-Za-z0-9-]{8,64}$/.test(input.build) ? { build: input.build } : {}),
     // As generated: the server puts the environment's registry in front.
     images: input.script.images.map((i) => ({ app: i.app, image: i.image })),
     chart: input.chart,

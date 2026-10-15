@@ -51,6 +51,8 @@ import { GEARBOX_REMOTE_CATALOGUE, loadRemoteGearCatalogue, remoteGearCatalogueC
 import { AnalyzeContribution } from './analyze-contribution';
 import { AnalyzeStudioClient } from './analyze-studio-client';
 import { DeployEnvironments, GEARBOX_DEPLOY_ENVIRONMENTS } from './gearbox-deploy-environments';
+import { BuildReports, GEARBOX_BUILD_REPORTS } from './gearbox-build-reports';
+import { isDesktopHost } from './desktop-git-contribution';
 import { AnalyzeWidget } from './analyze-widget';
 import { AuditFrontendController } from './audit-controller';
 import { OperationsWidget } from './operations-widget';
@@ -236,6 +238,11 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(GEARBOX_DEPLOY_ENVIRONMENTS).toDynamicValue(ctx => {
         const client = ctx.container.get(AnalyzeStudioClient);
         return new DeployEnvironments(roots => client.scope(roots));
+    }).inSingletonScope();
+    // Build and Run report a build's start and end to the project (ADR-0045).
+    bind(GEARBOX_BUILD_REPORTS).toDynamicValue(ctx => {
+        const client = ctx.container.get(AnalyzeStudioClient);
+        return new BuildReports(roots => client.scope(roots), isDesktopHost);
     }).inSingletonScope();
     bind(WorkspaceGraphService).toDynamicValue(ctx => {
         const provider = ctx.container.get(WebSocketConnectionProvider);

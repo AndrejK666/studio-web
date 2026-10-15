@@ -878,6 +878,8 @@ export interface ProjectConfig {
   brief?: string;
   /** The project's repositories: the one record of them (`project-sources.ts`). */
   sources?: import("./project-sources").ProjectSource[];
+  /** The CI workflow that builds the product (ADR-0045): Build starts it. */
+  build?: { repo: string; workflow: string };
 }
 
 // Workspace settings live as AM tenant metadata (schema seeded by the backend config).
@@ -4586,6 +4588,15 @@ export const api = {
       token,
     );
   },
+
+  /** Build in CI (ADR-0045 phase 3): start the project's build workflow, or
+   *  the one named, on a ref or the repository's branch. */
+  dispatchBuild: (token: string, projectId: string, body: { repo?: string; workflow?: string; ref?: string }) =>
+    request<{ repo: string; workflow: string; ref: string }>(
+      `/studio-artifact-ingest/v1/projects/${encodeURIComponent(projectId)}/builds/dispatch`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
 
   /** Relations between ingested nodes (authored_by / modifies / …), optionally
    * scoped to a tenant (both endpoints must be in-scope). */

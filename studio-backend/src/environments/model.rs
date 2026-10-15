@@ -346,6 +346,10 @@ pub struct Deployment {
     pub commit: Option<String>,
     #[serde(default)]
     pub lock_hash: Option<String>,
+    /// The build it came from (ADR-0045 §4): the IDE's build id, as its
+    /// `build` record in the project's graph names it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
     /// The images as Generate built them; the environment's registry is put
     /// in front of them when the chart is installed.
     #[serde(default)]
@@ -586,6 +590,7 @@ mod tests {
             product: "p".into(),
             commit: None,
             lock_hash: None,
+            build: None,
             images: vec![],
             namespace: "p-prod".into(),
             chart_sha256: String::new(),

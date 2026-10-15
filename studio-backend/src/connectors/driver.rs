@@ -744,6 +744,24 @@ pub trait ConnectorDriver: Send + Sync + 'static {
 
     /// The repository's default branch — what a caller means when it names no
     /// branch at all. Defaulted to an error for a driver with no write path.
+    /// Start a run of `workflow` (its file name, `build.yml`, or its id) on
+    /// `git_ref` (ADR-0045 phase 3). The provider queues it; the run arrives
+    /// in the next sync like any other. Defaulted to an error: only a CI host
+    /// has workflows, and a token may lack the right to start them.
+    async fn dispatch_workflow(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        workflow: &str,
+        git_ref: &str,
+    ) -> anyhow::Result<()> {
+        let _ = (auth, repo_full_path, workflow, git_ref);
+        Err(anyhow::anyhow!(
+            "{} cannot start CI workflows through this connection",
+            self.display_name()
+        ))
+    }
+
     async fn default_branch(
         &self,
         auth: &ConnectionAuth,

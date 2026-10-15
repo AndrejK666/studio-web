@@ -33,6 +33,10 @@ pub const COMMIT_TYPE: &str = "gts.cf.studio.artifact.commit.v1~";
 /// A CI run in a repository: one run of one workflow on one commit
 /// (ADR-0045). A build of the project's product, when its workflow builds it.
 pub const WORKFLOW_RUN_TYPE: &str = "gts.cf.studio.artifact.workflow_run.v1~";
+/// A build of the project's product that the IDE ran -- in a member's desktop
+/// or in a session -- and reported (ADR-0045 phase 2): what was built, where,
+/// and with what result. Written by the report, never edited once finished.
+pub const BUILD_TYPE: &str = "gts.cf.studio.artifact.build.v1~";
 /// What search sees of a file's text: a bounded excerpt, beside the file
 /// rather than inside it.
 ///
@@ -49,7 +53,7 @@ pub const FILE_CONTENT_TYPE: &str = "gts.cf.studio.artifact.file_content.v1~";
 pub const MAPPING_DECISION_TYPE: &str = "gts.cf.studio.artifact.mapping_decision.v1~";
 
 /// Every artifact node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 11] = [
+pub const ALL_NODE_TYPES: [&str; 12] = [
     REPO_TYPE,
     ISSUE_TYPE,
     PULL_REQUEST_TYPE,
@@ -61,6 +65,7 @@ pub const ALL_NODE_TYPES: [&str; 11] = [
     FILE_CONTENT_TYPE,
     MAPPING_DECISION_TYPE,
     WORKFLOW_RUN_TYPE,
+    BUILD_TYPE,
 ];
 
 /// The node types the artifact listing returns by default — the four
@@ -185,7 +190,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 11] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 12] = [
     (
         REPO_TYPE,
         "Repository",
@@ -240,6 +245,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 11] = [
         WORKFLOW_RUN_TYPE,
         "WorkflowRun",
         "A CI run of one workflow on one commit, pulled from the connector API.",
+    ),
+    (
+        BUILD_TYPE,
+        "Build",
+        "A build of the project's product that the IDE ran and reported.",
     ),
 ];
 
@@ -896,6 +906,22 @@ pub fn workflow_run_node(
     }
 }
 
+/// A build's node id: one per reported build, so the report of its end lands
+/// on the report of its start.
+pub fn build_instance_id(project_id: &str, build_id: &str) -> String {
+    anon_id(&["build", project_id, build_id])
+}
+
+/// A build the IDE reported, as the node keeps it. `value` is the record
+/// [`super::service::IngestService::record_build`] assembled.
+pub fn build_node(project_id: &str, build_id: &str, value: serde_json::Value) -> GtsNode {
+    GtsNode {
+        type_id: BUILD_TYPE,
+        instance_id: build_instance_id(project_id, build_id),
+        value,
+    }
+}
+
 /// comment → issue / pull_request (the artifact the comment is on).
 pub fn comment_on_edge(comment_id: &str, target_id: &str) -> GtsEdge {
     GtsEdge {
@@ -1378,6 +1404,17 @@ mod tests {
 #[cfg(test)]
 mod listable_type_tests {
     use super::*;
+
+    #[test]
+    fn a_build_is_listable_by_its_leaf_and_keyed_by_project_and_build() {
+        assert_eq!(resolve_listable_types(Some("build")), vec![BUILD_TYPE]);
+        assert!(!resolve_listable_types(None).contains(&BUILD_TYPE));
+        let a = build_node("p1", "b1", json!({"status": "running"}));
+        let b = build_node("p1", "b1", json!({"status": "passed"}));
+        assert_eq!(a.instance_id, b.instance_id, "the end lands on the start");
+        assert_ne!(a.instance_id, build_node("p2", "b1", json!({})).instance_id);
+        assert_eq!(a.type_id, BUILD_TYPE);
+    }
 
     #[test]
     fn a_workflow_run_is_listable_by_its_leaf_and_keyed_by_run_not_attempt() {
