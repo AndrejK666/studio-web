@@ -1043,6 +1043,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/build-estimate",
+      "operation_id": "studio_documents.get_spec_model_build_estimate",
+      "tag": "StudioDocuments",
+      "summary": "What a build of a project's model would read, and about how long it would take",
+      "authenticated": true,
+      "responses": [
+        "SpecModelBuildEstimateDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model/decisions",
       "operation_id": "studio_documents.list_spec_model_decisions",
       "tag": "StudioDocuments",
@@ -3335,6 +3352,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/spec-model/entities",
+      "operation_id": "studio_documents.upsert_spec_model_entity",
+      "tag": "StudioDocuments",
+      "summary": "Save an entity of the domain model to the project's documentation",
+      "authenticated": true,
+      "request": "SpecModelEntityRequest",
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/spec-model/findings/{fingerprint}/decision",
       "operation_id": "studio_documents.decide_spec_model_finding",
       "tag": "StudioDocuments",
@@ -3343,6 +3378,23 @@
       "request": "SpecModelDecisionRequest",
       "responses": [
         "SpecModelDecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/spec-model/findings/{fingerprint}/proposals",
+      "operation_id": "studio_documents.create_spec_model_finding_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a finding's fix as a pull request on its document",
+      "authenticated": true,
+      "responses": [
+        "SpecModelWriteDto"
       ],
       "errors": [
         "400",

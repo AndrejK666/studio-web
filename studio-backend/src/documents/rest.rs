@@ -5934,7 +5934,10 @@ pub fn register_routes(
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
-        .json_request::<SpecModelBuildRequest>(openapi, "The project, and one document to read again")
+        .json_request::<SpecModelBuildRequest>(
+            openapi,
+            "The project, and one document to read again",
+        )
         .handler(start_spec_model_build)
         .json_response_with_schema::<SpecModelBuildDto>(openapi, StatusCode::ACCEPTED, "The build")
         .error_400(openapi)

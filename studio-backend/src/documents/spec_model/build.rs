@@ -82,7 +82,11 @@ pub struct Estimate {
 
 /// The estimate of reading `texts`, at the measured wall-clock `pace` per
 /// document when there is one.
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 pub fn estimate(texts: &[&str], pace: Option<f64>) -> Estimate {
     let documents = texts.len();
     let characters: usize = texts.iter().map(|t| t.chars().count()).sum();
@@ -453,7 +457,9 @@ mod tests {
         assert!(begin(project, docs.len()));
         let kept = Mutex::new(Vec::new());
         let result = read_all(project, &models, &ctx(), docs, |d, r| {
-            kept.lock().unwrap().push((d.path, r.extraction.facts.len()));
+            kept.lock()
+                .unwrap()
+                .push((d.path, r.extraction.facts.len()));
             async {}
         })
         .await;
