@@ -18,3 +18,4 @@ pub mod keys;
 pub mod port;
 pub mod providers;
 pub mod rest;
+pub mod usage_tap;

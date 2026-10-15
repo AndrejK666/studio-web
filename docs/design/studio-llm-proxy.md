@@ -109,10 +109,28 @@ With none, the call is refused with 403 and words that say where a key goes.
 
 The Studio token authenticates the caller to Studio and goes no further.
 Upstream, a request carries the provider key and a fixed list of protocol
-headers (`content-type`, `accept`, `accept-encoding`, `user-agent`,
+headers (`content-type`, `accept`, `user-agent`,
 `anthropic-version`, `anthropic-beta`, `openai-beta`,
 `x-stainless-helper-method`). Back, the response carries its content headers,
 the provider's request id and its rate-limit headers, which the CLIs read.
+
+`accept-encoding` is not forwarded: an answer has to come back uncompressed for
+its usage to be read on the way through (below).
+
+#### Every call is metered
+
+- [x] `p2` - **ID**: `cpt-studio-principle-llm-every-call-metered`
+
+A successful answer is read as it streams past (`usage_tap.rs`) for the usage
+the provider reports in it: input, output, cache read and cache write tokens,
+and the model that answered. Once the answer has gone by, the call is recorded
+with the platform's `usage-collector` (`src/usage`): the caller, the tenant
+the request was made in, and whose key paid — the caller's own (profile key or
+personal connection), the workspace's or the organization's. A streamed chat
+completion is asked for its usage (`stream_options.include_usage`), because an
+OpenAI-compatible stream reports it only when asked. Metering never holds up or
+changes an answer; a call it cannot record is a log line. Reads (`GET`) are not
+metered. Issue #781 is what the records are for: an organization's costs.
 
 **ADRs**: `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves`
 
@@ -295,6 +313,7 @@ it.
 | `credstore` (`cpt-studio-component-platform-feature-gears`) | `CredStoreClientV1` | The caller's profile key (private only) |
 | `studio-connector` (`cpt-studio-component-connector`) | `connectors::sdk::Connectors` → `ConnectorService::model_key_for` | The caller's personal, the workspace's and the organization's AI connection key |
 | `studio-session` (`cpt-studio-component-session`) | `studio_session::sdk::TenantMembership` | Whether the caller reaches the workspace a route names |
+| `usage-collector` (platform) | `usage_collector_sdk::UsageCollectorClientV1`, through `usage::sdk::Usage` | Recording what each call used |
 
 It is used in-process by `studio-connector`'s `anthropic-connector-plugin` and
 `openai-connector-plugin`, through `ModelProviders`, resolved on use. The two

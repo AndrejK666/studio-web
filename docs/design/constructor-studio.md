@@ -1122,11 +1122,11 @@ Owns no identity data of its own; the person is `cpt-studio-component-user`.
 
 ##### Why this component exists
 
-Credentials, files and per-user settings are platform services.
+Credentials, files, per-user settings and usage metering are platform services.
 
 ##### Responsibility scope
 
-`credstore` with `static_credstore_plugin` (displaced by `cpt-studio-component-credstore-pg` at a lower priority value), `file_storage` (with the S3 data-plane sidecar on Kubernetes), `simple_user_settings`.
+`credstore` with `static_credstore_plugin` (displaced by `cpt-studio-component-credstore-pg` at a lower priority value), `file_storage` (with the S3 data-plane sidecar on Kubernetes), `simple_user_settings`, and `usage_collector` with Studio's `postgres-usage-collector-plugin` (`studio-backend/plugins/`, the published TimescaleDB plugin's code on a plain table until the shared Postgres can have TimescaleDB): studio-llm-proxy records every model call there and studio-session every running session, through `studio-backend/src/usage` (issue #781).
 
 ##### Responsibility boundaries
 

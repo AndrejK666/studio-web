@@ -26,8 +26,9 @@ use credstore_sdk::{CredStoreClientV1, SecretRef, SharingMode};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::providers::{KeySource, ProviderConfig};
+use super::providers::{KeySource, ProviderConfig, ProviderKey};
 use crate::connectors::sdk::Connectors;
+use crate::usage::port::Payer;
 
 /// The caller's own key, from their profile.
 #[async_trait]
@@ -43,13 +44,14 @@ pub trait ProfileKeys: Send + Sync {
 #[async_trait]
 pub trait ConnectionKeys: Send + Sync {
     /// `provider` is the connector's provider id, which is the proxy's
-    /// provider name (`anthropic`, `openai`).
+    /// provider name (`anthropic`, `openai`). The key comes with who pays
+    /// for it: the scope of the connection it was read from.
     async fn connection_key(
         &self,
         ctx: &SecurityContext,
         workspace: Option<Uuid>,
         provider: &str,
-    ) -> Option<String>;
+    ) -> Option<(String, Payer)>;
 }
 
 /// A profile secret's value, when it is the caller's own.
@@ -98,8 +100,24 @@ impl ConnectionKeys for ConnectorKeys {
         ctx: &SecurityContext,
         workspace: Option<Uuid>,
         provider: &str,
-    ) -> Option<String> {
-        self.0.get()?.model_key_for(ctx, workspace, provider).await
+    ) -> Option<(String, Payer)> {
+        let key = self
+            .0
+            .get()?
+            .model_key_for(ctx, workspace, provider)
+            .await?;
+        Some((key.token, payer_of_scope(&key.scope)))
+    }
+}
+
+/// Who pays for a key read from a connection of `scope`. A scope this gear
+/// does not know is somebody's shared connection, not a person's own: it is
+/// counted as the organization's rather than left out of its total.
+pub fn payer_of_scope(scope: &str) -> Payer {
+    match scope {
+        "personal" => Payer::Personal,
+        "workspace" => Payer::Workspace,
+        _ => Payer::Organization,
     }
 }
 
@@ -117,10 +135,15 @@ impl KeySource for PeopleKeys {
         ctx: &SecurityContext,
         provider: &ProviderConfig,
         workspace: Option<Uuid>,
-    ) -> anyhow::Result<Option<String>> {
+    ) -> anyhow::Result<Option<ProviderKey>> {
         if let Some(profile) = &self.profile {
             match profile.own_key(ctx, &provider.secret_ref).await {
-                Ok(Some(key)) => return Ok(Some(key)),
+                Ok(Some(key)) => {
+                    return Ok(Some(ProviderKey {
+                        value: key,
+                        payer: Payer::Personal,
+                    }));
+                }
                 Ok(None) => {}
                 // A profile that cannot be read is no reason to refuse a key
                 // a connection can give.
@@ -134,7 +157,8 @@ impl KeySource for PeopleKeys {
         Ok(self
             .connections
             .connection_key(ctx, workspace, &provider.name)
-            .await)
+            .await
+            .map(|(value, payer)| ProviderKey { value, payer }))
     }
 }
 
@@ -200,11 +224,11 @@ mod tests {
             _: &SecurityContext,
             workspace: Option<Uuid>,
             provider: &str,
-        ) -> Option<String> {
+        ) -> Option<(String, Payer)> {
             self.0
                 .iter()
                 .find(|((w, p), _)| *w == workspace && *p == provider)
-                .map(|(_, k)| (*k).to_owned())
+                .map(|(_, k)| ((*k).to_owned(), Payer::Workspace))
         }
     }
 
@@ -236,6 +260,7 @@ mod tests {
                 keys.key_for(&person(), anthropic, workspace)
                     .await
                     .unwrap()
+                    .map(|k| k.value)
                     .as_deref(),
                 expected
             );
@@ -249,6 +274,7 @@ mod tests {
             keys.key_for(&person(), anthropic, Some(ws))
                 .await
                 .unwrap()
+                .map(|k| k.value)
                 .as_deref(),
             Some("sk-conn")
         );

@@ -16,6 +16,10 @@ README is what you need to work in the directory.
 - Config section `gears.studio-session`; `enabled: false` keeps the gear booting
   and the session routes answering 503, for hosts with no Docker. `driver` is
   `docker` (default) or `kubernetes`.
+- Each `session.reap` pass first meters the running sessions
+  (`metering.rs`): every completed five-minute window, at the requested pod
+  size, recorded with the platform's `usage-collector` through `crate::usage`
+  (issue #781).
 - Registers the `session.await_ready` and `session.reap` handlers with
   [`../tasks`](../tasks), and asks [`../scheduler`](../scheduler) for the
   `session-reaper` schedule (`platform_schedules()` in `mod.rs`).

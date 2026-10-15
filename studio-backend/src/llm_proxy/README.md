@@ -35,3 +35,8 @@ This README is what you need to work in the directory.
   `claude-sonnet-5-5`, then OpenAI `gpt-4.1-mini`).
 - Same shape as [`../spec_quality`](../spec_quality): bytes in, bytes out,
   upstream status preserved, credential server-side.
+- Every successful `POST` is metered on its way back (`usage_tap.rs`) and
+  recorded with the platform's `usage-collector` through `crate::usage`
+  (issue #781). `accept-encoding` is therefore not forwarded, and a streamed
+  chat is asked for `stream_options.include_usage`. Whose money a call was
+  comes with the key (`keys.rs`, `ProviderKey::payer`).

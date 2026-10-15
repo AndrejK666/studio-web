@@ -1,0 +1,62 @@
+# A usage-collector storage plugin on plain PostgreSQL (issue #781).
+#
+# Vendored from cf-gears-timescaledb-usage-collector-plugin 0.3.0
+# (constructorfabric/gears-rust, gears/system/usage-collector/plugins/
+# timescaledb-usage-collector-plugin, Apache-2.0). The code is that crate's;
+# what differs is only what needs TimescaleDB, and README.md lists it. The
+# Studio's Postgres has no TimescaleDB (graph-storage runs it on a 19 beta,
+# which TimescaleDB does not support), so this stands in until usage moves to a
+# Postgres that has it -- then the published plugin replaces this directory.
+[package]
+name = "studio-postgres-usage-collector-plugin"
+description = "Usage Collector storage backend on plain PostgreSQL (vendored from the TimescaleDB plugin)"
+version = "0.3.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "postgres_usage_collector_plugin"
+
+[dependencies]
+usage-collector-sdk = { package = "cf-gears-usage-collector-sdk", version = "0.3.14" }
+types-registry-sdk = { package = "cf-gears-types-registry-sdk", version = "0.3.9" }
+types-registry = { package = "cf-gears-types-registry", version = "0.4.0" }
+toolkit = { package = "cf-gears-toolkit", version = "0.10.0" }
+toolkit-macros = { package = "cf-gears-toolkit-macros", version = "0.6.6" }
+toolkit-odata = { package = "cf-gears-toolkit-odata", version = "0.9.7" }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+sqlx = { version = "0.9", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls-aws-lc-rs",
+  "postgres",
+  "uuid",
+  "time",
+  "rust_decimal",
+  "bigdecimal",
+  "json",
+  "migrate",
+  "macros",
+] }
+bigdecimal = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
+rust_decimal = { version = "1.39", features = ["serde"] }
+time = { version = "0.3.47", features = ["serde", "formatting", "parsing"] }
+uuid = { version = "1.23.3", features = ["serde", "v5"] }
+rand = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+secrecy = { version = "0.10", features = ["serde"] }
+opentelemetry = { version = "0.32", features = ["trace", "metrics"] }
+tracing = "0.1"
+anyhow = "1.0"
+inventory = "0.3"
+
+[dev-dependencies]
+opentelemetry_sdk = { version = "0.32", features = ["trace", "rt-tokio", "metrics", "testing"] }
+tokio = { version = "1.47", features = ["full"] }
+
+[lints.rust]
+# The published crate measures coverage on nightly; the attribute is kept as is.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }
