@@ -72,8 +72,28 @@ impl SessionReapTask {
                 return;
             }
         };
-        if let Err(e) = self.usage.record(&ctx.security, records).await {
-            tracing::warn!("studio-session: session usage could not be recorded: {e:#}");
+        // Recorded per tenant, acting in it. The collector asks the PDP
+        // whether the recorder reaches the record's tenant, and the tenant
+        // clamp answers that for the recorder's own tenant only: from the
+        // platform tenant this run lives in, a record in a workspace below it
+        // is refused (seen on a stand, issue #787). The sessions are the
+        // platform's own runtime, so recording in each one's workspace is the
+        // platform acting there, not anybody reaching into it.
+        let mut by_tenant: std::collections::BTreeMap<uuid::Uuid, Vec<_>> = Default::default();
+        for record in records {
+            by_tenant.entry(record.tenant_id).or_default().push(record);
+        }
+        for (tenant, records) in by_tenant {
+            let recorder = match crate::org_scope::acting_in(&ctx.security, tenant) {
+                Ok(recorder) => recorder,
+                Err(e) => {
+                    tracing::warn!(%tenant, "studio-session: cannot act in a session's tenant to meter it: {e}");
+                    continue;
+                }
+            };
+            if let Err(e) = self.usage.record(&recorder, records).await {
+                tracing::warn!(%tenant, "studio-session: session usage could not be recorded: {e:#}");
+            }
         }
     }
 }

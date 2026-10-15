@@ -881,6 +881,16 @@ impl AuthZResolverPluginClient for Service {
         // would let a project-scoped grant pull in an organization the grant
         // says nothing about.
         let mut constraints = tenant_constraints(&request, &[tid]);
+        // A grant narrows by owner tenant; a PEP that cannot filter on it
+        // cannot be narrowed, and an unfiltered allow would widen the grant.
+        if !request
+            .context
+            .supported_properties
+            .iter()
+            .any(|p| p == pep_properties::OWNER_TENANT_ID)
+        {
+            return Ok(deny());
+        }
         for c in &mut constraints {
             c.predicates.push(Predicate::In(InPredicate::new(
                 pep_properties::OWNER_TENANT_ID,
@@ -913,13 +923,32 @@ impl AuthZResolverPluginClient for Service {
 ///
 /// `tids` is never empty: it always contains the tenant the request arrived
 /// with, so this can only ever widen what a caller could already reach.
+///
+/// Only properties the PEP declared (`context.supported_properties`). The
+/// PEP compiler fails a constraint naming anything else, and when that is the
+/// only constraint the whole answer fails closed — which is how every request
+/// for a platform-global resource that declares no tenant property was lost:
+/// usage-collector's usage-type catalogue was refused with "unsupported
+/// property: owner_tenant_id" (issue #787). An empty set leaves the decision to
+/// the PEP compiler: no row filter, or a deny when it required constraints.
+/// static-authz made the same change for the same reason.
 fn tenant_constraints(request: &EvaluationRequest, tids: &[Uuid]) -> Vec<Constraint> {
-    let mut constraints = vec![Constraint {
-        predicates: vec![Predicate::In(InPredicate::new(
-            pep_properties::OWNER_TENANT_ID,
-            tids.to_vec(),
-        ))],
-    }];
+    let supports = |prop: &str| {
+        request
+            .context
+            .supported_properties
+            .iter()
+            .any(|p| p == prop)
+    };
+    let mut constraints = Vec::new();
+    if supports(pep_properties::OWNER_TENANT_ID) {
+        constraints.push(Constraint {
+            predicates: vec![Predicate::In(InPredicate::new(
+                pep_properties::OWNER_TENANT_ID,
+                tids.to_vec(),
+            ))],
+        });
+    }
     let hierarchy = request
         .context
         .capabilities
@@ -927,12 +956,7 @@ fn tenant_constraints(request: &EvaluationRequest, tids: &[Uuid]) -> Vec<Constra
         .any(|c| matches!(c, Capability::TenantHierarchy));
     if hierarchy {
         for prop in [pep_properties::OWNER_TENANT_ID, pep_properties::RESOURCE_ID] {
-            if request
-                .context
-                .supported_properties
-                .iter()
-                .any(|p| p == prop)
-            {
+            if supports(prop) {
                 for tid in tids {
                     constraints.push(Constraint {
                         predicates: vec![Predicate::InTenantSubtree(
@@ -1042,10 +1066,29 @@ mod tests {
                 token_scopes: Vec::new(),
                 require_constraints: true,
                 capabilities: Vec::new(),
-                supported_properties: Vec::new(),
+                // What every tenant-scoped PEP in this deployment declares.
+                supported_properties: vec![pep_properties::OWNER_TENANT_ID.to_string()],
                 bearer_token: None,
             },
         }
+    }
+
+    /// A platform-global resource declares no tenant property (usage-collector's
+    /// usage-type catalogue): the clamp sends nothing the PEP compiler would
+    /// fail, rather than an `owner_tenant_id` constraint that turns every
+    /// request into a deny.
+    #[test]
+    fn a_resource_without_a_tenant_property_gets_no_tenant_constraint() {
+        let mut r = request("gts.cf.core.uc.usage_type.v1~");
+        r.context.supported_properties = Vec::new();
+        r.context.require_constraints = false;
+        let answer = tenant_clamp(&r, &[TENANT]);
+        assert!(answer.decision);
+        assert!(answer.context.constraints.is_empty());
+
+        // With the hierarchy capability but still no property, still nothing.
+        r.context.capabilities = vec![Capability::TenantHierarchy];
+        assert!(tenant_constraints(&r, &[TENANT]).is_empty());
     }
 
     /// Every resource type this deployment actually serves, near enough: one

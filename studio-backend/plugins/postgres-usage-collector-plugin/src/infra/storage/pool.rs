@@ -50,7 +50,7 @@ fn connect_options(database_url: &str) -> Result<PgConnectOptions, sqlx::Error> 
         // surface it in logs/alerting at startup. Emitted once per pool build
         // (this fn is called once from `build_pool`), not once per connection.
         tracing::warn!(
-            "connecting to TimescaleDB with sslmode=disable: credentials and usage \
+            "connecting to PostgreSQL with sslmode=disable: credentials and usage \
              data are sent in cleartext. This is a deliberate opt-out; set \
              sslmode=require (or verify-ca/verify-full) for encrypted transport."
         );
