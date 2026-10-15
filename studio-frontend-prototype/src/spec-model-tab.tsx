@@ -345,7 +345,14 @@ export function SpecModelTab({
         <RequirementsView read={requirements} traces={traces} work={work} selected={traced} onSelect={setTraced} onOpenFile={onOpenFile} />
       )}
       {view === "elsewhere" && <Elsewhere read={related} onOpenFile={onOpenFile} />}
-      {model && view === "glossary" && <GlossaryScreen entries={glossary} entities={entities} onDecide={decideTerm} />}
+      {model && view === "glossary" && (
+        <GlossaryScreen
+          entries={glossary}
+          entities={entities}
+          onDecide={decideTerm}
+          onProposeRename={(from, to) => api.proposeGlossaryRename(token, projectId, from, to)}
+        />
+      )}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
       {view === "product" && <AgainstTheCode read={product} onOpenFile={onOpenFile} />}
       {model && view === "coverage" && <Coverage model={model} />}

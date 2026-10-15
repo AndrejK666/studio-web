@@ -2293,6 +2293,31 @@ pub struct GlossaryDecisionRequest {
     pub alias_of: Option<String>,
 }
 
+/// A glossary rename to carry into the documents: the name they use and the
+/// name the project chose.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct GlossaryRenameRequest {
+    /// The old name, as the documents spell it (any case).
+    pub from: String,
+    /// The project's name for it.
+    pub to: String,
+}
+
+/// The pull request that renames a word across the documents.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GlossaryRenameProposalDto {
+    /// Every file changed, from the repository's root.
+    pub files: Vec<String>,
+    /// How many uses were renamed, across the files.
+    pub renamed: u32,
+    pub branch: String,
+    pub commit_sha: String,
+    /// Set when the change went as a pull request.
+    pub pr_url: Option<String>,
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct GlossaryDecisionDto {
@@ -4463,6 +4488,140 @@ async fn upsert_spec_model_entity(
     }))
 }
 
+/// Most files one rename proposes changes to: a word used in more is a
+/// review nobody finishes.
+const GLOSSARY_RENAME_FILES_MAX: usize = 100;
+
+/// Propose a glossary rename in the documents: every whole-word use of the
+/// old name in their prose replaced by the project's name, in one pull
+/// request over every file that uses it.
+async fn create_glossary_rename_proposal(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+    Json(body): Json<GlossaryRenameRequest>,
+) -> ApiResult<(StatusCode, JsonBody<GlossaryRenameProposalDto>)> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let invalid = |field: &str, why: &str| {
+        DocumentsError::invalid_argument()
+            .with_field_violation(field, why.to_owned(), "INVALID")
+            .create()
+    };
+    let from = body.from.trim();
+    let to = body.to.trim();
+    if from.is_empty() || from.len() > GLOSSARY_TEXT_MAX {
+        return Err(invalid("from", "must be a name of at most 200 bytes"));
+    }
+    if to.is_empty() || to.len() > GLOSSARY_TEXT_MAX {
+        return Err(invalid("to", "must be a name of at most 200 bytes"));
+    }
+    if from.to_lowercase() == to.to_lowercase() {
+        return Err(invalid("to", "must differ from `from` by more than case"));
+    }
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let using: Vec<&str> = sources
+        .documents
+        .iter()
+        .filter(|d| super::spec_model::rename::rename(&d.text, from, to).is_some())
+        .map(|d| d.path.as_str())
+        .collect();
+    let unused = || {
+        DocumentsError::invalid_argument()
+            .with_constraint(format!(
+                "no document of the project uses \"{from}\" as a word outside code and links"
+            ))
+            .create()
+    };
+    if using.is_empty() {
+        return Err(unused());
+    }
+    if using.len() > GLOSSARY_RENAME_FILES_MAX {
+        return Err(DocumentsError::invalid_argument()
+            .with_constraint(format!(
+                "\"{from}\" is used in {} documents; one proposal changes at most {GLOSSARY_RENAME_FILES_MAX}",
+                using.len()
+            ))
+            .create());
+    }
+    // The repository's text, not the checkout's: the change is made to what
+    // the branch holds now.
+    let files = project_files(&quality)?;
+    let project = project_id.to_string();
+    let mut changed: Vec<crate::product::port::DeclarationFile> = Vec::new();
+    let mut renamed = 0usize;
+    for path in using {
+        let Some(text) = files
+            .read(&ctx, &project, path)
+            .await
+            .map_err(invalid_or_internal)?
+        else {
+            continue;
+        };
+        if let Some((content, n)) = super::spec_model::rename::rename(&text, from, to) {
+            renamed += n;
+            changed.push(crate::product::port::DeclarationFile {
+                path: path.to_owned(),
+                content,
+            });
+        }
+    }
+    if changed.is_empty() {
+        return Err(unused());
+    }
+    let tag = content_tag(
+        &changed
+            .iter()
+            .map(|f| format!("{}\n{}", f.path, f.content))
+            .collect::<String>(),
+    );
+    let branch = format!(
+        "glossary/{}-to-{}-{tag}",
+        branch_part(from),
+        branch_part(to)
+    );
+    let paths: Vec<String> = changed.iter().map(|f| f.path.clone()).collect();
+    let listed = paths
+        .iter()
+        .map(|p| format!("- `{p}`"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let written = files
+        .write(
+            &ctx,
+            &project,
+            &branch,
+            &changed,
+            &crate::product::port::PullRequestText {
+                message: format!("docs: call \"{from}\" \"{to}\""),
+                title: format!("Glossary: \"{from}\" is \"{to}\""),
+                body: format!(
+                    "The project's glossary calls \"{from}\" \"{to}\". {renamed} uses renamed in prose \
+                     (code, links and front matter left as they are):\n\n{listed}\n\n\
+                     Proposed from the Glossary."
+                ),
+            },
+            true,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(GlossaryRenameProposalDto {
+            files: paths,
+            renamed: u32::try_from(renamed).unwrap_or(u32::MAX),
+            branch: written.branch,
+            commit_sha: written.commit_sha,
+            pr_url: written.pr_url,
+        }),
+    ))
+}
+
 /// A write refused for a reason the caller can act on (no repository, a
 /// connection the organization does not own) as such; anything else is ours.
 fn invalid_or_internal(error: anyhow::Error) -> CanonicalError {
@@ -5978,6 +6137,34 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/glossary/proposals")
+        .operation_id("studio_documents.create_spec_model_glossary_proposal")
+        .summary("Propose a glossary rename in the documents as one pull request")
+        .description(
+            "Every whole-word use of `from` (any case) in the prose of the project's documents \
+             replaced by `to`, the first letter keeping its case; code, links' destinations and \
+             front matter are left as they are. One pull request on a `glossary/…` branch over \
+             every file that uses it: a proposal, never a commit onto the documents' branch. 400 \
+             when no document uses the name.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose documents to change")
+        .json_request::<GlossaryRenameRequest>(openapi, "The old name and the project's name")
+        .handler(create_glossary_rename_proposal)
+        .json_response_with_schema::<GlossaryRenameProposalDto>(
+            openapi,
+            StatusCode::CREATED,
+            "The pull request",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::post("/studio-documents/v1/review-requests")

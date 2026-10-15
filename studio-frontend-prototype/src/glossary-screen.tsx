@@ -4,15 +4,46 @@
  * the documents use. */
 import { useMemo, useState } from "react";
 
+import type { GlossaryRenameProposal } from "./api";
 import { LAYER_TITLE } from "./domain-layers";
-import { filterRows, glossaryRows, mergeCandidates, similarPairs, type GlossaryFilter, type GlossaryRow } from "./glossary-view";
+import { filterRows, glossaryRows, mergeCandidates, renameOffer, similarPairs, type GlossaryFilter, type GlossaryRow } from "./glossary-view";
 import type { Entity, GlossaryEntry } from "./spec-model";
 
 type Decide = (key: string, decision: { name: string | null; alias_of: string | null }) => Promise<void>;
+type Rename = { from: string; to: string };
+/** Offer, after a decision, to carry a rename into the documents. */
+type Offer = (rename: Rename | null) => void;
 
 const PAGE = 60;
 
-export function GlossaryScreen({ entries, entities, onDecide }: { entries: GlossaryEntry[]; entities: Entity[]; onDecide: Decide }) {
+export function GlossaryScreen({
+  entries,
+  entities,
+  onDecide,
+  onProposeRename,
+}: {
+  entries: GlossaryEntry[];
+  entities: Entity[];
+  onDecide: Decide;
+  onProposeRename: (from: string, to: string) => Promise<GlossaryRenameProposal>;
+}) {
+  const [offer, setOffer] = useState<Rename | null>(null);
+  const [proposing, setProposing] = useState(false);
+  const [proposed, setProposed] = useState<GlossaryRenameProposal | null>(null);
+  const [proposeError, setProposeError] = useState<string | null>(null);
+  const offerRename: Offer = (rename) => {
+    setOffer(rename);
+    setProposed(null);
+    setProposeError(null);
+  };
+  const propose = (rename: Rename) => {
+    setProposing(true);
+    setProposeError(null);
+    onProposeRename(rename.from, rename.to)
+      .then((r) => setProposed(r))
+      .catch((e: unknown) => setProposeError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setProposing(false));
+  };
   const [filter, setFilter] = useState<GlossaryFilter>("all");
   const [text, setText] = useState("");
   const [shown, setShown] = useState(PAGE);
@@ -53,6 +84,35 @@ export function GlossaryScreen({ entries, entities, onDecide }: { entries: Gloss
         {chip("named", "Settled by you", named)}
       </div>
 
+      {offer && (
+        <section className="card gl-offer" aria-live="polite">
+          {proposed ? (
+            <span>
+              Proposed renaming “{offer.from}” to “{offer.to}” in {proposed.files.length} document{proposed.files.length === 1 ? "" : "s"} ({proposed.renamed} use
+              {proposed.renamed === 1 ? "" : "s"}):{" "}
+              {proposed.pr_url ? (
+                <a href={proposed.pr_url} target="_blank" rel="noreferrer">
+                  {proposed.pr_url}
+                </a>
+              ) : (
+                <code>{proposed.branch}</code>
+              )}
+            </span>
+          ) : (
+            <span>
+              The documents still say “{offer.from}”.{" "}
+              <button type="button" className="primary" disabled={proposing} onClick={() => propose(offer)}>
+                {proposing ? "Proposing…" : `Propose renaming “${offer.from}” to “${offer.to}” in the documents`}
+              </button>
+              {proposeError && <span className="hint"> {proposeError}</span>}
+            </span>
+          )}{" "}
+          <button type="button" className="ghost" onClick={() => offerRename(null)}>
+            {proposed ? "Close" : "Not now"}
+          </button>
+        </section>
+      )}
+
       {filter !== "named" && pairs.length > 0 && (
         <section className="card gl-pairs">
           <div className="dm-h">Probably one thing under two names</div>
@@ -62,7 +122,7 @@ export function GlossaryScreen({ entries, entities, onDecide }: { entries: Gloss
                 <b>{p.a.name}</b> and <b>{p.b.name}</b> <span className="hint">— {p.why}</span>
               </span>
               <span className="gl-pair-actions">
-                <button type="button" className="primary" title={`Read “${p.b.name}” as “${p.a.name}”`} onClick={() => void onDecide(p.b.key, { name: null, alias_of: p.a.key })}>
+                <button type="button" className="primary" title={`Read “${p.b.name}” as “${p.a.name}”`} onClick={() => void onDecide(p.b.key, { name: null, alias_of: p.a.key }).then(() => offerRename(renameOffer(p.b, p.a.name)))}>
                   Same thing
                 </button>
                 <button type="button" className="ghost" onClick={() => setApart((s) => new Set(s).add(`${p.a.key}|${p.b.key}`))}>
@@ -81,7 +141,7 @@ export function GlossaryScreen({ entries, entities, onDecide }: { entries: Gloss
 
       <ul className="gl-list">
         {list.slice(0, shown).map((r) => (
-          <GlossaryItem key={r.entry.key} row={r} entries={entries} onDecide={onDecide} />
+          <GlossaryItem key={r.entry.key} row={r} entries={entries} onDecide={onDecide} onOffer={offerRename} />
         ))}
       </ul>
       {list.length === 0 && <div className="empty">Nothing matches.</div>}
@@ -94,7 +154,7 @@ export function GlossaryScreen({ entries, entities, onDecide }: { entries: Gloss
   );
 }
 
-function GlossaryItem({ row, entries, onDecide }: { row: GlossaryRow; entries: GlossaryEntry[]; onDecide: Decide }) {
+function GlossaryItem({ row, entries, onDecide, onOffer }: { row: GlossaryRow; entries: GlossaryEntry[]; onDecide: Decide; onOffer: Offer }) {
   const e = row.entry;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [merging, setMerging] = useState<string | null>(null);
@@ -108,7 +168,11 @@ function GlossaryItem({ row, entries, onDecide }: { row: GlossaryRow; entries: G
             className="gl-inline"
             onSubmit={(ev) => {
               ev.preventDefault();
-              void onDecide(e.key, { name: renaming.trim() || null, alias_of: null }).then(() => setRenaming(null));
+              const name = renaming.trim();
+              void onDecide(e.key, { name: name || null, alias_of: null }).then(() => {
+                setRenaming(null);
+                onOffer(renameOffer(e, name));
+              });
             }}
           >
             <input autoFocus aria-label={`Name for ${e.name}`} value={renaming} onChange={(ev) => setRenaming(ev.target.value)} />
@@ -162,7 +226,11 @@ function GlossaryItem({ row, entries, onDecide }: { row: GlossaryRow; entries: G
         <div className="gl-merge">
           <input autoFocus type="search" placeholder={`Which word is “${e.name}” another name for?`} value={merging} onChange={(ev) => setMerging(ev.target.value)} aria-label={`Merge ${e.name} into`} />
           {candidates.map((c) => (
-            <button key={c.key} type="button" className="chip" onClick={() => void onDecide(e.key, { name: e.chosen ? e.name : null, alias_of: c.key }).then(() => setMerging(null))}>
+            <button key={c.key} type="button" className="chip" onClick={() => void onDecide(e.key, { name: e.chosen ? e.name : null, alias_of: c.key }).then(() => {
+                    setMerging(null);
+                    onOffer(renameOffer(e, c.name));
+                  })
+              }>
               {c.name} <span className="chip-n">{c.facts}</span>
             </button>
           ))}

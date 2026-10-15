@@ -3406,6 +3406,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/spec-model/glossary/proposals",
+      "operation_id": "studio_documents.create_spec_model_glossary_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a glossary rename in the documents as one pull request",
+      "authenticated": true,
+      "request": "GlossaryRenameRequest",
+      "responses": [
+        "GlossaryRenameProposalDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/workspaces/{workspace_id}/capabilities",
       "operation_id": "studio_documents.upsert_capability",
       "tag": "StudioDocuments",
