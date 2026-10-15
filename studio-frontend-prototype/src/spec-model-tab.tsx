@@ -18,10 +18,12 @@
 // read). A build runs on the viewer's own model key, so the button says so.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type SpecModelEntityEdit } from "./api";
+import { api, type Candidate, type SpecModelEntityEdit } from "./api";
 import { ModelMapView, Prose, RequirementsView, ResolveView, SideLink } from "./domain-model-screens";
+import { gearRefs } from "./entity-gears";
 import { GlossaryScreen } from "./glossary-screen";
 import { overlaySaved, pruneSaved, savedWrites, withSaved, type SavedEdit } from "./saved-entities";
+import { useGearCatalogue } from "./product-configurator-view";
 import {
   buildLine,
   coverageCounts,
@@ -59,11 +61,14 @@ export function SpecModelTab({
   token,
   projectId,
   onOpenFile,
+  onOpenProduct,
 }: {
   token: string;
   projectId: string;
   /** Open a document in the project's IDE session. */
   onOpenFile?: (path: string) => void;
+  /** Open the project's Product tab, where a gear for an entity is made. */
+  onOpenProduct?: () => void;
 }) {
   const [model, setModel] = useState<SpecModel | null>(null);
   const [findings, setFindings] = useState<SpecModelFinding[]>([]);
@@ -143,6 +148,23 @@ export function SpecModelTab({
     };
   }, [token, projectId]);
 
+  // The project's own gears, which keep entities the catalogue does not: the
+  // plan's candidates its repositories declare. Read once the map is opened,
+  // and quietly left out when the plan cannot be read.
+  const [ownGears, setOwnGears] = useState<Candidate[]>([]);
+  const mapOpened = view === "map";
+  useEffect(() => {
+    if (!mapOpened) return;
+    let live = true;
+    api
+      .projectPlan(token, projectId)
+      .then((r) => live && setOwnGears(r.items.flatMap((row) => row.candidates).filter((c) => c.origin === "project")))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, mapOpened]);
+
   // Read when the view is opened: it reads every code file of the checkouts.
   useEffect(() => {
     if (view !== "reqs" || traces !== null) return;
@@ -215,8 +237,13 @@ export function SpecModelTab({
   };
 
   const facts = useMemo(() => overlaySaved(model?.facts ?? [], saved), [model, saved]);
-  const entities = useMemo(() => entitiesOf(facts, glossary), [facts, glossary]);
   const writes = useMemo(() => savedWrites(saved), [saved]);
+  const entities = useMemo(() => entitiesOf(facts, glossary), [facts, glossary]);
+  // Which gear keeps each Domain entity: read when the map is first opened.
+  // Without the catalogue no gear is known, so no gap is claimed either.
+  const catalogue = useGearCatalogue(token, view === "map");
+  const index = catalogue && "index" in catalogue ? catalogue.index : null;
+  const gears = useMemo(() => (index ? gearRefs(index, ownGears) : null), [index, ownGears]);
   const ordered = useMemo(() => orderFindings(findings), [findings]);
   const open = ordered.filter((f) => f.decision !== "dismissed").length;
   const line = model ? buildLine(model.build) : "";
@@ -305,7 +332,14 @@ export function SpecModelTab({
         />
       )}
       {model && view === "map" && (
-        <ModelMapView entities={entities} onOpenFile={onOpenFile} onSave={saveEntity} saved={writes} />
+        <ModelMapView
+          entities={entities}
+          onOpenFile={onOpenFile}
+          onSave={saveEntity}
+          saved={writes}
+          gears={gears}
+          onOpenProduct={onOpenProduct}
+        />
       )}
       {view === "reqs" && (
         <RequirementsView read={requirements} traces={traces} work={work} selected={traced} onSelect={setTraced} onOpenFile={onOpenFile} />

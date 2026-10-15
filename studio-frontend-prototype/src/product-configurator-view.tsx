@@ -8,6 +8,8 @@
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 
 import { api, type GearConfig, type ProductPreview } from "./api";
+import { layerOf } from "./domain-layers";
+import { entityGears, gearRefs } from "./entity-gears";
 import { BringsWithIt } from "./gear-brings-view";
 import { GearConfigForm } from "./gear-config-form";
 import {
@@ -24,6 +26,7 @@ import {
   type Part,
 } from "./product-configurator";
 import { gearLabel } from "./product";
+import { entitiesOf, type GlossaryEntry } from "./spec-model";
 
 /** What the map needs of the project's product. */
 export type ConfiguredProduct = {
@@ -57,6 +60,33 @@ export function useGearCatalogue(token: string, on: boolean): Catalogue {
   return read;
 }
 
+/** The project's Domain entities each catalogue gear keeps, by engine id
+ *  (entity-gears.ts): read once the catalogue is there, from the model the
+ *  documents were last read into. Empty when there is no model or it cannot
+ *  be read: the map does not need it. */
+export function useKeptEntities(token: string, projectId: string, index: CatalogueIndex | null): Map<string, string[]> {
+  const [kept, setKept] = useState<Map<string, string[]>>(new Map());
+  useEffect(() => {
+    if (!index) return;
+    let live = true;
+    Promise.all([
+      api.specModel(token, projectId),
+      api.glossary(token, projectId).catch(() => ({ items: [] as GlossaryEntry[], total: 0 })),
+    ])
+      .then(([model, glossary]) => {
+        if (!live) return;
+        const domain = entitiesOf(model.facts, glossary.items).filter((e) => layerOf(e) === "domain");
+        const { byGear } = entityGears(domain, gearRefs(index));
+        setKept(new Map([...byGear].map(([id, es]) => [id, es.map((e) => e.name)])));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, index]);
+  return kept;
+}
+
 function Cog({ size = 24 }: { size?: number }) {
   // Eight teeth around a hub.
   const d = useMemo(() => {
@@ -88,9 +118,12 @@ export function ProductConfigurator({
   busy,
   onBuild,
   onOpen,
+  kept,
 }: {
   token: string;
   index: CatalogueIndex;
+  /** The Domain entities each gear keeps, by engine id (useKeptEntities). */
+  kept?: Map<string, string[]>;
   product: ConfiguredProduct;
   /** The engine's last answer about this product, if any. */
   preview: Pick<ProductPreview, "gears" | "ok" | "diagnostics" | "applications" | "profile"> | null;
@@ -207,7 +240,7 @@ export function ProductConfigurator({
                   </header>
                   {parts.length === 0 && <div className="pm-hint">Drop it here</div>}
                   {parts.map((p) => (
-                    <Tile key={p.name} part={p} selected={p.name === selected} onSelect={() => setSelected(p.name)} />
+                    <Tile key={p.name} part={p} keeps={kept?.get(p.id)} selected={p.name === selected} onSelect={() => setSelected(p.name)} />
                   ))}
                 </section>
               );
@@ -247,6 +280,7 @@ export function ProductConfigurator({
           token={token}
           index={index}
           part={chosen}
+          keeps={chosen ? kept?.get(chosen.id) : undefined}
           product={product}
           busy={busy}
           onOpen={onOpen}
@@ -260,7 +294,23 @@ export function ProductConfigurator({
   );
 }
 
-function Tile({ part, selected, onSelect }: { part: Part; selected: boolean; onSelect: () => void }) {
+/** "Keeps: Project, Workspace and 2 more": the Domain entities a part stores. */
+function keepsLine(keeps: string[], max = 3): string {
+  const shown = keeps.slice(0, max).join(", ");
+  return keeps.length > max ? `${shown} and ${keeps.length - max} more` : shown;
+}
+
+function Tile({
+  part,
+  keeps,
+  selected,
+  onSelect,
+}: {
+  part: Part;
+  keeps?: string[];
+  selected: boolean;
+  onSelect: () => void;
+}) {
   const open = part.unset.length > 0 || part.slots.some((s) => s.chosen.length === 0 || s.unset.length > 0);
   return (
     <button type="button" className={`pm-tile${selected ? " selected" : ""}`} onClick={onSelect} data-part={part.name}>
@@ -268,6 +318,11 @@ function Tile({ part, selected, onSelect }: { part: Part; selected: boolean; onS
       <Cog size={24} />
       <b>{part.label}</b>
       <small>{part.description ?? (part.plugsInto ? `Plugs into ${part.plugsInto}` : gearLabel(part.name))}</small>
+      {keeps && keeps.length > 0 && (
+        <small data-keeps title={`Domain entities it keeps: ${keeps.join(", ")}`}>
+          <b>Keeps:</b> {keepsLine(keeps)}
+        </small>
+      )}
       {part.slots.length > 0 && (
         <span className="pm-sockets">
           {part.slots.map((s) => {
@@ -373,6 +428,7 @@ function Inspector({
   token,
   index,
   part,
+  keeps,
   product,
   busy,
   onOpen,
@@ -381,6 +437,7 @@ function Inspector({
   token: string;
   index: CatalogueIndex;
   part: Part | null;
+  keeps?: string[];
   product: ConfiguredProduct;
   busy: boolean;
   onOpen?: (name: string) => void;
@@ -429,6 +486,12 @@ function Inspector({
       <div className="pm-why">
         {part.description ?? "Its gear.gdl does not say what it is for yet. What is known of it:"}
       </div>
+      {keeps && keeps.length > 0 && (
+        <div data-keeps>
+          <b>Keeps:</b> {keeps.join(", ")}
+          <span style={{ color: "var(--muted-foreground)", fontSize: 12 }}> — from this project&apos;s domain model</span>
+        </div>
+      )}
       {facts.length > 0 && (
         <ul className="pm-facts">
           {facts.map((f) => (
