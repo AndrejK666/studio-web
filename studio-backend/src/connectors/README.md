@@ -71,7 +71,7 @@ Notifications that must survive a failure go through
 - Gear `studio-connector`, capabilities `[rest]`, deps `types_registry`,
   `account_management`, `credstore`; no database (the catalogue is tenant
   metadata, the tokens are in credstore).
-- One plugin gear per provider (`<provider>-connector-plugin`, eleven of them
+- One plugin gear per provider (`<provider>-connector-plugin`, thirteen of them
   in `plugin.rs`), deps `types_registry`.
 - Config sections `gears.studio-connector` and
   `gears.<provider>-connector-plugin` (`vendor`, `priority`).

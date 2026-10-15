@@ -207,6 +207,23 @@ pub fn clone_or_update(
     std::fs::create_dir_all(work_root)
         .map_err(|e| anyhow::anyhow!("cannot create clone root {}: {e}", work_root.display()))?;
     let dir = work_root.join(checkout_key(connector_id, repo_full_path));
+    clone_or_update_into(&dir, clone_url, username, token, git_ref)
+}
+
+/// [`clone_or_update`] into exactly `dir`, for a caller whose directory's
+/// name means something: the Gearbox engine names a source root by it.
+pub fn clone_or_update_into(
+    dir: &Path,
+    clone_url: &str,
+    username: &str,
+    token: &str,
+    git_ref: Option<&str>,
+) -> anyhow::Result<CloneResult> {
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("cannot create clone root {}: {e}", parent.display()))?;
+    }
+    let dir = dir.to_path_buf();
 
     if dir.join(".git").is_dir() {
         // Existing checkout: fetch the tip shallowly and hard-reset onto it, so

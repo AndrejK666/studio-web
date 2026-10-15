@@ -18,11 +18,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { ModelMapView, Prose, RequirementsView, ResolveView, SideLink } from "./domain-model-screens";
+import { GlossaryScreen } from "./glossary-screen";
 import {
   buildLine,
   coverageCounts,
   entitiesOf,
-  mergeTargets,
   orderFindings,
   orderProductFindings,
   orderRelated,
@@ -289,7 +289,7 @@ export function SpecModelTab({
         <RequirementsView read={requirements} traces={traces} work={work} selected={traced} onSelect={setTraced} onOpenFile={onOpenFile} />
       )}
       {view === "elsewhere" && <Elsewhere read={related} onOpenFile={onOpenFile} />}
-      {model && view === "glossary" && <Glossary entries={glossary} onDecide={decideTerm} />}
+      {model && view === "glossary" && <GlossaryScreen entries={glossary} entities={entities} onDecide={decideTerm} />}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
       {view === "product" && <AgainstTheCode read={product} onOpenFile={onOpenFile} />}
       {model && view === "coverage" && <Coverage model={model} />}
@@ -515,126 +515,6 @@ function Elsewhere({
             <div className="sm-req-cites">Shared: {r.shared.join(", ")}</div>
           </li>
         ))}
-      </ul>
-    </>
-  );
-}
-
-/** The project's names for its things. Each entry is proposed from the
- *  spellings the documents use; a member names it, or merges it into another
- *  entry as one more name of the same thing, and can split it out again. */
-function Glossary({
-  entries,
-  onDecide,
-}: {
-  entries: GlossaryEntry[];
-  onDecide: (key: string, decision: { name: string | null; alias_of: string | null }) => Promise<void>;
-}) {
-  const [filter, setFilter] = useState("");
-  const [renaming, setRenaming] = useState<{ key: string; name: string } | null>(null);
-  if (entries.length === 0) {
-    return <div className="empty">Nothing read yet. Build the model to read the documents.</div>;
-  }
-  const needle = filter.trim().toLowerCase();
-  const shown = entries.filter(
-    (e) => !needle || e.spellings.some((s) => s.toLowerCase().includes(needle)) || e.name.toLowerCase().includes(needle),
-  );
-  // An entry shown is never an alias itself, so its decision keeps
-  // `alias_of` null; a split alias goes back to the name its documents use.
-  const chosenName = (e: GlossaryEntry) => (e.chosen ? e.name : null);
-  return (
-    <>
-      <p className="hint">
-        One entry per thing the documents name. Spellings that differ only in case, articles or plurals are already
-        one entry. Name the entry the way the project should say it, or merge an entry into another when the
-        documents call one thing by two names: the rules then read both names as one thing.
-      </p>
-      <input placeholder="Filter the glossary" value={filter} onChange={(e) => setFilter(e.target.value)} />
-      <ul className="rows sm-glossary">
-        {shown.map((e) => {
-          const others = e.spellings.filter((s) => s !== e.name);
-          const targets = mergeTargets(e, entries);
-          return (
-            <li key={e.key} className="sm-term">
-              <div className="sm-term-head">
-                {renaming?.key === e.key ? (
-                  <form
-                    className="sm-term-rename"
-                    onSubmit={(ev) => {
-                      ev.preventDefault();
-                      void onDecide(e.key, { name: renaming.name.trim() || null, alias_of: null }).then(() =>
-                        setRenaming(null),
-                      );
-                    }}
-                  >
-                    <input
-                      autoFocus
-                      aria-label={`Name for ${e.name}`}
-                      value={renaming.name}
-                      onChange={(ev) => setRenaming({ key: e.key, name: ev.target.value })}
-                    />
-                    <button type="submit" className="primary">
-                      Save
-                    </button>
-                    <button type="button" onClick={() => setRenaming(null)}>
-                      Cancel
-                    </button>
-                  </form>
-                ) : (
-                  <>
-                    <strong>{e.name}</strong>
-                    {e.chosen && <span className="sm-status">chosen</span>}
-                    <span className="hint">
-                      {e.facts} fact{e.facts === 1 ? "" : "s"} · {e.documents} doc{e.documents === 1 ? "" : "s"}
-                    </span>
-                  </>
-                )}
-              </div>
-              {others.length > 0 && <div className="hint">Also written: {others.join(", ")}</div>}
-              {e.aliases.length > 0 && (
-                <div className="sm-related">
-                  Same thing as:{" "}
-                  {e.aliases.map((a) => (
-                    <button
-                      key={a.key}
-                      className="chip"
-                      title={`Split “${a.name}” out into an entry of its own`}
-                      onClick={() => void onDecide(a.key, { name: null, alias_of: null })}
-                    >
-                      {a.name} ×
-                    </button>
-                  ))}
-                </div>
-              )}
-              {renaming?.key !== e.key && (
-                <div className="sm-term-actions">
-                  <button onClick={() => setRenaming({ key: e.key, name: e.name })}>Rename</button>
-                  {e.chosen && (
-                    <button onClick={() => void onDecide(e.key, { name: null, alias_of: null })}>
-                      Use the documents&apos; name
-                    </button>
-                  )}
-                  {targets.length > 0 && (
-                    <select
-                      aria-label={`Merge ${e.name} into another entry`}
-                      value=""
-                      onChange={(ev) =>
-                        ev.target.value && void onDecide(e.key, { name: chosenName(e), alias_of: ev.target.value })
-                      }
-                    >
-                      <option value="">Same thing as…</option>
-                      {targets.map((t) => (
-                        <option key={t.key} value={t.key}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              )}
-            </li>
-          );
-        })}
       </ul>
     </>
   );

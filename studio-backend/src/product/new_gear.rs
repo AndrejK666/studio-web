@@ -65,7 +65,7 @@ async fn describe(
         // other, the `gears-rust` checkout beside it. The plugin's
         // `gear.gdl` names its point by spec (`fills = "..."`), which the
         // engine joins across sources, so either validates.
-        let in_corpus = super::gearbox::repo_key(target_repo) == gearbox.corpus_repo();
+        let in_corpus = gearbox.is_corpus_repo(&super::gearbox::repo_key(target_repo));
         let points = gearbox
             .extension_points()
             .await

@@ -42,6 +42,7 @@ export const VIEW_PATHS = {
   gears: "components",
   platform: "platform",
   publications: "publication-requests",
+  "platform-sources": "platform-sources",
   org: "organization",
   reports: "reports",
   objects: "objects",

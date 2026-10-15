@@ -57,6 +57,10 @@ pub enum ConnectorCategory {
     /// browse: an organization's environments name it, and only the server
     /// uses its credential.
     Cluster,
+    /// A repository of gears a tier's corpus is read from (ADR-0046). The
+    /// connection is the repository itself; the server clones it for the
+    /// Gearbox engine.
+    Gears,
 }
 
 impl ConnectorCategory {
@@ -66,6 +70,7 @@ impl ConnectorCategory {
             Self::Ai => "ai",
             Self::Notification => "notification",
             Self::Cluster => "cluster",
+            Self::Gears => "gears",
         }
     }
 }
@@ -485,6 +490,29 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             ConnectorCategory::Ai => "API Key",
             ConnectorCategory::Notification => "Bot Token",
             ConnectorCategory::Cluster => "Service-account token",
+            ConnectorCategory::Gears => "Read token",
+        }
+    }
+
+    /// Whether a connection may be stored without a credential: a public
+    /// repository of gears is read anonymously. Every other kind needs one.
+    fn token_optional(&self) -> bool {
+        false
+    }
+
+    /// The connection's options as they are stored, from what was given,
+    /// or why they are refused. A driver that takes none refuses any.
+    fn check_options(
+        &self,
+        _base_url: &str,
+        options: &std::collections::BTreeMap<String, String>,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+        match options.keys().next() {
+            Some(k) => Err(anyhow::anyhow!(
+                "a {} connection takes no options (`{k}` was given)",
+                self.display_name()
+            )),
+            None => Ok(Default::default()),
         }
     }
 
@@ -495,6 +523,16 @@ pub trait ConnectorDriver: Send + Sync + 'static {
 
     /// Verify the credential and report whose it is.
     async fn test(&self, auth: &ConnectionAuth) -> anyhow::Result<DriverIdentity>;
+
+    /// [`Self::test`] for a connection with options, which say more of what
+    /// to check (a gear repository's ref). Most drivers have none.
+    async fn test_with_options(
+        &self,
+        auth: &ConnectionAuth,
+        _options: &std::collections::BTreeMap<String, String>,
+    ) -> anyhow::Result<DriverIdentity> {
+        self.test(auth).await
+    }
 
     /// Repositories the credential can reach. `search` narrows server-side
     /// where the provider supports it; `limit` caps one page.

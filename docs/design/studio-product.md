@@ -110,14 +110,34 @@ to the old one on 404. They go once no supported desktop release reads them.
 - [x] `p2` - **ID**: `cpt-studio-constraint-product-gearbox-optional`
 
 Previews, the engine catalogue, extension points, completion, repository facts
-and the corpus relay need `STUDIO_GEARBOX_WORKDIR` and
-`STUDIO_GEARBOX_CORPUS_URL` (the chart's `backend.gearbox`, where `corpusUrl`
-is required once it is enabled). The corpus is the platform's gears
-(ADR-0042), named by the deployment and by nothing else: there is no built-in
-default, and no catalogue sync can repoint it. The deployments name
+and the corpus relay need `STUDIO_GEARBOX_WORKDIR`. The corpus is the
+platform's gears (ADR-0042), read from the platform's **gear repositories**
+(ADR-0046): connections of the `gear-repository` kind held by the root tenant,
+in the order they were added (`gear_roots.rs`). Each is checked out at
+`gearbox-roots/<connection>/<source id>` under the engine's working directory
+and passed as its own `--root`: the engine names a root by its directory when
+there are several, and it follows links to the real one, so the checkout
+itself carries the id. They are always read together,
+because a gear in one may use a gear in another; where two declare the same
+gear, the first wins. The list is read on the way into a route of this gear or
+the catalogue's, at most once a minute (`GET /studio-product/v1/gearbox?refresh=true`
+reads it now); a changed list is checked out on the next use. No
+organization's settings or sync can change it.
+
+While the platform has no gear repository, the deployment's corpus is the one
+root, under the source id `gears-rust`: `STUDIO_GEARBOX_CORPUS_URL` (the
+chart's `backend.gearbox.corpusUrl`). The deployments name
 `MikeFalcon77/gears-rust` at `feature/gearbox` for now, because `gear.gdl`
 descriptors exist only on that branch until constructorfabric/gears-rust#4793
-merges.
+merges; connecting the platform's gear repositories moves them off it without
+a deployment.
+
+A generated `product.gdl` declares one `source` per gear repository, each at
+the commit it was checked against, and each `use_gear` names the repository the
+engine found the gear in (`render_product_gdl_from`). The status
+(`GET /studio-product/v1/gearbox`) lists every root with its commit and gear
+count (`sources`); the corpus relay and the catalogue DTO still name the first
+root only, until the relay per repository (ADR-0046 phase 2).
 
 #### A project writes only through its organization's own connections
 
@@ -422,7 +442,7 @@ reads no configuration section; it is configured by environment.
 |---|---|---|
 | `STUDIO_GEARBOX_WORKDIR` | unset: Gearbox is off | Where the corpus is checked out |
 | `STUDIO_GEARBOX_BIN` | `gearbox` | The engine CLI |
-| `STUDIO_GEARBOX_CORPUS_URL` | unset: Gearbox is off | The corpus: the platform's gears |
+| `STUDIO_GEARBOX_CORPUS_URL` | unset: no corpus until the platform has a gear repository | The corpus while the platform has no gear repository (ADR-0046) |
 | `STUDIO_GEARBOX_CORPUS_REF` | `main` | Its ref |
 | `STUDIO_GEARBOX_REFRESH_SECS` | `600` | How often the checkout is refreshed |
 

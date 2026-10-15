@@ -178,7 +178,8 @@ Studio's side follows once the engine answers this.
 4. **Several corpora, per-gear versions and forks in composition**, once the
    engine supports them: each product picks a version per gear, and an
    organization's fork replaces the platform gear for that organization.
-   Built on #702, in a separate PR.
+   Built on #702, in a separate PR. *Where the corpora come from: ADR-0046
+   (gear repositories as connections, several per tier).*
 
 ## Traceability
 
