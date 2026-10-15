@@ -188,3 +188,76 @@ describe("where sign-in sends you", () => {
     });
   });
 });
+
+/* ── Signing in with a password, on the portal's own page ───────────────────
+ *
+ * The password grant keeps the browser on the portal. What it cannot finish —
+ * a client with direct grants switched off, an account with required actions —
+ * goes on to the IdP's own form rather than failing; only a refusal of the
+ * credentials stays here.
+ */
+describe("signing in with a password", () => {
+  let location: { href: string; pathname: string; search: string; hash: string };
+
+  beforeEach(() => {
+    const href = "https://studio-dev.cfabric.org/";
+    location = { href, pathname: "/", search: "", hash: "" };
+    vi.stubGlobal("window", { location, history: { replaceState: vi.fn() } });
+    vi.stubGlobal("sessionStorage", memoryStorage());
+    vi.stubGlobal("localStorage", memoryStorage());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function answer(body: Record<string, unknown>, status: number) {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("signs in without leaving the page when the IdP takes the password", async () => {
+    const fetchMock = answer({ access_token: "access-1", refresh_token: "refresh-1", expires_in: 300 }, 200);
+    const { signInWithPassword } = await import("./oidc");
+
+    const outcome = await signInWithPassword("ada@example.com", "secret");
+
+    expect(outcome).toEqual({ kind: "signed-in", session: { accessToken: "access-1", expiresIn: 300 } });
+    const sent = new URLSearchParams(String(fetchMock.mock.calls[0][1]?.body));
+    expect(sent.get("grant_type")).toBe("password");
+    expect(sent.get("username")).toBe("ada@example.com");
+    expect(location.href).toBe("https://studio-dev.cfabric.org/");
+  });
+
+  it("stays on the page and says so when the credentials are wrong", async () => {
+    answer({ error: "invalid_grant", error_description: "Invalid user credentials" }, 401);
+    const { signInWithPassword } = await import("./oidc");
+
+    expect(await signInWithPassword("ada@example.com", "wrong")).toEqual({
+      kind: "rejected",
+      reason: "Wrong email or password.",
+    });
+    expect(location.href).toBe("https://studio-dev.cfabric.org/");
+  });
+
+  it("goes on to the IdP's form, e-mail filled in, when the client takes no passwords", async () => {
+    answer({ error: "unauthorized_client", error_description: "Client not allowed for direct access grants" }, 400);
+    const { signInWithPassword } = await import("./oidc");
+
+    expect(await signInWithPassword("ada@example.com", "secret")).toEqual({ kind: "redirected" });
+    const url = new URL(location.href);
+    expect(url.pathname).toMatch(/\/protocol\/openid-connect\/auth$/);
+    expect(url.searchParams.get("login_hint")).toBe("ada@example.com");
+  });
+
+  it("goes on to the IdP's form when the account has steps left to take", async () => {
+    answer({ error: "invalid_grant", error_description: "Account is not fully set up" }, 400);
+    const { signInWithPassword } = await import("./oidc");
+
+    expect(await signInWithPassword("ada@example.com", "secret")).toEqual({ kind: "redirected" });
+    expect(new URL(location.href).searchParams.get("login_hint")).toBe("ada@example.com");
+  });
+});
