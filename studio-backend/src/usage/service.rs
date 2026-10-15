@@ -369,9 +369,228 @@ async fn facts_of(
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use async_trait::async_trait;
+    use bigdecimal::BigDecimal;
     use time::macros::datetime;
+    use toolkit_odata::Page;
+    use usage_collector_sdk::{
+        AggregationBucket, AggregationResult, CreateUsageRecord, MetadataFilter, UsageRecord,
+        UsageType, UsageTypeGtsId,
+    };
 
     use super::*;
+    use crate::usage::prices::{ModelPrice, SessionPrice};
+
+    const WS: Uuid = Uuid::from_u128(0xD2);
+    const ADA: Uuid = Uuid::from_u128(0xADA);
+
+    /// A collector that answers each usage type's sum with canned buckets, and
+    /// a type nobody recorded under with `NotFound`, as the real one does.
+    struct Sums(Vec<(&'static str, Vec<String>, u64)>);
+
+    #[async_trait]
+    impl UsageCollectorClientV1 for Sums {
+        async fn create_usage_record(
+            &self,
+            _: &SecurityContext,
+            _: CreateUsageRecord,
+        ) -> std::result::Result<UsageRecord, UsageCollectorError> {
+            unimplemented!()
+        }
+        async fn create_usage_records(
+            &self,
+            _: &SecurityContext,
+            _: Vec<CreateUsageRecord>,
+        ) -> std::result::Result<
+            Vec<std::result::Result<UsageRecord, UsageCollectorError>>,
+            UsageCollectorError,
+        > {
+            unimplemented!()
+        }
+        async fn get_usage_record(
+            &self,
+            _: &SecurityContext,
+            _: Uuid,
+        ) -> std::result::Result<UsageRecord, UsageCollectorError> {
+            unimplemented!()
+        }
+        async fn query_aggregated_usage_records(
+            &self,
+            _: &SecurityContext,
+            gts_id: UsageTypeGtsId,
+            _: &ODataQuery,
+            _: &[MetadataFilter],
+            spec: AggregationSpec,
+        ) -> std::result::Result<AggregationResult, UsageCollectorError> {
+            assert_eq!(spec.op, AggregationOp::Sum);
+            let buckets: Vec<AggregationBucket> = self
+                .0
+                .iter()
+                .filter(|(name, _, _)| types::gts_id(name).unwrap() == gts_id)
+                .map(|(_, key, value)| {
+                    assert_eq!(key.len(), spec.group_by.len());
+                    AggregationBucket {
+                        key: key.clone(),
+                        value: Some(BigDecimal::from_str(&value.to_string()).unwrap()),
+                    }
+                })
+                .collect();
+            if buckets.is_empty() {
+                return Err(UsageCollectorError::usage_type_not_found(&gts_id));
+            }
+            Ok(AggregationResult { buckets })
+        }
+        async fn list_usage_records(
+            &self,
+            _: &SecurityContext,
+            _: UsageTypeGtsId,
+            _: &ODataQuery,
+            _: &[MetadataFilter],
+        ) -> std::result::Result<Page<UsageRecord>, UsageCollectorError> {
+            unimplemented!()
+        }
+        async fn deactivate_usage_record(
+            &self,
+            _: &SecurityContext,
+            _: Uuid,
+        ) -> std::result::Result<(), UsageCollectorError> {
+            unimplemented!()
+        }
+        async fn create_usage_type(
+            &self,
+            _: &SecurityContext,
+            _: UsageType,
+        ) -> std::result::Result<UsageType, UsageCollectorError> {
+            unimplemented!()
+        }
+        async fn get_usage_type(
+            &self,
+            _: &SecurityContext,
+            _: UsageTypeGtsId,
+        ) -> std::result::Result<UsageType, UsageCollectorError> {
+            unimplemented!()
+        }
+        async fn list_usage_types(
+            &self,
+            _: &SecurityContext,
+            _: &ODataQuery,
+        ) -> std::result::Result<Page<UsageType>, UsageCollectorError> {
+            unimplemented!()
+        }
+        async fn delete_usage_type(
+            &self,
+            _: &SecurityContext,
+            _: UsageTypeGtsId,
+        ) -> std::result::Result<(), UsageCollectorError> {
+            unimplemented!()
+        }
+    }
+
+    fn key(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// The four token sums of one call land on one fact, the three session
+    /// sums on another, each keyed as the collector grouped them; a type
+    /// nothing was recorded under (cache writes here) is no usage, not an
+    /// error. Priced, the personal-key switch moves the total.
+    #[tokio::test]
+    async fn the_collector_sums_become_one_fact_per_slice_and_price_into_a_report() {
+        let ada = ADA.to_string();
+        let org_call = key(&[&ada, "anthropic", "claude-sonnet-5-5", "organization"]);
+        let own_call = key(&[&ada, "anthropic", "claude-sonnet-5-5", "personal"]);
+        let pod = key(&["kubernetes", "workspace"]);
+        let collector = Sums(vec![
+            (types::LLM_INPUT, org_call.clone(), 1_000_000),
+            (types::LLM_OUTPUT, org_call.clone(), 100_000),
+            (types::LLM_CACHE_READ, org_call, 10),
+            (types::LLM_INPUT, own_call, 2_000_000),
+            (types::SESSION_SECONDS, pod.clone(), 3600),
+            (types::SESSION_CPU, pod.clone(), 500 * 3600),
+            (types::SESSION_MEMORY, pod, 1024 * 3600),
+        ]);
+        let ctx = SecurityContext::builder()
+            .subject_id(ADA)
+            .subject_tenant_id(WS)
+            .build()
+            .unwrap();
+        let mut facts = facts_of(
+            &collector,
+            &ctx,
+            WS,
+            datetime!(2026-10-01 0:00 UTC),
+            datetime!(2026-11-01 0:00 UTC),
+        )
+        .await
+        .unwrap();
+        facts.sort_by_key(|f| (f.kind == FactKind::Session, f.payer.map(Payer::as_str)));
+        assert_eq!(facts.len(), 3, "{facts:#?}");
+
+        let org = &facts[0];
+        assert_eq!(org.payer, Some(Payer::Organization));
+        assert_eq!((org.person, org.tenant), (Some(ADA), WS));
+        assert_eq!(
+            (org.provider.as_str(), org.item.as_str()),
+            ("anthropic", "claude-sonnet-5-5")
+        );
+        assert_eq!(
+            (
+                org.tokens.input,
+                org.tokens.output,
+                org.tokens.cache_read,
+                org.tokens.cache_write
+            ),
+            (1_000_000, 100_000, 10, 0)
+        );
+        assert_eq!(facts[1].payer, Some(Payer::Personal));
+        assert_eq!(facts[1].tokens.input, 2_000_000);
+
+        let session = &facts[2];
+        assert_eq!(session.kind, FactKind::Session);
+        assert_eq!(session.person, None);
+        assert_eq!(session.item, crate::usage::port::SESSION_ITEM);
+        assert_eq!(
+            (
+                session.session_seconds,
+                session.cpu_millicore_seconds,
+                session.memory_mib_seconds
+            ),
+            (3600, 500 * 3600, 1024 * 3600)
+        );
+
+        let prices = PriceList {
+            models: vec![ModelPrice {
+                provider: "anthropic".into(),
+                model: "claude-sonnet-5-5*".into(),
+                input_per_mtok: 3.0,
+                output_per_mtok: 15.0,
+                ..ModelPrice::default()
+            }],
+            session: Some(SessionPrice {
+                cpu_core_hour: 0.04,
+                memory_gib_hour: 0.01,
+            }),
+            ..PriceList::default()
+        };
+        // 3.00 + 1.50 for the organization's call, 0.02 + 0.01 for the hour
+        // of a 500m / 1Gi pod, 6.00 more on Ada's own key.
+        let with = costs::report(&facts, &prices, GroupBy::Payer, true);
+        let without = costs::report(&facts, &prices, GroupBy::Payer, false);
+        assert!((without.total - 4.53).abs() < 1e-9, "{}", without.total);
+        assert!((with.total - 10.53).abs() < 1e-9, "{}", with.total);
+        assert_eq!(with.rows[0].key, "personal");
+        assert!(with.unpriced.is_empty());
+    }
+
+    #[test]
+    fn a_payer_is_read_back_as_it_was_written() {
+        for p in [Payer::Personal, Payer::Workspace, Payer::Organization] {
+            assert_eq!(payer(p.as_str()), Some(p));
+        }
+        assert_eq!(payer(""), None);
+    }
 
     #[test]
     fn a_period_is_two_bounds_on_created_at() {

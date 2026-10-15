@@ -2634,6 +2634,40 @@
     },
     {
       "method": "GET",
+      "path": "/studio-usage/v1/costs",
+      "operation_id": "studio_usage.get_costs",
+      "tag": "",
+      "summary": "An organization's costs over a period, grouped",
+      "authenticated": true,
+      "responses": [
+        "CostsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-usage/v1/prices",
+      "operation_id": "studio_usage.get_prices",
+      "tag": "",
+      "summary": "An organization's price list for model tokens and IDE sessions",
+      "authenticated": true,
+      "responses": [
+        "PricesDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-user/v1/avatars/{user_id}/{digest}",
       "operation_id": "studio_user.get_avatar",
       "tag": "StudioUser",
@@ -5484,6 +5518,25 @@
       "errors": [
         "400",
         "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-usage/v1/prices",
+      "operation_id": "studio_usage.update_prices",
+      "tag": "",
+      "summary": "Replace an organization's price list",
+      "authenticated": true,
+      "request": "PricesRequest",
+      "responses": [
+        "PricesDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "404",
         "500"
       ]

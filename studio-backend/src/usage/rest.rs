@@ -79,7 +79,7 @@ pub struct SessionPriceDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct PriceListDto {
+pub struct PricesDto {
     /// ISO 4217 code every price is in.
     pub currency: String,
     pub models: Vec<ModelPriceDto>,
@@ -93,7 +93,7 @@ pub struct PriceListDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
-pub struct PriceListRequest {
+pub struct PricesRequest {
     /// ISO 4217; `USD` when absent.
     pub currency: Option<String>,
     pub models: Vec<ModelPriceDto>,
@@ -165,8 +165,8 @@ fn session_dto(s: SessionPrice) -> SessionPriceDto {
     }
 }
 
-fn list_dto(list: PriceList, may_manage: bool, may_view_costs: bool) -> PriceListDto {
-    PriceListDto {
+fn list_dto(list: PriceList, may_manage: bool, may_view_costs: bool) -> PricesDto {
+    PricesDto {
         currency: list.currency().to_owned(),
         models: list.models.into_iter().map(model_dto).collect(),
         session: list.session.map(session_dto),
@@ -188,7 +188,7 @@ fn instant(field: &str, raw: &str) -> Result<OffsetDateTime, CanonicalError> {
 async fn get_prices(
     OrgCtx(ctx): OrgCtx,
     Extension(usage): Extension<Usage>,
-) -> ApiResult<JsonBody<PriceListDto>> {
+) -> ApiResult<JsonBody<PricesDto>> {
     let org = ctx.subject_tenant_id();
     let (list, _) = usage.0.prices(&ctx, org).await.map_err(problem)?;
     let manage = usage.0.may(&ctx, org, MANAGE_PRIVILEGE).await;
@@ -199,8 +199,8 @@ async fn get_prices(
 async fn update_prices(
     OrgCtx(ctx): OrgCtx,
     Extension(usage): Extension<Usage>,
-    Json(body): Json<PriceListRequest>,
-) -> ApiResult<JsonBody<PriceListDto>> {
+    Json(body): Json<PricesRequest>,
+) -> ApiResult<JsonBody<PricesDto>> {
     let org = ctx.subject_tenant_id();
     let list = PriceList {
         currency: body.currency.unwrap_or_default(),
@@ -310,7 +310,7 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .query_param_typed("organization_id", false, "The organization", "string")
         .handler(get_prices)
-        .json_response_with_schema::<PriceListDto>(openapi, StatusCode::OK, "The price list")
+        .json_response_with_schema::<PricesDto>(openapi, StatusCode::OK, "The price list")
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -329,9 +329,9 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .query_param_typed("organization_id", false, "The organization", "string")
-        .json_request::<PriceListRequest>(openapi, "The price list")
+        .json_request::<PricesRequest>(openapi, "The price list")
         .handler(update_prices)
-        .json_response_with_schema::<PriceListDto>(openapi, StatusCode::OK, "Stored")
+        .json_response_with_schema::<PricesDto>(openapi, StatusCode::OK, "Stored")
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
