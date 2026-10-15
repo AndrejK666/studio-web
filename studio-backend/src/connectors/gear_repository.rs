@@ -211,7 +211,7 @@ impl ConnectorDriver for GearRepositoryDriver {
     }
 
     /// Reachable, at the ref, with how many gears: `owner/repo` as the
-    /// account, "<n> gears at <ref>" beside it.
+    /// account, "<n> gear.gdl files at <ref>" beside it.
     async fn test_with_options(
         &self,
         auth: &ConnectionAuth,
@@ -266,7 +266,7 @@ impl ConnectorDriver for GearRepositoryDriver {
         let more = if tree.truncated { "+" } else { "" };
         Ok(DriverIdentity {
             account: info.full_name,
-            display_name: Some(format!("{gears}{more} gears at {git_ref}")),
+            display_name: Some(format!("{gears}{more} gear.gdl files at {git_ref}")),
         })
     }
 

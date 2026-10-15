@@ -113,10 +113,11 @@ Previews, the engine catalogue, extension points, completion, repository facts
 and the corpus relay need `STUDIO_GEARBOX_WORKDIR`. The corpus is the
 platform's gears (ADR-0042), read from the platform's **gear repositories**
 (ADR-0046): connections of the `gear-repository` kind held by the root tenant,
-in the order they were added (`gear_roots.rs`). Each is checked out under the
-engine's working directory (namespaced by its connection), linked under
-`gearbox-roots/<source id>`, and passed as its own `--root`: the engine names a
-root by its directory when there are several. They are always read together,
+in the order they were added (`gear_roots.rs`). Each is checked out at
+`gearbox-roots/<connection>/<source id>` under the engine's working directory
+and passed as its own `--root`: the engine names a root by its directory when
+there are several, and it follows links to the real one, so the checkout
+itself carries the id. They are always read together,
 because a gear in one may use a gear in another; where two declare the same
 gear, the first wins. The list is read on the way into a route of this gear or
 the catalogue's, at most once a minute (`GET /studio-product/v1/gearbox?refresh=true`

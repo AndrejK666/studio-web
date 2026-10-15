@@ -2180,10 +2180,12 @@ impl Gearbox {
                     .map(|r| {
                         let s = &r.source;
                         let git_ref = Some(s.git_ref.as_str()).filter(|g| !g.trim().is_empty());
-                        crate::connectors::sdk::git_checkout::clone_or_update(
-                            &workdir,
-                            &s.key,
-                            &s.repo,
+                        // `gearbox-roots/<key>/<source id>`: the engine names a
+                        // root by its directory -- the real one, after links
+                        // are followed -- so the checkout itself carries the
+                        // id; the key keeps two connections apart.
+                        crate::connectors::sdk::git_checkout::clone_or_update_into(
+                            &workdir.join("gearbox-roots").join(&s.key).join(&r.id),
                             &s.url,
                             &s.username,
                             &s.token,
@@ -2242,7 +2244,11 @@ impl Gearbox {
             });
         }
         let corpus = guard.as_mut().expect("corpus is set above");
-        let named = link_roots(&self.cfg.workdir.join("gearbox-roots"), &corpus.roots)?;
+        let named: Vec<(String, PathBuf)> = corpus
+            .roots
+            .iter()
+            .map(|r| (r.id.clone(), r.dir.clone()))
+            .collect();
         if corpus.catalogue.is_none() {
             let bin = self.cfg.bin.clone();
             let mut args: Vec<String> = vec!["catalogue".into()];
@@ -2560,23 +2566,6 @@ fn relabel(diagnostics: Vec<EngineDiagnostic>) -> Vec<EngineDiagnostic> {
                 d.file = Some("product.gdl".into());
             }
             d
-        })
-        .collect()
-}
-
-/// Each root under `base/<source id>`, linked to its checkout, as the engine
-/// names a root by its directory. `base` is laid out afresh: a root that left
-/// the list must not stay a root.
-fn link_roots(base: &Path, roots: &[Root]) -> anyhow::Result<Vec<(String, PathBuf)>> {
-    let _ = std::fs::remove_dir_all(base);
-    std::fs::create_dir_all(base).with_context(|| format!("cannot create {}", base.display()))?;
-    roots
-        .iter()
-        .map(|r| {
-            let link = base.join(&r.id);
-            link_dir(&r.dir, &link)
-                .with_context(|| format!("cannot link the gear repository `{}`", r.id))?;
-            Ok((r.id.clone(), link))
         })
         .collect()
 }

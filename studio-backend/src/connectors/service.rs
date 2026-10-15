@@ -285,6 +285,16 @@ fn resolve_base_url(
 /// permission. Whoever supplies the credential already holds it, so the move
 /// discloses nothing new — and rotating while relocating is what a real
 /// migration looks like anyway.
+/// What a refused test is put down to: the credential, unless the connection
+/// may have none -- then it is the repository or the ref that was not there.
+fn refusal(driver: &dyn ConnectorDriver) -> &'static str {
+    if driver.token_optional() {
+        "the provider refused it"
+    } else {
+        "the credential was rejected by the provider"
+    }
+}
+
 /// Two gear repositories of one tenant may not share a source id: the engine
 /// takes each as a root's directory name, and `product.gdl` names gears'
 /// repositories by it. `except` is the connection being edited.
@@ -687,7 +697,7 @@ impl ConnectorService {
                 &options,
             )
             .await
-            .context("the credential was rejected by the provider")?;
+            .context(refusal(driver.as_ref()))?;
 
         let id = Uuid::new_v4();
         // No credential, no secret: a public gear repository is read
@@ -956,7 +966,7 @@ impl ConnectorService {
                 &options,
             )
             .await
-            .context("the credential was rejected by the provider")?;
+            .context(refusal(driver.as_ref()))?;
 
         if rotating {
             let key = SecretRef::new(&existing.secret_ref)
