@@ -409,7 +409,12 @@ function RolesTable({
                 {!catalogueRead ? (
                   <span className="sub">—</span>
                 ) : r.catalogue.length === 0 ? (
-                  mayManage ? (
+                  // The deployment's corpus is a stopgap nobody chose: the
+                  // way out is building from a listed repository, not listing
+                  // the stopgap.
+                  r.fallback ? (
+                    <span className="sub">not listed</span>
+                  ) : mayManage ? (
                     <button type="button" className="ghost" onClick={() => onList(r)}>
                       List it
                     </button>

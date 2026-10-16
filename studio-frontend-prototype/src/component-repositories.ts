@@ -66,7 +66,7 @@ export function rolesNote(r: RepositoryRoles): string | null {
   const gears = r.catalogue.find((c) => (c.mode || "gears") === "gears");
   if (r.engine && r.catalogue.length === 0)
     return r.fallback
-      ? "Products are built from the deployment's corpus, which the catalogue does not list."
+      ? "Products are built from the deployment's corpus, which the catalogue does not list. Build from a listed repository instead."
       : "Products are built from it, but the catalogue does not list it.";
   if (r.engine && gears && refLabel(gears.git_ref) !== refLabel(r.engine.ref))
     return `The catalogue reads ${refLabel(gears.git_ref)}, products are built from ${refLabel(r.engine.ref)}.`;
