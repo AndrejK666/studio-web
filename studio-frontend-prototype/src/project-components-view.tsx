@@ -114,7 +114,7 @@ export function ProjectComponentsInventory({
               id: "role",
               allLabel: "Everything",
               kind: "chips",
-              options: roles.filter((r) => n(r) > 0).map((r) => ({ value: r, label: `${ROLE_LABEL[r]} ${n(r)}` })),
+              options: roles.filter((r) => n(r) > 0).map((r) => ({ value: r, label: ROLE_LABEL[r] })),
               match: (r, v) => r.role === v,
             },
           ]}
