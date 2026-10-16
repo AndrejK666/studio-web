@@ -2687,3 +2687,19 @@ div.dm-block { padding-left: 0; }
 .conn-answer.ok { color: #15803d; }
 .conn-answer.bad { color: var(--destructive, #dc2626); overflow-wrap: anywhere; }
 .conn-missing { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; padding: 10px 4px 2px; border-top: 1px solid var(--border); margin-top: 8px; font-size: 13px; }
+
+/* Domain model: one row of tabs, a segment under a tab of two views. */
+.dm-tabs { display: flex; flex-wrap: wrap; gap: 2px; }
+.dm-tabbtn { padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted-foreground); font: inherit; font-size: 14px; cursor: pointer; }
+.dm-tabbtn.on { color: var(--foreground); border-bottom-color: var(--primary); font-weight: 600; }
+.dm-tabbtn:hover { color: var(--foreground); }
+.dm-seg { display: inline-flex; gap: 2px; margin: 0 0 10px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); background: var(--card); }
+.dm-seg button { border: 0; background: none; padding: 5px 12px; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; color: var(--muted-foreground); }
+.dm-seg button[aria-pressed="true"] { background: var(--accent); color: var(--foreground); font-weight: 600; }
+.dm-verdict-line { margin: 0 0 10px; font-size: 14px; }
+.dm-verdict-line b.ok { color: #15803d; }
+.dm-verdict-line b.bad { color: var(--destructive, #dc2626); }
+.dm-where { font-size: 12px; }
+.dm-status-blocks { color: var(--destructive, #dc2626); }
+.dm-resolve [class^="sub dm-status-"] { white-space: nowrap; }
+.dm-ent-on b { color: var(--primary); }

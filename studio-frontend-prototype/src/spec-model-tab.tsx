@@ -336,34 +336,83 @@ export function SpecModelTab({
   // Which gear keeps each Domain entity: read when the map is first opened.
   // Without the catalogue no gear is known, so no gap is claimed either.
   const catalogue = useGearCatalogue(token, view === "map");
+
   const index = catalogue && "index" in catalogue ? catalogue.index : null;
   const gears = useMemo(() => (index ? gearRefs(index, ownGears) : null), [index, ownGears]);
   const ordered = useMemo(() => orderFindings(findings), [findings]);
   const open = ordered.filter((f) => f.decision !== "dismissed").length;
   const line = model ? buildLine(model.build) : "";
 
+  /* Eight tabs, each one question; a tab of two views shows a segment under
+     it. The views themselves are unchanged — only where they are reached. */
+  const tabs: { id: string; label: string; why: string; count: number; views: { id: View; label: string; count: number }[] }[] = [
+    { id: "issues", label: "Issues", why: "can we build from these documents?", count: open, views: [{ id: "resolve", label: "Issues", count: open }] },
+    { id: "entities", label: "Entities", why: "what is this application?", count: entities.length, views: [{ id: "map", label: "Entities", count: entities.length }] },
+    {
+      id: "reqs",
+      label: "Requirements",
+      why: "where does each come from, how far did it get?",
+      count: requirements && "items" in requirements ? requirements.total : 0,
+      views: [{ id: "reqs", label: "Requirements", count: requirements && "items" in requirements ? requirements.total : 0 }],
+    },
+    {
+      id: "need",
+      label: "Need",
+      why: "who has which problem, and what is expected to help",
+      count: facts.filter((f) => f.kind === "problem" || f.kind === "outcome" || f.kind === "idea" || f.kind === "benefit").length,
+      views: [
+        { id: "needs", label: "Needs", count: facts.filter((f) => f.kind === "problem" || f.kind === "outcome" || f.kind === "idea").length },
+        { id: "hypotheses", label: "Hypotheses", count: facts.filter((f) => f.kind === "benefit").length },
+      ],
+    },
+    {
+      id: "rules",
+      label: "Rules",
+      why: "what must hold, and what behaviour the documents must answer",
+      count: facts.filter((f) => f.kind === "constraint" && reviewByKey.get(factKey(f)) === "accepted").length + facts.filter((f) => f.kind === "action").length,
+      views: [
+        { id: "rules", label: "Rules", count: facts.filter((f) => f.kind === "constraint" && reviewByKey.get(factKey(f)) === "accepted").length },
+        { id: "behaviour", label: "Behaviour", count: facts.filter((f) => f.kind === "action").length },
+      ],
+    },
+    { id: "priorities", label: "Priorities", why: "what to build first", count: 0, views: [{ id: "priorities", label: "Priorities", count: 0 }] },
+    { id: "glossary", label: "Glossary", why: "the project's words", count: glossary.length, views: [{ id: "glossary", label: "Glossary", count: glossary.length }] },
+    {
+      id: "sources",
+      label: "Sources",
+      why: "what was read, the work that names it, the code, other projects",
+      count: model?.documents.length ?? 0,
+      views: [
+        { id: "coverage", label: "Documents", count: model?.documents.length ?? 0 },
+        { id: "work", label: "Work", count: work && "items" in work ? work.total : 0 },
+        { id: "product", label: "Against the code", count: product && "items" in product ? product.items.length : 0 },
+        { id: "elsewhere", label: "Elsewhere", count: related && "items" in related ? related.total : 0 },
+      ],
+    },
+  ];
+  const tabOf = (v: View) => tabs.find((t) => t.views.some((x) => x.id === v))?.id ?? "issues";
+
   return (
     <FactReviewContext.Provider value={factReview}>
     <>
       <h1>Domain model</h1>
-      <p className="subtitle">
-        What this project&apos;s documents say the application is — its entities, what they hold, how
-        they relate, what must always be true — each fact with the passage it comes from. And where
-        the documents cannot all be right about it, so it is fixed before someone builds one side.
-      </p>
+      <p className="subtitle">What the project&apos;s documents say the application is, each fact with the passage it comes from.</p>
 
       <div className="sm-bar">
-        <div className="sm-views dm-views" role="tablist">
-          <ViewTab id="resolve" view={view} setView={setView} label="To resolve" count={open} why="can we build from these documents?" />
-          <ViewTab id="map" view={view} setView={setView} label="Model map" count={entities.length} why="what is this application?" />
-          <ViewTab
-            id="reqs"
-            view={view}
-            setView={setView}
-            label="Requirements"
-            count={requirements && "items" in requirements ? requirements.total : 0}
-            why="where does it come from, how far did it get?"
-          />
+        <div className="dm-tabs" role="tablist" aria-label="Domain model">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tabOf(view) === t.id}
+              className={`dm-tabbtn${tabOf(view) === t.id ? " on" : ""}`}
+              onClick={() => setView(t.views[0].id)}
+              title={t.why}
+            >
+              {t.label} <span className="chip-n">{t.count}</span>
+            </button>
+          ))}
         </div>
         <div className="sm-build">
           {line && <span className={model?.build.error ? "sm-build-line sm-err" : "sm-build-line"}>{line}</span>}
@@ -393,32 +442,17 @@ export function SpecModelTab({
           </button>
         </div>
       </div>
-
-      <div className="dm-more" role="tablist" aria-label="More">
-        <span className="hint">More:</span>
-        <ViewChip id="needs" view={view} setView={setView} label="Needs" count={facts.filter((f) => f.kind === "problem" || f.kind === "outcome" || f.kind === "idea").length} />
-        <ViewChip id="hypotheses" view={view} setView={setView} label="Hypotheses" count={facts.filter((f) => f.kind === "benefit").length} />
-        <ViewChip id="rules" view={view} setView={setView} label="Rules" count={facts.filter((f) => f.kind === "constraint" && reviewByKey.get(factKey(f)) === "accepted").length} />
-        <ViewChip id="behaviour" view={view} setView={setView} label="Behaviour" count={facts.filter((f) => f.kind === "action").length} />
-        <ViewChip id="priorities" view={view} setView={setView} label="Priorities" count={0} />
-        <ViewChip id="glossary" view={view} setView={setView} label="Glossary" count={glossary.length} />
-        <ViewChip id="work" view={view} setView={setView} label="Work" count={work && "items" in work ? work.total : 0} />
-        <ViewChip
-          id="product"
-          view={view}
-          setView={setView}
-          label="Against the code"
-          count={product && "items" in product ? product.items.length : 0}
-        />
-        <ViewChip
-          id="elsewhere"
-          view={view}
-          setView={setView}
-          label="Elsewhere"
-          count={related && "items" in related ? related.total : 0}
-        />
-        <ViewChip id="coverage" view={view} setView={setView} label="Documents" count={model?.documents.length ?? 0} />
-      </div>
+      {(tabs.find((t) => t.id === tabOf(view))?.views.length ?? 0) > 1 && (
+        <div className="dm-seg" role="tablist" aria-label="Views">
+          {tabs
+            .find((t) => t.id === tabOf(view))!
+            .views.map((v) => (
+              <button key={v.id} type="button" role="tab" aria-pressed={view === v.id} onClick={() => setView(v.id)}>
+                {v.label} <span className="chip-n">{v.count}</span>
+              </button>
+            ))}
+        </div>
+      )}
 
       {error && <div className="error">{error}</div>}
       {!model && !error && <div className="empty">Loading…</div>}
@@ -556,55 +590,7 @@ ${content}
   );
 }
 
-function ViewTab({
-  id,
-  view,
-  setView,
-  label,
-  count,
-  why,
-}: {
-  id: View;
-  view: View;
-  setView: (v: View) => void;
-  label: string;
-  count: number;
-  /** The question the view answers. */
-  why: string;
-}) {
-  return (
-    <button role="tab" aria-selected={view === id} className={view === id ? "dm-tab on" : "dm-tab"} onClick={() => setView(id)}>
-      <b>{label}</b> <span className="chip-n">{count}</span>
-      <span className="dm-why">{why}</span>
-    </button>
-  );
-}
 
-function ViewChip({
-  id,
-  view,
-  setView,
-  label,
-  count,
-}: {
-  id: View;
-  view: View;
-  setView: (v: View) => void;
-  label: string;
-  count: number;
-}) {
-  return (
-    <button
-      role="tab"
-      aria-selected={view === id}
-      className={view === id ? "chip on" : "chip"}
-      onClick={() => setView(id)}
-    >
-      {label}
-      <span className="chip-n">{count}</span>
-    </button>
-  );
-}
 
 function AgainstTheCode({
   read,

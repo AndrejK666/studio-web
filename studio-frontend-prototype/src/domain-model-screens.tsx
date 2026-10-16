@@ -18,8 +18,10 @@ import {
   type Layer,
   type PlacedCard,
 } from "./domain-layers";
+import { DataTable } from "./data-table";
 import {
   blockItems,
+  blocks,
   findEntities,
   findRequirements,
   mapEdges,
@@ -30,7 +32,6 @@ import {
   traceChain,
   type MapEdge,
   type ResolveItem,
-  type ResolveType,
 } from "./domain-model-views";
 import { FactReviewContext } from "./review-state";
 import {
@@ -44,7 +45,7 @@ import {
   type RequirementNature,
   type RequirementType,
 } from "./requirement-types";
-import { DOC_QUALITY_LABEL, docQuality, relationSentence, type DocQualityItem, type DocQualityType } from "./doc-quality";
+import { DOC_QUALITY_LABEL, docQuality, relationSentence, type DocQualityItem } from "./doc-quality";
 import { PROVISIONAL_NOTE } from "./saved-entities";
 import { entityGears, type GearRef, type Keeper } from "./entity-gears";
 import { gearDraftFrom, type GearDraft } from "./gear-from-entity";
@@ -167,117 +168,150 @@ export function ResolveView({
   onOpenFile: OpenFile;
   built: boolean;
 }) {
-  const [only, setOnly] = useState<Only>("all");
   const queue = useMemo(() => resolveQueue(findings, requirements?.items ?? []), [findings, requirements]);
   // Kept apart from the queue's readiness: a thin passage does not stop a
   // build, it makes the next reader's job harder.
   const better = useMemo(() => docQuality(entities, glossary, revisions), [entities, glossary, revisions]);
   const ready = readiness(queue, requirements?.by_basis ?? {}, requirements?.total ?? 0);
-  const count = (t: ResolveType) => queue.filter((i) => i.type === t && !i.done).length;
-  const countDoc = (t: DocQualityType) => better.filter((i) => i.type === t).length;
-  const isDoc = (o: Only): o is DocQualityType => o in DOC_QUALITY_LABEL;
-  const shown = isDoc(only) ? [] : queue.filter((i) => only === "all" || i.type === only);
-  const shownDoc = only === "all" ? better : isDoc(only) ? better.filter((i) => i.type === only) : [];
-  const room = Math.max(0, 80 - shown.length);
-  const pct = (n: number) => (ready.total ? `${(n / ready.total) * 100}%` : "0%");
 
+  // One row per thing to decide, whichever list it came from: the queue (what
+  // stops a build or should be looked at) and the documentation's thin
+  // places. The card a row stood for opens under it.
+  const issues: IssueRow[] = [
+    ...queue.map((i) => ({
+      key: i.key,
+      kind: i.concern ? "Possible conflict" : RESOLVE_LABEL[i.type],
+      group: (blocks(i) ? "blocks" : i.done ? "decided" : "look") as IssueGroup,
+      title: i.title,
+      side: i.sides[0] ?? null,
+      tone: i.tone,
+      queue: i,
+    })),
+    ...better.map((d) => ({
+      key: d.key,
+      kind: DOC_QUALITY_LABEL[d.type],
+      group: "improve" as IssueGroup,
+      title: d.title,
+      side: d.sides[0] ?? null,
+      tone: "warn" as const,
+      doc: d,
+    })),
+  ];
+  const n = (g: IssueGroup) => issues.filter((i) => i.group === g).length;
   return (
     <div className="dm-resolve">
-      <p className="dm-howto">
-        <b>Decide what blocks a build.</b> Work down the list: fix a document in the editor, or say a finding is fine.
-        A tile narrows the list to one kind.
-      </p>
-      <div className="dm-ready">
-        <div className="dm-tile dm-verdict">
-          <b>{ready.ready ? "Nothing stops a build" : `${ready.blocking} thing${ready.blocking === 1 ? "" : "s"} stop a build`}</b>
-          {ready.total > 0 && (
-            <div className="dm-meter" title="Requirements by what they rest on">
-              <i style={{ width: pct(ready.cited), background: "var(--success)" }} />
-              <i style={{ width: pct(ready.reasoned), background: "var(--studio-ai-violet)" }} />
-            </div>
-          )}
-          <span>
-            {ready.total > 0 ? `${ready.cited} of ${ready.total} requirements cite a source and ${ready.reasoned} give a reason — a citation says where it comes from, not that it is proven. ` : ""}
-            {ready.open === ready.blocking
-              ? ""
-              : `${ready.open - ready.blocking} more to look at: assumptions waiting for a check, possible conflicts, requirements with no source.`}
-          </span>
-        </div>
-        <Tile type="finding" n={count("finding")} label="problems in the documents" tone="bad" only={only} setOnly={setOnly} />
-        <Tile type="question" n={count("question")} label="open questions" tone="bad" only={only} setOnly={setOnly} />
-        <Tile type="assumption" n={count("assumption")} label="assumptions to confirm" tone="warn" only={only} setOnly={setOnly} />
-        <Tile type="nobasis" n={count("nobasis")} label="requirements with no basis" tone="warn" only={only} setOnly={setOnly} />
+      <div className="dm-verdict-line" data-verdict>
+        <b className={ready.ready ? "ok" : "bad"}>{ready.ready ? "Nothing stops a build" : `${ready.blocking} stop a build`}</b>
+        <span className="sub">
+          · {n("look")} to look at · {n("improve")} ways to make the documentation better
+          {ready.total > 0 ? ` · ${ready.cited} of ${ready.total} requirements cite a source` : ""}
+        </span>
+        {!built && <span className="sub"> · build the model to look for disagreements</span>}
       </div>
-      {better.length > 0 && (
-        <div className="dm-ready dm-ready-docs">
-          <div className="dm-tile dm-verdict">
-            <b>Make the documentation better</b>
-            <span>
-              {better.length} change{better.length === 1 ? "" : "s"} ready to save. None blocks a build; each makes the model
-              clearer to the next reader.
-            </span>
-          </div>
-          <Tile type="onlyadr" n={countDoc("onlyadr")} label="only in an ADR or a feature" tone="warn" only={only} setOnly={setOnly} />
-          <Tile type="nodefinition" n={countDoc("nodefinition")} label="things with no definition" tone="warn" only={only} setOnly={setOnly} />
-          <Tile type="onesided" n={countDoc("onesided")} label="one-sided relations" tone="warn" only={only} setOnly={setOnly} />
-          <Tile type="norelation" n={countDoc("norelation")} label="related to nothing" tone="warn" only={only} setOnly={setOnly} />
-          <Tile type="twonames" n={countDoc("twonames")} label="two names for one thing" tone="warn" only={only} setOnly={setOnly} />
-        </div>
-      )}
-
-      <div className="dm-queue-head">
-        <b>{only === "all" ? "Everything to decide, most blocking first" : isDoc(only) ? DOC_QUALITY_LABEL[only] : RESOLVE_LABEL[only]}</b>
-        {only !== "all" && (
-          <button type="button" className="dm-link" onClick={() => setOnly("all")}>
-            show all
-          </button>
-        )}
-        <span className="hint">{shown.length + shownDoc.length} shown</span>
-      </div>
-      {shown.length + shownDoc.length === 0 && (
-        <div className="empty">
-          {built ? "Nothing to decide here." : "Every reference resolves. Build the model to look for disagreements between documents."}
-        </div>
-      )}
-      <div className="dm-queue">
-        {shown.slice(0, 80).map((i) => (
-          <QueueItem key={i.key} item={i} onDecide={onDecide} onPropose={onPropose} onTrace={onTrace} onOpenFile={onOpenFile} />
-        ))}
-        {shownDoc.slice(0, room).map((i) => (
-          <DocItem key={i.key} item={i} onSave={onSave} onSameThing={onSameThing} onProposeSentence={onProposeSentence} onOpenFile={onOpenFile} />
-        ))}
-        {shown.length + shownDoc.length > 80 && (
-          <p className="hint">and {shown.length + shownDoc.length - 80} more; pick a tile above to narrow it.</p>
-        )}
+      <div className="card">
+        <DataTable<IssueRow>
+          list="dm-issues"
+          urlPrefix="iss."
+          rows={issues}
+          rowKey={(r) => r.key}
+          rowLabel={(r) => r.title}
+          pageSize={20}
+          search={{ placeholder: "Search issues" }}
+          searchText={(r) => [r.title, r.kind, r.side?.path]}
+          filters={[
+            {
+              id: "group",
+              allLabel: "Everything",
+              kind: "chips",
+              options: (
+                [
+                  ["blocks", "Stops a build"],
+                  ["look", "To look at"],
+                  ["improve", "Improve the docs"],
+                  ["decided", "Decided"],
+                ] as const
+              )
+                .filter(([g]) => n(g) > 0)
+                .map(([g, label]) => ({ value: g, label })),
+              match: (r, v) => r.group === v,
+            },
+            {
+              id: "kind",
+              allLabel: "Every kind",
+              kind: "select",
+              options: [...new Set(issues.map((i) => i.kind))].sort().map((k) => ({ value: k, label: k })),
+              match: (r, v) => r.kind === v,
+            },
+            {
+              id: "doc",
+              allLabel: "Every document",
+              kind: "select",
+              options: [...new Set(issues.map((i) => i.side?.path).filter((p): p is string => !!p))].sort().map((p) => ({ value: p, label: p })),
+              match: (r, v) => r.side?.path === v,
+            },
+          ]}
+          empty={{ title: built ? "Nothing to decide here." : "Every reference resolves.", body: built ? undefined : "Build the model to look for disagreements between documents." }}
+          columns={[
+            {
+              id: "kind",
+              header: "Kind",
+              compare: (x, y) => x.kind.localeCompare(y.kind),
+              cell: (r) => <span className={`dm-pill dm-${r.tone}`}>{r.kind}</span>,
+            },
+            { id: "title", header: "Issue", cell: (r) => <Prose text={r.title} /> },
+            {
+              id: "where",
+              header: "Where",
+              cell: (r) =>
+                r.side ? (
+                  <code className="dm-where" title={r.side.path}>
+                    {r.side.path.split("/").pop()}
+                    {r.side.line_start ? `:${r.side.line_start}` : ""}
+                  </code>
+                ) : (
+                  <span className="sub">—</span>
+                ),
+            },
+            {
+              id: "group",
+              header: "Status",
+              compare: (x, y) => GROUP_ORDER.indexOf(x.group) - GROUP_ORDER.indexOf(y.group),
+              cell: (r) => <span className={`sub dm-status-${r.group}`}>{GROUP_LABEL[r.group]}</span>,
+            },
+          ]}
+          expand={(r) =>
+            r.queue ? (
+              <QueueItem item={r.queue} onDecide={onDecide} onPropose={onPropose} onTrace={onTrace} onOpenFile={onOpenFile} />
+            ) : r.doc ? (
+              <DocItem item={r.doc} onSave={onSave} onSameThing={onSameThing} onProposeSentence={onProposeSentence} onOpenFile={onOpenFile} />
+            ) : null
+          }
+        />
       </div>
     </div>
   );
 }
 
-/** What a tile narrows the list to. */
-type Only = ResolveType | DocQualityType | "all";
+type IssueGroup = "blocks" | "look" | "improve" | "decided";
+const GROUP_ORDER: IssueGroup[] = ["blocks", "look", "improve", "decided"];
+const GROUP_LABEL: Record<IssueGroup, string> = {
+  blocks: "stops a build",
+  look: "to look at",
+  improve: "improves the docs",
+  decided: "decided",
+};
 
-function Tile({
-  type,
-  n,
-  label,
-  tone,
-  only,
-  setOnly,
-}: {
-  type: ResolveType | DocQualityType;
-  n: number;
-  label: string;
+/** One thing to decide, from the queue or from the documentation's thin
+ *  places: the Issues table's row. */
+interface IssueRow {
+  key: string;
+  kind: string;
+  group: IssueGroup;
+  title: string;
+  side: SpecModelSide | null;
   tone: "bad" | "warn";
-  only: Only;
-  setOnly: (t: Only) => void;
-}) {
-  return (
-    <button type="button" className={`dm-tile dm-${tone}`} aria-pressed={only === type} onClick={() => setOnly(only === type ? "all" : type)}>
-      <b>{n}</b>
-      <span>{label}</span>
-    </button>
-  );
+  queue?: ResolveItem;
+  doc?: DocQualityItem;
 }
 
 function QueueItem({
@@ -562,7 +596,8 @@ export function ModelMapView({
   const [layer, setLayer] = useState<Layer>("domain");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
-  const [mode, setMode] = useState<"diagram" | "list">("diagram");
+  // A table first: thousands of entities read as rows, not as a drawing.
+  const [mode, setMode] = useState<"diagram" | "list">("list");
   const [show, setShow] = useState<number>(25);
   const [mentions, setMentions] = useState(false);
 
@@ -587,6 +622,14 @@ export function ModelMapView({
     return { rel, men };
   }, [shown, relations, allMentions]);
   const sel = entities.find((e) => e.key === selected) ?? null;
+  const relationCount = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const r of relations) {
+      out.set(r.from, (out.get(r.from) ?? 0) + 1);
+      out.set(r.to, (out.get(r.to) ?? 0) + 1);
+    }
+    return out;
+  }, [relations]);
   // Only what the product is about is kept by a gear; System and Deployment
   // entities are the gears and where they run.
   const keepers = useMemo(
@@ -660,6 +703,8 @@ export function ModelMapView({
         <div className="card dm-canvas">
           <div className="dm-mapbar">
             <input type="search" placeholder="Find an entity" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Find an entity" />
+{mode === "diagram" && (
+              <>
             <span className="dm-seg" role="group" aria-label="How many">
               {SHOW_STEPS.map((n) => (
                 <button key={n} type="button" aria-pressed={show === n} onClick={() => setShow(n)}>
@@ -670,12 +715,14 @@ export function ModelMapView({
             <label className="hint">
               <input type="checkbox" checked={mentions} onChange={(e) => setMentions(e.target.checked)} /> show mentions
             </label>
+              </>
+            )}
             <span className="dm-seg" role="group" aria-label="How to show it">
+              <button type="button" aria-pressed={mode === "list"} onClick={() => setMode("list")}>
+                Table
+              </button>
               <button type="button" aria-pressed={mode === "diagram"} onClick={() => setMode("diagram")}>
                 Diagram
-              </button>
-              <button type="button" aria-pressed={mode === "list"} onClick={() => setMode("list")}>
-                List
               </button>
             </span>
             <span className="hint" style={{ marginLeft: "auto" }}>
@@ -685,16 +732,51 @@ export function ModelMapView({
           {mode === "diagram" ? (
             <Diagram entities={shown} layer={layer} relations={edges.rel} mentions={edges.men} selected={selected} onSelect={setSelected} gaps={gaps} />
           ) : (
-            <div className="dm-list">
-              {shown.map((e) => (
-                <button key={e.key} type="button" className={`dm-ent${e.key === selected ? " on" : ""}`} onClick={() => setSelected(e.key)}>
-                  <b>{e.name}</b>
-                  <span className="hint">
-                    {e.facts.length} facts · {e.documents} doc{e.documents === 1 ? "" : "s"}
-                  </span>
-                </button>
-              ))}
-            </div>
+            <DataTable<Entity>
+              list="dm-entities"
+              urlPrefix="ent."
+              rows={pool}
+              rowKey={(e) => e.key}
+              rowLabel={(e) => e.name}
+              pageSize={20}
+              onOpen={(e) => setSelected(e.key)}
+              empty={{ title: "No entity in this layer matches." }}
+              columns={[
+                {
+                  id: "name",
+                  header: "Entity",
+                  compare: (a, b) => a.name.localeCompare(b.name),
+                  cell: (e) => (
+                    <span className={e.key === selected ? "dm-ent-on" : undefined}>
+                      <b>{e.name}</b>
+                      {gaps.has(e.key) && (
+                        <span className="sub" title="No gear keeps it yet">
+                          {" "}
+                          · no gear
+                        </span>
+                      )}
+                    </span>
+                  ),
+                },
+                { id: "facts", header: "Facts", num: true, compare: (a, b) => a.facts.length - b.facts.length, cell: (e) => e.facts.length },
+                { id: "docs", header: "Documents", num: true, compare: (a, b) => a.documents - b.documents, cell: (e) => e.documents },
+                {
+                  id: "relations",
+                  header: "Relations",
+                  num: true,
+                  compare: (a, b) => relationCount.get(a.key)! - relationCount.get(b.key)!,
+                  cell: (e) => relationCount.get(e.key) ?? 0,
+                },
+                {
+                  id: "keeper",
+                  header: "Kept by",
+                  cell: (e) => {
+                    const k = keepers?.get(e.key);
+                    return k ? k.gear.label : k === null ? <span className="sub">no gear yet</span> : <span className="sub">—</span>;
+                  },
+                },
+              ]}
+            />
           )}
           {mode === "diagram" && (
             <div className="dm-legend">
