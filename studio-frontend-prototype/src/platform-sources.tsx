@@ -14,7 +14,17 @@
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
-import { PLATFORM_ROOT_TENANT_ID, api, type CatalogRepoSource, type Connection, type GearboxStatus } from "./api";
+import {
+  PLATFORM_ROOT_TENANT_ID,
+  api,
+  type CatalogRepoSource,
+  type Connection,
+  type GearboxStatus,
+  type OrgGearRepositoryState,
+} from "./api";
+import { ScaffoldModal } from "./documents";
+import { gearRepoConnections } from "./org-gear-repository";
+import { CreateGearRepository } from "./org-repository-create";
 import { type RepositoryRoles, refLabel, repositoryRoles, rolesNote } from "./component-repositories";
 import { type Column, DataTable, type EmptySpec, type RowAction } from "./data-table";
 import { errText } from "./format";
@@ -109,6 +119,11 @@ function GearSources({
   const [cratesIo, setCratesIo] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<{ url: string; ref: string; at: number } | null>(null);
   const addRef = useRef<HTMLDivElement>(null);
+  // Where Create a gear writes for the organization: the setting the server
+  // keeps (ADR-0042 §2), which follows the repository marked here once one is.
+  const [writeTarget, setWriteTarget] = useState<OrgGearRepositoryState | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newGear, setNewGear] = useState(false);
   const [status, setStatus] = useState<GearboxStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -139,6 +154,11 @@ function GearSources({
         .then(setStatus)
         .catch(() => setStatus(null))
         .finally(() => setStatusRead(true));
+      if (org)
+        api
+          .orgGearRepository(token)
+          .then(setWriteTarget)
+          .catch(() => setWriteTarget(null));
       if (org)
         api
           .catalogSources(token)
@@ -195,7 +215,41 @@ function GearSources({
       load(false);
     });
 
+  const targetRepo = writeTarget?.gear_repository?.repo ?? null;
   const roles = repositoryRoles(own, catalogue ?? [], fallback);
+  if (targetRepo && !roles.some((r) => r.repo.toLowerCase() === targetRepo.toLowerCase()))
+    roles.push({ repo: targetRepo, catalogue: [], engine: null, fallback: false });
+  const writesHere = (r: RepositoryRoles) =>
+    (!!target && r.engine?.connection?.id === target) || (!!targetRepo && r.repo.toLowerCase() === targetRepo.toLowerCase());
+  const githubConnections = gearRepoConnections(connections ?? [], tenantId);
+  // A repository the organization only lists can take new gears too: through
+  // its GitHub connection, as the setting always could.
+  const writeTo = (r: RepositoryRoles) => {
+    const c = r.engine?.connection;
+    if (c) return void markTarget(c);
+    const via = githubConnections[0];
+    if (!via) return setError("The organization has no GitHub connection to write through: add one under Connections.");
+    const gears = r.catalogue.find((x) => (x.mode || "gears") === "gears");
+    void api
+      .setOrgGearRepository(token, {
+        connection_id: gears?.connection_id || via.id,
+        repo: r.repo,
+        branch: gears?.git_ref && gears.git_ref !== "HEAD" ? gears.git_ref : undefined,
+      })
+      .then((st) => {
+        setWriteTarget(st);
+        setNote(`New gears go into ${r.repo}.`);
+      })
+      .catch((e) => setError(errText(e)));
+  };
+  const stopWriting = () =>
+    void api
+      .deleteOrgGearRepository(token)
+      .then((st) => {
+        setWriteTarget(st);
+        setNote("Create a gear writes into each project's own repository again.");
+      })
+      .catch((e) => setError(errText(e)));
   const platformRoles = repositoryRoles(platformRows, [], platformRows.length === 0 ? deploymentCorpus(status) : null);
   const saveCatalogue = async (items: CatalogRepoSource[], line: string) => {
     setError(null);
@@ -280,10 +334,42 @@ function GearSources({
             onList={listIt}
             onUnlist={unlist}
             onBuild={buildFrom}
-            target={org ? target : undefined}
-            onTarget={org && mayManage ? markTarget : undefined}
+            writesHere={org ? writesHere : undefined}
+            onWriteHere={org && mayManage ? writeTo : undefined}
+            onStopWriting={org && mayManage && targetRepo && !writeTarget?.gear_repository?.from_sources ? stopWriting : undefined}
+            onNewGear={org && mayManage ? () => setNewGear(true) : undefined}
+            primary={
+              org && mayManage && !creating ? (
+                <button type="button" onClick={() => setCreating(true)} data-create-repository>
+                  Create a repository…
+                </button>
+              ) : undefined
+            }
           />
         </div>
+      )}
+      {creating && (
+        <CreateGearRepository
+          token={token}
+          tenantId={tenantId}
+          connections={connections ?? []}
+          onCancel={() => setCreating(false)}
+          onCreated={(st) => {
+            setCreating(false);
+            setWriteTarget(st);
+            setNote(`Created ${st.gear_repository?.repo ?? "the repository"}; new gears go there.`);
+          }}
+        />
+      )}
+      {newGear && targetRepo && (
+        <ScaffoldModal
+          capability="new-gear"
+          token={token}
+          editable
+          lead={`A new gear in ${targetRepo}, with a pull request.`}
+          send={(body) => api.scaffoldOrgGear(token, body)}
+          onClose={() => setNewGear(false)}
+        />
       )}
       {org && (
         <div className="card" data-platform-rows>
@@ -349,8 +435,11 @@ function RolesTable({
   onList,
   onUnlist,
   onBuild,
-  target,
-  onTarget,
+  writesHere,
+  onWriteHere,
+  onStopWriting,
+  onNewGear,
+  primary,
 }: {
   list: string;
   title: string;
@@ -367,12 +456,14 @@ function RolesTable({
   onList?: (r: RepositoryRoles) => void;
   onUnlist?: (c: CatalogRepoSource) => void;
   onBuild?: (r: RepositoryRoles) => void;
-  /** The repository Create a gear writes into, when this is an
-   *  organization's own list. */
-  target?: string | null;
-  onTarget?: (c: Connection) => void;
+  /** Whether Create a gear writes into a row, on an organization's own list. */
+  writesHere?: (r: RepositoryRoles) => boolean;
+  onWriteHere?: (r: RepositoryRoles) => void;
+  onStopWriting?: () => void;
+  onNewGear?: () => void;
+  primary?: ReactNode;
 }) {
-  const own = target !== undefined;
+  const own = writesHere !== undefined;
   const note = (r: RepositoryRoles) => (catalogueRead ? rolesNote(r) : null);
   const columns: Column<RepositoryRoles>[] = [
     {
@@ -434,7 +525,7 @@ function RolesTable({
       id: "target",
       header: "New gears",
       cell: (r) =>
-        r.engine?.connection && target === r.engine.connection.id ? (
+        writesHere?.(r) ? (
           <span className="badge">Create a gear writes here</span>
         ) : (
           <span className="ing-dash">—</span>
@@ -449,6 +540,7 @@ function RolesTable({
       rows={rows}
       rowKey={(r) => r.repo}
       rowLabel={(r) => r.repo}
+      primary={primary}
       search={{ placeholder: "Search repositories" }}
       searchText={(r) => [r.repo, r.engine?.sourceId, ...r.catalogue.map((c) => c.mode)]}
       filters={
@@ -496,7 +588,18 @@ function RolesTable({
         // building from a listed repository, not listing the stopgap.
         if (catalogueRead && r.catalogue.length === 0 && !r.fallback && onList)
           out.push({ label: "List it in the catalogue", onSelect: () => onList(r) });
-        if (own && c && target !== c.id && onTarget) out.push({ label: "Write new gears here", onSelect: () => onTarget(c) });
+        if (own && writesHere?.(r) && onNewGear) out.push({ label: "New gear…", onSelect: onNewGear });
+        if (own && !writesHere?.(r) && !r.fallback && onWriteHere) out.push({ label: "Write new gears here", onSelect: () => onWriteHere(r) });
+        if (own && writesHere?.(r) && !r.engine?.connection && onStopWriting)
+          out.push({
+            label: "Stop writing new gears here",
+            onSelect: onStopWriting,
+            danger: {
+              title: `Stop writing new gears into ${r.repo}?`,
+              body: "Create a gear writes into each project's own repository again. The repository itself is not touched.",
+              confirmLabel: "Stop writing here",
+            },
+          });
         for (const s of r.catalogue)
           if (onUnlist)
             out.push({
