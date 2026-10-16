@@ -44,6 +44,10 @@ COPY --from=planner /src/studio-backend/recipe.json recipe.json
 # rather than local to one BuildKit daemon.
 # The generated recipe includes the committed lockfile. `cargo chef cook`
 # therefore resolves the same dependency graph without a separate update step.
+# A vendored plugin is a path dependency outside the recipe's skeletons, so the
+# cook needs its source; without it the build stops at "failed to read
+# plugins/…/Cargo.toml".
+COPY studio-backend/plugins/ plugins/
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY studio-backend/ .
 # The gear designs, for studio-assembly: build.rs compiles each one's purpose
