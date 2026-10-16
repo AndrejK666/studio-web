@@ -609,8 +609,6 @@ export const SURFACES: Surface[] = [
       "ProductCard",
       "GearConfigForm",
       "ProjectCandidate",
-      "ProjectEnvironments",
-      "StatusButton",
       "ProductConfigurator",
       "Explanation",
       "ExplainAll",
@@ -618,7 +616,6 @@ export const SURFACES: Surface[] = [
     gears: [
       "studio-components-catalog",
       "studio-documents",
-      "studio-environments",
       "studio-kits",
       "studio-product",
       "studio-spec-mapping",
@@ -631,6 +628,14 @@ export const SURFACES: Surface[] = [
     does: "See what the product was built into, where and how it went: the CI runs of the project's repositories and the builds the IDE reported, a failed one with its first error; start the project's build workflow in CI, or open the project in the IDE to build and deploy there.",
     components: ["ProjectBuilds"],
     gears: ["account-management", "studio-artifact-ingest"],
+  },
+  {
+    id: "project-deploys",
+    area: "project",
+    title: "Deploys",
+    does: "See where the project's product runs: each environment it may deploy to, its namespace and registry there, the last deploy and how it went; bind the product's kubernetes profiles to environments and read the deploy history.",
+    components: ["ProjectDeploys", "ProjectEnvironments", "StatusButton"],
+    gears: ["studio-environments"],
   },
   {
     id: "project-artifacts",
