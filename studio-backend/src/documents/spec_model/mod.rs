@@ -110,6 +110,14 @@ pub struct Coverage {
     pub error: Option<String>,
 }
 
+/// Whether a path is a template — a directory named `templates`, or a
+/// `template.md` — rather than documentation: never read into the model.
+pub fn is_template_path(path: &str) -> bool {
+    path.split('/').any(|seg| seg == "templates")
+        || path.ends_with("/template.md")
+        || path == "template.md"
+}
+
 /// One kept extraction, as the model view reads it.
 pub struct Kept<'a> {
     pub path: &'a str,
@@ -300,6 +308,16 @@ mod current_tests {
             "and the next build reads it again"
         );
         assert_eq!(to_read(&coverage), vec!["docs/a.md"]);
+    }
+
+    #[test]
+    fn a_template_is_not_documentation() {
+        assert!(is_template_path(
+            "studio-backend/src/documents/templates/prd.md"
+        ));
+        assert!(is_template_path("kits/sdlc/template.md"));
+        assert!(!is_template_path("docs/prd/constructor-studio.md"));
+        assert!(!is_template_path("docs/templates-guide.md"));
     }
 
     #[test]

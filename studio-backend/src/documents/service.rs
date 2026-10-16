@@ -1912,6 +1912,10 @@ impl DocumentsService {
         // model document whatever its binding says.
         let rows: Vec<DocumentBinding> = all
             .into_iter()
+            // A template is a blank to fill, not documentation: its
+            // placeholders and its links to sibling documents read as dangling
+            // references in every project that keeps one in its code.
+            .filter(|row| !super::spec_model::is_template_path(&row.path))
             .filter_map(|mut row| {
                 let doc_type = read_as(&row.path, row.state.is_typed(), row.type_key.as_deref())?;
                 row.type_key = doc_type;
