@@ -495,7 +495,7 @@ export function ComponentsCatalog({
    *  catalogue (what its repositories hold), or the repositories themselves
    *  (ADR-0046): one question, what our components are and where they come
    *  from, so one page rather than a Components and a Sources section. */
-  const [pane, setPane] = useState<ComponentsPane>(initialPane);
+  const [pane, setPane] = useState<ComponentsPane>(initialPane === "catalogue" && tier === "organization" ? "registry" : initialPane);
   /** Which tier the catalogue shows (ADR-0042), fixed by the level the page
    *  was opened at. */
   const tierTab: TierTab = tier;
@@ -884,7 +884,7 @@ export function ComponentsCatalog({
 
   const facts = useMemo(() => {
     const out = new Map<string, RowFacts>();
-    for (const g of visible) {
+    for (const g of [...visible, ...levelNodes.filter((n) => !visible.includes(n))]) {
       const name = nameOf(g);
       out.set(
         g.instance_id,
@@ -900,7 +900,7 @@ export function ComponentsCatalog({
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, resolved, schemas, activity, baselines]);
+  }, [visible, levelNodes, resolved, schemas, activity, baselines]);
   const columns = useMemo(() => gearColumns((g) => facts.get(g.instance_id), activityDays), [facts, activityDays]);
 
   /* The catalogue's own filters, on the list's toolbar. They live in the same
@@ -998,11 +998,8 @@ export function ComponentsCatalog({
               </span>
               {!platformLevel && (
                 <span className="chips" role="tablist" aria-label="Components" style={{ margin: "0 0 0 12px" }}>
-                  <button type="button" role="tab" aria-selected={pane === "registry"} className={`chip ${pane === "registry" ? "on" : ""}`} onClick={() => setPane("registry")}>
-                    Registry
-                  </button>
-                  <button type="button" role="tab" aria-selected={pane === "catalogue"} className={`chip ${pane === "catalogue" ? "on" : ""}`} onClick={() => setPane("catalogue")}>
-                    Catalogue <span className="n">{tiers.organization}</span>
+                  <button type="button" role="tab" aria-selected={pane !== "repositories"} className={`chip ${pane !== "repositories" ? "on" : ""}`} onClick={() => setPane("registry")}>
+                    Components
                   </button>
                   <button type="button" role="tab" aria-selected={pane === "repositories"} className={`chip ${pane === "repositories" ? "on" : ""}`} onClick={() => setPane("repositories")} data-pane-repositories>
                     Repositories
@@ -1010,7 +1007,7 @@ export function ComponentsCatalog({
                 </span>
               )}
             </div>
-            <div className="tools">
+            <div className="tools" hidden={!platformLevel && pane === "repositories"}>
               <div className="seg" role="tablist" aria-label="View mode">
                 {(["list", "graph"] as const).map((v) => (
                   <button key={v} aria-pressed={viewMode === v} onClick={() => setViewMode(v)}>
@@ -1100,13 +1097,15 @@ export function ComponentsCatalog({
           ) : (
             <>
               <p className="gcat-sub" data-level-note>
-                <strong>Built by this organization.</strong> Every component its projects declare, the code
-                that could become one, and the gears it keeps in its own gear repository. Only this
-                organization's members see them; publishing one gives it to the platform. The common set is
-                one level up, under <em>Platform</em> — a product draws on both.
+                <strong>Built by this organization</strong> and seen only by its members; publishing one gives it to
+                the platform, whose common set is one level up, under <em>Platform</em>.
               </p>
-              <OrgGearRepositoryCard token={token} tenantId={tenantId} connections={connections} />
-              {shadowedNote(shadowed) && <p className="gcat-hint" data-shadowed>{shadowedNote(shadowed)}</p>}
+              {pane === "repositories" && (
+                <>
+                  <OrgGearRepositoryCard token={token} tenantId={tenantId} connections={connections} />
+                  {shadowedNote(shadowed) && <p className="gcat-hint" data-shadowed>{shadowedNote(shadowed)}</p>}
+                </>
+              )}
             </>
           )}
 
@@ -1123,12 +1122,14 @@ export function ComponentsCatalog({
 
           {!platformLevel && pane === "repositories" ? (
             <OrgSources token={token} orgId={tenantId} embedded />
-          ) : !platformLevel && pane === "registry" ? (
+          ) : !platformLevel && viewMode !== "graph" ? (
             <ComponentRegistry
               token={token}
               projects={projects}
               isPlatformAdmin={isPlatformAdmin}
-              onOpenComponent={(name) => { setPane("catalogue"); setSelected(name); }}
+              onOpenComponent={(name) => setSelected(name)}
+              catalogue={levelNodes.filter((g) => componentTypes === null || componentTypes.has(g.type_id))}
+              catalogueCell={(id, node) => columns.find((c) => c.id === id)?.cell(node) ?? null}
             />
           ) : viewMode === "graph" ? (
             <>

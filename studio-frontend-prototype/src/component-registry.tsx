@@ -22,9 +22,9 @@
  * caller's own key -- for a description, category and capabilities that an
  * Apply turns into an edit. */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { ApiError, api } from "./api";
+import { ApiError, api, type CatalogNode } from "./api";
 import type {
   RegistryDecisionInput,
   RegistryDeclareResult,
@@ -34,12 +34,12 @@ import type {
   RegistryReadiness,
   RegistrySuggestion,
 } from "./api";
+import { DataTable, type Column } from "./data-table";
 import { errText } from "./format";
 import { occurrencePlace } from "./org-gear-repository";
 import {
   ACTION_LABEL,
   READINESS_LABEL,
-  REGISTRY_STATES,
   STATE_LABEL,
   STATE_TONE,
   allowedActions,
@@ -57,7 +57,6 @@ import {
   extractPreviewLines,
   extractionLine,
   extractionOpen,
-  filterEntries,
   isDuplicated,
   isOrphaned,
   ownerLabel,
@@ -80,21 +79,26 @@ export function ComponentRegistry({
   projects,
   onOpenComponent,
   isPlatformAdmin = false,
+  catalogue = [],
+  catalogueCell,
 }: {
   token: string;
   /** The organization's projects, for choosing which ones the walk reads. */
   projects: { id: string; name: string }[];
+  /** Open a published component's page. */
   onOpenComponent?: (name: string) => void;
+  /** What the organization's catalogue holds — published crates, kits — laid
+   *  beside what its projects declare, so one list answers what the
+   *  organization builds and how far each thing got. */
+  catalogue?: CatalogNode[];
+  /** The catalogue's own cell for a column, reused rather than redrawn. */
+  catalogueCell?: (column: "release" | "downloads" | "activity", node: CatalogNode) => ReactNode;
   /** A platform administrator may mark a contributed entry published by hand. */
   isPlatformAdmin?: boolean;
 }) {
   const [entries, setEntries] = useState<RegistryEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
-  const [state, setState] = useState<string | null>(null);
-  const [q, setQ] = useState("");
-  const [project, setProject] = useState<string | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
   const [excluded, setExcluded] = useState<string[] | null>(null);
   /** What the last walk saw of each project. */
   const [walks, setWalks] = useState<RegistryProjectWalk[]>([]);
@@ -188,9 +192,9 @@ export function ComponentRegistry({
     }
   };
 
+  const rows = useMemo(() => componentRows(entries ?? [], catalogue), [entries, catalogue]);
   const counts = useMemo(() => stateCounts(entries ?? []), [entries]);
   const seen = useMemo(() => registryProjects(entries ?? []), [entries]);
-  const shown = useMemo(() => filterEntries(entries ?? [], { state, q, project }), [entries, state, q, project]);
   const duplicated = (entries ?? []).filter(isDuplicated).length;
   const walkOf = (id: string) => walks.find((w) => w.project_id === id);
   const unreadable = projects.filter((p) => !(excluded ?? []).includes(p.id) && walkLine(walkOf(p.id)).failed);
@@ -209,12 +213,12 @@ export function ComponentRegistry({
     <div className="card" data-component-registry>
       <div className="card-head">
         <div>
-          <h2>Registry</h2>
+          <h2>Components</h2>
           <p className="subtitle">
-            Every component the organization&apos;s projects declare — a <code>gear.toml</code> or{" "}
-            <code>gear.gdl</code>, a <code>#[toolkit::gear]</code> attribute, a FrontX package or a kit
-            manifest — and where each one is. Read from every project below on a schedule, after a push,
-            or now.
+            What the organization builds, one row each: what its projects declare — a <code>gear.toml</code> or{" "}
+            <code>gear.gdl</code>, a <code>#[toolkit::gear]</code> attribute, a FrontX package or a kit manifest —
+            the code that could become a gear, and what it has published. Read from every project on a schedule,
+            after a push, or now.
           </p>
         </div>
         <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -232,8 +236,9 @@ export function ComponentRegistry({
         <>
           <p style={{ fontSize: 13, margin: "0 0 8px" }}>
             <b>
-              {entries.length} component{entries.length === 1 ? "" : "s"}
+              {rows.length} component{rows.length === 1 ? "" : "s"}
             </b>
+            {rows.length > entries.length && ` · ${rows.length - entries.length} published that no project declares`}
             {duplicated > 0 && ` · ${duplicated} declared in more than one repository`}
             {orphaned > 0 && ` · ${orphaned} no repository declares any more`}
           </p>
@@ -245,86 +250,97 @@ export function ComponentRegistry({
               — {unreadable.map((p) => p.name).join(", ")}. {walkLine(walkOf(unreadable[0].id)).hint ?? "See the projects below."}
             </div>
           )}
-          <div style={{ display: "flex", gap: 6, margin: "0 0 8px" }} role="group" aria-label="View">
-            <button type="button" className={view === "all" ? "primary" : ""} onClick={() => setView("all")}>
-              All components
-            </button>
-            <button
-              type="button"
-              className={view === "candidates" ? "primary" : ""}
-              onClick={() => setView("candidates")}
-              data-registry-candidates-tab
-            >
-              Candidates ({counts.candidate ?? 0})
-            </button>
-          </div>
+          {((counts.candidate ?? 0) > 0 || orphaned > 0 || view === "candidates") && (
+            <div className="reg-decide" role="group" aria-label="Needs a decision">
+              <span className="sub">Needs a decision:</span>
+              {view === "candidates" ? (
+                <button type="button" className="primary" onClick={() => setView("all")}>
+                  ← Every component
+                </button>
+              ) : (
+                (counts.candidate ?? 0) > 0 && (
+                  <button type="button" onClick={() => setView("candidates")} data-registry-candidates-tab>
+                    <b>{counts.candidate}</b> could become a gear — decide
+                  </button>
+                )
+              )}
+              {orphaned > 0 && view !== "candidates" && (
+                <span className="sub">
+                  · <b>{orphaned}</b> no repository declares any more
+                </span>
+              )}
+            </div>
+          )}
           {view === "candidates" ? (
             <CandidatesView token={token} entries={entries} people={people} names={names} onDecided={() => void load()} />
           ) : (
           <>
-          <div className="chips" role="group" aria-label="State">
-            <button type="button" className={`chip ${state === null ? "on" : ""}`} onClick={() => setState(null)}>
-              all<span className="chip-n">{entries.length}</span>
-            </button>
-            {REGISTRY_STATES.filter((s) => counts[s]).map((s) => (
-              <button key={s} type="button" className={`chip ${state === s ? "on" : ""}`} onClick={() => setState(s)}>
-                {STATE_LABEL[s]}
-                <span className="chip-n">{counts[s]}</span>
-              </button>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 8, margin: "8px 0", flexWrap: "wrap" }}>
-            <input
-              placeholder="Search names, descriptions, paths"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              style={{ flex: "1 1 260px" }}
-            />
-            <select value={project ?? ""} onChange={(e) => setProject(e.target.value || null)} aria-label="Project">
-              <option value="">every project</option>
-              {seen.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {shown.length === 0 ? (
-            <p className="empty">
-              {entries.length === 0
-                ? "Nothing yet: no project has been read. Read the projects now, or wait for the schedule."
-                : "No component matches."}
-            </p>
-          ) : (
-            <table className="ptable">
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left" }}>Component</th>
-                  <th style={{ textAlign: "left" }}>State</th>
-                  <th style={{ textAlign: "left" }}>Projects</th>
-                  <th style={{ textAlign: "left" }}>Declared at</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((e) => (
-                  <RegistryRow
-                    key={e.name}
-                    token={token}
-                    entry={e}
-                    entries={entries}
-                    people={people}
-                    names={names}
-                    open={open === e.name}
-                    onToggle={() => setOpen(open === e.name ? null : e.name)}
-                    onDecided={() => void load()}
-                    onOpenComponent={onOpenComponent}
-                    isPlatformAdmin={isPlatformAdmin}
-                  />
-                ))}
-              </tbody>
-            </table>
-          )}
+          <DataTable<ComponentRow>
+            list="org-components"
+            urlPrefix="comp."
+            rows={rows}
+            rowKey={(r) => r.key}
+            rowLabel={(r) => r.name}
+            onOpen={onOpenComponent ? (r) => r.node && onOpenComponent(String(r.node.value.name ?? r.name)) : undefined}
+            canOpen={(r) => !!r.node}
+            search={{ placeholder: "Search names, descriptions, paths" }}
+            searchText={(r) => [r.name, r.description, ...(r.entry?.occurrences ?? []).map((o) => o.path)]}
+            filters={[
+              {
+                id: "state",
+                allLabel: "Every state",
+                kind: "chips",
+                options: ROW_STATES.filter((st) => rows.some((r) => r.state === st)).map((st) => ({
+                  value: st,
+                  label: STATE_LABEL[st] ?? st,
+                })),
+                match: (r, v) => r.state === v,
+              },
+              {
+                id: "kind",
+                allLabel: "Every type",
+                kind: "select",
+                options: [...new Set(rows.map((r) => r.kind).filter(Boolean))].sort().map((k) => ({ value: k, label: k })),
+                match: (r, v) => r.kind === v,
+              },
+              {
+                id: "project",
+                allLabel: "Every project",
+                kind: "select",
+                options: seen.map((pr) => ({ value: pr.id, label: pr.name })),
+                match: (r, v) => (r.entry?.occurrences ?? []).some((o) => o.project_id === v),
+              },
+            ]}
+            empty={{
+              title: entries.length === 0 ? "Nothing read yet." : "No component matches.",
+              body: entries.length === 0 ? "Read the projects now, or wait for the schedule." : undefined,
+            }}
+            columns={componentColumns(catalogueCell, catalogue.length > 0)}
+            expand={(r) =>
+              r.entry ? (
+                <EntryDetail
+                  token={token}
+                  entry={r.entry}
+                  entries={entries}
+                  people={people}
+                  names={names}
+                  onDecided={() => void load()}
+                  onOpenComponent={r.node ? onOpenComponent : undefined}
+                  isPlatformAdmin={isPlatformAdmin}
+                />
+              ) : (
+                <div className="reg-detail" style={{ fontSize: 12 }}>
+                  Published, and no project of the organization declares it: it is read from the organization&apos;s
+                  repositories.{" "}
+                  {onOpenComponent && r.node && (
+                    <button type="button" className="linklike" onClick={() => onOpenComponent(String(r.node!.value.name ?? r.name))}>
+                      Open its page →
+                    </button>
+                  )}
+                </div>
+              )
+            }
+          />
           </>
           )}
 
@@ -367,14 +383,15 @@ export function ComponentRegistry({
   );
 }
 
-function RegistryRow({
+/** One component's registry entry, opened under its row: why it looks like a
+ *  gear, who owns it, where it is declared, what was contributed or extracted,
+ *  and the decisions it allows. */
+function EntryDetail({
   token,
   entry: e,
   entries,
   people,
   names,
-  open,
-  onToggle,
   onDecided,
   onOpenComponent,
   isPlatformAdmin = false,
@@ -384,191 +401,133 @@ function RegistryRow({
   entries: RegistryEntry[];
   people: { id: string; name: string }[];
   names: Record<string, string>;
-  open: boolean;
-  onToggle: () => void;
   onDecided: () => void;
   onOpenComponent?: (name: string) => void;
   isPlatformAdmin?: boolean;
 }) {
-  const first = e.occurrences[0];
-  const published = publishStatus(e);
-  const used = consumersLabel(e);
   return (
-    <>
-      <tr style={{ cursor: "pointer" }} onClick={onToggle} aria-expanded={open}>
-        <td>
-          <b>{e.name}</b> <span style={{ opacity: 0.6, fontSize: 12 }}>{e.kind}</span>
-          {isDuplicated(e) && (
-            <span className="badge warn" style={{ marginLeft: 6 }} title="Declared in more than one repository">
-              ×{new Set(e.occurrences.map((o) => o.repo)).size} repos
-            </span>
-          )}
-          {isOrphaned(e) && (
-            <span className="badge" style={{ marginLeft: 6 }} title="No repository declares it any more">
-              orphaned
-            </span>
-          )}
-          {e.description && <div style={{ fontSize: 12, opacity: 0.75 }}>{e.description}</div>}
-        </td>
-        <td>
-          <span className={`badge ${STATE_TONE[e.state] ?? ""}`}>{STATE_LABEL[e.state] ?? e.state}</span>
-          {published && (
-            <span
-              className={`badge ${published.kind === "published" ? "ok" : "info"}`}
-              style={{ marginLeft: 6 }}
-              title={published.kind === "pending" ? "Waiting for the platform's maintainers to merge the pull request" : "In the platform's catalogue"}
-              data-registry-publish-status
-            >
-              {published.label}
-            </span>
-          )}
-        </td>
-        <td style={{ fontSize: 13 }}>
-          {projectsOf(e).join(", ") || "—"}
-          {used && (
-            <div style={{ fontSize: 12, opacity: 0.75 }} data-registry-used-by>
-              {used}
-            </div>
-          )}
-        </td>
-        <td style={{ fontSize: 12 }}>
-          {first ? (
-            <>
-              <code>{first.path}</code> <span style={{ opacity: 0.6 }}>({first.declared_in})</span>
-              {e.occurrences.length > 1 && <span style={{ opacity: 0.6 }}> and {e.occurrences.length - 1} more</span>}
-            </>
-          ) : (
-            "—"
-          )}
-        </td>
-      </tr>
-      {open && (
-        <tr>
-          <td colSpan={4} style={{ fontSize: 12, background: "var(--muted, rgba(0,0,0,0.03))" }}>
-            {e.state === "candidate" && (
-              <div data-registry-evidence>
-                <b>Looks like a gear</b> (score {e.score ?? 0}):
-                <ul style={{ margin: "2px 0 4px", paddingLeft: 18 }}>
-                  {evidenceLines(e).map((l) => (
-                    <li key={l}>{l}</li>
-                  ))}
-                </ul>
-                <DeclareCandidate token={token} entry={e} onDeclared={onDecided} />
-              </div>
-            )}
-            {e.capabilities.length > 0 && (
-              <div>
-                <b>Capabilities:</b> {e.capabilities.join(", ")}
-              </div>
-            )}
-            <div>
-              <b>Owner:</b> {ownerLabel(e.owner) ?? <span style={{ opacity: 0.6 }}>nobody yet</span>}
-            </div>
-            {e.category && (
-              <div>
-                <b>Category:</b> {e.category}
-              </div>
-            )}
-            {(e.aliases ?? []).length > 0 && (
-              <div>
-                <b>Also found as:</b> {(e.aliases ?? []).join(", ")}
-              </div>
-            )}
-            {e.state === "merged" && e.merged_into && (
-              <div>
-                <b>Merged into</b> {e.merged_into}: what is found under this name is recorded there.
-              </div>
-            )}
-            {e.state === "deprecated" && (
-              <div>
-                <b>Deprecated</b>
-                {e.replaced_by ? ` — use ${e.replaced_by} instead.` : ": no longer to be chosen."}
-              </div>
-            )}
-            {e.state === "published" && e.version && (
-              <div>
-                <b>Published version:</b> {e.version}
-              </div>
-            )}
-            {e.contribution && (
-              <div data-registry-contribution>
-                <b>{e.state === "published" ? "Contributed" : "Contribution PR opened"}:</b>{" "}
-                {e.contribution.pr_url ? (
-                  <a href={e.contribution.pr_url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}>
-                    {e.contribution.pr_url}
-                  </a>
-                ) : (
-                  <code>{e.contribution.branch}</code>
-                )}{" "}
-                <span style={{ opacity: 0.7 }}>
-                  — {e.contribution.files} file{e.contribution.files === 1 ? "" : "s"} into <code>{e.contribution.repo}</code> at{" "}
-                  <code>{e.contribution.path}</code>
-                  {e.state !== "published" && "; published once the platform's catalogue has it"}
-                </span>
-              </div>
-            )}
-            {(e.consumers ?? []).length > 0 && (
-              <div data-registry-consumers>
-                <b>{consumersLabel(e)}:</b> {(e.consumers ?? []).map(consumerLine).join(", ")}
-              </div>
-            )}
-            <SuggestDescription token={token} entry={e} onApplied={onDecided} />
-            {e.extraction && (
-              <div data-registry-extraction>
-                <b>{extractionLine(e.extraction)}</b>
-                <div style={{ opacity: 0.8 }}>
-                  {[
-                    ["into the gear repository", e.extraction.gear_pr_url],
-                    ["into the project", e.extraction.source_pr_url],
-                  ].map(([what, url]) =>
-                    url ? (
-                      <span key={what ?? ""} style={{ marginRight: 8 }}>
-                        <a href={url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}>
-                          pull request {what}
-                        </a>
-                      </span>
-                    ) : null,
-                  )}
-                </div>
-              </div>
-            )}
-            <ExtractReadiness token={token} entry={e} onChanged={onDecided} />
-            <div style={{ marginTop: 4 }}>
-              <b>Found in</b>
-            </div>
-            <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
-              {e.occurrences.map((o) => (
-                <li key={`${o.repo}:${o.path}`}>
-                  {occurrencePlace(o)} · <code>{o.repo}</code>
-                  {o.git_ref ? `@${o.git_ref}` : ""} · <code>{o.path}</code> · {o.declared_in}
-                  {o.commit ? <span style={{ opacity: 0.6 }}> · {o.commit.slice(0, 7)}</span> : null}
-                </li>
-              ))}
-            </ul>
-            {(e.first_seen || e.last_seen) && (
-              <div style={{ opacity: 0.7, marginTop: 4 }}>
-                {e.first_seen && `first seen ${new Date(e.first_seen).toLocaleDateString()}`}
-                {e.last_seen && ` · last read ${new Date(e.last_seen).toLocaleString()}`}
-              </div>
-            )}
-            {onOpenComponent && (
-              <button type="button" className="linklike" style={{ marginTop: 6 }} onClick={() => onOpenComponent(e.name)}>
-                Open in the catalogue →
-              </button>
-            )}
-            <RegistryDecisions
-              token={token}
-              entry={e}
-              entries={entries}
-              people={people}
-              names={names}
-              onDecided={onDecided}
-              isPlatformAdmin={isPlatformAdmin}
-            />
-          </td>
-        </tr>
+    <div className="reg-detail" style={{ fontSize: 12 }}>
+      {e.state === "candidate" && (
+        <div data-registry-evidence>
+          <b>Looks like a gear</b> (score {e.score ?? 0}):
+          <ul style={{ margin: "2px 0 4px", paddingLeft: 18 }}>
+            {evidenceLines(e).map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+          <DeclareCandidate token={token} entry={e} onDeclared={onDecided} />
+        </div>
       )}
-    </>
+      {e.capabilities.length > 0 && (
+        <div>
+          <b>Capabilities:</b> {e.capabilities.join(", ")}
+        </div>
+      )}
+      <div>
+        <b>Owner:</b> {ownerLabel(e.owner) ?? <span style={{ opacity: 0.6 }}>nobody yet</span>}
+      </div>
+      {e.category && (
+        <div>
+          <b>Category:</b> {e.category}
+        </div>
+      )}
+      {(e.aliases ?? []).length > 0 && (
+        <div>
+          <b>Also found as:</b> {(e.aliases ?? []).join(", ")}
+        </div>
+      )}
+      {e.state === "merged" && e.merged_into && (
+        <div>
+          <b>Merged into</b> {e.merged_into}: what is found under this name is recorded there.
+        </div>
+      )}
+      {e.state === "deprecated" && (
+        <div>
+          <b>Deprecated</b>
+          {e.replaced_by ? ` — use ${e.replaced_by} instead.` : ": no longer to be chosen."}
+        </div>
+      )}
+      {e.state === "published" && e.version && (
+        <div>
+          <b>Published version:</b> {e.version}
+        </div>
+      )}
+      {e.contribution && (
+        <div data-registry-contribution>
+          <b>{e.state === "published" ? "Contributed" : "Contribution PR opened"}:</b>{" "}
+          {e.contribution.pr_url ? (
+            <a href={e.contribution.pr_url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}>
+              {e.contribution.pr_url}
+            </a>
+          ) : (
+            <code>{e.contribution.branch}</code>
+          )}{" "}
+          <span style={{ opacity: 0.7 }}>
+            — {e.contribution.files} file{e.contribution.files === 1 ? "" : "s"} into <code>{e.contribution.repo}</code> at{" "}
+            <code>{e.contribution.path}</code>
+            {e.state !== "published" && "; published once the platform's catalogue has it"}
+          </span>
+        </div>
+      )}
+      {(e.consumers ?? []).length > 0 && (
+        <div data-registry-consumers>
+          <b>{consumersLabel(e)}:</b> {(e.consumers ?? []).map(consumerLine).join(", ")}
+        </div>
+      )}
+      <SuggestDescription token={token} entry={e} onApplied={onDecided} />
+      {e.extraction && (
+        <div data-registry-extraction>
+          <b>{extractionLine(e.extraction)}</b>
+          <div style={{ opacity: 0.8 }}>
+            {[
+              ["into the gear repository", e.extraction.gear_pr_url],
+              ["into the project", e.extraction.source_pr_url],
+            ].map(([what, url]) =>
+              url ? (
+                <span key={what ?? ""} style={{ marginRight: 8 }}>
+                  <a href={url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}>
+                    pull request {what}
+                  </a>
+                </span>
+              ) : null,
+            )}
+          </div>
+        </div>
+      )}
+      <ExtractReadiness token={token} entry={e} onChanged={onDecided} />
+      <div style={{ marginTop: 4 }}>
+        <b>Found in</b>
+      </div>
+      <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+        {e.occurrences.map((o) => (
+          <li key={`${o.repo}:${o.path}`}>
+            {occurrencePlace(o)} · <code>{o.repo}</code>
+            {o.git_ref ? `@${o.git_ref}` : ""} · <code>{o.path}</code> · {o.declared_in}
+            {o.commit ? <span style={{ opacity: 0.6 }}> · {o.commit.slice(0, 7)}</span> : null}
+          </li>
+        ))}
+      </ul>
+      {(e.first_seen || e.last_seen) && (
+        <div style={{ opacity: 0.7, marginTop: 4 }}>
+          {e.first_seen && `first seen ${new Date(e.first_seen).toLocaleDateString()}`}
+          {e.last_seen && ` · last read ${new Date(e.last_seen).toLocaleString()}`}
+        </div>
+      )}
+      {onOpenComponent && (
+        <button type="button" className="linklike" style={{ marginTop: 6 }} onClick={() => onOpenComponent(e.name)}>
+          Open in the catalogue →
+        </button>
+      )}
+      <RegistryDecisions
+        token={token}
+        entry={e}
+        entries={entries}
+        people={people}
+        names={names}
+        onDecided={onDecided}
+        isPlatformAdmin={isPlatformAdmin}
+      />
+    </div>
   );
 }
 
@@ -1314,4 +1273,148 @@ function ExtractReadiness({
       )}
     </div>
   );
+}
+
+// ── one list: the registry and the catalogue ────────────────────────────────
+
+/** One component as the list shows it: what a project declares (the registry
+ *  entry), what was published (the catalogue node), or both. */
+export interface ComponentRow {
+  key: string;
+  name: string;
+  kind: string;
+  description: string;
+  /** The registry's state, or `published` for a catalogue node no project
+   *  declares. */
+  state: string;
+  entry?: RegistryEntry;
+  node?: CatalogNode;
+}
+
+/** The order a state filter offers them in: what needs a decision first. */
+const ROW_STATES = ["candidate", "declared", "registered", "published", "merged", "deprecated", "rejected", "extracted"];
+
+/** Whether a catalogue node is this registry entry, published: the same
+ *  name, the crate its extraction named, an alias, or the `cf-gears-`/`cf-`
+ *  name the crates are published under. */
+export function sameComponent(e: Pick<RegistryEntry, "name" | "aliases" | "extraction">, nodeName: string): boolean {
+  const n = nodeName.toLowerCase();
+  const names = [e.name, ...(e.aliases ?? [])].map((x) => x.toLowerCase());
+  return (
+    names.includes(n) ||
+    e.extraction?.crate_name?.toLowerCase() === n ||
+    names.some((x) => n === `cf-gears-${x}` || n === `cf-${x}`)
+  );
+}
+
+/** The registry's entries with the catalogue node each one is, and the
+ *  catalogue's nodes no entry is, as rows of one list. */
+export function componentRows(entries: RegistryEntry[], catalogue: CatalogNode[]): ComponentRow[] {
+  const used = new Set<string>();
+  const nodeName = (n: CatalogNode) => String(n.value.name ?? n.instance_id);
+  const rows: ComponentRow[] = entries.map((e) => {
+    const node = catalogue.find((n) => !used.has(n.instance_id) && sameComponent(e, nodeName(n)));
+    if (node) used.add(node.instance_id);
+    return { key: `r:${e.name}`, name: e.name, kind: e.kind, description: e.description ?? "", state: e.state, entry: e, node };
+  });
+  for (const n of catalogue) {
+    if (used.has(n.instance_id)) continue;
+    rows.push({
+      key: `c:${n.instance_id}`,
+      name: nodeName(n),
+      kind: String(n.value.kind ?? "component"),
+      description: String(n.value.description ?? ""),
+      state: "published",
+      node: n,
+    });
+  }
+  return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The columns: what a project declares always, what the catalogue knows
+ *  only when there is a catalogue — a column empty in every row says nothing. */
+function componentColumns(
+  catalogueCell: ((column: "release" | "downloads" | "activity", node: CatalogNode) => ReactNode) | undefined,
+  withCatalogue: boolean,
+): Column<ComponentRow>[] {
+  const dash = <span style={{ opacity: 0.5 }}>—</span>;
+  const cols: Column<ComponentRow>[] = [
+    {
+      id: "name",
+      header: "Component",
+      compare: (a, b) => a.name.localeCompare(b.name),
+      cell: (r) => (
+        <div>
+          <b>{r.name}</b> <span style={{ opacity: 0.6, fontSize: 12 }}>{r.kind}</span>
+          {r.entry && isDuplicated(r.entry) && (
+            <span className="badge warn" style={{ marginLeft: 6 }} title="Declared in more than one repository">
+              ×{new Set(r.entry.occurrences.map((o) => o.repo)).size} repos
+            </span>
+          )}
+          {r.entry && isOrphaned(r.entry) && (
+            <span className="badge" style={{ marginLeft: 6 }} title="No repository declares it any more">
+              orphaned
+            </span>
+          )}
+          {r.description && <div style={{ fontSize: 12, opacity: 0.75 }}>{r.description}</div>}
+        </div>
+      ),
+    },
+    {
+      id: "state",
+      header: "State",
+      compare: (a, b) => ROW_STATES.indexOf(a.state) - ROW_STATES.indexOf(b.state),
+      cell: (r) => {
+        const published = r.entry ? publishStatus(r.entry) : null;
+        return (
+          <>
+            <span className={`badge ${STATE_TONE[r.state] ?? (r.state === "published" ? "ok" : "")}`}>{STATE_LABEL[r.state] ?? r.state}</span>
+            {published && (
+              <span className={`badge ${published.kind === "published" ? "ok" : "info"}`} style={{ marginLeft: 6 }} data-registry-publish-status>
+                {published.label}
+              </span>
+            )}
+          </>
+        );
+      },
+    },
+    {
+      id: "projects",
+      header: "Projects",
+      cell: (r) => {
+        if (!r.entry) return dash;
+        const used = consumersLabel(r.entry);
+        return (
+          <span style={{ fontSize: 13 }}>
+            {projectsOf(r.entry).join(", ") || "—"}
+            {used && <div style={{ fontSize: 12, opacity: 0.75 }} data-registry-used-by>{used}</div>}
+          </span>
+        );
+      },
+    },
+    {
+      id: "where",
+      header: "Declared at",
+      cell: (r) => {
+        const first = r.entry?.occurrences[0];
+        if (!first) return r.node?.value.repository ? <span style={{ fontSize: 12 }}>{String(r.node.value.repository).replace(/^https?:\/\//, "")}</span> : dash;
+        return (
+          <span style={{ fontSize: 12 }}>
+            <code>{first.path}</code> <span style={{ opacity: 0.6 }}>({first.declared_in})</span>
+            {r.entry!.occurrences.length > 1 && <span style={{ opacity: 0.6 }}> and {r.entry!.occurrences.length - 1} more</span>}
+          </span>
+        );
+      },
+    },
+  ];
+  if (withCatalogue && catalogueCell) {
+    for (const [id, header] of [
+      ["release", "Release"],
+      ["downloads", "Downloads"],
+      ["activity", "Activity"],
+    ] as const) {
+      cols.push({ id, header, num: id === "downloads", cell: (r) => (r.node ? catalogueCell(id, r.node) : dash) });
+    }
+  }
+  return cols;
 }
