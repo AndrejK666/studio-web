@@ -1533,6 +1533,11 @@ button.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--destr
    at a glance in a band this short, where a 2px rule under 28px of text does
    not. */
 .psection.on { color: var(--primary); background: var(--studio-selection-subtle); }
+/* Reordering (section-band.tsx): the dragged tab fades, and a 2px bar in the
+   primary colour marks the gap it would drop into. */
+.psection.dragging { opacity: 0.4; }
+.psection.drop-before { box-shadow: inset 2px 0 0 var(--primary); }
+.psection.drop-after { box-shadow: inset -2px 0 0 var(--primary); }
 
 /* Older in-page tab strips (spec-quality and friends) keep the underline look. */
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0.9rem 0 1rem;
