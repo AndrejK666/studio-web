@@ -1226,6 +1226,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/glossary/document",
+      "operation_id": "studio_documents.get_spec_model_glossary_document",
+      "tag": "StudioDocuments",
+      "summary": "The glossary the project's documents keep, read as written",
+      "authenticated": true,
+      "responses": [
+        "GlossaryDocDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model/questions",
       "operation_id": "studio_documents.list_domain_questions",
       "tag": "StudioDocuments",
@@ -3765,6 +3782,24 @@
       "summary": "Say two glossary entries are different things",
       "authenticated": true,
       "request": "GlossaryDistinctRequest",
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/spec-model/glossary/document/proposals",
+      "operation_id": "studio_documents.create_spec_model_glossary_document_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose the project's glossary as docs/glossary.md",
+      "authenticated": true,
+      "request": "GlossaryDocRequest",
+      "responses": [
+        "SpecModelWriteDto"
+      ],
       "errors": [
         "400",
         "401",

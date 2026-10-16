@@ -14,6 +14,7 @@ pub(crate) mod domain_doc;
 pub(crate) mod extract;
 pub(crate) mod finding;
 pub(crate) mod glossary;
+pub(crate) mod glossary_doc;
 pub(crate) mod index;
 pub(crate) mod judge;
 pub(crate) mod questions;

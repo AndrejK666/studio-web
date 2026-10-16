@@ -3,7 +3,7 @@
 // searches instead of listing every word.
 import { describe, expect, it } from "vitest";
 
-import { clarifySentence, filterRows, glossaryRows, mergeCandidates, pairVerdict, renameOffer, similarPairs, type GlossaryRow } from "./glossary-view";
+import { clarifySentence, filterRows, glossaryRows, mergeCandidates, pairVerdict, planGlossary, renameOffer, similarPairs, type GlossaryRow } from "./glossary-view";
 import { entitiesOf, type GlossaryEntry, type SpecModelFact } from "./spec-model";
 
 const entry = (name: string, facts = 5, extra: Partial<GlossaryEntry> = {}): GlossaryEntry => ({
@@ -137,5 +137,47 @@ describe("what to do with a pair", () => {
   });
   it("asks the same of two defined terms that never meet: a level in front names a kind", () => {
     expect(verdict(["membership", ["a.md"], true], ["organization membership", ["b.md"], true]).action).toBe("clarify");
+  });
+});
+
+describe("the glossary document", () => {
+  const def = (name: string, text: string, path = "docs/a.md"): SpecModelFact => ({ ...fact(name, "entity", text), source: { path, line_start: 3 } });
+  const row = (e: GlossaryEntry, d: SpecModelFact | null, layer: GlossaryRow["layer"] = "domain"): GlossaryRow => ({
+    entry: e,
+    definition: d?.text ?? null,
+    layer,
+    definitions: d ? [d] : [],
+    paths: [],
+  });
+  const member = row(entry("Member", 20, { aliases: [{ key: "participant", name: "participant" }], distinct_from: ["membership"] }), def("Member", "A person in an organization."));
+  const membership = row(entry("Membership", 9), def("Membership", "The standing a member holds."));
+  const seat = row(entry("Seat", 2), def("Seat", "A paid place."));
+  const vague = row(entry("Thing", 30), null);
+  const rows = [member, membership, seat, vague];
+  const defOf = (r: GlossaryRow) => r.definitions[0] ?? null;
+
+  it("keeps the rows as written and fills what they leave out", () => {
+    const plan = planGlossary([{ term: "Members", definition: "Someone with a role.", aliases: [], not_same_as: [] }], rows, defOf);
+    expect(plan[0].change).toBe("filled");
+    expect(plan[0].row.definition).toBe("Someone with a role.");
+    expect(plan[0].row.aliases).toEqual(["participant"]);
+    expect(plan[0].row.not_same_as).toEqual(["Membership"]);
+  });
+  it("adds defined domain terms said often enough, and nothing it already has", () => {
+    const plan = planGlossary([{ term: "Member", definition: "x", aliases: [], not_same_as: [] }], rows, defOf);
+    expect(plan.map((p) => [p.row.term, p.change])).toEqual([
+      ["Member", "filled"],
+      ["Membership", "added"],
+    ]);
+    expect(plan[1].row.source).toBe("docs/a.md:3");
+  });
+  it("creates the glossary from nothing, a settled term however rarely said", () => {
+    const plan = planGlossary([], rows, defOf, { settled: (r) => r === seat });
+    expect(plan.map((p) => p.row.term)).toEqual(["Member", "Membership", "Seat"]);
+    expect(plan.every((p) => p.change === "added")).toBe(true);
+  });
+  it("leaves a row the model never read as written", () => {
+    const plan = planGlossary([{ term: "Kit", definition: "A bundle.", aliases: [], not_same_as: [] }], [], defOf);
+    expect(plan).toEqual([{ row: { term: "Kit", definition: "A bundle.", aliases: [], not_same_as: [] }, change: "kept", filled: [], facts: 0 }]);
   });
 });

@@ -2719,3 +2719,11 @@ div.dm-block { padding-left: 0; }
 .gl-act-different { background: var(--accent); }
 .gl-pair-detail { display: flex; flex-direction: column; gap: 10px; }
 .gl-pair-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+.gl-doc { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.gl-doc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.gl-doc-head p { margin: 4px 0 0; }
+.gl-doc-left { opacity: 0.5; text-decoration: line-through; }
+.gl-doc-kept { background: var(--accent); }
+.gl-doc-filled { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
+.gl-doc-added { background: color-mix(in srgb, #16a34a 16%, transparent); color: #15803d; }

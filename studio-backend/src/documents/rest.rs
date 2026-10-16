@@ -2465,6 +2465,55 @@ pub struct SpecModelDecisionListDto {
     pub total: u32,
 }
 
+/// One term of the project's glossary document.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct GlossaryDocRowDto {
+    pub term: String,
+    pub definition: String,
+    /// Other names that mean the same.
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    /// Terms that look alike and are something else.
+    #[serde(default)]
+    pub not_same_as: Vec<String>,
+    /// Where the definition was read: `path:line`.
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+/// The glossary the project's documents keep.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GlossaryDocFoundDto {
+    pub path: String,
+    /// The section's heading, for a glossary kept inside another document.
+    pub heading: Option<String>,
+    pub line_start: u32,
+    pub line_end: u32,
+    /// The whole document is the glossary.
+    pub whole: bool,
+    pub rows: Vec<GlossaryDocRowDto>,
+}
+
+/// Where the project's glossary is, and where Studio keeps it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct GlossaryDocDto {
+    /// The glossary the documents keep, if any.
+    pub found: Option<GlossaryDocFoundDto>,
+    /// Where Studio writes it: `docs/glossary.md`.
+    pub path: String,
+}
+
+/// The glossary to propose, row by row in its order.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct GlossaryDocRequest {
+    pub project_id: String,
+    pub rows: Vec<GlossaryDocRowDto>,
+}
+
 /// One name merged into a glossary entry.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -5496,6 +5545,173 @@ async fn create_spec_model_file_proposal(
     ))
 }
 
+fn glossary_row_dto(r: super::spec_model::glossary_doc::Row) -> GlossaryDocRowDto {
+    GlossaryDocRowDto {
+        term: r.term,
+        definition: r.definition,
+        aliases: r.aliases,
+        not_same_as: r.not_same_as,
+        source: r.source,
+    }
+}
+
+/// The glossary the project's documents keep — `docs/glossary.md`, or a
+/// glossary section inside another document — read as written.
+async fn get_glossary_document(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<GlossaryDocDto>> {
+    use super::spec_model::glossary_doc::{GLOSSARY_DOC_PATH, find};
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let line = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let found = find(
+        sources
+            .documents
+            .iter()
+            .map(|d| (d.path.as_str(), d.text.as_str())),
+    )
+    .map(|f| GlossaryDocFoundDto {
+        path: f.path,
+        heading: f.heading,
+        line_start: line(f.line_start),
+        line_end: line(f.line_end),
+        whole: f.whole,
+        rows: f.rows.into_iter().map(glossary_row_dto).collect(),
+    });
+    Ok(Json(GlossaryDocDto {
+        found,
+        path: GLOSSARY_DOC_PATH.to_owned(),
+    }))
+}
+
+/// Most rows one glossary holds.
+const GLOSSARY_DOC_ROWS_MAX: usize = 1000;
+
+/// Propose the project's glossary as `docs/glossary.md` in one pull request.
+/// A glossary kept as a section of another document moves: the same pull
+/// request leaves a link where the section's table was.
+async fn create_glossary_document_proposal(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(req): Json<GlossaryDocRequest>,
+) -> ApiResult<(StatusCode, JsonBody<SpecModelWriteDto>)> {
+    use super::spec_model::glossary_doc::{GLOSSARY_DOC_PATH, Row, find, render, replace_section};
+    let project_id = parse_project_id(&req.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let refuse = |why: &str| {
+        DocumentsError::invalid_argument()
+            .with_constraint(why)
+            .create()
+    };
+    if req.rows.is_empty() || req.rows.len() > GLOSSARY_DOC_ROWS_MAX {
+        return Err(refuse("a glossary holds between one and a thousand terms"));
+    }
+    let short = |s: &str| s.len() <= GLOSSARY_TEXT_MAX;
+    if !req.rows.iter().all(|r| {
+        !r.term.trim().is_empty()
+            && short(&r.term)
+            && r.definition.len() <= 4096
+            && r.aliases.iter().chain(&r.not_same_as).all(|a| short(a))
+            && r.source.as_deref().is_none_or(short)
+    }) {
+        return Err(refuse(
+            "every row needs a term; terms, names and sources are at most 200 bytes, a definition 4 KiB",
+        ));
+    }
+    let rows: Vec<Row> = req
+        .rows
+        .iter()
+        .map(|r| Row {
+            term: r.term.trim().to_owned(),
+            definition: r.definition.trim().to_owned(),
+            aliases: r.aliases.clone(),
+            not_same_as: r.not_same_as.clone(),
+            source: r.source.clone(),
+        })
+        .collect();
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let found = find(
+        sources
+            .documents
+            .iter()
+            .map(|d| (d.path.as_str(), d.text.as_str())),
+    );
+    let content = render(&rows);
+    let mut files_out = vec![crate::product::port::DeclarationFile {
+        path: GLOSSARY_DOC_PATH.to_owned(),
+        content: content.clone(),
+    }];
+    let moved = found.as_ref().filter(|f| !f.whole).and_then(|f| {
+        let text = sources.documents.iter().find(|d| d.path == f.path)?;
+        Some((f.path.clone(), replace_section(&text.text, f)))
+    });
+    if let Some((path, content)) = &moved {
+        files_out.push(crate::product::port::DeclarationFile {
+            path: path.clone(),
+            content: content.clone(),
+        });
+    }
+    let what = match (&found, &moved) {
+        (Some(f), Some(_)) => format!(
+            "The glossary moves out of `{}` ({}) into `{GLOSSARY_DOC_PATH}`, where every document can link a term;              the section keeps its heading and links there.",
+            f.path,
+            f.heading.as_deref().unwrap_or("its glossary section"),
+        ),
+        (Some(_), None) => {
+            format!("`{GLOSSARY_DOC_PATH}` put in order and filled from what the documents name.")
+        }
+        _ => format!(
+            "The project had no glossary: `{GLOSSARY_DOC_PATH}`, from what its documents name."
+        ),
+    };
+    let files = project_files(&quality)?;
+    let branch = format!(
+        "docs/glossary-{}",
+        &super::spec_model::extract::revision(&content)[..12]
+    );
+    let written = files
+        .write(
+            &ctx,
+            &project_id.to_string(),
+            &branch,
+            &files_out,
+            &crate::product::port::PullRequestText {
+                message: "docs: the project's glossary".to_owned(),
+                title: "Docs: the project's glossary".to_owned(),
+                body: format!(
+                    "{what}\n\n{} terms, each with what it means, the other names it goes by and the terms it is not. \
+                     Proposed from the Glossary tab of Constructor Studio, to review.",
+                    rows.len()
+                ),
+            },
+            true,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(SpecModelWriteDto {
+            path: GLOSSARY_DOC_PATH.to_owned(),
+            branch: written.branch,
+            commit_sha: written.commit_sha,
+            pr_url: written.pr_url,
+        }),
+    ))
+}
+
 /// The most facts one review action takes: a selection, not the model.
 const SPEC_REVIEW_BATCH_MAX: usize = 500;
 
@@ -7840,6 +8056,52 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/glossary/document")
+        .operation_id("studio_documents.get_spec_model_glossary_document")
+        .summary("The glossary the project's documents keep, read as written")
+        .description(
+            "`docs/glossary.md` when the repository has it, else the glossary section with a term \
+             table inside another document (a PRD's glossary), with its rows; `found` is null when \
+             the documents keep none.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose glossary to find")
+        .handler(get_glossary_document)
+        .json_response_with_schema::<GlossaryDocDto>(
+            openapi,
+            StatusCode::OK,
+            "Where the glossary is",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/glossary/document/proposals")
+        .operation_id("studio_documents.create_spec_model_glossary_document_proposal")
+        .summary("Propose the project's glossary as docs/glossary.md")
+        .description(
+            "The rows written as `docs/glossary.md`, one table row per term with an anchor other \
+             documents link to, in a pull request. A glossary kept as a section of another document \
+             moves in the same pull request: the section keeps its heading and links to the file.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<GlossaryDocRequest>(openapi, "The project and the glossary's rows")
+        .handler(create_glossary_document_proposal)
+        .json_response_with_schema::<SpecModelWriteDto>(openapi, StatusCode::CREATED, "The pull request")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::post("/studio-documents/v1/spec-model/files/proposals")

@@ -3,6 +3,7 @@
 // Pure: glossary-screen.tsx draws what these compute.
 
 import { layerOf, type Layer } from "./domain-layers";
+import type { GlossaryDocRow } from "./api";
 import type { Entity, GlossaryEntry, SpecModelFact } from "./spec-model";
 
 export type GlossaryFilter = "all" | "undefined" | "similar" | "named";
@@ -191,4 +192,101 @@ export function pairVerdict(p: SimilarPair, rowOf: (key: string) => GlossaryRow 
     return { action: "clarify", why: `“${longer.e.name}” is said apart from “${base.e.name}” and nothing defines how they differ: one sentence settles it.`, evidence };
   }
   return { action: "clarify", why: "The names are alike and nothing says how they differ.", evidence };
+}
+
+/** What the glossary document does with a term: keeps the row as written,
+ *  fills what the row leaves out, or adds a term the documents name. */
+export type DocChange = "kept" | "filled" | "added";
+
+export interface PlannedRow {
+  row: GlossaryDocRow;
+  change: DocChange;
+  /** What was filled in a kept row, in words. */
+  filled: string[];
+  /** How many facts the documents say of it: 0 for a term they never name. */
+  facts: number;
+}
+
+/** A term folded for matching a written glossary against the model: case,
+ *  an article and a plural do not make another term. */
+export function foldTerm(s: string): string {
+  let k = s.toLowerCase().replace(/[`*_]/g, "").replace(/\s+/g, " ").trim().replace(/^(the|a|an) /, "");
+  if (k.length > 3 && k.endsWith("s") && !k.endsWith("ss")) k = k.slice(0, -1);
+  return k;
+}
+
+/** The glossary to propose: every row the project already keeps, as written
+ *  and in its order, with the other names and the terms-it-is-not the model
+ *  knows filled in; then the terms the documents define and the glossary
+ *  lacks — a domain term, defined, said at least `minFacts` times or settled
+ *  by a member — the most said first, at most `maxAdded`, by name. */
+export function planGlossary(
+  existing: GlossaryDocRow[],
+  rows: GlossaryRow[],
+  defOf: (r: GlossaryRow) => SpecModelFact | null,
+  opts: { minFacts?: number; maxAdded?: number; settled?: (r: GlossaryRow) => boolean } = {},
+): PlannedRow[] {
+  const { minFacts = 5, maxAdded = 40, settled = (r) => r.entry.chosen } = opts;
+  const byFold = new Map<string, GlossaryRow>();
+  const nameOf = new Map(rows.map((r) => [r.entry.key, r.entry.name]));
+  for (const r of rows) {
+    for (const n of [r.entry.key, r.entry.name, ...r.entry.spellings, ...r.entry.aliases.map((a) => a.name)]) {
+      const k = foldTerm(n);
+      if (!byFold.has(k)) byFold.set(k, r);
+    }
+  }
+  const used = new Set<string>();
+  const taken = new Set<string>();
+  const sourceOf = (f: SpecModelFact) => `${f.source.path}${f.source.line_start ? `:${f.source.line_start}` : ""}`;
+  const apartOf = (r: GlossaryRow) => (r.entry.distinct_from ?? []).map((k) => nameOf.get(k) ?? k);
+  const out: PlannedRow[] = existing.map((e) => {
+    for (const n of [e.term, ...e.aliases]) taken.add(foldTerm(n));
+    const r = [e.term, ...e.aliases].map((n) => byFold.get(foldTerm(n))).find(Boolean);
+    if (!r) return { row: e, change: "kept", filled: [], facts: 0 };
+    used.add(r.entry.key);
+    const filled: string[] = [];
+    const row = { ...e, aliases: [...e.aliases], not_same_as: [...e.not_same_as] };
+    const has = (list: string[], n: string) => list.some((x) => foldTerm(x) === foldTerm(n));
+    for (const a of r.entry.aliases.map((x) => x.name)) {
+      if (foldTerm(a) !== foldTerm(e.term) && !has(row.aliases, a)) {
+        row.aliases.push(a);
+        filled.push(`also written as “${a}”`);
+      }
+    }
+    for (const n of apartOf(r)) {
+      if (!has(row.not_same_as, n)) {
+        row.not_same_as.push(n);
+        filled.push(`not the same as “${n}”`);
+      }
+    }
+    const def = defOf(r);
+    if (!row.definition.trim() && def) {
+      row.definition = def.text;
+      row.source = sourceOf(def);
+      filled.push("definition");
+    }
+    return { row, change: filled.length ? "filled" : "kept", filled, facts: r.entry.facts };
+  });
+  const added = rows
+    .filter((r) => !used.has(r.entry.key) && !taken.has(foldTerm(r.entry.name)) && r.layer !== null)
+    .filter((r) => defOf(r) && (r.entry.facts >= minFacts || settled(r)))
+    .sort((a, b) => b.entry.facts - a.entry.facts)
+    .slice(0, maxAdded)
+    .map((r): PlannedRow => {
+      const def = defOf(r)!;
+      return {
+        row: {
+          term: r.entry.name,
+          definition: def.text,
+          aliases: r.entry.aliases.map((a) => a.name),
+          not_same_as: apartOf(r),
+          source: sourceOf(def),
+        },
+        change: "added",
+        filled: [],
+        facts: r.entry.facts,
+      };
+    })
+    .sort((a, b) => a.row.term.localeCompare(b.row.term));
+  return [...out, ...added];
 }

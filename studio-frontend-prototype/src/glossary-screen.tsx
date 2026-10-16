@@ -2,9 +2,10 @@
  * that are probably one thing, and the words nobody has defined. Rows come a
  * page at a time and merging searches, so it opens at once however many words
  * the documents use. */
-import { useContext, useMemo, useState } from "react";
+import { useCallback, useContext, useMemo, useState } from "react";
 
-import type { GlossaryRenameProposal, SpecModelSentence, SpecModelWrite } from "./api";
+import type { GlossaryDoc, GlossaryDocRow, GlossaryRenameProposal, SpecModelSentence, SpecModelWrite } from "./api";
+import { GlossaryDocument } from "./glossary-document";
 import { DataTable } from "./data-table";
 import { FactRow } from "./domain-model-screens";
 import { FactReviewContext } from "./review-state";
@@ -41,7 +42,13 @@ export function GlossaryScreen({
   onDistinct,
   revisions = new Map(),
   onOpenFile,
+  onLoadDocument,
+  onProposeDocument,
 }: {
+  /** The glossary the project's documents keep. */
+  onLoadDocument?: () => Promise<GlossaryDoc>;
+  /** Propose the glossary as docs/glossary.md. */
+  onProposeDocument?: (rows: GlossaryDocRow[]) => Promise<SpecModelWrite>;
   /** Open a passage in the project's IDE. */
   onOpenFile?: (path: string) => void;
   entries: GlossaryEntry[];
@@ -87,7 +94,14 @@ export function GlossaryScreen({
   const pairs = useMemo(() => similarPairs(entries).filter((p) => !apart.has(`${p.a.key}|${p.b.key}`)), [entries, apart]);
   const review = useContext(FactReviewContext);
   /** The definition a term goes by: one a member accepted, else the first. */
-  const chosenDef = (r: GlossaryRow) => r.definitions.find((f) => review?.stateOf(f) === "accepted") ?? r.definitions[0] ?? null;
+  const chosenDef = useCallback(
+    (r: GlossaryRow) => r.definitions.find((f) => review?.stateOf(f) === "accepted") ?? r.definitions[0] ?? null,
+    [review],
+  );
+  const settled = useCallback(
+    (r: GlossaryRow) => r.entry.chosen || r.definitions.some((f) => review?.stateOf(f) === "accepted"),
+    [review],
+  );
   const validated = (r: GlossaryRow) => {
     const d = chosenDef(r);
     return d ? review?.stateOf(d) ?? null : null;
@@ -117,6 +131,9 @@ export function GlossaryScreen({
         <b>Settle the project&apos;s words.</b> Give each thing one name, merge two names of one thing, and define what
         nobody has. The model, its checks and every document&apos;s review then read the same word the same way.
       </p>
+      {onLoadDocument && onProposeDocument && (
+        <GlossaryDocument rows={rows} defOf={chosenDef} settled={settled} load={onLoadDocument} propose={onProposeDocument} />
+      )}
       <div className="gl-bar">
         <input type="search" placeholder="Find a word or what it means" value={text} onChange={(e) => setText(e.target.value)} aria-label="Find a word" />
         {chip("all", "All", rows.length)}

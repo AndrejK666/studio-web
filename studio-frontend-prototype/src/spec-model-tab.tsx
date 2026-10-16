@@ -289,6 +289,8 @@ export function SpecModelTab({
   const reviewByKey = useMemo(() => reviewIndex(reviews), [reviews]);
   const evidence = useMemo(() => evidenceIndex(reviews), [reviews]);
   const decisions = useMemo(() => decisionIndex(reviews), [reviews]);
+  // Stable, so the glossary document is read once per project, not per render.
+  const loadGlossaryDocument = useCallback(() => api.glossaryDocument(token, projectId), [token, projectId]);
   // Who an issue can go to: the organization's members with a GitHub login
   // among their confirmed or claimed accounts. Read only where issues are.
   const [people, setPeople] = useState<{ name: string; login: string }[]>([]);
@@ -622,6 +624,8 @@ ${content}
           onDistinct={(a, b) => api.decideGlossaryDistinct(token, projectId, a, b).catch((e: unknown) => setError(message(e)))}
           onOpenFile={onOpenFile}
           revisions={revisions}
+          onLoadDocument={loadGlossaryDocument}
+          onProposeDocument={(rows) => api.proposeGlossaryDocument(token, projectId, rows)}
         />
       )}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}
