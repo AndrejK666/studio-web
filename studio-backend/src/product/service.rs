@@ -279,6 +279,36 @@ impl ProductService {
         .await
     }
 
+    /// Open an issue in the project's repository — the one its product
+    /// description is written to — assigned to the given host accounts.
+    pub async fn create_project_issue(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        title: &str,
+        body: &str,
+        assignees: &[String],
+    ) -> anyhow::Result<(i64, Option<String>)> {
+        let target = self.write_target(ctx, project_id).await?;
+        self.ensure_owned(ctx, scope_of(ctx, project_id), &target)
+            .await?;
+        let connectors = self
+            .connector_service()
+            .ok_or_else(|| anyhow!("connectors service unavailable"))?;
+        let repo = Repository::open(
+            &connectors,
+            ctx,
+            target.tenant,
+            target.connection_id,
+            "github",
+            &target.repo,
+            None,
+        )
+        .await?;
+        let issue = repo.create_issue(title, body, assignees).await?;
+        Ok((issue.number, issue.url))
+    }
+
     /// The text of `path` in the project's repository (the one a product
     /// description is written to), on its base branch; `None` when the
     /// repository has no such file.

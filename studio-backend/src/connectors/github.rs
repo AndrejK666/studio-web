@@ -1573,6 +1573,36 @@ impl ConnectorDriver for GitHubDriver {
         true
     }
 
+    async fn create_issue(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        title: &str,
+        body: &str,
+        assignees: &[String],
+    ) -> anyhow::Result<super::driver::CreatedIssue> {
+        let url = format!("{}/repos/{repo_full_path}/issues", auth.root());
+        let payload = serde_json::json!({ "title": title, "body": body, "assignees": assignees });
+        let res = self
+            .headers(self.http.post(&url), auth)
+            .json(&payload)
+            .send()
+            .await?;
+        let status = res.status();
+        if status.is_success() {
+            let issue: GitHubPullRef = res.json().await?;
+            return Ok(super::driver::CreatedIssue {
+                number: issue.number,
+                url: Some(issue.html_url),
+            });
+        }
+        let text = res.text().await.unwrap_or_default();
+        anyhow::bail!(
+            "GitHub {status} opening an issue in {repo_full_path}: {}",
+            text.chars().take(300).collect::<String>()
+        );
+    }
+
     /// GitHub wants `head` qualified by the owner of the fork it lives on;
     /// within one repository that is the repository's own owner.
     async fn find_open_pull_request(

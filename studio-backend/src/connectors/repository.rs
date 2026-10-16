@@ -16,8 +16,8 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::driver::{
-    ConnectionAuth, ConnectorDriver, CreatedRepository, FileToWrite, OpenedPullRequest,
-    RemoteCommit, RemoteFileList, RemoteFileText,
+    ConnectionAuth, ConnectorDriver, CreatedIssue, CreatedRepository, FileToWrite,
+    OpenedPullRequest, RemoteCommit, RemoteFileList, RemoteFileText,
 };
 use super::service::ConnectorService;
 
@@ -169,6 +169,18 @@ impl Repository {
     ) -> Result<OpenedPullRequest> {
         self.driver
             .open_pull_request(&self.auth, &self.repo, head, base, title, body)
+            .await
+    }
+
+    /// Open an issue in it, assigned to the given accounts of the host.
+    pub async fn create_issue(
+        &self,
+        title: &str,
+        body: &str,
+        assignees: &[String],
+    ) -> Result<CreatedIssue> {
+        self.driver
+            .create_issue(&self.auth, &self.repo, title, body, assignees)
             .await
     }
 

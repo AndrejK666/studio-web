@@ -3792,6 +3792,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/spec-model/issues",
+      "operation_id": "studio_documents.create_spec_model_issue",
+      "tag": "StudioDocuments",
+      "summary": "Open an issue in the project's repository for something to decide",
+      "authenticated": true,
+      "request": "SpecModelIssueRequest",
+      "responses": [
+        "SpecModelIssueDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/spec-model/reviews",
       "operation_id": "studio_documents.decide_spec_model_fact_reviews",
       "tag": "StudioDocuments",

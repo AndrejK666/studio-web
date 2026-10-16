@@ -247,6 +247,17 @@ pub trait ProjectFiles: Send + Sync {
         text: &PullRequestText,
         propose: bool,
     ) -> anyhow::Result<DeclarationWritten>;
+
+    /// Open an issue in the project's repository, assigned to the given host
+    /// accounts: `(number, url)`.
+    async fn create_issue(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        title: &str,
+        body: &str,
+        assignees: &[String],
+    ) -> anyhow::Result<(i64, Option<String>)>;
 }
 
 /// studio-product's [`ProjectFiles`]: its own project writer.
@@ -308,6 +319,19 @@ impl ProjectFiles for Files {
             commit_sha: w.commit_sha,
             pr_url: w.pr_url,
         })
+    }
+
+    async fn create_issue(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        title: &str,
+        body: &str,
+        assignees: &[String],
+    ) -> anyhow::Result<(i64, Option<String>)> {
+        self.service
+            .create_project_issue(ctx, project_id, title, body, assignees)
+            .await
     }
 }
 

@@ -2557,6 +2557,26 @@ pub struct SpecModelReviewInput {
     pub note: Option<String>,
 }
 
+/// An issue to open in the project's repository from something to decide.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelIssueRequest {
+    pub project_id: String,
+    pub title: String,
+    pub body: String,
+    /// The host accounts to assign it to (GitHub logins).
+    #[serde(default)]
+    pub assignees: Vec<String>,
+}
+
+/// The issue opened.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelIssueDto {
+    pub number: i64,
+    pub url: Option<String>,
+}
+
 /// A whole document Studio proposes for the repository: an accepted need,
 /// a confirmed prioritisation.
 #[derive(Debug)]
@@ -5345,6 +5365,49 @@ async fn list_spec_model_reviews(
     }))
 }
 
+/// Open an issue in the project's repository for something to decide — a
+/// problem in the documents, a gap in the model — assigned to people by
+/// their host accounts.
+async fn create_spec_model_issue(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(req): Json<SpecModelIssueRequest>,
+) -> ApiResult<(StatusCode, JsonBody<SpecModelIssueDto>)> {
+    let project_id = parse_project_id(&req.project_id)?;
+    let _ = parent_workspace(&service, &ctx, project_id).await?;
+    let refuse = |why: &str| {
+        DocumentsError::invalid_argument()
+            .with_constraint(why)
+            .create()
+    };
+    let title = req.title.trim();
+    if title.is_empty() || title.len() > 256 {
+        return Err(refuse("an issue needs a title of at most 256 bytes"));
+    }
+    if req.body.len() > 64 * 1024 {
+        return Err(refuse("the description must be at most 64 KiB"));
+    }
+    let valid_login = |l: &String| {
+        !l.is_empty() && l.len() <= 39 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    };
+    if req.assignees.len() > 10 || !req.assignees.iter().all(valid_login) {
+        return Err(refuse("assignees are at most ten GitHub logins"));
+    }
+    let files = project_files(&quality)?;
+    let (number, url) = files
+        .create_issue(
+            &ctx,
+            &project_id.to_string(),
+            title,
+            &req.body,
+            &req.assignees,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok((StatusCode::CREATED, Json(SpecModelIssueDto { number, url })))
+}
+
 /// Whether a review state belongs to what its key names: a fact, a
 /// hypothesis (`ev:`), a behaviour obligation (`ob:`) or a match across
 /// projects (`rel:`). `proposed` withdraws any of them.
@@ -5358,6 +5421,8 @@ fn review_state_fits(key: &str, state: &str) -> bool {
         state == "excluded"
     } else if key.starts_with("rel:") {
         matches!(state, "reuse" | "coordinate" | "separate" | "unrelated")
+    } else if key.starts_with("iss:") {
+        state == "opened"
     } else {
         matches!(state, "accepted" | "rejected")
     }
@@ -7755,6 +7820,26 @@ pub fn register_routes(
         .error_404(openapi)
         .error_500(openapi)
         .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/issues")
+        .operation_id("studio_documents.create_spec_model_issue")
+        .summary("Open an issue in the project's repository for something to decide")
+        .description(
+            "A problem in the documents or a gap in the model, opened as an issue in the project's \
+             repository and assigned to people by their GitHub logins; the repository's sync then \
+             brings it back as work like any other issue.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<SpecModelIssueRequest>(openapi, "The project, the issue and who it is for")
+        .handler(create_spec_model_issue)
+        .json_response_with_schema::<SpecModelIssueDto>(openapi, StatusCode::CREATED, "The issue")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::post("/studio-documents/v1/spec-model/files/proposals")

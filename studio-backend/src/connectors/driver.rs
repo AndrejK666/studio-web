@@ -167,6 +167,13 @@ pub struct OpenedPullRequest {
     pub created: bool,
 }
 
+/// An issue opened in a repository.
+#[derive(Debug, Clone)]
+pub struct CreatedIssue {
+    pub number: i64,
+    pub url: Option<String>,
+}
+
 /// The result of writing one file into a repository.
 ///
 /// Reported back so the caller can link to what it just published and can tell
@@ -822,6 +829,23 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         let _ = (auth, repo_full_path, head, base, title, body);
         Err(anyhow::anyhow!(
             "{} cannot open pull requests through this connection",
+            self.display_name()
+        ))
+    }
+
+    /// Open an issue, assigned to the given accounts of the host. A host
+    /// that has no issues through this connection refuses.
+    async fn create_issue(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        title: &str,
+        body: &str,
+        assignees: &[String],
+    ) -> anyhow::Result<CreatedIssue> {
+        let _ = (auth, repo_full_path, title, body, assignees);
+        Err(anyhow::anyhow!(
+            "{} cannot open issues through this connection",
             self.display_name()
         ))
     }
