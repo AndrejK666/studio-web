@@ -25,20 +25,27 @@ import {
   type Tenant,
 } from "./api";
 import {
+  DEFAULT_NAMESPACE_PATTERN,
+  type EnvironmentField,
   STATE_LABELS,
   awaitingDecision,
   clusterConnections,
   emptyEnvironment,
   environmentInput,
-  environmentProblem,
+  environmentProblems,
+  environmentsByConnection,
   namespaceFor,
   runningNow,
   shortCommit,
   stateTone,
 } from "./environments";
 import { errText, relTime } from "./format";
+import { AddCluster } from "./kubeconfig-field";
 
 const PROJECT_TYPE = /tenant\.project\.v1/;
+
+/** The cluster select's "connect a new one" entry. */
+const NEW_CLUSTER = "__new_cluster__";
 
 function StateBadge({ d }: { d: Deployment }) {
   return (
@@ -133,6 +140,7 @@ function EnvironmentForm({
   projects,
   onDone,
   onCancel,
+  onClusterAdded,
 }: {
   token: string;
   org: string;
@@ -142,12 +150,30 @@ function EnvironmentForm({
   projects: Tenant[];
   onDone: () => void;
   onCancel: () => void;
+  onClusterAdded: (c: Connection) => void;
 }) {
-  const [input, setInput] = useState<DeployEnvironmentInput>(() => (editing ? environmentInput(editing) : emptyEnvironment()));
+  const [input, setInput] = useState<DeployEnvironmentInput>(() =>
+    editing ? environmentInput(editing) : { ...emptyEnvironment(), connection_id: clusters.length === 1 ? clusters[0].id : "" },
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const problem = environmentProblem(input, others, editing?.id);
-  const set = <K extends keyof DeployEnvironmentInput>(k: K, v: DeployEnvironmentInput[K]) => setInput((i) => ({ ...i, [k]: v }));
+  const [connecting, setConnecting] = useState(false);
+  // A field says what is wrong once it was touched, or once Add was pressed:
+  // a fresh form is not a list of complaints.
+  const [touched, setTouched] = useState<Set<EnvironmentField>>(new Set());
+  const [tried, setTried] = useState(false);
+  const problems = environmentProblems(input, others, editing?.id);
+  const problem = Object.values(problems)[0] ?? null;
+  const shown = (f: EnvironmentField) => ((tried || touched.has(f)) && problems[f]) || null;
+  const touch = (f: EnvironmentField) => setTouched((t) => (t.has(f) ? t : new Set(t).add(f)));
+  const set = <K extends keyof DeployEnvironmentInput>(k: K, v: DeployEnvironmentInput[K]) => {
+    setInput((i) => ({ ...i, [k]: v }));
+    if (k !== "description" && k !== "database" && k !== "protected") touch(k as EnvironmentField);
+  };
+  const patternIsDefault = (input.namespace_pattern ?? "").trim() === "" || input.namespace_pattern === DEFAULT_NAMESPACE_PATTERN;
+  const examples = (projects.length > 0 ? projects.slice(0, 3).map((p) => p.name) : ["Studio Web"]).map((p) =>
+    namespaceFor(input.namespace_pattern ?? "", p, input.name || "dev"),
+  );
   const save = async () => {
     setBusy(true);
     setError(null);
@@ -168,13 +194,21 @@ function EnvironmentForm({
       data-environment-form
       onSubmit={(e) => {
         e.preventDefault();
+        setTried(true);
         if (!problem) void save();
       }}
     >
       <h3>{editing ? `Change ${editing.name}` : "Add an environment"}</h3>
       <label className="field">
         Name
-        <input value={input.name} onChange={(e) => set("name", e.target.value)} placeholder="prod" aria-label="Name" />
+        <input
+          value={input.name}
+          onChange={(e) => set("name", e.target.value)}
+          placeholder="dev, stage or prod"
+          aria-label="Name"
+          aria-invalid={shown("name") ? true : undefined}
+        />
+        {shown("name") && <span className="env-field-error">{shown("name")}</span>}
       </label>
       <label className="field">
         Description
@@ -182,41 +216,76 @@ function EnvironmentForm({
       </label>
       <label className="field">
         Cluster
-        <select value={input.connection_id} onChange={(e) => set("connection_id", e.target.value)} aria-label="Cluster">
-          <option value="">{clusters.length === 0 ? "No Kubernetes connection yet" : "Choose a Kubernetes connection"}</option>
+        <select
+          value={connecting ? NEW_CLUSTER : input.connection_id}
+          onChange={(e) => {
+            if (e.target.value === NEW_CLUSTER) {
+              setConnecting(true);
+              return;
+            }
+            setConnecting(false);
+            set("connection_id", e.target.value);
+          }}
+          aria-label="Cluster"
+          aria-invalid={shown("connection_id") ? true : undefined}
+        >
+          <option value="">{clusters.length === 0 ? "No cluster connected yet" : "Choose a cluster"}</option>
           {clusters.map((c) => (
             <option key={c.id} value={c.id}>
               {c.label} — {c.base_url}
             </option>
           ))}
+          <option value={NEW_CLUSTER}>+ Connect a cluster…</option>
         </select>
+        {!connecting && shown("connection_id") && <span className="env-field-error">{shown("connection_id")}</span>}
       </label>
-      {clusters.length === 0 && (
-        <p className="hint">
-          Add a Kubernetes cluster under Connections first, for the organization: its API server and a service-account token
-          (or a kubeconfig with the cluster&apos;s CA). The server alone uses it.
-        </p>
+      {connecting && (
+        <AddCluster
+          token={token}
+          org={org}
+          onCancel={() => setConnecting(false)}
+          onAdded={(c) => {
+            setConnecting(false);
+            onClusterAdded(c);
+            set("connection_id", c.id);
+          }}
+        />
       )}
       <label className="field">
         Image registry
-        <input value={input.registry} onChange={(e) => set("registry", e.target.value)} placeholder="ghcr.io/acme" />
-      </label>
-      <label className="field">
-        Namespace pattern
         <input
-          value={input.namespace_pattern ?? ""}
-          onChange={(e) => set("namespace_pattern", e.target.value)}
-          placeholder="{project}-{environment}"
+          value={input.registry}
+          onChange={(e) => set("registry", e.target.value)}
+          placeholder="ghcr.io/acme — where the product's images are pulled from"
+          aria-invalid={shown("registry") ? true : undefined}
         />
-        <span className="hint">
-          e.g. <code>{namespaceFor(input.namespace_pattern ?? "", "Studio Web", input.name || "prod")}</code>
-        </span>
+        {shown("registry") && <span className="env-field-error">{shown("registry")}</span>}
       </label>
+      <details className="env-advanced" open={!patternIsDefault || !!shown("namespace_pattern")}>
+        <summary>
+          Namespaces: <code>{examples.join(", ")}</code>
+          <span className="sub"> · one per project</span>
+        </summary>
+        <label className="field">
+          Namespace pattern
+          <input
+            value={input.namespace_pattern ?? ""}
+            onChange={(e) => set("namespace_pattern", e.target.value)}
+            placeholder={DEFAULT_NAMESPACE_PATTERN}
+            aria-invalid={shown("namespace_pattern") ? true : undefined}
+          />
+          <span className="hint">
+            A pattern, not a name: <code>{"{project}"}</code> becomes each project&apos;s name and <code>{"{environment}"}</code>{" "}
+            this environment&apos;s.
+          </span>
+          {shown("namespace_pattern") && <span className="env-field-error">{shown("namespace_pattern")}</span>}
+        </label>
+      </details>
       <label className="field">
         Database
         <select value={input.database} onChange={(e) => set("database", e.target.value as "none" | "shared")}>
           <option value="none">None: the product brings its own</option>
-          <option value="shared">The environment&apos;s shared Postgres (recorded; handed on once the chart asks)</option>
+          <option value="shared">The environment&apos;s shared Postgres — recorded only, not handed to the chart yet</option>
         </select>
       </label>
       <label className="env-check">
@@ -249,10 +318,10 @@ function EnvironmentForm({
           ))}
         </ul>
       )}
-      {problem && <p className="hint">{problem}</p>}
+      {shown("projects") && <span className="env-field-error">{shown("projects")}</span>}
       {error && <div className="error">{error}</div>}
       <div className="env-actions">
-        <button type="submit" className="primary" disabled={busy || problem !== null}>
+        <button type="submit" className="primary" disabled={busy || connecting}>
           {editing ? "Save" : "Add"}
         </button>
         <button type="button" onClick={onCancel}>
@@ -276,6 +345,22 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
   const [busy, setBusy] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  const [connectingCluster, setConnectingCluster] = useState(false);
+  // What a Test answered, kept at the row it was asked from.
+  const [answers, setAnswers] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const ask = async (key: string, run: () => Promise<string>) => {
+    setBusy(key);
+    try {
+      const text = await run();
+      setAnswers((a) => ({ ...a, [key]: { ok: true, text } }));
+    } catch (e) {
+      setAnswers((a) => ({ ...a, [key]: { ok: false, text: errText(e) } }));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const Answer = ({ id }: { id: string }) =>
+    answers[id] ? <div className={`sub env-answer ${answers[id].ok ? "env-answer-ok" : "error"}`}>{answers[id].text}</div> : null;
 
   const load = useCallback(() => {
     let live = true;
@@ -314,6 +399,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
   }, [token, workspaceIds]);
 
   const clusters = useMemo(() => clusterConnections(connections), [connections]);
+  const usedBy = useMemo(() => environmentsByConnection(environments ?? []), [environments]);
   const connectionLabel = (id: string) => connections.find((c) => c.id === id)?.label ?? "a connection this page cannot see";
   const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? id.slice(0, 8);
 
@@ -401,6 +487,66 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
         </section>
       )}
 
+      <section className="card" data-clusters>
+        <div className="card-head">
+          <h3>Clusters</h3>
+          {mayManage && !connectingCluster && (
+            <button type="button" onClick={() => setConnectingCluster(true)} data-cluster-add>
+              Connect a cluster
+            </button>
+          )}
+        </div>
+        <p className="hint">
+          The Kubernetes clusters the organization deploys to. One cluster can hold several environments; its credential is
+          kept in Connections, and only the server reads it.
+        </p>
+        {connectingCluster && (
+          <AddCluster
+            token={token}
+            org={org.id}
+            onCancel={() => setConnectingCluster(false)}
+            onAdded={(c) => {
+              setConnectingCluster(false);
+              setNotice(`Connected ${c.label}.`);
+              load();
+            }}
+          />
+        )}
+        {clusters.length === 0 ? (
+          <p className="empty">No cluster connected yet.</p>
+        ) : (
+          <ul className="env-list">
+            {clusters.map((c) => (
+              <li key={c.id} data-cluster={c.label}>
+                <div className="env-head">
+                  <b>{c.label}</b>
+                  <span className="sub">
+                    <code>{c.base_url}</code> ·{" "}
+                    {usedBy.get(c.id)?.length ? `environments: ${usedBy.get(c.id)?.join(", ")}` : "no environment uses it yet"}
+                  </span>
+                </div>
+                <div className="env-actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={busy === c.id}
+                    onClick={() =>
+                      void ask(c.id, async () => {
+                        const t = await api.testConnection(token, c.id, org.id);
+                        return `Answers: ${t.account}`;
+                      })
+                    }
+                  >
+                    {busy === c.id ? "Asking…" : "Test"}
+                  </button>
+                </div>
+                <Answer id={c.id} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section className="card">
         <div className="card-head">
           <h3>Environments</h3>
@@ -423,6 +569,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
               setEditing(null);
               load();
             }}
+            onClusterAdded={(c) => setConnections((cs) => [...cs, c])}
           />
         )}
         {environments === null ? (
@@ -441,8 +588,10 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                   {e.protected && <span className="badge">protected</span>}
                   {e.database === "shared" && <span className="badge">shared database</span>}
                   <span className="sub">
-                    {connectionLabel(e.connection_id)} · {e.registry ? <code>{e.registry}</code> : "images as generated"} ·{" "}
-                    <code>{e.namespace_pattern}</code> ·{" "}
+                    cluster {connectionLabel(e.connection_id)} · images from{" "}
+                    {e.registry ? <code>{e.registry}</code> : "where the chart says"} · namespaces{" "}
+                    <code>{namespaceFor(e.namespace_pattern, projects[0]?.name ?? "Studio Web", e.name)}</code>
+                    {projects.length > 1 ? "…" : ""} ·{" "}
                     {e.projects ? `${e.projects.length} project(s): ${e.projects.map(projectName).join(", ")}` : "every project"}
                   </span>
                 </div>
@@ -453,9 +602,9 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                       type="button"
                       className="ghost"
                       disabled={busy === e.id}
-                      onClick={() => void act(e.id, async () => (await api.testEnvironment(token, org.id, e.id)).message)}
+                      onClick={() => void ask(e.id, async () => (await api.testEnvironment(token, org.id, e.id)).message)}
                     >
-                      Test
+                      {busy === e.id ? "Asking…" : "Test"}
                     </button>
                     <button type="button" className="ghost" onClick={() => setEditing(e)}>
                       Change
@@ -476,6 +625,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                     </button>
                   </div>
                 )}
+                <Answer id={e.id} />
               </li>
             ))}
           </ul>
@@ -654,5 +804,11 @@ const ENV_CSS = `
 .envs .env-workloads { list-style:none; padding:0; margin:6px 0 0; display:grid; gap:4px; font-size:13px; }
 .envs .env-status { margin-top:6px; }
 .envs .env-binding select { min-width:160px; }
+.envs .env-field-error { color:var(--destructive, #dc2626); font-size:12px; }
+.envs [aria-invalid] { border-color:var(--destructive, #dc2626); }
+.envs .env-answer { margin-top:4px; }
+.envs .env-answer-ok { color:#15803d; }
+.envs .env-advanced summary { cursor:pointer; font-size:13px; }
+.envs .env-advanced[open] summary { margin-bottom:8px; }
 .env-project { margin-top:12px; }
 `;

@@ -6,6 +6,8 @@ import {
   clusterConnections,
   emptyEnvironment,
   environmentProblem,
+  environmentProblems,
+  environmentsByConnection,
   namespaceFor,
   runningNow,
   slug,
@@ -67,6 +69,22 @@ describe("an environment form", () => {
     expect(environmentProblem({ ...ready, namespace_pattern: "{environment}" }, [])).toMatch(/\{project\}/);
     expect(environmentProblem({ ...ready, registry: "https://ghcr.io/acme" }, [])).toMatch(/scheme/);
     expect(environmentProblem({ ...ready, projects: [] }, [])).toMatch(/at least one project/);
+  });
+
+  it("says everything wrong at once, by field", () => {
+    // The form a person filled in on Dev: a capital, a literal namespace, no cluster.
+    const p = environmentProblems({ ...ready, name: "Test", connection_id: "", namespace_pattern: "studio-web-dev" }, []);
+    expect(Object.keys(p).sort()).toEqual(["connection_id", "name", "namespace_pattern"]);
+    expect(p.namespace_pattern).toMatch(/\{project\}/);
+  });
+});
+
+describe("which environments use a connection", () => {
+  it("lists each connection's environments by name", () => {
+    const m = environmentsByConnection([env(), env({ id: "e2", name: "dev" }), env({ id: "e3", name: "x", connection_id: "c2" })]);
+    expect(m.get("c1")).toEqual(["prod", "dev"]);
+    expect(m.get("c2")).toEqual(["x"]);
+    expect(m.get("c3")).toBeUndefined();
   });
 });
 

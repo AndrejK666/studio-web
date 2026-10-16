@@ -59,20 +59,43 @@ export function environmentInput(e: DeployEnvironment): DeployEnvironmentInput {
   };
 }
 
-/** What is wrong with a form, in the words the person reads; `null` when nothing. */
-export function environmentProblem(input: DeployEnvironmentInput, others: readonly DeployEnvironment[], editing?: string): string | null {
+/** The fields of the environment form a problem can belong to. */
+export type EnvironmentField = "name" | "connection_id" | "registry" | "namespace_pattern" | "projects";
+
+/** Everything wrong with a form, by field, in the words the person reads:
+ *  shown together at their fields, so one fix does not uncover the next. */
+export function environmentProblems(
+  input: DeployEnvironmentInput,
+  others: readonly DeployEnvironment[],
+  editing?: string,
+): Partial<Record<EnvironmentField, string>> {
+  const out: Partial<Record<EnvironmentField, string>> = {};
   const name = input.name.trim();
-  if (!isDnsLabel(name)) return "Name: lowercase letters, digits and '-', like dev, stage or prod.";
-  if (others.some((e) => e.name === name && e.id !== editing)) return `The organization already has an environment '${name}'.`;
-  if (!input.connection_id) return "Choose the cluster: a Kubernetes connection of the organization.";
+  if (!isDnsLabel(name)) out.name = "Only lowercase letters, digits and '-', like dev, stage or prod.";
+  else if (others.some((e) => e.name === name && e.id !== editing)) out.name = `The organization already has an environment '${name}'.`;
+  if (!input.connection_id) out.connection_id = "Choose the cluster: a Kubernetes connection of the organization.";
   const pattern = (input.namespace_pattern ?? "").trim() || DEFAULT_NAMESPACE_PATTERN;
-  if (!pattern.includes("{project}")) return "The namespace pattern must contain {project}: each project gets its own namespace.";
-  if (!isDnsLabel(namespaceFor(pattern, "a-project", name))) return `The pattern does not make a namespace: '${namespaceFor(pattern, "a-project", name)}'.`;
+  if (!pattern.includes("{project}"))
+    out.namespace_pattern = "Keep {project} in it: each project gets its own namespace, so one product never overwrites another.";
+  else if (!isDnsLabel(namespaceFor(pattern, "a-project", name || "env")))
+    out.namespace_pattern = `That does not make a namespace: '${namespaceFor(pattern, "a-project", name || "env")}'.`;
   const registry = input.registry.trim();
-  if (registry.includes("://")) return "Write the registry without a scheme, e.g. ghcr.io/acme.";
-  if (registry !== "" && !/^[A-Za-z0-9._\-/:]+$/.test(registry)) return "That is not an image registry prefix, e.g. ghcr.io/acme.";
-  if (input.projects && input.projects.length === 0) return "Choose at least one project, or let every project deploy here.";
-  return null;
+  if (registry.includes("://")) out.registry = "Write the registry without a scheme, e.g. ghcr.io/acme.";
+  else if (registry !== "" && !/^[A-Za-z0-9._\-/:]+$/.test(registry)) out.registry = "That is not an image registry prefix, e.g. ghcr.io/acme.";
+  if (input.projects && input.projects.length === 0) out.projects = "Choose at least one project, or let every project deploy here.";
+  return out;
+}
+
+/** The first thing wrong with a form; `null` when nothing. */
+export function environmentProblem(input: DeployEnvironmentInput, others: readonly DeployEnvironment[], editing?: string): string | null {
+  return Object.values(environmentProblems(input, others, editing))[0] ?? null;
+}
+
+/** The environments that deploy with each connection, by connection id. */
+export function environmentsByConnection(environments: readonly DeployEnvironment[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const e of environments) out.set(e.connection_id, [...(out.get(e.connection_id) ?? []), e.name]);
+  return out;
 }
 
 /** The connections an environment can name: the organization's clusters,

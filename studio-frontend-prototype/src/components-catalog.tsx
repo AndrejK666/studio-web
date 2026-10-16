@@ -51,6 +51,7 @@ import {
   syncedSources,
 } from "./component-kinds";
 import type { KindChip } from "./component-kinds";
+import { OrgSources } from "./platform-sources";
 
 /* ============================================================================
  * Platform Gears — a schema-driven component page per Gear, in Constructor
@@ -441,6 +442,9 @@ function kitAsNode(kit: StudioKit): CatalogNode {
   };
 }
 
+/** The panes of the organization's Components page. */
+export type ComponentsPane = "registry" | "catalogue" | "repositories";
+
 export function ComponentsCatalog({
   token,
   tenantId,
@@ -450,6 +454,7 @@ export function ComponentsCatalog({
   isPlatformAdmin = false,
   tier = "organization",
   orgName,
+  initialPane = "registry",
 }: {
   token: string;
   tenantId?: string;
@@ -476,6 +481,8 @@ export function ComponentsCatalog({
   /** A component page to open on, asked for from outside the catalogue (a
    *  project's product links here). */
   focus?: { name: string; at: number } | null;
+  /** The pane to open on: an old Sources link opens Repositories. */
+  initialPane?: ComponentsPane;
 }) {
   const [gears, setGears] = useState<CatalogNode[] | null>(null);
   const [profiles, setProfiles] = useState<Record<string, Record<string, unknown>>>({});
@@ -484,9 +491,11 @@ export function ComponentsCatalog({
    *  the editor writes them — this is what the table reads. */
   const [resolved, setResolved] = useState<Record<string, ComponentValues>>({});
   const [selected, setSelected] = useSelectedComponent(focus?.name ?? null);
-  /** The catalogue (what the sources list) or the registry (what the
-   *  organization's projects declare, ADR-0041). */
-  const [pane, setPane] = useState<"catalogue" | "registry">("registry");
+  /** The registry (what the organization's projects declare, ADR-0041), the
+   *  catalogue (what its repositories hold), or the repositories themselves
+   *  (ADR-0046): one question, what our components are and where they come
+   *  from, so one page rather than a Components and a Sources section. */
+  const [pane, setPane] = useState<ComponentsPane>(initialPane);
   /** Which tier the catalogue shows (ADR-0042), fixed by the level the page
    *  was opened at. */
   const tierTab: TierTab = tier;
@@ -995,6 +1004,9 @@ export function ComponentsCatalog({
                   <button type="button" role="tab" aria-selected={pane === "catalogue"} className={`chip ${pane === "catalogue" ? "on" : ""}`} onClick={() => setPane("catalogue")}>
                     Catalogue <span className="n">{tiers.organization}</span>
                   </button>
+                  <button type="button" role="tab" aria-selected={pane === "repositories"} className={`chip ${pane === "repositories" ? "on" : ""}`} onClick={() => setPane("repositories")} data-pane-repositories>
+                    Repositories
+                  </button>
                 </span>
               )}
             </div>
@@ -1109,7 +1121,9 @@ export function ComponentsCatalog({
           {/* A catalogue that never loaded says so in the list, with Retry. */}
           {err && (viewMode === "graph" || gears !== null) && <p className="gcat-err">{err}</p>}
 
-          {!platformLevel && pane === "registry" ? (
+          {!platformLevel && pane === "repositories" ? (
+            <OrgSources token={token} orgId={tenantId} embedded />
+          ) : !platformLevel && pane === "registry" ? (
             <ComponentRegistry
               token={token}
               projects={projects}
