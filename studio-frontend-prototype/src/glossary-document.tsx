@@ -119,7 +119,7 @@ export function GlossaryDocument({
                   </span>
                 ),
               },
-              { id: "def", header: "Definition", cell: (p) => <span className="sub gl-def">{p.row.definition || "—"}</span> },
+              { id: "def", header: "Definition", cell: (p) => <span className="sub gl-doc-def">{p.row.definition || "—"}</span> },
               { id: "aliases", header: "Also written as", cell: (p) => <span className="sub">{p.row.aliases.join(", ") || "—"}</span> },
               { id: "apart", header: "Not the same as", cell: (p) => <span className="sub">{p.row.not_same_as.join(", ") || "—"}</span> },
               {

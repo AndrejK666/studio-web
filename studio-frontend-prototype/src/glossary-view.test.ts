@@ -151,7 +151,7 @@ describe("the glossary document", () => {
   });
   const member = row(entry("Member", 20, { aliases: [{ key: "participant", name: "participant" }], distinct_from: ["membership"] }), def("Member", "A person in an organization."));
   const membership = row(entry("Membership", 9), def("Membership", "The standing a member holds."));
-  const seat = row(entry("Seat", 2), def("Seat", "A paid place."));
+  const seat = row(entry("Seat", 2), def("Seat", "A paid place in an organization's plan."));
   const vague = row(entry("Thing", 30), null);
   const rows = [member, membership, seat, vague];
   const defOf = (r: GlossaryRow) => r.definitions[0] ?? null;
@@ -179,5 +179,37 @@ describe("the glossary document", () => {
   it("leaves a row the model never read as written", () => {
     const plan = planGlossary([{ term: "Kit", definition: "A bundle.", aliases: [], not_same_as: [] }], [], defOf);
     expect(plan).toEqual([{ row: { term: "Kit", definition: "A bundle.", aliases: [], not_same_as: [] }, change: "kept", filled: [], facts: 0 }]);
+  });
+});
+
+describe("what a new glossary row takes", () => {
+  const def = (text: string, line = 3): SpecModelFact => ({ ...fact("x", "entity", text), source: { path: "docs/a.md", line_start: line } });
+  const row = (name: string, facts: number, defs: SpecModelFact[]): GlossaryRow => ({
+    entry: entry(name, facts),
+    definition: defs[0]?.text ?? null,
+    layer: "domain",
+    definitions: defs,
+    paths: [],
+  });
+  const first = (r: GlossaryRow) => r.definitions[0] ?? null;
+
+  it("a sentence, not a fragment, and the fullest one when the first is a fragment", () => {
+    const plan = planGlossary(
+      [],
+      [
+        row("IDE session", 20, [def("served at /studio/{id}/"), def("The project's Theia session, reused when one is alive.", 9)]),
+        row("Import", 16, [def("")]),
+      ],
+      first,
+    );
+    expect(plan.map((p) => [p.row.term, p.row.source])).toEqual([["IDE session", "docs/a.md:9"]]);
+  });
+  it("a capital for a name written in lower case, and no identifiers", () => {
+    const plan = planGlossary(
+      [],
+      [row("grant", 16, [def("A role given to a subject over a tenant.")]), row("graph-storage", 18, [def("The platform component that stores the graph.")])],
+      first,
+    );
+    expect(plan.map((p) => p.row.term)).toEqual(["Grant"]);
   });
 });

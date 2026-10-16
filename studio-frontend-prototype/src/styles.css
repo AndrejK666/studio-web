@@ -2727,3 +2727,5 @@ div.dm-block { padding-left: 0; }
 .gl-doc-kept { background: var(--accent); }
 .gl-doc-filled { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
 .gl-doc-added { background: color-mix(in srgb, #16a34a 16%, transparent); color: #15803d; }
+.gl-doc-def { display: block; white-space: normal; min-width: 280px; max-width: 560px; line-height: 1.4; }
+.gl-doc td .sub { white-space: normal; }

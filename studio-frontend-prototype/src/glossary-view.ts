@@ -215,6 +215,31 @@ export function foldTerm(s: string): string {
   return k;
 }
 
+/** A definition a glossary can carry: a sentence of five words or more, not
+ *  a fragment ("served at /studio/{id}/") or a label. */
+export function readsAsDefinition(text: string): boolean {
+  return text.trim().split(/\s+/).filter((w) => /[a-z]/i.test(w)).length >= 5;
+}
+
+/** The definition a new row takes: the one the person chose when it reads as
+ *  a definition, else the fullest of the others that does. */
+function definitionFor(r: GlossaryRow, chosen: SpecModelFact | null): SpecModelFact | null {
+  if (chosen && readsAsDefinition(chosen.text)) return chosen;
+  return [...r.definitions].filter((f) => readsAsDefinition(f.text)).sort((a, b) => b.text.length - a.text.length)[0] ?? null;
+}
+
+/** A name that is an identifier — `graph-storage`, `studio_documents`,
+ *  `product.gdl` — names a thing in the code, not a term of the domain. */
+export function isIdentifier(name: string): boolean {
+  return /[_/.`]/.test(name) || /^[a-z0-9]+(-[a-z0-9]+)+$/.test(name);
+}
+
+/** A term as a glossary heads it: a name written all in lower case starts
+ *  with a capital. */
+export function termCase(name: string): string {
+  return name === name.toLowerCase() ? name.charAt(0).toUpperCase() + name.slice(1) : name;
+}
+
 /** The glossary to propose: every row the project already keeps, as written
  *  and in its order, with the other names and the terms-it-is-not the model
  *  knows filled in; then the terms the documents define and the glossary
@@ -259,7 +284,7 @@ export function planGlossary(
         filled.push(`not the same as “${n}”`);
       }
     }
-    const def = defOf(r);
+    const def = definitionFor(r, defOf(r));
     if (!row.definition.trim() && def) {
       row.definition = def.text;
       row.source = sourceOf(def);
@@ -268,15 +293,15 @@ export function planGlossary(
     return { row, change: filled.length ? "filled" : "kept", filled, facts: r.entry.facts };
   });
   const added = rows
-    .filter((r) => !used.has(r.entry.key) && !taken.has(foldTerm(r.entry.name)) && r.layer !== null)
-    .filter((r) => defOf(r) && (r.entry.facts >= minFacts || settled(r)))
+    .filter((r) => !used.has(r.entry.key) && !taken.has(foldTerm(r.entry.name)) && r.layer !== null && !isIdentifier(r.entry.name))
+    .filter((r) => definitionFor(r, defOf(r)) && (r.entry.facts >= minFacts || settled(r)))
     .sort((a, b) => b.entry.facts - a.entry.facts)
     .slice(0, maxAdded)
     .map((r): PlannedRow => {
-      const def = defOf(r)!;
+      const def = definitionFor(r, defOf(r))!;
       return {
         row: {
-          term: r.entry.name,
+          term: termCase(r.entry.name),
           definition: def.text,
           aliases: r.entry.aliases.map((a) => a.name),
           not_same_as: apartOf(r),
