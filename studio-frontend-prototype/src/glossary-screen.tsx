@@ -2,10 +2,12 @@
  * that are probably one thing, and the words nobody has defined. Rows come a
  * page at a time and merging searches, so it opens at once however many words
  * the documents use. */
-import { useMemo, useState } from "react";
+import { useContext, useMemo, useState } from "react";
 
 import type { GlossaryRenameProposal, SpecModelSentence, SpecModelWrite } from "./api";
 import { DataTable } from "./data-table";
+import { FactRow } from "./domain-model-screens";
+import { FactReviewContext } from "./review-state";
 import { passageOf } from "./doc-quality";
 import { LAYER_TITLE } from "./domain-layers";
 import {
@@ -35,7 +37,10 @@ export function GlossaryScreen({
   onProposeSentence,
   onDistinct,
   revisions = new Map(),
+  onOpenFile,
 }: {
+  /** Open a passage in the project's IDE. */
+  onOpenFile?: (path: string) => void;
   entries: GlossaryEntry[];
   entities: Entity[];
   onDecide: Decide;
@@ -77,6 +82,13 @@ export function GlossaryScreen({
   const [clarifying, setClarifying] = useState<string | null>(null);
   const rows = useMemo(() => glossaryRows(entries, entities), [entries, entities]);
   const pairs = useMemo(() => similarPairs(entries).filter((p) => !apart.has(`${p.a.key}|${p.b.key}`)), [entries, apart]);
+  const review = useContext(FactReviewContext);
+  /** The definition a term goes by: one a member accepted, else the first. */
+  const chosenDef = (r: GlossaryRow) => r.definitions.find((f) => review?.stateOf(f) === "accepted") ?? r.definitions[0] ?? null;
+  const validated = (r: GlossaryRow) => {
+    const d = chosenDef(r);
+    return d ? review?.stateOf(d) ?? null : null;
+  };
   const list = useMemo(() => filterRows(rows, filter, text, pairs), [rows, filter, text, pairs]);
   const undefinedCount = useMemo(() => rows.filter((r) => !r.definition && r.layer !== null).length, [rows]);
   const named = useMemo(() => rows.filter((r) => r.entry.chosen || r.entry.aliases.length > 0).length, [rows]);
@@ -200,9 +212,34 @@ export function GlossaryScreen({
                 <span>
                   <b>{r.entry.name}</b>
                   {r.entry.chosen && <span className="sub"> · named by you</span>}
-                  {r.definition && <div className="sub gl-def">{r.definition}</div>}
+                  {chosenDef(r) && <div className="sub gl-def">{chosenDef(r)!.text}</div>}
                 </span>
               ),
+            },
+            {
+              id: "from",
+              header: "Definition from",
+              cell: (r) => {
+                const d = chosenDef(r);
+                if (!d) return <span className="sub">—</span>;
+                return (
+                  <span className="gl-from">
+                    <code className="dm-where" title={d.source.path}>
+                      {d.source.path.split("/").pop()}
+                      {d.source.line_start ? `:${d.source.line_start}` : ""}
+                    </code>
+                    {r.definitions.length > 1 && <span className="sub"> +{r.definitions.length - 1}</span>}
+                  </span>
+                );
+              },
+            },
+            {
+              id: "validated",
+              header: "Validated",
+              cell: (r) => {
+                const v = validated(r);
+                return v === "accepted" ? <span className="gl-ok">✓ accepted</span> : v === "rejected" ? <span className="dm-status-blocks">✗ rejected</span> : r.definitions.length ? <span className="sub">not yet</span> : <span className="sub">—</span>;
+              },
             },
             {
               id: "aliases",
@@ -217,10 +254,35 @@ export function GlossaryScreen({
             { id: "facts", header: "Facts", num: true, compare: (a, b) => a.entry.facts - b.entry.facts, cell: (r) => r.entry.facts },
             { id: "docs", header: "Documents", num: true, compare: (a, b) => a.entry.documents - b.entry.documents, cell: (r) => r.entry.documents },
           ]}
+          filters={[
+            {
+              id: "validated",
+              allLabel: "Any definition",
+              kind: "chips",
+              options: [
+                { value: "not-yet", label: "Not validated" },
+                { value: "accepted", label: "Accepted" },
+                { value: "rejected", label: "Rejected" },
+              ],
+              match: (r, v) => (v === "not-yet" ? r.definitions.length > 0 && !validated(r) : validated(r) === v),
+            },
+          ]}
           expand={(r) => (
-            <ul className="gl-list">
-              <GlossaryItem row={r} entries={entries} onDecide={onDecide} onOffer={offerRename} />
-            </ul>
+            <div>
+              {r.definitions.length > 0 && (
+                <div className="gl-defs">
+                  <div className="dm-h">
+                    What it is — {r.definitions.length} passage{r.definitions.length === 1 ? "" : "s"} say so; accept the one that is right
+                  </div>
+                  {r.definitions.map((f, k) => (
+                    <FactRow key={k} fact={f} onOpenFile={onOpenFile} />
+                  ))}
+                </div>
+              )}
+              <ul className="gl-list">
+                <GlossaryItem row={r} entries={entries} onDecide={onDecide} onOffer={offerRename} />
+              </ul>
+            </div>
           )}
         />
       </div>

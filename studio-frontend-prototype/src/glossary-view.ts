@@ -3,7 +3,7 @@
 // Pure: glossary-screen.tsx draws what these compute.
 
 import { layerOf, type Layer } from "./domain-layers";
-import type { Entity, GlossaryEntry } from "./spec-model";
+import type { Entity, GlossaryEntry, SpecModelFact } from "./spec-model";
 
 export type GlossaryFilter = "all" | "undefined" | "similar" | "named";
 
@@ -13,6 +13,9 @@ export interface GlossaryRow {
   /** What the documents say it is, when one of them does. */
   definition: string | null;
   layer: Layer | null;
+  /** Every passage that says what it is, each from its document: the one the
+   *  definition is read from first. */
+  definitions: SpecModelFact[];
 }
 
 /** Each entry with its definition and layer, read off the model's entities. */
@@ -21,8 +24,8 @@ export function glossaryRows(entries: GlossaryEntry[], entities: Entity[]): Glos
   for (const e of entities) for (const k of e.keys) byKey.set(k, e);
   return entries.map((entry) => {
     const e = byKey.get(entry.key);
-    const def = e?.facts.find((f) => f.kind === "entity")?.text ?? null;
-    return { entry, definition: def, layer: e ? layerOf(e) : null };
+    const definitions = e?.facts.filter((f) => f.kind === "entity") ?? [];
+    return { entry, definition: definitions[0]?.text ?? null, layer: e ? layerOf(e) : null, definitions };
   });
 }
 

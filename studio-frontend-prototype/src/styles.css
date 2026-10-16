@@ -2708,3 +2708,7 @@ div.dm-block { padding-left: 0; }
 .dm-issue-link { font-size: 12.5px; white-space: nowrap; }
 .gl-def { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dm-tabs[hidden] { display: none; }
+
+.gl-ok { color: #15803d; white-space: nowrap; }
+.gl-from { white-space: nowrap; }
+.gl-defs { margin-bottom: 8px; }

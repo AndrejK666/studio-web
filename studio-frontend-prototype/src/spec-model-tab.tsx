@@ -620,6 +620,7 @@ ${content}
           onProposeRename={(from, to) => api.proposeGlossaryRename(token, projectId, from, to)}
           onProposeSentence={(sentence) => api.proposeSpecModelSentence(token, projectId, sentence)}
           onDistinct={(a, b) => api.decideGlossaryDistinct(token, projectId, a, b).catch((e: unknown) => setError(message(e)))}
+          onOpenFile={onOpenFile}
           revisions={revisions}
         />
       )}
