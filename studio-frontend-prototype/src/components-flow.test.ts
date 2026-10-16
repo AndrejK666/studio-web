@@ -139,6 +139,12 @@ describe("the steps from the specs to a built product", () => {
     expect(states({ picks: 3, resolves: true })).toEqual(["done", "done", "current"]);
     expect(states({ picks: 3, resolves: true, written: true })).toEqual(["done", "done", "done"]);
   });
+  it("is not built while it no longer resolves, and says how the capabilities are closed", () => {
+    expect(states({ picks: 3, resolves: false, written: true })).toEqual(["done", "current", "todo"]);
+    const s = productSteps({ ...base, picks: 3, covered: 2, weak: 5, open: 0, resolves: false, written: true });
+    expect(s[0].status).toBe("7 capabilities · 2 closed, 5 only by words");
+    expect(s[2].status).toBe("built earlier · build again once it resolves");
+  });
   it("cannot compose without the engine", () => {
     expect(states({ composing: false })).toEqual(["current", "off", "off"]);
   });

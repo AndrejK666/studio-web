@@ -151,6 +151,10 @@ export interface NextStep {
 export interface FlowState {
   /** Capabilities the specs ask for; null while they are read. */
   capabilities: number | null;
+  /** Of those a gear answers, how many the product closes, and how many
+   *  only by a gear that mentions their words. */
+  covered?: number;
+  weak?: number;
   /** Capabilities no gear in the product closes. */
   open: number;
   picks: number;
@@ -215,10 +219,14 @@ export interface ProductStep {
  *  when the next can start on it: gears picked, the product resolving,
  *  product.gdl written. */
 export function productSteps(s: FlowState): ProductStep[] {
+  const closing =
+    s.composing && s.picks > 0 && s.covered !== undefined
+      ? [`${s.covered} closed`, s.weak ? `${s.weak} only by words` : "", s.open ? `${s.open} not closed` : ""].filter(Boolean).join(", ")
+      : "";
   const caps =
     s.capabilities === null
       ? "reading the specs…"
-      : `${plural(s.capabilities, "capability", "capabilities")}${s.composing && s.picks > 0 ? `, ${s.open} not closed` : ""}`;
+      : `${plural(s.capabilities, "capability", "capabilities")}${closing ? ` · ${closing}` : ""}`;
   const compose =
     s.picks === 0
       ? "nothing in it yet"
@@ -230,9 +238,16 @@ export function productSteps(s: FlowState): ProductStep[] {
   const steps: Omit<ProductStep, "state">[] = [
     { id: "needs", title: "What the specs ask for", status: caps },
     { id: "product", title: "Compose and check", status: compose },
-    { id: "build", title: "Build in Studio-ide", status: s.written ? "product.gdl in the repository" : "not built yet" },
+    {
+      id: "build",
+      title: "Build in Studio-ide",
+      status: !s.written ? "not built yet" : s.resolves === true ? "product.gdl in the repository" : "built earlier · build again once it resolves",
+    },
   ];
-  const done = [s.composing && s.picks > 0, s.composing && s.resolves === true, s.composing && s.written];
+  // A step is done only on the steps before it: a product built earlier is
+  // not built while it no longer resolves.
+  const own = [s.composing && s.picks > 0, s.composing && s.resolves === true, s.composing && s.written];
+  const done = own.map((d, i) => d && own.slice(0, i).every(Boolean));
   const current = done.findIndex((d) => !d);
   return steps.map((step, i) => ({
     ...step,

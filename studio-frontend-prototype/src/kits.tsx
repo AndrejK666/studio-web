@@ -119,7 +119,7 @@ export function ProjectKits({
   /** How many capabilities the documents declare; null until they are read. */
   /** What section 1 found: capabilities asked, how many the product leaves
    *  open, and the recommended gears. */
-  const [flow, setFlow] = useState<{ capabilities: number | null; open: number; recommended: string[] }>({
+  const [flow, setFlow] = useState<{ capabilities: number | null; open: number; covered?: number; weak?: number; recommended: string[] }>({
     capabilities: null,
     open: 0,
     recommended: [],
@@ -300,6 +300,8 @@ export function ProjectKits({
   const flowState = {
     capabilities: flow.capabilities,
     open: flow.open,
+    covered: flow.covered,
+    weak: flow.weak,
     picks: product.picks.length,
     inCode: code.report ? codeGears(code.report).length : null,
     resolves: verdict.resolves,
@@ -679,7 +681,7 @@ function SuggestedComponents({
   projectId: string;
   product: ProductState;
   code: CodeReport;
-  onFlow?: (flow: { capabilities: number | null; open: number; recommended: string[] }) => void;
+  onFlow?: (flow: { capabilities: number | null; open: number; covered?: number; weak?: number; recommended: string[] }) => void;
 }) {
   const [plan, setPlan] = useState<PlanRow[] | null>(null);
   /** Where the documents say the product runs: the profile to default to. */
@@ -772,10 +774,10 @@ function SuggestedComponents({
   const covers = useMemo(() => (plan ? alsoCovers(plan) : {}), [plan]);
   const recommendedKey = recommended.join(",");
   useEffect(() => {
-    onFlow?.({ capabilities: plan ? plan.length : null, open: coverage?.open ?? 0, recommended });
+    onFlow?.({ capabilities: plan ? plan.length : null, open: coverage?.open ?? 0, covered: coverage?.covered, weak: coverage?.weak, recommended });
     // The arrays are fresh per render; their content is what changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, coverage?.open, recommendedKey]);
+  }, [plan, coverage?.open, coverage?.covered, coverage?.weak, recommendedKey]);
   const report = code.report;
   /** Nothing in the product closes it and nothing built could: the honest
    *  next step is a gear of the project's own. */
