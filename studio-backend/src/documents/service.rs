@@ -1198,6 +1198,13 @@ impl DocumentsService {
             .await?;
         for binding in rows.into_iter().map(binding_from_row) {
             let binding = binding?;
+            // A template or an example declares what a filled-in document
+            // would need, not what this product needs: a kit's example PRD
+            // asked for `storage` and `connectors` on every project that
+            // vendors the kit.
+            if super::spec_model::is_template_path(&binding.path) {
+                continue;
+            }
             let confirmed = match binding.state {
                 BindingState::Confirmed | BindingState::Manual => true,
                 BindingState::Detected if binding.type_key.is_some() => false,
