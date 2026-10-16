@@ -23,7 +23,6 @@ import {
   blockItems,
   blocks,
   findEntities,
-  findRequirements,
   mapEdges,
   neighbours,
   readiness,
@@ -41,8 +40,6 @@ import {
   REQUIREMENT_TYPE_WHAT,
   requirementProblems,
   tallyTypes,
-  type RequirementLevel,
-  type RequirementNature,
   type RequirementType,
 } from "./requirement-types";
 import { DOC_QUALITY_LABEL, docQuality, relationSentence, type DocQualityItem } from "./doc-quality";
@@ -1289,13 +1286,9 @@ export function RequirementsView({
   onSelect: (id: string) => void;
   onOpenFile: OpenFile;
 }) {
-  const [basis, setBasis] = useState<string>("all");
-  const [text, setText] = useState("");
   // Requirements by type by default; the parts of the design that carry them
   // are a list of their own, not rows of "no basis stated".
   const [type, setType] = useState<RequirementType | "all" | "design">("all");
-  const [level, setLevel] = useState<RequirementLevel | "all">("all");
-  const [nature, setNature] = useState<RequirementNature | "all">("all");
   const classes = useMemo(
     () => new Map(read && "items" in read ? read.items.map((r) => [r.id, classify(r)]) : []),
     [read],
@@ -1313,9 +1306,8 @@ export function RequirementsView({
     const c = classes.get(r.id) ?? null;
     if (type === "design") return c === null;
     if (!c) return false;
-    return (type === "all" || c.type === type) && (level === "all" || c.level === level) && (nature === "all" || c.nature === nature);
+    return type === "all" || c.type === type;
   });
-  const list = findRequirements(pool, basis, text);
   const byBasis = (b: string) => pool.filter((r) => r.basis === b).length;
   const shownType = type !== "all" && type !== "design" ? tally?.types.find((t) => t.type === type) : undefined;
   const sel = read.items.find((r) => r.id === selected) ?? null;
@@ -1329,8 +1321,13 @@ export function RequirementsView({
       on, the work that names it and where the code and tests name it — a name found, not proof it is covered. An orange step is where it stops.
     </p>
     {problems.length > 0 && (
-      <section className="card dm-rproblems" aria-label="Problems in the requirements">
-        <div className="dm-h">Problems in the requirements</div>
+      <details className="card dm-rproblems" aria-label="Problems in the requirements">
+        <summary className="dm-h">
+          {problems.length} problem{problems.length === 1 ? "" : "s"} in the requirements —{" "}
+          {problems.filter((p) => p.severity === "missing").length} missing types,{" "}
+          {problems.filter((p) => p.severity === "few").length} too few,{" "}
+          {problems.filter((p) => p.severity === "ungrounded").length} resting on nothing
+        </summary>
         {problems.map((p) => (
           <div key={`${p.severity}:${p.type}`} className={`dm-rproblem ${p.severity}`}>
             <span className={`dm-pill ${p.severity === "missing" ? "dm-bad" : "dm-warn"}`}>
@@ -1355,7 +1352,7 @@ export function RequirementsView({
             </button>
           </div>
         ))}
-      </section>
+      </details>
     )}
     {tally && (
       <div className="dm-rtypes" role="group" aria-label="Requirements by type">
@@ -1398,59 +1395,88 @@ export function RequirementsView({
     )}
     <div className="dm-reqs">
       <div className="card dm-reqlist">
-        {type !== "design" && (
-          <div className="dm-filters dm-axes">
-            <span className="hint">Level</span>
-            {(["all", "business", "user", "system"] as const).map((l) => (
-              <button key={l} type="button" className={level === l ? "chip on" : "chip"} onClick={() => setLevel(l)}>
-                {l === "all" ? "Any" : l.charAt(0).toUpperCase() + l.slice(1)}
-              </button>
-            ))}
-            <span className="hint">Nature</span>
-            {(["all", "functional", "nonfunctional"] as const).map((n) => (
-              <button key={n} type="button" className={nature === n ? "chip on" : "chip"} onClick={() => setNature(n)}>
-                {n === "all" ? "Any" : n === "functional" ? "Functional" : "Non-functional"}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="dm-filters">
-          <button type="button" className={basis === "all" ? "chip on" : "chip"} onClick={() => setBasis("all")}>
-            All <span className="chip-n">{pool.length}</span>
-          </button>
-          {BASIS_ORDER.map((b) => (
-            <button key={b} type="button" className={basis === b ? "chip on" : "chip"} onClick={() => setBasis(b)}>
-              {BASIS_LABEL[b]} <span className="chip-n">{byBasis(b)}</span>
-            </button>
-          ))}
-          <input type="search" placeholder="Find by id, title or text" value={text} onChange={(e) => setText(e.target.value)} aria-label="Find a requirement" />
-        </div>
-        <div className="dm-rows">
-          {list.slice(0, 300).map((r) => (
-            <button key={r.id} type="button" className={`dm-row${r.id === selected ? " on" : ""}`} onClick={() => onSelect(r.id)}>
-              <b>{r.title ?? r.id}</b>
-              <span className="dm-marks">
-                <Mark n={codeOf(r.id)} what="code" known={!!traces && "items" in traces} />
-                <Mark n={(workById.get(r.id) ?? []).length || r.work} what="work" known />
-                <Mark n={testsOf(r.id)} what="tests" known={!!traces && "items" in traces} />
-              </span>
-              <span className="dm-meta">
-                <span className={`sm-sev sm-basis-${r.basis}`}>{BASIS_LABEL[r.basis]}</span>
-                {classes.get(r.id) ? (
+        <DataTable<SpecRequirement>
+          list="dm-reqs"
+          urlPrefix="req."
+          rows={pool}
+          rowKey={(r) => r.id}
+          rowLabel={(r) => r.title ?? r.id}
+          pageSize={20}
+          onOpen={(r) => onSelect(r.id)}
+          search={{ placeholder: "Find by id, title or text" }}
+          searchText={(r) => [r.id, r.title, r.text]}
+          filters={[
+            {
+              id: "basis",
+              allLabel: "Any basis",
+              kind: "chips",
+              options: BASIS_ORDER.filter((b) => byBasis(b) > 0).map((b) => ({ value: b, label: BASIS_LABEL[b] })),
+              match: (r, v) => r.basis === v,
+            },
+            ...(type !== "design"
+              ? [
+                  {
+                    id: "level",
+                    allLabel: "Any level",
+                    kind: "select" as const,
+                    options: (["business", "user", "system"] as const).map((l) => ({ value: l, label: l.charAt(0).toUpperCase() + l.slice(1) })),
+                    match: (r: SpecRequirement, v: string) => classes.get(r.id)?.level === v,
+                  },
+                  {
+                    id: "nature",
+                    allLabel: "Any nature",
+                    kind: "select" as const,
+                    options: [
+                      { value: "functional", label: "Functional" },
+                      { value: "nonfunctional", label: "Non-functional" },
+                    ],
+                    match: (r: SpecRequirement, v: string) => classes.get(r.id)?.nature === v,
+                  },
+                ]
+              : []),
+          ]}
+          empty={{ title: "Nothing matches." }}
+          columns={[
+            {
+              id: "title",
+              header: "Requirement",
+              compare: (a, b) => (a.title ?? a.id).localeCompare(b.title ?? b.id),
+              cell: (r) => (
+                <span className={r.id === selected ? "dm-ent-on" : undefined}>
+                  <b>{r.title ?? r.id}</b>
+                  <div>
+                    <code className="hint">{r.id}</code>
+                  </div>
+                </span>
+              ),
+            },
+            {
+              id: "type",
+              header: "Type",
+              cell: (r) =>
+                classes.get(r.id) ? (
                   <span className="sm-sev dm-rtype-pill" title={r.kind ?? undefined}>
                     {REQUIREMENT_TYPE_LABEL[classes.get(r.id)!.type]}
                   </span>
                 ) : (
                   r.kind && <span className="sm-sev">{r.kind}</span>
-                )}
-                {r.priority && <span className="sm-sev">{r.priority}</span>}
-                <code className="hint">{r.id}</code>
-              </span>
-            </button>
-          ))}
-          {list.length > 300 && <div className="empty">{list.length - 300} more; narrow the search.</div>}
-          {list.length === 0 && <div className="empty">Nothing matches.</div>}
-        </div>
+                ),
+            },
+            { id: "basis", header: "Basis", cell: (r) => <span className={`sm-sev sm-basis-${r.basis}`}>{BASIS_LABEL[r.basis]}</span> },
+            { id: "priority", header: "Priority", compare: (a, b) => (a.priority ?? "z").localeCompare(b.priority ?? "z"), cell: (r) => r.priority ?? <span className="sub">—</span> },
+            {
+              id: "reach",
+              header: "Named in",
+              cell: (r) => (
+                <span className="dm-marks">
+                  <Mark n={codeOf(r.id)} what="code" known={!!traces && "items" in traces} />
+                  <Mark n={(workById.get(r.id) ?? []).length || r.work} what="work" known />
+                  <Mark n={testsOf(r.id)} what="tests" known={!!traces && "items" in traces} />
+                </span>
+              ),
+            },
+          ]}
+        />
       </div>
       <aside className="card dm-chain" aria-label="Where the requirement comes from and how far it got">
         {sel ? (
