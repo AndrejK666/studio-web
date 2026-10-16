@@ -2565,6 +2565,8 @@ div.dm-block { padding-left: 0; }
 .gl-pair { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .gl-pair:last-of-type { border-bottom: 0; }
 .gl-pair-actions { display: flex; gap: 6px; }
+.gl-clarify { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding: 6px 0 4px; }
+.gl-clarify .dm-field { flex: 1 1 360px; }
 .gl-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
 .gl-item { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md, 8px); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .gl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
@@ -2590,5 +2592,6 @@ div.dm-block { padding-left: 0; }
 .dm-ready-docs { margin-top: 8px; }
 .dm-inverse { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .dm-inverse input { width: 12em; max-width: 100%; }
+.dm-sentence { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--studio-ai-violet); background: var(--accent); border-radius: 4px; font-size: 13px; }
 .sm-status.dm-provisional { color: var(--success, #16a34a); margin-left: 6px; }
 .dm-saved { font-size: 12.5px; color: var(--success, #16a34a); margin-top: 4px; }

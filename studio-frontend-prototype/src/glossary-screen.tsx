@@ -4,9 +4,20 @@
  * the documents use. */
 import { useMemo, useState } from "react";
 
-import type { GlossaryRenameProposal } from "./api";
+import type { GlossaryRenameProposal, SpecModelSentence, SpecModelWrite } from "./api";
+import { passageOf } from "./doc-quality";
 import { LAYER_TITLE } from "./domain-layers";
-import { filterRows, glossaryRows, mergeCandidates, renameOffer, similarPairs, type GlossaryFilter, type GlossaryRow } from "./glossary-view";
+import {
+  clarifySentence,
+  filterRows,
+  glossaryRows,
+  mergeCandidates,
+  renameOffer,
+  similarPairs,
+  type GlossaryFilter,
+  type GlossaryRow,
+  type SimilarPair,
+} from "./glossary-view";
 import type { Entity, GlossaryEntry } from "./spec-model";
 
 type Decide = (key: string, decision: { name: string | null; alias_of: string | null }) => Promise<void>;
@@ -21,11 +32,17 @@ export function GlossaryScreen({
   entities,
   onDecide,
   onProposeRename,
+  onProposeSentence,
+  revisions = new Map(),
 }: {
   entries: GlossaryEntry[];
   entities: Entity[];
   onDecide: Decide;
   onProposeRename: (from: string, to: string) => Promise<GlossaryRenameProposal>;
+  /** Open a pull request adding a sentence to a document. */
+  onProposeSentence?: (s: SpecModelSentence) => Promise<SpecModelWrite>;
+  /** Each read document's revision, by path. */
+  revisions?: Map<string, string>;
 }) {
   const [offer, setOffer] = useState<Rename | null>(null);
   const [proposing, setProposing] = useState(false);
@@ -49,6 +66,8 @@ export function GlossaryScreen({
   const [shown, setShown] = useState(PAGE);
   /** Pairs a person said are different things: not suggested again here. */
   const [apart, setApart] = useState<Set<string>>(new Set());
+  /** The pair whose clarifying sentence is open. */
+  const [clarifying, setClarifying] = useState<string | null>(null);
   const rows = useMemo(() => glossaryRows(entries, entities), [entries, entities]);
   const pairs = useMemo(() => similarPairs(entries).filter((p) => !apart.has(`${p.a.key}|${p.b.key}`)), [entries, apart]);
   const list = useMemo(() => filterRows(rows, filter, text, pairs), [rows, filter, text, pairs]);
@@ -125,10 +144,30 @@ export function GlossaryScreen({
                 <button type="button" className="primary" title={`Read “${p.b.name}” as “${p.a.name}”`} onClick={() => void onDecide(p.b.key, { name: null, alias_of: p.a.key }).then(() => offerRename(renameOffer(p.b, p.a.name)))}>
                   Same thing
                 </button>
+                {onProposeSentence && (
+                  <button
+                    type="button"
+                    className="ghost"
+                    aria-expanded={clarifying === `${p.a.key}|${p.b.key}`}
+                    title="Propose a sentence that tells the two words apart, in the document that describes one of them"
+                    onClick={() => setClarifying((c) => (c === `${p.a.key}|${p.b.key}` ? null : `${p.a.key}|${p.b.key}`))}
+                  >
+                    Clarify in the docs
+                  </button>
+                )}
                 <button type="button" className="ghost" onClick={() => setApart((s) => new Set(s).add(`${p.a.key}|${p.b.key}`))}>
                   Different things
                 </button>
               </span>
+              {onProposeSentence && clarifying === `${p.a.key}|${p.b.key}` && (
+                <Clarify
+                  pair={p}
+                  entities={entities}
+                  revisions={revisions}
+                  onPropose={onProposeSentence}
+                  onDone={() => setApart((s) => new Set(s).add(`${p.a.key}|${p.b.key}`))}
+                />
+              )}
             </div>
           ))}
           {filter !== "similar" && pairs.length > 5 && (
@@ -238,5 +277,78 @@ function GlossaryItem({ row, entries, onDecide, onOffer }: { row: GlossaryRow; e
         </div>
       )}
     </li>
+  );
+}
+
+/** A sentence that tells two words apart, editable, proposed as a pull
+ *  request to the document that describes the longer word, after the passage
+ *  that says what it is. The pair leaves the list once it is proposed: the
+ *  documents now say they are two things. */
+function Clarify({
+  pair,
+  entities,
+  revisions,
+  onPropose,
+  onDone,
+}: {
+  pair: SimilarPair;
+  entities: Entity[];
+  revisions: Map<string, string>;
+  onPropose: (s: SpecModelSentence) => Promise<SpecModelWrite>;
+  onDone: () => void;
+}) {
+  const longer = pair.b.key.length >= pair.a.key.length ? pair.b : pair.a;
+  const base = longer === pair.b ? pair.a : pair.b;
+  const anchor = useMemo(() => {
+    const of = (key: string) => entities.find((e) => e.key === key || e.keys.includes(key));
+    const e = of(longer.key) ?? of(base.key);
+    return e ? passageOf(e, revisions) : null;
+  }, [entities, revisions, longer, base]);
+  const [text, setText] = useState(() => clarifySentence(pair));
+  const [state, setState] = useState<{ busy: boolean; error?: string; done?: SpecModelWrite }>({ busy: false });
+  if (!anchor?.source.line_end)
+    return <div className="gl-clarify hint">No document read at its current revision describes “{longer.name}”: build the model, then clarify it.</div>;
+  const unfinished = !text.trim() || text.includes("…");
+  const propose = () => {
+    setState({ busy: true });
+    onPropose({
+      path: anchor.source.path,
+      revision: revisions.get(anchor.source.path)!,
+      line: anchor.source.line_end!,
+      sentence: text,
+      why: `tell “${longer.name}” and “${base.name}” apart`,
+    })
+      .then((done) => setState({ busy: false, done }))
+      .catch((e: unknown) => setState({ busy: false, error: e instanceof Error ? e.message : String(e) }));
+  };
+  return (
+    <div className="gl-clarify">
+      <label className="dm-field">
+        <span>
+          Added to {anchor.source.path} after line {anchor.source.line_end}
+        </span>
+        <textarea rows={2} value={text} disabled={!!state.done} onChange={(e) => setText(e.target.value)} />
+      </label>
+      {state.done ? (
+        <span className="dm-saved">
+          ✓ Proposed{" "}
+          {state.done.pr_url ? (
+            <a href={state.done.pr_url} target="_blank" rel="noreferrer">
+              as a pull request
+            </a>
+          ) : (
+            <>on {state.done.branch}</>
+          )}{" "}
+          <button type="button" className="dm-link" onClick={onDone}>
+            done
+          </button>
+        </span>
+      ) : (
+        <button type="button" className="primary" disabled={state.busy || unfinished} onClick={propose} title={unfinished ? "Finish the sentence first" : undefined}>
+          {state.busy ? "Proposing…" : "Propose this change"}
+        </button>
+      )}
+      {state.error && <span className="error-inline">{state.error}</span>}
+    </div>
   );
 }

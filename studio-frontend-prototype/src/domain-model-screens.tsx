@@ -3,7 +3,7 @@
  * requirement followed from its passage to its code. */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 
-import type { SpecModelEntityEdit, SpecModelWrite } from "./api";
+import type { SpecModelEntityEdit, SpecModelSentence, SpecModelWrite } from "./api";
 import {
   cardFields,
   cardSize,
@@ -32,7 +32,7 @@ import {
   type ResolveItem,
   type ResolveType,
 } from "./domain-model-views";
-import { DOC_QUALITY_LABEL, docQuality, type DocQualityItem, type DocQualityType } from "./doc-quality";
+import { DOC_QUALITY_LABEL, docQuality, relationSentence, type DocQualityItem, type DocQualityType } from "./doc-quality";
 import { PROVISIONAL_NOTE } from "./saved-entities";
 import { entityGears, type GearRef, type Keeper } from "./entity-gears";
 import { gearDraftFrom, type GearDraft } from "./gear-from-entity";
@@ -105,6 +105,8 @@ export function ResolveView({
   onPropose,
   onSave,
   onSameThing,
+  onProposeSentence,
+  revisions,
   onTrace,
   onOpenFile,
   built,
@@ -119,6 +121,10 @@ export function ResolveView({
   onSave?: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
   /** Read the second word as the first everywhere (the glossary's merge). */
   onSameThing?: (alias: string, of: string) => Promise<void>;
+  /** Open a pull request adding a sentence to a document. */
+  onProposeSentence?: (s: SpecModelSentence) => Promise<SpecModelWrite>;
+  /** Each read document's revision, by path. */
+  revisions?: Map<string, string>;
   onDecide: (f: SpecModelFinding, d: "confirmed" | "dismissed") => void;
   /** Open a pull request with a finding's fix on its document. */
   onPropose?: (f: SpecModelFinding) => Promise<SpecModelWrite>;
@@ -131,7 +137,7 @@ export function ResolveView({
   const queue = useMemo(() => resolveQueue(findings, requirements?.items ?? []), [findings, requirements]);
   // Kept apart from the queue's readiness: a thin passage does not stop a
   // build, it makes the next reader's job harder.
-  const better = useMemo(() => docQuality(entities, glossary), [entities, glossary]);
+  const better = useMemo(() => docQuality(entities, glossary, revisions), [entities, glossary, revisions]);
   const ready = readiness(queue, requirements?.by_basis ?? {}, requirements?.total ?? 0);
   const count = (t: ResolveType) => queue.filter((i) => i.type === t && !i.done).length;
   const countDoc = (t: DocQualityType) => better.filter((i) => i.type === t).length;
@@ -178,6 +184,7 @@ export function ResolveView({
           <Tile type="onlyadr" n={countDoc("onlyadr")} label="only in an ADR or a feature" tone="warn" only={only} setOnly={setOnly} />
           <Tile type="nodefinition" n={countDoc("nodefinition")} label="things with no definition" tone="warn" only={only} setOnly={setOnly} />
           <Tile type="onesided" n={countDoc("onesided")} label="one-sided relations" tone="warn" only={only} setOnly={setOnly} />
+          <Tile type="norelation" n={countDoc("norelation")} label="related to nothing" tone="warn" only={only} setOnly={setOnly} />
           <Tile type="twonames" n={countDoc("twonames")} label="two names for one thing" tone="warn" only={only} setOnly={setOnly} />
         </div>
       )}
@@ -201,7 +208,7 @@ export function ResolveView({
           <QueueItem key={i.key} item={i} onDecide={onDecide} onPropose={onPropose} onTrace={onTrace} onOpenFile={onOpenFile} />
         ))}
         {shownDoc.slice(0, room).map((i) => (
-          <DocItem key={i.key} item={i} onSave={onSave} onSameThing={onSameThing} onOpenFile={onOpenFile} />
+          <DocItem key={i.key} item={i} onSave={onSave} onSameThing={onSameThing} onProposeSentence={onProposeSentence} onOpenFile={onOpenFile} />
         ))}
         {shown.length + shownDoc.length > 80 && (
           <p className="hint">and {shown.length + shownDoc.length - 80} more; pick a tile above to narrow it.</p>
@@ -364,20 +371,23 @@ function DocItem({
   item,
   onSave,
   onSameThing,
+  onProposeSentence,
   onOpenFile,
 }: {
   item: DocQualityItem;
   onSave?: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
   onSameThing?: (alias: string, of: string) => Promise<void>;
+  onProposeSentence?: (s: SpecModelSentence) => Promise<SpecModelWrite>;
   onOpenFile: OpenFile;
 }) {
   const [edit, setEdit] = useState(item.edit ?? null);
-  const [state, setState] = useState<{ busy: boolean; error?: string }>({ busy: false });
+  const [verb, setVerb] = useState(item.sentence?.verb ?? "");
+  const [state, setState] = useState<{ busy: boolean; error?: string; done?: SpecModelWrite }>({ busy: false });
   const run = async (act: () => Promise<unknown>) => {
     setState({ busy: true });
     try {
-      await act();
-      setState({ busy: false });
+      const done = await act();
+      setState({ busy: false, done: item.sentence ? (done as SpecModelWrite) : undefined });
     } catch (e) {
       setState({ busy: false, error: e instanceof Error ? e.message : String(e) });
     }
@@ -405,6 +415,19 @@ function DocItem({
           <textarea rows={2} value={edit.definition ?? ""} onChange={(e) => setEdit({ ...edit, definition: e.target.value })} />
         </label>
       )}
+      {item.sentence && (
+        <div className="dm-field">
+          <span>
+            Added to {item.sentence.path} after line {item.sentence.line}
+          </span>
+          <div className="dm-inverse">
+            <b>{item.sentence.name}</b>
+            <input aria-label="Verb" value={verb} onChange={(e) => setVerb(e.target.value)} />
+            <b>{item.sentence.target}</b>
+          </div>
+          <blockquote className="dm-sentence">{relationSentence(item.sentence.name, verb, item.sentence.target)}</blockquote>
+        </div>
+      )}
       {edit && added && (
         <div className="dm-field">
           <span>Added to {edit.name}&apos;s section of docs/domain-model.md</span>
@@ -430,6 +453,40 @@ function DocItem({
           >
             {state.busy ? "Saving…" : item.type === "nodefinition" ? "Save definition" : item.type === "onesided" ? "Add the other side" : "Add to the domain model"}
           </button>
+        )}
+        {item.sentence && onProposeSentence && !state.done && (
+          <button
+            type="button"
+            className="primary"
+            disabled={state.busy || !verb.trim()}
+            onClick={() => {
+              const s = item.sentence!;
+              void run(() =>
+                onProposeSentence({
+                  path: s.path,
+                  revision: s.revision,
+                  line: s.line,
+                  sentence: relationSentence(s.name, verb, s.target),
+                  why: `say how ${s.name} relates to ${s.target}`,
+                }),
+              );
+            }}
+            title="Open a pull request adding this sentence to the document"
+          >
+            {state.busy ? "Proposing…" : "Propose this change"}
+          </button>
+        )}
+        {state.done && (
+          <span className="dm-saved">
+            ✓ Proposed{" "}
+            {state.done.pr_url ? (
+              <a href={state.done.pr_url} target="_blank" rel="noreferrer">
+                as a pull request
+              </a>
+            ) : (
+              <>on {state.done.branch}</>
+            )}
+          </span>
         )}
         {pair && onSameThing && (
           <button type="button" className="primary" disabled={state.busy} onClick={() => void run(() => onSameThing(pair.b.key, pair.a.key))} title={`Read “${pair.b.name}” as “${pair.a.name}”`}>

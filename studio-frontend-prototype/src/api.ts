@@ -114,6 +114,17 @@ export interface SpecModelEntityEdit {
   relations: { verb: string; target: string }[];
 }
 
+/** A sentence proposed for a document, after the passage at `line` of the
+ *  revision the model read. */
+export interface SpecModelSentence {
+  path: string;
+  revision: string;
+  line: number;
+  sentence: string;
+  /** What it makes better: the pull request's title. */
+  why?: string | null;
+}
+
 /** Where a change to the documents landed. */
 export interface SpecModelWrite {
   path: string;
@@ -3307,6 +3318,13 @@ export const api = {
       token,
       { method: "POST" },
     ),
+  /** Propose a sentence for one of the project's documents as a pull request:
+   *  a paragraph after the passage at `line`, on the revision the model read. */
+  proposeSpecModelSentence: (token: string, projectId: string, proposal: SpecModelSentence) =>
+    request<SpecModelWrite>(`/studio-documents/v1/spec-model/sentences/proposals?project_id=${encodeURIComponent(projectId)}`, token, {
+      method: "POST",
+      body: JSON.stringify(proposal),
+    }),
   decideSpecModelFinding: (
     token: string,
     projectId: string,

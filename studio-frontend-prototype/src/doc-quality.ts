@@ -11,22 +11,28 @@
 // - Only in an ADR or a feature: a thing of the domain no requirement or
 //   domain document describes, so it is part of the product only by
 //   accident of a decision or a feature write-up.
+// - No relation: a thing whose name says what it is about (connection
+//   health, role grant), while no document says how the two relate. The
+//   sentence that says it goes into the document that describes the thing,
+//   after that passage, as a pull request: the source is improved, not a
+//   copy of it.
 //
-// Each save writes the entity's section of docs/domain-model.md through the
-// same call the model map's editor uses. Pure: domain-model-screens.tsx
+// Each other save writes the entity's section of docs/domain-model.md through
+// the same call the model map's editor uses. Pure: domain-model-screens.tsx
 // draws what these compute.
 
-import type { SpecModelEntityEdit } from "./api";
-import { cardFields, entityDraft, isTemplatePath, layerOf, relationTarget } from "./domain-layers";
+import type { SpecModelEntityEdit, SpecModelSentence } from "./api";
+import { cardFields, entityDraft, isTemplatePath, layerOf, relationEdges, relationTarget } from "./domain-layers";
 import { similarPairs, type SimilarPair } from "./glossary-view";
 import { subjectKey, type Entity, type GlossaryEntry, type SpecModelFact, type SpecModelSide } from "./spec-model";
 
-export type DocQualityType = "nodefinition" | "twonames" | "onesided" | "onlyadr";
+export type DocQualityType = "nodefinition" | "twonames" | "onesided" | "norelation" | "onlyadr";
 
 export const DOC_QUALITY_LABEL: Record<DocQualityType, string> = {
   onlyadr: "Only in an ADR or a feature",
   nodefinition: "No definition",
   onesided: "One-sided relation",
+  norelation: "No relation",
   twonames: "Two names for one thing",
 };
 
@@ -41,6 +47,43 @@ export interface DocQualityItem {
   edit?: SpecModelEntityEdit;
   /** For two names: the pair, the second to be read as the first. */
   pair?: SimilarPair;
+  /** For no relation: the sentence for the document that describes the
+   *  thing, and the relation it states, its verb editable. */
+  sentence?: SpecModelSentence & { name: string; verb: string; target: string };
+}
+
+/** A name that is a screen, a step or an action rather than a thing the
+ *  product keeps: no relation is proposed for it. */
+const SCREEN_OR_STEP =
+  /\b(overlay|screen|form|button|menu|slot|tab|step|list|listing|bar|rail|breadcrumb|click|dialog|wizard|page|panel|view|section|container|switcher|tile|table|row)\b|^(go|move|open|create|connect|new|sign|run|re-?run|add|pick|choose|select)\b|\b(creation|selection|resolution|switch|navigation|write|read|refusal|validation|bootstrap|backfill|import|sync|open|delivery|choice)$/i;
+
+/** Where a sentence about a thing goes: after the passage that says what it
+ *  is, else the first that describes it, in a document read at its current
+ *  revision, so the line is still the line the model read. */
+export function passageOf(e: Entity, revisions: Map<string, string>): SpecModelFact | null {
+  const facts = own(e).filter((f) => revisions.has(f.source.path) && f.source.line_end);
+  return facts.find((f) => f.kind === "entity") ?? facts[0] ?? null;
+}
+
+/** The sentence that states a relation, as a document would: "Connection
+ *  health belongs to **connection**." */
+export function relationSentence(name: string, verb: string, target: string): string {
+  const subject = name.charAt(0).toUpperCase() + name.slice(1);
+  return `${subject} ${verb.trim()} **${target}**.`;
+}
+
+/** The other things a name is made of, the longest first: "connection draft"
+ *  is about a connection and a draft. */
+function namedIn(e: Entity, keys: Map<string, Entity>): { other: Entity; head: boolean }[] {
+  const words = e.key.split(" ");
+  const out: { other: Entity; head: boolean }[] = [];
+  for (let len = words.length - 1; len > 0; len--)
+    for (let i = 0; i + len <= words.length; i++) {
+      const k = words.slice(i, i + len).join(" ");
+      const other = keys.get(k);
+      if (other && k.length > 3 && !out.some((o) => o.other.key === other.key)) out.push({ other, head: i + len === words.length });
+    }
+  return out;
 }
 
 /** A thing's facts that are about this project: a kit's templates and
@@ -116,8 +159,15 @@ function mentions(facts: SpecModelFact[], other: Entity, of: Entity, all: Entity
 
 /** Everything that would make the documentation better, worst gap first:
  *  things only an ADR or a feature describes, things with no definition,
- *  one-sided relations, then words that may name one thing. */
-export function docQuality(entities: Entity[], glossary: GlossaryEntry[] = []): DocQualityItem[] {
+ *  one-sided relations, things related to nothing, then words that may
+ *  name one thing. */
+export function docQuality(
+  entities: Entity[],
+  glossary: GlossaryEntry[] = [],
+  /** Each read document's revision, by path: a sentence is proposed only
+   *  where the lines the model read are the lines in the repository. */
+  revisions: Map<string, string> = new Map(),
+): DocQualityItem[] {
   const domain = entities.filter((e) => layerOf(e) === "domain");
   const onlyAdr: DocQualityItem[] = [];
   const noDef: DocQualityItem[] = [];
@@ -174,6 +224,40 @@ export function docQuality(entities: Entity[], glossary: GlossaryEntry[] = []): 
     }
   }
 
+  // No relation: a name made of another thing's name, and nothing that
+  // relates the two. The modifier is what it belongs to (a connection
+  // health, of a connection); a head noun alone is what it is a kind of.
+  const noRelation: DocQualityItem[] = [];
+  const tied = new Set(relationEdges(entities).flatMap((e) => [e.from, e.to]));
+  const byKey = new Map(domain.map((e) => [e.key, e]));
+  for (const e of domain) {
+    if (tied.has(e.key) || SCREEN_OR_STEP.test(e.name)) continue;
+    const parts = namedIn(e, byKey);
+    const part = parts.find((p) => !p.head) ?? parts[0];
+    if (!part) continue;
+    const anchor = passageOf(e, revisions);
+    if (!anchor) continue;
+    const verb = part.head ? "is a kind of" : "belongs to";
+    const target = part.other.name;
+    noRelation.push({
+      key: `nr:${e.key}`,
+      type: "norelation",
+      title: `${e.name} is related to nothing`,
+      hint: `Its name says it is about ${target}, but no document says how. The sentence goes into the document that describes ${e.name}, after that passage, as a pull request.`,
+      sides: [anchor.source, ...sidesOf(own(part.other))].slice(0, 3),
+      sentence: {
+        path: anchor.source.path,
+        revision: revisions.get(anchor.source.path)!,
+        line: anchor.source.line_end!,
+        sentence: relationSentence(e.name, verb, target),
+        why: `say how ${e.name} relates to ${target}`,
+        name: e.name,
+        verb,
+        target,
+      },
+    });
+  }
+
   const twoNames: DocQualityItem[] = similarPairs(glossary).map((p) => ({
     key: `tn:${p.a.key}|${p.b.key}`,
     type: "twonames",
@@ -184,5 +268,5 @@ export function docQuality(entities: Entity[], glossary: GlossaryEntry[] = []): 
   }));
 
   // Within a kind, the order of `entities`: the most described first.
-  return [...onlyAdr, ...noDef, ...oneSided, ...twoNames];
+  return [...onlyAdr, ...noDef, ...oneSided, ...noRelation, ...twoNames];
 }

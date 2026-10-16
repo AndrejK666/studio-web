@@ -31,6 +31,20 @@ export interface SimilarPair {
   a: GlossaryEntry;
   b: GlossaryEntry;
   why: string;
+  /** How the names are alike: one is the other with an ending, or with a
+   *  level in front. What a clarifying sentence says depends on it. */
+  how?: { suffix: string } | { level: string };
+}
+
+/** A sentence that tells the two words apart, for the document that
+ *  describes the longer one; a person corrects it before it is proposed. */
+export function clarifySentence(p: SimilarPair): string {
+  const [base, longer] = p.b.key.length >= p.a.key.length ? [p.a, p.b] : [p.b, p.a];
+  const subject = longer.name.charAt(0).toUpperCase() + longer.name.slice(1);
+  const article = /^[aeiou]/i.test(longer.name) ? "An" : "A";
+  if (p.how && "level" in p.how) return `${subject} is a **${base.name}** at the ${p.how.level} level.`;
+  if (p.how && p.how.suffix === "ship") return `${article} ${longer.name} is what makes someone a **${base.name}**.`;
+  return `${subject} is not the same as **${base.name}**: …`;
 }
 
 const words = (key: string) => key.split(" ").filter(Boolean);
@@ -47,16 +61,16 @@ export function similarPairs(entries: GlossaryEntry[], max = 40): SimilarPair[] 
   const byKey = new Map(pool.map((e) => [e.key, e]));
   const out: SimilarPair[] = [];
   const seen = new Set<string>();
-  const add = (a: GlossaryEntry, b: GlossaryEntry, why: string) => {
+  const add = (a: GlossaryEntry, b: GlossaryEntry, why: string, how: SimilarPair["how"]) => {
     const id = [a.key, b.key].sort().join("|");
     if (a.key === b.key || seen.has(id)) return;
     seen.add(id);
-    out.push(a.facts >= b.facts ? { a, b, why } : { a: b, b: a, why });
+    out.push(a.facts >= b.facts ? { a, b, why, how } : { a: b, b: a, why, how });
   };
   for (const e of pool) {
     for (const suffix of ["ship", "s", "ing"]) {
       const other = byKey.get(e.key + suffix);
-      if (other) add(e, other, `“${other.name}” is “${e.name}” with “-${suffix}”`);
+      if (other) add(e, other, `“${other.name}” is “${e.name}” with “-${suffix}”`, { suffix });
     }
     // "Organization membership" is the membership; "nested project" is a kind
     // of project, not another name for it. Only a level in front reads as the
@@ -64,7 +78,7 @@ export function similarPairs(entries: GlossaryEntry[], max = 40): SimilarPair[] 
     const w = words(e.key);
     if (w.length === 2 && SCOPES.has(w[0])) {
       const tail = byKey.get(w[1]);
-      if (tail) add(tail, e, `“${e.name}” names “${tail.name}” with its level`);
+      if (tail) add(tail, e, `“${e.name}” names “${tail.name}” with its level`, { level: w[0] });
     }
   }
   return out.sort((x, y) => y.a.facts + y.b.facts - (x.a.facts + x.b.facts)).slice(0, max);

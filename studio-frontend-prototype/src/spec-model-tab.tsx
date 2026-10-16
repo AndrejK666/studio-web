@@ -263,6 +263,12 @@ export function SpecModelTab({
   const facts = useMemo(() => overlaySaved(model?.facts ?? [], saved), [model, saved]);
   const writes = useMemo(() => savedWrites(saved), [saved]);
   const entities = useMemo(() => entitiesOf(facts, glossary), [facts, glossary]);
+  // The lines a fact names are the repository's lines only for a document
+  // read at its current revision: a sentence is proposed only there.
+  const revisions = useMemo(
+    () => new Map((model?.documents ?? []).filter((d) => d.state === "extracted").map((d) => [d.path, d.revision])),
+    [model],
+  );
   // Which gear keeps each Domain entity: read when the map is first opened.
   // Without the catalogue no gear is known, so no gap is claimed either.
   const catalogue = useGearCatalogue(token, view === "map");
@@ -363,6 +369,8 @@ export function SpecModelTab({
           onSave={saveEntity}
           onSameThing={(alias, of) => decideTerm(alias, { name: null, alias_of: of })}
           onPropose={(f) => api.proposeSpecModelFix(token, projectId, f.fingerprint)}
+          onProposeSentence={(sentence) => api.proposeSpecModelSentence(token, projectId, sentence)}
+          revisions={revisions}
           onTrace={(id) => {
             setTraced(id);
             setView("reqs");
@@ -391,6 +399,8 @@ export function SpecModelTab({
           entities={entities}
           onDecide={decideTerm}
           onProposeRename={(from, to) => api.proposeGlossaryRename(token, projectId, from, to)}
+          onProposeSentence={(sentence) => api.proposeSpecModelSentence(token, projectId, sentence)}
+          revisions={revisions}
         />
       )}
       {view === "work" && <Work read={work} onOpenFile={onOpenFile} />}

@@ -2397,6 +2397,24 @@ pub struct SpecModelEntityRequest {
     pub relations: Vec<SpecModelRelationInput>,
 }
 
+/// A sentence the Domain model tab proposes for a document, after the passage
+/// the model read a fact from: the relation an entity has no document stating.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelSentenceRequest {
+    /// The document, from the repository's root: one of the project's
+    /// documentation, never another file.
+    pub path: String,
+    /// The revision the model read, so the line still means the same passage.
+    pub revision: String,
+    /// The passage's last line, 1-based; the sentence goes after its block.
+    pub line: u32,
+    pub sentence: String,
+    /// What the change makes better, for the pull request's title.
+    #[serde(default)]
+    pub why: Option<String>,
+}
+
 /// Where a change to the documents landed.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -5700,6 +5718,100 @@ async fn create_spec_model_finding_proposal(
     ))
 }
 
+/// Propose a sentence for one of the project's documents as a pull request:
+/// a paragraph of its own after the passage the model read, on the revision
+/// it read. What the Domain model tab offers for an entity no document
+/// relates to anything.
+async fn create_spec_model_sentence_proposal(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+    Json(req): Json<SpecModelSentenceRequest>,
+) -> ApiResult<(StatusCode, JsonBody<SpecModelWriteDto>)> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let refuse = |why: &str| {
+        DocumentsError::invalid_argument()
+            .with_constraint(why)
+            .create()
+    };
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    if !sources.documents.iter().any(|d| d.path == req.path) {
+        return Err(refuse(
+            "not one of the project's documents: only its documentation is proposed to",
+        ));
+    }
+    let files = project_files(&quality)?;
+    let project = project_id.to_string();
+    let text = files
+        .read(&ctx, &project, &req.path)
+        .await
+        .map_err(invalid_or_internal)?
+        .ok_or_else(|| {
+            DocumentsError::not_found("the document is not in the repository")
+                .with_resource(req.path.clone())
+                .create()
+        })?;
+    if super::spec_model::extract::revision(&text) != req.revision {
+        return Err(refuse(
+            "the document changed since the model read it: build the model again",
+        ));
+    }
+    let line = usize::try_from(req.line).unwrap_or(usize::MAX);
+    let changed = super::spec_model::domain_doc::insert_after(&text, line, &req.sentence)
+        .ok_or_else(|| refuse("no passage at that line to add a sentence after, or it is code"))?;
+    let sentence = req
+        .sentence
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let title: String = req
+        .why
+        .as_deref()
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+        .unwrap_or(&sentence)
+        .chars()
+        .take(70)
+        .collect();
+    let branch = format!(
+        "docs/{}",
+        &super::spec_model::extract::revision(&changed)[..12]
+    );
+    let written = files
+        .write(
+            &ctx,
+            &project,
+            &branch,
+            &[crate::product::port::DeclarationFile { path: req.path.clone(), content: changed }],
+            &crate::product::port::PullRequestText {
+                message: format!("docs: {title}"),
+                title: format!("Docs: {title}"),
+                body: format!(
+                    "{title}\n\nAdded to `{}` after line {line}:\n\n> {sentence}\n\nProposed from the Domain model tab.",
+                    req.path
+                ),
+            },
+            true,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(SpecModelWriteDto {
+            path: req.path,
+            branch: written.branch,
+            commit_sha: written.commit_sha,
+            pr_url: written.pr_url,
+        }),
+    ))
+}
+
 /// Every decision members recorded on the project's findings, of the model
 /// and of the Spec Quality detectors alike: both are keyed by fingerprint.
 async fn list_spec_model_decisions(
@@ -7303,6 +7415,29 @@ pub fn register_routes(
             .error_404(openapi)
             .error_500(openapi)
             .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/sentences/proposals")
+        .operation_id("studio_documents.create_spec_model_sentence_proposal")
+        .summary("Propose a sentence for one of the project's documents as a pull request")
+        .description(
+            "A paragraph of its own after the block the given line sits in, on a `docs/…` branch \
+             with a pull request — a proposal, never a commit onto the document's branch. The Domain \
+             model tab uses it to state a relation no document states. 400 when the file is not one \
+             of the project's documents, it changed since the model read it, or the line is blank \
+             or code; 404 when it is not in the repository.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project the document is in")
+        .json_request::<SpecModelSentenceRequest>(openapi, "The sentence and where it goes")
+        .handler(create_spec_model_sentence_proposal)
+        .json_response_with_schema::<SpecModelWriteDto>(openapi, StatusCode::CREATED, "The pull request")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/spec-model/glossary")
         .operation_id("studio_documents.get_spec_model_glossary")

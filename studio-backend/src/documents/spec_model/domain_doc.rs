@@ -152,6 +152,46 @@ pub fn apply_edit(text: &str, replace: &str, with: &str) -> Option<String> {
     Some(format!("{}{}{}", &text[..start], with, &text[end..]))
 }
 
+/// `text` with `sentence` as a paragraph of its own after the block that line
+/// `line` (1-based) sits in: the paragraph, list or table ends at the next
+/// blank line, so the sentence never breaks one. `None` when the line is not
+/// in the text, the sentence is empty, or the block is fenced code, where a
+/// sentence would be read as code. Line endings follow the text's own.
+pub fn insert_after(text: &str, line: usize, sentence: &str) -> Option<String> {
+    let sentence = sentence.split_whitespace().collect::<Vec<_>>().join(" ");
+    if sentence.is_empty() || line == 0 {
+        return None;
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    if line > lines.len() {
+        return None;
+    }
+    let fence = |l: &str| l.trim_start().starts_with("```") || l.trim_start().starts_with("~~~");
+    if lines[..line].iter().filter(|l| fence(l)).count() % 2 == 1 {
+        return None;
+    }
+    let mut end = line - 1;
+    if lines[end].trim().is_empty() {
+        return None;
+    }
+    while end + 1 < lines.len() && !lines[end + 1].trim().is_empty() && !fence(lines[end + 1]) {
+        end += 1;
+    }
+    let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut out: Vec<&str> = lines[..=end].to_vec();
+    out.push("");
+    out.push(&sentence);
+    if end + 1 < lines.len() && !lines[end + 1].trim().is_empty() {
+        out.push("");
+    }
+    out.extend_from_slice(&lines[end + 1..]);
+    let mut joined = out.join(nl);
+    if text.ends_with('\n') {
+        joined.push_str(nl);
+    }
+    Some(joined)
+}
+
 /// The type the model reads a project file as, or `None` when it is not
 /// documentation: a file whose type is settled, as that type; and Studio's
 /// own [`DOMAIN_DOC_PATH`] whatever its binding says, because Studio writes
@@ -268,5 +308,45 @@ mod tests {
         assert_eq!(apply_edit("nothing here", "belongs to", "x"), None);
         assert_eq!(apply_edit("a b and a b", "a b", "x"), None);
         assert_eq!(apply_edit("text", "   ", "x"), None);
+    }
+
+    #[test]
+    fn a_sentence_goes_after_the_block_its_line_is_in() {
+        let doc = "# Title\n\nA connection health is read\nfrom the host.\n\n## Next\n";
+        assert_eq!(
+            insert_after(doc, 3, "Connection health describes **Connection**.").as_deref(),
+            Some(
+                "# Title\n\nA connection health is read\nfrom the host.\n\nConnection health describes **Connection**.\n\n## Next\n"
+            ),
+            "after the whole paragraph, not inside it"
+        );
+        let table = "| a | b |\n|---|---|\n| x | y |\n";
+        assert_eq!(
+            insert_after(table, 1, "S.").as_deref(),
+            Some("| a | b |\n|---|---|\n| x | y |\n\nS.\n"),
+            "a table is not broken"
+        );
+        assert_eq!(
+            insert_after("a\r\nb\r\n", 1, "S.").as_deref(),
+            Some("a\r\nb\r\n\r\nS.\r\n"),
+            "the text's own line endings"
+        );
+    }
+
+    #[test]
+    fn no_sentence_where_it_cannot_go() {
+        assert_eq!(insert_after("a\n", 2, "S."), None, "past the end");
+        assert_eq!(insert_after("a\n", 0, "S."), None);
+        assert_eq!(insert_after("a\n", 1, "  "), None, "nothing to say");
+        assert_eq!(
+            insert_after("a\n\nb\n", 2, "S."),
+            None,
+            "a blank line is no passage"
+        );
+        assert_eq!(
+            insert_after("```\ncode\n```\n", 2, "S."),
+            None,
+            "inside a fence"
+        );
     }
 }

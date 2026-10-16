@@ -3,7 +3,7 @@
 // searches instead of listing every word.
 import { describe, expect, it } from "vitest";
 
-import { filterRows, glossaryRows, mergeCandidates, renameOffer, similarPairs } from "./glossary-view";
+import { clarifySentence, filterRows, glossaryRows, mergeCandidates, renameOffer, similarPairs } from "./glossary-view";
 import { entitiesOf, type GlossaryEntry, type SpecModelFact } from "./spec-model";
 
 const entry = (name: string, facts = 5, extra: Partial<GlossaryEntry> = {}): GlossaryEntry => ({
@@ -77,5 +77,21 @@ describe("renameOffer", () => {
   it("offers nothing for the same word or an empty name", () => {
     expect(renameOffer(entry("Member"), "member ")).toBeNull();
     expect(renameOffer(entry("Member"), "  ")).toBeNull();
+  });
+});
+
+describe("a sentence that tells two words apart", () => {
+  const pair = (a: string, b: string) => similarPairs([entry(a, 9), entry(b, 4)])[0];
+
+  it("says what a level in front adds", () => {
+    expect(clarifySentence(pair("membership", "organization membership"))).toBe("Organization membership is a **membership** at the organization level.");
+  });
+
+  it("says what a -ship word makes of the other", () => {
+    expect(clarifySentence(pair("Member", "membership"))).toBe("A membership is what makes someone a **Member**.");
+  });
+
+  it("leaves the rest for a person to finish", () => {
+    expect(clarifySentence(pair("build", "building"))).toBe("Building is not the same as **build**: …");
   });
 });

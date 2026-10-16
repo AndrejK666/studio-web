@@ -3,7 +3,7 @@
 // that a saved change takes the item off the list at once.
 import { describe, expect, it } from "vitest";
 
-import { definitionFrom, docQuality, inverseVerb } from "./doc-quality";
+import { definitionFrom, docQuality, inverseVerb, relationSentence } from "./doc-quality";
 import { overlaySaved } from "./saved-entities";
 import { entitiesOf, type GlossaryEntry, type SpecModelFact } from "./spec-model";
 
@@ -123,5 +123,45 @@ describe("two names for one thing", () => {
     expect(items[0].type).toBe("twonames");
     expect(items[0].pair?.a.key).toBe("member");
     expect(items[0].pair?.b.key).toBe("membership");
+  });
+});
+
+describe("no relation", () => {
+  const at = (line: number, path = "docs/prd/x.md") => ({ source: { path, line_start: line, line_end: line + 1, quote: "q" } });
+  const revisions = new Map([["docs/prd/x.md", "r1"]]);
+  const facts = [
+    fact("Connection", "entity", { text: "A Connection reaches a host.", ...at(3) }),
+    fact("Connection health", "entity", { text: "Connection health is read from the host.", ...at(10) }),
+    attr("Connection health", "status", at(12)),
+  ];
+  const noRelation = (fs: SpecModelFact[], rev = revisions) => docQuality(entitiesOf(fs), [], rev).filter((i) => i.type === "norelation");
+
+  it("proposes the sentence its name implies, after the passage that describes it", () => {
+    const [item] = noRelation(facts);
+    expect(item?.title).toBe("Connection health is related to nothing");
+    expect(item?.sentence).toMatchObject({
+      path: "docs/prd/x.md",
+      revision: "r1",
+      line: 11,
+      sentence: "Connection health belongs to **Connection**.",
+      verb: "belongs to",
+      target: "Connection",
+    });
+  });
+
+  it("reads a head noun alone as what it is a kind of", () => {
+    const fs = [fact("Grant", "entity", at(1)), fact("Owner grant", "entity", at(5)), attr("Owner grant", "who", at(6))];
+    expect(noRelation(fs)[0]?.sentence?.sentence).toBe("Owner grant is a kind of **Grant**.");
+  });
+
+  it("is not asked once a relation ties it in, of a screen or a step, or of a document read at an older revision", () => {
+    expect(noRelation([...facts, rel("Connection health", "describes", "Connection", at(14))])).toEqual([]);
+    const screen = [fact("Connection", "entity", at(3)), fact("Connection list", "entity", at(10)), attr("Connection list", "a", at(11))];
+    expect(noRelation(screen)).toEqual([]);
+    expect(noRelation(facts, new Map())).toEqual([]);
+  });
+
+  it("states the relation the way a document would", () => {
+    expect(relationSentence("role grant", " grants ", "Role")).toBe("Role grant grants **Role**.");
   });
 });
