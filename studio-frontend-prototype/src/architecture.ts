@@ -696,7 +696,7 @@ export const SURFACES: Surface[] = [
     area: "organization",
     title: "Organization component repositories",
     does: "Components > Repositories: list the organization's own gear repositories, read after the platform's in its corpus (ADR-0046 phase 3): add or remove one, see what the engine read, and pick the one Create a gear writes into.",
-    components: ["OrgSources", "GearSources", "AddGearRepository"],
+    components: ["OrgSources", "GearSources", "AddGearRepository", "CreateGearRepository"],
     gears: ["studio-components-catalog", "studio-connector", "studio-product"],
   },
   {
