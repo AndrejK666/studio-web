@@ -95,7 +95,7 @@ pub fn readable_path(id: &str, path: &str) -> Option<String> {
 /// project's product file. Errors are logged and the project skipped: one
 /// unreadable repository does not take the organization's corpus with it.
 pub async fn read(
-    gearbox: &Gearbox,
+    gearbox: &Arc<Gearbox>,
     connectors: &Connectors,
     hub: &Arc<ClientHub>,
     ctx: &SecurityContext,
@@ -163,9 +163,13 @@ pub async fn read(
                 subdir: Some(String::new()),
             };
             let dir = checkout_dir(gearbox.workdir(), &probe);
-            let clone = match gearbox_checkout(gearbox, &dir, &corpus) {
-                Ok(c) => c,
-                Err(e) => {
+            let clone = match gearbox_checkout(gearbox, &dir, &corpus).await {
+                Some(Ok(c)) => c,
+                None => {
+                    warn!(project_id = %project.id, repo = %source.full_path, "studio-product: a project source is still being cloned; its gears are read on the next refresh");
+                    continue;
+                }
+                Some(Err(e)) => {
                     warn!(project_id = %project.id, repo = %source.full_path, error = %format!("{e:#}"), "studio-product: a project source could not be checked out for its product file");
                     continue;
                 }
@@ -210,14 +214,26 @@ pub async fn read(
     (roots, files)
 }
 
-/// [`Gearbox::checkout_at`], told the runtime it blocks: git under the
-/// checkout's lock, which the corpus takes too.
-fn gearbox_checkout(
-    gearbox: &Gearbox,
+/// How long a request waits for a project's repository to be cloned or
+/// fetched. A first clone of a large one (studio-web's took over 30 s) runs
+/// on, and the next read of the organization's roots finds it done -- a page
+/// that waited for it whole answered the gateway's 504 instead.
+const CHECKOUT_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// [`Gearbox::checkout_at`] off the runtime, waited for at most
+/// [`CHECKOUT_WAIT`]: `None` when it is still running.
+async fn gearbox_checkout(
+    gearbox: &Arc<Gearbox>,
     dir: &std::path::Path,
     source: &CorpusSource,
-) -> anyhow::Result<crate::connectors::sdk::git_checkout::CloneResult> {
-    tokio::task::block_in_place(|| gearbox.checkout_at(dir, source))
+) -> Option<anyhow::Result<crate::connectors::sdk::git_checkout::CloneResult>> {
+    let (gearbox, dir, source) = (Arc::clone(gearbox), dir.to_path_buf(), source.clone());
+    let job = tokio::task::spawn_blocking(move || gearbox.checkout_at(&dir, &source));
+    match tokio::time::timeout(CHECKOUT_WAIT, job).await {
+        Ok(Ok(result)) => Some(result),
+        Ok(Err(e)) => Some(Err(anyhow::anyhow!("the checkout task failed: {e}"))),
+        Err(_) => None,
+    }
 }
 
 #[cfg(test)]

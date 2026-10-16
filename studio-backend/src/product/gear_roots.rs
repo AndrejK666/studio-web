@@ -98,7 +98,7 @@ pub async fn refresh(gearbox: &Gearbox, connectors: &Connectors, ctx: &SecurityC
 /// `now`). The platform's root and no organization are the platform's scope.
 /// The caller has already shown that `ctx` reaches `org`.
 pub async fn scope_for(
-    gearbox: &Gearbox,
+    gearbox: &Arc<Gearbox>,
     connectors: &Connectors,
     hub: &Arc<toolkit::client_hub::ClientHub>,
     ctx: &SecurityContext,
