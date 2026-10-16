@@ -5,7 +5,7 @@ import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-
 import { URL_CHANGE_EVENT } from "./list-state";
 import type { FormEvent, ReactNode } from "react";
 import { env as runtimeEnv, idpConsoleUrl } from "./env";
-import { errText, matches } from "./format";
+import { errText, matches, relTime } from "./format";
 // Screens that arrive when somebody asks for them — see ./lazy-screens for
 // what is split and what deliberately is not.
 import {
@@ -7035,6 +7035,21 @@ function SecretsView({
 /* ── Connectors (aggregate of workspace sources) ── */
 
 /** Provider groups in the picker. Keys match ConnectorDriver::category(). */
+/** What a scope goes without when it has no connection of a kind. */
+const MISSING_MEANS: Record<string, string> = {
+  source_code: "no repository can be attached or synced",
+  ai: "the IDE agents and chat run only on personal keys",
+  notification: "Studio cannot tell anyone what happened",
+  cluster: "no environment can deploy anywhere",
+};
+
+/** How long a connection's answer to a test is trusted before it is asked
+ *  again: the page opens often, the providers should not be asked as often. */
+const HEALTH_TTL_MS = 5 * 60_000;
+
+/** Each connection's last answer, kept across visits to the page. */
+const healthCache = new Map<string, { state: "ok" | "bad"; text: string; at: number }>();
+
 const CATEGORIES: { key: string; title: string; blurb: string }[] = [
   {
     key: "source_code",
@@ -8211,6 +8226,9 @@ function ConnectorsView({
   const [disabled, setDisabled] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  /** The provider picker: closed (null), open on every kind (""), or open on
+   *  one kind the "Not connected yet" line asked for. */
+  const [adding, setAdding] = useState<string | null>(null);
   // Bumped when a repo is attached/detached anywhere on the tab, so the sources
   // panel and the connector browser's "attached" flags stay in sync.
   const [sourcesTick, setSourcesTick] = useState(0);
@@ -8260,7 +8278,7 @@ function ConnectorsView({
 
   return (
     <>
-      <h1>Connectors</h1>
+      <h1>Connections</h1>
       <p className="subtitle">
         How repositories and model credentials enter <b>{ws.name}</b>: its own connections plus
         those shared with every project. Configure one once, then pick
@@ -8277,16 +8295,18 @@ function ConnectorsView({
         </div>
       )}
 
-      {/* Connectors + the repository browser live here (the Sources tab). The
-          attached-sources list itself now lives on the Nested projects tab,
-          next to the projects those sources feed. */}
-      {!disabled && (
+      {/* What is connected comes first; the provider picker opens as a block
+          above the list only when someone adds one. */}
+      {!disabled && adding !== null && (
         <AddConnector
           token={token}
           workspace={ws}
           providers={providers ?? []}
+          category={adding || undefined}
+          onClose={() => setAdding(null)}
           onAdded={(t) => {
             setNote(`Connected as ${t.account}${t.display_name ? ` (${t.display_name})` : ""}.`);
+            setAdding(null);
             void reload();
           }}
         />
@@ -8304,6 +8324,8 @@ function ConnectorsView({
           onSourcesChanged={bumpSources}
           onChanged={() => void reload()}
           onNote={setNote}
+          onAdd={(category) => setAdding(category ?? "")}
+          adding={adding !== null}
         />
       )}
 
@@ -8322,14 +8344,20 @@ function AddConnector({
   token,
   workspace,
   providers,
+  category,
+  onClose,
   onAdded,
 }: {
   token: string;
   workspace: Workspace;
   providers: ConnectorProvider[];
+  /** Open on one kind, from the "Not connected yet" line. */
+  category?: string;
+  onClose: () => void;
   onAdded: (t: { account: string; display_name?: string }) => void;
 }) {
   const [picked, setPicked] = useState<ConnectorProvider | null>(null);
+  const [find, setFind] = useState("");
   const [label, setLabel] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [pat, setPat] = useState("");
@@ -8369,47 +8397,48 @@ function AddConnector({
   }
 
   if (!picked) {
+    const q = find.trim().toLowerCase();
+    const where = workspace.id === workspace.orgId ? workspace.name : `${workspace.name}`;
     return (
-      <div className="card">
-        <h2>Add connector</h2>
-        <p className="hint">Connect this project to an external tool or service.</p>
-        {CATEGORIES.map(({ key, title, blurb }) => {
-          const group = providers.filter((p) => p.category === key);
+      <div className="card conn-picker" data-connection-picker>
+        <div className="conn-picker-head">
+          <h2>Add a connection to {where}</h2>
+          <input type="search" placeholder="Find a provider" value={find} onChange={(e) => setFind(e.target.value)} aria-label="Find a provider" />
+          <button type="button" className="ghost" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        {CATEGORIES.filter(({ key }) => !category || key === category).map(({ key, title, blurb }) => {
+          const group = providers.filter(
+            (p) => p.category === key && (!q || `${p.display_name} ${p.provider} ${title}`.toLowerCase().includes(q)),
+          );
           if (group.length === 0) return null;
           return (
-            <div key={key}>
+            <section key={key} className="conn-picker-group">
               <h3 className="group">{title}</h3>
               <p className="hint">{blurb}</p>
-              <ul className="rows">
+              <div className="conn-picker-tiles">
                 {group.map((p) => (
-                  <li key={p.provider}>
+                  <button
+                    key={p.provider}
+                    type="button"
+                    className="conn-picker-tile"
+                    title={p.default_base_url}
+                    onClick={() => {
+                      setPicked(p);
+                      // An environment takes only a cluster the organization
+                      // holds, so a cluster starts organization-wide.
+                      if (p.provider === "kubernetes") setReach("organization");
+                    }}
+                  >
                     <span className="conn-logo-slot" aria-hidden>
                       <ConnectorLogo provider={p.provider} label={p.display_name} />
                     </span>
-                    <div className="grow">
-                      <div className="name">{p.display_name}</div>
-                      <div className="sub">
-                        {title.toLowerCase()} · {p.default_base_url}
-                      </div>
-                    </div>
-                    {/* Proof this is plugin-backed: the driver's GTS instance id. */}
-                    <span className="sub" title={p.instance_id}>
-                      {p.instance_id.split("~").filter(Boolean).slice(-1)[0]}
-                    </span>
-                    <button
-                      onClick={() => {
-                        setPicked(p);
-                        // An environment takes only a cluster the organization
-                        // holds, so a cluster starts organization-wide.
-                        if (p.provider === "kubernetes") setReach("organization");
-                      }}
-                    >
-                      Connect
-                    </button>
-                  </li>
+                    <span className="name">{p.display_name}</span>
+                  </button>
                 ))}
-              </ul>
-            </div>
+              </div>
+            </section>
           );
         })}
       </div>
@@ -8450,8 +8479,8 @@ function AddConnector({
   };
 
   return (
-    <div className="card">
-      <h2>Add connector</h2>
+    <div className="card conn-picker">
+      <h2>Connect {picked.display_name}</h2>
       <ul className="rows">
         <li>
           <span className="conn-logo-slot" aria-hidden>
@@ -8552,6 +8581,9 @@ function AddConnector({
 
       <div className="row">
         <button onClick={reset}>← Back</button>
+        <button className="ghost" onClick={onClose}>
+          Close
+        </button>
         <span className="grow" />
         <button disabled={!pat.trim() || busy !== null} onClick={() => void submit("probe")}>
           {busy === "probe" ? "Testing…" : "Test connection"}
@@ -8582,12 +8614,18 @@ function ConnectionList({
   onSourcesChanged,
   onChanged,
   onNote,
+  onAdd,
+  adding,
 }: {
   token: string;
   workspace: Workspace;
   providers: ConnectorProvider[];
   connections: Connection[];
   loading: boolean;
+  /** Open the provider picker, on one kind or on all. */
+  onAdd: (category?: string) => void;
+  /** Whether the picker is open above. */
+  adding: boolean;
   sourcesTick: number;
   /** Environments by the cluster connection they deploy with. */
   envUses: Map<string, string[]>;
@@ -8597,7 +8635,16 @@ function ConnectionList({
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [health, setHealth] = useState<Record<string, "ok" | "bad" | "testing">>({});
+  // Each connection's last answer: from the cache when it is fresh, else asked
+  // once when the list shows. A forced test always asks.
+  const [health, setHealth] = useState<Record<string, { state: "ok" | "bad" | "testing"; text: string; at: number }>>(() =>
+    Object.fromEntries([...healthCache.entries()]),
+  );
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const nameOf = (p: string) => providers.find((x) => x.provider === p)?.display_name ?? p;
   const categoryOf = (p: string) => providers.find((x) => x.provider === p)?.category;
@@ -8607,19 +8654,38 @@ function ConnectionList({
   const inheritedOf = (c: Connection) => c.owner_tenant_id !== workspace.id;
   const browsable = (c: Connection) => categoryOf(c.provider) === "source_code";
 
-  const test = (c: Connection) => {
-    setHealth((h) => ({ ...h, [c.id]: "testing" }));
-    void api
-      .testConnection(token, c.id, workspace.id)
-      .then((t) => {
-        setHealth((h) => ({ ...h, [c.id]: "ok" }));
-        onNote(`${c.label}: valid — ${t.account}`);
-      })
-      .catch((e) => {
-        setHealth((h) => ({ ...h, [c.id]: "bad" }));
-        onNote(`${c.label}: ${errText(e)}`);
-      });
-  };
+  const test = useCallback(
+    (c: Connection) => {
+      setHealth((h) => ({ ...h, [c.id]: { state: "testing", text: h[c.id]?.text ?? "Checking…", at: h[c.id]?.at ?? Date.now() } }));
+      void api
+        .testConnection(token, c.id, workspace.id)
+        .then((t) => {
+          const v = { state: "ok" as const, text: t.display_name ? `${t.account} (${t.display_name})` : t.account, at: Date.now() };
+          healthCache.set(c.id, v);
+          setHealth((h) => ({ ...h, [c.id]: v }));
+        })
+        .catch((e) => {
+          const v = { state: "bad" as const, text: errText(e), at: Date.now() };
+          healthCache.set(c.id, v);
+          setHealth((h) => ({ ...h, [c.id]: v }));
+        });
+    },
+    [token, workspace.id],
+  );
+  // Ask what has no fresh answer, once per list of connections.
+  const ids = connections.map((c) => c.id).join(",");
+  useEffect(() => {
+    const now = Date.now();
+    for (const c of connections) {
+      const known = healthCache.get(c.id);
+      if (!known || now - known.at > HEALTH_TTL_MS) test(c);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids, test]);
+  const defaultUrl = (p: string) => providers.find((x) => x.provider === p)?.default_base_url ?? "";
+  const missing = CATEGORIES.filter(
+    ({ key }) => providers.some((p) => p.category === key) && !connections.some((c) => categoryOf(c.provider) === key),
+  );
 
   const providersPresent = [...new Set(connections.map((c) => c.provider))];
   const categoriesPresent = CATEGORIES.filter(({ key }) => connections.some((c) => categoryOf(c.provider) === key));
@@ -8656,30 +8722,56 @@ function ConnectionList({
             match: (c, v) => c.provider === v,
           },
         ]}
-        empty={{ title: "Nothing connected for this project yet.", body: "Add a connector below." }}
+        primary={
+          <button type="button" className="primary" disabled={adding} onClick={() => onAdd()}>
+            + Add connection
+          </button>
+        }
+        empty={{ title: `Nothing connected to ${workspace.name} yet.`, body: "“+ Add connection” starts with a provider." }}
         columns={[
           {
-            id: "connector",
-            header: "Connector",
+            id: "connection",
+            header: "Connection",
             className: "acell-lead",
-            compare: (a, b) => nameOf(a.provider).localeCompare(nameOf(b.provider)),
+            compare: (a, b) => a.label.localeCompare(b.label),
             cell: (c) => (
               <>
                 <span className="conn-logo-slot" aria-hidden>
                   <ConnectorLogo provider={c.provider} label={nameOf(c.provider)} />
                 </span>
-                {nameOf(c.provider)}
+                <span>
+                  <span className="conn-name">
+                    <span className={`conn-dot conn-dot-${health[c.id]?.state ?? "testing"}`} aria-hidden />
+                    {c.label}
+                  </span>
+                  <span className="sub conn-sub">
+                    {nameOf(c.provider)}
+                    {c.base_url && c.base_url.replace(/\/$/, "") !== defaultUrl(c.provider).replace(/\/$/, "")
+                      ? ` · ${c.base_url.replace(/^https?:\/\//, "")}`
+                      : ""}
+                  </span>
+                </span>
               </>
             ),
           },
-          { id: "kind", header: "Kind", cell: (c) => <span className="sub">{categoryTitle(c.provider)}</span> },
-          { id: "account", header: "Account", cell: (c) => c.account || <span className="ing-dash">—</span> },
-          { id: "label", header: "Label", compare: (a, b) => a.label.localeCompare(b.label), cell: (c) => c.label },
           {
-            id: "url",
-            header: "URL",
-            className: "conn-url",
-            cell: (c) => <span title={c.base_url}>{c.base_url}</span>,
+            id: "kind",
+            header: "Kind",
+            compare: (a, b) => categoryTitle(a.provider).localeCompare(categoryTitle(b.provider)),
+            cell: (c) => <span className="sub">{categoryTitle(c.provider)}</span>,
+          },
+          {
+            id: "answers",
+            header: "Answers",
+            cell: (c) => {
+              const h = health[c.id];
+              return (
+                <span className={`conn-answer ${h?.state ?? "testing"}`} title={h?.text}>
+                  {h ? h.text : "Checking…"}
+                  {h && h.state !== "testing" && <span className="sub"> · checked {relTime(new Date(h.at).toISOString())}</span>}
+                </span>
+              );
+            },
           },
           {
             // What reads this connection, so nobody removes a cluster an
@@ -8700,21 +8792,6 @@ function ConnectionList({
               ),
           },
           {
-            id: "health",
-            header: "Health",
-            cell: (c) => {
-              const h = health[c.id];
-              return (
-                <span
-                  className={`badge ${h === "ok" ? "ok" : h === "bad" ? "danger" : ""}`}
-                  title={h ? undefined : "Health is not cached — Test checks it now"}
-                >
-                  {h === "ok" ? "healthy" : h === "bad" ? "failing" : h === "testing" ? "testing…" : "not checked"}
-                </span>
-              );
-            },
-          },
-          {
             id: "scope",
             header: "Scope",
             cell: (c) => (
@@ -8724,12 +8801,8 @@ function ConnectionList({
             ),
           },
         ]}
-        inline={(c) => (
-          <button type="button" className="ghost" disabled={health[c.id] === "testing"} onClick={() => test(c)}>
-            Test
-          </button>
-        )}
         actions={(c) => [
+          { label: health[c.id]?.state === "testing" ? "Checking…" : "Test again", disabled: health[c.id]?.state === "testing", onSelect: () => test(c) },
           {
             label: editing === c.id ? "Close editor" : "Edit",
             // Inherited connections are edited where they are defined.
@@ -8777,11 +8850,8 @@ function ConnectionList({
                 if (changed) {
                   // A rotated credential invalidates the cached health badge:
                   // it was computed for the old token.
-                  setHealth((h) => {
-                    const next = { ...h };
-                    delete next[c.id];
-                    return next;
-                  });
+                  healthCache.delete(c.id);
+                  test(c);
                   onChanged();
                 }
               }}
@@ -8798,6 +8868,19 @@ function ConnectionList({
           ) : null
         }
       />
+      {!loading && missing.length > 0 && (
+        <div className="conn-missing" data-connections-missing>
+          <span className="sub">Not connected yet:</span>
+          {missing.map((m) => (
+            <span key={m.key} className="conn-missing-item">
+              <b>{m.title}</b> <span className="sub">— {MISSING_MEANS[m.key] ?? "nothing uses it yet"}</span>{" "}
+              <button type="button" className="dm-link" onClick={() => onAdd(m.key)}>
+                Add
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
