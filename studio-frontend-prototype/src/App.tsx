@@ -126,8 +126,12 @@ import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
 import { OrgEnvironments } from "./environments-screen";
+import { KubeconfigField } from "./kubeconfig-field";
+import { kubeconfigServer } from "./kubeconfig";
+import { environmentsByConnection } from "./environments";
+import { GEAR_REPOSITORY } from "./gear-repositories";
 import { OrgCosts } from "./costs-screen";
-import { OrgSources, PlatformSources } from "./platform-sources";
+import { PlatformSources } from "./platform-sources";
 import { PublicationRequests } from "./publication-requests";
 import { MyIdentitiesCard, MyPersonCard, PersonPhoto } from "./people-profile";
 import { orgPeople } from "./org-people";
@@ -755,10 +759,9 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
     { id: "environments", icon: "layers", label: "Environments" },
     // What its model calls and IDE sessions cost, and the prices (issue #781).
     { id: "costs", icon: "coins", label: "Costs" },
-    // What its projects build: the registry, candidates, its gear repository.
+    // What its projects build: the registry, the catalogue, and the gear
+    // repositories it comes from (ADR-0046) -- one page, one question.
     { id: "gears", icon: "package", label: "Components" },
-    // Its own gear repositories, read after the platform's (ADR-0046).
-    { id: "org-sources", icon: "plug", label: "Sources" },
     // Every report the Studio draws, configured once for the organization.
     { id: "reports", icon: "activity", label: "Reports" },
     // Its studio-tasks runs and studio-scheduler schedules.
@@ -2703,7 +2706,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         )}
         {view === "publications" && <PublicationRequests token={token} orgId={orgAsSpace?.id} />}
         {view === "platform-sources" && <PlatformSources token={token} isPlatformAdmin={showPlatform} />}
-        {view === "org-sources" && <OrgSources token={token} orgId={orgAsSpace?.id} />}
         {view === "costs" && orgAsSpace && (
           <OrgCosts
             key={orgAsSpace.id}
@@ -2773,8 +2775,11 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             projects={workspaces.filter((w) => w.orgId === orgAsSpace?.id).map((w) => ({ id: w.id, name: w.name }))}
           />
         )}
-        {(view === "gears" || view === "platform") && (
+        {(view === "gears" || view === "platform" || view === "org-sources") && (
           <ComponentsCatalog
+            // Organization › Sources moved into Components: an address kept
+            // from before opens the Repositories pane.
+            initialPane={view === "org-sources" ? "repositories" : undefined}
             // Remounted when the organization resolves: the registry and the
             // catalogue read it once, and a page opened straight from its
             // address mounts before the organization is known.
@@ -8201,6 +8206,20 @@ function ConnectorsView({
   // panel and the connector browser's "attached" flags stay in sync.
   const [sourcesTick, setSourcesTick] = useState(0);
   const bumpSources = () => setSourcesTick((t) => t + 1);
+  // Which environments deploy with each cluster, for the Used by column. Only
+  // the organization's page has them; a failure leaves the column quiet.
+  const [envUses, setEnvUses] = useState<Map<string, string[]>>(new Map());
+  useEffect(() => {
+    if (ws.id !== ws.orgId) return;
+    let live = true;
+    api
+      .environments(token, ws.id)
+      .then((r) => live && setEnvUses(environmentsByConnection(r.items)))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [token, ws.id, ws.orgId]);
 
   const reload = useCallback(async () => {
     if (!ws) return;
@@ -8272,6 +8291,7 @@ function ConnectorsView({
           connections={connections ?? []}
           loading={connections === null}
           sourcesTick={sourcesTick}
+          envUses={envUses}
           onSourcesChanged={bumpSources}
           onChanged={() => void reload()}
           onNote={setNote}
@@ -8289,84 +8309,6 @@ function ConnectorsView({
 
 /** Provider picker, then the credential form. "Test connection" probes without
  *  saving; "Test & save" does both in one server-side step. */
-/** The API server a kubeconfig names: its current context's cluster, else its
- *  only cluster. A plain line scan, enough for `kubectl config view --raw`. */
-function kubeconfigServer(text: string): string | null {
-  const servers = [...text.matchAll(/^\s*"?server"?\s*:\s*"?(https:\/\/[^\s",}]+)/gm)].map(
-    (m) => m[1],
-  );
-  return servers.length === 1 ? servers[0] : null;
-}
-
-/** A cluster's credential: a kubeconfig is several lines (and its CA is long),
- *  so it is chosen as a file or pasted into a text area, never one input line,
- *  which would fold the YAML into one unreadable line. */
-function KubeconfigField({
-  value,
-  reveal,
-  onReveal,
-  placeholder,
-  onChange,
-}: {
-  value: string;
-  reveal: boolean;
-  onReveal: () => void;
-  placeholder: string;
-  onChange: (text: string) => void;
-}) {
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [readError, setReadError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const lines = value ? value.split("\n").length : 0;
-  return (
-    <>
-      <input
-        ref={inputRef}
-        type="file"
-        style={{ display: "none" }}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          e.target.value = "";
-          if (!file) return;
-          setReadError(null);
-          file.text().then(
-            (text) => {
-              setFileName(file.name);
-              onChange(text);
-            },
-            (err) => setReadError(`could not read ${file.name}: ${String(err)}`),
-          );
-        }}
-      />
-      <div className="row">
-        <button onClick={() => inputRef.current?.click()}>Choose kubeconfig file…</button>
-        <span className="grow hint">
-          {fileName
-            ? `${fileName} · ${lines} lines`
-            : value
-              ? `${lines} line${lines === 1 ? "" : "s"} pasted`
-              : "or paste a token or a kubeconfig below"}
-        </span>
-        <button onClick={onReveal}>{reveal ? "Hide" : "Show"}</button>
-      </div>
-      {reveal || !value ? (
-        <textarea
-          rows={reveal ? 10 : 3}
-          spellCheck={false}
-          style={{ width: "100%", fontFamily: "var(--mono, monospace)" }}
-          placeholder={placeholder}
-          value={value}
-          onChange={(e) => {
-            setFileName(null);
-            onChange(e.target.value);
-          }}
-        />
-      ) : null}
-      {readError && <p className="error">{readError}</p>}
-    </>
-  );
-}
-
 function AddConnector({
   token,
   workspace,
@@ -8388,7 +8330,11 @@ function AddConnector({
   // first "Test & save" fail on a write they aren't allowed — the connector
   // never landed. Org-shared stays one explicit choice away for the case where
   // one PAT really is an organization asset shared across every project.
-  const [reach, setReach] = useState<Reach>("workspace");
+  // On the organization's own page there is no project to keep it to: the
+  // choice is the organization or yourself, and the organization is the default.
+  const atOrg = workspace.id === workspace.orgId;
+  const defaultReach: Reach = atOrg ? "organization" : "workspace";
+  const [reach, setReach] = useState<Reach>(defaultReach);
   const [busy, setBusy] = useState<"probe" | "save" | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -8399,7 +8345,7 @@ function AddConnector({
     setBaseUrl("");
     setPat("");
     setReveal(false);
-    setReach("workspace");
+    setReach(defaultReach);
     setResult(null);
     setError(null);
   };
@@ -8514,8 +8460,10 @@ function AddConnector({
 
       <label>Available to</label>
       <select value={reach} onChange={(e) => setReach(e.target.value as Reach)}>
-        <option value="workspace">{workspace.name} — this project only</option>
-        <option value="organization">Shared — inherited by every project</option>
+        {!atOrg && <option value="workspace">{workspace.name} — this project only</option>}
+        <option value="organization">
+          {atOrg ? `Everyone in ${workspace.name} — every project` : "Shared — inherited by every project"}
+        </option>
         <option value="personal">Only me — private to my account</option>
       </select>
       <p className="hint">
@@ -8621,6 +8569,7 @@ function ConnectionList({
   connections,
   loading,
   sourcesTick,
+  envUses,
   onSourcesChanged,
   onChanged,
   onNote,
@@ -8631,6 +8580,8 @@ function ConnectionList({
   connections: Connection[];
   loading: boolean;
   sourcesTick: number;
+  /** Environments by the cluster connection they deploy with. */
+  envUses: Map<string, string[]>;
   onSourcesChanged: () => void;
   onChanged: () => void;
   onNote: (s: string) => void;
@@ -8720,6 +8671,24 @@ function ConnectionList({
             header: "URL",
             className: "conn-url",
             cell: (c) => <span title={c.base_url}>{c.base_url}</span>,
+          },
+          {
+            // What reads this connection, so nobody removes a cluster an
+            // environment deploys with without seeing it.
+            id: "used",
+            header: "Used by",
+            cell: (c) =>
+              c.provider === "kubernetes" ? (
+                envUses.get(c.id)?.length ? (
+                  <span className="sub">environments: {envUses.get(c.id)?.join(", ")}</span>
+                ) : (
+                  <span className="sub">no environment yet</span>
+                )
+              ) : c.provider === GEAR_REPOSITORY ? (
+                <span className="sub">Components › Repositories</span>
+              ) : (
+                <span className="ing-dash">—</span>
+              ),
           },
           {
             id: "health",

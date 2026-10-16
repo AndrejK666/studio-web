@@ -33,9 +33,10 @@ export function PlatformSources({ token, isPlatformAdmin }: { token: string; isP
   return <GearSources token={token} tier="platform" tenantId={PLATFORM_ROOT_TENANT_ID} mayManage={isPlatformAdmin} />;
 }
 
-/** Organization › Sources: who may change the list is who may manage the
- *  organization's registry (`component.registry`). */
-export function OrgSources({ token, orgId }: { token: string; orgId?: string }) {
+/** Organization › Components › Repositories: who may change the list is who
+ *  may manage the organization's registry (`component.registry`). `embedded`
+ *  drops the page heading, which the Components page already has. */
+export function OrgSources({ token, orgId, embedded = false }: { token: string; orgId?: string; embedded?: boolean }) {
   const [mayManage, setMayManage] = useState(false);
   useEffect(() => {
     api
@@ -44,7 +45,7 @@ export function OrgSources({ token, orgId }: { token: string; orgId?: string }) 
       .catch(() => setMayManage(false));
   }, [token]);
   if (!orgId) return <p className="hint">Open an organization to see its sources.</p>;
-  return <GearSources token={token} tier="organization" tenantId={orgId} mayManage={mayManage} />;
+  return <GearSources token={token} tier="organization" tenantId={orgId} mayManage={mayManage} embedded={embedded} />;
 }
 
 function GearSources({
@@ -52,11 +53,13 @@ function GearSources({
   tier,
   tenantId,
   mayManage,
+  embedded = false,
 }: {
   token: string;
   tier: "platform" | "organization";
   tenantId: string;
   mayManage: boolean;
+  embedded?: boolean;
 }) {
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const [status, setStatus] = useState<GearboxStatus | null>(null);
@@ -137,7 +140,7 @@ function GearSources({
   return (
     <div className="gear-sources" data-platform-sources={org ? undefined : ""} data-org-sources={org ? "" : undefined}>
       <style>{SOURCES_CSS}</style>
-      <h1>Sources</h1>
+      {!embedded && <h1>Sources</h1>}
       <p className="subtitle">
         {org
           ? "The repositories this organization's gears come from. Its corpus reads the platform's repositories first, then these, in this order; a gear in one may use a gear in another. One of them is where Create a gear writes."
