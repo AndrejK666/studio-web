@@ -116,6 +116,10 @@ const PREF_LANGUAGE = "app.language";
  *  The rail holds only what they pinned; every level's own sections are the
  *  band above the work area, so hiding it loses no destination. */
 const PREF_RAIL = "app.rail";
+/** The order a person keeps a project's / a workspace's sections in, the same
+ *  for every project (section-band.tsx). */
+const PREF_PROJECT_TAB_ORDER = "project.tabs.order";
+const PREF_WORKSPACE_TAB_ORDER = "workspace.tabs.order";
 import { ActivityView } from "./activity-view";
 import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
@@ -145,6 +149,7 @@ import {
   SlidersIcon,
   SparkleIcon,
 } from "./icons";
+import { OrderedSections } from "./section-band";
 import { isPinned, loadPins, pinKey, savePins, togglePin, type Pin } from "./pins";
 import {
   clampStep,
@@ -2390,19 +2395,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           and would each cost a line in a 240px column. */}
       {projectOpen && (
         <nav className="project-sections" aria-label="Project sections">
-          {PROJECT_TABS.map((t) => (
-            <button
-              key={t.id}
-              className={`psection${projectTab === t.id ? " on" : ""}`}
-              aria-current={projectTab === t.id ? "page" : undefined}
-              onClick={() => setProjectTab(t.id)}
-            >
-              <span className="ico" aria-hidden>
-                <NavIcon name={t.icon} />
-              </span>
-              {t.label}
-            </button>
-          ))}
+          <OrderedSections
+            prefKey={PREF_PROJECT_TAB_ORDER}
+            tabs={PROJECT_TABS}
+            active={projectTab}
+            onOpen={setProjectTab}
+            icon={(name) => <NavIcon name={name} />}
+          />
           {/* Pinning a project section belongs on the section, not in the rail:
               the rail cannot know which project is open, and a picker listing
               every project x every section is a list nobody reads. */}
@@ -2441,20 +2440,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           switch — the level above should not invent its own navigation. */}
       {workspaceOpen && (
         <nav className="project-sections" aria-label="Workspace sections">
-          {WORKSPACE_TABS.map((t) => (
-            <button
-              key={t.id}
-              className={`psection${workspaceTab === t.id ? " on" : ""}`}
-              aria-current={workspaceTab === t.id ? "page" : undefined}
-              title={t.hint}
-              onClick={() => setWorkspaceTab(t.id)}
-            >
-              <span className="ico" aria-hidden>
-                <NavIcon name={t.icon} />
-              </span>
-              {t.label}
-            </button>
-          ))}
+          <OrderedSections
+            prefKey={PREF_WORKSPACE_TAB_ORDER}
+            tabs={WORKSPACE_TABS}
+            active={workspaceTab}
+            onOpen={setWorkspaceTab}
+            icon={(name) => <NavIcon name={name} />}
+          />
         </nav>
       )}
       {/* Spaces host: all session iframes stay mounted; only the active one
