@@ -16,6 +16,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 
 import { PLATFORM_ROOT_TENANT_ID, api, type CatalogRepoSource, type Connection, type GearboxStatus } from "./api";
 import { type RepositoryRoles, refLabel, repositoryRoles, rolesNote } from "./component-repositories";
+import { type Column, DataTable, type EmptySpec, type RowAction } from "./data-table";
 import { errText } from "./format";
 import {
   GEAR_REPOSITORY,
@@ -182,8 +183,6 @@ function GearSources({
       setNote(`${r.account}: ${r.display_name ?? "reachable"}`);
     });
   const remove = (c: Connection) => {
-    const whose = org ? "the organization's" : "the platform's";
-    if (!window.confirm(`Stop reading ${repositoryOf(c.base_url) ?? c.label}? Its gears leave ${whose} corpus.`)) return;
     void act(c, async () => {
       await api.deleteConnection(token, c.id, tenantId);
       load(true);
@@ -197,6 +196,7 @@ function GearSources({
     });
 
   const roles = repositoryRoles(own, catalogue ?? [], fallback);
+  const platformRoles = repositoryRoles(platformRows, [], platformRows.length === 0 ? deploymentCorpus(status) : null);
   const saveCatalogue = async (items: CatalogRepoSource[], line: string) => {
     setError(null);
     setNote(null);
@@ -219,7 +219,6 @@ function GearSources({
       `${r.repo} is listed in the catalogue.`,
     );
   const unlist = (c: CatalogRepoSource) => {
-    if (!window.confirm(`Stop listing ${c.repo} (${c.mode || "gears"}) in the catalogue? Products built from it are not affected.`)) return;
     void saveCatalogue(
       (catalogue ?? []).filter((x) => x !== c),
       `${c.repo} (${c.mode || "gears"}) is no longer listed.`,
@@ -258,60 +257,47 @@ function GearSources({
           organization&apos;s repository another.
         </div>
       )}
-      {org && (
-        <section data-platform-rows>
-          <h3>The platform&apos;s</h3>
-          {!statusRead ? (
-            <p className="hint">Asking the engine what it reads…</p>
-          ) : platformRows.length === 0 ? (
-            <p className="hint">
-              {deploymentCorpus(status)
-                ? `The deployment's corpus: ${deploymentCorpus(status)?.repo} (${readLine(deploymentCorpus(status))}).`
-                : "The platform has no gear repository."}
-            </p>
-          ) : (
-            <SourceTable rows={platformRows} statusRead={statusRead} />
-          )}
-          <h3>This organization&apos;s</h3>
-        </section>
-      )}
       {loading ? (
         <p className="hint">{readsConnections ? "Loading…" : "Asking the engine what it reads…"}</p>
-      ) : roles.length > 0 && (catalogue !== null || own.length > 0) ? (
-        <RolesTable
-          rows={roles}
-          statusRead={statusRead}
-          busy={busy}
-          mayManage={mayManage}
-          catalogueRead={catalogue !== null}
-          onTest={test}
-          onRemove={mayManage ? remove : undefined}
-          onList={listIt}
-          onUnlist={unlist}
-          onBuild={buildFrom}
-          target={org ? target : undefined}
-          onTarget={org && mayManage ? markTarget : undefined}
-        />
-      ) : own.length === 0 ? (
-        <p className="hint" data-gear-sources-empty>
-          {org
-            ? "None yet. Products here read the platform's gears; a repository added here adds this organization's own."
-            : fallback
-              ? `No gear repository is connected, so the engine reads the deployment's corpus: ${fallback.repo}${
-                  fallback.git_ref ? `@${fallback.git_ref}` : ""
-                } (${readLine(fallback)}). Adding one replaces it.`
-              : "No gear repository is connected, and the deployment names no corpus: the engine has nothing to read."}
-        </p>
       ) : (
-        <SourceTable
-          rows={own}
-          statusRead={statusRead}
-          busy={busy}
-          onTest={test}
-          onRemove={mayManage ? remove : undefined}
-          target={target}
-          onTarget={org && mayManage ? markTarget : undefined}
-        />
+        <div className="card">
+          <RolesTable
+            list={org ? "org-repositories" : "platform-repositories"}
+            title={org ? "This organization's" : "Repositories"}
+            rows={roles}
+            empty={{
+              title: org ? "No repository of its own yet." : "No repository yet.",
+              body: org
+                ? "Products here read the platform's gears; a repository added below adds this organization's own."
+                : "No gear repository is connected and the deployment names no corpus: the engine has nothing to read.",
+            }}
+            statusRead={statusRead}
+            busy={busy}
+            mayManage={mayManage}
+            catalogueRead={catalogue !== null}
+            onTest={test}
+            onRemove={mayManage ? remove : undefined}
+            onList={listIt}
+            onUnlist={unlist}
+            onBuild={buildFrom}
+            target={org ? target : undefined}
+            onTarget={org && mayManage ? markTarget : undefined}
+          />
+        </div>
+      )}
+      {org && (
+        <div className="card" data-platform-rows>
+          <RolesTable
+            list="org-platform-repositories"
+            title="The platform's — read first"
+            rows={statusRead ? platformRoles : null}
+            empty={{ title: "The platform has no gear repository." }}
+            statusRead={statusRead}
+            busy={null}
+            mayManage={false}
+            catalogueRead={false}
+          />
+        </div>
       )}
       {catalogueSettings && (
         <details className="gear-source-catalogue" data-catalogue-settings>
@@ -347,9 +333,13 @@ function GearSources({
   );
 }
 
-/** One row per repository, with its two roles side by side. */
+/** One row per repository, with its two roles side by side, on the shared
+ *  list: search, a role filter, Test beside the row, the rest in its menu. */
 function RolesTable({
+  list,
+  title,
   rows,
+  empty,
   statusRead,
   busy,
   mayManage,
@@ -362,207 +352,175 @@ function RolesTable({
   target,
   onTarget,
 }: {
-  rows: RepositoryRoles[];
+  list: string;
+  title: string;
+  rows: RepositoryRoles[] | null;
+  empty: EmptySpec;
   statusRead: boolean;
   busy: string | null;
   mayManage: boolean;
   /** Whether the catalogue's list could be read: a member who may not read
    *  the platform's sees only what the engine reads. */
   catalogueRead: boolean;
-  onTest: (c: Connection) => void;
-  onRemove?: (c: Connection) => void;
-  onList: (r: RepositoryRoles) => void;
-  onUnlist: (c: CatalogRepoSource) => void;
-  onBuild: (r: RepositoryRoles) => void;
-  target?: string | null;
-  onTarget?: (c: Connection) => void;
-}) {
-  const org = target !== undefined;
-  return (
-    <table className="data-table" data-repository-roles>
-      <thead>
-        <tr>
-          <th>Repository</th>
-          <th title="Synced into the Components list: descriptions, versions, activity">In the catalogue</th>
-          <th title="Read by the Gearbox engine when it composes a product">Built from</th>
-          {org && <th>New gears</th>}
-          <th aria-label="Actions" />
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => {
-          const c = r.engine?.connection ?? null;
-          const note = catalogueRead ? rolesNote(r) : null;
-          return (
-            <tr key={r.repo} data-repository={r.repo}>
-              <td>
-                <a href={`https://github.com/${r.repo}`} target="_blank" rel="noreferrer">
-                  {r.repo}
-                </a>
-                {note && (
-                  <div className="gear-source-warn" data-roles-note>
-                    {note}
-                  </div>
-                )}
-              </td>
-              <td data-role-catalogue>
-                {!catalogueRead ? (
-                  <span className="sub">—</span>
-                ) : r.catalogue.length === 0 ? (
-                  // The deployment's corpus is a stopgap nobody chose: the
-                  // way out is building from a listed repository, not listing
-                  // the stopgap.
-                  r.fallback ? (
-                    <span className="sub">not listed</span>
-                  ) : mayManage ? (
-                    <button type="button" className="ghost" onClick={() => onList(r)}>
-                      List it
-                    </button>
-                  ) : (
-                    <span className="sub">not listed</span>
-                  )
-                ) : (
-                  r.catalogue.map((s, i) => (
-                    <span key={i} className="gear-role-chip">
-                      {s.mode || "gears"} · {refLabel(s.git_ref)}
-                      {s.shadowed_by_platform && <span className="sub"> · the platform lists it too</span>}
-                      {mayManage && (
-                        <button type="button" className="ghost" title="Stop listing it" onClick={() => onUnlist(s)}>
-                          ×
-                        </button>
-                      )}
-                    </span>
-                  ))
-                )}
-              </td>
-              <td data-role-engine>
-                {r.engine ? (
-                  <>
-                    <code>{r.engine.sourceId}</code> <span className="sub">· {refLabel(r.engine.ref)}</span>
-                    <div className="sub">
-                      {statusRead ? readLine(r.engine.read) : "reading…"}
-                      {r.fallback && " · the deployment's corpus, until a repository is added"}
-                      {c && (c.secret_ref ? " · with a token" : " · public")}
-                    </div>
-                  </>
-                ) : mayManage ? (
-                  <button type="button" className="ghost" onClick={() => onBuild(r)}>
-                    Build from it…
-                  </button>
-                ) : (
-                  <span className="sub">not built from</span>
-                )}
-              </td>
-              {org && (
-                <td data-gear-source-target>
-                  {c && target === c.id ? (
-                    <span className="badge">Create a gear writes here</span>
-                  ) : c && onTarget ? (
-                    <button type="button" disabled={busy === c.id} onClick={() => onTarget(c)}>
-                      Write new gears here
-                    </button>
-                  ) : null}
-                </td>
-              )}
-              <td className="gear-source-actions">
-                {c && (
-                  <button type="button" disabled={busy === c.id} onClick={() => onTest(c)}>
-                    Test
-                  </button>
-                )}
-                {c && onRemove && (
-                  <button type="button" disabled={busy === c.id} onClick={() => onRemove(c)} title="Stop building from it">
-                    Remove
-                  </button>
-                )}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
-function SourceTable({
-  rows,
-  statusRead,
-  busy,
-  onTest,
-  onRemove,
-  target,
-  onTarget,
-}: {
-  rows: GearRepositoryRow[];
-  statusRead: boolean;
-  busy?: string | null;
   onTest?: (c: Connection) => void;
   onRemove?: (c: Connection) => void;
+  onList?: (r: RepositoryRoles) => void;
+  onUnlist?: (c: CatalogRepoSource) => void;
+  onBuild?: (r: RepositoryRoles) => void;
   /** The repository Create a gear writes into, when this is an
-   *  organization's list. */
+   *  organization's own list. */
   target?: string | null;
   onTarget?: (c: Connection) => void;
 }) {
-  const org = target !== undefined;
+  const own = target !== undefined;
+  const note = (r: RepositoryRoles) => (catalogueRead ? rolesNote(r) : null);
+  const columns: Column<RepositoryRoles>[] = [
+    {
+      id: "repo",
+      header: "Repository",
+      className: "acell-lead",
+      compare: (a, b) => a.repo.localeCompare(b.repo),
+      cell: (r) => (
+        <div>
+          <a href={`https://github.com/${r.repo}`} target="_blank" rel="noreferrer">
+            {r.repo}
+          </a>
+          {note(r) && (
+            <div className="gear-source-warn" data-roles-note>
+              {note(r)}
+            </div>
+          )}
+        </div>
+      ),
+    },
+  ];
+  if (catalogueRead)
+    columns.push({
+      id: "catalogue",
+      header: <span title="Synced into the Components list: descriptions, versions, activity">In the catalogue</span>,
+      cell: (r) =>
+        r.catalogue.length === 0 ? (
+          <span className="ing-dash">—</span>
+        ) : (
+          <span data-role-catalogue>
+            {r.catalogue.map((s, i) => (
+              <span key={i} className="badge gear-role-chip">
+                {s.mode || "gears"} · {refLabel(s.git_ref)}
+                {s.shadowed_by_platform ? " · the platform lists it too" : ""}
+              </span>
+            ))}
+          </span>
+        ),
+    });
+  columns.push({
+    id: "engine",
+    header: <span title="Read by the Gearbox engine when it composes a product">Built from</span>,
+    cell: (r) =>
+      r.engine ? (
+        <div data-role-engine>
+          <code>{r.engine.sourceId}</code> <span className="sub">· {refLabel(r.engine.ref)}</span>
+          <div className="sub">
+            {statusRead ? readLine(r.engine.read) : "reading…"}
+            {r.fallback && " · the deployment's corpus, until a repository is added"}
+            {r.engine.connection && (r.engine.connection.secret_ref ? " · with a token" : " · public")}
+          </div>
+        </div>
+      ) : (
+        <span className="ing-dash">—</span>
+      ),
+  });
+  if (own)
+    columns.push({
+      id: "target",
+      header: "New gears",
+      cell: (r) =>
+        r.engine?.connection && target === r.engine.connection.id ? (
+          <span className="badge">Create a gear writes here</span>
+        ) : (
+          <span className="ing-dash">—</span>
+        ),
+    });
+
   return (
-    <table className="data-table" data-gear-sources>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Source</th>
-          <th>Repository</th>
-          <th>Read</th>
-          {org && <th>New gears</th>}
-          <th aria-label="Actions" />
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r, i) => {
-          const c = r.connection;
+    <DataTable<RepositoryRoles>
+      list={list}
+      urlPrefix={`${list}.`}
+      title={title}
+      rows={rows}
+      rowKey={(r) => r.repo}
+      rowLabel={(r) => r.repo}
+      search={{ placeholder: "Search repositories" }}
+      searchText={(r) => [r.repo, r.engine?.sourceId, ...r.catalogue.map((c) => c.mode)]}
+      filters={
+        catalogueRead
+          ? [
+              {
+                id: "role",
+                allLabel: "Every repository",
+                kind: "chips",
+                options: [
+                  { value: "catalogue", label: "In the catalogue" },
+                  { value: "engine", label: "Built from" },
+                  { value: "attention", label: "Needs a look" },
+                ],
+                match: (r, v) =>
+                  v === "catalogue" ? r.catalogue.length > 0 : v === "engine" ? r.engine !== null : note(r) !== null,
+              },
+            ]
+          : undefined
+      }
+      empty={empty}
+      columns={columns}
+      inline={(r) => {
+        const c = r.engine?.connection;
+        if (c && onTest)
           return (
-            <tr key={c?.id ?? r.sourceId} data-gear-source={r.sourceId}>
-              <td>{i + 1}</td>
-              <td>
-                <code>{r.sourceId}</code>
-              </td>
-              <td>
-                <a href={`https://github.com/${r.repo}`} target="_blank" rel="noreferrer">
-                  {r.repo}
-                </a>
-                <span className="sub">
-                  {r.ref ? ` @ ${r.ref}` : " @ default branch"}
-                  {c && (c.secret_ref ? " · with a token" : " · public")}
-                </span>
-              </td>
-              <td>{statusRead ? readLine(r.read) : "reading…"}</td>
-              {org && (
-                <td data-gear-source-target>
-                  {c && target === c.id ? (
-                    <span className="badge">Create a gear writes here</span>
-                  ) : c && onTarget ? (
-                    <button type="button" disabled={busy === c.id} onClick={() => onTarget(c)}>
-                      Write new gears here
-                    </button>
-                  ) : null}
-                </td>
-              )}
-              <td className="gear-source-actions">
-                {c && onTest && (
-                  <button type="button" disabled={busy === c.id} onClick={() => onTest(c)}>
-                    Test
-                  </button>
-                )}
-                {c && onRemove && (
-                  <button type="button" disabled={busy === c.id} onClick={() => onRemove(c)}>
-                    Remove
-                  </button>
-                )}
-              </td>
-            </tr>
+            <button type="button" className="ghost" disabled={busy === c.id} onClick={() => onTest(c)}>
+              Test
+            </button>
           );
-        })}
-      </tbody>
-    </table>
+        if (!r.engine && mayManage && onBuild)
+          return (
+            <button type="button" className="ghost" onClick={() => onBuild(r)}>
+              Build from it…
+            </button>
+          );
+        return null;
+      }}
+      actions={(r) => {
+        if (!mayManage) return [];
+        const c = r.engine?.connection ?? null;
+        const out: RowAction[] = [];
+        if (!r.engine && onBuild) out.push({ label: "Build from it…", onSelect: () => onBuild(r) });
+        // The deployment's corpus is a stopgap nobody chose: the way out is
+        // building from a listed repository, not listing the stopgap.
+        if (catalogueRead && r.catalogue.length === 0 && !r.fallback && onList)
+          out.push({ label: "List it in the catalogue", onSelect: () => onList(r) });
+        if (own && c && target !== c.id && onTarget) out.push({ label: "Write new gears here", onSelect: () => onTarget(c) });
+        for (const s of r.catalogue)
+          if (onUnlist)
+            out.push({
+              label: `Stop listing it (${s.mode || "gears"})`,
+              onSelect: () => onUnlist(s),
+              danger: {
+                title: `Stop listing ${s.repo} (${s.mode || "gears"})?`,
+                body: "Its components leave the Components list at the next sync. Products built from it are not affected.",
+                confirmLabel: "Stop listing",
+              },
+            });
+        if (c && onRemove)
+          out.push({
+            label: "Stop building from it",
+            onSelect: () => onRemove(c),
+            danger: {
+              title: `Stop building from ${r.repo}?`,
+              body: "Its gears leave the corpus the engine composes products from. The catalogue keeps listing it.",
+              confirmLabel: "Stop building",
+            },
+          });
+        return out;
+      }}
+    />
   );
 }
 
@@ -686,9 +644,8 @@ const SOURCES_CSS = `
 .gear-sources .gear-source-form { display:grid; gap:10px; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); }
 .gear-sources .gear-source-form label { display:grid; gap:4px; font-size:13px; }
 .gear-sources h3 { margin:16px 0 8px; }
-.gear-sources .gear-role-chip { display:inline-flex; gap:4px; align-items:center; margin:0 6px 4px 0; padding:1px 6px; border:1px solid var(--border); border-radius:999px; font-size:12px; }
-.gear-sources .gear-role-chip button { padding:0 4px; min-height:0; line-height:1; }
-.gear-sources .gear-source-warn { margin-top:4px; font-size:12px; color:#b45309; }
+.gear-sources .gear-role-chip { margin:0 6px 4px 0; }
+.gear-sources .gear-source-warn { margin-top:4px; font-size:12px; color:#b45309; white-space:normal; overflow-wrap:anywhere; max-width:48ch; }
 .gear-sources .gear-source-catalogue { margin-top:16px; }
 .gear-sources .gear-source-catalogue summary { cursor:pointer; font-weight:600; margin-bottom:8px; }
 `;
