@@ -4,6 +4,8 @@
  * says where it comes from, an unknown stays unknown, a tie stays a tie. */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { DataTable } from "./data-table";
+
 import {
   confidenceFromBasis,
   easeFromEffort,
@@ -161,70 +163,91 @@ export function PrioritiesScreen({
       {rows.length === 0 ? (
         <div className="empty">Nothing to compare yet. Add the requirements to weigh against each other.</div>
       ) : (
-        <div className="card pr-table" role="table" aria-label="Requirements by ICE">
-          <div className="pr-row pr-head" role="row">
-            <span>#</span>
-            <span>Requirement</span>
-            <span>Impact</span>
-            <span>Confidence</span>
-            <span>Effort, person-weeks → Ease</span>
-            <span>ICE</span>
-            <span />
-          </div>
-          {rows.map(({ r, inputs, ice }) => {
-            const e = saved.entries[r.id] ?? {};
-            const cell = (k: IceCriterion, field: ReactNode) => (
-              <span className={`pr-cell pr-${inputs[k].origin}`} title={inputs[k].basis}>
-                {field}
-                <small>
-                  {inputs[k].range ? `${inputs[k].range![0]}–${inputs[k].range![1]}` : (inputs[k].score ?? "?")} · {ORIGIN_LABEL[inputs[k].origin]}
-                </small>
-              </span>
-            );
-            return (
-              <div key={r.id} className="pr-row" role="row">
-                <span className="pr-rank">
-                  {rank.get(r.id)}
-                  {ordering.ties.has(r.id) && <small title="Same score as its neighbour: a tie, not a decision">tie</small>}
-                </span>
-                <span>
-                  <button type="button" className="dm-link" onClick={() => onTrace(r.id)}>
-                    {r.title ?? r.id}
-                  </button>
-                  <small className="hint">
-                    {REQUIREMENT_TYPE_LABEL[classify(r)!.type]} · {r.priority ?? "no mark"} · <code>{r.id}</code>
-                  </small>
-                </span>
-                {cell(
-                  "impact",
-                  <input type="number" min={1} max={10} aria-label={`${ICE_LABEL.impact} of ${r.id}`} value={e.impact ?? ""} onChange={(ev) => setEntry(r.id, { impact: num(ev.target.value) })} />,
-                )}
-                {cell(
-                  "confidence",
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    aria-label={`${ICE_LABEL.confidence} of ${r.id}`}
-                    placeholder={inputs.confidence.origin === "estimated" ? String(inputs.confidence.score) : ""}
-                    value={e.confidence ?? ""}
-                    onChange={(ev) => setEntry(r.id, { confidence: num(ev.target.value) })}
-                  />,
-                )}
-                {cell(
-                  "ease",
-                  <input type="text" aria-label={`Effort of ${r.id}`} placeholder="e.g. 3 or 1.5-3" value={e.effort ?? ""} onChange={(ev) => setEntry(r.id, { effort: ev.target.value })} />,
-                )}
-                <span className="pr-score">
-                  {ice.score !== null ? ice.score : ice.range ? `${ice.range[0]}–${ice.range[1]}` : "—"}
-                  {ice.missing.length > 0 && <small>needs {ice.missing.map((k) => ICE_LABEL[k]).join(", ")}</small>}
-                </span>
-                <button type="button" className="ghost" onClick={() => remove(r.id)} aria-label={`Take ${r.id} out of the comparison`}>
-                  ✕
-                </button>
-              </div>
-            );
-          })}
+        <div className="card">
+          <DataTable<(typeof rows)[number]>
+            list="priorities"
+            urlPrefix="pri."
+            rows={rows}
+            rowKey={(x) => x.r.id}
+            rowLabel={(x) => x.r.title ?? x.r.id}
+            pageSize={20}
+            empty={{ title: "Nothing to compare yet." }}
+            columns={[
+              {
+                id: "rank",
+                header: "#",
+                num: true,
+                compare: (a, b) => rank.get(a.r.id)! - rank.get(b.r.id)!,
+                cell: ({ r }) => (
+                  <span className="pr-rank">
+                    {rank.get(r.id)}
+                    {ordering.ties.has(r.id) && <small title="Same score as its neighbour: a tie, not a decision">tie</small>}
+                  </span>
+                ),
+              },
+              {
+                id: "req",
+                header: "Requirement",
+                cell: ({ r }) => (
+                  <span>
+                    <button type="button" className="dm-link" onClick={() => onTrace(r.id)}>
+                      {r.title ?? r.id}
+                    </button>
+                    <small className="hint" style={{ display: "block" }}>
+                      {REQUIREMENT_TYPE_LABEL[classify(r)!.type]} · {r.priority ?? "no mark"} · <code>{r.id}</code>
+                    </small>
+                  </span>
+                ),
+              },
+              {
+                id: "impact",
+                header: "Impact",
+                cell: ({ r, inputs }) => (
+                  <Cell c={inputs.impact}>
+                    <input type="number" min={1} max={10} aria-label={`${ICE_LABEL.impact} of ${r.id}`} value={(saved.entries[r.id] ?? {}).impact ?? ""} onChange={(ev) => setEntry(r.id, { impact: num(ev.target.value) })} />
+                  </Cell>
+                ),
+              },
+              {
+                id: "confidence",
+                header: "Confidence",
+                cell: ({ r, inputs }) => (
+                  <Cell c={inputs.confidence}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      aria-label={`${ICE_LABEL.confidence} of ${r.id}`}
+                      placeholder={inputs.confidence.origin === "estimated" ? String(inputs.confidence.score) : ""}
+                      value={(saved.entries[r.id] ?? {}).confidence ?? ""}
+                      onChange={(ev) => setEntry(r.id, { confidence: num(ev.target.value) })}
+                    />
+                  </Cell>
+                ),
+              },
+              {
+                id: "ease",
+                header: "Effort, weeks → Ease",
+                cell: ({ r, inputs }) => (
+                  <Cell c={inputs.ease}>
+                    <input type="text" aria-label={`Effort of ${r.id}`} placeholder="3 or 1.5-3" value={(saved.entries[r.id] ?? {}).effort ?? ""} onChange={(ev) => setEntry(r.id, { effort: ev.target.value })} />
+                  </Cell>
+                ),
+              },
+              {
+                id: "ice",
+                header: "ICE",
+                num: true,
+                cell: ({ ice }) => (
+                  <span className="pr-score">
+                    {ice.score !== null ? ice.score : ice.range ? `${ice.range[0]}–${ice.range[1]}` : "—"}
+                    {ice.missing.length > 0 && <small>needs {ice.missing.map((k) => ICE_LABEL[k]).join(", ")}</small>}
+                  </span>
+                ),
+              },
+            ]}
+            actions={({ r }) => [{ label: "Take out of the comparison", onSelect: () => remove(r.id) }]}
+          />
         </div>
       )}
       {rows.length > 0 && onConfirm && (
@@ -284,5 +307,17 @@ export function PrioritiesScreen({
         </p>
       )}
     </div>
+  );
+}
+
+/** One ICE criterion's cell: the field, then its value and where it comes from. */
+function Cell({ c, children }: { c: Criterion; children: ReactNode }) {
+  return (
+    <span className={`pr-cell pr-${c.origin}`} title={c.basis}>
+      {children}
+      <small>
+        {c.range ? `${c.range[0]}–${c.range[1]}` : (c.score ?? "?")} · {ORIGIN_LABEL[c.origin]}
+      </small>
+    </span>
   );
 }

@@ -5,6 +5,7 @@
 import { useMemo, useState } from "react";
 
 import type { GlossaryRenameProposal, SpecModelSentence, SpecModelWrite } from "./api";
+import { DataTable } from "./data-table";
 import { passageOf } from "./doc-quality";
 import { LAYER_TITLE } from "./domain-layers";
 import {
@@ -25,7 +26,6 @@ type Rename = { from: string; to: string };
 /** Offer, after a decision, to carry a rename into the documents. */
 type Offer = (rename: Rename | null) => void;
 
-const PAGE = 60;
 
 export function GlossaryScreen({
   entries,
@@ -66,7 +66,6 @@ export function GlossaryScreen({
   };
   const [filter, setFilter] = useState<GlossaryFilter>("all");
   const [text, setText] = useState("");
-  const [shown, setShown] = useState(PAGE);
   /** Pairs a person said are different things: hidden at once, and kept
    *  apart for good once the decision is saved. */
   const [apart, setApart] = useState<Set<string>>(new Set());
@@ -88,10 +87,7 @@ export function GlossaryScreen({
     <button
       type="button"
       className={filter === id ? "chip on" : "chip"}
-      onClick={() => {
-        setFilter(id);
-        setShown(PAGE);
-      }}
+      onClick={() => setFilter(id)}
     >
       {label} <span className="chip-n">{n}</span>
     </button>
@@ -186,17 +182,48 @@ export function GlossaryScreen({
         </section>
       )}
 
-      <ul className="gl-list">
-        {list.slice(0, shown).map((r) => (
-          <GlossaryItem key={r.entry.key} row={r} entries={entries} onDecide={onDecide} onOffer={offerRename} />
-        ))}
-      </ul>
-      {list.length === 0 && <div className="empty">Nothing matches.</div>}
-      {list.length > shown && (
-        <button type="button" className="ghost" onClick={() => setShown((n) => n + PAGE)}>
-          Show {Math.min(PAGE, list.length - shown)} more of {list.length - shown}
-        </button>
-      )}
+      <div className="card">
+        <DataTable<GlossaryRow>
+          list="glossary"
+          urlPrefix="gl."
+          rows={list}
+          rowKey={(r) => r.entry.key}
+          rowLabel={(r) => r.entry.name}
+          pageSize={20}
+          empty={{ title: "Nothing matches." }}
+          columns={[
+            {
+              id: "term",
+              header: "Term",
+              compare: (a, b) => a.entry.name.localeCompare(b.entry.name),
+              cell: (r) => (
+                <span>
+                  <b>{r.entry.name}</b>
+                  {r.entry.chosen && <span className="sub"> · named by you</span>}
+                  {r.definition && <div className="sub gl-def">{r.definition}</div>}
+                </span>
+              ),
+            },
+            {
+              id: "aliases",
+              header: "Also written as",
+              cell: (r) => {
+                const other = [...r.entry.spellings.filter((x) => x !== r.entry.name), ...r.entry.aliases.map((a) => a.name)];
+                return other.length ? <span className="sub">{other.slice(0, 3).join(", ")}{other.length > 3 ? ` +${other.length - 3}` : ""}</span> : <span className="sub">—</span>;
+              },
+            },
+            { id: "layer", header: "Layer", cell: (r) => (r.layer ? LAYER_TITLE[r.layer] : <span className="sub">—</span>) },
+            { id: "defined", header: "Defined", cell: (r) => (r.definition ? "✓" : r.layer ? <span className="dm-status-blocks">no</span> : <span className="sub">—</span>) },
+            { id: "facts", header: "Facts", num: true, compare: (a, b) => a.entry.facts - b.entry.facts, cell: (r) => r.entry.facts },
+            { id: "docs", header: "Documents", num: true, compare: (a, b) => a.entry.documents - b.entry.documents, cell: (r) => r.entry.documents },
+          ]}
+          expand={(r) => (
+            <ul className="gl-list">
+              <GlossaryItem row={r} entries={entries} onDecide={onDecide} onOffer={offerRename} />
+            </ul>
+          )}
+        />
+      </div>
     </div>
   );
 }

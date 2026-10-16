@@ -23,6 +23,7 @@ import { estimateLabel, etaLabel, readFraction, tokensLabel, type SpecModelBuild
 import { ModelMapView, Prose, RequirementsView, ResolveView, SideLink } from "./domain-model-screens";
 import { gearRefs } from "./entity-gears";
 import type { GearDraft } from "./gear-from-entity";
+import { DataTable } from "./data-table";
 import { GlossaryScreen } from "./glossary-screen";
 import { PrioritiesScreen } from "./priorities-screen";
 import type { Obligation } from "./behaviour";
@@ -664,29 +665,38 @@ function AgainstTheCode({
         The documents against the crates <code>{read.repo}</code> depends on and the gears it declares.
         A decision about which gear fills a capability is taken in the project&apos;s Product tab.
       </p>
-      {read.items.map((f) => (
-        <div key={f.fingerprint} className={`card sm-finding sm-${f.severity}`}>
-          <div className="card-head">
+      <div className="card">
+        <DataTable<ProductFinding>
+          list="dm-against-code"
+          urlPrefix="code."
+          rows={read.items}
+          rowKey={(f) => f.fingerprint}
+          rowLabel={(f) => f.capability}
+          pageSize={20}
+          search={{ placeholder: "Search capabilities" }}
+          searchText={(f) => [f.capability, f.message, f.gear]}
+          empty={{ title: "Nothing matches." }}
+          columns={[
+            { id: "sev", header: "Severity", cell: (f) => <span className={`sm-sev sm-sev-${f.severity}`}>{f.severity}</span> },
+            { id: "rule", header: "What", cell: (f) => ruleLabel(f.rule) },
+            { id: "cap", header: "Capability", compare: (a, b) => a.capability.localeCompare(b.capability), cell: (f) => <code>{f.capability}</code> },
+            { id: "docs", header: "Documents", num: true, cell: (f) => f.sides.length },
+          ]}
+          expand={(f) => (
             <div>
-              <span className={`sm-sev sm-sev-${f.severity}`}>{f.severity}</span>{" "}
-              <strong>{ruleLabel(f.rule)}</strong> <code>{f.capability}</code>
+              <p className="sm-message">
+                <Prose text={f.message} />
+              </p>
+              <div className={f.sides.length === 2 ? "sm-sides sm-two" : "sm-sides"}>
+                {f.sides.slice(0, 6).map((sd, k) => (
+                  <SideLink key={k} side={{ path: sd.path, quote: sd.quote }} onOpenFile={sd.kind === "file" ? onOpenFile : undefined} />
+                ))}
+                {f.sides.length > 6 && <div className="hint">and {f.sides.length - 6} more documents</div>}
+              </div>
             </div>
-          </div>
-          <p className="sm-message">
-            <Prose text={f.message} />
-          </p>
-          <div className={f.sides.length === 2 ? "sm-sides sm-two" : "sm-sides"}>
-            {f.sides.slice(0, 6).map((s, i) => (
-              <SideLink
-                key={i}
-                side={{ path: s.path, quote: s.quote }}
-                onOpenFile={s.kind === "file" ? onOpenFile : undefined}
-              />
-            ))}
-            {f.sides.length > 6 && <div className="hint">and {f.sides.length - 6} more documents</div>}
-          </div>
-        </div>
-      ))}
+          )}
+        />
+      </div>
     </div>
   );
 }
@@ -719,16 +729,31 @@ function Work({
   return (
     <>
       <p className="hint">{summary} A piece of work is linked when its title, text or commit message names the identifier.</p>
-      <ul className="rows sm-work">
-        {read.items.map((l) => (
-          <li key={l.id} className="sm-work-row">
-            <div className="sm-term-head">
-              <code>{l.id}</code>
-              <SideLink side={l.defined_in} onOpenFile={onOpenFile} />
-            </div>
+      <div className="card">
+        <DataTable<WorkLinks["items"][number]>
+          list="dm-work"
+          urlPrefix="work."
+          rows={read.items}
+          rowKey={(l) => l.id}
+          rowLabel={(l) => l.id}
+          pageSize={20}
+          search={{ placeholder: "Search identifiers and work" }}
+          searchText={(l) => [l.id, ...l.work.map((w) => w.title)]}
+          empty={{ title: "Nothing matches." }}
+          columns={[
+            { id: "id", header: "Identifier", compare: (a, b) => a.id.localeCompare(b.id), cell: (l) => <code>{l.id}</code> },
+            { id: "where", header: "Defined in", cell: (l) => <SideLink side={l.defined_in} onOpenFile={onOpenFile} /> },
+            { id: "work", header: "Work", num: true, compare: (a, b) => a.work.length - b.work.length, cell: (l) => l.work.length },
+            {
+              id: "latest",
+              header: "Named by",
+              cell: (l) => <span className="sub">{l.work.slice(0, 2).map((w) => workLabel(w)).join(", ")}{l.work.length > 2 ? " …" : ""}</span>,
+            },
+          ]}
+          expand={(l) => (
             <ul className="sm-work-items">
-              {l.work.map((w, i) => (
-                <li key={i}>
+              {l.work.map((w, k) => (
+                <li key={k}>
                   {w.url ? (
                     <a href={w.url} target="_blank" rel="noreferrer">
                       {workLabel(w)}
@@ -736,14 +761,13 @@ function Work({
                   ) : (
                     <span>{workLabel(w)}</span>
                   )}{" "}
-                  <span className="sm-work-title">{w.title}</span>{" "}
-                  {workState(w) && <span className="sm-status">{workState(w)}</span>}
+                  <span className="sm-work-title">{w.title}</span> {workState(w) && <span className="sm-status">{workState(w)}</span>}
                 </li>
               ))}
             </ul>
-          </li>
-        ))}
-      </ul>
+          )}
+        />
+      </div>
     </>
   );
 }
@@ -790,49 +814,85 @@ function Elsewhere({
         {read.truncated ? " (the first 40)" : ""}, by the words two statements share. Read both before deciding
         anything: a pair here is a question, not a finding.
       </p>
-      <ul className="rows sm-work">
-        {orderRelated(read.items).map((r, i) => (
-          <li key={i} className="sm-work-row">
-            <div className="sm-term-head">
-              <span className={`sm-status sm-rel-${r.relation}`}>{RELATION_LABEL[r.relation]}</span>
-              <span className="sm-status">{Math.round(r.score * 100)}%</span>
+      <div className="card">
+        <DataTable<RelatedRequirement>
+          list="dm-elsewhere"
+          urlPrefix="else."
+          rows={orderRelated(read.items)}
+          rowKey={(r) => relatedKey(r)}
+          rowLabel={(r) => r.id}
+          pageSize={20}
+          search={{ placeholder: "Search requirements" }}
+          searchText={(r) => [r.id, r.text, r.other_id, r.other_text, r.other_project_name]}
+          filters={[
+            {
+              id: "relation",
+              allLabel: "Every match",
+              kind: "chips",
+              options: (["opposite", "same", "overlap"] as const).map((x) => ({ value: x, label: RELATION_LABEL[x] })),
+              match: (r, v) => r.relation === v,
+            },
+            {
+              id: "project",
+              allLabel: "Every project",
+              kind: "select",
+              options: [...new Set(read.items.map((r) => r.other_project_name))].sort().map((x) => ({ value: x, label: x })),
+              match: (r, v) => r.other_project_name === v,
+            },
+          ]}
+          empty={{ title: "Nothing matches." }}
+          columns={[
+            { id: "relation", header: "Match", cell: (r) => <span className={`sm-status sm-rel-${r.relation}`}>{RELATION_LABEL[r.relation]} · {Math.round(r.score * 100)}%</span> },
+            { id: "ours", header: "Ours", cell: (r) => <span><code>{r.id}</code> <span className="sub">{r.text.slice(0, 90)}{r.text.length > 90 ? "…" : ""}</span></span> },
+            { id: "theirs", header: "Theirs", cell: (r) => <span><code>{r.other_id}</code> <span className="sub">{r.other_project_name}</span></span> },
+            {
+              id: "decision",
+              header: "Decision",
+              cell: (r) => {
+                const d = decisionOf?.(r);
+                return d ? MATCH_DECISIONS.find((m) => m.state === d)?.label ?? d : <span className="sub">—</span>;
+              },
+            },
+          ]}
+          expand={(r) => (
+            <div>
+              <div className="sm-rel-pair">
+                <div>
+                  <code>{r.id}</code> <SideLink side={r.defined_in} onOpenFile={onOpenFile} />
+                  <div className="sm-work-title">{r.text}</div>
+                </div>
+                <div>
+                  <code>{r.other_id}</code>{" "}
+                  <span className="sm-status">
+                    {r.other_workspace_name} / {r.other_project_name}
+                  </span>{" "}
+                  <span className="sm-work-title">
+                    {r.other_defined_in.path}:{r.other_defined_in.line_start}
+                  </span>
+                  <div className="sm-work-title">{r.other_text}</div>
+                </div>
+              </div>
+              <div className="sm-req-cites">Shared: {r.shared.join(", ")}</div>
+              {onDecide && (
+                <div className="dm-actions">
+                  {MATCH_DECISIONS.map((d) => (
+                    <button
+                      key={d.state}
+                      type="button"
+                      title={d.why}
+                      className={decisionOf?.(r) === d.state ? "primary" : "ghost"}
+                      aria-pressed={decisionOf?.(r) === d.state}
+                      onClick={() => void onDecide(r, decisionOf?.(r) === d.state ? "proposed" : d.state)}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="sm-rel-pair">
-              <div>
-                <code>{r.id}</code> <SideLink side={r.defined_in} onOpenFile={onOpenFile} />
-                <div className="sm-work-title">{r.text}</div>
-              </div>
-              <div>
-                <code>{r.other_id}</code>{" "}
-                <span className="sm-status">
-                  {r.other_workspace_name} / {r.other_project_name}
-                </span>{" "}
-                <span className="sm-work-title">
-                  {r.other_defined_in.path}:{r.other_defined_in.line_start}
-                </span>
-                <div className="sm-work-title">{r.other_text}</div>
-              </div>
-            </div>
-            <div className="sm-req-cites">Shared: {r.shared.join(", ")}</div>
-            {onDecide && (
-              <div className="dm-actions">
-                {MATCH_DECISIONS.map((d) => (
-                  <button
-                    key={d.state}
-                    type="button"
-                    title={d.why}
-                    className={decisionOf?.(r) === d.state ? "primary" : "ghost"}
-                    aria-pressed={decisionOf?.(r) === d.state}
-                    onClick={() => void onDecide(r, decisionOf?.(r) === d.state ? "proposed" : d.state)}
-                  >
-                    {d.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
+          )}
+        />
+      </div>
     </>
   );
 }
@@ -857,43 +917,47 @@ function Coverage({
         revision, so an unchanged document is never paid for twice. To read one document again, whatever its
         state, rebuild from it: only its facts are replaced.
       </p>
-      <table className="sm-table">
-        <thead>
-          <tr>
-            <th>Document</th>
-            <th>State</th>
-            <th>Facts</th>
-            <th>Dropped</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {model.documents.map((d) => (
-            <tr key={d.path}>
-              <td>{d.path}</td>
-              <td>
+      <div className="card">
+        <DataTable<SpecModel["documents"][number]>
+          list="dm-documents"
+          urlPrefix="doc."
+          rows={model.documents}
+          rowKey={(d) => d.path}
+          rowLabel={(d) => d.path}
+          pageSize={20}
+          search={{ placeholder: "Search documents" }}
+          searchText={(d) => [d.path]}
+          filters={[
+            {
+              id: "state",
+              allLabel: "Every state",
+              kind: "chips",
+              options: (["extracted", "stale", "failed", "pending"] as const)
+                .filter((st) => counts[st] > 0)
+                .map((st) => ({ value: st, label: st === "extracted" ? "read" : st === "pending" ? "never read" : st })),
+              match: (d, v) => d.state === v,
+            },
+          ]}
+          empty={{ title: "Nothing matches." }}
+          columns={[
+            { id: "path", header: "Document", compare: (a, b) => a.path.localeCompare(b.path), cell: (d) => <code className="dm-where">{d.path}</code> },
+            {
+              id: "state",
+              header: "State",
+              cell: (d) => (
                 <span className={`sm-state sm-state-${d.state}`} title={d.error ?? undefined}>
                   {d.state}
                 </span>
-              </td>
-              <td>{d.facts}</td>
-              <td title="Facts the model gave that the text did not bear out">{d.dropped}</td>
-              <td>
-                <button
-                  type="button"
-                  className="ghost"
-                  disabled={busy}
-                  onClick={() => onRebuild(d.path)}
-                  title="Read this document again on your own model key; only its facts are replaced"
-                  data-rebuild={d.path}
-                >
-                  Rebuild from this document
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              ),
+            },
+            { id: "facts", header: "Facts", num: true, compare: (a, b) => a.facts - b.facts, cell: (d) => d.facts },
+            { id: "dropped", header: "Dropped", num: true, compare: (a, b) => a.dropped - b.dropped, cell: (d) => d.dropped },
+          ]}
+          actions={(d) => [
+            { label: "Rebuild from this document", disabled: busy, onSelect: () => onRebuild(d.path) },
+          ]}
+        />
+      </div>
     </>
   );
 }
