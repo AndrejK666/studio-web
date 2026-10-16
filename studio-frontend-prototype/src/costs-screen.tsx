@@ -38,6 +38,8 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
   const [group, setGroup] = useState<CostGroup>("project");
   const [personal, setPersonal] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The report's own failure: a later good read clears it, and a save leaves it alone.
+  const [reportError, setReportError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   // The editor's working copy of the price list.
@@ -74,8 +76,12 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
     setLoading(true);
     api
       .costs(token, org.id, { ...periodRange(period), group_by: group, include_personal: personal })
-      .then((r) => live && setReport(r))
-      .catch((e) => live && setError(errText(e)))
+      .then((r) => {
+        if (!live) return;
+        setReport(r);
+        setReportError(null);
+      })
+      .catch((e) => live && setReportError(errText(e)))
       .finally(() => live && setLoading(false));
     return () => {
       live = false;
@@ -119,6 +125,7 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
 
       {prices?.may_view_costs && (
         <section className="card" data-cost-report>
+          {reportError && <div className="error">{reportError}</div>}
           <div className="cost-controls">
             <label>
               Period
