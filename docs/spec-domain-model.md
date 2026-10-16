@@ -311,6 +311,7 @@ Under `/studio-documents/v1`, beside the gear's other routes:
 | `GET` | `/spec-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
 | `GET` | `/spec-model/reviews?project_id=` | Every accept or reject members gave on the facts the model read, by the key the tab gives a fact (kind, subject, aspect and the folded quote, hashed) |
 | `POST` | `/spec-model/reviews` | Accept, reject, or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same |
+| `POST` | `/spec-model/files/proposals` | A whole Markdown document under `docs/` as a pull request: the need a member accepted (`docs/discovery.md`), a confirmed prioritisation (`docs/priorities.md`); `201` with the pull request |
 | `POST` | `/spec-model/glossary/distinct` | Two entries are different things: kept on both as `distinct_from`, so they are not offered as one thing again; `204` |
 | `POST` | `/spec-model/glossary/decisions` | Name an entry, or make it an alias of another; `201` with the decision |
 | `POST` | `/spec-model/glossary/proposals?project_id=` | Rename `from` to `to` in the documents' prose (whole words, first letter's case kept; code, links and front matter untouched) as one pull request; `201` with the files and the pull request, `400` when no document uses `from` |
@@ -443,6 +444,42 @@ A project tab beside Specs and Components in the prototype
   how many were dropped.
 
 The Build button sits above all three and says what a running build is doing.
+
+## The need, hypotheses, behaviour and priorities
+
+Read off the same facts, for the PM workflow the PRDs *Describe the need*,
+*Validate product hypotheses*, *Define the domain model and behaviour* and
+*Prioritise functionality* describe. The extractor (version 2) also reads
+`role`, `action`, `problem`, `outcome`, `idea`, `benefit` and `scenario`; the
+last five describe the need, not a thing the application keeps, and stay off
+the model map.
+
+- **Materials.** A pasted interview, request or report is a Studio document of
+  the built-in `material` type (Source, Material). A project's Studio-held
+  documents are read beside its repository files, under `studio:<id>`, and a
+  material is read as soon as it is added, on the key of whoever added it.
+- **Needs** groups problems, outcomes, ideas and scenarios by role and shows
+  the gaps — a problem nothing proposes to solve, an idea that names no
+  problem — without filling them in. What a member accepted is proposed as
+  `docs/discovery.md`.
+- **Hypotheses**: each expected benefit is a claim (solution, for whom,
+  effect), with a proposed check among the five methods (problem evidence,
+  expected benefit, time/TCO, demand, existing capability) and one of four
+  states — not checked, supports, contradicts, insufficient — kept as a
+  review keyed `ev:`. Accepting the wording is not validating it, and an
+  unchecked hypothesis stops nothing.
+- **Behaviour**: for each action a role takes on a thing and each state the
+  thing goes through, whether it may happen then. A passage that names both
+  answers it; otherwise it is asked, or excluded with a reason kept as a
+  review keyed `ob:`.
+- **Priorities**: ICE, the mean of Impact, Confidence and Ease, each 1–10;
+  Ease from person-weeks by the PRD's bands, Confidence first proposed from a
+  requirement's basis (an assumption 1, a citation 3, no basis unknown). Every
+  value shows its origin, an unknown leaves the score incomplete, a tie stays a
+  tie, and a prerequisite comes before what needs it while a cycle is shown.
+  A confirmed order is proposed as `docs/priorities.md`.
+- **Elsewhere**: a pair with another project's requirement is decided —
+  reuse, coordinate, keep separate, unrelated — and kept, keyed `rel:`.
 
 ## Calibration
 
