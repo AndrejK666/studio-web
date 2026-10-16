@@ -111,10 +111,13 @@ pub struct Coverage {
     pub error: Option<String>,
 }
 
-/// Whether a path is a template — a directory named `templates`, or a
-/// `template.md` — rather than documentation: never read into the model.
+/// Whether a path is a template or an example rather than documentation — a
+/// `templates` or `examples` directory, a `template.md`, or anything under a
+/// tool's `.cf-studio` directory wherever it sits: never read into the model,
+/// nor into what the product needs.
 pub fn is_template_path(path: &str) -> bool {
-    path.split('/').any(|seg| seg == "templates")
+    path.split('/')
+        .any(|seg| seg == "templates" || seg == "examples" || seg == ".cf-studio")
         || path.ends_with("/template.md")
         || path == "template.md"
 }
@@ -319,6 +322,11 @@ mod current_tests {
         assert!(is_template_path("kits/sdlc/template.md"));
         assert!(!is_template_path("docs/prd/constructor-studio.md"));
         assert!(!is_template_path("docs/templates-guide.md"));
+        assert!(is_template_path(
+            "studio-frontend/.cf-studio/config/kits/sdlc/artifacts/PRD/examples/example.md"
+        ));
+        assert!(is_template_path("docs/examples/flow.md"));
+        assert!(!is_template_path("docs/example-driven-design.md"));
     }
 
     #[test]
