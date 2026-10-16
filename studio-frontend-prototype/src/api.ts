@@ -3329,6 +3329,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ project_id: projectId, path, content, title }),
     }),
+  /** Open an issue in the project's repository for something to decide,
+   *  assigned by GitHub login. */
+  createSpecModelIssue: (token: string, projectId: string, issue: { title: string; body: string; assignees: string[] }) =>
+    request<{ number: number; url?: string | null }>(`/studio-documents/v1/spec-model/issues`, token, {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, ...issue }),
+    }),
   /** Every accept or reject members gave on the facts the model read. */
   specModelReviews: (token: string, projectId: string) =>
     request<{ items: SpecModelReview[]; total: number }>(`/studio-documents/v1/spec-model/reviews?project_id=${encodeURIComponent(projectId)}`, token),

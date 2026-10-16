@@ -71,6 +71,8 @@ export function SpecModelTab({
   token,
   projectId,
   workspaceId,
+  only,
+  orgId,
   onOpenFile,
   onCreateGear,
 }: {
@@ -78,6 +80,10 @@ export function SpecModelTab({
   projectId: string;
   /** The project's workspace: where a pasted material is kept. */
   workspaceId?: string;
+  /** The project's Issues tab: the same model, only what there is to decide. */
+  only?: "issues";
+  /** The project's organization: whose members an issue can be assigned to. */
+  orgId?: string;
   /** Open a document in the project's IDE session. */
   onOpenFile?: (path: string) => void;
   /** Open the project's Product tab with a gear for an entity drafted, ready to scaffold. */
@@ -86,7 +92,7 @@ export function SpecModelTab({
   const [model, setModel] = useState<SpecModel | null>(null);
   const [findings, setFindings] = useState<SpecModelFinding[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<View>("resolve");
+  const [view, setView] = useState<View>(only === "issues" ? "resolve" : "map");
   /** The requirement followed in the Requirements view. */
   const [traced, setTraced] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -282,6 +288,33 @@ export function SpecModelTab({
   const reviewByKey = useMemo(() => reviewIndex(reviews), [reviews]);
   const evidence = useMemo(() => evidenceIndex(reviews), [reviews]);
   const decisions = useMemo(() => decisionIndex(reviews), [reviews]);
+  // Who an issue can go to: the organization's members with a GitHub login
+  // among their confirmed or claimed accounts. Read only where issues are.
+  const [people, setPeople] = useState<{ name: string; login: string }[]>([]);
+  useEffect(() => {
+    if (!orgId || view !== "resolve") return;
+    let live = true;
+    void api
+      .orgMembers(token, orgId)
+      .then((members) =>
+        Promise.all(
+          members.slice(0, 50).map((m) =>
+            api
+              .memberIdentities(token, orgId, m.user_id)
+              .then((ids) => {
+                const gh = ids.aliases.find((a) => a.kind === "github" && a.confidence !== "suggested");
+                return gh ? { name: m.display_name || m.email || gh.external_id, login: gh.external_id } : null;
+              })
+              .catch(() => null),
+          ),
+        ),
+      )
+      .then((list) => live && setPeople(list.filter((p): p is { name: string; login: string } => !!p)))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [token, orgId, view]);
   /** Record a decision kept by key: an excluded obligation, a match across
    *  projects. `proposed` withdraws it. */
   const recordDecision = async (key: string, state: string, note: string | null = null, path = "") => {
@@ -340,13 +373,11 @@ export function SpecModelTab({
   const index = catalogue && "index" in catalogue ? catalogue.index : null;
   const gears = useMemo(() => (index ? gearRefs(index, ownGears) : null), [index, ownGears]);
   const ordered = useMemo(() => orderFindings(findings), [findings]);
-  const open = ordered.filter((f) => f.decision !== "dismissed").length;
   const line = model ? buildLine(model.build) : "";
 
   /* Eight tabs, each one question; a tab of two views shows a segment under
      it. The views themselves are unchanged — only where they are reached. */
   const tabs: { id: string; label: string; why: string; count: number; views: { id: View; label: string; count: number }[] }[] = [
-    { id: "issues", label: "Issues", why: "can we build from these documents?", count: open, views: [{ id: "resolve", label: "Issues", count: open }] },
     { id: "entities", label: "Entities", why: "what is this application?", count: entities.length, views: [{ id: "map", label: "Entities", count: entities.length }] },
     {
       id: "reqs",
@@ -390,16 +421,20 @@ export function SpecModelTab({
       ],
     },
   ];
-  const tabOf = (v: View) => tabs.find((t) => t.views.some((x) => x.id === v))?.id ?? "issues";
+  const tabOf = (v: View) => tabs.find((t) => t.views.some((x) => x.id === v))?.id ?? "entities";
 
   return (
     <FactReviewContext.Provider value={factReview}>
     <>
-      <h1>Domain model</h1>
-      <p className="subtitle">What the project&apos;s documents say the application is, each fact with the passage it comes from.</p>
+      <h1>{only === "issues" ? "Issues" : "Domain model"}</h1>
+      <p className="subtitle">
+        {only === "issues"
+          ? "Everything to decide about the project: what stops a build, what to look at, how the documentation could be better."
+          : "What the project's documents say the application is, each fact with the passage it comes from."}
+      </p>
 
       <div className="sm-bar">
-        <div className="dm-tabs" role="tablist" aria-label="Domain model">
+        <div className="dm-tabs" role="tablist" aria-label="Domain model" hidden={only === "issues"}>
           {tabs.map((t) => (
             <button
               key={t.id}
@@ -442,7 +477,7 @@ export function SpecModelTab({
           </button>
         </div>
       </div>
-      {(tabs.find((t) => t.id === tabOf(view))?.views.length ?? 0) > 1 && (
+      {only !== "issues" && (tabs.find((t) => t.id === tabOf(view))?.views.length ?? 0) > 1 && (
         <div className="dm-seg" role="tablist" aria-label="Views">
           {tabs
             .find((t) => t.id === tabOf(view))!
@@ -475,6 +510,13 @@ export function SpecModelTab({
           onPropose={(f) => api.proposeSpecModelFix(token, projectId, f.fingerprint)}
           onProposeSentence={(sentence) => api.proposeSpecModelSentence(token, projectId, sentence)}
           revisions={revisions}
+          people={people}
+          issueOf={(key) => (decisions.get(`iss:${key}`)?.state === "opened" ? decisions.get(`iss:${key}`)?.note ?? null : null)}
+          onCreateIssue={async (key, issue) => {
+            const made = await api.createSpecModelIssue(token, projectId, issue);
+            if (made.url) await recordDecision(`iss:${key}`, "opened", made.url);
+            return made;
+          }}
           onTrace={(id) => {
             setTraced(id);
             setView("reqs");

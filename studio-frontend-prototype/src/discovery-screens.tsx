@@ -5,6 +5,7 @@
 import { useState } from "react";
 
 import type { SpecModelWrite } from "./api";
+import { DataTable } from "./data-table";
 import { obligations, type Obligation } from "./behaviour";
 import { conflicts, describe as sayRule, readRule } from "./rule-checks";
 import { FactRow } from "./domain-model-screens";
@@ -52,6 +53,18 @@ export function NeedsScreen({
       : []),
   ];
   const any = roles.some((r) => r.problems.length + r.outcomes.length + r.ideas.length + r.scenarios.length > 0);
+  const needRows: NeedRow[] = roles.flatMap((r) =>
+    (
+      [
+        ["Problem", r.problems],
+        ["Wants to reach", r.outcomes],
+        ["Idea", r.ideas],
+        ["Scenario", r.scenarios],
+      ] as const
+    ).flatMap(([kind, list]) =>
+      list.map((fact, i) => ({ key: `${r.role}|${kind}|${i}|${fact.subject}`, kind, role: r.role || "No role named", fact })),
+    ),
+  );
   const [adding, setAdding] = useState<{ title: string; content: string } | null>(null);
   const [state, setState] = useState<{ busy: boolean; error?: string; done?: SpecModelWrite; added?: string }>({ busy: false });
   const run = async (act: () => Promise<SpecModelWrite | void>, added?: string) => {
@@ -149,8 +162,10 @@ export function NeedsScreen({
       </p>
       {intake}
       {gaps.length > 0 && (
-        <section className="card dm-rproblems" aria-label="Gaps in the need">
-          <div className="dm-h">Gaps</div>
+        <details className="card dm-rproblems" aria-label="Gaps in the need">
+          <summary className="dm-h">
+            {gaps.length} gap{gaps.length === 1 ? "" : "s"} in the need — a problem nothing solves, an idea with no problem
+          </summary>
           {gaps.map((g, i) => (
             <div key={i} className="dm-rproblem">
               <span className="dm-pill dm-warn">
@@ -167,33 +182,66 @@ export function NeedsScreen({
               </div>
             </div>
           ))}
-        </section>
+        </details>
       )}
-      {roles.map((r) => (
-        <section key={r.role || "—"} className="card nd-role">
-          <div className="dm-h">{r.role || "No role named"}</div>
-          {(
-            [
-              ["Problems", r.problems],
-              ["Wants to reach", r.outcomes],
-              ["Ideas", r.ideas],
-              ["Scenarios", r.scenarios],
-            ] as const
-          ).map(([title, list]) =>
-            list.length ? (
-              <div key={title} className="sm-kind">
-                <h3>{title}</h3>
-                {list.map((f, i) => (
-                  <div key={i}>
-                    <b className="nd-subject">{f.subject}</b>
-                    <FactRow fact={f} onOpenFile={onOpenFile} />
-                  </div>
-                ))}
-              </div>
-            ) : null,
-          )}
-        </section>
-      ))}
+      <div className="card">
+        <DataTable<NeedRow>
+          list="dm-needs"
+          urlPrefix="need."
+          rows={needRows}
+          rowKey={(r) => r.key}
+          rowLabel={(r) => r.fact.subject}
+          pageSize={20}
+          search={{ placeholder: "Search the need" }}
+          searchText={(r) => [r.fact.subject, r.fact.value, r.fact.text, r.role]}
+          filters={[
+            {
+              id: "kind",
+              allLabel: "Everything",
+              kind: "chips",
+              options: (["Problem", "Wants to reach", "Idea", "Scenario"] as const)
+                .filter((k) => needRows.some((r) => r.kind === k))
+                .map((k) => ({ value: k, label: k })),
+              match: (r, v) => r.kind === v,
+            },
+            {
+              id: "role",
+              allLabel: "Every role",
+              kind: "select",
+              options: [...new Set(needRows.map((r) => r.role))].sort().map((x) => ({ value: x, label: x })),
+              match: (r, v) => r.role === v,
+            },
+          ]}
+          empty={{ title: "Nothing matches." }}
+          columns={[
+            { id: "kind", header: "Kind", cell: (r) => <span className="dm-pill dm-warn">{r.kind}</span> },
+            {
+              id: "what",
+              header: "What",
+              compare: (a, b) => a.fact.subject.localeCompare(b.fact.subject),
+              cell: (r) => (
+                <span>
+                  <b>{r.fact.subject}</b>
+                  {r.fact.value && <span className="sub"> — {r.fact.value}</span>}
+                </span>
+              ),
+            },
+            { id: "role", header: "Who", compare: (a, b) => a.role.localeCompare(b.role), cell: (r) => r.role },
+            {
+              id: "where",
+              header: "Read from",
+              cell: (r) => (
+                <code className="dm-where">
+                  {r.fact.source.path.split("/").pop()}
+                  {r.fact.source.line_start ? `:${r.fact.source.line_start}` : ""}
+                </code>
+              ),
+            },
+            { id: "accepted", header: "Accepted", cell: (r) => (accepted(r.fact) ? "✓" : <span className="sub">—</span>) },
+          ]}
+          expand={(r) => <FactRow fact={r.fact} onOpenFile={onOpenFile} />}
+        />
+      </div>
     </div>
   );
 }
@@ -230,57 +278,68 @@ export function HypothesesScreen({
         for whom, with what effect. Studio proposes how to check it; what the check found is yours to record. Accepting the
         wording is not validating it, and an unchecked hypothesis stops nothing.
       </p>
-      <div className="dm-filters">
-        {(Object.keys(EVIDENCE_LABEL) as EvidenceState[]).map((s) => (
-          <span key={s} className={`chip nd-ev-${s}`}>
-            {EVIDENCE_LABEL[s]} <span className="chip-n">{counts[s]}</span>
-          </span>
-        ))}
-      </div>
-      {list.map((h, i) => {
-        const m = method[i] ?? h.method;
-        const state = stateOf(h.fact);
-        return (
-          <article key={i} className={`card dm-item nd-hyp nd-ev-${state}`}>
-            <header>
-              <span className="dm-pill dm-warn">{EVIDENCE_LABEL[state]}</span>
-              <b>{h.solution || "A solution not named"}</b>
-            </header>
-            <div className="nd-claim">
-              <span>
-                For <b>{h.role || <i>a role not named</i>}</b>
-              </span>
-              <span>
-                expected: <b>{h.effect || <i>an effect not stated</i>}</b>
-              </span>
-            </div>
-            <FactRow fact={h.fact} onOpenFile={onOpenFile} />
-            <div className="nd-check">
-              <label>
-                Check by{" "}
-                <select value={m} onChange={(e) => setMethod((x) => ({ ...x, [i]: e.target.value as CheckMethod }))}>
-                  {(Object.keys(CHECK_METHOD_LABEL) as CheckMethod[]).map((k) => (
-                    <option key={k} value={k}>
-                      {CHECK_METHOD_LABEL[k]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <span className="hint">{CHECK_METHOD_WHAT[m]}</span>
-            </div>
-            {onEvidence && (
-              <div className="dm-actions">
-                <span className="hint">What checking found:</span>
-                {(["supports", "contradicts", "insufficient", "unchecked"] as EvidenceState[]).map((s) => (
-                  <button key={s} type="button" className={state === s ? "primary" : "ghost"} aria-pressed={state === s} onClick={() => void onEvidence(h.fact, s)}>
-                    {EVIDENCE_LABEL[s]}
-                  </button>
-                ))}
+      <div className="card">
+        <DataTable<HypRow>
+          list="dm-hypotheses"
+          urlPrefix="hyp."
+          rows={list.map((h, i) => ({ key: `${i}|${h.solution}|${h.effect}`, i, h, state: stateOf(h.fact) }))}
+          rowKey={(r) => r.key}
+          rowLabel={(r) => r.h.solution || "A solution not named"}
+          pageSize={20}
+          search={{ placeholder: "Search hypotheses" }}
+          searchText={(r) => [r.h.solution, r.h.role, r.h.effect, r.h.fact.text]}
+          filters={[
+            {
+              id: "state",
+              allLabel: "Every state",
+              kind: "chips",
+              options: (Object.keys(EVIDENCE_LABEL) as EvidenceState[])
+                .filter((st) => counts[st] > 0)
+                .map((st) => ({ value: st, label: EVIDENCE_LABEL[st] })),
+              match: (r, v) => r.state === v,
+            },
+          ]}
+          empty={{ title: "Nothing matches." }}
+          columns={[
+            { id: "state", header: "State", cell: (r) => <span className={`dm-pill dm-warn nd-ev-${r.state}`}>{EVIDENCE_LABEL[r.state]}</span> },
+            { id: "solution", header: "Solution", compare: (a, b) => a.h.solution.localeCompare(b.h.solution), cell: (r) => <b>{r.h.solution || <i>not named</i>}</b> },
+            { id: "role", header: "For whom", cell: (r) => r.h.role || <i className="sub">not named</i> },
+            { id: "effect", header: "Expected", cell: (r) => r.h.effect || <i className="sub">not stated</i> },
+            { id: "method", header: "Check by", cell: (r) => CHECK_METHOD_LABEL[method[r.i] ?? r.h.method] },
+          ]}
+          expand={(r) => {
+            const m = method[r.i] ?? r.h.method;
+            return (
+              <div className="nd-hyp-detail">
+                <FactRow fact={r.h.fact} onOpenFile={onOpenFile} />
+                <div className="nd-check">
+                  <label>
+                    Check by{" "}
+                    <select value={m} onChange={(e) => setMethod((x) => ({ ...x, [r.i]: e.target.value as CheckMethod }))}>
+                      {(Object.keys(CHECK_METHOD_LABEL) as CheckMethod[]).map((k) => (
+                        <option key={k} value={k}>
+                          {CHECK_METHOD_LABEL[k]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="hint">{CHECK_METHOD_WHAT[m]}</span>
+                </div>
+                {onEvidence && (
+                  <div className="dm-actions">
+                    <span className="hint">What checking found:</span>
+                    {(["supports", "contradicts", "insufficient", "unchecked"] as EvidenceState[]).map((st) => (
+                      <button key={st} type="button" className={r.state === st ? "primary" : "ghost"} aria-pressed={r.state === st} onClick={() => void onEvidence(r.h.fact, st)}>
+                        {EVIDENCE_LABEL[st]}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </article>
-        );
-      })}
+            );
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -312,6 +371,7 @@ export function BehaviourScreen({
   const excluded = list.filter((o) => decisionOf(o.key)?.state === "excluded");
   const answered = list.filter((o) => o.answer && !excluded.includes(o));
   const open = list.filter((o) => !o.answer && !excluded.includes(o));
+  const statusOf = (o: Obligation) => (excluded.includes(o) ? "excluded" : o.answer ? "answered" : "open");
   const row = (o: Obligation) => (
     <div key={o.key} className="nd-ob">
       <div>
@@ -353,35 +413,58 @@ export function BehaviourScreen({
         through: may it happen then? A question is answered only where one passage names both; otherwise answer it in the
         documents, or exclude it with a reason. None of this blocks a build.
       </p>
-      <div className="dm-filters">
-        <span className="chip">
-          Open <span className="chip-n">{open.length}</span>
-        </span>
-        <span className="chip">
-          Answered <span className="chip-n">{answered.length}</span>
-        </span>
-        <span className="chip">
-          Excluded <span className="chip-n">{excluded.length}</span>
-        </span>
+      <div className="card">
+        <DataTable<Obligation>
+          list="dm-behaviour"
+          urlPrefix="beh."
+          rows={list}
+          rowKey={(o) => o.key}
+          rowLabel={(o) => `${o.action} ${o.entity} ${o.state}`}
+          pageSize={20}
+          search={{ placeholder: "Search questions" }}
+          searchText={(o) => [o.role, o.action, o.entity, o.state]}
+          filters={[
+            {
+              id: "status",
+              allLabel: "Every question",
+              kind: "chips",
+              options: [
+                { value: "open", label: `Not answered` },
+                { value: "answered", label: "Answered" },
+                { value: "excluded", label: "Excluded" },
+              ].filter((x) => (x.value === "open" ? open.length : x.value === "answered" ? answered.length : excluded.length) > 0),
+              match: (o, v) => statusOf(o) === v,
+            },
+            {
+              id: "entity",
+              allLabel: "Every thing",
+              kind: "select",
+              options: [...new Set(list.map((o) => o.entity))].sort().map((x) => ({ value: x, label: x })),
+              match: (o, v) => o.entity === v,
+            },
+          ]}
+          empty={{ title: "Nothing matches." }}
+          columns={[
+            {
+              id: "status",
+              header: "Status",
+              cell: (o) => <span className={`dm-pill ${statusOf(o) === "open" ? "dm-warn" : "dm-ok"}`}>{statusOf(o) === "open" ? "not answered" : statusOf(o)}</span>,
+            },
+            {
+              id: "question",
+              header: "Question",
+              cell: (o) => (
+                <span>
+                  May <b>{o.role || "someone"}</b> {o.action} a <b>{o.entity}</b> that is <b>{o.state}</b>?
+                </span>
+              ),
+            },
+            { id: "entity", header: "Thing", compare: (a, b) => a.entity.localeCompare(b.entity), cell: (o) => o.entity },
+            { id: "state", header: "State", cell: (o) => o.state },
+          ]}
+          expand={(o) => row(o)}
+        />
       </div>
-      {open.length > 0 && (
-        <section className="card nd-role">
-          <div className="dm-h">Not answered</div>
-          {open.map(row)}
-        </section>
-      )}
-      {answered.length > 0 && (
-        <section className="card nd-role">
-          <div className="dm-h">Answered by a passage</div>
-          {answered.map(row)}
-        </section>
-      )}
-      {excluded.length > 0 && (
-        <section className="card nd-role">
-          <div className="dm-h">Excluded</div>
-          {excluded.map(row)}
-        </section>
-      )}
     </div>
   );
 }
@@ -432,49 +515,84 @@ export function RulesScreen({
       </div>
       {confirmed.length === 0 && (
         <div className="empty">
-          No rule is accepted yet. Accept the constraints you agree with on the model map&apos;s cards; only those are
-          checked, so an unconfirmed reading never becomes a verdict.
+          No rule is accepted yet. Accept the constraints you agree with on an entity&apos;s card; only those are checked, so
+          an unconfirmed reading never becomes a verdict.
         </div>
       )}
-      {found.length > 0 && (
-        <section className="card nd-role">
-          <div className="dm-h">Cannot both hold</div>
-          {found.map((x, i) => (
-            <article key={i} className="nd-ob">
-              <b>{x.witness}</b>
-              <FactRow fact={x.a.fact} onOpenFile={onOpenFile} />
-              <FactRow fact={x.b.fact} onOpenFile={onOpenFile} />
-            </article>
-          ))}
-        </section>
-      )}
-      {confirmed.length > 0 && found.length === 0 && (
-        <div className="hint">No conflict among the {read.length} rules read. Rules it could not read are listed below.</div>
-      )}
-      {read.length > 0 && (
-        <section className="card nd-role">
-          <div className="dm-h">Read as</div>
-          {read.map((r, i) => (
-            <div key={i} className="nd-ob">
-              <span>
-                Studio reads it as: <b>{sayRule(r.reading!)}</b>
-              </span>
-              <FactRow fact={r.fact} onOpenFile={onOpenFile} />
-            </div>
-          ))}
-        </section>
-      )}
-      {incomplete.length + unsupported.length > 0 && (
-        <section className="card nd-role">
-          <div className="dm-h">Not checked</div>
-          {[...incomplete, ...unsupported].map((r, i) => (
-            <div key={i} className="nd-ob">
-              <span className="hint">{r.outcome === "incomplete" ? `Incomplete: it ${r.why}.` : `Unsupported: ${r.why}.`}</span>
-              <FactRow fact={r.fact} onOpenFile={onOpenFile} />
-            </div>
-          ))}
-        </section>
+      {confirmed.length > 0 && (
+        <div className="card">
+          <DataTable<RuleRow>
+            list="dm-rules"
+            urlPrefix="rule."
+            rows={confirmed.map((r, i) => ({ key: `${i}|${r.fact.subject}|${r.fact.text}`, r, conflict: found.find((x) => x.a === r || x.b === r) ?? null }))}
+            rowKey={(x) => x.key}
+            rowLabel={(x) => x.r.fact.subject}
+            pageSize={20}
+            search={{ placeholder: "Search rules" }}
+            searchText={(x) => [x.r.fact.subject, x.r.fact.text, x.r.fact.value]}
+            filters={[
+              {
+                id: "outcome",
+                allLabel: "Every rule",
+                kind: "chips",
+                options: [
+                  { value: "conflict", label: "In conflict" },
+                  { value: "read", label: "Read" },
+                  { value: "incomplete", label: "Incomplete" },
+                  { value: "unsupported", label: "Unsupported" },
+                ],
+                match: (x, v) => (v === "conflict" ? !!x.conflict : x.r.outcome === v),
+              },
+            ]}
+            empty={{ title: "Nothing matches." }}
+            columns={[
+              {
+                id: "outcome",
+                header: "Outcome",
+                cell: (x) =>
+                  x.conflict ? (
+                    <span className="dm-pill dm-bad">conflict</span>
+                  ) : (
+                    <span className={`dm-pill ${x.r.outcome === "read" ? "dm-ok" : "dm-warn"}`}>{x.r.outcome}</span>
+                  ),
+              },
+              { id: "subject", header: "About", compare: (a, b) => a.r.fact.subject.localeCompare(b.r.fact.subject), cell: (x) => <b>{x.r.fact.subject}</b> },
+              {
+                id: "reading",
+                header: "Read as",
+                cell: (x) => (x.r.reading ? sayRule(x.r.reading) : <span className="sub">{x.r.why}</span>),
+              },
+            ]}
+            expand={(x) => (
+              <div>
+                {x.conflict && <div className="dm-rgap"><b>Cannot both hold:</b> {x.conflict.witness}</div>}
+                <FactRow fact={x.r.fact} onOpenFile={onOpenFile} />
+                {x.conflict && <FactRow fact={(x.conflict.a === x.r ? x.conflict.b : x.conflict.a).fact} onOpenFile={onOpenFile} />}
+              </div>
+            )}
+          />
+        </div>
       )}
     </div>
   );
+}
+
+interface NeedRow {
+  key: string;
+  kind: "Problem" | "Wants to reach" | "Idea" | "Scenario";
+  role: string;
+  fact: SpecModelFact;
+}
+
+interface HypRow {
+  key: string;
+  i: number;
+  h: ReturnType<typeof hypothesesOf>[number];
+  state: EvidenceState;
+}
+
+interface RuleRow {
+  key: string;
+  r: ReturnType<typeof readRule>;
+  conflict: ReturnType<typeof conflicts>[number] | null;
 }

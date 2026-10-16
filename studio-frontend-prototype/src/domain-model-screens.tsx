@@ -142,7 +142,16 @@ export function ResolveView({
   onTrace,
   onOpenFile,
   built,
+  people = [],
+  onCreateIssue,
+  issueOf,
 }: {
+  /** Who an issue can be assigned to: members with a GitHub login. */
+  people?: { name: string; login: string }[];
+  /** Open an issue for a row in the project's repository. */
+  onCreateIssue?: (key: string, issue: { title: string; body: string; assignees: string[] }) => Promise<{ number: number; url?: string | null }>;
+  /** The issue already opened for a row, if any. */
+  issueOf?: (key: string) => string | null;
   findings: SpecModelFinding[];
   requirements: SpecRequirements | null;
   /** The model's entities, saved edits laid over: what the documentation
@@ -195,6 +204,7 @@ export function ResolveView({
     })),
   ];
   const n = (g: IssueGroup) => issues.filter((i) => i.group === g).length;
+  const [opening, setOpening] = useState<string | null>(null);
   return (
     <div className="dm-resolve">
       <div className="dm-verdict-line" data-verdict>
@@ -273,9 +283,26 @@ export function ResolveView({
               id: "group",
               header: "Status",
               compare: (x, y) => GROUP_ORDER.indexOf(x.group) - GROUP_ORDER.indexOf(y.group),
-              cell: (r) => <span className={`sub dm-status-${r.group}`}>{GROUP_LABEL[r.group]}</span>,
+              cell: (r) => {
+                const url = issueOf?.(r.key);
+                return url ? (
+                  <a href={url} target="_blank" rel="noreferrer" className="dm-issue-link">
+                    issue #{url.split("/").pop()}
+                  </a>
+                ) : (
+                  <span className={`sub dm-status-${r.group}`}>{GROUP_LABEL[r.group]}</span>
+                );
+              },
             },
           ]}
+          actions={(r) =>
+            onCreateIssue && !issueOf?.(r.key) ? [{ label: "Create issue…", onSelect: () => setOpening(opening === r.key ? null : r.key) }] : []
+          }
+          detail={(r) =>
+            opening === r.key && onCreateIssue ? (
+              <IssueForm row={r} people={people} onCancel={() => setOpening(null)} onCreate={(issue) => onCreateIssue(r.key, issue).then((x) => (setOpening(null), x))} />
+            ) : null
+          }
           expand={(r) =>
             r.queue ? (
               <QueueItem item={r.queue} onDecide={onDecide} onPropose={onPropose} onTrace={onTrace} onOpenFile={onOpenFile} />
@@ -284,6 +311,83 @@ export function ResolveView({
             ) : null
           }
         />
+      </div>
+    </div>
+  );
+}
+
+/** An issue's text from a row: what is wrong, where, and what to do. */
+function issueBody(r: IssueRow): string {
+  const hint = r.queue?.hint ?? r.doc?.hint ?? "";
+  const sides = r.queue?.sides ?? r.doc?.sides ?? [];
+  const lines = [`**${r.kind}** — ${GROUP_LABEL[r.group]}.`, "", hint, ""];
+  if (sides.length) {
+    lines.push("Where:");
+    for (const s of sides.slice(0, 5)) lines.push(`- \`${s.path}${s.line_start ? `:${s.line_start}` : ""}\`${s.quote ? ` — “${s.quote.trim().slice(0, 200)}”` : ""}`);
+    lines.push("");
+  }
+  const fix = r.queue?.finding?.edit;
+  if (fix) lines.push(`Proposed fix in \`${fix.path}\`:`, "", "```diff", `- ${fix.replace}`, `+ ${fix.with}`, "```", "");
+  lines.push("_Opened from the project's Issues in Constructor Studio._");
+  return lines.join("\n");
+}
+
+/** The issue to open for a row: its title and text, editable, and who it is for. */
+function IssueForm({
+  row,
+  people,
+  onCreate,
+  onCancel,
+}: {
+  row: IssueRow;
+  people: { name: string; login: string }[];
+  onCreate: (issue: { title: string; body: string; assignees: string[] }) => Promise<unknown>;
+  onCancel: () => void;
+}) {
+  const [title, setTitle] = useState(row.title.slice(0, 240));
+  const [body, setBody] = useState(() => issueBody(row));
+  const [assignee, setAssignee] = useState("");
+  const [state, setState] = useState<{ busy: boolean; error?: string }>({ busy: false });
+  return (
+    <div className="dm-issue-form" data-issue-form>
+      <label className="dm-field">
+        <span>Title</span>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} />
+      </label>
+      <label className="dm-field">
+        <span>Description</span>
+        <textarea rows={7} value={body} onChange={(e) => setBody(e.target.value)} />
+      </label>
+      <div className="dm-actions">
+        <label>
+          Assign to{" "}
+          <select value={assignee} onChange={(e) => setAssignee(e.target.value)} aria-label="Assign to">
+            <option value="">nobody yet</option>
+            {people.map((p) => (
+              <option key={p.login} value={p.login}>
+                {p.name} (@{p.login})
+              </option>
+            ))}
+          </select>
+        </label>
+        {people.length === 0 && <span className="hint">No member has a GitHub login on their profile yet.</span>}
+        <button
+          type="button"
+          className="primary"
+          disabled={state.busy || !title.trim()}
+          onClick={() => {
+            setState({ busy: true });
+            onCreate({ title: title.trim(), body, assignees: assignee ? [assignee] : [] }).catch((e: unknown) =>
+              setState({ busy: false, error: e instanceof Error ? e.message : String(e) }),
+            );
+          }}
+        >
+          {state.busy ? "Opening…" : "Open the issue"}
+        </button>
+        <button type="button" className="ghost" onClick={onCancel}>
+          Cancel
+        </button>
+        {state.error && <span className="error-inline">{state.error}</span>}
       </div>
     </div>
   );

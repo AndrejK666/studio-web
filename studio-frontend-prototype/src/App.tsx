@@ -639,6 +639,13 @@ function NavIcon({ name }: { name: string }) {
         <path d="m9 12 2 2 4-4" />
       </>
     ),
+    alert: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7.5v5.5" />
+        <path d="M12 16.5h.01" />
+      </>
+    ),
     org: (
       <>
         <rect x="4" y="3" width="16" height="18" rx="1" />
@@ -5236,6 +5243,10 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // In the order the work happens, which is not the order the sections were
   // added. Icons are the lucide names the shipped project-sidebar picks.
   { id: "overview", icon: "home", label: "Overview" },
+  // Everything to decide about the project in one place: what stops a build,
+  // what to look at, how the documentation could be better. A question about
+  // the whole project, so a tab of the project, not of one of its sections.
+  { id: "issues", icon: "alert", label: "Issues" },
   // Specs first, because everything after it is downstream of a document: the
   // components a product is composed from are matched against what its specs
   // declare, and the artifacts are what came out. Reading the row left to right
@@ -5649,6 +5660,16 @@ function ProjectScreen({
               onOpenStudio={onOpenStudio}
             />
           </>
+        )}
+        {tab === "issues" && (
+          <SpecModelTab
+            token={token}
+            projectId={proj.id}
+            workspaceId={workspace.id}
+            only="issues"
+            orgId={proj.orgId}
+            onOpenFile={(path) => void studio?.openFile(proj, path)}
+          />
         )}
         {tab === "model" && (
           <SpecModelTab
