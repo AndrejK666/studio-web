@@ -1,5 +1,5 @@
 /* The organization's gear repository (ADR-0042 §2), as the Components page
- * and "Create a gear" read it. Pure rules behind `org-gear-repository-card.tsx`
+ * and "Create a gear" read it. Pure rules behind `org-repository-create.tsx`, the Repositories list
  * and the scaffold modal, kept here for their tests. */
 
 import type { Connection, RegistryOccurrence, RegistryProjectWalk } from "./api";
