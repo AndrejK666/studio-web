@@ -86,7 +86,6 @@ export function ProjectsPortfolio({
   homeOrgId,
   org,
   onOpen,
-  onOpenStudio,
   onOpenProject,
   onChanged,
 }: {
@@ -104,7 +103,9 @@ export function ProjectsPortfolio({
   /** Where a new workspace is created — the hidden organization. */
   homeOrgId: string | null;
   onOpen: (root: RootProject) => void;
-  onOpenStudio: (root: RootProject) => void;
+  /** Not offered here any more: the IDE opens from a project, where its
+   *  sources are; a workspace only groups projects. Kept so callers compile. */
+  onOpenStudio?: (root: RootProject) => void;
   /** Open a nested project (from the expandable tree under a workspace). */
   onOpenProject?: (wsId: string, p: { id: string; name: string }) => void;
   onChanged: () => void;
@@ -349,11 +350,6 @@ export function ProjectsPortfolio({
             { id: "people", header: "People", cell: (r) => <Avatars users={people[r.id]} /> },
           ]}
           expand={(r) => <NestedProjects kids={children[r.id]} load={() => loadChildren(r.id)} onOpen={(p) => onOpenProject?.(r.id, p)} />}
-          inline={(r) => (
-            <button className="primary" onClick={() => onOpenStudio(r)}>
-              Open in IDE
-            </button>
-          )}
           actions={(r) => [
             { label: "Open", onSelect: () => onOpen(r) },
             {
@@ -391,21 +387,7 @@ export function ProjectsPortfolio({
                 { label: "projects", value: rollupText(rollups[r.id]?.projects ?? null) },
                 { label: "people", value: rollupText(people[r.id]?.length ?? null) },
               ]}
-              footer={
-                <>
-                  <Avatars users={people[r.id]} />
-                  <button
-                    className="ghost"
-                    style={{ marginLeft: "auto" }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenStudio(r);
-                    }}
-                  >
-                    Open in IDE
-                  </button>
-                </>
-              }
+              footer={<Avatars users={people[r.id]} />}
             />
           )}
         />
@@ -428,20 +410,32 @@ function NestedProjects({
     if (kids === undefined) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  if (kids === undefined) return <div className="pcell indent sub">Loading projects…</div>;
-  if (kids.length === 0) return <div className="pcell indent sub">No projects yet</div>;
+  if (kids === undefined) return <div className="nested-projects nested-note">Loading projects…</div>;
+  if (kids.length === 0) return <div className="nested-projects nested-note">No projects in this workspace yet.</div>;
   return (
-    <div className="nested-projects">
+    <ul className="nested-projects" aria-label="Projects in this workspace">
       {kids.map((p) => (
-        <div key={p.id} className="pcell indent">
-          <span className="pico" aria-hidden>
-            ▦
-          </span>
-          <button type="button" className="pname" onClick={() => onOpen(p)}>
-            {p.name}
+        <li key={p.id}>
+          <button type="button" className="nested-project" onClick={() => onOpen(p)}>
+            <ProjectGlyph />
+            <span className="nested-name">{p.name}</span>
+            <span className="nested-open" aria-hidden>
+              Open ›
+            </span>
           </button>
-        </div>
+        </li>
       ))}
-    </div>
+    </ul>
+  );
+}
+
+/** A small project glyph: a document with a fold, beside the folder of its
+ *  workspace. */
+function ProjectGlyph() {
+  return (
+    <svg className="nested-glyph" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M4 1.8h5.2L12.4 5v8.2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M9 1.9V5h3.3" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
   );
 }
