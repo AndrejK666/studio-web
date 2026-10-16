@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Candidate, PlanRow } from "./api";
 import {
   alsoCovers,
+  productSteps,
   applyFix,
   codeDiff,
   codeGears,
@@ -121,5 +122,24 @@ describe("the next step", () => {
     expect(gap.tone).toBe("warn");
     expect(gap.text).toContain("2 capabilities the specs ask for are not closed yet.");
     expect(nextStep({ ...base, written: true }).action).toBe("open");
+  });
+});
+
+describe("the steps from the specs to a built product", () => {
+  const base: FlowState = { capabilities: 7, open: 5, picks: 0, inCode: 0, resolves: null, fixes: 0, written: false, composing: true };
+  const states = (s: Partial<FlowState>) => productSteps({ ...base, ...s }).map((x) => x.state);
+
+  it("starts on the specs", () => {
+    expect(states({})).toEqual(["current", "todo", "todo"]);
+    expect(productSteps(base)[0].status).toBe("7 capabilities");
+  });
+  it("moves on as gears are picked, the product resolves and is built", () => {
+    expect(states({ picks: 3 })).toEqual(["done", "current", "todo"]);
+    expect(productSteps({ ...base, picks: 3, resolves: false, fixes: 1 })[1].status).toBe("does not resolve · 1 fix");
+    expect(states({ picks: 3, resolves: true })).toEqual(["done", "done", "current"]);
+    expect(states({ picks: 3, resolves: true, written: true })).toEqual(["done", "done", "done"]);
+  });
+  it("cannot compose without the engine", () => {
+    expect(states({ composing: false })).toEqual(["current", "off", "off"]);
   });
 });

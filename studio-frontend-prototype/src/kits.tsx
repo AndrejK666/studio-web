@@ -19,7 +19,7 @@ import {
   type ProjectRepository,
   type StudioKit,
 } from "./api";
-import { When, useConfirm } from "./data-table";
+import { DataTable, When, useConfirm } from "./data-table";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
 import { gearProblemFrom, nameWarning, type GearDraft } from "./gear-from-entity";
@@ -60,6 +60,8 @@ import {
   codeGears,
   fixesFrom,
   nextStep,
+  productSteps,
+  type ProductStep,
   plainText,
   rowShortlist,
   type Fix,
@@ -92,6 +94,8 @@ export function ProjectKits({
   onPendingGearTaken?: () => void;
 }) {
   const [entityGear, setEntityGear] = useState<GearDraft | null>(null);
+  /** Which part of the journey is shown. */
+  const [pane, setPane] = useState<ProductPane>("needs");
   useEffect(() => {
     if (!pendingGear || section !== "components") return;
     setEntityGear(pendingGear);
@@ -293,6 +297,18 @@ export function ProjectKits({
       },
     );
 
+  const flowState = {
+    capabilities: flow.capabilities,
+    open: flow.open,
+    picks: product.picks.length,
+    inCode: code.report ? codeGears(code.report).length : null,
+    resolves: verdict.resolves,
+    fixes: verdict.fixes,
+    written: !!product.record?.written && verdict.resolves !== null,
+    composing: product.composing,
+  };
+  const steps = productSteps(flowState);
+
   return (
     <section className="kits-view">
       {/* The page reads as the question a person brings to it: what do my
@@ -303,20 +319,12 @@ export function ProjectKits({
       {section === "components" && (
         <>
       <NextStepBar
-        step={nextStep({
-          capabilities: flow.capabilities,
-          open: flow.open,
-          picks: product.picks.length,
-          inCode: code.report ? codeGears(code.report).length : null,
-          resolves: verdict.resolves,
-          fixes: verdict.fixes,
-          written: !!product.record?.written && verdict.resolves !== null,
-          composing: product.composing,
-        })}
+        step={nextStep(flowState)}
         onAct={(action) => {
           if (action === "add-recommended") {
             product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
           } else {
+            setPane(action === "build" || action === "open" ? "build" : "product");
             setCommand({ kind: action, at: Date.now() });
           }
         }}
@@ -327,14 +335,68 @@ export function ProjectKits({
           {product.gearbox.problem ? ` (${product.gearbox.problem})` : ""}.
         </p>
       )}
-      <SuggestedComponents
-        token={token}
-        projectId={projectId}
-        product={product}
-        code={code}
-        onFlow={setFlow}
-      />
-      <BeyondGears token={token} projectId={projectId} />
+      <ol className="psteps" aria-label="From the specs to a built product">
+        {steps.map((st, i) => (
+          <li key={st.id} className={`pstep ${st.state}${pane === st.id ? " on" : ""}`}>
+            <button type="button" aria-current={pane === st.id ? "step" : undefined} disabled={st.state === "off"} onClick={() => setPane(st.id)}>
+              <span className="pstep-n">{st.state === "done" ? "✓" : i + 1}</span>
+              <span>
+                <span className="pstep-title">{st.title}</span>
+                <span className="pstep-status">{st.status}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      {/* Every pane stays mounted: each reads on arrival and keeps what the
+          person did in it while another is shown. */}
+      <div hidden={pane !== "needs"}>
+        <SuggestedComponents
+          token={token}
+          projectId={projectId}
+          product={product}
+          code={code}
+          onFlow={setFlow}
+        />
+      </div>
+      <div hidden={pane !== "needs"}>
+        <details className="psteps-more">
+          <summary>Beyond gears — the services and applications in the repositories that are not gears</summary>
+          <BeyondGears token={token} projectId={projectId} />
+        </details>
+      </div>
+      {product.composing && (
+        <section className="card pstep-build" hidden={pane !== "build"}>
+          <h2>3 · Build it in Studio-ide</h2>
+          <p className="subtitle">
+            Building saves <code>product.gdl</code> to the repository and opens the desktop Studio on it, in its Gearbox view.
+          </p>
+          {verdict.resolves !== true ? (
+            <p>
+              The product has to resolve first.{" "}
+              <button type="button" className="ghost" onClick={() => setPane("product")}>
+                Back to step 2
+              </button>
+            </p>
+          ) : (
+            <div className="dm-actions">
+              <button type="button" className="primary" onClick={() => setCommand({ kind: "build", at: Date.now() })}>
+                {product.record?.written ? "Build it again →" : "Build it in Studio-ide →"}
+              </button>
+              {product.record?.written && (
+                <button type="button" className="ghost" onClick={() => setCommand({ kind: "open", at: Date.now() })}>
+                  Open in Studio-ide
+                </button>
+              )}
+              {product.record?.written && (
+                <span className="hint">
+                  Built on <code>{product.record.written.branch}</code>.
+                </span>
+              )}
+            </div>
+          )}
+        </section>
+      )}
       {entityGear && (
         <ScaffoldModal
           key={entityGear.entityKey}
@@ -350,6 +412,7 @@ export function ProjectKits({
         />
       )}
       {product.composing && (
+        <div hidden={pane !== "product"}>
         <ProductCard
           token={token}
           projectId={projectId}
@@ -359,6 +422,7 @@ export function ProjectKits({
           command={command}
           onVerdict={setVerdict}
         />
+        </div>
       )}
         </>
       )}
@@ -602,6 +666,8 @@ function NextStepBar({ step, onAct }: { step: NextStep; onAct: (action: NextActi
   );
 }
 
+type ProductPane = ProductStep["id"];
+
 function SuggestedComponents({
   token,
   projectId,
@@ -711,6 +777,11 @@ function SuggestedComponents({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, coverage?.open, recommendedKey]);
   const report = code.report;
+  /** Nothing in the product closes it and nothing built could: the honest
+   *  next step is a gear of the project's own. */
+  const needsGearFor = (row: PlanRow) =>
+    !row.nonfunctional &&
+    !!(row.gap || row.unbuilt || (composing && rowCoverage(row, product.picks).cover === "open" && !row.candidates.some((c) => c.built === "built")));
 
   return (
     <section className="card" style={{ marginBottom: 16 }}>
@@ -786,108 +857,133 @@ function SuggestedComponents({
                 {coverage.open > 0 && ` · ${coverage.open} not closed by any gear in it`}.
               </p>
             )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {plan.map((row) => {
-                const cover = rowCoverage(row, product.picks);
+            <DataTable<PlanRow>
+              list="product-needs"
+              urlPrefix="need."
+              rows={plan}
+              rowKey={(r) => r.capability}
+              rowLabel={(r) => r.capability}
+              pageSize={20}
+              search={{ placeholder: "Find a capability or a gear" }}
+              searchText={(r) => [r.capability, r.label, ...r.candidates.map((c) => c.name)]}
+              empty={{ title: "No capability matches." }}
+              filters={[
+                ...(composing
+                  ? [
+                      {
+                        id: "closed",
+                        allLabel: "Closed or not",
+                        kind: "chips" as const,
+                        options: [
+                          { value: "covered", label: "Closed" },
+                          { value: "weak", label: "Only by words" },
+                          { value: "open", label: "Not closed" },
+                        ],
+                        match: (r: PlanRow, v: string) => !r.nonfunctional && rowCoverage(r, product.picks).cover === v,
+                      },
+                    ]
+                  : []),
+                {
+                  id: "kind",
+                  allLabel: "Every capability",
+                  kind: "chips",
+                  options: [
+                    { value: "gear", label: "Needs a gear" },
+                    { value: "unbuilt", label: "Nothing built yet" },
+                    { value: "runs", label: "Where it runs" },
+                  ],
+                  match: (r, v) => (v === "gear" ? needsGearFor(r) : v === "unbuilt" ? !!(r.gap || r.unbuilt) : !!r.nonfunctional),
+                },
+              ]}
+              columns={[
+                {
+                  id: "capability",
+                  header: "Capability",
+                  compare: (a, b) => a.capability.localeCompare(b.capability),
+                  cell: (row) => {
+                    const rowSources = sources[row.capability] ?? [];
+                    return (
+                      <span>
+                        <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
+                        {row.label && row.label.toLowerCase() !== row.capability && <span style={{ fontSize: 12 }}> {row.label}</span>}
+                        {rowSources.length > 0 && (
+                          <div className="sub">
+                            from {[...new Set(rowSources.map((src) => src.label))].join(", ")}
+                            {rowSources.every((src) => src.inferred) && " · read from the requirements"}
+                            {rowSources.every((src) => src.confirmed === false) && " · unconfirmed"}
+                          </div>
+                        )}
+                      </span>
+                    );
+                  },
+                },
+                ...(composing
+                  ? [
+                      {
+                        id: "closed",
+                        header: "In the product",
+                        cell: (row: PlanRow) => {
+                          if (row.nonfunctional) return <span className="sub">the deployment profile</span>;
+                          const cover = rowCoverage(row, product.picks);
+                          return cover.cover === "covered" ? (
+                            <span className="badge ok" title="A gear in the product provides its contract, declares it, or a member confirmed it">
+                              closed by {cover.strong.join(", ")}
+                            </span>
+                          ) : cover.cover === "weak" ? (
+                            <span className="badge warn" title="The product's gears only mention its words: they talk about the subject, which does not prove they do the job">
+                              only by words · {cover.weak.length} gear{cover.weak.length === 1 ? "" : "s"}
+                            </span>
+                          ) : (
+                            <span className="badge danger" title="No gear in the product fills it">
+                              not closed
+                            </span>
+                          );
+                        },
+                      },
+                    ]
+                  : []),
+                {
+                  id: "code",
+                  header: "In the code",
+                  cell: (row) => {
+                    const inCode = codeFor(report, row.capability);
+                    if (!inCode || row.nonfunctional) return <span className="sub">—</span>;
+                    return (
+                      <span className={`badge ${inCode.status === "implemented" ? "ok" : ""}`} title="What the project's code depends on, read from its Cargo.toml files">
+                        {inCode.status === "implemented" ? inCode.by.map((b) => gearLabel(b.name)).join(", ") : "not in the code"}
+                      </span>
+                    );
+                  },
+                },
+                {
+                  id: "offered",
+                  header: "Offered",
+                  cell: (row) => {
+                    if (row.nonfunctional) return <span className="sub">answered by where it runs, not by a gear</span>;
+                    if (row.gap) return <span className="badge danger">nothing in the catalogue</span>;
+                    const best = row.candidates[0];
+                    return (
+                      <span>
+                        {best && <b>{best.name}</b>}
+                        {best && <span className="sub"> {best.step === "contract" ? "contract" : best.declared ? "declared" : candidateStrength(best) === "strong" ? "confirmed" : "words"}</span>}
+                        {row.candidates.length > 1 && <span className="sub"> · +{row.candidates.length - 1}</span>}
+                        {row.unbuilt && <div className="sub">nothing built yet</div>}
+                      </span>
+                    );
+                  },
+                },
+              ]}
+              actions={(row) => (needsGearFor(row) ? [{ label: "Create a gear for it", onSelect: () => setScaffoldFor(row) }] : [])}
+              expand={(row) => {
                 const open = whyOpen[row.capability];
                 const shown = typeof open === "string" ? row.candidates.find((c) => c.name === open) : undefined;
                 const beyond = composing ? picksBeyondShortlist(row, product.picks) : [];
                 const rowSources = sources[row.capability] ?? [];
-                // Nothing in the product closes it and nothing built could:
-                // the honest next step is a gear of the project's own.
-                const needsGear =
-                  !row.nonfunctional && (row.gap || row.unbuilt || (composing && cover.cover === "open" && !row.candidates.some((c) => c.built === "built")));
-                const reasons = open === true ? specReasons(row) : [];
-                const inCode = codeFor(report, row.capability);
+                const reasons = specReasons(row);
                 const { shown: shortlist, hidden } = rowShortlist(row, product.picks, !!expanded[row.capability]);
                 return (
-                  <div
-                    key={row.capability}
-                    style={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 8,
-                      padding: "8px 10px",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <code style={{ fontSize: 12, fontWeight: 700 }}>{row.capability}</code>
-                      {row.label && row.label.toLowerCase() !== row.capability && (
-                        <span style={{ fontSize: 12 }}>{row.label}</span>
-                      )}
-                      {composing && cover.cover === "covered" && (
-                        <span
-                          className="badge ok"
-                          title="A gear in the product provides its contract, declares it, or a member confirmed it"
-                        >
-                          closed by {cover.strong.join(", ")}
-                        </span>
-                      )}
-                      {composing && cover.cover === "weak" && (
-                        <span
-                          className="badge warn"
-                          title="The product's gears only mention its words: they talk about the subject, which does not prove they do the job"
-                        >
-                          only by words: {cover.weak.join(", ")}
-                        </span>
-                      )}
-                      {composing && cover.cover === "open" && (
-                        <span className="badge danger" title="No gear in the product fills it">
-                          not closed
-                        </span>
-                      )}
-                      {inCode && !row.nonfunctional && (
-                        <span
-                          className={`badge ${inCode.status === "implemented" ? "ok" : ""}`}
-                          title="What the project's code depends on, read from its Cargo.toml files"
-                        >
-                          {inCode.status === "implemented"
-                            ? `in the code: ${inCode.by.map((b) => gearLabel(b.name)).join(", ")}`
-                            : "not in the code"}
-                        </span>
-                      )}
-                      {rowSources.length > 0 && (
-                        <span style={{ fontSize: 11, opacity: 0.65 }}>
-                          from {rowSources.map((src) => src.label).join(", ")}
-                          {rowSources.every((src) => src.inferred) && " · read from the requirements"}
-                          {rowSources.every((src) => src.confirmed === false) && " · unconfirmed"}
-                        </span>
-                      )}
-                      {row.gap && (
-                        <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>NOTHING IN THE CATALOGUE</span>
-                      )}
-                      {row.unbuilt && (
-                        <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}>NOTHING BUILT YET</span>
-                      )}
-                      {row.nonfunctional && (
-                        <span
-                          style={{ fontSize: 10, fontWeight: 700, opacity: 0.75 }}
-                          title="Answered by the deployment profile, not by a gear"
-                        >
-                          WHERE IT RUNS — THE PROFILE, NOT A GEAR
-                        </span>
-                      )}
-                      {needsGear && (
-                        <button
-                          type="button"
-                          className="linklike"
-                          style={{ marginLeft: "auto", fontSize: 12 }}
-                          title="Scaffold a gear for it, with the specs' requirements as its PRD: into the project's gear repository, else the organization's — the dialog says which"
-                          onClick={() => setScaffoldFor(row)}
-                        >
-                          Create a gear for it
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="linklike"
-                        style={{ marginLeft: needsGear ? undefined : "auto", fontSize: 12 }}
-                        aria-expanded={open === true}
-                        onClick={() => toggleWhy(row.capability)}
-                      >
-                        {open === true ? "Hide why" : "Why?"}
-                      </button>
-                    </div>
-                    {open === true && (
+                  <div>
+                    {(
                       <div style={whyPanelStyle}>
                         <div style={{ fontWeight: 700, marginBottom: 2 }}>Why the specs ask for it</div>
                         {reasons.length === 0 ? (
@@ -1101,8 +1197,8 @@ function SuggestedComponents({
                     )}
                   </div>
                 );
-              })}
-            </div>
+              }}
+            />
             {report && report.unexplained.length > 0 && (
               <p style={{ fontSize: 12, margin: "10px 0 0" }}>
                 <b>In the code, not in the specs:</b>{" "}

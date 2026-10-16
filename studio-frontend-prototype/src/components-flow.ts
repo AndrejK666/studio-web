@@ -198,3 +198,44 @@ export function nextStep(s: FlowState): NextStep {
   if (!s.written) return { text: `The product resolves: build it in Studio-ide.${gap}`, action: "build", tone: gap ? "warn" : "todo" };
   return { text: `Built: product.gdl is in the repository. Open it in Studio-ide.${gap}`, action: "open", tone: gap ? "warn" : "done" };
 }
+
+/** One step of the way from the specs to a built product. */
+export interface ProductStep {
+  id: "needs" | "product" | "build";
+  title: string;
+  /** Where it stands, in a few words. */
+  status: string;
+  /** `done`; `current`: the first not done; `todo`: after it; `off`: the
+   *  deployment cannot do it. */
+  state: "done" | "current" | "todo" | "off";
+}
+
+/** The three steps — what the specs ask for, the product composed and
+ *  checked, the product built — each with where it stands. A step is done
+ *  when the next can start on it: gears picked, the product resolving,
+ *  product.gdl written. */
+export function productSteps(s: FlowState): ProductStep[] {
+  const caps =
+    s.capabilities === null
+      ? "reading the specs…"
+      : `${plural(s.capabilities, "capability", "capabilities")}${s.composing && s.picks > 0 ? `, ${s.open} not closed` : ""}`;
+  const compose =
+    s.picks === 0
+      ? "nothing in it yet"
+      : s.resolves === null
+        ? `${plural(s.picks, "gear", "gears")}, not checked`
+        : s.resolves
+          ? `${plural(s.picks, "gear", "gears")}, resolves`
+          : `does not resolve${s.fixes > 0 ? ` · ${plural(s.fixes, "fix", "fixes")}` : ""}`;
+  const steps: Omit<ProductStep, "state">[] = [
+    { id: "needs", title: "What the specs ask for", status: caps },
+    { id: "product", title: "Compose and check", status: compose },
+    { id: "build", title: "Build in Studio-ide", status: s.written ? "product.gdl in the repository" : "not built yet" },
+  ];
+  const done = [s.composing && s.picks > 0, s.composing && s.resolves === true, s.composing && s.written];
+  const current = done.findIndex((d) => !d);
+  return steps.map((step, i) => ({
+    ...step,
+    state: i > 0 && !s.composing ? "off" : done[i] ? "done" : i === current ? "current" : "todo",
+  }));
+}
