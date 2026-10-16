@@ -26,7 +26,7 @@ import type { GearDraft } from "./gear-from-entity";
 import { GlossaryScreen } from "./glossary-screen";
 import { PrioritiesScreen } from "./priorities-screen";
 import type { Obligation } from "./behaviour";
-import { BehaviourScreen, HypothesesScreen, NeedsScreen } from "./discovery-screens";
+import { BehaviourScreen, HypothesesScreen, NeedsScreen, RulesScreen } from "./discovery-screens";
 import type { EvidenceState } from "./need-view";
 import { decisionIndex, EVIDENCE_PREFIX, evidenceIndex, FactReviewContext, factKey, reviewIndex, withoutRejected, type FactReview, type SpecModelReview } from "./review-state";
 import { overlaySaved, pruneSaved, savedWrites, withSaved, type SavedEdit } from "./saved-entities";
@@ -56,7 +56,7 @@ import {
 } from "./spec-model";
 
 /** The three questions first; the rest stays a click away under More. */
-type View = "resolve" | "map" | "reqs" | "needs" | "hypotheses" | "behaviour" | "priorities" | "glossary" | "work" | "product" | "elsewhere" | "coverage";
+type View = "resolve" | "map" | "reqs" | "needs" | "hypotheses" | "behaviour" | "rules" | "priorities" | "glossary" | "work" | "product" | "elsewhere" | "coverage";
 
 /** The product findings as read, or why they could not be. */
 type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
@@ -306,6 +306,11 @@ export function SpecModelTab({
   const factReview = useMemo<FactReview>(
     () => ({
       stateOf: (f) => reviewByKey.get(factKey(f)),
+      reviewedEarlier: (f) => {
+        const r = reviews.find((x) => x.fact_key === factKey(f));
+        const now = model?.documents.find((d) => d.path === f.source.path)?.revision;
+        return !!r && !!r.revision && !!now && r.revision !== now;
+      },
       rejectedOf: (keys) => allFacts.filter((f) => reviewByKey.get(factKey(f)) === "rejected" && keys.includes(subjectKey(f.subject))),
       review: async (fs, state) => {
         const revisionOf = new Map((model?.documents ?? []).map((d) => [d.path, d.revision]));
@@ -318,7 +323,7 @@ export function SpecModelTab({
         }
       },
     }),
-    [reviewByKey, allFacts, model, token, projectId],
+    [reviewByKey, reviews, allFacts, model, token, projectId],
   );
   const writes = useMemo(() => savedWrites(saved), [saved]);
   const entities = useMemo(() => entitiesOf(facts, glossary), [facts, glossary]);
@@ -393,6 +398,7 @@ export function SpecModelTab({
         <span className="hint">More:</span>
         <ViewChip id="needs" view={view} setView={setView} label="Needs" count={facts.filter((f) => f.kind === "problem" || f.kind === "outcome" || f.kind === "idea").length} />
         <ViewChip id="hypotheses" view={view} setView={setView} label="Hypotheses" count={facts.filter((f) => f.kind === "benefit").length} />
+        <ViewChip id="rules" view={view} setView={setView} label="Rules" count={facts.filter((f) => f.kind === "constraint" && reviewByKey.get(factKey(f)) === "accepted").length} />
         <ViewChip id="behaviour" view={view} setView={setView} label="Behaviour" count={facts.filter((f) => f.kind === "action").length} />
         <ViewChip id="priorities" view={view} setView={setView} label="Priorities" count={0} />
         <ViewChip id="glossary" view={view} setView={setView} label="Glossary" count={glossary.length} />
@@ -484,6 +490,11 @@ ${content}
               : undefined
           }
           onPropose={(content) => api.proposeSpecModelFile(token, projectId, "docs/discovery.md", content, "the need as accepted in Studio")}
+          requirements={
+            requirements && "items" in requirements
+              ? requirements.items.filter((r) => ["fr", "usecase", "flow"].includes((r.kind ?? "").toLowerCase()))
+              : []
+          }
         />
       )}
       {model && view === "hypotheses" && (
@@ -493,6 +504,9 @@ ${content}
           onEvidence={recordEvidence}
           onOpenFile={onOpenFile}
         />
+      )}
+      {model && view === "rules" && (
+        <RulesScreen facts={facts} accepted={(f) => reviewByKey.get(factKey(f)) === "accepted"} onOpenFile={onOpenFile} />
       )}
       {model && view === "behaviour" && (
         <BehaviourScreen

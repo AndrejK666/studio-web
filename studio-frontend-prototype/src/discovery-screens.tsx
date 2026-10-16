@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import type { SpecModelWrite } from "./api";
 import { obligations, type Obligation } from "./behaviour";
+import { conflicts, describe as sayRule, readRule } from "./rule-checks";
 import { FactRow } from "./domain-model-screens";
 import {
   CHECK_METHOD_LABEL,
@@ -15,10 +16,11 @@ import {
   needGaps,
   needsByRole,
   needDocument,
+  unlinkedRequirements,
   type CheckMethod,
   type EvidenceState,
 } from "./need-view";
-import type { SpecModelFact } from "./spec-model";
+import type { SpecModelFact, SpecRequirement } from "./spec-model";
 
 type OpenFile = ((path: string) => void) | undefined;
 
@@ -28,6 +30,7 @@ export function NeedsScreen({
   accepted,
   onAddMaterial,
   onPropose,
+  requirements,
 }: {
   facts: SpecModelFact[];
   onOpenFile: OpenFile;
@@ -37,9 +40,17 @@ export function NeedsScreen({
   onAddMaterial?: (title: string, content: string) => Promise<void>;
   /** Propose the accepted need as docs/discovery.md. */
   onPropose?: (content: string) => Promise<SpecModelWrite>;
+  /** The functional and user requirements, to say which trace to no need. */
+  requirements?: SpecRequirement[];
 }) {
   const roles = needsByRole(facts);
-  const gaps = needGaps(facts);
+  const unlinked = unlinkedRequirements(requirements ?? [], facts);
+  const gaps = [
+    ...needGaps(facts),
+    ...(unlinked.length
+      ? [{ kind: "idea-without-problem" as const, title: `${unlinked.length} requirement${unlinked.length === 1 ? "" : "s"} name no problem or goal of the need — ${unlinked.slice(0, 3).map((r) => r.id).join(", ")}${unlinked.length > 3 ? "…" : ""}` }]
+      : []),
+  ];
   const any = roles.some((r) => r.problems.length + r.outcomes.length + r.ideas.length + r.scenarios.length > 0);
   const [adding, setAdding] = useState<{ title: string; content: string } | null>(null);
   const [state, setState] = useState<{ busy: boolean; error?: string; done?: SpecModelWrite; added?: string }>({ busy: false });
@@ -369,6 +380,99 @@ export function BehaviourScreen({
         <section className="card nd-role">
           <div className="dm-h">Excluded</div>
           {excluded.map(row)}
+        </section>
+      )}
+    </div>
+  );
+}
+
+/** The rules a member confirmed, read into a precise form, and checked
+ *  against each other: a conflict with the two passages that witness it,
+ *  none among what was read, incomplete, or a rule this check has no form
+ *  for. Unconfirmed rules give no verdict. */
+export function RulesScreen({
+  facts,
+  accepted,
+  onOpenFile,
+}: {
+  facts: SpecModelFact[];
+  accepted: (f: SpecModelFact) => boolean;
+  onOpenFile: OpenFile;
+}) {
+  const all = facts.filter((f) => f.kind === "constraint" && f.status === "active");
+  const confirmed = all.filter(accepted).map(readRule);
+  const pending = all.length - confirmed.length;
+  const found = conflicts(confirmed);
+  const read = confirmed.filter((r) => r.outcome === "read");
+  const incomplete = confirmed.filter((r) => r.outcome === "incomplete");
+  const unsupported = confirmed.filter((r) => r.outcome === "unsupported");
+  return (
+    <div className="nd">
+      <p className="dm-howto">
+        <b>Check the rules against each other.</b> Only rules a member accepted are checked. Each is read into a precise
+        form — who may do what, a number that bounds something — shown so you can say it is what the rule means. Two that
+        cannot both hold are a conflict, shown with both passages.
+      </p>
+      <div className="dm-filters">
+        <span className={`chip${found.length ? " nd-ev-contradicts" : ""}`}>
+          Conflicts <span className="chip-n">{found.length}</span>
+        </span>
+        <span className="chip">
+          Read <span className="chip-n">{read.length}</span>
+        </span>
+        <span className="chip">
+          Incomplete <span className="chip-n">{incomplete.length}</span>
+        </span>
+        <span className="chip">
+          Unsupported <span className="chip-n">{unsupported.length}</span>
+        </span>
+        <span className="chip">
+          Not accepted yet <span className="chip-n">{pending}</span>
+        </span>
+      </div>
+      {confirmed.length === 0 && (
+        <div className="empty">
+          No rule is accepted yet. Accept the constraints you agree with on the model map&apos;s cards; only those are
+          checked, so an unconfirmed reading never becomes a verdict.
+        </div>
+      )}
+      {found.length > 0 && (
+        <section className="card nd-role">
+          <div className="dm-h">Cannot both hold</div>
+          {found.map((x, i) => (
+            <article key={i} className="nd-ob">
+              <b>{x.witness}</b>
+              <FactRow fact={x.a.fact} onOpenFile={onOpenFile} />
+              <FactRow fact={x.b.fact} onOpenFile={onOpenFile} />
+            </article>
+          ))}
+        </section>
+      )}
+      {confirmed.length > 0 && found.length === 0 && (
+        <div className="hint">No conflict among the {read.length} rules read. Rules it could not read are listed below.</div>
+      )}
+      {read.length > 0 && (
+        <section className="card nd-role">
+          <div className="dm-h">Read as</div>
+          {read.map((r, i) => (
+            <div key={i} className="nd-ob">
+              <span>
+                Studio reads it as: <b>{sayRule(r.reading!)}</b>
+              </span>
+              <FactRow fact={r.fact} onOpenFile={onOpenFile} />
+            </div>
+          ))}
+        </section>
+      )}
+      {incomplete.length + unsupported.length > 0 && (
+        <section className="card nd-role">
+          <div className="dm-h">Not checked</div>
+          {[...incomplete, ...unsupported].map((r, i) => (
+            <div key={i} className="nd-ob">
+              <span className="hint">{r.outcome === "incomplete" ? `Incomplete: it ${r.why}.` : `Unsupported: ${r.why}.`}</span>
+              <FactRow fact={r.fact} onOpenFile={onOpenFile} />
+            </div>
+          ))}
         </section>
       )}
     </div>

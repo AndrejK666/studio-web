@@ -162,3 +162,17 @@ export function needDocument(accepted: SpecModelFact[]): string {
   }
   return out.join("\n");
 }
+
+/** Functional requirements that name no problem or goal the materials give,
+ *  once the need is described at all: functionality nobody said why for.
+ *  `requirements` are the identifiers the documents define, with their
+ *  text. Nothing is asked of a project whose need is not described. */
+export function unlinkedRequirements<R extends { id: string; title: string | null; text: string }>(requirements: R[], facts: SpecModelFact[]): R[] {
+  const needs = facts.filter((f) => (f.kind === "problem" || f.kind === "outcome") && live(f));
+  if (needs.length === 0) return [];
+  const keys = needs.map((f) => subjectKey(f.subject)).filter((k) => k.length > 3);
+  return requirements.filter((r) => {
+    const said = ` ${subjectKey(`${r.title ?? ""} ${r.text}`)} `;
+    return !keys.some((k) => said.includes(` ${k} `));
+  });
+}

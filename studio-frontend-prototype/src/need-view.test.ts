@@ -64,3 +64,15 @@ describe("hypotheses", () => {
     expect(proposeMethod("approvals will be more accurate")).toBe("benefit");
   });
 });
+
+describe("requirements and the need", () => {
+  it("names a requirement no problem or goal explains, once the need is described", async () => {
+    const { unlinkedRequirements } = await import("./need-view");
+    const reqs = [
+      { id: "cpt-a", title: "Search by number", text: "The operator finds a slow request search fast." },
+      { id: "cpt-b", title: "Dark mode", text: "The portal has a dark theme." },
+    ];
+    expect(unlinkedRequirements(reqs, [f("problem", "slow request search", "operator")]).map((r) => r.id)).toEqual(["cpt-b"]);
+    expect(unlinkedRequirements(reqs, [])).toEqual([]);
+  });
+});

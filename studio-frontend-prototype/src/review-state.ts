@@ -85,6 +85,9 @@ export function reviewCounts(facts: SpecModelFact[], index: Map<string, ReviewSt
  *  nobody may review (a read-only view). */
 export interface FactReview {
   stateOf: (f: SpecModelFact) => ReviewState | undefined;
+  /** Reviewed while its document was at another revision: the words are the
+   *  same, the text around them may not be — worth a second look. */
+  reviewedEarlier?: (f: SpecModelFact) => boolean;
   rejectedOf: (keys: string[]) => SpecModelFact[];
   review: (facts: SpecModelFact[], state: ReviewState | "proposed") => Promise<void>;
 }

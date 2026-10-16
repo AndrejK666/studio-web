@@ -116,6 +116,11 @@ export function FactRow({ fact, onOpenFile }: { fact: SpecModelFact; onOpenFile?
           </span>
         )}
         {fact.provisional && <span className="sm-status dm-provisional">{PROVISIONAL_NOTE}</span>}
+        {state && review?.reviewedEarlier?.(fact) && (
+          <span className="sm-status" title="Its document changed since: the words are the same, the text around them may not be">
+            {state} at an earlier revision
+          </span>
+        )}
       </div>
       {fact.value && fact.text && <div className="hint">{fact.text}</div>}
       <SideLink side={fact.source} onOpenFile={onOpenFile} />
