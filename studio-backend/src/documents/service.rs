@@ -1962,11 +1962,38 @@ impl DocumentsService {
             .into_iter()
             .filter_map(|(path, text)| text.map(|t| (path, t)))
             .collect();
+        let mut documents: Vec<super::spec_model::SourceText> = documents;
+        documents.extend(self.studio_sources(workspace_id, project_id).await?);
         Ok(super::spec_model::Sources {
             documents,
             tree,
             files,
         })
+    }
+
+    /// The documents the project keeps in Studio rather than in its
+    /// repository — pasted materials, a PRD written here — as the model reads
+    /// them: under `studio:` and their id, so a passage opens the document
+    /// and is never mistaken for a repository file.
+    async fn studio_sources(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::spec_model::SourceText>> {
+        let (docs, _) = self
+            .read_documents(workspace_id, Some(project_id), 0, Some(STUDIO_SOURCES_MAX))
+            .await?;
+        Ok(docs
+            .into_iter()
+            .filter(|d| d.project_id == Some(project_id) && !d.content.trim().is_empty())
+            .map(|d| super::spec_model::SourceText {
+                path: studio_source_path(d.id),
+                text: d.content,
+                doc_type: Some(d.type_key),
+                node: String::new(),
+                binding: None,
+            })
+            .collect())
     }
 
     // ── application parts (#786) ─────────────────────────────────────────────
@@ -2468,11 +2495,93 @@ impl DocumentsService {
             term_key: term_key.to_string(),
             name,
             alias_of,
+            distinct_from: "[]".to_owned(),
             decided_by: ctx.subject_id(),
             decided_at: OffsetDateTime::now_utc(),
         };
         self.repo.put_spec_term(model.clone()).await?;
         Ok(model)
+    }
+
+    /// Every accept or reject members gave on the facts the model read.
+    pub async fn spec_reviews(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::entity::spec_review::Model>> {
+        self.repo.list_spec_reviews(workspace_id, project_id).await
+    }
+
+    /// Record a member's review of each fact: `accepted`, `rejected`, or
+    /// `proposed` to withdraw an earlier one. One call for a whole selection.
+    pub async fn put_spec_reviews(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        items: Vec<(String, String, String, String, Option<String>)>,
+    ) -> Result<Vec<super::entity::spec_review::Model>> {
+        let mut saved = Vec::new();
+        for (fact_key, state, path, revision, note) in items {
+            if state == "proposed" {
+                self.repo
+                    .delete_spec_review(workspace_id, project_id, &fact_key)
+                    .await?;
+                continue;
+            }
+            let model = super::entity::spec_review::Model {
+                id: super::repo::spec_review_id(project_id, &fact_key),
+                tenant_id: workspace_id,
+                project_id,
+                fact_key,
+                state,
+                path,
+                revision,
+                note,
+                decided_by: ctx.subject_id(),
+                decided_at: OffsetDateTime::now_utc(),
+            };
+            self.repo.put_spec_review(model.clone()).await?;
+            saved.push(model);
+        }
+        Ok(saved)
+    }
+
+    /// Record that two glossary entries are different things, on both: the
+    /// pair is not offered as one thing again. Each entry's name and alias
+    /// decision stay as they were.
+    pub async fn put_spec_terms_distinct(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        a: &str,
+        b: &str,
+    ) -> Result<()> {
+        let terms = self.spec_terms(workspace_id, project_id).await?;
+        for (key, other) in [(a, b), (b, a)] {
+            let mut apart = terms
+                .iter()
+                .find(|t| t.term_key == key)
+                .map(|t| distinct_keys(&t.distinct_from))
+                .unwrap_or_default();
+            if !apart.iter().any(|k| k == other) {
+                apart.push(other.to_owned());
+            }
+            let model = super::entity::spec_term::Model {
+                id: super::repo::spec_term_id(project_id, key),
+                tenant_id: workspace_id,
+                project_id,
+                term_key: key.to_owned(),
+                name: None,
+                alias_of: None,
+                distinct_from: serde_json::to_string(&apart)?,
+                decided_by: ctx.subject_id(),
+                decided_at: OffsetDateTime::now_utc(),
+            };
+            self.repo.put_spec_term_distinct(model).await?;
+        }
+        Ok(())
     }
 
     /// Every member decision on the project's spec-model findings.
@@ -4637,4 +4746,19 @@ impl crate::documents::port::SpecNeeds for DocumentsService {
     ) -> anyhow::Result<(Vec<DeclaredCapability>, Vec<DeclaredRequirement>)> {
         self.declared_capabilities(workspace_id, project_id).await
     }
+}
+
+/// The keys stored in a glossary entry's `distinct_from`; nothing for a
+/// value that is not a JSON array of strings.
+pub fn distinct_keys(json: &str) -> Vec<String> {
+    serde_json::from_str(json).unwrap_or_default()
+}
+
+/// The most Studio-held documents one model build reads for a project.
+const STUDIO_SOURCES_MAX: u64 = 200;
+
+/// Where the model says a Studio-held document's passage is: `studio:` and
+/// the document's id, never a repository path.
+pub fn studio_source_path(id: Uuid) -> String {
+    format!("studio:{id}")
 }

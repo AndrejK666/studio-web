@@ -24,6 +24,10 @@ import { ModelMapView, Prose, RequirementsView, ResolveView, SideLink } from "./
 import { gearRefs } from "./entity-gears";
 import type { GearDraft } from "./gear-from-entity";
 import { GlossaryScreen } from "./glossary-screen";
+import { PrioritiesScreen } from "./priorities-screen";
+import { HypothesesScreen, NeedsScreen } from "./discovery-screens";
+import type { EvidenceState } from "./need-view";
+import { EVIDENCE_PREFIX, evidenceIndex, FactReviewContext, factKey, reviewIndex, withoutRejected, type FactReview, type SpecModelReview } from "./review-state";
 import { overlaySaved, pruneSaved, savedWrites, withSaved, type SavedEdit } from "./saved-entities";
 import { useGearCatalogue } from "./product-configurator-view";
 import {
@@ -35,11 +39,13 @@ import {
   orderRelated,
   RELATION_LABEL,
   ruleLabel,
+  subjectKey,
   type GlossaryEntry,
   type ProductFinding,
   type RelatedRequirements,
   type RequirementTraces,
   type SpecModel,
+  type SpecModelFact,
   type SpecModelFinding,
   type SpecRequirements,
   type WorkLinks,
@@ -48,7 +54,7 @@ import {
 } from "./spec-model";
 
 /** The three questions first; the rest stays a click away under More. */
-type View = "resolve" | "map" | "reqs" | "glossary" | "work" | "product" | "elsewhere" | "coverage";
+type View = "resolve" | "map" | "reqs" | "needs" | "hypotheses" | "priorities" | "glossary" | "work" | "product" | "elsewhere" | "coverage";
 
 /** The product findings as read, or why they could not be. */
 type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
@@ -62,11 +68,14 @@ function message(e: unknown): string {
 export function SpecModelTab({
   token,
   projectId,
+  workspaceId,
   onOpenFile,
   onCreateGear,
 }: {
   token: string;
   projectId: string;
+  /** The project's workspace: where a pasted material is kept. */
+  workspaceId?: string;
   /** Open a document in the project's IDE session. */
   onOpenFile?: (path: string) => void;
   /** Open the project's Product tab with a gear for an entity drafted, ready to scaffold. */
@@ -88,9 +97,17 @@ export function SpecModelTab({
   /** Entities saved this visit, laid over the model until a build reads them,
    *  so the map, the cards and the queue all show a save at once. */
   const [saved, setSaved] = useState<SavedEdit[]>([]);
+  /** Members' accept or reject on each fact: rejected readings leave the
+   *  model, accepted ones are the project's reading. */
+  const [reviews, setReviews] = useState<SpecModelReview[]>([]);
 
   const load = useCallback(async () => {
     try {
+      // A backend from before fact reviews answers 404: nothing is reviewed.
+      void api
+        .specModelReviews(token, projectId)
+        .then((r) => setReviews(r.items))
+        .catch(() => setReviews([]));
       const [m, f, g] = await Promise.all([
         api.specModel(token, projectId),
         api.specModelFindings(token, projectId),
@@ -260,7 +277,36 @@ export function SpecModelTab({
     return write;
   };
 
-  const facts = useMemo(() => overlaySaved(model?.facts ?? [], saved), [model, saved]);
+  const reviewByKey = useMemo(() => reviewIndex(reviews), [reviews]);
+  const evidence = useMemo(() => evidenceIndex(reviews), [reviews]);
+  const recordEvidence = async (f: SpecModelFact, state: EvidenceState) => {
+    const revision = model?.documents.find((d) => d.path === f.source.path)?.revision ?? "";
+    try {
+      await api.reviewSpecModelFacts(token, projectId, [{ fact_key: `${EVIDENCE_PREFIX}${factKey(f)}`, state: state === "unchecked" ? "proposed" : state, path: f.source.path, revision }]);
+      setReviews((await api.specModelReviews(token, projectId)).items);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+  const allFacts = useMemo(() => overlaySaved(model?.facts ?? [], saved), [model, saved]);
+  const facts = useMemo(() => withoutRejected(allFacts, reviewByKey), [allFacts, reviewByKey]);
+  const factReview = useMemo<FactReview>(
+    () => ({
+      stateOf: (f) => reviewByKey.get(factKey(f)),
+      rejectedOf: (keys) => allFacts.filter((f) => reviewByKey.get(factKey(f)) === "rejected" && keys.includes(subjectKey(f.subject))),
+      review: async (fs, state) => {
+        const revisionOf = new Map((model?.documents ?? []).map((d) => [d.path, d.revision]));
+        const items = fs.map((f) => ({ fact_key: factKey(f), state, path: f.source.path, revision: revisionOf.get(f.source.path) ?? "" }));
+        try {
+          await api.reviewSpecModelFacts(token, projectId, items);
+          setReviews((await api.specModelReviews(token, projectId)).items);
+        } catch (e) {
+          setError(message(e));
+        }
+      },
+    }),
+    [reviewByKey, allFacts, model, token, projectId],
+  );
   const writes = useMemo(() => savedWrites(saved), [saved]);
   const entities = useMemo(() => entitiesOf(facts, glossary), [facts, glossary]);
   // The lines a fact names are the repository's lines only for a document
@@ -279,6 +325,7 @@ export function SpecModelTab({
   const line = model ? buildLine(model.build) : "";
 
   return (
+    <FactReviewContext.Provider value={factReview}>
     <>
       <h1>Domain model</h1>
       <p className="subtitle">
@@ -331,6 +378,9 @@ export function SpecModelTab({
 
       <div className="dm-more" role="tablist" aria-label="More">
         <span className="hint">More:</span>
+        <ViewChip id="needs" view={view} setView={setView} label="Needs" count={facts.filter((f) => f.kind === "problem" || f.kind === "outcome" || f.kind === "idea").length} />
+        <ViewChip id="hypotheses" view={view} setView={setView} label="Hypotheses" count={facts.filter((f) => f.kind === "benefit").length} />
+        <ViewChip id="priorities" view={view} setView={setView} label="Priorities" count={0} />
         <ViewChip id="glossary" view={view} setView={setView} label="Glossary" count={glossary.length} />
         <ViewChip id="work" view={view} setView={setView} label="Work" count={work && "items" in work ? work.total : 0} />
         <ViewChip
@@ -392,6 +442,41 @@ export function SpecModelTab({
       {view === "reqs" && (
         <RequirementsView read={requirements} traces={traces} work={work} selected={traced} onSelect={setTraced} onOpenFile={onOpenFile} />
       )}
+      {model && view === "needs" && (
+        <NeedsScreen
+          facts={facts}
+          onOpenFile={onOpenFile}
+          accepted={(f) => reviewByKey.get(factKey(f)) === "accepted"}
+          onAddMaterial={
+            workspaceId
+              ? async (title, content) => {
+                  const doc = await api.createProjectDocument(token, workspaceId, projectId, { type_key: "material", title, content });
+                  // Read at once, on the key of whoever added it: no separate start.
+                  await startBuild(`studio:${doc.id}`);
+                }
+              : undefined
+          }
+          onPropose={(content) => api.proposeSpecModelFile(token, projectId, "docs/discovery.md", content, "the need as accepted in Studio")}
+        />
+      )}
+      {model && view === "hypotheses" && (
+        <HypothesesScreen
+          facts={facts}
+          stateOf={(f) => (evidence.get(factKey(f)) as EvidenceState | undefined) ?? "unchecked"}
+          onEvidence={recordEvidence}
+          onOpenFile={onOpenFile}
+        />
+      )}
+      {view === "priorities" && (
+        <PrioritiesScreen
+          read={requirements}
+          projectId={projectId}
+          onTrace={(id) => {
+            setTraced(id);
+            setView("reqs");
+          }}
+        />
+      )}
       {view === "elsewhere" && <Elsewhere read={related} onOpenFile={onOpenFile} />}
       {model && view === "glossary" && (
         <GlossaryScreen
@@ -400,6 +485,7 @@ export function SpecModelTab({
           onDecide={decideTerm}
           onProposeRename={(from, to) => api.proposeGlossaryRename(token, projectId, from, to)}
           onProposeSentence={(sentence) => api.proposeSpecModelSentence(token, projectId, sentence)}
+          onDistinct={(a, b) => api.decideGlossaryDistinct(token, projectId, a, b).catch((e: unknown) => setError(message(e)))}
           revisions={revisions}
         />
       )}
@@ -409,6 +495,7 @@ export function SpecModelTab({
         <Coverage model={model} busy={running || starting} onRebuild={(path) => void startBuild(path)} />
       )}
     </>
+    </FactReviewContext.Provider>
   );
 }
 

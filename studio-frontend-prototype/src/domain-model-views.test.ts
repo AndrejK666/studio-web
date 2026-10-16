@@ -74,7 +74,19 @@ describe("to resolve", () => {
       ["f:f2", false],
       ["f:f1", true],
     ]);
-    expect(readiness(q, { cited: 3, reasoned: 1 }, 5)).toEqual({ total: 5, cited: 3, reasoned: 1, open: 1, ready: false });
+    expect(readiness(q, { cited: 3, reasoned: 1 }, 5)).toEqual({ total: 5, cited: 3, reasoned: 1, open: 1, blocking: 1, ready: false });
+  });
+
+  it("lets assumptions, unsourced requirements and unconfirmed concerns wait without stopping a build", () => {
+    const q = resolveQueue(
+      [finding("c1", { rule: "contradiction.value" })],
+      [req("cpt-a", { basis: "stated", kind: "fr" }), req("cpt-b", { basis: "assumption" })],
+    );
+    expect(q[0]).toMatchObject({ concern: true, tone: "warn" });
+    expect(readiness(q, {}, 2)).toMatchObject({ open: 3, blocking: 0, ready: true });
+    const confirmed = resolveQueue([finding("c1", { rule: "contradiction.value", decision: "confirmed" })], []);
+    expect(readiness(confirmed, {}, 0)).toMatchObject({ blocking: 1, ready: false });
+    expect(readiness(resolveQueue([], [req("cpt-q", { basis: "open_question" })]), {}, 1).ready).toBe(false);
   });
 
   it("reads a dangling reference as what is missing", () => {
@@ -135,7 +147,7 @@ describe("requirements", () => {
       ["Rests on 1 identifier", true],
       ["Used by 1 document", true],
       ["No issue or PR names it", false],
-      ["Not found in the code", false],
+      ["No code names it", false],
       ["No test names it", false],
     ]);
     expect(traceChain(r, null, [])[4].label).toBe("The code is not read yet");

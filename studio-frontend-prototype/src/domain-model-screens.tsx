@@ -1,7 +1,7 @@
 /* The Domain model tab's three views (domain-model-views.ts): what to resolve
  * before building, the model as a map of connected entities, and each
  * requirement followed from its passage to its code. */
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 
 import type { SpecModelEntityEdit, SpecModelSentence, SpecModelWrite } from "./api";
 import {
@@ -32,6 +32,7 @@ import {
   type ResolveItem,
   type ResolveType,
 } from "./domain-model-views";
+import { FactReviewContext } from "./review-state";
 import {
   classify,
   REQUIREMENT_TYPE_LABEL,
@@ -87,8 +88,25 @@ export function SideLink({ side, onOpenFile }: { side: SpecModelSide; onOpenFile
 
 export function FactRow({ fact, onOpenFile }: { fact: SpecModelFact; onOpenFile?: (path: string) => void }) {
   const inactive = fact.status !== "active";
+  const review = useContext(FactReviewContext);
+  const state = review?.stateOf(fact);
   return (
-    <div className={inactive ? "sm-fact sm-inactive" : "sm-fact"}>
+    <div className={`sm-fact${inactive ? " sm-inactive" : ""}${state ? ` sm-${state}` : ""}`}>
+      {review && !fact.provisional && (
+        <span className="sm-review" role="group" aria-label="Review this reading">
+          <button
+            type="button"
+            aria-pressed={state === "accepted"}
+            title={state === "accepted" ? "Accepted — click to put it back as proposed" : "Accept this reading"}
+            onClick={() => void review.review([fact], state === "accepted" ? "proposed" : "accepted")}
+          >
+            ✓
+          </button>
+          <button type="button" title="Reject this reading: it leaves the model and is not proposed again" onClick={() => void review.review([fact], "rejected")}>
+            ✗
+          </button>
+        </span>
+      )}
       <div>
         {fact.aspect && <span className="sm-aspect">{fact.aspect}: </span>}
         {fact.value ? <strong>{fact.value}</strong> : fact.text}
@@ -166,7 +184,7 @@ export function ResolveView({
       </p>
       <div className="dm-ready">
         <div className="dm-tile dm-verdict">
-          <b>{ready.ready ? "Ready to build" : "Not ready to build yet"}</b>
+          <b>{ready.ready ? "Nothing stops a build" : `${ready.blocking} thing${ready.blocking === 1 ? "" : "s"} stop a build`}</b>
           {ready.total > 0 && (
             <div className="dm-meter" title="Requirements by what they rest on">
               <i style={{ width: pct(ready.cited), background: "var(--success)" }} />
@@ -174,8 +192,10 @@ export function ResolveView({
             </div>
           )}
           <span>
-            {ready.total > 0 ? `${ready.cited} of ${ready.total} requirements cite a source, ${ready.reasoned} give a reason. ` : ""}
-            {ready.open === 0 ? "Nothing waits for a decision." : `${ready.open} thing${ready.open === 1 ? "" : "s"} wait for a decision.`}
+            {ready.total > 0 ? `${ready.cited} of ${ready.total} requirements cite a source and ${ready.reasoned} give a reason — a citation says where it comes from, not that it is proven. ` : ""}
+            {ready.open === ready.blocking
+              ? ""
+              : `${ready.open - ready.blocking} more to look at: assumptions waiting for a check, possible conflicts, requirements with no source.`}
           </span>
         </div>
         <Tile type="finding" n={count("finding")} label="problems in the documents" tone="bad" only={only} setOnly={setOnly} />
@@ -283,7 +303,7 @@ function QueueItem({
   return (
     <article className={`card dm-item${item.done ? " dm-done" : ""}`} data-item={item.key}>
       <header>
-        <span className={`dm-pill dm-${item.tone}`}>{RESOLVE_LABEL[item.type]}</span>
+        <span className={`dm-pill dm-${item.tone}`}>{item.concern ? "Possible conflict" : RESOLVE_LABEL[item.type]}</span>
         <b>
           <Prose text={item.title} />
         </b>
@@ -363,7 +383,7 @@ function QueueItem({
             <>
               {onOpenFile && (
                 <button type="button" className="primary" onClick={() => onOpenFile(r.defined_in.path)}>
-                  {item.type === "question" ? "Answer it in the document" : item.type === "assumption" ? "Confirm it in the document" : "Add its source"}
+                  {item.type === "question" ? "Answer it in the document" : item.type === "assumption" ? "Say how it is checked" : "Add its source"}
                 </button>
               )}
             </>
@@ -938,6 +958,10 @@ function EntityCard({
 }) {
   const definition = entity.facts.find((f) => f.kind === "entity");
   const [editing, setEditing] = useState(false);
+  const review = useContext(FactReviewContext);
+  const reviewable = entity.facts.filter((f) => !f.provisional);
+  const proposed = review ? reviewable.filter((f) => !review.stateOf(f)) : [];
+  const rejected = review ? review.rejectedOf(entity.keys) : [];
   if (editing && onSave)
     return <EntityEditor entity={entity} names={names} onSave={onSave} onDone={() => setEditing(false)} />;
   return (
@@ -953,7 +977,13 @@ function EntityCard({
         {saved && <SavedNote saved={saved} />}
         <div className="hint">
           {entity.facts.length} facts from {entity.documents} document{entity.documents === 1 ? "" : "s"}
+          {review && ` · ${reviewable.length - proposed.length} accepted, ${proposed.length} proposed`}
         </div>
+        {review && proposed.length > 0 && (
+          <button type="button" className="ghost dm-accept-all" onClick={() => void review.review(proposed, "accepted")} title="Accept every reading of it still proposed, in one action">
+            Accept all {proposed.length} proposed
+          </button>
+        )}
       </div>
       {definition && (
         <blockquote className="sm-quote">
@@ -1004,6 +1034,25 @@ function EntityCard({
           ))}
         </section>
       ))}
+      {review && rejected.length > 0 && (
+        <details className="sm-kind dm-rejected">
+          <summary>
+            {rejected.length} rejected reading{rejected.length === 1 ? "" : "s"}
+          </summary>
+          {rejected.map((f, i) => (
+            <div key={i} className="sm-fact sm-rejected">
+              <div>
+                {f.aspect && <span className="sm-aspect">{f.aspect}: </span>}
+                {f.value || f.text}{" "}
+                <button type="button" className="dm-link" onClick={() => void review.review([f], "proposed")}>
+                  put back
+                </button>
+              </div>
+              <SideLink side={f.source} onOpenFile={onOpenFile} />
+            </div>
+          ))}
+        </details>
+      )}
     </>
   );
 }
@@ -1132,6 +1181,8 @@ const KIND_TITLE: Record<string, string> = {
   lifecycle: "How it changes",
   requirement: "Asked of it",
   decision: "Decided",
+  role: "Who uses the product",
+  action: "What is done to it",
 };
 
 // ── 3 · Requirements ────────────────────────────────────────────────────────
@@ -1188,7 +1239,7 @@ export function RequirementsView({
     <>
     <p className="dm-howto">
       <b>Follow a requirement to the code.</b> Pick one: the chain shows the passage that states it, what it rests
-      on, the work that names it and where the code and tests carry it. An orange step is where it stops.
+      on, the work that names it and where the code and tests name it — a name found, not proof it is covered. An orange step is where it stops.
     </p>
     {problems.length > 0 && (
       <section className="card dm-rproblems" aria-label="Problems in the requirements">
@@ -1322,7 +1373,7 @@ export function RequirementsView({
             <div className="dm-h">Trace a requirement</div>
             <p className="hint" style={{ margin: 0 }}>
               Pick a requirement to follow it from the passage that states it, through the documents that use it and the work that names
-              it, to the code and tests that carry it.
+              it, to the code and tests that name it.
             </p>
           </>
         )}

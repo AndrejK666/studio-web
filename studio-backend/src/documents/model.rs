@@ -1209,6 +1209,17 @@ pub fn builtin_types() -> Vec<DocumentType> {
             Rules::default(),
         ),
         builtin(
+            "material",
+            "Source material",
+            "What the need is read from: an interview, a customer request, a report, pasted as it is.",
+            include_str!("templates/material.md"),
+            Vec::new(),
+            Rules {
+                forbid_placeholders: false,
+                ..Rules::default()
+            },
+        ),
+        builtin(
             "feature",
             "Feature Spec",
             "One shippable feature: behaviour, acceptance, and edges.",

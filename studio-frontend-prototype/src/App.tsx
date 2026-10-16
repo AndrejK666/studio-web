@@ -5640,6 +5640,7 @@ function ProjectScreen({
           <SpecModelTab
             token={token}
             projectId={proj.id}
+            workspaceId={workspace.id}
             onOpenFile={(path) => void studio?.openFile(proj, path)}
             onCreateGear={(draft) => {
               setPendingGear(draft);

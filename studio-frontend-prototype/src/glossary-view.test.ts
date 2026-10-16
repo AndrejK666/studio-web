@@ -80,6 +80,13 @@ describe("renameOffer", () => {
   });
 });
 
+describe("two things a member kept apart", () => {
+  it("are not offered as one thing again", () => {
+    const pairs = similarPairs([entry("membership", 9, { distinct_from: ["member"] }), entry("Member", 4)]);
+    expect(pairs).toEqual([]);
+  });
+});
+
 describe("a sentence that tells two words apart", () => {
   const pair = (a: string, b: string) => similarPairs([entry(a, 9), entry(b, 4)])[0];
 

@@ -2226,6 +2226,15 @@ ul.rows li.sm-term { flex-direction: column; align-items: stretch; gap: 4px; }
 .sm-term-rename input { flex: 1 1 12rem; min-width: 0; }
 .sm-kind h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); margin: 1rem 0 0.25rem; }
 .sm-fact { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.sm-fact { position: relative; }
+.sm-review { float: right; display: inline-flex; gap: 2px; margin-left: 6px; }
+.sm-review button { padding: 0 6px; font-size: 12px; line-height: 18px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); color: var(--muted-foreground); cursor: pointer; }
+.sm-review button[aria-pressed="true"] { background: var(--success); border-color: var(--success); color: var(--primary-foreground); }
+.sm-fact.sm-accepted { border-left: 3px solid var(--success); padding-left: 6px; }
+.sm-fact.sm-rejected { opacity: .6; text-decoration: line-through; }
+.sm-fact.sm-rejected .dm-link { text-decoration: none; }
+.dm-accept-all { margin-top: 4px; }
+.dm-rejected summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; }
 .sm-inactive { opacity: 0.6; }
 .sm-aspect { color: var(--muted-foreground); }
 .sm-status { margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: var(--radius-full); background: var(--muted); }
@@ -2616,3 +2625,39 @@ div.dm-block { padding-left: 0; }
 .dm-sentence { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--studio-ai-violet); background: var(--accent); border-radius: 4px; font-size: 13px; }
 .sm-status.dm-provisional { color: var(--success, #16a34a); margin-left: 6px; }
 .dm-saved { font-size: 12.5px; color: var(--success, #16a34a); margin-top: 4px; }
+
+/* Priorities (priorities-screen.tsx): ICE per requirement, its origin on every value. */
+.pr { display: flex; flex-direction: column; gap: 10px; }
+.pr-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px; }
+.pr-add input[type="search"] { flex: 1 1 320px; }
+.pr-matches { flex-basis: 100%; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.pr-table { padding: 0; overflow-x: auto; }
+.pr-row { display: grid; grid-template-columns: 44px minmax(220px, 2fr) repeat(3, minmax(120px, 1fr)) 90px 36px; gap: 8px; align-items: start; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 13px; }
+.pr-head { border-top: 0; font-weight: 600; color: var(--muted-foreground); font-size: 12px; }
+.pr-row small { display: block; color: var(--muted-foreground); font-size: 11.5px; }
+.pr-cell input { width: 100%; }
+.pr-cell.pr-unknown small { color: var(--warning-foreground, var(--warning)); }
+.pr-cell.pr-estimated small { color: var(--studio-ai-violet); }
+.pr-rank { font-weight: 700; font-size: 16px; }
+.pr-score { font-weight: 700; font-size: 16px; }
+
+/* Needs and hypotheses (discovery-screens.tsx). */
+.nd { display: flex; flex-direction: column; gap: 10px; }
+.nd-role { padding: 12px; }
+.nd-subject { display: block; margin-top: 6px; font-size: 13px; }
+.nd-claim { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.nd-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.nd-hyp.nd-ev-supports { border-left: 3px solid var(--success); }
+.nd-hyp.nd-ev-contradicts { border-left: 3px solid var(--destructive, #dc2626); }
+.nd-hyp.nd-ev-insufficient { border-left: 3px solid var(--warning); }
+
+/* A workspace's projects under its row (projects.tsx NestedProjects): one
+   aligned row each under the Workspace column, the whole row a target. */
+.nested-projects { list-style: none; margin: 0; padding: 4px 0 6px 34px; display: flex; flex-direction: column; gap: 2px; }
+.nested-projects.nested-note { padding: 8px 0 8px 42px; color: var(--muted-foreground); font-size: 13px; }
+.nested-project { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 560px; padding: 7px 10px; border: 0; border-radius: var(--radius-md, 8px); background: transparent; color: var(--foreground); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.nested-project:hover, .nested-project:focus-visible { background: color-mix(in srgb, var(--accent) 70%, transparent); }
+.nested-glyph { flex: none; color: var(--muted-foreground); }
+.nested-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nested-open { flex: none; color: var(--muted-foreground); font-size: 12.5px; opacity: 0; transition: opacity .12s; }
+.nested-project:hover .nested-open, .nested-project:focus-visible .nested-open { opacity: 1; color: var(--primary); }

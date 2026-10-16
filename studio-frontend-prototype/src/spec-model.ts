@@ -21,7 +21,18 @@ export type FactKind =
   | "requirement"
   | "constraint"
   | "lifecycle"
-  | "decision";
+  | "decision"
+  | "role"
+  | "action"
+  | "problem"
+  | "outcome"
+  | "idea"
+  | "benefit"
+  | "scenario";
+
+/** Kinds that describe the need and its claims (need-view.ts), not a thing
+ *  the application keeps: they stay off the model map. */
+export const NEED_KINDS: ReadonlySet<string> = new Set(["problem", "outcome", "idea", "benefit", "scenario"]);
 
 export type FactStatus = "active" | "proposed" | "deferred" | "superseded" | "resolved" | "evidence";
 
@@ -307,6 +318,8 @@ export interface GlossaryEntry {
   aliases: GlossaryAlias[];
   facts: number;
   documents: number;
+  /** Entries a member said are different things from this one. */
+  distinct_from?: string[];
 }
 
 /** Each key the glossary knows, its entry's and its aliases', to the entry it
@@ -348,6 +361,7 @@ export function entitiesOf(facts: SpecModelFact[], glossary: GlossaryEntry[] = [
   const index = glossaryIndex(glossary);
   const byKey = new Map<string, { spellings: Map<string, number>; facts: SpecModelFact[] }>();
   for (const fact of facts) {
+    if (NEED_KINDS.has(fact.kind)) continue;
     const own = subjectKey(fact.subject);
     if (!own) continue;
     const key = index.get(own)?.key ?? own;
@@ -381,6 +395,8 @@ export const KIND_ORDER: FactKind[] = [
   "entity",
   "attribute",
   "relation",
+  "role",
+  "action",
   "constraint",
   "lifecycle",
   "requirement",

@@ -35,6 +35,10 @@ export interface ResolveItem {
   sides: SpecModelSide[];
   finding?: SpecModelFinding;
   requirement?: SpecRequirement;
+  /** A finding a model proposed from facts nobody confirmed (a judged
+   *  contradiction): a concern to look at, not a verdict, until a person
+   *  says it is a real problem. */
+  concern?: boolean;
   /** Decided already: shown after the rest, greyed. */
   done: boolean;
 }
@@ -57,8 +61,14 @@ export function findingTitle(f: SpecModelFinding): string {
   return m ? `${m[1]} is cited, but there is no ${m[2]}` : f.message;
 }
 
+/** A finding the model judged from extracted facts rather than one a rule
+ *  established on its own: the passages may disagree, a person decides. */
+export const isConcern = (f: Pick<SpecModelFinding, "rule">) => f.rule.startsWith("contradiction.");
+
 function findingHint(f: SpecModelFinding): string {
   if (f.rule.startsWith("reference.")) return "A document points at something that does not exist. Fix the reference, or write what it names.";
+  if (isConcern(f))
+    return "The model reads these passages as disagreeing. It is a proposed concern, not a verdict: say whether it is a real problem, then fix the document that is wrong.";
   return "The documents cannot all be right here. Decide which one is, and fix the others.";
 }
 
@@ -69,10 +79,12 @@ export function resolveQueue(findings: SpecModelFinding[], requirements: SpecReq
   const out: ResolveItem[] = [];
   const severity = (f: SpecModelFinding) => (f.severity === "high" ? 0 : f.severity === "medium" ? 1 : 2);
   for (const f of [...findings].sort((a, b) => severity(a) - severity(b))) {
+    const concern = isConcern(f);
     out.push({
       key: `f:${f.fingerprint}`,
       type: "finding",
-      tone: f.severity === "low" ? "warn" : "bad",
+      tone: f.severity === "low" || (concern && f.decision !== "confirmed") ? "warn" : "bad",
+      concern,
       title: findingTitle(f),
       hint: findingHint(f),
       sides: f.sides,
@@ -99,7 +111,7 @@ export function resolveQueue(findings: SpecModelFinding[], requirements: SpecReq
       type: "assumption",
       tone: "warn",
       title: r.title ?? r.id,
-      hint: `Rests on an assumption${because(r)}. Confirm it, or replace it with a source.`,
+      hint: `Rests on an assumption${because(r)}. It may wait for a check; say how it will be checked, or cite what already shows it.`,
       sides: [r.defined_in],
       requirement: r,
       done: false,
@@ -111,7 +123,7 @@ export function resolveQueue(findings: SpecModelFinding[], requirements: SpecReq
       type: "nobasis",
       tone: "warn",
       title: r.title ?? r.id,
-      hint: "Says what to build, but not why or from where. Cite the source or the decision behind it.",
+      hint: "Says what to build, but not why or from where. Worth a source or the decision behind it; it does not stop a build.",
       sides: [r.defined_in],
       requirement: r,
       done: false,
@@ -126,16 +138,29 @@ export interface Readiness {
   reasoned: number;
   /** Things that wait for somebody. */
   open: number;
+  /** Of them, the ones that stop a build. */
+  blocking: number;
   ready: boolean;
 }
 
-/** How far the documents are from something one can build from: every
- *  requirement resting on a source or a reason, and nothing left to decide. */
+/** Whether an item stops a build: a problem a rule established, a concern a
+ *  person confirmed and nobody fixed yet, a question nobody answered. An
+ *  assumption waiting for its check, a requirement that names no source and
+ *  a concern nobody looked at are worth attention and stop nothing: a
+ *  hypothesis is checked later, not before anyone may build. */
+export function blocks(i: ResolveItem): boolean {
+  if (i.type === "question") return !i.done;
+  if (i.type !== "finding") return false;
+  return i.concern ? i.finding?.decision === "confirmed" : !i.done;
+}
+
+/** How far the documents are from something one can build from. */
 export function readiness(queue: ResolveItem[], byBasis: Partial<Record<string, number>>, total: number): Readiness {
   const open = queue.filter((i) => !i.done).length;
+  const blocking = queue.filter(blocks).length;
   const cited = byBasis.cited ?? 0;
   const reasoned = byBasis.reasoned ?? 0;
-  return { total, cited, reasoned, open, ready: open === 0 };
+  return { total, cited, reasoned, open, blocking, ready: blocking === 0 };
 }
 
 // ── Model map ───────────────────────────────────────────────────────────────
@@ -356,8 +381,8 @@ export function traceChain(r: SpecRequirement, trace: RequirementTrace | null, w
     step(r.cites.length > 0, r.cites.length ? `Rests on ${plural(r.cites.length, "identifier")}` : "Rests on nothing it names", { ids: r.cites }),
     step(docs.length > 0, docs.length ? `Used by ${plural(docs.length, "document")}` : "No other document uses it", { sides: docs }),
     step(work.length > 0, work.length ? `Worked on in ${plural(work.length, "issue or PR", "issues and PRs")}` : "No issue or PR names it", { work }),
-    step(code.length > 0, code.length ? `In the code: ${plural(code.length, "place")}` : trace ? "Not found in the code" : "The code is not read yet", { sides: code }),
-    step(tests.length > 0, tests.length ? `Tested in ${plural(tests.length, "place")}` : "No test names it", { sides: tests }),
+    step(code.length > 0, code.length ? `Named in the code: ${plural(code.length, "place")}` : trace ? "No code names it" : "The code is not read yet", { sides: code }),
+    step(tests.length > 0, tests.length ? `Named by tests: ${plural(tests.length, "place")}` : "No test names it", { sides: tests }),
   ];
 }
 

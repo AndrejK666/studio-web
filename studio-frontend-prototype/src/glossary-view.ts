@@ -58,12 +58,14 @@ const SCOPES = new Set(["organization", "workspace", "project", "platform"]);
  *  Only entries the documents say something real about, the busiest first. */
 export function similarPairs(entries: GlossaryEntry[], max = 40): SimilarPair[] {
   const pool = entries.filter((e) => e.facts >= 2 && e.key.length >= 4);
+  // A pair a member said is two things is not offered again.
+  const apart = (a: GlossaryEntry, b: GlossaryEntry) => !!a.distinct_from?.includes(b.key) || !!b.distinct_from?.includes(a.key);
   const byKey = new Map(pool.map((e) => [e.key, e]));
   const out: SimilarPair[] = [];
   const seen = new Set<string>();
   const add = (a: GlossaryEntry, b: GlossaryEntry, why: string, how: SimilarPair["how"]) => {
     const id = [a.key, b.key].sort().join("|");
-    if (a.key === b.key || seen.has(id)) return;
+    if (a.key === b.key || seen.has(id) || apart(a, b)) return;
     seen.add(id);
     out.push(a.facts >= b.facts ? { a, b, why, how } : { a: b, b: a, why, how });
   };

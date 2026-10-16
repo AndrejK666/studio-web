@@ -18,7 +18,7 @@ use uuid::Uuid;
 use super::entity::{
     analysis, application_part, approval, capability, decision, delivery_history, delivery_limit,
     delivery_scope, doc_type, document, document_binding, review_request, spec_decision,
-    spec_extraction, spec_judgement, spec_term, stage,
+    spec_extraction, spec_judgement, spec_review, spec_term, stage,
 };
 
 /// UUIDv5 namespace for a document type's deterministic id — makes `(tenant,
@@ -79,6 +79,16 @@ pub fn spec_decision_id(project_id: Uuid, fingerprint: &str) -> Uuid {
 }
 
 /// And for a member's decision on one glossary entry.
+const SPEC_REVIEW_NS: Uuid = Uuid::from_u128(0x5d2e_9b41_7c06_4a83_b1f5_3e8a_02c7_d914);
+
+/// Deterministic id for a fact review: one per fact, the latest.
+pub fn spec_review_id(project_id: Uuid, fact_key: &str) -> Uuid {
+    Uuid::new_v5(
+        &SPEC_REVIEW_NS,
+        format!("{project_id}\u{1f}{fact_key}").as_bytes(),
+    )
+}
+
 const SPEC_TERM_NS: Uuid = Uuid::from_u128(0x91c3_5e7a_2b04_4d18_a6f9_0c2e_87d1_b453);
 
 pub fn spec_term_id(project_id: Uuid, term_key: &str) -> Uuid {
@@ -447,6 +457,78 @@ impl DocumentsRepo {
             spec_term::Column::DecidedBy,
             spec_term::Column::DecidedAt,
         ])?;
+        spec_term::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Every fact review in a project.
+    pub async fn list_spec_reviews(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<spec_review::Model>> {
+        let conn = self.db.conn()?;
+        let rows = spec_review::Entity::find()
+            .filter(spec_review::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?;
+        Ok(rows)
+    }
+
+    /// Record a review of one fact; a later one replaces it.
+    pub async fn put_spec_review(&self, model: spec_review::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let workspace_id = model.tenant_id;
+        let on_conflict =
+            SecureOnConflict::<spec_review::Entity>::columns([spec_review::Column::Id])
+                .update_columns([
+                    spec_review::Column::State,
+                    spec_review::Column::Path,
+                    spec_review::Column::Revision,
+                    spec_review::Column::Note,
+                    spec_review::Column::DecidedBy,
+                    spec_review::Column::DecidedAt,
+                ])?;
+        spec_review::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Withdraw a review: the fact is proposed again.
+    pub async fn delete_spec_review(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        fact_key: &str,
+    ) -> Result<()> {
+        let conn = self.db.conn()?;
+        spec_review::Entity::delete_many()
+            .filter(spec_review::Column::Id.eq(spec_review_id(project_id, fact_key)))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Record which entries an entry is a different thing from, leaving its
+    /// name and alias decision as they are.
+    pub async fn put_spec_term_distinct(&self, model: spec_term::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let workspace_id = model.tenant_id;
+        let on_conflict = SecureOnConflict::<spec_term::Entity>::columns([spec_term::Column::Id])
+            .update_columns([spec_term::Column::DistinctFrom])?;
         spec_term::Entity::insert(model.into_active_model())
             .secure()
             .scope_unchecked(&AccessScope::for_tenant(workspace_id))?

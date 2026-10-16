@@ -13,7 +13,7 @@ use crate::llm_proxy::port::CompletionRequest;
 
 /// Bumped whenever the prompt or the reading changes, so a document is
 /// extracted again rather than served an answer to a different question.
-pub const EXTRACTOR_VERSION: &str = "1";
+pub const EXTRACTOR_VERSION: &str = "2";
 
 /// How much text one call reads. Large enough that a section and its
 /// neighbours arrive together, small enough that the answer fits the budget.
@@ -22,7 +22,7 @@ const CHUNK_CHARS: usize = 12_000;
 /// The answer's budget per call.
 const MAX_TOKENS: u32 = 8_000;
 
-pub const KINDS: [&str; 7] = [
+pub const KINDS: [&str; 14] = [
     "entity",
     "attribute",
     "relation",
@@ -30,6 +30,13 @@ pub const KINDS: [&str; 7] = [
     "constraint",
     "lifecycle",
     "decision",
+    "role",
+    "action",
+    "problem",
+    "outcome",
+    "idea",
+    "benefit",
+    "scenario",
 ];
 
 /// Where an entity sits on the map: what the product is about, what serves
@@ -190,7 +197,21 @@ the cardinality if stated).\n\
 (aspect names which, value gives it).\n\
 - lifecycle: who or what starts, dates, changes, ends or re-runs something, and its states \
 (aspect names which, value gives it).\n\
-- decision: a choice the documents record (subject = the decision, value = what was chosen).\n\n\
+- decision: a choice the documents record (subject = the decision, value = what was chosen).\n\
+- role: a kind of person who uses the product (subject = the role, as the text names it).\n\
+- action: something a role does to a thing (subject = the thing acted on, aspect = the role, \
+value = the action and its result; the precondition, if stated, in text).\n\
+- problem: a difficulty someone has today (subject = the problem in a few words, aspect = who \
+has it, value = the situation it happens in). Only what the text says, never inferred.\n\
+- outcome: what someone wants to reach (subject = the outcome, aspect = who, value = how it \
+would be measured, if stated).\n\
+- idea: a solution or functionality the text proposes or mentions (subject = the idea, aspect = \
+the problem it addresses if the text says so, value = who it is for).\n\
+- benefit: an effect someone expects a solution to have (subject = the solution, aspect = for \
+whom, value = the expected effect and its conditions). A claim, not a fact: extract it only \
+where the text expects or hopes, and leave a part empty when the text does not state it.\n\
+- scenario: a sequence of steps someone follows (subject = the scenario, aspect = who, value = \
+the steps in short).\n\n\
 subject is a short noun phrase as the documents name it. aspect is the slot a value fills, in \
 plain words (grain, trigger, dating rule, routing, cardinality, who may read, limit), so two \
 statements about the same slot of the same subject get the same aspect. Leave aspect and value \

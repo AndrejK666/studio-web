@@ -281,6 +281,43 @@ pub mod spec_decision {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+/// A member's accept or reject on one fact the model read.
+pub mod spec_review {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_spec_model_reviews")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// Deterministic v5 UUID of `(project, fact_key)`: the latest review.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        /// The fact as the tab keys it: kind, subject, aspect and the quote,
+        /// folded and hashed, so a reading keeps its review while its passage
+        /// says the same.
+        pub fact_key: String,
+        /// `accepted` or `rejected`.
+        pub state: String,
+        /// Where the fact was read, and at which revision, when reviewed.
+        pub path: String,
+        pub revision: String,
+        /// Why, in the member's words: the reason an obligation is excluded.
+        pub note: Option<String>,
+        pub decided_by: Uuid,
+        pub decided_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// A member's decision on one entry of a project's glossary.
 pub mod spec_term {
     use sea_orm::entity::prelude::*;
@@ -304,6 +341,9 @@ pub mod spec_term {
         pub name: Option<String>,
         /// The key of the entry this one is another name of.
         pub alias_of: Option<String>,
+        /// The keys of the entries a member said are different things from
+        /// this one, as a JSON array: never offered as one thing again.
+        pub distinct_from: String,
         pub decided_by: Uuid,
         pub decided_at: OffsetDateTime,
     }

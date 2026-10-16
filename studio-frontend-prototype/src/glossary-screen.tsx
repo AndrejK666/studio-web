@@ -33,6 +33,7 @@ export function GlossaryScreen({
   onDecide,
   onProposeRename,
   onProposeSentence,
+  onDistinct,
   revisions = new Map(),
 }: {
   entries: GlossaryEntry[];
@@ -41,6 +42,8 @@ export function GlossaryScreen({
   onProposeRename: (from: string, to: string) => Promise<GlossaryRenameProposal>;
   /** Open a pull request adding a sentence to a document. */
   onProposeSentence?: (s: SpecModelSentence) => Promise<SpecModelWrite>;
+  /** Keep two entries apart for good: they are different things. */
+  onDistinct?: (a: string, b: string) => Promise<void>;
   /** Each read document's revision, by path. */
   revisions?: Map<string, string>;
 }) {
@@ -64,8 +67,13 @@ export function GlossaryScreen({
   const [filter, setFilter] = useState<GlossaryFilter>("all");
   const [text, setText] = useState("");
   const [shown, setShown] = useState(PAGE);
-  /** Pairs a person said are different things: not suggested again here. */
+  /** Pairs a person said are different things: hidden at once, and kept
+   *  apart for good once the decision is saved. */
   const [apart, setApart] = useState<Set<string>>(new Set());
+  const keepApart = (p: SimilarPair) => {
+    setApart((s) => new Set(s).add(`${p.a.key}|${p.b.key}`));
+    void onDistinct?.(p.a.key, p.b.key);
+  };
   /** The pair whose clarifying sentence is open. */
   const [clarifying, setClarifying] = useState<string | null>(null);
   const rows = useMemo(() => glossaryRows(entries, entities), [entries, entities]);
@@ -155,7 +163,7 @@ export function GlossaryScreen({
                     Clarify in the docs
                   </button>
                 )}
-                <button type="button" className="ghost" onClick={() => setApart((s) => new Set(s).add(`${p.a.key}|${p.b.key}`))}>
+                <button type="button" className="ghost" onClick={() => keepApart(p)}>
                   Different things
                 </button>
               </span>
@@ -165,7 +173,7 @@ export function GlossaryScreen({
                   entities={entities}
                   revisions={revisions}
                   onPropose={onProposeSentence}
-                  onDone={() => setApart((s) => new Set(s).add(`${p.a.key}|${p.b.key}`))}
+                  onDone={() => keepApart(p)}
                 />
               )}
             </div>

@@ -42,6 +42,8 @@ impl MigratorTrait for Migrator {
             Box::new(m0021::Migration),
             Box::new(m0022::Migration),
             Box::new(m0023::Migration),
+            Box::new(m0024::Migration),
+            Box::new(m0025::Migration),
         ]
     }
 }
@@ -1463,6 +1465,110 @@ CREATE TABLE IF NOT EXISTS studio_application_parts (
 
 /// What a review was asked about, and why a finding was decided (the
 /// prototype's review card and document comparisons).
+/// A member's accept or reject on one fact the model read: what the model
+/// proposes becomes the project's reading only once somebody accepts it.
+mod m0025 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0025_spec_model_fact_reviews"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_spec_model_reviews (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    fact_key TEXT NOT NULL,
+    state TEXT NOT NULL,
+    path TEXT NOT NULL DEFAULT '',
+    revision TEXT NOT NULL DEFAULT '',
+    note TEXT,
+    decided_by UUID NOT NULL,
+    decided_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (project_id, fact_key)
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_spec_model_reviews_project
+    ON studio_spec_model_reviews (tenant_id, project_id);",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_spec_model_reviews;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Two glossary entries a member said are different things: kept on each
+/// entry, so the pair is not offered as one thing again.
+mod m0024 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0024_glossary_distinct_terms"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_spec_model_terms ADD COLUMN IF NOT EXISTS distinct_from TEXT NOT NULL DEFAULT '[]';",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_spec_model_terms DROP COLUMN IF EXISTS distinct_from;",
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
 mod m0023 {
     use toolkit_db::sea_orm_migration::prelude::*;
     use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;

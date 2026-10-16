@@ -2488,6 +2488,9 @@ pub struct GlossaryEntryDto {
     pub aliases: Vec<GlossaryAliasDto>,
     pub facts: u32,
     pub documents: u32,
+    /// The keys of the entries a member said are different things from this
+    /// one: not to be offered as one thing again.
+    pub distinct_from: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -2511,6 +2514,79 @@ pub struct GlossaryDecisionRequest {
     /// The `key` of the entry this one is another name of; `null` keeps it an
     /// entry of its own.
     pub alias_of: Option<String>,
+}
+
+/// A member's accept or reject on one fact the model read.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelReviewDto {
+    /// The fact as the tab keys it.
+    pub fact_key: String,
+    /// `accepted` or `rejected`.
+    pub state: String,
+    pub path: String,
+    pub revision: String,
+    pub note: Option<String>,
+    pub decided_by: String,
+    pub decided_at: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelReviewListDto {
+    pub items: Vec<SpecModelReviewDto>,
+    pub total: u32,
+}
+
+/// One fact to accept, reject, or put back as proposed.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelReviewInput {
+    pub fact_key: String,
+    /// `accepted`, `rejected`, or `proposed` to withdraw a review; for a
+    /// hypothesis (key `ev:…`), what checking found: `supports`,
+    /// `contradicts` or `insufficient`.
+    pub state: String,
+    /// Where the fact was read, and at which revision.
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub revision: String,
+    /// Why, when it needs saying: an excluded obligation's reason.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// A whole document Studio proposes for the repository: an accepted need,
+/// a confirmed prioritisation.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelFileProposalRequest {
+    pub project_id: String,
+    /// Where it goes: a Markdown file under `docs/`.
+    pub path: String,
+    pub content: String,
+    /// The pull request's title.
+    pub title: String,
+}
+
+/// A selection of facts reviewed in one action.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelReviewRequest {
+    pub project_id: String,
+    pub items: Vec<SpecModelReviewInput>,
+}
+
+/// Two glossary entries a member says are different things.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct GlossaryDistinctRequest {
+    pub project_id: String,
+    /// One entry's `key`.
+    pub a: String,
+    /// The other's.
+    pub b: String,
 }
 
 /// A glossary rename to carry into the documents: the name they use and the
@@ -3306,10 +3382,18 @@ async fn get_glossary(
         .glossary_choices(workspace_id, project_id)
         .await
         .map_err(internal)?;
+    let apart: std::collections::HashMap<String, Vec<String>> = service
+        .spec_terms(workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|t| (t.term_key, super::service::distinct_keys(&t.distinct_from)))
+        .collect();
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let items: Vec<GlossaryEntryDto> = super::spec_model::glossary::entries(&facts, &choices)
         .into_iter()
         .map(|e| GlossaryEntryDto {
+            distinct_from: apart.get(&e.key).cloned().unwrap_or_default(),
             key: e.key,
             name: e.name,
             chosen: e.chosen,
@@ -5228,6 +5312,215 @@ async fn list_related_requirements(
 const GLOSSARY_TEXT_MAX: usize = 200;
 
 /// Record a member's decision on one glossary entry.
+fn spec_review_dto(r: super::entity::spec_review::Model) -> SpecModelReviewDto {
+    SpecModelReviewDto {
+        fact_key: r.fact_key,
+        state: r.state,
+        path: r.path,
+        revision: r.revision,
+        note: r.note,
+        decided_by: r.decided_by.to_string(),
+        decided_at: rfc3339(r.decided_at),
+    }
+}
+
+/// Every accept or reject members gave on the facts the model read.
+async fn list_spec_model_reviews(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecModelReviewListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let items: Vec<SpecModelReviewDto> = service
+        .spec_reviews(workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(spec_review_dto)
+        .collect();
+    Ok(Json(SpecModelReviewListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+/// Whether a review state belongs to what its key names: a fact, a
+/// hypothesis (`ev:`), a behaviour obligation (`ob:`) or a match across
+/// projects (`rel:`). `proposed` withdraws any of them.
+fn review_state_fits(key: &str, state: &str) -> bool {
+    if state == "proposed" {
+        return true;
+    }
+    if key.starts_with("ev:") {
+        matches!(state, "supports" | "contradicts" | "insufficient")
+    } else if key.starts_with("ob:") {
+        state == "excluded"
+    } else if key.starts_with("rel:") {
+        matches!(state, "reuse" | "coordinate" | "separate" | "unrelated")
+    } else {
+        matches!(state, "accepted" | "rejected")
+    }
+}
+
+/// Propose a whole document for the project's repository, as a pull request:
+/// what a member accepted in Studio — the need, a prioritisation — kept as a
+/// document beside the others, versioned by the repository.
+async fn create_spec_model_file_proposal(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(req): Json<SpecModelFileProposalRequest>,
+) -> ApiResult<(StatusCode, JsonBody<SpecModelWriteDto>)> {
+    let project_id = parse_project_id(&req.project_id)?;
+    let _ = parent_workspace(&service, &ctx, project_id).await?;
+    let refuse = |why: &str| {
+        DocumentsError::invalid_argument()
+            .with_constraint(why)
+            .create()
+    };
+    let path = req.path.trim();
+    let safe = path.starts_with("docs/")
+        && path.ends_with(".md")
+        && path.len() <= 200
+        && !path.contains("..")
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/-_.".contains(c));
+    if !safe {
+        return Err(refuse(
+            "the path must be a Markdown file under docs/, in plain letters, digits, - _ . and /",
+        ));
+    }
+    if req.content.trim().is_empty() || req.content.len() > 512 * 1024 {
+        return Err(refuse("the content must be a document of at most 512 KiB"));
+    }
+    let title: String = req.title.trim().chars().take(70).collect();
+    if title.is_empty() {
+        return Err(refuse("a title says what the pull request proposes"));
+    }
+    let files = project_files(&quality)?;
+    let project = project_id.to_string();
+    let branch = format!(
+        "docs/{}",
+        &super::spec_model::extract::revision(&req.content)[..12]
+    );
+    let written = files
+        .write(
+            &ctx,
+            &project,
+            &branch,
+            &[crate::product::port::DeclarationFile { path: path.to_owned(), content: req.content.clone() }],
+            &crate::product::port::PullRequestText {
+                message: format!("docs: {title}"),
+                title: format!("Docs: {title}"),
+                body: format!("{title}\n\nWritten to `{path}` from the Domain model tab, as a proposal to review."),
+            },
+            true,
+        )
+        .await
+        .map_err(invalid_or_internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(SpecModelWriteDto {
+            path: path.to_owned(),
+            branch: written.branch,
+            commit_sha: written.commit_sha,
+            pr_url: written.pr_url,
+        }),
+    ))
+}
+
+/// The most facts one review action takes: a selection, not the model.
+const SPEC_REVIEW_BATCH_MAX: usize = 500;
+
+/// Accept, reject or put back a selection of facts in one action.
+async fn review_spec_model_facts(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Json(body): Json<SpecModelReviewRequest>,
+) -> ApiResult<JsonBody<SpecModelReviewListDto>> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let invalid = |field: &str, why: &str| {
+        DocumentsError::invalid_argument()
+            .with_field_violation(field, why.to_owned(), "INVALID")
+            .create()
+    };
+    if body.items.is_empty() || body.items.len() > SPEC_REVIEW_BATCH_MAX {
+        return Err(invalid("items", "must hold between 1 and 500 facts"));
+    }
+    let mut items = Vec::with_capacity(body.items.len());
+    for i in body.items {
+        let key = i.fact_key.trim();
+        if key.is_empty() || key.len() > 128 {
+            return Err(invalid(
+                "fact_key",
+                "must be a fact's key of at most 128 bytes",
+            ));
+        }
+        if !review_state_fits(key, &i.state) {
+            return Err(invalid(
+                "state",
+                "must be accepted, rejected or proposed; for a hypothesis (ev:) supports, contradicts or \
+                 insufficient; for an obligation (ob:) excluded; for a match across projects (rel:) \
+                 reuse, coordinate, separate or unrelated",
+            ));
+        }
+        if i.note.as_ref().is_some_and(|n| n.len() > 2000) {
+            return Err(invalid("note", "must be at most 2000 bytes"));
+        }
+        if i.path.len() > 1024 || i.revision.len() > 128 {
+            return Err(invalid("path", "must be a document path and its revision"));
+        }
+        items.push((key.to_owned(), i.state, i.path, i.revision, i.note));
+    }
+    let saved: Vec<SpecModelReviewDto> = service
+        .put_spec_reviews(&ctx, workspace_id, project_id, items)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(spec_review_dto)
+        .collect();
+    Ok(Json(SpecModelReviewListDto {
+        total: u32::try_from(saved.len()).unwrap_or(u32::MAX),
+        items: saved,
+    }))
+}
+
+/// Record that two glossary entries are different things, so the pair is not
+/// offered as one thing again.
+async fn decide_glossary_distinct(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Json(body): Json<GlossaryDistinctRequest>,
+) -> ApiResult<StatusCode> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let (a, b) = (body.a.trim(), body.b.trim());
+    for (field, key) in [("a", a), ("b", b)] {
+        if key.is_empty() || key.len() > GLOSSARY_TEXT_MAX {
+            return Err(DocumentsError::invalid_argument()
+                .with_field_violation(
+                    field,
+                    "must be a glossary entry's key".to_owned(),
+                    "INVALID",
+                )
+                .create());
+        }
+    }
+    if a == b {
+        return Err(DocumentsError::invalid_argument()
+            .with_field_violation("b", "must name another entry".to_owned(), "INVALID")
+            .create());
+    }
+    service
+        .put_spec_terms_distinct(&ctx, workspace_id, project_id, a, b)
+        .await
+        .map_err(internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn decide_glossary_entry(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
@@ -7462,6 +7755,87 @@ pub fn register_routes(
         .error_404(openapi)
         .error_500(openapi)
         .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/files/proposals")
+        .operation_id("studio_documents.create_spec_model_file_proposal")
+        .summary("Propose a whole document for the project's repository as a pull request")
+        .description(
+            "What a member accepted in Studio — the need, a prioritisation — written to a Markdown \
+             file under `docs/` on a `docs/…` branch with a pull request: a proposal, never a commit \
+             onto the repository's branch. 400 for any other path or an empty document.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<SpecModelFileProposalRequest>(openapi, "The document and where it goes")
+        .handler(create_spec_model_file_proposal)
+        .json_response_with_schema::<SpecModelWriteDto>(openapi, StatusCode::CREATED, "The pull request")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/reviews")
+        .operation_id("studio_documents.list_spec_model_reviews")
+        .summary("Every accept or reject members gave on the facts the model read")
+        .description(
+            "What the model proposes is the project's reading only once a member accepts it; a \
+             rejected reading is not proposed again while its passage says the same.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .handler(list_spec_model_reviews)
+        .json_response_with_schema::<SpecModelReviewListDto>(openapi, StatusCode::OK, "The reviews")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/reviews")
+        .operation_id("studio_documents.decide_spec_model_fact_reviews")
+        .summary("Accept, reject or put back a selection of facts in one action")
+        .description(
+            "Each item is a fact's key with `accepted`, `rejected`, or `proposed` to withdraw an \
+             earlier review, and where it was read. At most 500 in one call.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<SpecModelReviewRequest>(openapi, "The project and the facts")
+        .handler(review_spec_model_facts)
+        .json_response_with_schema::<SpecModelReviewListDto>(
+            openapi,
+            StatusCode::OK,
+            "What was recorded",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-model/glossary/distinct")
+        .operation_id("studio_documents.decide_spec_model_glossary_distinct")
+        .summary("Say two glossary entries are different things")
+        .description(
+            "Kept on both entries as `distinct_from`, so the glossary does not offer them as one \
+             thing again. Each entry's name and alias decision stay as they are.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<GlossaryDistinctRequest>(openapi, "The project and the two entries")
+        .handler(decide_glossary_distinct)
+        .no_content_response(StatusCode::NO_CONTENT, "Recorded")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::post("/studio-documents/v1/spec-model/glossary/decisions")
