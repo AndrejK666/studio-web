@@ -59,6 +59,7 @@ import {
   type ShareMode,
 } from "./project-sources";
 import { ProjectOverview, type ProjTab } from "./project-overview";
+import { ProjectComponentsInventory } from "./project-components-view";
 import { makeZip } from "./zip";
 import { SpecModelTab } from "./spec-model-tab";
 import { ProjectBuilds } from "./builds-tab";
@@ -5269,6 +5270,11 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // this tab makes of them is the product. The organization and the platform
   // keep "Components" for what they hold. The id stays, so links still open it.
   { id: "components", icon: "package", label: "Product" },
+  // What the project is made of: the platform's and the organization's
+  // components it takes, its own gears, its code that could become one, the
+  // services that are not gears, and the gears its documents ask for that
+  // nobody wrote. After Product, which composes some of them into the product.
+  { id: "parts", icon: "grid", label: "Components" },
   // Kits are how the project works (workflows, conventions pinned to a Git
   // version), not what it is made of, so they stopped sharing a page with the
   // specs-to-product journey.
@@ -5630,6 +5636,9 @@ function ProjectScreen({
             pendingGear={pendingGear}
             onPendingGearTaken={() => setPendingGear(null)}
           />
+        )}
+        {tab === "parts" && (
+          <ProjectComponentsInventory token={token} projectId={proj.id} workspaceId={workspace.id} onOpenProduct={() => setTab("components")} />
         )}
         {tab === "builds" && (
           <ProjectBuilds token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />

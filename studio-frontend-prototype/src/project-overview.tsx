@@ -82,6 +82,7 @@ export type ProjTab =
   | "specs"
   | "model"
   | "components"
+  | "parts"
   | "builds"
   | "deploys"
   | "kits"

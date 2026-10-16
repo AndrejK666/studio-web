@@ -610,6 +610,7 @@ export const SURFACES: Surface[] = [
       "GearConfigForm",
       "ProjectCandidate",
       "ProductConfigurator",
+      "ProjectComponentsInventory",
       "Explanation",
       "ExplainAll",
     ],

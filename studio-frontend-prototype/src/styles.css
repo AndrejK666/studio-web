@@ -2748,3 +2748,9 @@ div.dm-block { padding-left: 0; }
 .psteps-more > summary { cursor: pointer; font-size: 13px; padding: 6px 0; }
 .pstep-build .dm-actions { margin-top: 8px; }
 @media (max-width: 720px) { .psteps { grid-template-columns: 1fr; } }
+
+.pcomp-ours { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
+.pcomp-could { background: var(--warning-soft, #fef3c7); }
+.pcomp-create { background: color-mix(in srgb, #dc2626 12%, transparent); color: #b91c1c; }
+.pcomp-organization { background: color-mix(in srgb, #16a34a 14%, transparent); color: #15803d; }
+.pcomp-platform, .pcomp-service { background: var(--accent); }
