@@ -27,6 +27,12 @@ export const ComponentsCatalog = lazy(() =>
   import("./components-catalog").then((m) => ({ default: m.ComponentsCatalog })),
 );
 
+/** The platform's catalogue sources and sync, on Platform › Repositories:
+ *  the same chunk as the catalogue. */
+export const PlatformSourcesPanel = lazy(() =>
+  import("./components-catalog").then((m) => ({ default: m.PlatformSourcesPanel })),
+);
+
 /** The reports, their sources and the roadmap report's tables. */
 export const ReportsScreen = lazy(() => import("./reports").then((m) => ({ default: m.ReportsScreen })));
 
