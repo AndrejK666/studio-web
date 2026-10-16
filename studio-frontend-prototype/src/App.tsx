@@ -8289,6 +8289,84 @@ function ConnectorsView({
 
 /** Provider picker, then the credential form. "Test connection" probes without
  *  saving; "Test & save" does both in one server-side step. */
+/** The API server a kubeconfig names: its current context's cluster, else its
+ *  only cluster. A plain line scan, enough for `kubectl config view --raw`. */
+function kubeconfigServer(text: string): string | null {
+  const servers = [...text.matchAll(/^\s*"?server"?\s*:\s*"?(https:\/\/[^\s",}]+)/gm)].map(
+    (m) => m[1],
+  );
+  return servers.length === 1 ? servers[0] : null;
+}
+
+/** A cluster's credential: a kubeconfig is several lines (and its CA is long),
+ *  so it is chosen as a file or pasted into a text area, never one input line,
+ *  which would fold the YAML into one unreadable line. */
+function KubeconfigField({
+  value,
+  reveal,
+  onReveal,
+  placeholder,
+  onChange,
+}: {
+  value: string;
+  reveal: boolean;
+  onReveal: () => void;
+  placeholder: string;
+  onChange: (text: string) => void;
+}) {
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const lines = value ? value.split("\n").length : 0;
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (!file) return;
+          setReadError(null);
+          file.text().then(
+            (text) => {
+              setFileName(file.name);
+              onChange(text);
+            },
+            (err) => setReadError(`could not read ${file.name}: ${String(err)}`),
+          );
+        }}
+      />
+      <div className="row">
+        <button onClick={() => inputRef.current?.click()}>Choose kubeconfig file…</button>
+        <span className="grow hint">
+          {fileName
+            ? `${fileName} · ${lines} lines`
+            : value
+              ? `${lines} line${lines === 1 ? "" : "s"} pasted`
+              : "or paste a token or a kubeconfig below"}
+        </span>
+        <button onClick={onReveal}>{reveal ? "Hide" : "Show"}</button>
+      </div>
+      {reveal || !value ? (
+        <textarea
+          rows={reveal ? 10 : 3}
+          spellCheck={false}
+          style={{ width: "100%", fontFamily: "var(--mono, monospace)" }}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => {
+            setFileName(null);
+            onChange(e.target.value);
+          }}
+        />
+      ) : null}
+      {readError && <p className="error">{readError}</p>}
+    </>
+  );
+}
+
 function AddConnector({
   token,
   workspace,
@@ -8363,7 +8441,16 @@ function AddConnector({
                     <span className="sub" title={p.instance_id}>
                       {p.instance_id.split("~").filter(Boolean).slice(-1)[0]}
                     </span>
-                    <button onClick={() => setPicked(p)}>Connect</button>
+                    <button
+                      onClick={() => {
+                        setPicked(p);
+                        // An environment takes only a cluster the organization
+                        // holds, so a cluster starts organization-wide.
+                        if (p.provider === "kubernetes") setReach("organization");
+                      }}
+                    >
+                      Connect
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -8472,16 +8559,32 @@ function AddConnector({
       )}
 
       <label>{picked.credential_label}</label>
-      <div className="row">
-        <input
-          className="grow"
-          type={reveal ? "text" : "password"}
-          placeholder={picked.credential_hint}
+      {picked.provider === "kubernetes" ? (
+        <KubeconfigField
           value={pat}
-          onChange={(e) => setPat(e.target.value)}
+          reveal={reveal}
+          onReveal={() => setReveal((v) => !v)}
+          placeholder={picked.credential_hint}
+          onChange={(text) => {
+            setPat(text);
+            // The kubeconfig names its API server; the connection's address
+            // must be that server, so take it unless one is typed already.
+            const server = kubeconfigServer(text);
+            if (server && !baseUrl.trim()) setBaseUrl(server);
+          }}
         />
-        <button onClick={() => setReveal((v) => !v)}>{reveal ? "Hide" : "Show"}</button>
-      </div>
+      ) : (
+        <div className="row">
+          <input
+            className="grow"
+            type={reveal ? "text" : "password"}
+            placeholder={picked.credential_hint}
+            value={pat}
+            onChange={(e) => setPat(e.target.value)}
+          />
+          <button onClick={() => setReveal((v) => !v)}>{reveal ? "Hide" : "Show"}</button>
+        </div>
+      )}
       <p className="hint">
         Stored in credstore under a per-connection reference. Never logged, never returned by the
         API.
