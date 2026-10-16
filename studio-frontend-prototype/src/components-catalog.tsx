@@ -1085,13 +1085,18 @@ export function ComponentsCatalog({
             </p>
           ) : (
             <>
-              <p className="gcat-sub" data-level-note>
-                <strong>Built by this organization</strong> and seen only by its members; publishing one gives it to
-                the platform, whose common set is one level up, under <em>Platform</em>.
-              </p>
-              {pane === "repositories" && (
+              {/* The Repositories pane is about where components come from:
+                  the note on whose they are and the shadowed hint belong to
+                  the list of components. Creating the repository new gears
+                  go to stays there — the list can only pick an existing one. */}
+              {pane === "repositories" ? (
+                <OrgGearRepositoryCard token={token} tenantId={tenantId} connections={connections} />
+              ) : (
                 <>
-                  <OrgGearRepositoryCard token={token} tenantId={tenantId} connections={connections} />
+                  <p className="gcat-sub" data-level-note>
+                    <strong>Built by this organization</strong> and seen only by its members; publishing one gives it to
+                    the platform, whose common set is one level up, under <em>Platform</em>.
+                  </p>
                   {shadowedNote(shadowed) && <p className="gcat-hint" data-shadowed>{shadowedNote(shadowed)}</p>}
                 </>
               )}
