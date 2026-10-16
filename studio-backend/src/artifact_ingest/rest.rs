@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, Query};
+use axum::extract::Query;
 use axum::http::HeaderMap;
 use axum::{Extension, Router};
 use serde_json::Value;
@@ -686,6 +686,22 @@ fn build_problem(e: super::builds::BuildRefusal) -> CanonicalError {
     }
 }
 
+/// `?project_id=` of the build routes: the project the build belongs to.
+#[derive(Debug, serde::Deserialize)]
+pub struct BuildQuery {
+    pub project_id: String,
+}
+
+impl BuildQuery {
+    fn project(&self) -> ApiResult<Uuid> {
+        Uuid::parse_str(self.project_id.trim()).map_err(|_| {
+            StudioArtifactIngestError::invalid_argument()
+                .with_field_violation("project_id", "must name a project".to_owned(), "INVALID")
+                .create()
+        })
+    }
+}
+
 /// The project's workspace, read as the caller: `None` (404) when the caller
 /// does not reach the project.
 async fn reachable_project(
@@ -712,12 +728,13 @@ async fn reachable_project(
     Ok((am, tenant.parent_id.map(|p| p.0)))
 }
 
-async fn report_build(
+async fn upsert_build(
     Extension(ctx): Extension<SecurityContext>,
     Extension(ingest): Extension<Ingest>,
-    Path(project_id): Path<Uuid>,
+    Query(query): Query<BuildQuery>,
     Json(req): Json<BuildReportRequest>,
 ) -> ApiResult<JsonBody<ArtifactNodeDto>> {
+    let project_id = query.project()?;
     let svc = ingest.get()?;
     let (_, workspace) = reachable_project(&ingest, &ctx, project_id).await?;
     let report = super::builds::BuildReport {
@@ -749,12 +766,13 @@ async fn report_build(
     }))
 }
 
-async fn dispatch_build(
+async fn start_build(
     Extension(ctx): Extension<SecurityContext>,
     Extension(ingest): Extension<Ingest>,
-    Path(project_id): Path<Uuid>,
+    Query(query): Query<BuildQuery>,
     Json(req): Json<BuildDispatchRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<BuildDispatchedDto>)> {
+    let project_id = query.project()?;
     let svc = ingest.get()?;
     let (am, _) = reachable_project(&ingest, &ctx, project_id).await?;
     let (repo, workflow, git_ref) = svc
@@ -1765,8 +1783,8 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    let router = OperationBuilder::post("/studio-artifact-ingest/v1/projects/{project_id}/builds")
-        .operation_id("studio_artifact_ingest.report_build")
+    let router = OperationBuilder::post("/studio-artifact-ingest/v1/builds")
+        .operation_id("studio_artifact_ingest.upsert_build")
         .summary("Record a build the IDE ran: its start, or its end")
         .description(
             "ADR-0045 phase 2. The IDE's Build and Run, in a desktop or a session, \
@@ -1779,9 +1797,9 @@ pub fn register_routes(
         .tag("StudioArtifactIngest")
         .authenticated()
         .require_license_features::<License>([])
-        .path_param("project_id", "Project tenant id")
+        .query_param("project_id", true, "The project the build belongs to")
         .json_request::<BuildReportRequest>(openapi, "The build's start or end")
-        .handler(report_build)
+        .handler(upsert_build)
         .json_response_with_schema::<ArtifactNodeDto>(
             openapi,
             StatusCode::OK,
@@ -1793,34 +1811,33 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    let router =
-        OperationBuilder::post("/studio-artifact-ingest/v1/projects/{project_id}/builds/dispatch")
-            .operation_id("studio_artifact_ingest.dispatch_build")
-            .summary("Start the project's build workflow in CI")
-            .description(
-                "ADR-0045 phase 3. Starts a run of the project's build workflow \
+    let router = OperationBuilder::post("/studio-artifact-ingest/v1/builds/dispatch")
+        .operation_id("studio_artifact_ingest.start_build")
+        .summary("Start the project's build workflow in CI")
+        .description(
+            "ADR-0045 phase 3. Starts a run of the project's build workflow \
                  (`project.config` `build`), or of the workflow and repository the \
                  request names, through the connection of that project repository \
                  (`workflow_dispatch`). Only a connection the project's organization \
                  owns is used (400 `CONNECTION_NOT_OWNED`); the provider's refusal is \
                  400 `CI_REFUSED`. The run arrives with the next sync.",
-            )
-            .tag("StudioArtifactIngest")
-            .authenticated()
-            .require_license_features::<License>([])
-            .path_param("project_id", "Project tenant id")
-            .json_request::<BuildDispatchRequest>(openapi, "Which workflow, on which ref")
-            .handler(dispatch_build)
-            .json_response_with_schema::<BuildDispatchedDto>(
-                openapi,
-                StatusCode::ACCEPTED,
-                "Started",
-            )
-            .error_400(openapi)
-            .error_401(openapi)
-            .error_404(openapi)
-            .error_500(openapi)
-            .register(router, openapi);
+        )
+        .tag("StudioArtifactIngest")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(
+            "project_id",
+            true,
+            "The project whose build workflow to start",
+        )
+        .json_request::<BuildDispatchRequest>(openapi, "Which workflow, on which ref")
+        .handler(start_build)
+        .json_response_with_schema::<BuildDispatchedDto>(openapi, StatusCode::ACCEPTED, "Started")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
 
     let router = OperationBuilder::post("/studio-artifact-ingest/v1/reconcile")
         .operation_id("studio_artifact_ingest.reconcile_repositories")

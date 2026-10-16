@@ -23,7 +23,7 @@ describe('a build the IDE ran, told to the Studio server', () => {
         );
         await reports.report('/home/a/p/products/shop/product.gdl', report);
         expect(sent).toEqual([
-            { path: '/studio-artifact-ingest/v1/projects/p-1/builds', body: { ...report, where: 'desktop' } },
+            { path: '/studio-artifact-ingest/v1/builds?project_id=p-1', body: { ...report, where: 'desktop' } },
         ]);
     });
 

@@ -148,7 +148,7 @@ made of, what was built, where it runs.
    `error: could not compile`, the first `error` line, a missing protoc) and
    report its start and end through the Studio extension
    (`gearbox-build-reports.ts`) to
-   `POST /studio-artifact-ingest/v1/projects/{id}/builds`, a `build` node per
+   `POST /studio-artifact-ingest/v1/builds?project_id=`, a `build` node per
    build; the Builds tab lists them under "In the IDE", a failed one with its
    first error. Reported over REST rather than the events channel: the
    channel carries the portal's pushes to the IDE, and a report needs an

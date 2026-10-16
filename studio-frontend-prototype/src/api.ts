@@ -4676,7 +4676,7 @@ export const api = {
    *  the one named, on a ref or the repository's branch. */
   dispatchBuild: (token: string, projectId: string, body: { repo?: string; workflow?: string; ref?: string }) =>
     request<{ repo: string; workflow: string; ref: string }>(
-      `/studio-artifact-ingest/v1/projects/${encodeURIComponent(projectId)}/builds/dispatch`,
+      `/studio-artifact-ingest/v1/builds/dispatch?project_id=${encodeURIComponent(projectId)}`,
       token,
       { method: "POST", body: JSON.stringify(body) },
     ),

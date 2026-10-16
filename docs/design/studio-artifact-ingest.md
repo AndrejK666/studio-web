@@ -337,8 +337,8 @@ and unscoped listings.
 | `POST` | `/studio-artifact-ingest/v1/quality` | Upsert `spec_finding` nodes and derived `duplicates`/`traces_to` edges | unstable |
 | `POST` | `/studio-artifact-ingest/v1/search` | Hybrid retrieval when embeddings exist, else lexical | unstable |
 | `POST` | `/studio-artifact-ingest/v1/files` | Register a file-storage object reference as a `file` node, idempotent by (project, path) | unstable |
-| `POST` | `/studio-artifact-ingest/v1/projects/{project_id}/builds` | Record a build the IDE ran: its start, or its end over its start (ADR-0045 phase 2); 404 when the caller does not reach the project | unstable |
-| `POST` | `/studio-artifact-ingest/v1/projects/{project_id}/builds/dispatch` | Build in CI: start the project's build workflow (`project.config` `build`) or the one named, through that repository's connection -- only one the organization owns (`CONNECTION_NOT_OWNED`); a provider's refusal is 400 `CI_REFUSED` (ADR-0045 phase 3) | unstable |
+| `POST` | `/studio-artifact-ingest/v1/builds` | Record a build the IDE ran in the project `?project_id=` names: its start, or its end over its start (ADR-0045 phase 2); 404 when the caller does not reach the project | unstable |
+| `POST` | `/studio-artifact-ingest/v1/builds/dispatch` | Build in CI: start the `?project_id=` project's build workflow (`project.config` `build`) or the one named, through that repository's connection -- only one the organization owns (`CONNECTION_NOT_OWNED`); a provider's refusal is 400 `CI_REFUSED` (ADR-0045 phase 3) | unstable |
 
 Without a connector driver linked the routes stay mounted and answer 503 with
 the reason. In process the gear

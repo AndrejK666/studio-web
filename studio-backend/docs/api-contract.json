@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 256,
+  "open_violations": 252,
   "operations": [
     {
       "method": "DELETE",
@@ -3001,25 +3001,8 @@
     },
     {
       "method": "POST",
-      "path": "/studio-artifact-ingest/v1/files",
-      "operation_id": "studio_artifact_ingest.add_file",
-      "tag": "StudioArtifactIngest",
-      "summary": "Register an uploaded or generated project artifact",
-      "authenticated": true,
-      "request": "ManualFileRequest",
-      "responses": [
-        "ManualFileResponse"
-      ],
-      "errors": [
-        "400",
-        "401",
-        "500"
-      ]
-    },
-    {
-      "method": "POST",
-      "path": "/studio-artifact-ingest/v1/projects/{project_id}/builds",
-      "operation_id": "studio_artifact_ingest.report_build",
+      "path": "/studio-artifact-ingest/v1/builds",
+      "operation_id": "studio_artifact_ingest.upsert_build",
       "tag": "StudioArtifactIngest",
       "summary": "Record a build the IDE ran: its start, or its end",
       "authenticated": true,
@@ -3036,8 +3019,8 @@
     },
     {
       "method": "POST",
-      "path": "/studio-artifact-ingest/v1/projects/{project_id}/builds/dispatch",
-      "operation_id": "studio_artifact_ingest.dispatch_build",
+      "path": "/studio-artifact-ingest/v1/builds/dispatch",
+      "operation_id": "studio_artifact_ingest.start_build",
       "tag": "StudioArtifactIngest",
       "summary": "Start the project's build workflow in CI",
       "authenticated": true,
@@ -3049,6 +3032,23 @@
         "400",
         "401",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-artifact-ingest/v1/files",
+      "operation_id": "studio_artifact_ingest.add_file",
+      "tag": "StudioArtifactIngest",
+      "summary": "Register an uploaded or generated project artifact",
+      "authenticated": true,
+      "request": "ManualFileRequest",
+      "responses": [
+        "ManualFileResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
         "500"
       ]
     },

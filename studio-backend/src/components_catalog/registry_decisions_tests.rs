@@ -61,7 +61,10 @@ fn the_transition_table_allows_exactly_the_lifecycle_moves() {
         ("register", "declared", "registered"),
         ("reject", "candidate", "rejected"),
         ("reject", "declared", "rejected"),
+        // ADR-0044's lifecycle: registered, extracted and published all lead
+        // to deprecated.
         ("deprecate", "registered", "deprecated"),
+        ("deprecate", "extracted", "deprecated"),
         ("deprecate", "published", "deprecated"),
         ("restore", "rejected", "declared"),
         ("restore", "deprecated", "registered"),
@@ -69,9 +72,20 @@ fn the_transition_table_allows_exactly_the_lifecycle_moves() {
         ("publish", "registered", "registered"),
         ("decline_publication", "registered", "registered"),
         ("mark_published", "registered", "published"),
+        // Publishing starts from extracted and leaves it there until the
+        // platform has it (ADR-0044 §5).
+        ("request_publication", "extracted", "extracted"),
+        ("publish", "extracted", "extracted"),
+        ("decline_publication", "extracted", "extracted"),
+        ("mark_published", "extracted", "published"),
+        // Extract leaves the entry registered; completing it makes it
+        // extracted (ADR-0044 §1).
+        ("extract", "registered", "registered"),
+        ("complete_extraction", "registered", "extracted"),
         ("merge", "candidate", "merged"),
         ("merge", "declared", "merged"),
         ("merge", "registered", "merged"),
+        ("merge", "extracted", "merged"),
         ("merge", "published", "merged"),
         ("merge", "rejected", "merged"),
         ("merge", "deprecated", "merged"),

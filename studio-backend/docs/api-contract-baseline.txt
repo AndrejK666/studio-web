@@ -186,7 +186,7 @@ path-literal	GET <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_session/rest.rs>
 path-literal	POST <dynamic@src/studio_theia/rest.rs>
 
-# --- scope-in-path (68) ---------------------------------------------------
+# --- scope-in-path (77) ---------------------------------------------------
 # Rule C. The scope is a path segment, so the same thought needs one
 # operation per scope. Fixing this is the expensive migration: the tenant moves
 # into the security context and a project becomes `?project_id=`, which collapses
@@ -195,6 +195,10 @@ path-literal	POST <dynamic@src/studio_theia/rest.rs>
 # clone URL itself, so a query parameter cannot carry the scope. The handler
 # reads the workspace's settings under the caller's own context, which is the
 # access decision; the path names the workspace, it does not grant it.
+# studio-product's gear repository relay (ADR-0046 phase 2) is the same case:
+# an IDE clones an organization's own gear repository from
+# `.../organizations/{organization_id}/gearbox/corpus/{source_id}`, git appends
+# the rest, and the handler serves it to the organization's members only.
 # studio-llm (agents and the IDE chat on a person's key): Claude Code, Codex and
 # the OpenAI client append their own paths to a base URL, so the workspace —
 # whose AI connections count — cannot be a query parameter either. The handler
@@ -214,6 +218,8 @@ scope-in-path	DELETE /studio-user/v1/organizations/{org_id}/invitations/{invitat
 scope-in-path	DELETE /studio-user/v1/users/{user_id}/memberships/{org_id}
 scope-in-path	GET /studio-product/v1/projects/{project_id}/gear-repo
 scope-in-path	GET /studio-product/v1/projects/{project_id}/product
+scope-in-path	GET /studio-product/v1/organizations/{organization_id}/gearbox/corpus/{source_id}/info/refs
+scope-in-path	POST /studio-product/v1/organizations/{organization_id}/gearbox/corpus/{source_id}/git-upload-pack
 scope-in-path	GET /studio-documents/v1/organizations/{organization_id}/capabilities
 scope-in-path	GET /studio-documents/v1/organizations/{organization_id}/stages
 scope-in-path	GET /studio-documents/v1/organizations/{organization_id}/types
@@ -275,13 +281,15 @@ scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}
 scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}/analyses/{detector}
 scope-in-path	PUT /studio-user/v1/users/{user_id}/memberships/{org_id}
 
-# --- typed-response (25) ---------------------------------------------------
+# --- typed-response (35) ---------------------------------------------------
 # Rule B3. The response is registered without a schema, so the shape is
 # invisible to /cf/docs and to client generation. studio-theia, spec-quality and
 # studio-llm proxy an upstream body through verbatim; each needs a DTO of ours.
 # studio-git (ADR-0027): the body is Git's own wire protocol (pkt-lines and
 # packs), streamed through; there is no JSON shape to give a schema. The same
-# holds for the gear corpus relay in studio-components-catalog (read-only).
+# holds for the gear corpus relay in studio-components-catalog (read-only), and
+# for studio-product's per-repository relay, the platform's roots and an
+# organization's own (ADR-0046 phase 2).
 # studio-llm providers (ADR-0030): the body is the model provider's own answer,
 # JSON or an SSE stream, passed through for the agent CLIs; there is no shape of ours.
 # A report's workbook (studio-reports) is an .xlsx file, a zip of
@@ -293,6 +301,8 @@ typed-response	GET /studio-spec-quality/v1/health
 typed-response	GET /studio-user/v1/avatars/{user_id}/{digest}
 typed-response	GET /studio-components-catalog/v1/gearbox/corpus/info/refs
 typed-response	GET /studio-product/v1/gearbox/corpus/info/refs
+typed-response	GET /studio-product/v1/gearbox/corpus/{source_id}/info/refs
+typed-response	GET /studio-product/v1/organizations/{organization_id}/gearbox/corpus/{source_id}/info/refs
 typed-response	GET /studio-reports/v1/reports/{report_id}/workbook
 typed-response	GET /studio-reports/v1/reports/{report_id}/plan/yaml
 typed-response	GET /studio-git/v1/workspaces/{workspace_id}/sources/{source}/info/refs
@@ -311,6 +321,8 @@ typed-response	POST /studio-spec-quality/v1/analyze/purpose
 typed-response	POST /studio-spec-quality/v1/analyze/traceability
 typed-response	POST /studio-components-catalog/v1/gearbox/corpus/git-upload-pack
 typed-response	POST /studio-product/v1/gearbox/corpus/git-upload-pack
+typed-response	POST /studio-product/v1/gearbox/corpus/{source_id}/git-upload-pack
+typed-response	POST /studio-product/v1/organizations/{organization_id}/gearbox/corpus/{source_id}/git-upload-pack
 typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-receive-pack
 typed-response	POST /studio-git/v1/workspaces/{workspace_id}/sources/{source}/git-upload-pack
 typed-response	POST /studio-llm/v1/chat/completions

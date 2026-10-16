@@ -38,7 +38,7 @@ fn repository() -> Vec<(String, String)> {
         ("app/Cargo.toml", MANIFEST),
         (
             "app/src/billing/mod.rs",
-            "pub mod port;\npub mod sdk;\nmod repo;\nuse serde::Serialize;\nuse crate::billing::sdk::Invoice;\n",
+            "pub mod port;\npub mod sdk;\nmod repo;\nmod migrations;\nuse serde::Serialize;\nuse crate::billing::sdk::Invoice;\n",
         ),
         ("app/src/billing/port.rs", "use super::sdk::Invoice;\n"),
         (
@@ -46,6 +46,12 @@ fn repository() -> Vec<(String, String)> {
             "use serde_json::Value;\npub struct Invoice;\n",
         ),
         ("app/src/billing/repo.rs", "use crate::billing::sdk::Invoice;\n"),
+        // The tables `repo.rs` reads come with it: a module whose tables no
+        // migration of its own creates is not ready to leave (ADR-0044 §1).
+        (
+            "app/src/billing/migrations.rs",
+            "pub const CREATE_INVOICES: &str = \"CREATE TABLE invoices (id uuid PRIMARY KEY)\";\n",
+        ),
         ("app/src/billing/gear.gdl", "gear(id = \"billing\")\n"),
         (
             "app/src/main.rs",

@@ -29,7 +29,7 @@ type Scope = (roots: readonly string[]) => Promise<AnalyzeScope | undefined>;
 
 /**
  * Sends Build and Run's reports to the project the product's folder was
- * opened for: `POST /studio-artifact-ingest/v1/projects/{id}/builds`, with
+ * opened for: `POST /studio-artifact-ingest/v1/builds?project_id=`, with
  * where the build ran. A product outside a Studio project, or a member signed
  * out, reports nothing; a refusal is thrown with the server's words, and the
  * caller only logs it.
@@ -47,7 +47,7 @@ export class BuildReports {
             return;
         }
         const where = (await this.desktop()) ? 'desktop' : 'session';
-        const res = await this.fetchApi(`/studio-artifact-ingest/v1/projects/${encodeURIComponent(scope.projectId)}/builds`, {
+        const res = await this.fetchApi(`/studio-artifact-ingest/v1/builds?project_id=${encodeURIComponent(scope.projectId)}`, {
             method: 'POST',
             body: JSON.stringify({ ...report, where }),
         });
