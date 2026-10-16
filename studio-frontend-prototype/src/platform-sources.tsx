@@ -12,9 +12,10 @@
  * the organization's own gear repositories, which its corpus reads after the
  * platform's. One of them is where "Create a gear" writes. */
 
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
-import { PLATFORM_ROOT_TENANT_ID, api, type Connection, type GearboxStatus } from "./api";
+import { PLATFORM_ROOT_TENANT_ID, api, type CatalogRepoSource, type Connection, type GearboxStatus } from "./api";
+import { type RepositoryRoles, refLabel, repositoryRoles, rolesNote } from "./component-repositories";
 import { errText } from "./format";
 import {
   GEAR_REPOSITORY,
@@ -29,14 +30,40 @@ import {
   repositoryOf,
 } from "./gear-repositories";
 
-export function PlatformSources({ token, isPlatformAdmin }: { token: string; isPlatformAdmin: boolean }) {
-  return <GearSources token={token} tier="platform" tenantId={PLATFORM_ROOT_TENANT_ID} mayManage={isPlatformAdmin} />;
+export function PlatformSources({
+  token,
+  isPlatformAdmin,
+  catalogueSettings,
+}: {
+  token: string;
+  isPlatformAdmin: boolean;
+  catalogueSettings?: ReactNode;
+}) {
+  return (
+    <GearSources
+      token={token}
+      tier="platform"
+      tenantId={PLATFORM_ROOT_TENANT_ID}
+      mayManage={isPlatformAdmin}
+      catalogueSettings={isPlatformAdmin ? catalogueSettings : undefined}
+    />
+  );
 }
 
 /** Organization › Components › Repositories: who may change the list is who
  *  may manage the organization's registry (`component.registry`). `embedded`
  *  drops the page heading, which the Components page already has. */
-export function OrgSources({ token, orgId, embedded = false }: { token: string; orgId?: string; embedded?: boolean }) {
+export function OrgSources({
+  token,
+  orgId,
+  embedded = false,
+  catalogueSettings,
+}: {
+  token: string;
+  orgId?: string;
+  embedded?: boolean;
+  catalogueSettings?: ReactNode;
+}) {
   const [mayManage, setMayManage] = useState(false);
   useEffect(() => {
     api
@@ -45,7 +72,16 @@ export function OrgSources({ token, orgId, embedded = false }: { token: string; 
       .catch(() => setMayManage(false));
   }, [token]);
   if (!orgId) return <p className="hint">Open an organization to see its sources.</p>;
-  return <GearSources token={token} tier="organization" tenantId={orgId} mayManage={mayManage} embedded={embedded} />;
+  return (
+    <GearSources
+      token={token}
+      tier="organization"
+      tenantId={orgId}
+      mayManage={mayManage}
+      embedded={embedded}
+      catalogueSettings={catalogueSettings}
+    />
+  );
 }
 
 function GearSources({
@@ -54,14 +90,24 @@ function GearSources({
   tenantId,
   mayManage,
   embedded = false,
+  catalogueSettings,
 }: {
   token: string;
   tier: "platform" | "organization";
   tenantId: string;
   mayManage: boolean;
   embedded?: boolean;
+  /** The catalogue's own settings and sync, drawn under the list. */
+  catalogueSettings?: ReactNode;
 }) {
   const [connections, setConnections] = useState<Connection[] | null>(null);
+  // The other role of the same repositories: what the catalogue syncs. The
+  // platform's list is a platform administrator's to read; an organization's,
+  // its members'.
+  const [catalogue, setCatalogue] = useState<CatalogRepoSource[] | null>(null);
+  const [cratesIo, setCratesIo] = useState<string | null>(null);
+  const [prefill, setPrefill] = useState<{ url: string; ref: string; at: number } | null>(null);
+  const addRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<GearboxStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -92,8 +138,21 @@ function GearSources({
         .then(setStatus)
         .catch(() => setStatus(null))
         .finally(() => setStatusRead(true));
+      if (org)
+        api
+          .catalogSources(token)
+          .then((r) => setCatalogue(r.items ?? []))
+          .catch(() => setCatalogue(null));
+      else if (mayManage)
+        api
+          .platformSources(token)
+          .then((r) => {
+            setCatalogue(r.items ?? []);
+            setCratesIo(r.crates_io ?? null);
+          })
+          .catch(() => setCatalogue(null));
     },
-    [token, tenantId, org, readsConnections],
+    [token, tenantId, org, readsConnections, mayManage],
   );
   useEffect(() => load(), [load]);
 
@@ -137,14 +196,50 @@ function GearSources({
       load(false);
     });
 
+  const roles = repositoryRoles(own, catalogue ?? [], fallback);
+  const saveCatalogue = async (items: CatalogRepoSource[], line: string) => {
+    setError(null);
+    setNote(null);
+    try {
+      const saved = org
+        ? await api.saveCatalogSources(token, items)
+        : await api.savePlatformSources(token, items, cratesIo);
+      setCatalogue(saved.items);
+      setNote(`${line} The catalogue picks it up at its next sync.`);
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+  const listIt = (r: RepositoryRoles) =>
+    void saveCatalogue(
+      [
+        ...(catalogue ?? []),
+        { tenant: tenantId, connection_id: null, repo: r.repo, git_ref: r.engine?.ref || null, mode: "gears" },
+      ],
+      `${r.repo} is listed in the catalogue.`,
+    );
+  const unlist = (c: CatalogRepoSource) => {
+    if (!window.confirm(`Stop listing ${c.repo} (${c.mode || "gears"}) in the catalogue? Products built from it are not affected.`)) return;
+    void saveCatalogue(
+      (catalogue ?? []).filter((x) => x !== c),
+      `${c.repo} (${c.mode || "gears"}) is no longer listed.`,
+    );
+  };
+  const buildFrom = (r: RepositoryRoles) => {
+    const gears = r.catalogue.find((c) => (c.mode || "gears") === "gears") ?? r.catalogue[0];
+    const ref = gears?.git_ref && gears.git_ref !== "HEAD" ? gears.git_ref : "";
+    setPrefill({ url: `https://github.com/${r.repo}`, ref, at: Date.now() });
+    addRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
   return (
     <div className="gear-sources" data-platform-sources={org ? undefined : ""} data-org-sources={org ? "" : undefined}>
       <style>{SOURCES_CSS}</style>
-      {!embedded && <h1>Sources</h1>}
+      {!embedded && <h1>Repositories</h1>}
       <p className="subtitle">
         {org
-          ? "The repositories this organization's gears come from. Its corpus reads the platform's repositories first, then these, in this order; a gear in one may use a gear in another. One of them is where Create a gear writes."
-          : "The repositories the platform's gears come from. The Gearbox engine reads them together, in this order, so a gear in one may use a gear in another; where two declare the same gear, the first wins. Every organization builds on what they hold."}
+          ? "Where this organization's components come from. A repository can be in the catalogue (synced into the Components list) and built from (the Gearbox engine reads it, after the platform's, when it composes a product); one of those is where Create a gear writes."
+          : "Where the platform's components come from. A repository can be in the catalogue (synced into the Components list every organization sees) and built from (the Gearbox engine reads it when it composes a product; where two declare the same gear, the first wins)."}
       </p>
       {error && <div className="error">{error}</div>}
       {note && (
@@ -182,6 +277,21 @@ function GearSources({
       )}
       {loading ? (
         <p className="hint">{readsConnections ? "Loading…" : "Asking the engine what it reads…"}</p>
+      ) : roles.length > 0 && (catalogue !== null || own.length > 0) ? (
+        <RolesTable
+          rows={roles}
+          statusRead={statusRead}
+          busy={busy}
+          mayManage={mayManage}
+          catalogueRead={catalogue !== null}
+          onTest={test}
+          onRemove={mayManage ? remove : undefined}
+          onList={listIt}
+          onUnlist={unlist}
+          onBuild={buildFrom}
+          target={org ? target : undefined}
+          onTarget={org && mayManage ? markTarget : undefined}
+        />
       ) : own.length === 0 ? (
         <p className="hint" data-gear-sources-empty>
           {org
@@ -203,17 +313,29 @@ function GearSources({
           onTarget={org && mayManage ? markTarget : undefined}
         />
       )}
+      {catalogueSettings && (
+        <details className="gear-source-catalogue" data-catalogue-settings>
+          <summary>Catalogue settings and sync — modes, refs, connections{org ? "" : ", crates.io"}</summary>
+          {catalogueSettings}
+        </details>
+      )}
       {mayManage ? (
-        <AddGearRepository
-          token={token}
-          ownerTenant={tenantId}
-          taken={own.map((r) => r.sourceId)}
-          platformIds={platformRows.map((r) => r.sourceId)}
-          onAdded={(line) => {
-            setNote(line);
-            load(true);
-          }}
-        />
+        <div ref={addRef}>
+          <AddGearRepository
+            key={prefill?.at ?? 0}
+            token={token}
+            ownerTenant={tenantId}
+            taken={own.map((r) => r.sourceId)}
+            platformIds={platformRows.map((r) => r.sourceId)}
+            initialUrl={prefill?.url}
+            initialRef={prefill?.ref}
+            onAdded={(line) => {
+              setNote(line);
+              setPrefill(null);
+              load(true);
+            }}
+          />
+        </div>
       ) : (
         <p className="hint">
           {org
@@ -222,6 +344,138 @@ function GearSources({
         </p>
       )}
     </div>
+  );
+}
+
+/** One row per repository, with its two roles side by side. */
+function RolesTable({
+  rows,
+  statusRead,
+  busy,
+  mayManage,
+  catalogueRead,
+  onTest,
+  onRemove,
+  onList,
+  onUnlist,
+  onBuild,
+  target,
+  onTarget,
+}: {
+  rows: RepositoryRoles[];
+  statusRead: boolean;
+  busy: string | null;
+  mayManage: boolean;
+  /** Whether the catalogue's list could be read: a member who may not read
+   *  the platform's sees only what the engine reads. */
+  catalogueRead: boolean;
+  onTest: (c: Connection) => void;
+  onRemove?: (c: Connection) => void;
+  onList: (r: RepositoryRoles) => void;
+  onUnlist: (c: CatalogRepoSource) => void;
+  onBuild: (r: RepositoryRoles) => void;
+  target?: string | null;
+  onTarget?: (c: Connection) => void;
+}) {
+  const org = target !== undefined;
+  return (
+    <table className="data-table" data-repository-roles>
+      <thead>
+        <tr>
+          <th>Repository</th>
+          <th title="Synced into the Components list: descriptions, versions, activity">In the catalogue</th>
+          <th title="Read by the Gearbox engine when it composes a product">Built from</th>
+          {org && <th>New gears</th>}
+          <th aria-label="Actions" />
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => {
+          const c = r.engine?.connection ?? null;
+          const note = catalogueRead ? rolesNote(r) : null;
+          return (
+            <tr key={r.repo} data-repository={r.repo}>
+              <td>
+                <a href={`https://github.com/${r.repo}`} target="_blank" rel="noreferrer">
+                  {r.repo}
+                </a>
+                {note && (
+                  <div className="gear-source-warn" data-roles-note>
+                    {note}
+                  </div>
+                )}
+              </td>
+              <td data-role-catalogue>
+                {!catalogueRead ? (
+                  <span className="sub">—</span>
+                ) : r.catalogue.length === 0 ? (
+                  mayManage ? (
+                    <button type="button" className="ghost" onClick={() => onList(r)}>
+                      List it
+                    </button>
+                  ) : (
+                    <span className="sub">not listed</span>
+                  )
+                ) : (
+                  r.catalogue.map((s, i) => (
+                    <span key={i} className="gear-role-chip">
+                      {s.mode || "gears"} · {refLabel(s.git_ref)}
+                      {s.shadowed_by_platform && <span className="sub"> · the platform lists it too</span>}
+                      {mayManage && (
+                        <button type="button" className="ghost" title="Stop listing it" onClick={() => onUnlist(s)}>
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  ))
+                )}
+              </td>
+              <td data-role-engine>
+                {r.engine ? (
+                  <>
+                    <code>{r.engine.sourceId}</code> <span className="sub">· {refLabel(r.engine.ref)}</span>
+                    <div className="sub">
+                      {statusRead ? readLine(r.engine.read) : "reading…"}
+                      {r.fallback && " · the deployment's corpus, until a repository is added"}
+                      {c && (c.secret_ref ? " · with a token" : " · public")}
+                    </div>
+                  </>
+                ) : mayManage ? (
+                  <button type="button" className="ghost" onClick={() => onBuild(r)}>
+                    Build from it…
+                  </button>
+                ) : (
+                  <span className="sub">not built from</span>
+                )}
+              </td>
+              {org && (
+                <td data-gear-source-target>
+                  {c && target === c.id ? (
+                    <span className="badge">Create a gear writes here</span>
+                  ) : c && onTarget ? (
+                    <button type="button" disabled={busy === c.id} onClick={() => onTarget(c)}>
+                      Write new gears here
+                    </button>
+                  ) : null}
+                </td>
+              )}
+              <td className="gear-source-actions">
+                {c && (
+                  <button type="button" disabled={busy === c.id} onClick={() => onTest(c)}>
+                    Test
+                  </button>
+                )}
+                {c && onRemove && (
+                  <button type="button" disabled={busy === c.id} onClick={() => onRemove(c)} title="Stop building from it">
+                    Remove
+                  </button>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
@@ -312,6 +566,8 @@ function AddGearRepository({
   ownerTenant,
   taken,
   platformIds,
+  initialUrl,
+  initialRef,
   onAdded,
 }: {
   token: string;
@@ -320,10 +576,13 @@ function AddGearRepository({
   /** On an organization's page: the platform's source ids, which its own
    *  repositories cannot share (the engine names a root by it). */
   platformIds: string[];
+  /** Filled in from a catalogue row's "Build from it". */
+  initialUrl?: string;
+  initialRef?: string;
   onAdded: (line: string) => void;
 }) {
-  const [url, setUrl] = useState("");
-  const [ref, setRef] = useState("");
+  const [url, setUrl] = useState(initialUrl ?? "");
+  const [ref, setRef] = useState(initialRef ?? "");
   const [sourceId, setSourceId] = useState("");
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -422,4 +681,9 @@ const SOURCES_CSS = `
 .gear-sources .gear-source-form { display:grid; gap:10px; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); }
 .gear-sources .gear-source-form label { display:grid; gap:4px; font-size:13px; }
 .gear-sources h3 { margin:16px 0 8px; }
+.gear-sources .gear-role-chip { display:inline-flex; gap:4px; align-items:center; margin:0 6px 4px 0; padding:1px 6px; border:1px solid var(--border); border-radius:999px; font-size:12px; }
+.gear-sources .gear-role-chip button { padding:0 4px; min-height:0; line-height:1; }
+.gear-sources .gear-source-warn { margin-top:4px; font-size:12px; color:#b45309; }
+.gear-sources .gear-source-catalogue { margin-top:16px; }
+.gear-sources .gear-source-catalogue summary { cursor:pointer; font-weight:600; margin-bottom:8px; }
 `;

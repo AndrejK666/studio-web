@@ -455,6 +455,7 @@ export function ComponentsCatalog({
   tier = "organization",
   orgName,
   initialPane = "registry",
+  onOpenRepositories,
 }: {
   token: string;
   tenantId?: string;
@@ -483,6 +484,8 @@ export function ComponentsCatalog({
   focus?: { name: string; at: number } | null;
   /** The pane to open on: an old Sources link opens Repositories. */
   initialPane?: ComponentsPane;
+  /** Platform › Repositories, where the platform's sources and sync are. */
+  onOpenRepositories?: () => void;
 }) {
   const [gears, setGears] = useState<CatalogNode[] | null>(null);
   const [profiles, setProfiles] = useState<Record<string, Record<string, unknown>>>({});
@@ -505,7 +508,6 @@ export function ComponentsCatalog({
   /** The organization's sources as the server keeps them, each marked
    *  whether the platform already reads it. */
   const [serverSources, setServerSources] = useState<CatalogRepoSource[] | null>(null);
-  const [showPlatformSources, setShowPlatformSources] = useState(false);
   useEffect(() => {
     if (focus) setSelected(focus.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -526,7 +528,9 @@ export function ComponentsCatalog({
   const [busy, setBusy] = useState(false);
   const [sync, setSync] = useState("");
   const [sources, setSources] = useState<Sources>(() => loadSources());
-  const [showSources, setShowSources] = useState(false);
+  // The organization's sources as the server keeps them are read while the
+  // Repositories pane is open.
+  const showSources = pane === "repositories";
   const [showReport, setShowReport] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
   // Which component kind the list shows (a `component-kinds` filter value),
@@ -1032,12 +1036,11 @@ export function ComponentsCatalog({
               {!platformLevel && (
                 <>
                   <button
-                    className={`iconbtn${showSources ? " active" : ""}`}
-                    onClick={() => setShowSources((v) => !v)}
-                    aria-expanded={showSources}
-                    title="The repositories this organization's catalogue reads, besides its projects"
+                    className={`iconbtn${pane === "repositories" ? " active" : ""}`}
+                    onClick={() => setPane("repositories")}
+                    title="Where this organization's components come from: what the catalogue lists and what products are built from"
                   >
-                    Our sources{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
+                    Repositories{filledFrom ? ` · ${filledFrom}` : sourceSummary ? ` · ${sourceSummary}` : ""}
                   </button>
                   <button className="iconbtn" onClick={() => setShowReport(true)}>
                     Roadmap report
@@ -1049,12 +1052,11 @@ export function ComponentsCatalog({
               )}
               {platformLevel && isPlatformAdmin && (
                 <button
-                  className={`iconbtn${showPlatformSources ? " active" : " primary"}`}
-                  onClick={() => setShowPlatformSources((v) => !v)}
-                  aria-expanded={showPlatformSources}
-                  title="What the platform's components are read from. Only a platform administrator changes it."
+                  className="iconbtn primary"
+                  onClick={() => onOpenRepositories?.()}
+                  title="What the platform's components come from: what the catalogue lists and what products are built from"
                 >
-                  Platform sources &amp; sync
+                  Repositories &amp; sync
                 </button>
               )}
             </div>
@@ -1062,9 +1064,6 @@ export function ComponentsCatalog({
 
           {showReport && <RoadmapReportDialog token={token} org={tenantId} onClose={() => setShowReport(false)} />}
 
-          {platformLevel && isPlatformAdmin && showPlatformSources && (
-            <PlatformSourcesPanel token={token} onSynced={() => void reload()} />
-          )}
 
           {!platformLevel && serverSources && shadowedSources(serverSources).length > 0 && (
             <div className="gcat-hint" data-shadowed-sources>
@@ -1077,16 +1076,6 @@ export function ComponentsCatalog({
                 </p>
               ))}
             </div>
-          )}
-
-          {!platformLevel && showSources && (
-            <SourcesPanel
-              sources={sources}
-              setSrc={setSrc}
-              setRepo={setRepo}
-              connections={connections}
-              tenantId={tenantId}
-            />
           )}
 
           {platformLevel ? (
@@ -1122,7 +1111,28 @@ export function ComponentsCatalog({
           {err && (viewMode === "graph" || gears !== null) && <p className="gcat-err">{err}</p>}
 
           {!platformLevel && pane === "repositories" ? (
-            <OrgSources token={token} orgId={tenantId} embedded />
+            <OrgSources
+              token={token}
+              orgId={tenantId}
+              embedded
+              catalogueSettings={
+                <>
+                  <SourcesPanel
+                    sources={sources}
+                    setSrc={setSrc}
+                    setRepo={setRepo}
+                    connections={connections}
+                    tenantId={tenantId}
+                  />
+                  <div className="editrow">
+                    <button className="iconbtn primary" disabled={busy} onClick={() => void runSync()}>
+                      {syncing ? "Syncing…" : "Sync the catalogue"}
+                    </button>
+                    {sync && <span className="gcat-hint">{sync}</span>}
+                  </div>
+                </>
+              }
+            />
           ) : !platformLevel && pane === "registry" ? (
             <ComponentRegistry
               token={token}
@@ -1321,7 +1331,7 @@ function KindPicker({
 /** The platform's catalogue sources (ADR-0042), for a platform administrator:
  *  the repositories and the crates.io keyword every organization's catalogue
  *  reads, saved in the platform's tenant, and a sync of them. */
-function PlatformSourcesPanel({ token, onSynced }: { token: string; onSynced: () => void }) {
+export function PlatformSourcesPanel({ token, onSynced }: { token: string; onSynced: () => void }) {
   const [items, setItems] = useState<CatalogRepoSource[] | null>(null);
   const [keyword, setKeyword] = useState("");
   const [connections, setConnections] = useState<Connection[]>([]);

@@ -10,6 +10,7 @@ import { errText, matches } from "./format";
 // what is split and what deliberately is not.
 import {
   ComponentsCatalog,
+  PlatformSourcesPanel,
   ReportsScreen,
   DocumentTypesTab,
   DocumentsTab,
@@ -743,8 +744,9 @@ const LEVEL_NAV: Record<"platform" | "organization", { id: View; icon: string; l
   platform: [
     // The common set every organization builds on (ADR-0042).
     { id: "platform", icon: "layers", label: "Components" },
-    // The repositories those components come from (ADR-0046).
-    { id: "platform-sources", icon: "plug", label: "Sources" },
+    // Where those components come from: what the catalogue lists (ADR-0042)
+    // and what products are built from (ADR-0046), one row per repository.
+    { id: "platform-sources", icon: "plug", label: "Repositories" },
     // What organizations ask the platform to take, answered by a curator.
     { id: "publications", icon: "package", label: "Publication requests" },
     // How the deployment itself is doing.
@@ -2706,7 +2708,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           />
         )}
         {view === "publications" && <PublicationRequests token={token} orgId={orgAsSpace?.id} />}
-        {view === "platform-sources" && <PlatformSources token={token} isPlatformAdmin={showPlatform} />}
+        {view === "platform-sources" && (
+          <PlatformSources
+            token={token}
+            isPlatformAdmin={showPlatform}
+            catalogueSettings={<PlatformSourcesPanel token={token} onSynced={() => undefined} />}
+          />
+        )}
         {view === "costs" && orgAsSpace && (
           <OrgCosts
             key={orgAsSpace.id}
@@ -2781,6 +2789,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             // Organization › Sources moved into Components: an address kept
             // from before opens the Repositories pane.
             initialPane={view === "org-sources" ? "repositories" : undefined}
+            onOpenRepositories={() => setView("platform-sources")}
             // Remounted when the organization resolves: the registry and the
             // catalogue read it once, and a page opened straight from its
             // address mounts before the organization is known.
