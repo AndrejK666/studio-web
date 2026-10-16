@@ -156,3 +156,39 @@ export function awaitingDecision(deployments: readonly Deployment[]): Deployment
 export function shortCommit(commit: string | null | undefined): string {
   return commit ? commit.slice(0, 8) : "";
 }
+
+/** One cluster as the Environments page shows it: what is on it, what runs
+ *  there, and when it last took a deploy. */
+export interface ClusterCard {
+  /** The connection's id; "" for environments whose cluster this page
+   *  cannot see (a connection out of reach, or removed). */
+  id: string;
+  label: string;
+  baseUrl: string;
+  environments: DeployEnvironment[];
+  /** The newest deploy per project and environment that succeeded here. */
+  running: Deployment[];
+  deployments: Deployment[];
+  lastDeploy: string | null;
+}
+
+/** The organization's clusters, each with its environments and deploys, in
+ *  the order they were connected; environments on a cluster the page cannot
+ *  see come last, under one card, so nothing disappears. */
+export function clusterCards(
+  clusters: readonly Connection[],
+  environments: readonly DeployEnvironment[],
+  deployments: readonly Deployment[],
+): ClusterCard[] {
+  const card = (id: string, label: string, baseUrl: string, envs: DeployEnvironment[]): ClusterCard => {
+    const ids = new Set(envs.map((e) => e.id));
+    const deps = deployments.filter((d) => ids.has(d.environment_id));
+    const last = deps.map((d) => d.requested_at).sort().pop() ?? null;
+    return { id, label, baseUrl, environments: envs, running: runningNow(deps), deployments: deps, lastDeploy: last };
+  };
+  const known = new Set(clusters.map((c) => c.id));
+  const out = clusters.map((c) => card(c.id, c.label, c.base_url ?? "", environments.filter((e) => e.connection_id === c.id)));
+  const orphans = environments.filter((e) => !known.has(e.connection_id));
+  if (orphans.length) out.push(card("", "A cluster this page cannot see", "", orphans));
+  return out;
+}

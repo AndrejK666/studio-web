@@ -120,3 +120,24 @@ describe("what runs where", () => {
     expect(awaitingDecision(list).map((d) => d.id)).toEqual(["waiting"]);
   });
 });
+
+describe("cluster cards", () => {
+  it("puts each environment and its deploys under its cluster, and keeps the unseen ones", async () => {
+    const { clusterCards } = await import("./environments");
+    const conn = (id: string, label: string) => ({ id, label, base_url: `https://${label}:6443`, provider: "kubernetes", scope: "organization" }) as never;
+    const env = (id: string, name: string, connection_id: string) => ({ id, name, connection_id }) as never;
+    const dep = (environment_id: string, requested_at: string, project_id = "p") =>
+      ({ id: `${environment_id}-${requested_at}`, environment_id, requested_at, state: "succeeded", project_id }) as never;
+    const cards = clusterCards(
+      [conn("c1", "dev-cluster"), conn("c2", "prod-cluster")],
+      [env("e1", "dev", "c1"), env("e2", "stage", "c1"), env("e3", "old", "gone")],
+      [dep("e1", "2026-10-01T00:00:00Z"), dep("e2", "2026-10-05T00:00:00Z"), dep("e3", "2026-09-01T00:00:00Z")],
+    );
+    expect(cards.map((c) => [c.label, c.environments.length, c.deployments.length, c.lastDeploy])).toEqual([
+      ["dev-cluster", 2, 2, "2026-10-05T00:00:00Z"],
+      ["prod-cluster", 0, 0, null],
+      ["A cluster this page cannot see", 1, 1, "2026-09-01T00:00:00Z"],
+    ]);
+    expect(cards[0].running).toHaveLength(2);
+  });
+});
