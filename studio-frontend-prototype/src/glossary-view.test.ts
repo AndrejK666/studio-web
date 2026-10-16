@@ -135,7 +135,7 @@ describe("what to do with a pair", () => {
   it("asks to say a kind is a kind when both are defined in the same documents", () => {
     expect(verdict(["membership", ["a.md"], true], ["organization membership", ["a.md"], true]).action).toBe("clarify");
   });
-  it("keeps two defined terms that never meet apart", () => {
-    expect(verdict(["membership", ["a.md"], true], ["organization membership", ["b.md"], true]).action).toBe("different");
+  it("asks the same of two defined terms that never meet: a level in front names a kind", () => {
+    expect(verdict(["membership", ["a.md"], true], ["organization membership", ["b.md"], true]).action).toBe("clarify");
   });
 });

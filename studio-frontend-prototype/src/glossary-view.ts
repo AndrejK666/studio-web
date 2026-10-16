@@ -149,7 +149,7 @@ export interface PairVerdict {
  *  - A level in front with a definition of its own that says something else
  *    is a kind of the other: tell them apart. Without a definition of its own,
  *    said in the same documents, it is the other said more fully: one thing.
- *    Said in other documents altogether, with definitions of both: different. */
+ *    "Different" is never guessed: a level in front names a kind. */
 export function pairVerdict(p: SimilarPair, rowOf: (key: string) => GlossaryRow | undefined): PairVerdict {
   const a = rowOf(p.a.key);
   const b = rowOf(p.b.key);
@@ -178,9 +178,14 @@ export function pairVerdict(p: SimilarPair, rowOf: (key: string) => GlossaryRow 
   }
   if (p.how && "level" in p.how) {
     if (longer.defined && base.defined)
-      return shared === 0
-        ? { action: "different", why: `Both are defined, and never in the same document: “${longer.e.name}” is its own thing.`, evidence }
-        : { action: "clarify", why: `Both are defined: “${longer.e.name}” is a kind of “${base.e.name}” at the ${p.how.level} level — say so where it is defined.`, evidence };
+      return {
+        action: "clarify",
+        why:
+          shared === 0
+            ? `Both are defined, never side by side: say where “${longer.e.name}” is defined that it is a kind of “${base.e.name}” at the ${p.how.level} level, or that it is not.`
+            : `Both are defined: “${longer.e.name}” is a kind of “${base.e.name}” at the ${p.how.level} level — say so where it is defined.`,
+        evidence,
+      };
     if (!longer.defined && shared > 0)
       return { action: "same", why: `“${longer.e.name}” has no definition of its own and is said in ${shared} of the same documents: “${base.e.name}”, said more fully.`, evidence };
     return { action: "clarify", why: `“${longer.e.name}” is said apart from “${base.e.name}” and nothing defines how they differ: one sentence settles it.`, evidence };
