@@ -2707,3 +2707,4 @@ div.dm-block { padding-left: 0; }
 .dm-issue-form { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md, 8px); background: var(--card); }
 .dm-issue-link { font-size: 12.5px; white-space: nowrap; }
 .gl-def { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-tabs[hidden] { display: none; }
