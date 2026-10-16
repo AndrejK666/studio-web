@@ -1,6 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ComponentRegistry } from "./component-registry";
-import { OrgGearRepositoryCard } from "./org-gear-repository-card";
 import { ApiError, api, PLATFORM_ROOT_TENANT_ID } from "./api";
 import type {
   CatalogRepoSource,
@@ -1085,13 +1084,11 @@ export function ComponentsCatalog({
             </p>
           ) : (
             <>
-              {/* The Repositories pane is about where components come from:
-                  the note on whose they are and the shadowed hint belong to
-                  the list of components. Creating the repository new gears
-                  go to stays there — the list can only pick an existing one. */}
-              {pane === "repositories" ? (
-                <OrgGearRepositoryCard token={token} tenantId={tenantId} connections={connections} />
-              ) : (
+              {/* The Repositories pane is about where components come from,
+                  and its list creates and picks the repository new gears go
+                  to: the note on whose they are and the shadowed hint belong
+                  to the list of components. */}
+              {pane !== "repositories" && (
                 <>
                   <p className="gcat-sub" data-level-note>
                     <strong>Built by this organization</strong> and seen only by its members; publishing one gives it to
