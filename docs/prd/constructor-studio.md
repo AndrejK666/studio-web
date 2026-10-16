@@ -330,7 +330,7 @@ The system **MUST** answer every authorization request through the Studio PDP, w
 
 - [ ] `p2` - **ID**: `cpt-studio-fr-authz-row-roles`
 
-Planned. The Studio PDP **MUST** map a Studio resource type and action to a privilege when that resource's gear starts asking for row-level access; `privilege_for` in `studio_authz_plugin.rs` returns nothing today (ADR-0019, Follow-ups).
+Planned. The Studio PDP **MUST** map a Studio resource type and action to a privilege when that resource's gear starts asking for row-level access; `privilege_for` in `studio_authz_plugin/mod.rs` returns nothing today (ADR-0019, Follow-ups).
 
 - **Rationale**: Row access is the PDP's question; administration is not (ADR-0019 §3).
 - **Actors**: `cpt-studio-actor-member`
@@ -958,8 +958,8 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-canonical-user` | `studio-backend/src/user_profile/`; `/studio-user/v1/{me,resolve,merge,users}`; prototype `profile` |
 | `cpt-studio-fr-invitations-membership` | `studio-backend/src/user_profile/`, platform `keycloak_idp_plugin`, `static_idp_plugin`; `/studio-user/v1/me/{invitations,memberships}`; prototype `people`, project tab `people` |
 | `cpt-studio-fr-identity-directory` | `studio-backend/src/identity_directory/`; `/studio-identity/v1`; prototype platform `identities` |
-| `cpt-studio-fr-authz-tenant-clamp` | `studio-backend/src/studio_authz_plugin.rs`, `studio-backend/src/access_config.rs`; platform `authz_resolver`, `tenant_resolver`, `resource_group` |
-| `cpt-studio-fr-authz-row-roles` | planned: `privilege_for` in `studio-backend/src/studio_authz_plugin.rs`; ADR-0019 Follow-ups |
+| `cpt-studio-fr-authz-tenant-clamp` | `studio-backend/src/studio_authz_plugin/mod.rs`, `studio-backend/src/access_config.rs`; platform `authz_resolver`, `tenant_resolver`, `resource_group` |
+| `cpt-studio-fr-authz-row-roles` | planned: `privilege_for` in `studio-backend/src/studio_authz_plugin/mod.rs`; ADR-0019 Follow-ups |
 | `cpt-studio-fr-presence` | `studio-backend/src/presence/`; `/studio-presence/v1`; `studio-frontend-prototype/src/presence.tsx` |
 | `cpt-studio-fr-connections` | `studio-backend/src/connectors/` and its eleven plugin gears; `/studio-connector/v1`; `connections-mfe` (Connections, Connect source); prototype `connectors`, admin `connectors`, project tab `sources` |
 | `cpt-studio-fr-credentials-durable` | `studio-backend/src/credstore_pg/`, `studio-backend/src/secrets_bootstrap/`; platform `credstore`, `static_credstore_plugin`; prototype admin `secrets` |
@@ -1010,7 +1010,7 @@ Platform gears that serve every requirement rather than one — `gear_orchestrat
 | AC3 | `studio-backend/src/connectors/rest.rs`; `cpt-studio-fr-connections` |
 | AC4 | `studio-backend/src/organizations/`; `cpt-studio-fr-org-create` |
 | AC5 | `studio-backend/src/user_profile/`, `studio-backend/src/identity_directory/`; `cpt-studio-fr-invitations-membership`, `cpt-studio-fr-identity-directory` |
-| AC6 | `studio-backend/src/studio_authz_plugin.rs`; `cpt-studio-nfr-tenant-isolation` |
+| AC6 | `studio-backend/src/studio_authz_plugin/mod.rs`; `cpt-studio-nfr-tenant-isolation` |
 | AC7 | `studio-backend/src/credstore_pg/`, `studio-backend/src/tasks/`, `studio-backend/src/studio_events/`; `cpt-studio-nfr-durable-work` |
 | AC8 | `studio-backend/src/documents/classify.rs`, `studio-backend/src/documents/validate.rs`; `cpt-studio-fr-repository-documents` |
 | AC9 | `studio-backend/src/studio_events/`, `studio-backend/src/tasks/`; `cpt-studio-fr-push-channel` |
