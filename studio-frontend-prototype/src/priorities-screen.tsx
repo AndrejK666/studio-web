@@ -15,6 +15,7 @@ import {
   type IceCriterion,
   type IceInputs,
 } from "./prioritise";
+import type { SpecModelWrite } from "./api";
 import { classify, REQUIREMENT_TYPE_LABEL } from "./requirement-types";
 import type { SpecRequirement, SpecRequirements } from "./spec-model";
 
@@ -74,14 +75,19 @@ export function PrioritiesScreen({
   read,
   projectId,
   onTrace,
+  onConfirm,
 }: {
   read: SpecRequirements | { error: string } | null;
   projectId: string;
+  /** Propose the confirmed order as docs/priorities.md: versioned by the
+   *  repository, reviewed like any change. */
+  onConfirm?: (content: string) => Promise<SpecModelWrite>;
   /** Follow a requirement in the Requirements view. */
   onTrace: (id: string) => void;
 }) {
   const [saved, setSaved] = useState<Saved>(() => load(projectId));
   const [adding, setAdding] = useState("");
+  const [confirm, setConfirm] = useState<{ busy: boolean; done?: SpecModelWrite; error?: string }>({ busy: false });
   useEffect(() => {
     try {
       localStorage.setItem(storeKey(projectId), JSON.stringify(saved));
@@ -221,9 +227,59 @@ export function PrioritiesScreen({
           })}
         </div>
       )}
+      {rows.length > 0 && onConfirm && (
+        <div className="dm-actions">
+          <button
+            type="button"
+            className="primary"
+            disabled={confirm.busy}
+            onClick={() => {
+              setConfirm({ busy: true });
+              const lines = [
+                "---",
+                "type: material",
+                "---",
+                "",
+                "# Priorities",
+                "",
+                "<!-- Confirmed in Studio. ICE: the mean of Impact, Confidence and Ease, each 1–10. -->",
+                "",
+                "| # | Requirement | Impact | Confidence | Ease | ICE |",
+                "|---|---|---|---|---|---|",
+                ...rows.map(({ r, inputs, ice }) => {
+                  const v = (k: IceCriterion) =>
+                    `${inputs[k].range ? `${inputs[k].range![0]}–${inputs[k].range![1]}` : (inputs[k].score ?? "unknown")} (${ORIGIN_LABEL[inputs[k].origin]})`;
+                  const score = ice.score ?? (ice.range ? `${ice.range[0]}–${ice.range[1]}` : "incomplete");
+                  return `| ${rank.get(r.id)}${ordering.ties.has(r.id) ? " (tie)" : ""} | ${(r.title ?? r.id).replace(/\|/g, "\\|")} \`${r.id}\` | ${v("impact")} | ${v("confidence")} | ${v("ease")} | ${score} |`;
+                }),
+                "",
+              ];
+              onConfirm(lines.join("\n"))
+                .then((done) => setConfirm({ busy: false, done }))
+                .catch((e: unknown) => setConfirm({ busy: false, error: e instanceof Error ? e.message : String(e) }));
+            }}
+            title="Write this order to docs/priorities.md as a pull request: a confirmed, versioned snapshot"
+          >
+            {confirm.busy ? "Proposing…" : "Confirm as docs/priorities.md"}
+          </button>
+          {confirm.done && (
+            <span className="dm-saved">
+              ✓ Proposed{" "}
+              {confirm.done.pr_url ? (
+                <a href={confirm.done.pr_url} target="_blank" rel="noreferrer">
+                  as a pull request
+                </a>
+              ) : (
+                <>on {confirm.done.branch}</>
+              )}
+            </span>
+          )}
+          {confirm.error && <span className="error-inline">{confirm.error}</span>}
+        </div>
+      )}
       {rows.length > 0 && (
         <p className="hint">
-          Kept in this browser for now; confirmed, versioned snapshots come next. Confidence starts from what each requirement
+          The working set is kept in this browser; a confirmed order is a document in the repository. Confidence starts from what each requirement
           rests on — an assumption is a weak claim, a citation indirect evidence — and is yours to correct with what was observed.
         </p>
       )}

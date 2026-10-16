@@ -5,6 +5,7 @@
 import { useState } from "react";
 
 import type { SpecModelWrite } from "./api";
+import { obligations, type Obligation } from "./behaviour";
 import { FactRow } from "./domain-model-screens";
 import {
   CHECK_METHOD_LABEL,
@@ -269,6 +270,107 @@ export function HypothesesScreen({
           </article>
         );
       })}
+    </div>
+  );
+}
+
+/** Bounded behaviour coverage: what the specification must say about each
+ *  action in each state, answered by a passage, asked, or excluded with a
+ *  reason. Nothing here is a release gate. */
+export function BehaviourScreen({
+  facts,
+  decisionOf,
+  onExclude,
+  onOpenFile,
+}: {
+  facts: SpecModelFact[];
+  decisionOf: (key: string) => { state: string; note: string | null } | undefined;
+  /** Record a reason an obligation does not apply, or `null` to ask it again. */
+  onExclude?: (o: Obligation, reason: string | null) => Promise<void>;
+  onOpenFile: OpenFile;
+}) {
+  const list = obligations(facts);
+  const [reason, setReason] = useState<Record<string, string>>({});
+  if (list.length === 0)
+    return (
+      <div className="empty">
+        No behaviour questions yet. They come from an entity&apos;s states (a lifecycle that lists them) and the actions roles
+        take on it, once a build reads them with the current extractor.
+      </div>
+    );
+  const excluded = list.filter((o) => decisionOf(o.key)?.state === "excluded");
+  const answered = list.filter((o) => o.answer && !excluded.includes(o));
+  const open = list.filter((o) => !o.answer && !excluded.includes(o));
+  const row = (o: Obligation) => (
+    <div key={o.key} className="nd-ob">
+      <div>
+        May <b>{o.role || "someone"}</b> {o.action} a <b>{o.entity}</b> that is <b>{o.state}</b>?
+      </div>
+      {o.answer ? (
+        <FactRow fact={o.answer} onOpenFile={onOpenFile} />
+      ) : decisionOf(o.key)?.state === "excluded" ? (
+        <div className="hint">
+          Excluded: {decisionOf(o.key)?.note}{" "}
+          {onExclude && (
+            <button type="button" className="dm-link" onClick={() => void onExclude(o, null)}>
+              ask again
+            </button>
+          )}
+        </div>
+      ) : (
+        onExclude && (
+          <div className="dm-actions">
+            <input
+              type="text"
+              placeholder="Why it does not apply"
+              value={reason[o.key] ?? ""}
+              onChange={(e) => setReason((r) => ({ ...r, [o.key]: e.target.value }))}
+              aria-label="Reason to exclude"
+            />
+            <button type="button" className="ghost" disabled={!reason[o.key]?.trim()} onClick={() => void onExclude(o, reason[o.key].trim())}>
+              Exclude with this reason
+            </button>
+          </div>
+        )
+      )}
+    </div>
+  );
+  return (
+    <div className="nd">
+      <p className="dm-howto">
+        <b>What the specification must say about behaviour.</b> For each action roles take on a thing and each state it goes
+        through: may it happen then? A question is answered only where one passage names both; otherwise answer it in the
+        documents, or exclude it with a reason. None of this blocks a build.
+      </p>
+      <div className="dm-filters">
+        <span className="chip">
+          Open <span className="chip-n">{open.length}</span>
+        </span>
+        <span className="chip">
+          Answered <span className="chip-n">{answered.length}</span>
+        </span>
+        <span className="chip">
+          Excluded <span className="chip-n">{excluded.length}</span>
+        </span>
+      </div>
+      {open.length > 0 && (
+        <section className="card nd-role">
+          <div className="dm-h">Not answered</div>
+          {open.map(row)}
+        </section>
+      )}
+      {answered.length > 0 && (
+        <section className="card nd-role">
+          <div className="dm-h">Answered by a passage</div>
+          {answered.map(row)}
+        </section>
+      )}
+      {excluded.length > 0 && (
+        <section className="card nd-role">
+          <div className="dm-h">Excluded</div>
+          {excluded.map(row)}
+        </section>
+      )}
     </div>
   );
 }

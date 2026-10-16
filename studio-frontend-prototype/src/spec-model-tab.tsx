@@ -25,9 +25,10 @@ import { gearRefs } from "./entity-gears";
 import type { GearDraft } from "./gear-from-entity";
 import { GlossaryScreen } from "./glossary-screen";
 import { PrioritiesScreen } from "./priorities-screen";
-import { HypothesesScreen, NeedsScreen } from "./discovery-screens";
+import type { Obligation } from "./behaviour";
+import { BehaviourScreen, HypothesesScreen, NeedsScreen } from "./discovery-screens";
 import type { EvidenceState } from "./need-view";
-import { EVIDENCE_PREFIX, evidenceIndex, FactReviewContext, factKey, reviewIndex, withoutRejected, type FactReview, type SpecModelReview } from "./review-state";
+import { decisionIndex, EVIDENCE_PREFIX, evidenceIndex, FactReviewContext, factKey, reviewIndex, withoutRejected, type FactReview, type SpecModelReview } from "./review-state";
 import { overlaySaved, pruneSaved, savedWrites, withSaved, type SavedEdit } from "./saved-entities";
 import { useGearCatalogue } from "./product-configurator-view";
 import {
@@ -42,6 +43,7 @@ import {
   subjectKey,
   type GlossaryEntry,
   type ProductFinding,
+  type RelatedRequirement,
   type RelatedRequirements,
   type RequirementTraces,
   type SpecModel,
@@ -54,7 +56,7 @@ import {
 } from "./spec-model";
 
 /** The three questions first; the rest stays a click away under More. */
-type View = "resolve" | "map" | "reqs" | "needs" | "hypotheses" | "priorities" | "glossary" | "work" | "product" | "elsewhere" | "coverage";
+type View = "resolve" | "map" | "reqs" | "needs" | "hypotheses" | "behaviour" | "priorities" | "glossary" | "work" | "product" | "elsewhere" | "coverage";
 
 /** The product findings as read, or why they could not be. */
 type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
@@ -279,6 +281,17 @@ export function SpecModelTab({
 
   const reviewByKey = useMemo(() => reviewIndex(reviews), [reviews]);
   const evidence = useMemo(() => evidenceIndex(reviews), [reviews]);
+  const decisions = useMemo(() => decisionIndex(reviews), [reviews]);
+  /** Record a decision kept by key: an excluded obligation, a match across
+   *  projects. `proposed` withdraws it. */
+  const recordDecision = async (key: string, state: string, note: string | null = null, path = "") => {
+    try {
+      await api.reviewSpecModelFacts(token, projectId, [{ fact_key: key, state, path, revision: "", note }]);
+      setReviews((await api.specModelReviews(token, projectId)).items);
+    } catch (e) {
+      setError(message(e));
+    }
+  };
   const recordEvidence = async (f: SpecModelFact, state: EvidenceState) => {
     const revision = model?.documents.find((d) => d.path === f.source.path)?.revision ?? "";
     try {
@@ -380,6 +393,7 @@ export function SpecModelTab({
         <span className="hint">More:</span>
         <ViewChip id="needs" view={view} setView={setView} label="Needs" count={facts.filter((f) => f.kind === "problem" || f.kind === "outcome" || f.kind === "idea").length} />
         <ViewChip id="hypotheses" view={view} setView={setView} label="Hypotheses" count={facts.filter((f) => f.kind === "benefit").length} />
+        <ViewChip id="behaviour" view={view} setView={setView} label="Behaviour" count={facts.filter((f) => f.kind === "action").length} />
         <ViewChip id="priorities" view={view} setView={setView} label="Priorities" count={0} />
         <ViewChip id="glossary" view={view} setView={setView} label="Glossary" count={glossary.length} />
         <ViewChip id="work" view={view} setView={setView} label="Work" count={work && "items" in work ? work.total : 0} />
@@ -450,7 +464,20 @@ export function SpecModelTab({
           onAddMaterial={
             workspaceId
               ? async (title, content) => {
-                  const doc = await api.createProjectDocument(token, workspaceId, projectId, { type_key: "material", title, content });
+                  const doc = await api.createProjectDocument(token, workspaceId, projectId, {
+                    type_key: "material",
+                    title,
+                    content: `# ${title}
+
+## Source
+
+${title}
+
+## Material
+
+${content}
+`,
+                  });
                   // Read at once, on the key of whoever added it: no separate start.
                   await startBuild(`studio:${doc.id}`);
                 }
@@ -467,17 +494,33 @@ export function SpecModelTab({
           onOpenFile={onOpenFile}
         />
       )}
+      {model && view === "behaviour" && (
+        <BehaviourScreen
+          facts={facts}
+          decisionOf={(key) => decisions.get(key)}
+          onExclude={(o: Obligation, reason) => recordDecision(o.key, reason === null ? "proposed" : "excluded", reason, o.from.source.path)}
+          onOpenFile={onOpenFile}
+        />
+      )}
       {view === "priorities" && (
         <PrioritiesScreen
           read={requirements}
           projectId={projectId}
+          onConfirm={(content) => api.proposeSpecModelFile(token, projectId, "docs/priorities.md", content, "the priorities as confirmed in Studio")}
           onTrace={(id) => {
             setTraced(id);
             setView("reqs");
           }}
         />
       )}
-      {view === "elsewhere" && <Elsewhere read={related} onOpenFile={onOpenFile} />}
+      {view === "elsewhere" && (
+        <Elsewhere
+          read={related}
+          onOpenFile={onOpenFile}
+          decisionOf={(r) => decisions.get(relatedKey(r))?.state}
+          onDecide={(r, state) => recordDecision(relatedKey(r), state, null, r.defined_in.path)}
+        />
+      )}
       {model && view === "glossary" && (
         <GlossaryScreen
           entries={glossary}
@@ -666,12 +709,26 @@ function Work({
 /** What other projects of the organization require that reads like this
  *  project's requirements: the same, overlapping, or the opposite. A list of
  *  candidates to read side by side; nothing is decided here. */
+/** A match across projects as its decision is kept. */
+const relatedKey = (r: RelatedRequirement) => `rel:${r.id}|${r.other_project_id}|${r.other_id}`;
+
+const MATCH_DECISIONS: { state: string; label: string; why: string }[] = [
+  { state: "reuse", label: "Reuse it", why: "The other project's functionality serves this need: use it rather than build it again" },
+  { state: "coordinate", label: "Coordinate", why: "Related work: keep the two projects in step" },
+  { state: "separate", label: "Keep separate", why: "Alike in words, different in what it does or for whom" },
+  { state: "unrelated", label: "Unrelated", why: "Not the same functionality at all" },
+];
+
 function Elsewhere({
   read,
   onOpenFile,
+  decisionOf,
+  onDecide,
 }: {
   read: RelatedRequirements | { error: string } | null;
   onOpenFile?: (path: string) => void;
+  decisionOf?: (r: RelatedRequirement) => string | undefined;
+  onDecide?: (r: RelatedRequirement, state: string) => Promise<void>;
 }) {
   if (read === null) return <div className="empty">Comparing with the organization&apos;s other projects…</div>;
   if ("error" in read) return <div className="error">{read.error}</div>;
@@ -715,6 +772,22 @@ function Elsewhere({
               </div>
             </div>
             <div className="sm-req-cites">Shared: {r.shared.join(", ")}</div>
+            {onDecide && (
+              <div className="dm-actions">
+                {MATCH_DECISIONS.map((d) => (
+                  <button
+                    key={d.state}
+                    type="button"
+                    title={d.why}
+                    className={decisionOf?.(r) === d.state ? "primary" : "ghost"}
+                    aria-pressed={decisionOf?.(r) === d.state}
+                    onClick={() => void onDecide(r, decisionOf?.(r) === d.state ? "proposed" : d.state)}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </li>
         ))}
       </ul>

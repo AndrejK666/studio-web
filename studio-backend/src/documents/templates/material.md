@@ -1,3 +1,9 @@
-# {{title}}
+# TODO: what this material is
 
-Paste the material here: an interview, a customer request, a report.
+## Source
+
+TODO: who said or wrote it, when, and where — an interview with an operator, 2026-10-12.
+
+## Material
+
+TODO: paste the interview, the customer request or the report as it is.

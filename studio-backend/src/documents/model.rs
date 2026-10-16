@@ -1213,11 +1213,11 @@ pub fn builtin_types() -> Vec<DocumentType> {
             "Source material",
             "What the need is read from: an interview, a customer request, a report, pasted as it is.",
             include_str!("templates/material.md"),
-            Vec::new(),
-            Rules {
-                forbid_placeholders: false,
-                ..Rules::default()
-            },
+            vec![
+                sec("source", "Source", true, None),
+                sec("material", "Material", true, Some(20)),
+            ],
+            Rules::default(),
         ),
         builtin(
             "feature",

@@ -275,7 +275,7 @@ export interface RelatedRequirements {
 
 export const RELATION_LABEL: Record<RelatedRequirement["relation"], string> = {
   opposite: "Says the opposite",
-  same: "Same requirement",
+  same: "Reads alike",
   overlap: "Overlaps",
 };
 

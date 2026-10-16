@@ -17,6 +17,7 @@ export interface SpecModelReview {
   state: string;
   path: string;
   revision: string;
+  note?: string | null;
   decided_by: string;
   decided_at: string;
 }
@@ -55,6 +56,12 @@ export function reviewIndex(reviews: SpecModelReview[]): Map<string, ReviewState
 /** A hypothesis's evidence is stored beside its fact's review, under this
  *  prefix: a fact's own key is bare hex and never has it. */
 export const EVIDENCE_PREFIX = "ev:";
+
+/** Every review by its full key, with the note it carries: obligations
+ *  (`ob:`) and matches across projects (`rel:`) read their decision here. */
+export function decisionIndex(reviews: SpecModelReview[]): Map<string, { state: string; note: string | null }> {
+  return new Map(reviews.map((r) => [r.fact_key, { state: r.state, note: r.note ?? null }]));
+}
 
 /** What checking found for each hypothesis, by its fact's key. */
 export function evidenceIndex(reviews: SpecModelReview[]): Map<string, string> {
