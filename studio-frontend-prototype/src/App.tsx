@@ -7054,7 +7054,7 @@ const CATEGORIES: { key: string; title: string; blurb: string }[] = [
   {
     key: "source_code",
     title: "Source code",
-    blurb: "Browse repositories and attach them to this project.",
+    blurb: "Repositories Studio reads: browse them and attach them to projects.",
   },
   {
     key: "ai",
@@ -8767,7 +8767,7 @@ function ConnectionList({
               const h = health[c.id];
               return (
                 <span className={`conn-answer ${h?.state ?? "testing"}`} title={h?.text}>
-                  {h ? h.text : "Checking…"}
+                  {h ? h.text.replace(` (${c.base_url})`, "").replace(` (${c.base_url.replace(/\/$/, "")})`, "") : "Checking…"}
                   {h && h.state !== "testing" && <span className="sub"> · checked {relTime(new Date(h.at).toISOString())}</span>}
                 </span>
               );
