@@ -32,6 +32,17 @@ import {
   type ResolveItem,
   type ResolveType,
 } from "./domain-model-views";
+import {
+  classify,
+  REQUIREMENT_TYPE_LABEL,
+  REQUIREMENT_TYPE_NOUN,
+  REQUIREMENT_TYPE_WHAT,
+  requirementProblems,
+  tallyTypes,
+  type RequirementLevel,
+  type RequirementNature,
+  type RequirementType,
+} from "./requirement-types";
 import { DOC_QUALITY_LABEL, docQuality, relationSentence, type DocQualityItem, type DocQualityType } from "./doc-quality";
 import { PROVISIONAL_NOTE } from "./saved-entities";
 import { entityGears, type GearRef, type Keeper } from "./entity-gears";
@@ -1142,6 +1153,17 @@ export function RequirementsView({
 }) {
   const [basis, setBasis] = useState<string>("all");
   const [text, setText] = useState("");
+  // Requirements by type by default; the parts of the design that carry them
+  // are a list of their own, not rows of "no basis stated".
+  const [type, setType] = useState<RequirementType | "all" | "design">("all");
+  const [level, setLevel] = useState<RequirementLevel | "all">("all");
+  const [nature, setNature] = useState<RequirementNature | "all">("all");
+  const classes = useMemo(
+    () => new Map(read && "items" in read ? read.items.map((r) => [r.id, classify(r)]) : []),
+    [read],
+  );
+  const tally = useMemo(() => (read && "items" in read ? tallyTypes(read.items) : null), [read]);
+  const problems = useMemo(() => (read && "items" in read ? requirementProblems(read.items) : []), [read]);
   const traceById = useMemo(
     () => new Map(traces && "items" in traces ? traces.items.map((t) => [t.id, t]) : []),
     [traces],
@@ -1149,7 +1171,15 @@ export function RequirementsView({
   const workById = useMemo(() => new Map(work && "items" in work ? work.items.map((w) => [w.id, w.work]) : []), [work]);
   if (!read) return <div className="empty">Loading…</div>;
   if ("error" in read) return <div className="error">{read.error}</div>;
-  const list = findRequirements(read.items, basis, text);
+  const pool = read.items.filter((r) => {
+    const c = classes.get(r.id) ?? null;
+    if (type === "design") return c === null;
+    if (!c) return false;
+    return (type === "all" || c.type === type) && (level === "all" || c.level === level) && (nature === "all" || c.nature === nature);
+  });
+  const list = findRequirements(pool, basis, text);
+  const byBasis = (b: string) => pool.filter((r) => r.basis === b).length;
+  const shownType = type !== "all" && type !== "design" ? tally?.types.find((t) => t.type === type) : undefined;
   const sel = read.items.find((r) => r.id === selected) ?? null;
   const codeOf = (id: string) => traceById.get(id)?.code.length ?? 0;
   const testsOf = (id: string) => traceById.get(id)?.tests.length ?? 0;
@@ -1160,15 +1190,99 @@ export function RequirementsView({
       <b>Follow a requirement to the code.</b> Pick one: the chain shows the passage that states it, what it rests
       on, the work that names it and where the code and tests carry it. An orange step is where it stops.
     </p>
+    {problems.length > 0 && (
+      <section className="card dm-rproblems" aria-label="Problems in the requirements">
+        <div className="dm-h">Problems in the requirements</div>
+        {problems.map((p) => (
+          <div key={`${p.severity}:${p.type}`} className={`dm-rproblem ${p.severity}`}>
+            <span className={`dm-pill ${p.severity === "missing" ? "dm-bad" : "dm-warn"}`}>
+              {p.severity === "missing" ? "Missing" : p.severity === "few" ? "Too few" : "No basis"}
+            </span>
+            <div>
+              <b>{p.title}.</b> <span className="hint">{p.why}</span>
+              <div className="dm-rwhere">
+                Write them in{" "}
+                {p.where.path && onOpenFile ? (
+                  <button type="button" className="dm-link" onClick={() => onOpenFile(p.where.path!)}>
+                    {p.where.path}
+                  </button>
+                ) : (
+                  <span>the product requirements</span>
+                )}
+                , {p.where.section}, each under its own id.
+              </div>
+            </div>
+            <button type="button" className="ghost" onClick={() => setType(p.type)}>
+              Show {REQUIREMENT_TYPE_NOUN[p.type]}
+            </button>
+          </div>
+        ))}
+      </section>
+    )}
+    {tally && (
+      <div className="dm-rtypes" role="group" aria-label="Requirements by type">
+        <button type="button" className={`dm-rtype${type === "all" ? " on" : ""}`} aria-pressed={type === "all"} onClick={() => setType("all")}>
+          <b>{tally.types.reduce((n, t) => n + t.n, 0)}</b>
+          <span>All requirements</span>
+        </button>
+        {tally.types.map((t) => (
+          <button
+            key={t.type}
+            type="button"
+            className={`dm-rtype${type === t.type ? " on" : ""}${t.n === 0 ? " gap" : ""}`}
+            aria-pressed={type === t.type}
+            title={`${REQUIREMENT_TYPE_LABEL[t.type]}: ${REQUIREMENT_TYPE_WHAT[t.type]}`}
+            onClick={() => setType(type === t.type ? "all" : t.type)}
+          >
+            <b>{t.n}</b>
+            <span>{REQUIREMENT_TYPE_LABEL[t.type]}</span>
+            {t.n > 0 ? (
+              <i className="dm-rtype-bar" title={`${t.grounded} of ${t.n} cite a source or give a reason`}>
+                <i style={{ width: `${(t.grounded / t.n) * 100}%` }} />
+              </i>
+            ) : (
+              <small>none written</small>
+            )}
+          </button>
+        ))}
+        <button type="button" className={`dm-rtype dm-rtype-design${type === "design" ? " on" : ""}`} aria-pressed={type === "design"} onClick={() => setType(type === "design" ? "all" : "design")}>
+          <b>{tally.design}</b>
+          <span>Design elements</span>
+          <small>what carries them</small>
+        </button>
+      </div>
+    )}
+    {shownType && shownType.n === 0 && (
+      <p className="dm-rgap">
+        <b>No {REQUIREMENT_TYPE_NOUN[shownType.type]} are written.</b> They say{" "}
+        {REQUIREMENT_TYPE_WHAT[shownType.type]}. Add them to the product requirements, each under its own id.
+      </p>
+    )}
     <div className="dm-reqs">
       <div className="card dm-reqlist">
+        {type !== "design" && (
+          <div className="dm-filters dm-axes">
+            <span className="hint">Level</span>
+            {(["all", "business", "user", "system"] as const).map((l) => (
+              <button key={l} type="button" className={level === l ? "chip on" : "chip"} onClick={() => setLevel(l)}>
+                {l === "all" ? "Any" : l.charAt(0).toUpperCase() + l.slice(1)}
+              </button>
+            ))}
+            <span className="hint">Nature</span>
+            {(["all", "functional", "nonfunctional"] as const).map((n) => (
+              <button key={n} type="button" className={nature === n ? "chip on" : "chip"} onClick={() => setNature(n)}>
+                {n === "all" ? "Any" : n === "functional" ? "Functional" : "Non-functional"}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="dm-filters">
           <button type="button" className={basis === "all" ? "chip on" : "chip"} onClick={() => setBasis("all")}>
-            All <span className="chip-n">{read.total}</span>
+            All <span className="chip-n">{pool.length}</span>
           </button>
           {BASIS_ORDER.map((b) => (
             <button key={b} type="button" className={basis === b ? "chip on" : "chip"} onClick={() => setBasis(b)}>
-              {BASIS_LABEL[b]} <span className="chip-n">{read.by_basis[b] ?? 0}</span>
+              {BASIS_LABEL[b]} <span className="chip-n">{byBasis(b)}</span>
             </button>
           ))}
           <input type="search" placeholder="Find by id, title or text" value={text} onChange={(e) => setText(e.target.value)} aria-label="Find a requirement" />
@@ -1184,7 +1298,13 @@ export function RequirementsView({
               </span>
               <span className="dm-meta">
                 <span className={`sm-sev sm-basis-${r.basis}`}>{BASIS_LABEL[r.basis]}</span>
-                {r.kind && <span className="sm-sev">{r.kind}</span>}
+                {classes.get(r.id) ? (
+                  <span className="sm-sev dm-rtype-pill" title={r.kind ?? undefined}>
+                    {REQUIREMENT_TYPE_LABEL[classes.get(r.id)!.type]}
+                  </span>
+                ) : (
+                  r.kind && <span className="sm-sev">{r.kind}</span>
+                )}
                 {r.priority && <span className="sm-sev">{r.priority}</span>}
                 <code className="hint">{r.id}</code>
               </span>
