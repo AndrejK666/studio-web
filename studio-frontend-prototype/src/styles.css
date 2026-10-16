@@ -2712,3 +2712,10 @@ div.dm-block { padding-left: 0; }
 .gl-ok { color: #15803d; white-space: nowrap; }
 .gl-from { white-space: nowrap; }
 .gl-defs { margin-bottom: 8px; }
+
+.gl-evidence { white-space: nowrap; }
+.gl-act-same { background: color-mix(in srgb, #16a34a 16%, transparent); color: #15803d; }
+.gl-act-clarify { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
+.gl-act-different { background: var(--accent); }
+.gl-pair-detail { display: flex; flex-direction: column; gap: 10px; }
+.gl-pair-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }

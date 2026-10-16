@@ -3,7 +3,7 @@
 // searches instead of listing every word.
 import { describe, expect, it } from "vitest";
 
-import { clarifySentence, filterRows, glossaryRows, mergeCandidates, renameOffer, similarPairs } from "./glossary-view";
+import { clarifySentence, filterRows, glossaryRows, mergeCandidates, pairVerdict, renameOffer, similarPairs, type GlossaryRow } from "./glossary-view";
 import { entitiesOf, type GlossaryEntry, type SpecModelFact } from "./spec-model";
 
 const entry = (name: string, facts = 5, extra: Partial<GlossaryEntry> = {}): GlossaryEntry => ({
@@ -100,5 +100,42 @@ describe("a sentence that tells two words apart", () => {
 
   it("leaves the rest for a person to finish", () => {
     expect(clarifySentence(pair("build", "building"))).toBe("Building is not the same as **build**: …");
+  });
+});
+
+describe("what to do with a pair", () => {
+  const row = (e: GlossaryEntry, paths: string[], defined: boolean): GlossaryRow => ({
+    entry: e,
+    definition: defined ? "it is" : null,
+    layer: null,
+    definitions: defined ? [fact(e.name, "entity")] : [],
+    paths,
+  });
+  const verdict = (a: [string, string[], boolean], b: [string, string[], boolean]) => {
+    const ea = entry(a[0], 9);
+    const eb = entry(b[0], 4);
+    const rows = new Map([ea, eb].map((e, i) => [e.key, row(e, [a, b][i][1], [a, b][i][2])]));
+    return pairVerdict(similarPairs([ea, eb])[0], (k) => rows.get(k));
+  };
+
+  it("reads a plural or an -ing form as one thing", () => {
+    expect(verdict(["deploy", ["x.md"], true], ["deploying", ["y.md"], false]).action).toBe("same");
+    expect(verdict(["project", ["x.md"], true], ["projects", ["x.md"], false]).action).toBe("same");
+  });
+  it("asks to tell a standing apart from the one who holds it", () => {
+    const v = verdict(["member", ["x.md"], true], ["membership", ["x.md"], true]);
+    expect(v.action).toBe("clarify");
+    expect(v.why).toContain("“membership” names the standing");
+  });
+  it("reads a level in front without its own definition, said in the same documents, as the same thing", () => {
+    const v = verdict(["membership", ["a.md", "b.md"], true], ["organization membership", ["a.md"], false]);
+    expect(v.action).toBe("same");
+    expect(v.evidence.shared).toBe(1);
+  });
+  it("asks to say a kind is a kind when both are defined in the same documents", () => {
+    expect(verdict(["membership", ["a.md"], true], ["organization membership", ["a.md"], true]).action).toBe("clarify");
+  });
+  it("keeps two defined terms that never meet apart", () => {
+    expect(verdict(["membership", ["a.md"], true], ["organization membership", ["b.md"], true]).action).toBe("different");
   });
 });

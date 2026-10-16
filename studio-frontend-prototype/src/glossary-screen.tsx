@@ -19,6 +19,9 @@ import {
   similarPairs,
   type GlossaryFilter,
   type GlossaryRow,
+  pairVerdict,
+  type PairAction,
+  type PairVerdict,
   type SimilarPair,
 } from "./glossary-view";
 import type { Entity, GlossaryEntry } from "./spec-model";
@@ -90,6 +93,9 @@ export function GlossaryScreen({
     return d ? review?.stateOf(d) ?? null : null;
   };
   const list = useMemo(() => filterRows(rows, filter, text, pairs), [rows, filter, text, pairs]);
+  const rowByKey = useMemo(() => new Map(rows.map((r) => [r.entry.key, r])), [rows]);
+  const verdicts = useMemo(() => new Map<string, PairVerdict>(pairs.map((p) => [`${p.a.key}|${p.b.key}`, pairVerdict(p, (k) => rowByKey.get(k))])), [pairs, rowByKey]);
+  const verdictOf = (p: SimilarPair) => verdicts.get(`${p.a.key}|${p.b.key}`)!;
   const undefinedCount = useMemo(() => rows.filter((r) => !r.definition && r.layer !== null).length, [rows]);
   const named = useMemo(() => rows.filter((r) => r.entry.chosen || r.entry.aliases.length > 0).length, [rows]);
 
@@ -148,52 +154,130 @@ export function GlossaryScreen({
         </section>
       )}
 
-      {filter !== "named" && pairs.length > 0 && (
-        <section className="card gl-pairs">
-          <div className="dm-h">Probably one thing under two names</div>
-          {pairs.slice(0, filter === "similar" ? pairs.length : 5).map((p) => (
-            <div key={`${p.a.key}|${p.b.key}`} className="gl-pair">
-              <span>
-                <b>{p.a.name}</b> and <b>{p.b.name}</b> <span className="hint">— {p.why}</span>
-              </span>
-              <span className="gl-pair-actions">
-                <button type="button" className="primary" title={`Read “${p.b.name}” as “${p.a.name}”`} onClick={() => void onDecide(p.b.key, { name: null, alias_of: p.a.key }).then(() => offerRename(renameOffer(p.b, p.a.name)))}>
-                  Same thing
-                </button>
-                {onProposeSentence && (
-                  <button
-                    type="button"
-                    className="ghost"
-                    aria-expanded={clarifying === `${p.a.key}|${p.b.key}`}
-                    title="Propose a sentence that tells the two words apart, in the document that describes one of them"
-                    onClick={() => setClarifying((c) => (c === `${p.a.key}|${p.b.key}` ? null : `${p.a.key}|${p.b.key}`))}
-                  >
-                    Clarify in the docs
-                  </button>
-                )}
-                <button type="button" className="ghost" onClick={() => keepApart(p)}>
-                  Different things
-                </button>
-              </span>
-              {onProposeSentence && clarifying === `${p.a.key}|${p.b.key}` && (
-                <Clarify
-                  pair={p}
-                  entities={entities}
-                  revisions={revisions}
-                  onPropose={onProposeSentence}
-                  onDone={() => keepApart(p)}
-                />
-              )}
-            </div>
-          ))}
-          {filter !== "similar" && pairs.length > 5 && (
-            <button type="button" className="dm-link" onClick={() => setFilter("similar")}>
-              all {pairs.length} pairs
-            </button>
-          )}
-        </section>
+      {filter !== "similar" && filter !== "named" && pairs.length > 0 && (
+        <p className="dm-verdict-line">
+          <b>{pairs.length}</b> pair{pairs.length === 1 ? "" : "s"} of names may be one thing.{" "}
+          <button type="button" className="dm-link" onClick={() => setFilter("similar")}>
+            Review them with a recommendation for each
+          </button>
+        </p>
+      )}
+      {filter === "similar" && (
+        <div className="card gl-pairs">
+          <DataTable<SimilarPair>
+            list="glossary-pairs"
+            urlPrefix="pair."
+            rows={pairs}
+            rowKey={(p) => `${p.a.key}|${p.b.key}`}
+            rowLabel={(p) => `${p.a.name} / ${p.b.name}`}
+            pageSize={20}
+            filters={[
+              {
+                id: "action",
+                allLabel: "Every recommendation",
+                kind: "chips",
+                options: [
+                  { value: "same", label: "Same thing" },
+                  { value: "clarify", label: "Clarify in the docs" },
+                  { value: "different", label: "Different things" },
+                ],
+                match: (p, v) => verdictOf(p).action === v,
+              },
+            ]}
+            empty={{ title: "No pair left to decide." }}
+            columns={[
+              {
+                id: "pair",
+                header: "Names",
+                cell: (p) => (
+                  <span>
+                    <b>{p.a.name}</b> · <b>{p.b.name}</b>
+                    <div className="sub">{p.why}</div>
+                  </span>
+                ),
+              },
+              {
+                id: "evidence",
+                header: "Said",
+                cell: (p) => {
+                  const e = verdictOf(p).evidence;
+                  return (
+                    <span className="sub gl-evidence">
+                      {e.aFacts} / {e.bFacts} facts · {e.aDocs} / {e.bDocs} docs · {e.shared} shared
+                      <br />
+                      defined: {e.aDefined ? "✓" : "—"} / {e.bDefined ? "✓" : "—"}
+                    </span>
+                  );
+                },
+              },
+              {
+                id: "recommend",
+                header: "Recommended",
+                cell: (p) => {
+                  const v = verdictOf(p);
+                  return (
+                    <span>
+                      <span className={`dm-pill gl-act-${v.action}`}>{ACTION_LABEL[v.action]}</span>
+                      <div className="sub">{v.why}</div>
+                    </span>
+                  );
+                },
+              },
+            ]}
+            expand={(p) => {
+              const v = verdictOf(p);
+              const ra = rowByKey.get(p.a.key);
+              const rb = rowByKey.get(p.b.key);
+              const key = `${p.a.key}|${p.b.key}`;
+              return (
+                <div className="gl-pair-detail">
+                  <div className="gl-pair-sides">
+                    {[ra, rb].map((r, k) => (
+                      <div key={k}>
+                        <div className="dm-h">{(k === 0 ? p.a : p.b).name}</div>
+                        {r && r.definitions.length ? (
+                          r.definitions.slice(0, 2).map((f, i) => <FactRow key={i} fact={f} onOpenFile={onOpenFile} />)
+                        ) : (
+                          <p className="sub">No document says what it is.</p>
+                        )}
+                        {r && <div className="sub">Said in: {r.paths.slice(0, 4).map((x) => x.split("/").pop()).join(", ")}{r.paths.length > 4 ? ` +${r.paths.length - 4}` : ""}</div>}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="gl-pair-actions">
+                    <button
+                      type="button"
+                      className={v.action === "same" ? "primary" : "ghost"}
+                      title={`Read “${p.b.name}” as “${p.a.name}”`}
+                      onClick={() => void onDecide(p.b.key, { name: null, alias_of: p.a.key }).then(() => offerRename(renameOffer(p.b, p.a.name)))}
+                    >
+                      Same thing
+                    </button>
+                    {onProposeSentence && (
+                      <button
+                        type="button"
+                        className={v.action === "clarify" ? "primary" : "ghost"}
+                        aria-expanded={clarifying === key}
+                        onClick={() => setClarifying((c) => (c === key ? null : key))}
+                      >
+                        Clarify in the docs
+                      </button>
+                    )}
+                    <button type="button" className={v.action === "different" ? "primary" : "ghost"} onClick={() => keepApart(p)}>
+                      Different things
+                    </button>
+                  </div>
+                  {onProposeSentence && clarifying === key && (
+                    <Clarify pair={p} entities={entities} revisions={revisions} onPropose={onProposeSentence} onDone={() => keepApart(p)} />
+                  )}
+                </div>
+              );
+            }}
+          />
+        </div>
       )}
 
+      {filter !== "similar" && (
       <div className="card">
         <DataTable<GlossaryRow>
           list="glossary"
@@ -286,6 +370,7 @@ export function GlossaryScreen({
           )}
         />
       </div>
+      )}
     </div>
   );
 }
@@ -449,3 +534,9 @@ function Clarify({
     </div>
   );
 }
+
+const ACTION_LABEL: Record<PairAction, string> = {
+  same: "Same thing",
+  clarify: "Clarify in the docs",
+  different: "Different things",
+};

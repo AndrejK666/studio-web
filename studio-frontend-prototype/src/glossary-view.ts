@@ -16,6 +16,8 @@ export interface GlossaryRow {
   /** Every passage that says what it is, each from its document: the one the
    *  definition is read from first. */
   definitions: SpecModelFact[];
+  /** The documents it is said in. */
+  paths: string[];
 }
 
 /** Each entry with its definition and layer, read off the model's entities. */
@@ -25,7 +27,8 @@ export function glossaryRows(entries: GlossaryEntry[], entities: Entity[]): Glos
   return entries.map((entry) => {
     const e = byKey.get(entry.key);
     const definitions = e?.facts.filter((f) => f.kind === "entity") ?? [];
-    return { entry, definition: definitions[0]?.text ?? null, layer: e ? layerOf(e) : null, definitions };
+    const paths = [...new Set((e?.facts ?? []).map((f) => f.source.path))];
+    return { entry, definition: definitions[0]?.text ?? null, layer: e ? layerOf(e) : null, definitions, paths };
   });
 }
 
@@ -124,4 +127,63 @@ export function renameOffer(entry: GlossaryEntry, to: string): { from: string; t
   if (!name) return null;
   const from = entry.chosen ? (entry.spellings.find((s) => s.toLowerCase() !== name.toLowerCase()) ?? entry.name) : entry.name;
   return from.toLowerCase() === name.toLowerCase() ? null : { from, to: name };
+}
+
+/** What to do with two names that look like one thing. */
+export type PairAction = "same" | "clarify" | "different";
+
+export interface PairVerdict {
+  action: PairAction;
+  /** Why, in a sentence a person can check against the evidence. */
+  why: string;
+  /** What the evidence is: how much each is said, where, and whether they meet. */
+  evidence: { aFacts: number; bFacts: number; aDocs: number; bDocs: number; shared: number; aDefined: boolean; bDefined: boolean };
+}
+
+/** A recommendation for a pair, from how the names are alike and what the
+ *  documents say of each. Never a decision: the person takes it or not.
+ *  - "-ing" of the same word is the act and the thing done: one thing.
+ *  - "-s" is a plural: one thing.
+ *  - "-ship" names a standing, not the one who holds it (membership, member):
+ *    two things worth telling apart in the documents.
+ *  - A level in front with a definition of its own that says something else
+ *    is a kind of the other: tell them apart. Without a definition of its own,
+ *    said in the same documents, it is the other said more fully: one thing.
+ *    Said in other documents altogether, with definitions of both: different. */
+export function pairVerdict(p: SimilarPair, rowOf: (key: string) => GlossaryRow | undefined): PairVerdict {
+  const a = rowOf(p.a.key);
+  const b = rowOf(p.b.key);
+  const aPaths = new Set(a?.paths ?? []);
+  const shared = (b?.paths ?? []).filter((x) => aPaths.has(x)).length;
+  const evidence = {
+    aFacts: p.a.facts,
+    bFacts: p.b.facts,
+    aDocs: a?.paths.length ?? p.a.documents,
+    bDocs: b?.paths.length ?? p.b.documents,
+    shared,
+    aDefined: !!a?.definitions.length,
+    bDefined: !!b?.definitions.length,
+  };
+  const longer = p.b.key.length >= p.a.key.length ? { e: p.b, row: b, defined: evidence.bDefined } : { e: p.a, row: a, defined: evidence.aDefined };
+  const base = longer.e === p.b ? { e: p.a, defined: evidence.aDefined } : { e: p.b, defined: evidence.bDefined };
+  if (p.how && "suffix" in p.how) {
+    if (p.how.suffix === "ing")
+      return { action: "same", why: `“${longer.e.name}” is the act of “${base.e.name}”: one thing, named two ways.`, evidence };
+    if (p.how.suffix === "s") return { action: "same", why: `“${longer.e.name}” is the plural of “${base.e.name}”.`, evidence };
+    return {
+      action: "clarify",
+      why: `“${longer.e.name}” names the standing, “${base.e.name}” the one who holds it: two things the documents should tell apart.`,
+      evidence,
+    };
+  }
+  if (p.how && "level" in p.how) {
+    if (longer.defined && base.defined)
+      return shared === 0
+        ? { action: "different", why: `Both are defined, and never in the same document: “${longer.e.name}” is its own thing.`, evidence }
+        : { action: "clarify", why: `Both are defined: “${longer.e.name}” is a kind of “${base.e.name}” at the ${p.how.level} level — say so where it is defined.`, evidence };
+    if (!longer.defined && shared > 0)
+      return { action: "same", why: `“${longer.e.name}” has no definition of its own and is said in ${shared} of the same documents: “${base.e.name}”, said more fully.`, evidence };
+    return { action: "clarify", why: `“${longer.e.name}” is said apart from “${base.e.name}” and nothing defines how they differ: one sentence settles it.`, evidence };
+  }
+  return { action: "clarify", why: "The names are alike and nothing says how they differ.", evidence };
 }
