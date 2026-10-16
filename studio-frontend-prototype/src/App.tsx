@@ -126,6 +126,7 @@ import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
 import { OrgEnvironments } from "./environments-screen";
+import { ProjectDeploys } from "./project-deploys-tab";
 import { KubeconfigField } from "./kubeconfig-field";
 import { kubeconfigServer } from "./kubeconfig";
 import { environmentsByConnection } from "./environments";
@@ -5263,6 +5264,11 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // the tab that says what it is made of, before where it runs. The portal
   // does not build; CI and the IDE do.
   { id: "builds", icon: "activity", label: "Builds" },
+  // Where the product runs (ADR-0043): the organization's environments this
+  // project may deploy to, its namespace in each, its bindings and deploys.
+  // After Builds, because a deploy takes what a build made. It was a block at
+  // the bottom of the Product card, under the configuration.
+  { id: "deploys", icon: "layers", label: "Deploys" },
   { id: "kits", icon: "grid", label: "Kits" },
   { id: "artifacts", icon: "file", label: "Artifacts" },
   // Sources sits after them because it is where they come from: a sync run
@@ -5615,6 +5621,9 @@ function ProjectScreen({
         )}
         {tab === "builds" && (
           <ProjectBuilds token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />
+        )}
+        {tab === "deploys" && (
+          <ProjectDeploys token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />
         )}
         {tab === "kits" && (
           <ProjectKits
