@@ -5,10 +5,6 @@
 
 use std::collections::BTreeSet;
 
-/// Linked, and named by no product: the toolkit's runtime, which every
-/// assembly has and gears-rust gives no description.
-const RUNTIME: &[&str] = &["gear-orchestrator"];
-
 /// Every gear id a product description names: `use_gear("…")` and
 /// `plugin("…")`. A line scan, enough for the file the engine writes.
 fn named(gdl: &str) -> BTreeSet<String> {
@@ -48,6 +44,9 @@ fn a_product_description_names_its_gears_and_plugins() {
 #[cfg(not(feature = "theia-bridge"))]
 #[test]
 fn product_gdl_names_what_this_binary_links() {
+    // Linked, and named by no product: the toolkit's runtime, which every
+    // assembly has and gears-rust gives no description.
+    const RUNTIME: &[&str] = &["gear-orchestrator"];
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../product.gdl");
     let gdl = std::fs::read_to_string(&path).expect("product.gdl at the repository root");
     let linked: BTreeSet<String> = super::linked()
