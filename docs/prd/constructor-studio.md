@@ -103,26 +103,7 @@ goals are stated as observable outcomes rather than numeric targets.
 
 ### 1.4 Glossary
 
-These terms are used with exactly this meaning in every document under `docs/`.
-
-| Term | Definition |
-|------|------------|
-| Organization | An account-management tenant that owns members, the shared connection catalogue and the access config. Hidden from navigation in concept v2, not removed. |
-| Workspace | An account-management tenant of type `workspace` under an organization. Concept v2 calls it a root project; the wire keeps `workspace` and `workspace_id` (ADR-0010). |
-| Project | A tenant nested under a workspace; its attributes are tenant metadata (ADR-0010). |
-| Member | A person with a membership in an organization, recorded by `studio-user` (ADR-0016). |
-| Gear | A CF/Gears module linked into the backend binary and registered at link time through `inventory`. A Studio gear lives in `studio-backend/src/`; a platform gear comes from gears-rust. |
-| Plugin | A gear that implements another gear's plugin contract, for example a connector plugin for `studio-connector` or an AuthZ resolver plugin. |
-| Connection | A configured credential for one provider (source host, model provider or chat platform), owned by a tenant; its secret is a credstore reference. |
-| Session | A running Theia IDE container or Pod for one workspace, managed by `studio-session`. |
-| Document type | A template, section checklist and rules a document is validated against (`studio-documents`). |
-| Binding | The record that ties a repository file's knowledge-graph node to a document type, with its detection state and validation report (`studio_document_bindings`). |
-| Capability | A key of the capability vocabulary a PRD declares (`domain`, `tenancy`, `auth`, `authz`, `storage`, `connectors`, `facade`, `billing`, `compliance`, `deploy`), from which gears are suggested. The vocabulary translates each key into the contracts that satisfy it. |
-| Contract | What the Gearbox engine reports a gear doing for others, so it is checked rather than read from prose: a contract the gear provides (`<gear>/<Trait>@v<N>`, projected from `#[toolkit::provides]`), the GTS spec of an extension point it hosts, or the spec of the point it implements as a plugin. |
-| Mapping | A capability of a specification paired with the gear that covers it, or with nothing (a gap); proposed by the system, decided by a member. |
-| Kit | A bundle of templates, prompts and checklists kept in its own Git repository and installed into a project's checkout by `cfs`. |
-| Product | A `product.gdl` composed from picked gears and resolved by the Gearbox engine. |
-| Run | One unit of durable background work in `studio-tasks`. |
+The project's terms are kept in [the glossary](../glossary.md): one row per term, with what it means and the other names it goes by. Link a term there where a document first uses it.
 
 ## 2. Actors
 
