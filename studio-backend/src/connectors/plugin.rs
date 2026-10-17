@@ -61,6 +61,17 @@ async fn register_driver(
     }
     ctx.client_hub()
         .register_scoped::<dyn ConnectorDriver>(ClientScope::gts_id(instance_id), driver);
+    // What it registered under, beside it: studio-connector selects drivers
+    // by vendor in its own init, before the registry serves what was
+    // registered in this one.
+    ctx.client_hub()
+        .register_scoped::<super::driver::DriverRegistration>(
+            ClientScope::gts_id(instance_id),
+            Arc::new(super::driver::DriverRegistration {
+                vendor: vendor.to_owned(),
+                priority,
+            }),
+        );
     info!(instance_id = %instance_id, vendor = %vendor, priority = priority,
           "connector driver registered");
     Ok(())

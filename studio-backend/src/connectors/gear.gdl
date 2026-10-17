@@ -21,7 +21,10 @@ gear(
     # so the crate is its own SDK.
     sdk = cargo(crate_name = "cf-studio-backend", lib = "cf_studio_backend", path = "../.."),
     extension_points = [
-        extension_point("cf.studio.connector.plugin.v1~", trait = "ConnectorDriver"),
+        extension_point("cf.studio.connector.plugin.v1~", trait = "ConnectorDriver", selector = "vendor"),
     ],
     docs = docs(design = "../../../docs/design/studio-connector.md"),
+    # The vendor it takes its drivers from (ConnectorGearConfig): every driver
+    # it takes registers under it.
+    config_schema = config(rust = "ConnectorGearConfig", exposes = ["vendor"]),
 )
