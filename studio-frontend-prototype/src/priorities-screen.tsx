@@ -2,7 +2,7 @@
  * Impact, take Confidence from what it rests on or correct it, give an effort
  * for Ease, and read the ICE score and the order it leads to. Every value
  * says where it comes from, an unknown stays unknown, a tie stays a tie. */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { DataTable } from "./data-table";
 
@@ -18,21 +18,21 @@ import {
   type IceInputs,
 } from "./prioritise";
 import type { SpecModelWrite } from "./api";
+import {
+  changedSince,
+  confirmations,
+  confirmationWrite,
+  itemWrite,
+  removeWrite,
+  workingSet,
+  type ConfirmedRow,
+  type Entry,
+  type ReviewWrite,
+  type WorkingSet,
+} from "./priority-store";
 import { classify, REQUIREMENT_TYPE_LABEL } from "./requirement-types";
+import type { SpecModelReview } from "./review-state";
 import type { SpecRequirement, SpecRequirements } from "./spec-model";
-
-/** What a person entered for one item. */
-interface Entry {
-  impact?: number;
-  confidence?: number;
-  /** Person-weeks: "3", or a range "1.5-3". */
-  effort?: string;
-}
-
-interface Saved {
-  items: string[];
-  entries: Record<string, Entry>;
-}
 
 const ORIGIN_LABEL: Record<Criterion["origin"], string> = {
   measured: "measured",
@@ -41,16 +41,35 @@ const ORIGIN_LABEL: Record<Criterion["origin"], string> = {
   unknown: "unknown",
 };
 
-const storeKey = (projectId: string) => `studio.priorities.${projectId}`;
+/** Where an earlier version kept the working set: in this browser only. */
+const legacyKey = (projectId: string) => `studio.priorities.${projectId}`;
 
-function load(projectId: string): Saved {
+function loadLegacy(projectId: string): WorkingSet | null {
   try {
-    const raw = localStorage.getItem(storeKey(projectId));
-    if (raw) return JSON.parse(raw) as Saved;
+    const raw = localStorage.getItem(legacyKey(projectId));
+    const set = raw ? (JSON.parse(raw) as WorkingSet) : null;
+    return set && Array.isArray(set.items) && set.items.length ? set : null;
   } catch {
-    // Private window or blocked storage: start empty.
+    // Private window or blocked storage: nothing to bring over.
+    return null;
   }
-  return { items: [], entries: {} };
+}
+
+function dropLegacy(projectId: string) {
+  try {
+    localStorage.removeItem(legacyKey(projectId));
+  } catch {
+    // Nothing kept, nothing to drop.
+  }
+}
+
+/** How long an entry waits for more typing before it is saved. */
+const SAVE_AFTER_MS = 700;
+
+/** The entries typed this visit and not saved yet: a reload of the project's
+ *  set must not undo them. */
+function stillTyped(s: WorkingSet, timers: Map<string, unknown>): Record<string, Entry> {
+  return Object.fromEntries([...timers.keys()].filter((id) => s.entries[id]).map((id) => [id, s.entries[id]]));
 }
 
 /** "3" or "1.5-3" as person-weeks; undefined when it is neither. */
@@ -76,27 +95,41 @@ function inputsOf(r: SpecRequirement, e: Entry): IceInputs {
 export function PrioritiesScreen({
   read,
   projectId,
+  reviews,
+  onSave,
   onTrace,
   onConfirm,
 }: {
   read: SpecRequirements | { error: string } | null;
   projectId: string;
+  /** The project's decisions: the working set and the confirmed orders are among them. */
+  reviews: SpecModelReview[];
+  /** Keep changes to the working set, or a confirmed order, with the project. */
+  onSave?: (writes: ReviewWrite[]) => Promise<void>;
   /** Propose the confirmed order as docs/priorities.md: versioned by the
    *  repository, reviewed like any change. */
   onConfirm?: (content: string) => Promise<SpecModelWrite>;
   /** Follow a requirement in the Requirements view. */
   onTrace: (id: string) => void;
 }) {
-  const [saved, setSaved] = useState<Saved>(() => load(projectId));
+  const kept = useMemo(() => workingSet(reviews), [reviews]);
+  const history = useMemo(() => confirmations(reviews), [reviews]);
+  // What is on screen: the project's set, with this visit's typing laid over
+  // it until it is saved.
+  const pending = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const [saved, setSaved] = useState<WorkingSet>(kept);
+  useEffect(() => setSaved((s) => ({ items: kept.items, entries: { ...kept.entries, ...stillTyped(s, pending.current) } })), [kept]);
+  useEffect(() => () => pending.current.forEach((t) => clearTimeout(t)), []);
+  const [legacy, setLegacy] = useState(() => loadLegacy(projectId));
   const [adding, setAdding] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ busy: boolean; done?: SpecModelWrite; error?: string }>({ busy: false });
-  useEffect(() => {
-    try {
-      localStorage.setItem(storeKey(projectId), JSON.stringify(saved));
-    } catch {
-      // Not kept; the screen still works for this visit.
-    }
-  }, [saved, projectId]);
+  const save = (writes: ReviewWrite[]) => {
+    if (!onSave || writes.length === 0) return Promise.resolve();
+    return onSave(writes)
+      .then(() => setSaveError(null))
+      .catch((e: unknown) => setSaveError(e instanceof Error ? e.message : String(e)));
+  };
 
   const items = read && "items" in read ? read.items : [];
   const candidates = useMemo(
@@ -119,13 +152,42 @@ export function PrioritiesScreen({
   const rank = new Map(ordering.order.map((id, n) => [id, n + 1]));
   const rows = [...scored].sort((a, b) => rank.get(a.r.id)! - rank.get(b.r.id)!);
 
-  const setEntry = (id: string, patch: Partial<Entry>) =>
-    setSaved((s) => ({ ...s, entries: { ...s.entries, [id]: { ...s.entries[id], ...patch } } }));
-  const add = (ids: string[]) => setSaved((s) => ({ ...s, items: [...s.items, ...ids.filter((id) => !s.items.includes(id))] }));
-  const remove = (id: string) => setSaved((s) => ({ ...s, items: s.items.filter((x) => x !== id) }));
+  const setEntry = (id: string, patch: Partial<Entry>) => {
+    const entry = { ...saved.entries[id], ...patch };
+    setSaved((s) => ({ ...s, entries: { ...s.entries, [id]: entry } }));
+    // Typing is saved once it pauses, one item at a time.
+    clearTimeout(pending.current.get(id));
+    pending.current.set(
+      id,
+      setTimeout(() => {
+        pending.current.delete(id);
+        void save([itemWrite(id, entry)]);
+      }, SAVE_AFTER_MS),
+    );
+  };
+  const add = (ids: string[]) => {
+    const fresh = ids.filter((id) => !saved.items.includes(id));
+    setSaved((s) => ({ ...s, items: [...s.items, ...fresh] }));
+    void save(fresh.map((id) => itemWrite(id, saved.entries[id] ?? {})));
+  };
+  const remove = (id: string) => {
+    setSaved((s) => ({ ...s, items: s.items.filter((x) => x !== id) }));
+    void save([removeWrite(id)]);
+  };
+  const bringLegacy = async () => {
+    if (!legacy) return;
+    const ids = legacy.items.filter((id) => !saved.items.includes(id));
+    await save(ids.map((id) => itemWrite(id, legacy.entries[id] ?? {})));
+    dropLegacy(projectId);
+    setLegacy(null);
+  };
   const q = adding.trim().toLowerCase();
   const matches = q ? candidates.filter((r) => !saved.items.includes(r.id) && `${r.id} ${r.title ?? ""}`.toLowerCase().includes(q)).slice(0, 8) : [];
   const num = (v: string) => (v.trim() === "" ? undefined : Math.min(10, Math.max(1, Math.round(Number(v)))));
+  const scoreText = (ice: (typeof rows)[number]["ice"]) => String(ice.score ?? (ice.range ? `${ice.range[0]}–${ice.range[1]}` : "incomplete"));
+  const nowRows: ConfirmedRow[] = rows.map(({ r, ice }) => ({ id: r.id, rank: rank.get(r.id)!, ice: scoreText(ice) }));
+  const last = history[0];
+  const changed = changedSince(last, nowRows);
 
   if (!read) return <div className="empty">Loading…</div>;
   if ("error" in read) return <div className="error">{read.error}</div>;
@@ -137,6 +199,28 @@ export function PrioritiesScreen({
         Each value says where it comes from; one nobody knows leaves the score incomplete rather than guessed. Order puts a
         prerequisite before what needs it, and a tie stays a tie.
       </p>
+      {legacy && onSave && (
+        <div className="card pr-legacy">
+          <span>
+            This browser still keeps a comparison of {legacy.items.length} item{legacy.items.length === 1 ? "" : "s"} from before
+            it was kept with the project.
+          </span>
+          <button type="button" className="primary" onClick={() => void bringLegacy()}>
+            Bring it into the project
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              dropLegacy(projectId);
+              setLegacy(null);
+            }}
+          >
+            Discard it
+          </button>
+        </div>
+      )}
+      {saveError && <div className="error">Not saved: {saveError}</div>}
       <div className="card pr-add">
         <input type="search" placeholder="Add a functional or user requirement by id or title" value={adding} onChange={(e) => setAdding(e.target.value)} aria-label="Add a requirement" />
         <button
@@ -272,13 +356,17 @@ export function PrioritiesScreen({
                 ...rows.map(({ r, inputs, ice }) => {
                   const v = (k: IceCriterion) =>
                     `${inputs[k].range ? `${inputs[k].range![0]}–${inputs[k].range![1]}` : (inputs[k].score ?? "unknown")} (${ORIGIN_LABEL[inputs[k].origin]})`;
-                  const score = ice.score ?? (ice.range ? `${ice.range[0]}–${ice.range[1]}` : "incomplete");
-                  return `| ${rank.get(r.id)}${ordering.ties.has(r.id) ? " (tie)" : ""} | ${(r.title ?? r.id).replace(/\|/g, "\\|")} \`${r.id}\` | ${v("impact")} | ${v("confidence")} | ${v("ease")} | ${score} |`;
+                  return `| ${rank.get(r.id)}${ordering.ties.has(r.id) ? " (tie)" : ""} | ${(r.title ?? r.id).replace(/\|/g, "\\|")} \`${r.id}\` | ${v("impact")} | ${v("confidence")} | ${v("ease")} | ${scoreText(ice)} |`;
                 }),
                 "",
               ];
               onConfirm(lines.join("\n"))
-                .then((done) => setConfirm({ busy: false, done }))
+                .then(async (done) => {
+                  // The confirmation is kept with the project too: who, when,
+                  // the pull request and the order, to compare against later.
+                  await save([confirmationWrite(new Date().toISOString(), done, nowRows)]);
+                  setConfirm({ busy: false, done });
+                })
                 .catch((e: unknown) => setConfirm({ busy: false, error: e instanceof Error ? e.message : String(e) }));
             }}
             title="Write this order to docs/priorities.md as a pull request: a confirmed, versioned snapshot"
@@ -300,10 +388,40 @@ export function PrioritiesScreen({
           {confirm.error && <span className="error-inline">{confirm.error}</span>}
         </div>
       )}
+      {history.length > 0 && (
+        <details className="card pr-history" open={changed}>
+          <summary className="dm-h">
+            {changed ? "Changed since the order confirmed last" : "The order is as confirmed last"} ·{" "}
+            {history.length} confirmed order{history.length === 1 ? "" : "s"}
+          </summary>
+          <ul>
+            {history.map((c) => (
+              <li key={c.key}>
+                {new Date(c.at).toLocaleString()} —{" "}
+                {c.prUrl ? (
+                  <a href={c.prUrl} target="_blank" rel="noreferrer">
+                    the pull request
+                  </a>
+                ) : (
+                  c.branch && <>on {c.branch}</>
+                )}{" "}
+                <span className="hint">
+                  {c.rows
+                    .slice(0, 5)
+                    .map((r) => `${r.rank}. ${r.id} (${r.ice})`)
+                    .join(", ")}
+                  {c.rows.length + c.more > 5 ? `, … ${c.rows.length + c.more} in all` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {rows.length > 0 && (
         <p className="hint">
-          The working set is kept in this browser; a confirmed order is a document in the repository. Confidence starts from what each requirement
-          rests on — an assumption is a weak claim, a citation indirect evidence — and is yours to correct with what was observed.
+          The working set is kept with the project, for everyone who opens it; a confirmed order is a document in the repository
+          and a record here. Confidence starts from what each requirement rests on — an assumption is a weak claim, a citation
+          indirect evidence — and is yours to correct with what was observed.
         </p>
       )}
     </div>

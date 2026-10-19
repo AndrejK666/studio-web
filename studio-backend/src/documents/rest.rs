@@ -5458,14 +5458,22 @@ async fn create_spec_model_issue(
 }
 
 /// Whether a review state belongs to what its key names: a fact, a
-/// hypothesis (`ev:`), a behaviour obligation (`ob:`) or a match across
-/// projects (`rel:`). `proposed` withdraws any of them.
+/// hypothesis's evidence (`ev:`) or its check (`hyp:`), a behaviour
+/// obligation (`ob:`), a match across projects (`rel:`), an item being
+/// prioritised (`pri:`) or a confirmed order (`prc:`). `proposed` withdraws
+/// any of them.
 fn review_state_fits(key: &str, state: &str) -> bool {
     if state == "proposed" {
         return true;
     }
     if key.starts_with("ev:") {
         matches!(state, "supports" | "contradicts" | "insufficient")
+    } else if key.starts_with("hyp:") {
+        state == "check"
+    } else if key.starts_with("pri:") {
+        state == "scored"
+    } else if key.starts_with("prc:") {
+        state == "confirmed"
     } else if key.starts_with("ob:") {
         state == "excluded"
     } else if key.starts_with("rel:") {
@@ -5474,6 +5482,16 @@ fn review_state_fits(key: &str, state: &str) -> bool {
         state == "opened"
     } else {
         matches!(state, "accepted" | "rejected")
+    }
+}
+
+/// How long a review's note may be: a hypothesis's check keeps its brief and
+/// what checking found, so it gets more room than a reason in a sentence.
+fn review_note_max(key: &str) -> usize {
+    if key.starts_with("hyp:") {
+        8000
+    } else {
+        2000
     }
 }
 
@@ -5743,13 +5761,18 @@ async fn review_spec_model_facts(
         if !review_state_fits(key, &i.state) {
             return Err(invalid(
                 "state",
-                "must be accepted, rejected or proposed; for a hypothesis (ev:) supports, contradicts or \
-                 insufficient; for an obligation (ob:) excluded; for a match across projects (rel:) \
-                 reuse, coordinate, separate or unrelated",
+                "must be accepted, rejected or proposed; for a hypothesis's evidence (ev:) supports, \
+                 contradicts or insufficient; for its check (hyp:) check; for an obligation (ob:) \
+                 excluded; for a match across projects (rel:) reuse, coordinate, separate or \
+                 unrelated; for a prioritised item (pri:) scored; for a confirmed order (prc:) \
+                 confirmed",
             ));
         }
-        if i.note.as_ref().is_some_and(|n| n.len() > 2000) {
-            return Err(invalid("note", "must be at most 2000 bytes"));
+        if i.note.as_ref().is_some_and(|n| n.len() > review_note_max(key)) {
+            return Err(invalid(
+                "note",
+                "must be at most 2000 bytes, or 8000 for a hypothesis's check (hyp:)",
+            ));
         }
         if i.path.len() > 1024 || i.revision.len() > 128 {
             return Err(invalid("path", "must be a document path and its revision"));
@@ -8148,7 +8171,12 @@ pub fn register_routes(
         .summary("Accept, reject or put back a selection of facts in one action")
         .description(
             "Each item is a fact's key with `accepted`, `rejected`, or `proposed` to withdraw an \
-             earlier review, and where it was read. At most 500 in one call.",
+             earlier review, and where it was read. Prefixed keys carry the project's other \
+             decisions under the same rule: a hypothesis's evidence (`ev:`) and its check \
+             (`hyp:`, a note of up to 8000 bytes), an excluded obligation (`ob:`), a match \
+             across projects (`rel:`), an opened issue (`iss:`), an item being prioritised \
+             (`pri:`, state `scored`) and a confirmed order (`prc:`, state `confirmed`). At most \
+             500 in one call.",
         )
         .tag("StudioDocuments")
         .authenticated()
@@ -9881,6 +9909,20 @@ pub fn register_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_review_state_fits_only_what_its_key_names() {
+        assert!(review_state_fits("0123456789abcdef", "accepted"));
+        assert!(review_state_fits("hyp:0123456789abcdef", "check"));
+        assert!(review_state_fits("pri:cpt-a-fr-search", "scored"));
+        assert!(review_state_fits("prc:2026-10-19T08:00:00Z", "confirmed"));
+        assert!(review_state_fits("pri:cpt-a-fr-search", "proposed"));
+        assert!(!review_state_fits("pri:cpt-a-fr-search", "accepted"));
+        assert!(!review_state_fits("hyp:0123456789abcdef", "supports"));
+        assert!(!review_state_fits("0123456789abcdef", "scored"));
+        assert_eq!(review_note_max("hyp:0123456789abcdef"), 8000);
+        assert_eq!(review_note_max("pri:cpt-a"), 2000);
+    }
 
     #[test]
     fn an_analysis_request_may_carry_inline_texts_alone() {

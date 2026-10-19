@@ -593,6 +593,11 @@ export function SpecModelTab({
         <PrioritiesScreen
           read={requirements}
           projectId={projectId}
+          reviews={reviews}
+          onSave={async (writes) => {
+            await api.reviewSpecModelFacts(token, projectId, writes);
+            setReviews((await api.specModelReviews(token, projectId)).items);
+          }}
           onConfirm={(content) => api.proposeSpecModelFile(token, projectId, "docs/priorities.md", content, "the priorities as confirmed in Studio")}
           onTrace={(id) => {
             setTraced(id);

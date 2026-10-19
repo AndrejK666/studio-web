@@ -2683,6 +2683,10 @@ div.dm-block { padding-left: 0; }
 .nd-ob:first-of-type { border-top: 0; }
 .nd-ob .dm-actions input { flex: 1 1 260px; }
 .nd-intake { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.pr-legacy { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; }
+.pr-legacy span { flex: 1 1 280px; }
+.pr-history { padding: 10px 12px; }
+.pr-history ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .nd-file { font-size: 13.5px; font-weight: 600; border-radius: var(--radius-lg); border: 1px solid transparent; color: var(--primary); padding: 7px 14px; cursor: pointer; }
 .nd-file:hover { background: var(--accent); }
 .nd-file:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }

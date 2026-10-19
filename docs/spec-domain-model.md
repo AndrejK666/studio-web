@@ -487,7 +487,13 @@ the model map.
   requirement's basis (an assumption 1, a citation 3, no basis unknown). Every
   value shows its origin, an unknown leaves the score incomplete, a tie stays a
   tie, and a prerequisite comes before what needs it while a cycle is shown.
-  A confirmed order is proposed as `docs/priorities.md`.
+  The working set is the project's, shared by everyone who opens it: each
+  item compared is a review keyed `pri:` (state `scored`) whose note keeps
+  what was entered. A confirmed order is proposed as `docs/priorities.md` and
+  recorded keyed `prc:` (state `confirmed`) with the pull request and the
+  order, so the view says whether the order changed since it was confirmed
+  last and lists every confirmation. A comparison an earlier version kept in
+  one browser is brought into the project only when someone asks.
 - **Elsewhere**: a pair with another project's requirement is decided —
   reuse, coordinate, keep separate, unrelated — and kept, keyed `rel:`.
 

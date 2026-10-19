@@ -23,7 +23,7 @@ export interface SpecModelReview {
 }
 
 /** 64-bit FNV-1a as 16 hex digits: short, stable, the same everywhere. */
-function fnv64(text: string): string {
+export function fnv64(text: string): string {
   let h1 = 0x811c9dc5;
   let h2 = 0x050c5d1f;
   for (let i = 0; i < text.length; i++) {
