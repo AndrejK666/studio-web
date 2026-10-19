@@ -222,6 +222,20 @@ fn strip_comments(line: &str, in_comment: &mut bool) -> String {
     }
 }
 
+/// The maturity a front matter declares, normalized; `None` when it declares
+/// none.
+fn maturity_in(fm: &HashMap<String, String>) -> Option<String> {
+    fm.get("maturity")
+        .map(|v| normalize(v.trim_matches(|c| c == '"' || c == '\'')))
+        .filter(|v| !v.is_empty())
+}
+
+/// The maturity a document declares in its front matter, as [`validate`]
+/// reads it: what a review of it is held to (`approvals::advisory`).
+pub(super) fn maturity_of(content: &str) -> Option<String> {
+    maturity_in(&split_front_matter(content).0)
+}
+
 /// First `# ` (level-1) heading title, if any.
 fn first_title(heads: &[Heading]) -> Option<String> {
     heads
@@ -239,10 +253,7 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
     let mut open: Vec<String> = Vec::new();
     let mut conforms = true;
 
-    let maturity = fm
-        .get("maturity")
-        .map(|v| normalize(v.trim_matches(|c| c == '"' || c == '\'')))
-        .filter(|v| !v.is_empty());
+    let maturity = maturity_in(&fm);
     let level = match maturity.as_deref() {
         None => Strictness::Full,
         Some(m) => strictness(m).unwrap_or_else(|| {

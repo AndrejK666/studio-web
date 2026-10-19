@@ -17,6 +17,8 @@ export interface Reviewer {
   name?: string | null;
   required: boolean;
   verdict?: "approved" | "changes_requested" | null;
+  /** That verdict asks for changes over a security concern. */
+  security?: boolean;
 }
 
 export interface ReviewVerdict {
@@ -26,6 +28,7 @@ export interface ReviewVerdict {
   approver: string;
   approver_name?: string | null;
   verdict: "approved" | "changes_requested";
+  security?: boolean;
   note?: string | null;
   checks: string[];
   decided_at: string;
@@ -46,6 +49,11 @@ export interface ReviewRequest {
   state: "open" | "approved" | "superseded" | "withdrawn";
   overdue: boolean;
   outstanding: string[];
+  /** The maturity the version asked about declares (gears-rust #5275). */
+  maturity?: string | null;
+  /** Below `stable`: the review is advice, and only a security concern
+   *  holds the stage. */
+  advisory?: boolean;
   created_at: string;
   verdicts: ReviewVerdict[];
 }
@@ -96,6 +104,22 @@ export function reviewState(r: ReviewRequest): { label: string; tone: "ok" | "wa
         tone: r.overdue ? "late" : "wait",
       };
   }
+}
+
+/** Why the request does or does not hold the document's stage, in one line,
+ *  when that is not simply "until the required reviewers approve": a
+ *  maturity below stable makes the review advice, and a security concern
+ *  holds the stage at any level. `null` for the plain case. */
+export function gateNote(r: ReviewRequest): string | null {
+  if (r.state !== "open") return null;
+  const concerns = r.reviewers.filter((x) => x.verdict === "changes_requested" && x.security).map((x) => x.name ?? x.person);
+  if (concerns.length > 0) {
+    return `${concerns.join(", ")} raised a security concern: it holds the stage at any maturity until they answer again.`;
+  }
+  if (r.advisory) {
+    return `The document is ${r.maturity ?? "below stable"}: this review is advice and does not hold the stage; only a security concern would.`;
+  }
+  return null;
 }
 
 /** Whether the caller can give a verdict: an open request that names them. */

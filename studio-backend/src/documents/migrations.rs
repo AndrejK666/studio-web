@@ -44,6 +44,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0023::Migration),
             Box::new(m0024::Migration),
             Box::new(m0025::Migration),
+            Box::new(m0026::Migration),
         ]
     }
 }
@@ -1610,6 +1611,51 @@ mod m0023 {
             ] {
                 manager.get_connection().execute_unprepared(sql).await?;
             }
+            Ok(())
+        }
+    }
+}
+
+/// A verdict that asks for changes may mark them a security concern, which
+/// holds a stage at every maturity (`approvals::holding`). Every verdict
+/// recorded before is not one.
+mod m0026 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0026_security_verdicts"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_approvals ADD COLUMN IF NOT EXISTS security BOOLEAN NOT NULL DEFAULT false;",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("ALTER TABLE studio_approvals DROP COLUMN IF EXISTS security;")
+                .await?;
             Ok(())
         }
     }

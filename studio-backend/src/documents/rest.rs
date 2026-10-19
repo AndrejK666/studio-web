@@ -1166,7 +1166,13 @@ async fn stage_evidence(
             .iter()
             .filter(|r| r.request.state == "open")
             .filter(|r| {
-                !super::approvals::outstanding(&r.reviewers(), &r.verdict_facts()).is_empty()
+                !super::approvals::holding(
+                    &r.reviewers(),
+                    &r.verdict_facts(),
+                    r.maturity().as_deref(),
+                    true,
+                )
+                .is_empty()
             })
             .map(|r| r.request.title.clone())
             .collect();
@@ -6597,6 +6603,9 @@ pub struct ReviewVerdictInput {
     pub project_id: String,
     /// `approved` or `changes_requested`.
     pub verdict: String,
+    /// The changes asked for are a security concern, which holds the stage at
+    /// any maturity. Ignored on an approval.
+    pub security: Option<bool>,
     pub note: Option<String>,
 }
 
@@ -6616,6 +6625,8 @@ pub struct ReviewerDto {
     pub required: bool,
     /// Their latest verdict, when they gave one.
     pub verdict: Option<String>,
+    /// That verdict asks for changes over a security concern.
+    pub security: bool,
 }
 
 /// One verdict, as it was recorded. Never edited.
@@ -6628,6 +6639,8 @@ pub struct ApprovalDto {
     pub approver: String,
     pub approver_name: Option<String>,
     pub verdict: String,
+    /// The changes asked for are a security concern.
+    pub security: bool,
     pub note: Option<String>,
     /// The detectors that had passed on the document when it was given.
     pub checks: Vec<String>,
@@ -6655,6 +6668,11 @@ pub struct ReviewRequestDto {
     pub overdue: bool,
     /// The required reviewers who have not approved, by name.
     pub outstanding: Vec<String>,
+    /// The maturity the version asked about declares in its front matter.
+    pub maturity: Option<String>,
+    /// That maturity is below `stable`: the review is advice, and only a
+    /// security concern holds the stage on it.
+    pub advisory: bool,
     pub created_at: String,
     pub verdicts: Vec<ApprovalDto>,
     /// The version the document is at now: a binding's content digest, a
@@ -6795,6 +6813,7 @@ fn approval_dto(a: &super::entity::approval::Model) -> ApprovalDto {
         approver: a.approver.clone(),
         approver_name: a.approver_name.clone(),
         verdict: a.verdict.clone(),
+        security: a.security,
         note: a.note.clone(),
         checks: serde_json::from_value(a.checks.clone()).unwrap_or_default(),
         decided_at: rfc3339(a.decided_at),
@@ -6811,9 +6830,9 @@ fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> Rev
             .iter()
             .filter(|v| v.approver == person)
             .max_by_key(|v| v.decided_at)
-            .map(|v| v.verdict.clone())
     };
     let open = r.state == "open";
+    let maturity = review.maturity();
     ReviewRequestDto {
         id: r.id.to_string(),
         project_id: r.project_id.to_string(),
@@ -6833,10 +6852,13 @@ fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> Rev
         } else {
             Vec::new()
         },
+        advisory: super::approvals::advisory(maturity.as_deref()),
+        maturity,
         reviewers: reviewers
             .iter()
             .map(|x| ReviewerDto {
-                verdict: latest(&x.person),
+                verdict: latest(&x.person).map(|v| v.verdict.clone()),
+                security: latest(&x.person).is_some_and(|v| v.security),
                 person: x.person.clone(),
                 name: x.name.clone(),
                 required: x.required,
@@ -7053,6 +7075,7 @@ async fn create_review_approval(
             request_id,
             approver,
             &body.verdict,
+            body.security.unwrap_or(false),
             body.note,
         )
         .await
@@ -8463,8 +8486,10 @@ pub fn register_routes(
             "Records `approved` or `changes_requested` from the caller, who must be one of the \
              request's reviewers, against the version the request names, with the detectors \
              that had passed on the document at that moment. A verdict is never edited: a \
-             later one is another record, and the latest counts. When every required reviewer \
-             has approved, the request becomes `approved`.",
+             later one is another record, and the latest counts. `security: true` marks the \
+             changes asked for as a security concern, which holds the stage at any maturity. \
+             When every required reviewer has approved and no latest verdict is a security \
+             concern, the request becomes `approved`.",
         )
         .tag("StudioDocuments")
         .authenticated()

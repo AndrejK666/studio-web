@@ -6,7 +6,9 @@
 //! record of one person's verdict on that version, kept as written and never
 //! edited: a later verdict is another record. Everything here is the pure
 //! part — who is still awaited, whether it is late, whom to suggest — so the
-//! gate and the inbox read the same answer.
+//! gate and the inbox read the same answer. How much a review holds a stage
+//! follows the document's maturity ([`holding`]): below `stable` it is advice,
+//! and a security concern holds it at every level.
 
 use std::collections::BTreeMap;
 
@@ -37,7 +39,22 @@ pub const VERDICTS: [&str; 2] = ["approved", "changes_requested"];
 pub struct Verdict {
     pub approver: String,
     pub verdict: String,
+    /// The reviewer marked the changes they ask for as a security concern:
+    /// what holds a stage at every maturity.
+    pub security: bool,
     pub decided_at: OffsetDateTime,
+}
+
+/// The maturities below `stable` (gears-rust #5275). A review of a document
+/// at one of them is advice: it records what people think, and only a
+/// security concern holds the stage on it.
+pub const ADVISORY_MATURITIES: [&str; 3] = ["design", "experimental", "preview"];
+
+/// Whether a review of a document at this maturity is advice rather than a
+/// gate. `stable`, `deprecated`, an unknown level and no level at all keep
+/// the full gate.
+pub fn advisory(maturity: Option<&str>) -> bool {
+    maturity.is_some_and(|m| ADVISORY_MATURITIES.contains(&m))
 }
 
 /// Each reviewer's latest verdict, by person.
@@ -79,9 +96,57 @@ pub fn awaiting<'r>(reviewers: &'r [Reviewer], verdicts: &[Verdict]) -> Vec<&'r 
         .collect()
 }
 
-/// Whether every required reviewer approved. A request with no required
-/// reviewer is approved by its first approval.
+/// The reviewers, required or not, whose latest verdict asks for changes over
+/// a security concern. Each holds the request until they give another.
+pub fn security_concerns<'r>(reviewers: &'r [Reviewer], verdicts: &[Verdict]) -> Vec<&'r Reviewer> {
+    let latest = latest(verdicts);
+    reviewers
+        .iter()
+        .filter(|r| {
+            latest
+                .get(r.person.as_str())
+                .is_some_and(|v| v.security && v.verdict == "changes_requested")
+        })
+        .collect()
+}
+
+/// Who holds a stage on this request, for a document at `maturity`. A
+/// security concern holds it at any level. Otherwise, at `stable` or with no
+/// level declared, every required reviewer who has not approved -- all of
+/// them when `same_version` is false, the request being about an earlier
+/// version than the one there now; below `stable`, nobody else.
+pub fn holding<'r>(
+    reviewers: &'r [Reviewer],
+    verdicts: &[Verdict],
+    maturity: Option<&str>,
+    same_version: bool,
+) -> Vec<&'r Reviewer> {
+    let concerns = security_concerns(reviewers, verdicts);
+    let waiting: Vec<&Reviewer> = if advisory(maturity) {
+        Vec::new()
+    } else if same_version {
+        outstanding(reviewers, verdicts)
+    } else {
+        reviewers.iter().filter(|r| r.required).collect()
+    };
+    reviewers
+        .iter()
+        .filter(|r| {
+            concerns.iter().any(|c| c.person == r.person)
+                || waiting.iter().any(|w| w.person == r.person)
+        })
+        .collect()
+}
+
+/// Whether every required reviewer approved and nobody's latest verdict is a
+/// security concern. A request with no required reviewer is approved by its
+/// first approval.
 pub fn approved(reviewers: &[Reviewer], verdicts: &[Verdict]) -> bool {
+    // A request closed as approved takes no more verdicts, so one closed over
+    // a security concern would hold its stage with nobody able to lift it.
+    if !security_concerns(reviewers, verdicts).is_empty() {
+        return false;
+    }
     if reviewers.iter().any(|r| r.required) {
         outstanding(reviewers, verdicts).is_empty()
     } else {

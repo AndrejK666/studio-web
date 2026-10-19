@@ -3568,11 +3568,14 @@ export const api = {
     requestId: string,
     verdict: "approved" | "changes_requested",
     note: string | null,
+    /** The changes asked for are a security concern: they hold the stage at
+     *  any maturity. */
+    security = false,
   ) =>
     request<ReviewVerdict>(
       `/studio-documents/v1/review-requests/${encodeURIComponent(requestId)}/approvals`,
       token,
-      { method: "POST", body: JSON.stringify({ project_id: projectId, verdict, note }) },
+      { method: "POST", body: JSON.stringify({ project_id: projectId, verdict, note, security }) },
     ),
   cancelReviewRequest: (token: string, projectId: string, requestId: string) =>
     request<ReviewRequest>(`/studio-documents/v1/review-requests/${encodeURIComponent(requestId)}/cancel`, token, {

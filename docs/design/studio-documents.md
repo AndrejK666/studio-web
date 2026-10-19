@@ -352,7 +352,21 @@ and it keeps the detectors that had passed on the document when it was given.
 `stage-status` folds the current request (the newest open or approved one) into
 each requirement as `approvals_outstanding`: the required reviewers who have
 not approved. A stage is complete only when that is empty, so a review gates a
-stage once somebody asks for it, and never before. Reviewer suggestions are the
+stage once somebody asks for it, and never before. How much it gates follows
+the document's `maturity`, as the structural check reads it (gears-rust
+#5275): review strictness follows the level, and only a security issue blocks
+at every level. A verdict asking for changes may say `security: true`. At
+`stable` or `deprecated`, and when nothing is declared, the gate is the one
+above, plus anybody, required or not, whose latest verdict is a security
+concern. At `design`, `experimental` or `preview` the review is advice: the
+request still waits for its required reviewers and still closes as `approved`
+only when they approve, but the stage waits only on a security concern. An open
+question closes with a spike or a follow-up change, not another review round.
+A request whose latest verdicts include a security concern is not `approved`,
+since an approved request takes no more verdicts and the concern could never be
+lifted. Each request answers its `maturity`, read from the text it was asked
+about, and `advisory` when that is below `stable`; the stage reads the
+maturity the document declares now. Reviewer suggestions are the
 reviewers of earlier requests on the document, then on its type, ranked by how
 often they were asked. Each request change is announced on `studio-events` as
 `review_request.created`, `.decided` or `.cancelled`
@@ -772,6 +786,7 @@ deletes one.
 | `version` | TEXT | the version the verdict is about |
 | `approver`, `approver_name` | TEXT | the canonical person |
 | `verdict` | TEXT | `approved` or `changes_requested` |
+| `security` | BOOLEAN | the changes asked for are a security concern, which holds the stage at any maturity (`m0026`); `false` on an approval |
 | `note` | TEXT | optional |
 | `checks` | JSONB | the detectors that had passed on the document then |
 | `decided_at` | TIMESTAMPTZ | |

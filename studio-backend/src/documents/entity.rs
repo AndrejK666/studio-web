@@ -530,6 +530,9 @@ pub mod approval {
         pub approver_name: Option<String>,
         /// `approved` or `changes_requested`.
         pub verdict: String,
+        /// The changes asked for are a security concern: they hold the stage
+        /// whatever the document's maturity (`approvals::holding`).
+        pub security: bool,
         pub note: Option<String>,
         /// The detectors that had passed on the document when the verdict
         /// was given.

@@ -3,6 +3,7 @@ import {
   addReviewer,
   canDecide,
   currentRequest,
+  gateNote,
   isStale,
   reviewRequestBody,
   reviewState,
@@ -68,5 +69,20 @@ describe("review requests", () => {
     const one = addReviewer([], { person: "ann", required: true });
     expect(addReviewer(one, { person: "ann", required: false })).toBe(one);
     expect(addReviewer(one, { person: "bob", required: false })).toHaveLength(2);
+  });
+
+  it("says when a review is advice and when a security concern holds the stage", () => {
+    expect(gateNote(request())).toBeNull();
+    expect(gateNote(request({ maturity: "experimental", advisory: true }))).toMatch(
+      /experimental: this review is advice and does not hold the stage/,
+    );
+    const concern = request({
+      maturity: "preview",
+      advisory: true,
+      reviewers: [{ person: "bob", name: "Bob", required: false, verdict: "changes_requested", security: true }],
+    });
+    expect(gateNote(concern)).toMatch(/^Bob raised a security concern/);
+    expect(gateNote(request({ ...concern, maturity: "stable", advisory: false }))).toMatch(/security concern/);
+    expect(gateNote(request({ advisory: true, state: "approved" }))).toBeNull();
   });
 });

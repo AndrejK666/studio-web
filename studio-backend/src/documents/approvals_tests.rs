@@ -12,7 +12,15 @@ fn verdict(approver: &str, verdict: &str, at: OffsetDateTime) -> Verdict {
     Verdict {
         approver: approver.to_string(),
         verdict: verdict.to_string(),
+        security: false,
         decided_at: at,
+    }
+}
+
+fn security_concern(approver: &str, at: OffsetDateTime) -> Verdict {
+    Verdict {
+        security: true,
+        ..verdict(approver, "changes_requested", at)
     }
 }
 
@@ -110,4 +118,75 @@ fn suggestions_rank_this_document_then_its_type_by_how_often_and_skip_the_reques
     assert_eq!(people, ["ann", "cy", "bob", "dan"]);
     assert!(!got[2].required, "bob was optional when last asked");
     assert_eq!(suggest(&earlier, "doc-1", Some("prd"), "me", 2).len(), 2);
+}
+
+fn people(rs: Vec<&Reviewer>) -> Vec<String> {
+    rs.into_iter().map(|r| r.person.clone()).collect()
+}
+
+#[test]
+fn below_stable_a_review_is_advice_and_at_stable_or_undeclared_a_gate() {
+    for level in ["design", "experimental", "preview"] {
+        assert!(advisory(Some(level)), "{level}");
+    }
+    for level in [Some("stable"), Some("deprecated"), Some("alpha"), None] {
+        assert!(!advisory(level), "{level:?}");
+    }
+
+    let reviewers = [reviewer("ann", true), reviewer("bob", true)];
+    let asked = [verdict("ann", "changes_requested", t(10))];
+    // Stable and undeclared hold on everyone required who has not approved,
+    // as before; an experiment holds on nobody.
+    assert_eq!(
+        people(holding(&reviewers, &asked, Some("stable"), true)),
+        ["ann", "bob"]
+    );
+    assert_eq!(
+        people(holding(&reviewers, &asked, None, true)),
+        ["ann", "bob"]
+    );
+    assert!(holding(&reviewers, &asked, Some("experimental"), true).is_empty());
+    // An earlier version than the one there now: every required reviewer
+    // holds a stable document, nobody an experimental one.
+    assert_eq!(
+        people(holding(&reviewers, &[], Some("stable"), false)),
+        ["ann", "bob"]
+    );
+    assert!(holding(&reviewers, &[], Some("preview"), false).is_empty());
+}
+
+#[test]
+fn a_security_concern_holds_at_any_maturity_until_its_reviewer_answers_again() {
+    let reviewers = [reviewer("ann", true), reviewer("cy", false)];
+    let concern = [
+        verdict("ann", "approved", t(10)),
+        security_concern("cy", t(10)),
+    ];
+    for level in [Some("design"), Some("preview"), Some("stable"), None] {
+        assert_eq!(
+            people(holding(&reviewers, &concern, level, true)),
+            ["cy"],
+            "{level:?}"
+        );
+        assert!(
+            people(holding(&reviewers, &concern, level, false)).contains(&"cy".to_string()),
+            "a new version does not lift it: {level:?}"
+        );
+    }
+    // Every required reviewer approved, and still the request stays open.
+    assert!(!approved(&reviewers, &concern));
+    assert_eq!(people(security_concerns(&reviewers, &concern)), ["cy"]);
+
+    let answered = [
+        verdict("ann", "approved", t(10)),
+        security_concern("cy", t(10)),
+        verdict("cy", "approved", t(11)),
+    ];
+    assert!(holding(&reviewers, &answered, Some("experimental"), true).is_empty());
+    assert!(approved(&reviewers, &answered));
+
+    // Asking for changes without marking them a security concern is advice
+    // below stable.
+    let plain = [verdict("cy", "changes_requested", t(10))];
+    assert!(holding(&reviewers, &plain, Some("experimental"), true).is_empty());
 }

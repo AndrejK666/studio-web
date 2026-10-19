@@ -1,7 +1,8 @@
 // The review of one document: ask people to review the version on screen,
 // see where the current request stands, and — when you are asked — give your
 // verdict. Every verdict stays on record; the stage the document belongs to
-// waits until its required reviewers approve.
+// waits until its required reviewers approve -- unless the document's
+// maturity is below stable, when only a security concern holds it.
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type Colleague } from "./api";
@@ -9,6 +10,7 @@ import {
   addReviewer,
   canDecide,
   currentRequest,
+  gateNote,
   isStale,
   reviewRequestBody,
   reviewState,
@@ -43,6 +45,7 @@ export function ReviewPanel({
   const [picked, setPicked] = useState<ReviewerInput[]>([]);
   const [due, setDue] = useState("");
   const [note, setNote] = useState("");
+  const [security, setSecurity] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -102,8 +105,9 @@ export function ReviewPanel({
   const decide = async (r: ReviewRequest, verdict: "approved" | "changes_requested") => {
     setBusy(true);
     try {
-      await api.createReviewApproval(token, projectId, r.id, verdict, note.trim() || null);
+      await api.createReviewApproval(token, projectId, r.id, verdict, note.trim() || null, verdict === "changes_requested" && security);
       setNote("");
+      setSecurity(false);
       await load();
       onChanged?.();
     } catch (e) {
@@ -129,6 +133,7 @@ export function ReviewPanel({
   if (requests === null) return null;
   const current = currentRequest(requests);
   const state = current ? reviewState(current) : null;
+  const gate = current ? gateNote(current) : null;
   const nameOf = (person: string) =>
     people.find((p) => p.user_id === person)?.display_name ?? picked.find((p) => p.person === person)?.name ?? person;
 
@@ -148,6 +153,7 @@ export function ReviewPanel({
         )}
       </div>
       {err && <div className="rv-err">{err}</div>}
+      {gate && <div className="rv-muted">{gate}</div>}
 
       {current && (
         <>
@@ -156,7 +162,15 @@ export function ReviewPanel({
               <li key={r.person}>
                 {r.name ?? r.person}
                 {r.required ? "" : " (optional)"}:{" "}
-                <b>{r.verdict === "approved" ? "✓ approved" : r.verdict === "changes_requested" ? "✗ changes" : "—"}</b>
+                <b>
+                  {r.verdict === "approved"
+                    ? "✓ approved"
+                    : r.verdict === "changes_requested"
+                      ? r.security
+                        ? "✗ changes (security)"
+                        : "✗ changes"
+                      : "—"}
+                </b>
               </li>
             ))}
           </ul>
@@ -175,6 +189,10 @@ export function ReviewPanel({
               <button disabled={busy} onClick={() => void decide(current, "changes_requested")}>
                 ✗ Request changes
               </button>
+              <label title="A security concern holds the stage at any maturity">
+                <input type="checkbox" checked={security} onChange={(e) => setSecurity(e.target.checked)} /> a
+                security concern
+              </label>
             </div>
           )}
           {current.state === "open" && current.requested_by === me && (
@@ -189,7 +207,7 @@ export function ReviewPanel({
                 {current.verdicts.map((v) => (
                   <li key={v.id}>
                     {v.decided_at.slice(0, 16).replace("T", " ")} · {v.approver_name ?? v.approver} ·{" "}
-                    {v.verdict === "approved" ? "approved" : "requested changes"}
+                    {v.verdict === "approved" ? "approved" : v.security ? "requested changes (security)" : "requested changes"}
                     {v.note && <> · “{v.note}”</>}
                     {v.checks.length > 0 && <span className="rv-muted"> · passed: {v.checks.join(", ")}</span>}
                   </li>
