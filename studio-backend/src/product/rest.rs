@@ -905,11 +905,14 @@ async fn get_project_product(
     // A project whose repository keeps its own product.gdl is that product:
     // its gears are what the file names, whatever was picked here. Read with
     // the organization's roots, so asking for the scope reads it when due.
-    let _ = product.scope(&ctx, project_id, false).await;
-    let file = product
-        .gearbox
-        .as_ref()
-        .and_then(|g| g.project_file(project_id));
+    let scope = product.scope(&ctx, project_id, false).await;
+    let file = file_in_scope(
+        product
+            .gearbox
+            .as_ref()
+            .and_then(|g| g.project_file(project_id)),
+        scope,
+    );
     let node = match file {
         Some(file) => Some(from_product_file(node, &project_id.to_string(), &file)),
         None => node,
@@ -918,6 +921,18 @@ async fn get_project_product(
         nodes: to_dtos(node.into_iter().collect()),
         truncated: false,
     }))
+}
+
+/// The cached product file, only for a caller whose context resolved the
+/// project's organization to the one the file was read for. The cache is
+/// keyed by project alone and shared by every request, so a caller who cannot
+/// reach the project (its scope is `None`, or another organization) must not
+/// get its repository, branch and gears out of it.
+fn file_in_scope(
+    file: Option<super::gearbox::ProjectFile>,
+    scope: super::gearbox::Scope,
+) -> Option<super::gearbox::ProjectFile> {
+    file.filter(|f| scope == Some(f.organization))
 }
 
 /// The product record as the project's own `product.gdl` says it: its gears,
@@ -2378,8 +2393,35 @@ mod save_mode_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::product_path_for;
+    use super::{file_in_scope, product_path_for};
     use serde_json::json;
+
+    #[test]
+    fn a_cached_product_file_reaches_only_its_own_organization() {
+        let org = uuid::Uuid::new_v4();
+        let file = super::super::gearbox::ProjectFile {
+            organization: org,
+            repo: "acme/shop".into(),
+            branch: "main".into(),
+            path: "product.gdl".into(),
+            commit: None,
+            gears: vec!["credstore".into()],
+        };
+        assert_eq!(
+            file_in_scope(Some(file.clone()), Some(org)),
+            Some(file.clone())
+        );
+        assert_eq!(
+            file_in_scope(Some(file.clone()), None),
+            None,
+            "a caller who could not resolve the project's organization"
+        );
+        assert_eq!(
+            file_in_scope(Some(file), Some(uuid::Uuid::new_v4())),
+            None,
+            "another organization"
+        );
+    }
 
     #[test]
     fn a_new_product_goes_under_products_and_a_written_one_stays_where_it_is() {
