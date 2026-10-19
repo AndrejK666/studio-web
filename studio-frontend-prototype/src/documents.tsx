@@ -56,6 +56,7 @@ import { BriefPanel, RemarksPanel } from "./remarks-panel";
 import { PullRequestChecksPanel } from "./project-checks-view";
 import { errText, relTime } from "./format";
 import { Modal } from "./modal";
+import { subsystemOf } from "./product-configurator";
 import { gearSlug } from "./scaffold";
 import { scaffoldTargetLine } from "./org-gear-repository";
 import { Tile, TileGrid, ViewToggle, useViewMode } from "./view-mode";
@@ -3149,7 +3150,7 @@ function kindColor(kind: string): string {
 // browser the only thing that knew what a gear looks like.
 
 /** What a scaffold is sent: the project's route or the organization's. */
-type ScaffoldBody = { slug: string; problem?: string; origin?: string; capabilities?: string[]; dry_run?: boolean; open_pr?: boolean };
+type ScaffoldBody = { slug: string; problem?: string; origin?: string; capabilities?: string[]; category?: string; dry_run?: boolean; open_pr?: boolean };
 
 export function ScaffoldModal({
   capability,
@@ -3160,7 +3161,8 @@ export function ScaffoldModal({
   origin,
   editable = false,
   lead,
-  nameWarning,
+  category: givenCategory,
+  categories,
   send,
   onBack,
   onClose,
@@ -3181,8 +3183,10 @@ export function ScaffoldModal({
   editable?: boolean;
   /** A line above the form saying what the gear is drafted from. */
   lead?: string;
-  /** Why a typed-in name is a poor one, or null. */
-  nameWarning?: (name: string) => string | null;
+  /** The subsystem (gear.gdl's `category`) proposed for it; blank is the server's `platform`. */
+  category?: string;
+  /** The categories to choose from, when it can be chosen (with `editable`). */
+  categories?: string[];
   /** Where the request goes instead of the project's route: the
    *  organization's Components page sends it to its gear repository. */
   send?: (body: ScaffoldBody) => Promise<ScaffoldResult>;
@@ -3198,7 +3202,8 @@ export function ScaffoldModal({
   const capabilityName = editable ? asked.name.trim() || capability : capability;
   const problem = editable ? asked.problem : givenProblem;
   const commit = () => setAsked({ name: typedName, problem: typedProblem.trim() || undefined });
-  const warning = editable && nameWarning ? nameWarning(typedName) : null;
+  // A choice, not typing: the preview follows it at once.
+  const [category, setCategory] = useState(givenCategory ?? "");
   const [active, setActive] = useState(0);
   const [openPr, setOpenPr] = useState(true);
   const [pushing, setPushing] = useState(false);
@@ -3218,7 +3223,7 @@ export function ScaffoldModal({
   useEffect(() => {
     let alive = true;
     setPushErr(null);
-    post({ slug: capabilityName, problem, origin, capabilities: declares, dry_run: true })
+    post({ slug: capabilityName, problem, origin, capabilities: declares, category: category || undefined, dry_run: true })
       .then((r) => {
         if (!alive) return;
         setFiles(r.files);
@@ -3232,7 +3237,7 @@ export function ScaffoldModal({
     };
     // `declares` is a fresh array per render; its content is what matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, projectTenantId, capabilityName, problem, origin, (declares ?? []).join(",")]);
+  }, [token, projectTenantId, capabilityName, problem, origin, category, (declares ?? []).join(",")]);
 
   const file = files?.[active];
   const copy = () => {
@@ -3250,6 +3255,7 @@ export function ScaffoldModal({
         problem: editable ? typedProblem.trim() || undefined : problem,
         origin,
         capabilities: declares,
+        category: category || undefined,
         open_pr: openPr,
       });
       setResult({ branch: r.branch, pr_url: r.pr_url });
@@ -3282,11 +3288,6 @@ export function ScaffoldModal({
                 onKeyDown={(e) => e.key === "Enter" && commit()}
                 style={{ width: "100%", fontFamily: "ui-monospace, Menlo, monospace" }}
               />
-              {warning && (
-                <div className="hint" style={{ color: "var(--warning)" }}>
-                  {warning}
-                </div>
-              )}
             </div>
             <label htmlFor="scaffold-problem">What it is for</label>
             <textarea
@@ -3297,6 +3298,19 @@ export function ScaffoldModal({
               onBlur={commit}
               style={{ width: "100%" }}
             />
+            {categories && categories.length > 0 && (
+              <>
+                <label htmlFor="scaffold-category">Subsystem</label>
+                <select id="scaffold-category" value={category} onChange={(e) => setCategory(e.target.value)}>
+                  <option value="">Platform (default)</option>
+                  {categories.map((c) => (
+                    <option key={c} value={c}>
+                      {subsystemOf({ category: c })}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
           </div>
         )}
         <p style={{ fontSize: 12, opacity: 0.7, margin: "0 0 6px" }}>

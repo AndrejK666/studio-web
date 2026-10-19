@@ -127,7 +127,6 @@ import { PresenceNotes, WhoIsOnline, usePresence } from "./presence";
 import { followRun } from "./studio-events";
 import { runProvision, type ProvisionStep, type StepState } from "./provision";
 import { gearParentDir, gearSlug } from "./scaffold";
-import type { GearDraft } from "./gear-from-entity";
 import { productIdFrom } from "./product";
 import { PortalNavProvider, type PortalNav } from "./portal-nav";
 import { OrgDashboard } from "./org-dashboard";
@@ -5560,9 +5559,6 @@ function ProjectScreen({
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const studio = useStudioBridge();
-  /** A gear the Domain model asked for, carried to the Product tab, whose
-   *  scaffold dialog takes it (and clears it) when it opens. */
-  const [pendingGear, setPendingGear] = useState<GearDraft | null>(null);
 
   // Someone who opens a project is likely to open one of its documents next:
   // start its IDE now, so that click is not also the wait for a session.
@@ -5633,8 +5629,6 @@ function ProjectScreen({
             projectId={proj.id}
             projectName={proj.name}
             workspaceId={workspace.id}
-            pendingGear={pendingGear}
-            onPendingGearTaken={() => setPendingGear(null)}
           />
         )}
         {tab === "parts" && (
@@ -5687,10 +5681,6 @@ function ProjectScreen({
             projectId={proj.id}
             workspaceId={workspace.id}
             onOpenFile={(path) => void studio?.openFile(proj, path)}
-            onCreateGear={(draft) => {
-              setPendingGear(draft);
-              setTab("components");
-            }}
           />
         )}
         {tab === "specs" && (

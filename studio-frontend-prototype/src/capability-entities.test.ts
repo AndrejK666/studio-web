@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PlanRow } from "./api";
-import { capabilityEntities, capabilityWords, keptSentences } from "./capability-entities";
+import { capabilityEntities, capabilityWords, keptSentences, suggestedCategory } from "./capability-entities";
 import { entitiesOf, type SpecModelFact } from "./spec-model";
 
 const fact = (subject: string, kind: SpecModelFact["kind"], extra: Partial<SpecModelFact> = {}): SpecModelFact => ({
@@ -118,6 +118,33 @@ describe("the requirements the gear answers", () => {
       requirement("Invoice", "Totals are rounded to cents.", 4),
     ]);
     expect(capabilityEntities(row(), withLine).requirements.map((r) => r.text)).toEqual(["An invoice is numbered once it is issued."]);
+  });
+});
+
+describe("the category suggested for the gear", () => {
+  const categories: Record<string, string> = { "cf-gears-ledger": "bss", "cf-gears-pricing": "bss", "cf-gears-chat": "gen-ai", "hello-world": "example" };
+  const index = { find: (name: string) => (categories[name] ? { category: categories[name] } as never : undefined) };
+  const candidate = (name: string) => ({ name }) as PlanRow["candidates"][number];
+  const none = () => [];
+
+  it("is where most of the capability's candidates sit, examples aside", () => {
+    const row = { candidates: [candidate("cf-gears-chat"), candidate("cf-gears-ledger"), candidate("cf-gears-pricing"), candidate("hello-world")] };
+    expect(suggestedCategory(row, [], model, index, none)).toMatchObject({ category: "bss" });
+  });
+
+  it("else is where the gears keeping the related entities sit", () => {
+    const related = entitiesOf([
+      ...entity("Invoice", "number"),
+      fact("Invoice", "relation", { aspect: "is paid by", value: "Payment" }),
+      ...entity("Payment", "amount"),
+    ]);
+    const keeperOf = (keys: string[]) => keys.map((k) => (k === "payment" ? "cf-gears-ledger" : null));
+    expect(suggestedCategory({ candidates: [] }, [{ key: "invoice" }], related, index, keeperOf)).toMatchObject({ category: "bss" });
+  });
+
+  it("is nothing when nothing says, or the catalogue is not read", () => {
+    expect(suggestedCategory({ candidates: [candidate("unknown")] }, [], model, index, none)).toBeNull();
+    expect(suggestedCategory({ candidates: [candidate("cf-gears-chat")] }, [], model, null, none)).toBeNull();
   });
 });
 

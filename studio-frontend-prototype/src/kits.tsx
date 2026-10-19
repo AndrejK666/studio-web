@@ -22,7 +22,6 @@ import {
 import { DataTable, When, useConfirm } from "./data-table";
 import { errText } from "./format";
 import { GearConfigForm } from "./gear-config-form";
-import { gearProblemFrom, nameWarning, type GearDraft } from "./gear-from-entity";
 import { ProductConfigurator, useGearCatalogue, useKeptEntities } from "./product-configurator-view";
 import {
   PRODUCT_PROFILES,
@@ -75,8 +74,6 @@ export function ProjectKits({
   projectName,
   workspaceId,
   section = "components",
-  pendingGear,
-  onPendingGearTaken,
 }: {
   token: string;
   projectId: string;
@@ -87,22 +84,9 @@ export function ProjectKits({
   /** Which tab this is: the specs-to-product journey, or the project's kits.
    *  One component, because both read the project's IDE repositories. */
   section?: "components" | "kits";
-  /** A gear asked for elsewhere (the Domain model's "Create a gear for it"):
-   *  the scaffold dialog opens with it filled in. */
-  pendingGear?: GearDraft | null;
-  /** Called once the dialog has it, so a later visit does not open it again. */
-  onPendingGearTaken?: () => void;
 }) {
-  const [entityGear, setEntityGear] = useState<GearDraft | null>(null);
   /** Which part of the journey is shown. */
   const [pane, setPane] = useState<ProductPane>("needs");
-  useEffect(() => {
-    if (!pendingGear || section !== "components") return;
-    setEntityGear(pendingGear);
-    onPendingGearTaken?.();
-    // Taken once per request; the callback's identity does not matter.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingGear, section]);
   const [catalog, setCatalog] = useState<StudioKit[] | null>(null);
   const [installed, setInstalled] = useState<KitInstallation[]>([]);
   const [versions, setVersions] = useState<Record<string, string>>({});
@@ -398,20 +382,6 @@ export function ProjectKits({
             </div>
           )}
         </section>
-      )}
-      {entityGear && (
-        <ScaffoldModal
-          key={entityGear.entityKey}
-          capability={entityGear.name}
-          token={token}
-          projectTenantId={projectId}
-          problem={gearProblemFrom(entityGear)}
-          origin={entityGear.origin}
-          editable
-          lead={`A gear to keep “${entityGear.entityName}”, which no gear keeps in the Domain model. Once it is merged and the project's repositories declare it, the Domain model shows it as this project's gear.`}
-          nameWarning={(name) => nameWarning(entityGear.entityKey, entityGear.entityName, name)}
-          onClose={() => setEntityGear(null)}
-        />
       )}
       {product.composing && (
         <div hidden={pane !== "product"}>

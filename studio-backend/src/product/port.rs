@@ -566,6 +566,8 @@ pub struct NewGear {
     pub gear_kind: Option<String>,
     pub plugin_host: Option<String>,
     pub plugin_spec: Option<String>,
+    /// The subsystem it belongs to; `None` is `platform`.
+    pub category: Option<String>,
     /// Capability keys written into its `gear.toml`.
     pub capabilities: Vec<String>,
     /// Open a pull request back into the base branch.

@@ -46,6 +46,10 @@ pub struct SkeletonSpec {
     pub gear_gdl: Option<String>,
     /// Whether the gear is a plugin of some host's extension point.
     pub plugin: bool,
+    /// The subsystem it belongs to, as gear.gdl's `category` names it
+    /// (`bss`, `gen-ai`); `None` or blank is `platform`. Laid into the
+    /// engine's `gear.gdl`, which does not take one itself.
+    pub category: Option<String>,
     /// The capability keys the gear provides, written into `gear.toml` as
     /// `capabilities = [...]`: the catalogue's sync reads that line as the
     /// gear declaring them, so the gear closes them once it is synced.
@@ -161,11 +165,17 @@ pub fn generate(spec: &SkeletonSpec) -> (String, Vec<ScaffoldFile>) {
 
     // One `[gear]` table, a human name, and the three plugin booleans: the
     // shape every gear in `gears-rust` actually has.
+    let category = spec
+        .category
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
     let mut gear_toml = format!(
         "[gear]\nname = \"{title}\"\ndescription = \"{}\"\n\
-         category = \"platform\"\nis_plugin = {plugin}\nhas_plugins = false\n\
+         category = \"{}\"\nis_plugin = {plugin}\nhas_plugins = false\n\
          has_extension_point = false\n",
         toml_text(&description),
+        toml_text(category.unwrap_or("platform")),
         plugin = spec.plugin
     );
     let keys: Vec<String> = spec
@@ -237,7 +247,10 @@ pub fn generate(spec: &SkeletonSpec) -> (String, Vec<ScaffoldFile>) {
     if let Some(gdl) = &spec.gear_gdl {
         files.push(ScaffoldFile {
             path: format!("{dir}/gear.gdl"),
-            content: gdl.clone(),
+            content: match category {
+                Some(c) => gdl_with(gdl, &[("category", c)]),
+                None => gdl.clone(),
+            },
         });
     }
     (slug, files)
@@ -566,6 +579,7 @@ mod tests {
             parent_dir: String::new(),
             gear_gdl: None,
             plugin: false,
+            category: None,
             capabilities: Vec::new(),
         }
     }
@@ -625,6 +639,32 @@ mod tests {
         assert_eq!(files[5].path, "gears/audit-log/gear.gdl");
         assert_eq!(files[5].content, "gear \"cf-gears-audit-log\" {}\n");
         assert!(files[0].content.contains("is_plugin = true"));
+    }
+
+    /// The engine's scaffold takes no category, so the one asked for is laid
+    /// into its `gear.gdl` (and the `gear.toml`); none asked leaves both as
+    /// they were.
+    #[test]
+    fn the_category_asked_for_is_laid_into_the_engines_description() {
+        let gdl = "gear(\n    name = \"Audit Log\",\n    category = \"platform\",\n)\n";
+        let (_, files) = generate(&SkeletonSpec {
+            gear_gdl: Some(gdl.to_owned()),
+            category: Some(" bss ".to_owned()),
+            ..spec("Audit Log")
+        });
+        assert!(files[0].content.contains("category = \"bss\""));
+        assert_eq!(
+            files[5].content,
+            "gear(\n    name = \"Audit Log\",\n    category = \"bss\",\n)\n"
+        );
+
+        let (_, plain) = generate(&SkeletonSpec {
+            gear_gdl: Some(gdl.to_owned()),
+            category: Some("  ".to_owned()),
+            ..spec("Audit Log")
+        });
+        assert!(plain[0].content.contains("category = \"platform\""));
+        assert_eq!(plain[5].content, gdl);
     }
 
     #[test]

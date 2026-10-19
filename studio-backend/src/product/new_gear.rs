@@ -25,6 +25,7 @@ pub(super) async fn files(
         parent_dir,
         gear_gdl,
         plugin,
+        category: gear.category.clone(),
         capabilities: gear.capabilities.clone(),
     })
     .1)

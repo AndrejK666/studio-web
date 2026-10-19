@@ -14,6 +14,7 @@
 
 import type { PlanRow } from "./api";
 import { entityDraft, layerOf } from "./domain-layers";
+import type { CatalogueIndex } from "./product-configurator";
 import { subjectKey, type Entity, type SpecModelSide } from "./spec-model";
 
 /** One entity the gear keeps, and why it is this gear's. */
@@ -106,6 +107,45 @@ export function capabilityEntities(
   for (const f of facts) if (words.some((w) => has(said(f.text), w))) add(f.text, f.source);
 
   return { entities: picked.map((k) => ({ key: k.key, name: k.name, fields: k.fields, why: k.why, score: k.score })), requirements };
+}
+
+/** The category (gear.gdl's subsystem) a gear for this capability most likely
+ *  belongs to: the one most of the catalogue's candidates for the capability
+ *  sit in, else the one most of the gears keeping the kept entities' related
+ *  entities sit in. Examples never count. Null when nothing says: the server
+ *  then writes `platform`. */
+export function suggestedCategory(
+  row: Pick<PlanRow, "candidates">,
+  kept: readonly Pick<KeptEntity, "key">[],
+  entities: readonly Entity[],
+  index: Pick<CatalogueIndex, "find"> | null,
+  keeperOf: (keys: string[]) => (string | null)[],
+): { category: string; why: string } | null {
+  if (!index) return null;
+  const most = (names: (string | null)[], why: string) => {
+    const count = new Map<string, number>();
+    for (const n of names) {
+      const c = n ? index.find(n)?.category?.trim() : null;
+      if (c && c !== "example") count.set(c, (count.get(c) ?? 0) + 1);
+    }
+    const best = [...count].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+    return best ? { category: best[0], why } : null;
+  };
+  const byCandidates = most(
+    (row.candidates ?? []).map((c) => c.name),
+    "where the catalogue's gears that come close to the capability sit",
+  );
+  if (byCandidates) return byCandidates;
+  const keptKeys = new Set(kept.map((k) => k.key));
+  const related = new Set<string>();
+  for (const e of entities) {
+    if (!keptKeys.has(e.key)) continue;
+    for (const r of entityDraft(e).relations) {
+      const k = subjectKey(r.target);
+      if (k && !keptKeys.has(k)) related.add(k);
+    }
+  }
+  return most(keeperOf([...related]), "where the gears keeping the entities it relates to sit");
 }
 
 /** "a, b and c". */
