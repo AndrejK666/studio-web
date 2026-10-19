@@ -1756,6 +1756,12 @@ pub fn render_product_gdl_from(
         })
         .collect::<Vec<_>>()
         .join(",\n                   ");
+    // A cluster's Postgres password comes out of an existing Secret.
+    let cluster_db = format!(
+        "postgres(host = \"postgres\", user = \"app\", password = \"${{GEARS_PG_PASSWORD}}\",\n\
+         \x20                                      existing_secret = {})",
+        gdl_string(&format!("{product_id}-db"))
+    );
     format!(
         "# The product this project ships, as Gearbox composes it.\n\
          #\n\
@@ -1791,11 +1797,6 @@ pub fn render_product_gdl_from(
         name = gdl_string(name),
         profile = gdl_string(default_profile),
         local_db = PROFILE_DATABASE,
-        cluster_db = format!(
-            "postgres(host = \"postgres\", user = \"app\", password = \"${{GEARS_PG_PASSWORD}}\",\n\
-             \x20                                      existing_secret = {})",
-            gdl_string(&format!("{product_id}-db"))
-        ),
     )
 }
 
