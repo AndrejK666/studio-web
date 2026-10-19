@@ -2383,6 +2383,8 @@ impl Gearbox {
     }
 
     /// Whether organization `org`'s own gear repositories are due to be read.
+    /// A request claims the read with [`Self::begin_org_refresh`].
+    #[cfg(test)]
     pub fn org_roots_due(&self, org: uuid::Uuid) -> bool {
         self.org_roots
             .lock()
@@ -2407,6 +2409,20 @@ impl Gearbox {
             .entry(org)
             .or_insert_with(|| RootSet::new(Vec::new()))
             .take(list);
+    }
+
+    /// Claim the next read of `org`'s roots: true for the one request that
+    /// should read them now (they are due, or `now`), which marks them
+    /// checked before it starts, so requests arriving during that read serve
+    /// the roots there are instead of each starting the same slow read.
+    pub fn begin_org_refresh(&self, org: uuid::Uuid, now: bool) -> bool {
+        let mut sets = self.org_roots.lock().expect("gearbox org roots");
+        let set = sets.entry(org).or_insert_with(|| RootSet::new(Vec::new()));
+        if !now && !set.due() {
+            return false;
+        }
+        set.checked = Some(Instant::now());
+        true
     }
 
     /// Note a failed read of `org`'s list.
@@ -4313,6 +4329,19 @@ mod tests {
 
         g.use_repositories(Vec::new());
         assert_eq!(ids(&g), ["gears-rust"]);
+    }
+
+    #[test]
+    fn one_request_claims_an_organizations_refresh_the_others_serve_what_there_is() {
+        let g = Gearbox::new(config("https://github.com/MikeFalcon77/gears-rust.git"));
+        let acme = uuid::Uuid::new_v4();
+        assert!(g.begin_org_refresh(acme, false), "due: the first claims it");
+        assert!(
+            !g.begin_org_refresh(acme, false),
+            "while it reads, the next request does not start the same read"
+        );
+        assert!(!g.org_roots_due(acme));
+        assert!(g.begin_org_refresh(acme, true), "asked for now, it reads");
     }
 
     #[test]

@@ -106,8 +106,10 @@ pub async fn scope_for(
     now: bool,
 ) -> Scope {
     let org = org.filter(|o| *o != PLATFORM_ROOT_TENANT)?;
-    if (now || gearbox.org_roots_due(org))
-        && let Some(service) = connectors.get()
+    // One read at a time per organization: the request that claims it reads,
+    // the others serve the roots there are meanwhile.
+    if let Some(service) = connectors.get()
+        && gearbox.begin_org_refresh(org, now)
     {
         let listed = match acting_in(ctx, org) {
             Ok(octx) => service.gear_repositories(&octx, org).await,
