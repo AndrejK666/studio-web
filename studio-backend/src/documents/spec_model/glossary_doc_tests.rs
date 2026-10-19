@@ -91,3 +91,21 @@ fn links_and_anchors() {
     assert_eq!(anchor("Document type"), "document-type");
     assert_eq!(anchor("Gear | module"), "gear-module");
 }
+
+#[test]
+fn the_written_glossary_declares_no_document_type_and_links_from_a_spec_folder() {
+    let doc = render(&[Row {
+        term: "Member".into(),
+        definition: "A person with a membership.".into(),
+        ..Row::default()
+    }]);
+    let (fm, _) = crate::documents::validate::split_front_matter(&doc);
+    for key in ["type", "doc_type", "document_type", "kind"] {
+        assert!(
+            !fm.contains_key(key),
+            "`{key}` would make the classifier bind the glossary as a specification"
+        );
+    }
+    assert_eq!(fm.get("artifact").map(String::as_str), Some("glossary"));
+    assert!(doc.contains("(../glossary.md#member)"));
+}
