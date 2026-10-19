@@ -24,7 +24,7 @@
 // other gears than the binary links.
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -165,4 +165,33 @@ try {
   await call("shutdown", null).catch(() => undefined);
   send({ jsonrpc: "2.0", method: "exit" });
   child.stdin.end();
+}
+
+// GDL 1.1: a profile whose gears keep data names the Postgres they keep it in,
+// or the product does not resolve (GBX0306). One server for every gear
+// database, as config/dev.yaml's `pg_main`; the password stays a reference.
+// Written as text because the engine's profile edit only writes strings, and
+// `database` is a `postgres(...)` call.
+{
+  const file = resolve(repo, "product.gdl");
+  const text = readFileSync(file, "utf8");
+  const plain = 'embedded(id = "dev"),';
+  if (!text.includes(plain)) throw new Error(`product.gdl has no \`${plain}\` to give a database`);
+  writeFileSync(
+    file,
+    text.replace(
+      plain,
+      [
+        "embedded(",
+        '            id = "dev",',
+        "            database = postgres(",
+        '                host = "127.0.0.1",',
+        "                port = 5433,",
+        '                user = "studio",',
+        '                password = "${STUDIO_PG_PASSWORD}",',
+        "            ),",
+        "        ),",
+      ].join("\n"),
+    ),
+  );
 }

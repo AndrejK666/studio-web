@@ -14,7 +14,15 @@ product(
     ],
 
     profiles = [
-        embedded(id = "dev"),
+        embedded(
+            id = "dev",
+            database = postgres(
+                host = "127.0.0.1",
+                port = 5433,
+                user = "studio",
+                password = "${STUDIO_PG_PASSWORD}",
+            ),
+        ),
     ],
     default_profile = "dev",
 

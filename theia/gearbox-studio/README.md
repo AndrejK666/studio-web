@@ -9,9 +9,13 @@ Studio's own.
 The engine now lives at
 [`constructorfabric/gearbox`](https://github.com/constructorfabric/gearbox)
 under Apache-2.0, and the session image builds it from the commit
-`STUDIO_GEARBOX_REF` names in `theia/Dockerfile`, `ea964f9` since the move
-from `fills` to `implements` (gearbox#2). `src/common/generated/`,
-`src/common/extension-points.ts` and `src/browser/ai/generated/` are copied
+`STUDIO_GEARBOX_REF` names in `theia/Dockerfile`: `6d60603` on
+`MikeFalcon77/gearbox` `feature/gdl-extensible` since 2026-10-19, because
+GDL 1.0 -- which gears-rust is written in since 2026-10-17 -- has not reached
+`constructorfabric/gearbox` yet (`ea964f9`, the move from `fills` to
+`implements`, gearbox#2, before that). `src/common/generated/`,
+`src/common/extension-points.ts`, `src/browser/gdl/generated/` and
+`src/browser/ai/generated/` are copied
 from that commit verbatim, because they describe the engine's wire format;
 the views are still the 55f7015 port, with the rename applied. Every file
 copied from it keeps its original text apart from the changes marked
