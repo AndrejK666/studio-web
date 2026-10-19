@@ -120,6 +120,7 @@ fn scaffold_body(dry_run: Option<bool>) -> RegistryScaffoldRequest {
         gear_kind: None,
         plugin_host: None,
         plugin_spec: None,
+        category: None,
         parent_dir: None,
         app_title: None,
         open_pr: None,

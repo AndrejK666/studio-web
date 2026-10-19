@@ -22,7 +22,6 @@ import { api, type Candidate, type SpecModelEntityEdit } from "./api";
 import { estimateLabel, etaLabel, readFraction, tokensLabel, type SpecModelBuildEstimate } from "./build-eta";
 import { ModelMapView, Prose, RequirementsView, ResolveView, SideLink } from "./domain-model-screens";
 import { gearRefs } from "./entity-gears";
-import type { GearDraft } from "./gear-from-entity";
 import { DataTable } from "./data-table";
 import { GlossaryScreen } from "./glossary-screen";
 import { PrioritiesScreen } from "./priorities-screen";
@@ -75,7 +74,6 @@ export function SpecModelTab({
   only,
   orgId,
   onOpenFile,
-  onCreateGear,
 }: {
   token: string;
   projectId: string;
@@ -87,8 +85,6 @@ export function SpecModelTab({
   orgId?: string;
   /** Open a document in the project's IDE session. */
   onOpenFile?: (path: string) => void;
-  /** Open the project's Product tab with a gear for an entity drafted, ready to scaffold. */
-  onCreateGear?: (draft: GearDraft) => void;
 }) {
   const [model, setModel] = useState<SpecModel | null>(null);
   const [findings, setFindings] = useState<SpecModelFinding[]>([]);
@@ -535,7 +531,6 @@ export function SpecModelTab({
           onSave={saveEntity}
           saved={writes}
           gears={gears}
-          onCreateGear={onCreateGear}
         />
       )}
       {view === "reqs" && (

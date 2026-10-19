@@ -6,7 +6,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Conformance, type PlanRow } from "./api";
+import { capabilityEntities, keptSentences, suggestedCategory } from "./capability-entities";
 import { ProjectCandidate } from "./component-registry";
+import { layerOf } from "./domain-layers";
+import { entityGears, gearRefs } from "./entity-gears";
+import { useGearCatalogue } from "./product-configurator-view";
 import { DataTable } from "./data-table";
 import { ScaffoldModal } from "./documents";
 import { errText } from "./format";
@@ -14,6 +18,7 @@ import { usePortalNav } from "./portal-nav";
 import { inventory, ownGearsOf, ROLE_LABEL, type InventoryRole, type InventoryRow, type OwnGear } from "./project-inventory";
 import type { ProjectComponent } from "./project-checks";
 import { gearProblem, rowCoverage } from "./spec-coverage";
+import { entitiesOf, type Entity, type GlossaryEntry } from "./spec-model";
 
 interface Read {
   plan: PlanRow[];
@@ -42,8 +47,42 @@ export function ProjectComponentsInventory({
   const [error, setError] = useState<string | null>(null);
   const [scaffold, setScaffold] = useState<PlanRow | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
+  /** The Domain model's entities, read when a gear is first asked for: what
+   *  the new gear keeps. Null while unread; empty when it cannot be read. */
+  const [entities, setEntities] = useState<Entity[] | null>(null);
   const nav = usePortalNav();
   const asking = useRef(projectId);
+
+  useEffect(() => setEntities(null), [projectId]);
+  useEffect(() => {
+    if (!scaffold || entities) return;
+    let live = true;
+    Promise.all([
+      api.specModel(token, projectId),
+      // A backend from before the glossary answers 404: the model still reads.
+      api.glossary(token, projectId).catch(() => ({ items: [] as GlossaryEntry[], total: 0 })),
+    ])
+      .then(([model, glossary]) => live && setEntities(entitiesOf(model.facts, glossary.items)))
+      // No model yet: the gear is asked for from the capability alone.
+      .catch(() => live && setEntities([]));
+    return () => {
+      live = false;
+    };
+  }, [scaffold, entities, token, projectId]);
+  // The catalogue says which subsystem the new gear most likely joins; a
+  // catalogue that cannot be read leaves the choice to the server's default.
+  const catalogue = useGearCatalogue(token, !!scaffold);
+  const index = catalogue && "index" in catalogue ? catalogue.index : null;
+  const draft = useMemo(() => {
+    if (!scaffold || !entities || !catalogue) return null;
+    const kept = capabilityEntities(scaffold, entities);
+    const domain = entities.filter((e) => layerOf(e) === "domain");
+    const keepers = index ? entityGears(domain, gearRefs(index)).byEntity : new Map();
+    const suggested = suggestedCategory(scaffold, kept.entities, entities, index, (keys) => keys.map((k) => keepers.get(k)?.gear.id ?? null));
+    const categories = [...new Set((index?.gears ?? []).map((g) => g.category?.trim() ?? "").filter((c) => c && c !== "example"))].sort();
+    return { kept, suggested, categories };
+  }, [scaffold, entities, catalogue, index]);
+  const kept = draft?.kept ?? null;
 
   const load = async () => {
     const forProject = projectId;
@@ -172,8 +211,8 @@ export function ProjectComponentsInventory({
           ]}
           inline={(r) =>
             r.role === "create" && r.need ? (
-              <button type="button" className="primary" onClick={() => setScaffold(r.need!)}>
-                Create a gear…
+              <button type="button" className="primary" disabled={scaffold === r.need && !kept} onClick={() => setScaffold(r.need!)}>
+                {scaffold === r.need && !kept ? "Reading the Domain model…" : "Create a gear…"}
               </button>
             ) : null
           }
@@ -199,13 +238,27 @@ export function ProjectComponentsInventory({
           }
         />
       </div>
-      {scaffold && (
+      {/* Opened once the Domain model is read, so the draft it starts with is the whole one. */}
+      {scaffold && draft && kept && (
         <ScaffoldModal
           capability={scaffold.capability}
           token={token}
           projectTenantId={projectId}
-          problem={gearProblem(scaffold)}
+          problem={[gearProblem(scaffold), keptSentences(kept)].filter(Boolean).join(" ")}
           declares={[scaffold.capability]}
+          editable
+          category={draft.suggested?.category}
+          categories={draft.categories}
+          lead={[
+            kept.entities.length
+              ? `From the Domain model it keeps ${kept.entities.map((e) => e.name).join(", ")}${
+                  kept.requirements.length ? ` and answers ${kept.requirements.length} of its requirements` : ""
+                }. Change what it is for before the push if the model read it wrong.`
+              : "The Domain model names no entity of this capability: the gear starts from the specs' words alone.",
+            draft.suggested ? `Its subsystem is proposed from ${draft.suggested.why}.` : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
           onClose={() => {
             setScaffold(null);
             void load();

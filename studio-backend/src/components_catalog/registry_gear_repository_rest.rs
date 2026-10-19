@@ -95,6 +95,9 @@ pub struct RegistryScaffoldRequest {
     pub plugin_host: Option<String>,
     /// For a plugin of a host with several points: which, by GTS spec id.
     pub plugin_spec: Option<String>,
+    /// The subsystem the gear belongs to, written into its `gear.gdl`;
+    /// omitted is `platform`.
+    pub category: Option<String>,
     /// Directory the gear's own goes under (default `gears`).
     pub parent_dir: Option<String>,
     /// Named in its manifest and its PRD.
@@ -346,6 +349,7 @@ fn new_gear_of(
         gear_kind: body.gear_kind,
         plugin_host: body.plugin_host,
         plugin_spec: body.plugin_spec,
+        category: body.category,
         capabilities: body.capabilities.unwrap_or_default(),
         open_pr: body.open_pr.unwrap_or(true),
         dry_run: body.dry_run.unwrap_or(false),

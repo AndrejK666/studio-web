@@ -45,7 +45,6 @@ import {
 import { DOC_QUALITY_LABEL, docQuality, relationSentence, type DocQualityItem } from "./doc-quality";
 import { PROVISIONAL_NOTE } from "./saved-entities";
 import { entityGears, type GearRef, type Keeper } from "./entity-gears";
-import type { GearDraft } from "./gear-from-entity";
 import {
   BASIS_LABEL,
   BASIS_ORDER,
@@ -690,9 +689,6 @@ export function ModelMapView({
   saved?: Map<string, SpecModelWrite>;
   /** The gears that could keep a Domain entity; null while unknown, so no gap is claimed. */
   gears?: GearRef[] | null;
-  /** Open the project's Product tab with a gear for an entity drafted. */
-  /** Not offered from an entity any more: a gear answers a capability, and an entity lives inside one. Kept so callers compile. */
-  onCreateGear?: (draft: GearDraft) => void;
 }) {
   const [layer, setLayer] = useState<Layer>("domain");
   const [query, setQuery] = useState("");

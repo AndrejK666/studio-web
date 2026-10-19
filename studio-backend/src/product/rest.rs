@@ -211,6 +211,9 @@ pub struct ScaffoldRequest {
     /// For a `plugin` whose host declares more than one extension point: which
     /// one, by its GTS spec id, from `GET /gearbox/extension-points`.
     pub plugin_spec: Option<String>,
+    /// The subsystem the gear belongs to (`bss`, `gen-ai`), written into its
+    /// `gear.gdl` and `gear.toml`; omitted is `platform`. Ignored with `files`.
+    pub category: Option<String>,
     /// Capability keys the gear provides, written into its `gear.toml`, so the
     /// gear declares them once the catalogue syncs it (`auth`, `storage`).
     /// Ignored with `files`.
@@ -759,6 +762,7 @@ fn new_gear_of(body: &ScaffoldRequest) -> super::port::NewGear {
         gear_kind: body.gear_kind.clone(),
         plugin_host: body.plugin_host.clone(),
         plugin_spec: body.plugin_spec.clone(),
+        category: body.category.clone(),
         capabilities: body.capabilities.clone().unwrap_or_default(),
         open_pr: body.open_pr.unwrap_or(false),
         dry_run: body.dry_run.unwrap_or(false),
