@@ -50,4 +50,19 @@ describe("what a project is made of", () => {
     // Its code holds studio-documents, and it is still the project's, not the platform's.
     expect(withOwn.filter((r) => r.name === "studio-documents")).toHaveLength(1);
   });
+
+  it("makes a declared gear the project's even where a candidate of its name was another's", () => {
+    const shared = [
+      need("tenancy", [cand("tenant-resolver", { tier: "platform" })]),
+      need("probing", [cand("probe", { origin: "project", registry_state: "candidate" })]),
+    ];
+    const own = [
+      { name: "tenant-resolver", kind: "gear", path: "backend/src/tenancy" },
+      { name: "probe", kind: "gear" },
+    ];
+    const rows2 = inventory(shared, { components_in_code: [] } as never, ["tenant-resolver"], [], () => false, own);
+    const find = (name: string) => rows2.find((r) => r.name === name);
+    expect(find("tenant-resolver")).toMatchObject({ role: "ours", inCode: true, path: "backend/src/tenancy" });
+    expect(find("probe")).toMatchObject({ role: "ours", inCode: true });
+  });
 });

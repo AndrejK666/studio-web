@@ -113,7 +113,12 @@ export function inventory(
   for (const g of own) {
     const row = rows.get(g.name);
     if (row) {
-      if (row.role === "ours") row.inCode = true;
+      // The project's own declaration is the answer, whatever a plan
+      // candidate of the same name was taken for (platform, organization,
+      // code that could become a gear).
+      row.role = "ours";
+      row.inCode = true;
+      row.path ??= g.path ?? null;
       continue;
     }
     rows.set(g.name, {
