@@ -6773,10 +6773,38 @@ fn parse_uuid_field(field: &str, raw: &str) -> ApiResult<Uuid> {
     })
 }
 
+/// What happened to a review request, as the `review_request.*` kind it is
+/// announced under. An enum so the kinds are a closed set the tests can hold
+/// against `docs/events-catalog.md`.
+#[derive(Debug, Clone, Copy)]
+enum ReviewEvent {
+    Created,
+    Decided,
+    Cancelled,
+}
+
+impl ReviewEvent {
+    #[cfg(test)]
+    const ALL: [Self; 3] = [Self::Created, Self::Decided, Self::Cancelled];
+
+    fn kind(self) -> &'static str {
+        match self {
+            Self::Created => "review_request.created",
+            Self::Decided => "review_request.decided",
+            Self::Cancelled => "review_request.cancelled",
+        }
+    }
+}
+
 /// Tell the caller's organization a review request changed, so an inbox or a
 /// stage on screen reads it again (`docs/events-catalog.md`, rule E5: the
 /// event is a prompt, `GET /review-requests` is the truth).
-fn announce_review(quality: &Quality, ctx: &SecurityContext, kind: &str, dto: &ReviewRequestDto) {
+fn announce_review(
+    quality: &Quality,
+    ctx: &SecurityContext,
+    event: ReviewEvent,
+    dto: &ReviewRequestDto,
+) {
     let Ok(events) = quality
         .hub
         .get::<dyn crate::studio_events::StudioEventPublisher>()
@@ -6786,7 +6814,7 @@ fn announce_review(quality: &Quality, ctx: &SecurityContext, kind: &str, dto: &R
     events.publish(
         crate::studio_events::StudioEvent::new(
             ctx.subject_tenant_id(),
-            kind,
+            event.kind(),
             "review_request",
             dto.id.clone(),
             "studio-documents",
@@ -6960,7 +6988,7 @@ async fn create_review_request(
         review_dto(&review, time::OffsetDateTime::now_utc()),
         &versions,
     );
-    announce_review(&quality, &ctx, "review_request.created", &dto);
+    announce_review(&quality, &ctx, ReviewEvent::Created, &dto);
     Ok((StatusCode::CREATED, Json(dto)))
 }
 
@@ -7086,7 +7114,7 @@ async fn create_review_approval(
                 .create()
         })?;
     let dto = review_dto(&review, time::OffsetDateTime::now_utc());
-    announce_review(&quality, &ctx, "review_request.decided", &dto);
+    announce_review(&quality, &ctx, ReviewEvent::Decided, &dto);
     Ok((StatusCode::CREATED, Json(approval_dto(&approval))))
 }
 
@@ -7112,7 +7140,7 @@ async fn cancel_review_request(
                 .create()
         })?;
     let dto = review_dto(&review, time::OffsetDateTime::now_utc());
-    announce_review(&quality, &ctx, "review_request.cancelled", &dto);
+    announce_review(&quality, &ctx, ReviewEvent::Cancelled, &dto);
     Ok(Json(dto))
 }
 
@@ -10069,6 +10097,27 @@ pub fn register_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The review kinds this gear publishes are the ones the events catalogue
+    /// lists, no more and no fewer.
+    #[test]
+    fn the_review_kinds_are_the_ones_the_catalogue_lists() {
+        for event in ReviewEvent::ALL {
+            // A new variant stops compiling here until it is in `ALL`.
+            match event {
+                ReviewEvent::Created | ReviewEvent::Decided | ReviewEvent::Cancelled => {}
+            }
+        }
+        let published: std::collections::BTreeSet<String> = ReviewEvent::ALL
+            .into_iter()
+            .map(|event| event.kind().to_string())
+            .collect();
+        assert_eq!(
+            published,
+            crate::api_contract::events::documented_kinds("review_request."),
+            "docs/events-catalog.md and studio-documents disagree on the `review_request.*` kinds"
+        );
+    }
 
     #[test]
     fn a_review_state_fits_only_what_its_key_names() {
