@@ -2767,3 +2767,8 @@ div.dm-block { padding-left: 0; }
 .pcomp-create { background: color-mix(in srgb, #dc2626 12%, transparent); color: #b91c1c; }
 .pcomp-organization { background: color-mix(in srgb, #16a34a 14%, transparent); color: #15803d; }
 .pcomp-platform, .pcomp-service { background: var(--accent); }
+
+/* Artifacts › Outputs: a build's or a release's files, under its row. */
+.output-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.output-files li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.output-files .error { flex-basis: 100%; }

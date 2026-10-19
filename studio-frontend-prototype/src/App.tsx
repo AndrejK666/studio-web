@@ -3,7 +3,7 @@ import { useDismiss } from "./use-dismiss";
 import { LevelBadge, LevelMark, LogoControl, OrgMark } from "./level-marks";
 import { VIEW_PATHS, pathToPlace, placeToPath, type KnownPlaces } from "./place-url";
 import { URL_CHANGE_EVENT } from "./list-state";
-import type { FormEvent, ReactNode } from "react";
+import type { FormEvent } from "react";
 import { env as runtimeEnv, idpConsoleUrl } from "./env";
 import { errText, matches, relTime } from "./format";
 // Screens that arrive when somebody asks for them — see ./lazy-screens for
@@ -40,7 +40,7 @@ import {
   teamText,
   type ReviewFilter,
 } from "./project-rows";
-import { DataTable, When, type PageRequest, type PageResult } from "./data-table";
+import { DataTable, When } from "./data-table";
 import { PeopleView } from "./people";
 import { OrgMembersView, OrganizationsTable } from "./org-admin";
 import { BackgroundWork } from "./tasks";
@@ -64,6 +64,8 @@ import { makeZip } from "./zip";
 import { SpecModelTab } from "./spec-model-tab";
 import { ProjectBuilds } from "./builds-tab";
 import { ProjectTabHowto } from "./project-path-view";
+import { ProjectDocuments, ProjectOutputs } from "./artifacts-tab";
+import { formatBytes, storedFiles, type StoredFile } from "./outputs";
 import { GearsTable, PermissionsTable } from "./system-tables";
 import {
   StudioBridgeProvider,
@@ -5625,7 +5627,7 @@ function ProjectScreen({
           />
         )}
         {tab === "artifacts" && (
-          <ArtifactsView token={token} workspace={proj} parentWorkspaceId={workspace.id} />
+          <ArtifactsView token={token} workspace={proj} parentWorkspaceId={workspace.id} onOpenTab={setTab} />
         )}
         {tab === "components" && (
           <ProjectKits
@@ -7149,317 +7151,76 @@ function ArtifactsView({
   token,
   workspace,
   parentWorkspaceId,
+  onOpenTab,
 }: {
   token: string;
   workspace: Workspace;
   /** The parent workspace tenant id. `workspace` here is the project tenant;
    *  ProjectFiles tags BOTH onto every file it adds so the graph can scope to
-   *  either level. Still needed after Sources moved out — dropping it would
-   *  silently start writing files that only the project can see. */
+   *  either level, and document bindings are addressed under it. */
   parentWorkspaceId?: string;
+  onOpenTab?: (tab: ProjTab) => void;
 }) {
-  // Was bumped after every sync, back when the sync button was on this page.
-  // It is a Sources action now, and this list re-reads on mount — which is the
-  // only moment it can have changed, because you have to leave to run one.
-  const [refreshKey] = useState(0);
-  /** Which origin's artifacts are showing. Synced is the default because it is
-   *  where nearly everything is; hand-added files are the exception. */
-  const [origin, setOrigin] = useState<"ingested" | "manual">("ingested");
+  const studio = useStudioBridge();
+  /** What the project produced, or what it holds. Outputs first: they are
+   *  what nobody can see anywhere else in the portal. */
+  const [view, setView] = useState<"outputs" | "documents">("outputs");
   return (
     <>
       <h1>Artifacts</h1>
       <p className="subtitle">
-        Everything this project knows about its own work. The repositories it came from are on the
-        Sources tab.
+        What the project produced — the files its builds kept and its releases — and the documents and files it
+        holds. Its issues, pull requests and commits are on Issues and Activity.
       </p>
-      {/* Where an artifact CAME FROM is the first thing to choose, because it
-          decides everything after it: a synced artifact has a forge, an author
-          and a state, and a hand-added file has bytes and a version. They were
-          two stacked cards, which put a nine-thousand-row table above a
-          usually-empty one and made the second easy to miss entirely. */}
-      <div className="doc-views" role="tablist" aria-label="Where artifacts came from">
+      {/* It used to be the artifact graph as six tables: ~9,000 issues, pull
+          requests, commits, comments, files and authors, each already shown
+          where it means something. The raw graph is one click away in the IDE
+          (Open graph in Studio, below); admin Objects lists types, not nodes. */}
+      <div className="doc-views" role="tablist" aria-label="Artifacts">
         <button
           role="tab"
-          aria-selected={origin === "ingested"}
-          className={origin === "ingested" ? "doc-view on" : "doc-view"}
-          onClick={() => setOrigin("ingested")}
+          aria-selected={view === "outputs"}
+          className={view === "outputs" ? "doc-view on" : "doc-view"}
+          onClick={() => setView("outputs")}
         >
-          From repositories
+          Outputs
         </button>
         <button
           role="tab"
-          aria-selected={origin === "manual"}
-          className={origin === "manual" ? "doc-view on" : "doc-view"}
-          onClick={() => setOrigin("manual")}
+          aria-selected={view === "documents"}
+          className={view === "documents" ? "doc-view on" : "doc-view"}
+          onClick={() => setView("documents")}
         >
-          Added by hand
+          Documents &amp; files
         </button>
       </div>
-      {origin === "ingested" ? (
-        <IngestedArtifacts
-          token={token}
-          scope={workspace.id}
-          target={workspace}
-          refreshKey={refreshKey}
-        />
+      {view === "outputs" ? (
+        <ProjectOutputs token={token} projectId={workspace.id} onOpenTab={onOpenTab} />
       ) : (
-        <ProjectFiles token={token} workspace={workspace} parentWorkspaceId={parentWorkspaceId} />
+        <>
+          <ProjectDocuments
+            token={token}
+            workspaceId={parentWorkspaceId ?? workspace.id}
+            projectId={workspace.id}
+            target={workspace}
+            onOpenTab={onOpenTab}
+          />
+          <ProjectFiles token={token} workspace={workspace} parentWorkspaceId={parentWorkspaceId} />
+        </>
       )}
-    </>
-  );
-}
-
-/** The ingested-artifacts viewer: issues and pull requests pulled from the
- *  attached sources by the artifact-ingest gear and read back from the graph
- *  store. Reloads whenever `refreshKey` changes (i.e. after a Sync). */
-/** The node types a repository sync actually writes into the graph.
- *
- *  Three of these were being ingested and never shown. On the development graph
- *  at the time of writing: 8529 files, 5227 COMMENTS, 4965 COMMITS, 2210
- *  issues, 800 pull requests, 89 AUTHORS. The sync task has always reported
- *  `comments` and `commits` in its progress counts (see api.artifactSyncTask) —
- *  the work was done, the door was just missing. Roughly ten thousand nodes
- *  were unreachable from the portal.
- *
- *  `user` is last because it is a by-product: authors are extracted so issues
- *  and commits can point at a person, not because anybody browses them. */
-type ArtTab = "issue" | "pull_request" | "commit" | "comment" | "file" | "user";
-
-const ART_TABS: { id: ArtTab; label: string; plural: string }[] = [
-  { id: "issue", label: "Issues", plural: "issues" },
-  { id: "pull_request", label: "Pull requests", plural: "pull requests" },
-  { id: "commit", label: "Commits", plural: "commits" },
-  { id: "comment", label: "Comments", plural: "comments" },
-  { id: "file", label: "Files", plural: "files" },
-  { id: "user", label: "Authors", plural: "authors" },
-];
-
-/** One column of the artifact table. `render` gets the node's payload. */
-interface ArtColumn {
-  key: string;
-  label: string;
-  /** Right-aligned, tabular — for counts and sizes. */
-  num?: boolean;
-  render: (v: import("./api").ArtifactNode["value"]) => ReactNode;
-}
-
-/** Truncate a body to something that fits a table cell. Comments are the reason
- *  this exists: a CodeRabbit review body is kilobytes of markdown, and pasting
- *  it into a row makes the row taller than the viewport. */
-function excerpt(s: unknown, max = 120): string {
-  const text = typeof s === "string" ? s.replace(/\s+/g, " ").trim() : "";
-  if (!text) return "—";
-  return text.length > max ? `${text.slice(0, max)}…` : text;
-}
-
-const ART_COLUMNS: Record<ArtTab, ArtColumn[]> = {
-  issue: [
-    { key: "title", label: "Title", render: (v) => `${v.number != null ? `#${v.number} ` : ""}${v.title ?? "(untitled)"}` },
-    { key: "state", label: "State", render: (v) => String(v.state ?? "—") },
-    { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
-    { key: "labels", label: "Labels", render: (v) => (Array.isArray(v.labels) && v.labels.length ? v.labels.join(", ") : "—") },
-    { key: "updated", label: "Updated", render: (v) => <When iso={v.updated_at as string | undefined} /> },
-  ],
-  pull_request: [
-    { key: "title", label: "Title", render: (v) => `${v.number != null ? `#${v.number} ` : ""}${v.title ?? "(untitled)"}` },
-    { key: "state", label: "State", render: (v) => (v.merged ? "merged" : String(v.state ?? "—")) },
-    { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
-    { key: "branches", label: "Branches", render: (v) => (v.source_branch ? `${v.source_branch} → ${v.target_branch ?? "?"}` : "—") },
-    // Only open pull requests carry a count — a merged one is nobody's queue,
-    // and the sync leaves it unset rather than writing a zero that would read
-    // as "reviewed and clear".
-    {
-      key: "open_threads",
-      label: "Open threads",
-      num: true,
-      render: (v) => {
-        const open = (v as Record<string, unknown>).open_threads;
-        return typeof open === "number" ? String(open) : "—";
-      },
-    },
-    { key: "updated", label: "Updated", render: (v) => <When iso={v.updated_at as string | undefined} /> },
-  ],
-  commit: [
-    { key: "title", label: "Message", render: (v) => excerpt(v.title ?? (v as Record<string, unknown>).message, 90) },
-    { key: "sha", label: "SHA", render: (v) => <code>{String((v as Record<string, unknown>).short_sha ?? "").slice(0, 7) || "—"}</code> },
-    { key: "author", label: "Author", render: (v) => String((v as Record<string, unknown>).author_name ?? v.author ?? "—") },
-    { key: "created", label: "Committed", render: (v) => <When iso={(v as Record<string, unknown>).created_at as string | undefined} /> },
-  ],
-  comment: [
-    { key: "body", label: "Comment", render: (v) => excerpt((v as Record<string, unknown>).body) },
-    { key: "on", label: "On", render: (v) => { const n = (v as Record<string, unknown>).target_number; return n != null ? `#${n}` : "—"; } },
-    { key: "author", label: "Author", render: (v) => String(v.author ?? "—") },
-    { key: "created", label: "Written", render: (v) => <When iso={(v as Record<string, unknown>).created_at as string | undefined} /> },
-  ],
-  file: [
-    { key: "path", label: "Path", render: (v) => <code>{String(v.path ?? "(no path)")}</code> },
-    { key: "size", label: "Size", num: true, render: (v) => (typeof v.size === "number" ? `${(v.size / 1024).toFixed(1)} KB` : "—") },
-    { key: "sha", label: "SHA", render: (v) => <code>{v.sha ? String(v.sha).slice(0, 7) : "—"}</code> },
-  ],
-  user: [
-    { key: "login", label: "Login", render: (v) => String((v as Record<string, unknown>).login ?? v.title ?? "—") },
-    { key: "provider", label: "Provider", render: (v) => String(v.provider ?? "—") },
-  ],
-};
-
-function IngestedArtifacts({
-  token,
-  scope,
-  target,
-  refreshKey,
-}: {
-  token: string;
-  /** Project tenant id — reads are scoped to it so the list shows only this
-   *  project's ingested artifacts, not every repo across the org. */
-  scope?: string;
-  /** The project the IDE opens against when a row is handed off to it. */
-  target: StudioTarget;
-  refreshKey: number;
-}) {
-  const studio = useStudioBridge();
-  const [repos, setRepos] = useState<import("./api").ArtifactNode[]>([]);
-  const [tab, setTab] = useState<ArtTab>("issue");
-  const [tick, setTick] = useState(0);
-
-  // The repositories in scope, for the repository filter.
-  useEffect(() => {
-    let alive = true;
-    api
-      .listArtifactNodes(token, "repo", scope, undefined, 200)
-      .then((r) => {
-        if (alive) setRepos(r.nodes ?? []);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [token, scope]);
-
-  // The backend pages, searches and filters; newest first is the order it
-  // offers, so it is the list's order and no header pretends to sort.
-  const load = useCallback(
-    async (req: PageRequest): Promise<PageResult<import("./api").ArtifactNode>> => {
-      const r = await api.listArtifactNodes(token, tab, scope, undefined, req.limit, {
-        repo: req.filters.repo || undefined,
-        sort: "updated",
-        q: req.q || undefined,
-        offset: req.offset,
-      });
-      return { items: r.nodes ?? [], total: r.total ?? (r.nodes?.length ?? 0) };
-    },
-    [token, tab, scope],
-  );
-
-  /** What a row is for: a file opens in the editor, anything else where it
-   *  came from. A commit or a comment has no meaning inside the IDE. */
-  const openNode = (n: import("./api").ArtifactNode) => {
-    const path = typeof n.value.path === "string" ? n.value.path : "";
-    const url = typeof n.value.url === "string" ? n.value.url : undefined;
-    if (tab === "file" && path) void studio?.openFile(target, path);
-    else if (url) window.open(url, "_blank", "noreferrer");
-  };
-  const opens = (n: import("./api").ArtifactNode) =>
-    (tab === "file" && typeof n.value.path === "string" && !!n.value.path) || typeof n.value.url === "string";
-
-  const plural = ART_TABS.find((t) => t.id === tab)?.plural ?? "artifacts";
-
-  return (
-    <div className="card">
-      <p className="hint">
-        Issues, pull requests and repository files pulled from the attached sources by Sync. Stored
-        in the graph as typed GTS nodes — this reads them back.
+      <p className="hint" data-raw-graph>
+        Every node the syncs keep is in the IDE&apos;s graph:{" "}
+        <button
+          className="linklike"
+          onClick={() => void studio?.openGraph(workspace)}
+          disabled={!studio || studio.opening === workspace.id}
+          title="Open the Workspace Graph in the Studio IDE"
+        >
+          {studio?.opening === workspace.id ? "opening Studio…" : "open graph in Studio"}
+        </button>
+        .
       </p>
-      <div className="doc-views" role="tablist" aria-label="Artifact kind">
-        {ART_TABS.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            aria-selected={tab === t.id}
-            className={tab === t.id ? "doc-view on" : "doc-view"}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <DataTable<import("./api").ArtifactNode>
-        key={tab}
-        list="artifacts"
-        title="Ingested"
-        load={load}
-        reloadKey={`${refreshKey}:${tick}`}
-        rowKey={(n) => n.instance_id}
-        rowLabel={(n) => String(n.value.title ?? n.value.path ?? n.instance_id)}
-        onOpen={openNode}
-        canOpen={opens}
-        search={{ placeholder: "Search title / author…" }}
-        filters={[
-          {
-            id: "repo",
-            allLabel: "All repositories",
-            kind: "select",
-            options: repos.map((r) => ({
-              value: r.instance_id,
-              label: String(r.value.full_path ?? r.value.name ?? r.instance_id),
-            })),
-          },
-        ]}
-        primary={
-          <>
-            {/* Launches the session if none is running — the graph is one
-                click from here whether or not the IDE is already open. */}
-            <button
-              className="ghost"
-              onClick={() => void studio?.openGraph(target)}
-              disabled={!studio || studio.opening === target.id}
-              title="Open the Workspace Graph in the Studio IDE"
-            >
-              {studio?.opening === target.id ? "Opening Studio…" : "Open graph in Studio"}
-            </button>
-            <button className="ghost" onClick={() => setTick((t) => t + 1)}>
-              Refresh
-            </button>
-          </>
-        }
-        empty={{ title: `Nothing ingested yet.`, body: `Sync a repository in Sources to pull its ${plural}.` }}
-        columns={ART_COLUMNS[tab].map((c, i) => ({
-          id: c.key,
-          header: c.label,
-          num: c.num,
-          className: !c.num && i === 0 ? "acell-lead" : undefined,
-          cell: (n: import("./api").ArtifactNode) => c.render(n.value),
-        }))}
-        inline={(n) => {
-          const path = typeof n.value.path === "string" ? n.value.path : "";
-          const url = typeof n.value.url === "string" ? n.value.url : undefined;
-          return tab === "file" && path ? (
-            <button
-              className="ghost"
-              onClick={() => void studio?.openFile(target, path)}
-              disabled={!studio || studio.opening === target.id}
-              title="Open this file in the Studio editor"
-            >
-              Open in editor
-            </button>
-          ) : url ? (
-            <a className="ghost" href={url} target="_blank" rel="noreferrer">
-              Open ↗
-            </a>
-          ) : null;
-        }}
-        tile={(n, open) => {
-          const [lead, second, ...rest] = ART_COLUMNS[tab];
-          return (
-            <VTile
-              title={lead.render(n.value)}
-              subtitle={second?.render(n.value)}
-              stats={rest.slice(0, 3).map((c) => ({ label: c.label, value: c.render(n.value) }))}
-              onClick={opens(n) ? open : undefined}
-            />
-          );
-        }}
-      />
-    </div>
+    </>
   );
 }
 
@@ -7481,15 +7242,7 @@ function ProjectFiles({
    *  tagged with both so the graph can scope to either. */
   parentWorkspaceId?: string;
 }) {
-  const [files, setFiles] = useState<
-    {
-      id: string;
-      path: string;
-      size?: number;
-      file_id?: string;
-      version_id?: string;
-    }[] | null
-  >(null);
+  const [files, setFiles] = useState<StoredFile[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -7498,8 +7251,9 @@ function ProjectFiles({
     setErr(null);
     try {
       // Scope to this project tenant (matches the file's project_id), then keep
-      // only hand-added files. Every page, not the first: a hand-added file
-      // past it used to be invisible, among a repository's thousands.
+      // the files people added and Studio generated. Every page, not the first:
+      // a hand-added file past it used to be invisible, among a repository's
+      // thousands.
       const nodes: import("./api").ArtifactNode[] = [];
       for (let offset = 0; offset < 20_000; ) {
         const page = await api.listArtifactNodes(token, "file", workspace.id, undefined, 200, { offset });
@@ -7507,26 +7261,7 @@ function ProjectFiles({
         offset += page.nodes?.length ?? 0;
         if (!page.nodes?.length || offset >= (page.total ?? 0)) break;
       }
-      const mine = nodes
-        .filter((n) => {
-          const v = (n.value ?? {}) as Record<string, unknown>;
-          return v.origin === "manual";
-        })
-        .map((n) => {
-          const v = (n.value ?? {}) as Record<string, unknown>;
-          const objectRef =
-            v.object_ref && typeof v.object_ref === "object"
-              ? (v.object_ref as Record<string, unknown>)
-              : undefined;
-          return {
-            id: n.instance_id,
-            path: typeof v.path === "string" ? v.path : n.instance_id,
-            size: typeof v.size === "number" ? v.size : undefined,
-            file_id: typeof objectRef?.file_id === "string" ? objectRef.file_id : undefined,
-            version_id: typeof objectRef?.version_id === "string" ? objectRef.version_id : undefined,
-          };
-        });
-      setFiles(mine);
+      setFiles(storedFiles(nodes));
     } catch (e) {
       setErr(errText(e));
     }
@@ -7544,7 +7279,8 @@ function ProjectFiles({
     setErr(null);
     try {
       const workspaceId = parentWorkspaceId ?? workspace.id;
-      const existingFileId = files?.find((stored) => stored.path === file.name)?.file_id;
+      const existingFileId =
+        files?.find((stored) => stored.path === file.name && stored.origin === "manual")?.fileId ?? undefined;
       const objectRef = await uploadProjectArtifact(
         token,
         file,
@@ -7578,16 +7314,15 @@ function ProjectFiles({
   return (
     <div className="card">
       <div className="card-head">
-        <h2>Added by hand{count > 0 ? ` · ${count}` : ""}</h2>
+        <h2>Kept in Studio{count > 0 ? ` · ${count}` : ""}</h2>
         <button className="primary" disabled={busy} onClick={() => inputRef.current?.click()}>
           {busy ? "Uploading…" : "Add file…"}
         </button>
       </div>
       <input ref={inputRef} type="file" style={{ display: "none" }} onChange={onPick} />
       <p className="hint">
-        Manually added file bytes are stored in S3 through file-storage. The artifact graph keeps
-        their organization/workspace/project scope and a durable file-version reference. Uploading
-        the same name creates a new immutable version.
+        Files people added and files Studio generated, kept in Studio rather than in a repository.
+        Uploading the same name keeps the earlier file as a version.
       </p>
       {err && files !== null && <p className="error">{err}</p>}
       <DataTable<NonNullable<typeof files>[number]>
@@ -7604,13 +7339,18 @@ function ProjectFiles({
         columns={[
           { id: "path", header: "File", compare: (a, b) => a.path.localeCompare(b.path), cell: (f) => <div className="name">{f.path}</div> },
           {
+            id: "origin",
+            header: "From",
+            cell: (f) => (f.origin === "manual" ? "added by hand" : <span className="sub">generated</span>),
+          },
+          {
             id: "size",
             header: "Size",
             num: true,
             compare: (a, b) => (a.size ?? -1) - (b.size ?? -1),
-            cell: (f) => (typeof f.size === "number" ? `${(f.size / 1024).toFixed(1)} KB` : "—"),
+            cell: (f) => formatBytes(f.size),
           },
-          { id: "version", header: "Version", cell: (f) => <span className="sub">{f.version_id ? `${f.version_id.slice(0, 8)}…` : "—"}</span> },
+          { id: "version", header: "Version", cell: (f) => <span className="sub">{f.versionId ? `${f.versionId.slice(0, 8)}…` : "—"}</span> },
         ]}
       />
     </div>

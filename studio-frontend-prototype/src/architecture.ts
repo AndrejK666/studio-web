@@ -642,8 +642,8 @@ export const SURFACES: Surface[] = [
     id: "project-artifacts",
     area: "project",
     title: "Artifacts",
-    does: "Browse the issues, pull requests, commits and files synced from the project's repositories.",
-    components: ["IngestedArtifacts", "ProjectFiles"],
+    does: "Take what the project produced: the files its CI builds kept, under the build, and its releases, downloaded straight from the provider; see the repository documents Studio has typed and the files kept in Studio, and add one.",
+    components: ["ProjectOutputs", "ProjectFiles"],
     gears: ["file-storage", "studio-artifact-ingest"],
   },
   {

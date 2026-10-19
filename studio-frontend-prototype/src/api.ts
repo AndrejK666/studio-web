@@ -1562,6 +1562,43 @@ export interface DeploymentStatus {
   hosts: string[];
 }
 
+/** `build_artifact`: a file a CI run kept. `release`: a release and its files. */
+export type OutputKind = "build_artifact" | "release";
+
+/** A file attached to a release. */
+export interface OutputAsset {
+  id: string;
+  name: string;
+  size?: number | null;
+  content_type?: string | null;
+  download_count?: number | null;
+}
+
+/** What a build produced (`GET /studio-artifact-ingest/v1/outputs`). Only a
+ *  description: the bytes stay with the provider until someone downloads. */
+export interface BuildOutput {
+  id: string;
+  kind: OutputKind;
+  repo?: string | null;
+  repo_full_path?: string | null;
+  title: string;
+  size_in_bytes?: number | null;
+  /** The provider no longer keeps the artifact. */
+  expired: boolean;
+  /** The `workflow_run` node that kept an artifact. */
+  run?: string | null;
+  branch?: string | null;
+  sha?: string | null;
+  tag?: string | null;
+  draft: boolean;
+  prerelease: boolean;
+  url?: string | null;
+  assets: OutputAsset[];
+  created_at?: string | null;
+  expires_at?: string | null;
+  published_at?: string | null;
+}
+
 /** How a document binding's type was decided. */
 export type DocDetectionSource = "front_matter" | "heuristic" | "spec_quality" | "manual";
 
@@ -4770,6 +4807,26 @@ export const api = {
       token,
       { method: "POST", body: JSON.stringify(body) },
     ),
+
+  /** What the project's builds produced: the files CI runs kept and the
+   *  repositories' releases, newest first, as the last sync read them. */
+  listOutputs: (token: string, projectId: string, opts?: { kind?: OutputKind; run?: string }) => {
+    const qs = new URLSearchParams({ project_id: projectId });
+    if (opts?.kind) qs.set("kind", opts.kind);
+    if (opts?.run) qs.set("run", opts.run);
+    return request<{ items: BuildOutput[]; total: number }>(`/studio-artifact-ingest/v1/outputs?${qs}`, token);
+  },
+
+  /** A provider-signed link to one output (a release's file names `assetId`).
+   *  It lives about a minute: open it at once, never keep it. */
+  outputDownload: (token: string, projectId: string, outputId: string, assetId?: string) => {
+    const qs = new URLSearchParams({ project_id: projectId });
+    if (assetId) qs.set("asset_id", assetId);
+    return request<{ url: string }>(
+      `/studio-artifact-ingest/v1/outputs/${encodeURIComponent(outputId)}/download?${qs}`,
+      token,
+    );
+  },
 
   /** Relations between ingested nodes (authored_by / modifies / …), optionally
    * scoped to a tenant (both endpoints must be in-scope). */
