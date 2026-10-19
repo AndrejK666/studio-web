@@ -2217,6 +2217,9 @@ impl DeclaredGear {
 /// written for an older engine still says it.
 fn parse_gear_gdl(body: &str) -> DeclaredGear {
     let mut out = DeclaredGear::empty();
+    // GDL 1.0 moved "no code yet" off `maturity` onto a second axis,
+    // `implementation = "design"`, and such a gear has no maturity at all.
+    let mut design = false;
     let chars: Vec<char> = body.chars().collect();
     let mut i = 0;
     let mut depth = 0usize;
@@ -2244,6 +2247,7 @@ fn parse_gear_gdl(body: &str) -> DeclaredGear {
                     "description" => out.description = Some(s),
                     "category" => out.category = Some(s),
                     "maturity" => out.maturity = Some(s),
+                    "implementation" => design = s == "design",
                     "implements" | "fills" => out.implements = Some(s),
                     _ => {}
                 }
@@ -2302,6 +2306,9 @@ fn parse_gear_gdl(body: &str) -> DeclaredGear {
     // `is_plugin = false`.
     out.is_plugin = Some(out.implements.is_some() && out.extension_points.is_empty());
     out.extension_point = Some(!out.extension_points.is_empty());
+    if design && out.maturity.is_none() {
+        out.maturity = Some("design".into());
+    }
     out
 }
 
@@ -3623,6 +3630,30 @@ gear(
             Some("Escaped \"quotes\" stay.")
         );
         assert_eq!(parsed.extension_points, ["cf.bss.x.plugin.v1~"]);
+    }
+
+    #[test]
+    fn a_gdl_1_0_design_reads_as_design_and_its_source_is_not_its_own() {
+        // As gears-rust writes it since GDL 1.0: the strings inside
+        // `git(...)` are the source's, not the gear's.
+        let parsed = parse_gear_gdl(
+            r#"gear(
+    gdl_version = "1.0",
+    source = git(url = "https://github.com/o/gears-rust", path = "gears/approval-service"),
+    implementation = "design",
+    name = "Approval Service",
+    description = "Generic approval workflow.",
+)"#,
+        );
+        assert_eq!(parsed.maturity.as_deref(), Some("design"));
+        assert_eq!(
+            parsed.description.as_deref(),
+            Some("Generic approval workflow.")
+        );
+        let built = parse_gear_gdl(
+            r#"gear(gdl_version = "1.0", maturity = "preview", implementation = "in-progress")"#,
+        );
+        assert_eq!(built.maturity.as_deref(), Some("preview"));
     }
 
     #[test]

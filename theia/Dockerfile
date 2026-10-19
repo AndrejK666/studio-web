@@ -180,9 +180,15 @@ RUN --mount=type=secret,id=github_token \
 # from source at a pinned commit: the repository publishes no release and no
 # crate. Linked against glibc only, so the bookworm build runs on the
 # bookworm-slim runtime. Debug info is stripped: 92 MB with it.
-FROM rust:1.97.0-bookworm@sha256:8fa55b2f3ddf97471ab6a767bfa3f37e6bad0986ba823e75fea57e2a2a5c3073 AS gearbox
-ARG STUDIO_GEARBOX_REPO=https://github.com/constructorfabric/gearbox.git
-ARG STUDIO_GEARBOX_REF=ea964f94a59627ab818f4215d8251cbd64db098d
+# The commit is on MikeFalcon77/gearbox `feature/gdl-extensible`, not on
+# constructorfabric/gearbox: GDL 1.0 (`gdl_version`, git sources, the
+# implementation axis) has no upstream pull request yet, and the corpus the
+# portal reads (gears-rust `feature/gearbox`) is written in it since
+# 2026-10-17. Move back to constructorfabric/gearbox once it lands there.
+# The engine builds with Rust 1.98 (its rust-toolchain.toml).
+FROM rust:1.98.0-bookworm@sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922 AS gearbox
+ARG STUDIO_GEARBOX_REPO=https://github.com/MikeFalcon77/gearbox.git
+ARG STUDIO_GEARBOX_REF=6d60603f8db36ef30ee50e1ff7008f3ee24a2501
 WORKDIR /src
 RUN git init -q . \
     && git fetch -q --depth 1 "$STUDIO_GEARBOX_REPO" "$STUDIO_GEARBOX_REF" \

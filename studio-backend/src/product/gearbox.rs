@@ -1756,6 +1756,12 @@ pub fn render_product_gdl_from(
         })
         .collect::<Vec<_>>()
         .join(",\n                   ");
+    // A cluster's Postgres password comes out of an existing Secret.
+    let cluster_db = format!(
+        "postgres(host = \"postgres\", user = \"app\", password = \"${{GEARS_PG_PASSWORD}}\",\n\
+         \x20                                      existing_secret = {})",
+        gdl_string(&format!("{product_id}-db"))
+    );
     format!(
         "# The product this project ships, as Gearbox composes it.\n\
          #\n\
@@ -1771,11 +1777,17 @@ pub fn render_product_gdl_from(
          \x20   name = {name},\n\
          \x20   version = \"0.1.0\",\n\
          \x20   sources = [{declared}],\n\
+         \x20   # Where the gears that keep data keep it: one Postgres per profile\n\
+         \x20   # (GDL 1.1). The password is only ever a `${{NAME}}` the deployment\n\
+         \x20   # sets; change the host and user to the server you run.\n\
          \x20   profiles = [\n\
-         \x20       embedded(id = \"dev\"),\n\
+         \x20       embedded(id = \"dev\",\n\
+         \x20                database = {local_db}),\n\
          \x20       self_hosted(id = \"local\", host = {id}, worker_discovery = \"directory\",\n\
-         \x20                   target_dir = \"target\"),\n\
-         \x20       kubernetes(id = \"prod\", discovery = \"static\", namespace = {id}),\n\
+         \x20                   target_dir = \"target\",\n\
+         \x20                   database = {local_db}),\n\
+         \x20       kubernetes(id = \"prod\", discovery = \"static\", namespace = {id},\n\
+         \x20                  database = {cluster_db}),\n\
          \x20   ],\n\
          \x20   default_profile = {profile},\n\
          \x20   gears = [\n\
@@ -1784,8 +1796,15 @@ pub fn render_product_gdl_from(
          )\n",
         name = gdl_string(name),
         profile = gdl_string(default_profile),
+        local_db = PROFILE_DATABASE,
     )
 }
+
+/// The Postgres a profile on a machine names. Without one, a product with any
+/// gear that keeps data -- types-registry is in nearly all of them -- does not
+/// resolve since GDL 1.1 (GBX0306); a product with none resolves with it too.
+const PROFILE_DATABASE: &str =
+    "postgres(host = \"127.0.0.1\", user = \"app\", password = \"${GEARS_PG_PASSWORD}\")";
 
 // ── What the engine said ──────────────────────────────────────────────────
 
@@ -3332,6 +3351,66 @@ mod tests {
         assert!(quiet.unreadable_root(&roots).is_none());
     }
 
+    /// What the pinned engine (6d60603f) prints over gears-rust in GDL 1.0
+    /// and this repository's own gear.gdl files, trimmed to a host and a
+    /// plugin from each root and one design: the shape grew (`sdks`,
+    /// `origin`, `implementation`, `scenarios`), and none of it may stop the
+    /// catalogue from reading or a plugin from finding its host.
+    #[test]
+    fn a_gdl_1_0_catalogue_reads_and_its_plugins_find_their_hosts() {
+        let raw: Value = serde_json::from_str(include_str!("testdata/catalogue-gdl-1.0.json"))
+            .expect("the fixture is JSON");
+        let catalogue: EngineCatalogue =
+            serde_json::from_value(raw).expect("the GDL 1.0 catalogue deserializes");
+        for (plugin, host) in [
+            ("static-tr-plugin", "tenant-resolver"),
+            ("github-connector-plugin", "studio-connector"),
+        ] {
+            let found = catalogue
+                .host_of(&catalogue.gears[plugin])
+                .map(|g| g.id.as_str());
+            assert_eq!(found, Some(host), "{plugin}");
+        }
+        assert_eq!(
+            catalogue.implementers_of(&catalogue.gears["tenant-resolver"]),
+            ["cf-gears-static-tr-plugin"]
+        );
+        let roots = vec![
+            (
+                "gears-rust".to_string(),
+                PathBuf::from("/corpus/gears-rust"),
+            ),
+            (
+                "studio-backend".to_string(),
+                PathBuf::from("/corpus/studio-backend"),
+            ),
+        ];
+        assert!(catalogue.unreadable_root(&roots).is_none());
+
+        // The same output with one root's gears gone and the engine's own
+        // diagnostic for it, as 6d60603f prints one (`location.uri` under the
+        // root): that root is named, the other is not.
+        let mut raw: Value = serde_json::from_str(include_str!("testdata/catalogue-gdl-1.0.json"))
+            .expect("the fixture is JSON");
+        let gears = raw["gears"].as_object_mut().expect("gears is a map");
+        gears.retain(|_, g| g["source"] == "gears-rust");
+        raw["diagnostics"] = json!([{
+            "code": "GBX0519",
+            "severity": "error",
+            "message": "`postgres-usage-collector-plugin` implements `cf.core.uc.plugin.v1~`, which no described gear declares as an extension point",
+            "location": {
+                "uri": "file:///corpus/studio-backend/plugins/postgres-usage-collector-plugin/gear.gdl",
+                "range": {"start": {"line": 7, "character": 0}, "end": {"line": 19, "character": 1}}
+            }
+        }]);
+        let half: EngineCatalogue = serde_json::from_value(raw).expect("still the shape");
+        let why = half
+            .unreadable_root(&roots)
+            .expect("the root with no gears and an error is named");
+        assert!(why.contains("`studio-backend`"), "{why}");
+        assert!(why.contains("GBX0519 \u{d7}1"), "{why}");
+    }
+
     /// The corpus shape that matters: a host with an extension point, two
     /// plugins filling it, and a gear that is neither.
     fn catalogue() -> EngineCatalogue {
@@ -3959,9 +4038,14 @@ mod tests {
         assert!(gdl.contains("id = \"my-shop\""));
         assert!(gdl.contains("name = \"My \\\"Shop\\\"\""));
         assert!(gdl.contains("source(id = \"gears-rust\", at = path(\"../gears-rust\"))"));
-        assert!(gdl.contains("embedded(id = \"dev\")"));
+        assert!(gdl.contains("embedded(id = \"dev\","));
         assert!(gdl.contains("self_hosted(id = \"local\", host = \"my-shop\""));
         assert!(gdl.contains("kubernetes(id = \"prod\""));
+        // Every profile names its Postgres (GBX0306 otherwise), with the
+        // password as a reference only.
+        assert_eq!(gdl.matches("database = postgres(").count(), 3, "{gdl}");
+        assert!(gdl.contains("password = \"${GEARS_PG_PASSWORD}\""));
+        assert!(gdl.contains("existing_secret = \"my-shop-db\""));
         assert!(gdl.contains("default_profile = \"local\""));
         assert!(gdl.contains("use_gear(\"api-gateway\", source = \"gears-rust\"),"));
         assert!(gdl.contains(
