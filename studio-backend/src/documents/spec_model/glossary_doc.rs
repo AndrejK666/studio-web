@@ -285,7 +285,7 @@ pub fn anchor(term: &str) -> String {
 /// (`docs/design/`), where the documents that link to it live.
 const HEAD: &str = "---\nartifact: glossary\n---\n\n# Glossary\n\n\
 These terms are used with exactly this meaning in every document of the project. \
-Link a term where a document first uses it — `[Member](../glossary.md#member)` from a \
+Link a term where a document first uses it — to `../glossary.md#member` from a \
 specification under `docs/` — \
 instead of saying again what it means. The names under *Also written as* mean the \
 same thing; use the term, not them, in new text.\n\n\

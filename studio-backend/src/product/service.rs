@@ -448,7 +448,10 @@ impl ProductService {
     /// `owner/name` of the repository a product description is written to,
     /// when the project has one.
     pub async fn write_repo(&self, ctx: &SecurityContext, project_id: &str) -> Option<String> {
-        self.write_target(ctx, project_id).await.ok().map(|t| t.repo)
+        self.write_target(ctx, project_id)
+            .await
+            .ok()
+            .map(|t| t.repo)
     }
 
     /// How the project shares into the repository a product description is

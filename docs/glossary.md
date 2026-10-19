@@ -4,7 +4,7 @@ artifact: glossary
 
 # Glossary
 
-These terms are used with exactly this meaning in every document of the project. Link a term where a document first uses it — `[Member](../glossary.md#member)` from a specification under `docs/` — instead of saying again what it means. The names under *Also written as* mean the same thing; use the term, not them, in new text.
+These terms are used with exactly this meaning in every document of the project. Link a term where a document first uses it — to `../glossary.md#member` from a specification under `docs/` — instead of saying again what it means. The names under *Also written as* mean the same thing; use the term, not them, in new text.
 
 <!-- Kept by Constructor Studio from the Glossary tab: one row per term. Edit it here or there. -->
 

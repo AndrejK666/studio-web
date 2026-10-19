@@ -195,10 +195,10 @@ async fn read_project(
     org: Uuid,
     project: Uuid,
 ) -> ProjectRead {
-    let sources = match crate::project_sources::read(am, ctx, project).await {
-        Ok(s) => s,
-        Err(_) => return ProjectRead::Unread,
-    };
+    // No config, or none the caller sees: no sources, as before.
+    let sources = crate::project_sources::read(am, ctx, project)
+        .await
+        .unwrap_or_default();
     let mut unread = false;
     for source in sources {
         let Some(connection) = source.connection_id else {
@@ -399,8 +399,14 @@ mod tests {
     #[test]
     fn a_project_not_read_this_time_keeps_its_last_file_and_roots() {
         let (shop, crm, blog) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
-        let previous_roots = [root("shop-backend", "acme/shop"), root("crm-backend", "acme/crm")];
-        let previous_files = [(shop, file("acme/shop", "old")), (crm, file("acme/crm", "crm"))];
+        let previous_roots = [
+            root("shop-backend", "acme/shop"),
+            root("crm-backend", "acme/crm"),
+        ];
+        let previous_files = [
+            (shop, file("acme/shop", "old")),
+            (crm, file("acme/crm", "crm")),
+        ];
         let (roots, files) = merge(
             vec![
                 (
@@ -417,9 +423,17 @@ mod tests {
             &previous_files,
         );
         let ids: Vec<&str> = roots.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, ["shop-backend", "crm-backend"], "crm's root is kept, not dropped");
+        assert_eq!(
+            ids,
+            ["shop-backend", "crm-backend"],
+            "crm's root is kept, not dropped"
+        );
         assert_eq!(files.len(), 2);
-        assert_eq!(files[0].1.gears, ["new"], "a project read this time says what it says now");
+        assert_eq!(
+            files[0].1.gears,
+            ["new"],
+            "a project read this time says what it says now"
+        );
         assert_eq!(files[1], (crm, file("acme/crm", "crm")));
     }
 
@@ -486,8 +500,16 @@ mod tests {
         let inside = contained_dir(&checkout, "crates/gears").expect("a real directory");
         assert!(inside.ends_with("gears"));
         assert_eq!(contained_dir(&checkout, "missing"), None);
-        assert_eq!(contained_dir(&checkout, "README.md"), None, "a file is no root");
-        assert_eq!(contained_dir(&checkout, "crates/.."), None, "the checkout itself");
+        assert_eq!(
+            contained_dir(&checkout, "README.md"),
+            None,
+            "a file is no root"
+        );
+        assert_eq!(
+            contained_dir(&checkout, "crates/.."),
+            None,
+            "the checkout itself"
+        );
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&elsewhere, checkout.join("studio-backend")).unwrap();

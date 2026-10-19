@@ -107,5 +107,5 @@ fn the_written_glossary_declares_no_document_type_and_links_from_a_spec_folder()
         );
     }
     assert_eq!(fm.get("artifact").map(String::as_str), Some("glossary"));
-    assert!(doc.contains("(../glossary.md#member)"));
+    assert!(doc.contains("`../glossary.md#member`"));
 }

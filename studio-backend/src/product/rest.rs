@@ -2467,7 +2467,10 @@ mod tests {
             uuid::Uuid::from_u128(3),
         );
         let owners = project_source_owners(
-            &[root("shop-backend", "acme/shop"), root("crm-backend", "acme/crm")],
+            &[
+                root("shop-backend", "acme/shop"),
+                root("crm-backend", "acme/crm"),
+            ],
             &[
                 (a, file("acme/shop", "main")),
                 (b, file("acme/crm", "main")),

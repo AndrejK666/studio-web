@@ -4447,10 +4447,7 @@ mod tests {
             None,
             "another project's directory is pinned by its git url, not a path here"
         );
-        assert_eq!(
-            within_product_repo(Some("shop-backend"), url, None),
-            None
-        );
+        assert_eq!(within_product_repo(Some("shop-backend"), url, None), None);
         assert_eq!(within_product_repo(None, url, Some("acme/shop")), None);
     }
 
