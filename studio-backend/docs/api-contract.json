@@ -2097,6 +2097,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/overview",
+      "operation_id": "studio_organizations.get_organization_overview",
+      "tag": "StudioOrganizations",
+      "summary": "What an organization's leaders ask of it, over the last 30 days",
+      "authenticated": true,
+      "responses": [
+        "OrganizationOverviewDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/rollups",
       "operation_id": "studio_organizations.list_rollups",
       "tag": "StudioOrganizations",

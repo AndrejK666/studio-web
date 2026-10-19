@@ -477,12 +477,254 @@ async fn list_rollups(
     }))
 }
 
+// ── The organization's overview ──────────────────────────────────────────────
+
+/// What an organization's leaders ask of it, for one organization, over the
+/// last 30 days against the same days a month earlier. Every money field is
+/// null unless the caller holds `cost.view`; every other null means that
+/// source could not be asked, never zero.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OrganizationOverviewDto {
+    pub organization_id: String,
+    pub name: String,
+    /// The period, RFC 3339: the last 30 UTC days, today included, `[from, to)`.
+    pub period_from: String,
+    pub period_to: String,
+    /// The same 30 days one month earlier.
+    pub previous_from: String,
+    pub previous_to: String,
+    /// The rules the answer was computed with: a pull request is stuck after
+    /// `stuck_days`, spend growing by `growth_alert` (a share) is news, a
+    /// project is quiet after `quiet_days`.
+    pub stuck_days: u32,
+    pub growth_alert: f64,
+    pub quiet_days: u32,
+    /// `shown`, `hidden` (the caller may not see costs) or `unreadable`.
+    pub costs: String,
+    /// What waits on the organization's leaders, the most urgent first.
+    pub needs: Vec<OverviewNeedDto>,
+    /// Null unless `costs` is `shown`.
+    pub spend: Option<OverviewSpendDto>,
+    pub delivery: OverviewDeliveryDto,
+    pub specs: OverviewSpecsDto,
+    pub people: OverviewPeopleDto,
+    /// The workspaces, the one in most trouble first, each with its projects.
+    pub workspaces: Vec<OverviewWorkspaceDto>,
+    /// Where the money goes: every grouping, with and without people's own
+    /// keys, so a screen switches between them without asking again. Null
+    /// unless `costs` is `shown`.
+    pub money: Option<Vec<OverviewMoneyDto>>,
+    /// Who the stuck pull requests wait on, longest queue first. Null when no
+    /// pull request could be read.
+    pub waiting_on: Option<Vec<OverviewQueueDto>>,
+    /// The component registry's open decisions. Null when it could not be read.
+    pub decisions: Option<OverviewDecisionsDto>,
+}
+
+/// One thing that waits on the organization's leaders. `kind` says which
+/// fields are set: `connection` (`provider`, `status`, `projects`, `repos`),
+/// `spend` (`current`, `previous`, `forecast`, `grower`), `pulls` (`pulls`,
+/// `people`), `components` (`components`), `runs` (`runs`).
+#[derive(Debug, Default)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewNeedDto {
+    pub kind: String,
+    /// `danger` or `warn`.
+    pub tone: String,
+    pub provider: Option<String>,
+    /// `401` or `403`.
+    pub status: Option<String>,
+    /// The names of the projects a refused connection stops.
+    pub projects: Vec<String>,
+    pub repos: Option<u32>,
+    pub current: Option<f64>,
+    pub previous: Option<f64>,
+    pub forecast: Option<f64>,
+    /// The project whose spend grew the most.
+    pub grower: Option<String>,
+    pub pulls: Option<u32>,
+    pub people: Option<u32>,
+    pub components: Option<u32>,
+    pub runs: Option<u32>,
+}
+
+/// The organization's spend. People's own keys are never in it: `own_keys`
+/// says what they spent on top.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewSpendDto {
+    pub currency: String,
+    pub current: f64,
+    pub previous: f64,
+    /// Where this month ends at its pace so far.
+    pub forecast: f64,
+    pub own_keys: f64,
+    /// Of `current`: what members' sign-ins spent, what subjects no active
+    /// member signs in with spent, and IDE sessions, which name nobody.
+    pub attributed: f64,
+    pub unattributed: f64,
+    pub sessions: f64,
+    /// `provider/model` (or `session`) used without a price: counted, not priced.
+    pub unpriced: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewDeliveryDto {
+    /// Pull requests merged over the last `window_days` days.
+    pub merged: Option<u32>,
+    pub window_days: u32,
+    pub open: Option<u32>,
+    /// The middle open pull request's age, in days, drafts left out.
+    pub median_wait_days: Option<f64>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewSpecsDto {
+    pub specs: Option<u32>,
+    pub failing: Option<u32>,
+    pub open_findings: Option<u32>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewPeopleDto {
+    /// Active members.
+    pub active: Option<u32>,
+    /// Members who used a model in the period. Null without costs.
+    pub with_spend: Option<u32>,
+    /// `spend.attributed` over `with_spend`. Null without costs.
+    pub per_person: Option<f64>,
+    /// Members with no model use and no open pull request they wrote or
+    /// review. Null without costs or members.
+    pub idle: Option<Vec<OverviewPersonDto>>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewPersonDto {
+    pub person_id: String,
+    pub name: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewWorkspaceDto {
+    pub id: String,
+    pub name: String,
+    pub spend: Option<f64>,
+    pub previous: Option<f64>,
+    pub specs_failing: u32,
+    pub stuck: u32,
+    /// The most recently active project's days without activity.
+    pub quiet_days: Option<u32>,
+    pub score: u32,
+    /// Its projects, the one in most trouble first.
+    pub projects: Vec<OverviewProjectDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewProjectDto {
+    pub id: String,
+    pub name: String,
+    pub spend: Option<f64>,
+    pub previous: Option<f64>,
+    pub specs_failing: Option<u32>,
+    pub open_findings: Option<u32>,
+    pub stuck: u32,
+    pub quiet_days: Option<u32>,
+    /// A connection it syncs through is refused.
+    pub broken: bool,
+    pub score: u32,
+    /// What is wrong, worst first; empty when nothing is.
+    pub reasons: Vec<OverviewReasonDto>,
+}
+
+/// One thing wrong with a project: `refused`, `specs_failing` (`value` =
+/// how many), `stuck` (how many pull requests), `spend_grows` (the growth, a
+/// share), `quiet` (days).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewReasonDto {
+    pub kind: String,
+    pub value: Option<f64>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewMoneyDto {
+    /// `project`, `person`, `model`, `source` or `payer`.
+    pub group_by: String,
+    pub include_personal: bool,
+    pub rows: Vec<OverviewMoneyRowDto>,
+}
+
+/// One row of a breakdown. By person, `key` is the member's person id,
+/// `unattributed` for subjects no active member signs in with, and empty for
+/// IDE sessions.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewMoneyRowDto {
+    pub key: String,
+    /// The project's or person's name where the key is one.
+    pub label: Option<String>,
+    pub cost: f64,
+    pub previous: f64,
+    pub unpriced: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewQueueDto {
+    /// The member, when the account is one of the organization's people.
+    pub person_id: Option<String>,
+    /// Their name, else the account; null for pull requests nobody was asked
+    /// to review.
+    pub who: Option<String>,
+    pub count: u32,
+    pub oldest_days: u32,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewDecisionsDto {
+    /// Candidates and declared entries: waiting for the organization to decide.
+    pub undecided: u32,
+    pub candidates: u32,
+    pub registered: u32,
+    pub published: u32,
+}
+
+async fn get_organization_overview(
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
+    Extension(overview): Extension<Option<Arc<super::overview::Overview>>>,
+) -> ApiResult<JsonBody<OrganizationOverviewDto>> {
+    let overview = overview.ok_or_else(|| {
+        CanonicalError::service_unavailable()
+            .with_detail("account-management is not available, so nothing can be counted")
+            .create()
+    })?;
+    let org = ctx.subject_tenant_id();
+    let now = time::OffsetDateTime::now_utc();
+    let read = overview.read(&ctx, org, now).await.map_err(|_| {
+        OrganizationError::not_found(format!("there is no organization {org} for this caller"))
+            .with_resource(org.to_string())
+            .create()
+    })?;
+    Ok(Json(super::overview::compose(org, &read, now)))
+}
+
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<OrganizationService>>,
     self_service: SelfService,
     sources: Option<Arc<super::rollups::Sources>>,
+    overview: Option<Arc<super::overview::Overview>>,
+    access: Option<crate::org_scope::OrgAccess>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-organizations/v1/capabilities")
         .operation_id("studio_organizations.capabilities")
@@ -678,8 +920,52 @@ Labels are deliberately              absent: what a privilege is called belongs 
         .error_500(openapi)
         .register(router, openapi);
 
-    router
+    let router = OperationBuilder::get("/studio-organizations/v1/overview")
+        .operation_id("studio_organizations.get_organization_overview")
+        .summary("What an organization's leaders ask of it, over the last 30 days")
+        .description(
+            "One organization's state, for the people who lead it: what waits on them \
+             (connections a provider refuses, spend growing against the same days last month, \
+             pull requests stuck over `stuck_days`, components to decide, failed runs), spend \
+             with a month-end forecast and people's own keys apart, delivery, spec health, \
+             people with spend attributed to members and the idle named, the workspaces worst \
+             first down to their projects, where the money goes by every grouping, and who \
+             stuck pull requests wait on.\n\n\
+             The rules are the server's and the answer says which it used. Money fields are \
+             null unless the caller holds `cost.view` (`costs` says `hidden`); every other null \
+             means its source could not be asked, never zero. Spend made by a token subject \
+             no active member signs in with is `unattributed`, and IDE sessions name nobody: \
+             neither is dropped. 404 when the organization is not the caller's to see or is \
+             not an organization.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .handler(get_organization_overview)
+        .json_response_with_schema::<OrganizationOverviewDto>(
+            openapi,
+            StatusCode::OK,
+            "The overview",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = router
         .layer(Extension(service))
         .layer(Extension(self_service))
         .layer(Extension(sources))
+        .layer(Extension(overview));
+    match access {
+        Some(access) => router.layer(Extension(access)),
+        None => router,
+    }
 }

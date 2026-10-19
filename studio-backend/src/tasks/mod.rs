@@ -166,6 +166,54 @@ impl TaskQueue for TaskService {
     }
 }
 
+/// The newest runs of a tenant, for a gear that summarizes what broke.
+///
+/// Separate from [`TaskQueue`] because it reads rather than adds work, and is
+/// asked by a gear composing an overview for somebody who has already been
+/// shown to reach the tenant (the organization's overview walks its tree).
+/// The runs themselves stay this gear's; the consumer gets what each did.
+#[async_trait]
+pub trait RecentRuns: Send + Sync + 'static {
+    /// Up to `limit` runs of `tenant`, newest first.
+    async fn recent_runs(&self, tenant: Uuid, limit: u64) -> anyhow::Result<Vec<RunSummary>>;
+}
+
+/// One run, as [`RecentRuns`] answers it.
+#[derive(Debug, Clone)]
+pub struct RunSummary {
+    pub task_type: String,
+    /// `queued`, `running`, `succeeded`, `failed` or `cancelled`.
+    pub state: String,
+    /// What the handler was given; its shape belongs to the task type.
+    pub payload: serde_json::Value,
+    pub last_error: Option<String>,
+    pub created_at: time::OffsetDateTime,
+}
+
+#[async_trait]
+impl RecentRuns for TaskService {
+    async fn recent_runs(&self, tenant: Uuid, limit: u64) -> anyhow::Result<Vec<RunSummary>> {
+        let ctx = service_context(tenant)?;
+        let query = service::RunQuery {
+            state: None,
+            task_type: None,
+            offset: 0,
+            limit,
+        };
+        let (rows, _) = TaskService::list(self, &ctx, tenant, &query).await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| RunSummary {
+                task_type: r.task_type,
+                state: r.state,
+                payload: r.payload,
+                last_error: r.last_error,
+                created_at: r.created_at,
+            })
+            .collect())
+    }
+}
+
 /// The identity this gear uses for its own reads and writes when there is no
 /// caller — the same subject the dispatcher runs as.
 fn service_context(tenant: Uuid) -> anyhow::Result<SecurityContext> {
@@ -371,6 +419,8 @@ impl Gear for StudioTasksGear {
         let queue: Arc<dyn TaskQueue> = service.clone();
         ctx.client_hub()
             .register_scoped::<dyn TaskQueue>(ClientScope::gts_id(TASK_QUEUE_INSTANCE_ID), queue);
+        let recent: Arc<dyn RecentRuns> = service.clone();
+        ctx.client_hub().register::<dyn RecentRuns>(recent);
 
         *self
             .queue

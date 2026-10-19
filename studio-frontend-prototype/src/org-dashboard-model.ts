@@ -1,127 +1,141 @@
-/* The organization's dashboard: what the level between the platform and the
- * workspaces holds, in one screen (ADR-0042 puts the organization in the
- * path; this is what clicking it shows).
+/* The organization's overview: what its leaders ask of it, in their words.
  *
- * Pure rules behind `org-dashboard.tsx`, kept here for their tests. Every
- * count follows the rollups' rule: unknown is `null`, never 0. */
+ * The rules — which connection is refused, what is stuck, whose spend it is,
+ * which workspace is worst — are the server's (`studio-backend/src/
+ * organizations/overview.rs`, one request). What stays here is every word a
+ * reader sees, decided once and tested, not improvised in the markup. */
 
-import type { RollupRow } from "./api";
+import type { CostGroup, OrgMoney, OrgNeed, OrgOverview, OrgQueue, OrgReason, OrgWorkspace } from "./api";
 
-export interface OrgTotals {
-  workspaces: number;
-  projects: number;
-  repos: number | null;
-  specs: number | null;
-  specsFailing: number | null;
-  openFindings: number | null;
-  pullsOpen: number | null;
+export type NeedTarget = "connectors" | "costs" | "projects" | "gears" | "tasks";
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** "+23%", "−5%", or "new" when nothing was spent before. */
+export function growthText(current: number, previous: number): string {
+  if (previous <= 0) return current > 0 ? "new" : "—";
+  const pct = Math.round(((current - previous) / previous) * 100);
+  return pct > 0 ? `+${pct}%` : pct < 0 ? `−${-pct}%` : "±0%";
 }
 
-/** Sum a column, `null` when no row knows it. */
-function sum(rows: readonly RollupRow[], pick: (r: RollupRow) => number | null | undefined): number | null {
-  let known = false;
-  let total = 0;
-  for (const r of rows) {
-    const v = pick(r);
-    if (typeof v === "number") {
-      known = true;
-      total += v;
+/** One thing that needs the leader: what is wrong, and where it is fixed. */
+export function needText(
+  n: OrgNeed,
+  stuckDays: number,
+  money: (v: number) => string,
+): { title: string; detail: string; target: NeedTarget } {
+  switch (n.kind) {
+    case "connection": {
+      const shown = n.projects.slice(0, 3).join(", ") + (n.projects.length > 3 ? "…" : "");
+      return {
+        title: `A ${n.provider ?? "git"} connection is refused (${n.status ?? "401"})`,
+        detail: n.projects.length
+          ? `${plural(n.projects.length, "project", "projects")} cannot sync: ${shown}`
+          : `${plural(n.repos ?? 0, "repository", "repositories")} cannot sync`,
+        target: "connectors",
+      };
     }
+    case "spend": {
+      const current = n.current ?? 0;
+      return {
+        title: `Spend ${growthText(current, n.previous ?? 0)} against the same days last month`,
+        detail:
+          `${money(current)} in 30 days; the month ends near ${money(n.forecast ?? 0)}` +
+          (n.grower ? `. Grows most: ${n.grower}` : ""),
+        target: "costs",
+      };
+    }
+    case "pulls":
+      return {
+        title: `${plural(n.pulls ?? 0, "pull request waits", "pull requests wait")} over ${stuckDays} days`,
+        detail: `on ${plural(n.people ?? 0, "person", "people")}`,
+        target: "projects",
+      };
+    case "components":
+      return {
+        title: `${plural(n.components ?? 0, "component waits", "components wait")} for a decision`,
+        detail: "make it a gear of the organization, or leave it in its project",
+        target: "gears",
+      };
+    case "runs":
+      return {
+        title: `${plural(n.runs ?? 0, "background run", "background runs")} failed`,
+        detail: "not a refused connection; the runs list says what",
+        target: "tasks",
+      };
   }
-  return known ? total : null;
 }
 
-/** The rollup rows of one organization: its workspaces and their projects. */
-export function rowsOfOrg(rows: readonly RollupRow[], workspaceIds: ReadonlySet<string>): RollupRow[] {
-  return rows.filter((r) =>
-    r.kind === "workspace" ? workspaceIds.has(r.id) : !!r.parent_id && workspaceIds.has(r.parent_id),
+/** What is wrong with a project, in a few words. */
+export function reasonText(r: OrgReason, stuckDays: number): string {
+  const v = Math.round(r.value ?? 0);
+  switch (r.kind) {
+    case "refused":
+      return "its repository connection is refused";
+    case "specs_failing":
+      return `${v} ${v === 1 ? "spec fails" : "specs fail"}`;
+    case "stuck":
+      return `${plural(v, "pull request waits", "pull requests wait")} over ${stuckDays} days`;
+    case "spend_grows":
+      return `spend +${Math.round((r.value ?? 0) * 100)}%`;
+    case "quiet":
+      return `quiet for ${v} days`;
+  }
+}
+
+export function reasonLine(reasons: readonly OrgReason[], stuckDays: number): string {
+  return reasons.map((r) => reasonText(r, stuckDays)).join(" · ");
+}
+
+/** A workspace's one line: its worst project and why, and how many more. */
+export function workspaceLine(ws: OrgWorkspace, stuckDays: number): string {
+  const troubled = ws.projects.filter((p) => p.reasons.length > 0);
+  if (troubled.length === 0) return `${plural(ws.projects.length, "project", "projects")}, nothing wrong`;
+  const more = troubled.length - 1;
+  return (
+    `${troubled[0].name}: ${reasonLine(troubled[0].reasons, stuckDays)}` +
+    (more > 0 ? ` · ${plural(more, "more project", "more projects")}` : "")
   );
 }
 
-export function orgTotals(rows: readonly RollupRow[]): OrgTotals {
-  const projects = rows.filter((r) => r.kind === "project");
-  return {
-    workspaces: rows.filter((r) => r.kind === "workspace").length,
-    projects: projects.length,
-    repos: sum(projects, (r) => r.repos),
-    specs: sum(projects, (r) => r.specs),
-    specsFailing: sum(projects, (r) => r.specs_failing),
-    openFindings: sum(projects, (r) => r.open_findings),
-    pullsOpen: sum(projects, (r) => r.pulls_open),
-  };
+/** Days without activity: "today", "3 d", or "—" when unknown. */
+export function quietText(days: number | null): string {
+  return days === null ? "—" : days === 0 ? "today" : `${days} d`;
 }
 
-/** How much a project asks for attention: what is failing, then what waits. */
-export function attentionScore(r: RollupRow): number {
-  return (r.specs_failing ?? 0) * 3 + (r.open_findings ?? 0) * 2 + (r.pulls_open ?? 0) + (r.open_comments ?? 0);
+/** Who a queue is: the member's name, the account, or nobody at all. */
+export function queueLabel(q: OrgQueue): string {
+  return q.who ?? "Nobody asked to review";
 }
 
-/** What a project's attention is about, in a few words. */
-export function attentionLine(r: RollupRow): string {
-  const parts: string[] = [];
-  const n = (v: number | null | undefined, one: string, many: string) => {
-    if (v) parts.push(`${v} ${v === 1 ? one : many}`);
-  };
-  n(r.specs_failing, "spec failing", "specs failing");
-  n(r.open_findings, "open finding", "open findings");
-  n(r.pulls_open, "open pull request", "open pull requests");
-  n(r.open_comments, "unresolved thread", "unresolved threads");
-  return parts.join(" · ");
-}
-
-/** The projects most in need of someone, most first; quiet ones are left out. */
-export function needsAttention(rows: readonly RollupRow[], limit = 5): RollupRow[] {
-  return rows
-    .filter((r) => r.kind === "project" && attentionScore(r) > 0)
-    .sort((a, b) => attentionScore(b) - attentionScore(a) || a.name.localeCompare(b.name))
-    .slice(0, limit);
-}
-
-/** The projects that moved most recently, newest first. */
-export function recentlyActive(rows: readonly RollupRow[], limit = 5): RollupRow[] {
-  return rows
-    .filter((r) => r.kind === "project" && r.last_at)
-    .sort((a, b) => (b.last_at ?? "").localeCompare(a.last_at ?? ""))
-    .slice(0, limit);
-}
-
-/** Failed runs as one line per kind of failure: the same task failing the
- *  same way five times is one problem, said once with its count. "The same
- *  way" is the start of the message: its tail carries request ids and
- *  numbers that differ on every attempt. */
-export function groupFailures<T extends { task_type: string; last_error?: string | null }>(
-  runs: readonly T[],
-): { task_type: string; error: string; count: number }[] {
-  const out: { task_type: string; error: string; count: number }[] = [];
-  for (const r of runs) {
-    const error = (r.last_error ?? "failed").trim();
-    const same = out.find((g) => g.task_type === r.task_type && failureKey(g.error) === failureKey(error));
-    if (same) same.count += 1;
-    else out.push({ task_type: r.task_type, error, count: 1 });
+/** A row of "where the money goes", named. */
+export function moneyLabel(group: CostGroup, row: OrgMoney["rows"][number]): string {
+  if (row.label) return row.label;
+  switch (group) {
+    case "person":
+      if (row.key === "unattributed") return "Unattributed (not a member's sign-in)";
+      if (!row.key) return "IDE sessions (nobody in particular)";
+      return `Person ${row.key.slice(0, 8)}`;
+    case "source":
+      return row.key === "llm" ? "Model calls" : row.key === "session" ? "IDE sessions" : row.key;
+    case "payer":
+      return (
+        { personal: "People's own keys", workspace: "Workspace connections", organization: "The organization" }[row.key] ??
+        (row.key || "Unknown")
+      );
+    case "model":
+      return row.key === "ide-session" ? "IDE sessions" : row.key;
+    default:
+      return row.key || "—";
   }
-  return out;
 }
 
-/** What two failures share when they are the same failure. */
-function failureKey(error: string): string {
-  return error.replace(/\d+/g, "#").slice(0, 60);
+/** The breakdown the reader picked, from the ones the overview carries. */
+export function moneyFor(o: OrgOverview, group: CostGroup, personal: boolean): OrgMoney | null {
+  return o.money?.find((m) => m.group_by === group && m.include_personal === personal) ?? null;
 }
 
-/** The registry's counts the dashboard shows: every entry, what waits for a
- *  decision (candidates and declared), and what the organization accepted. */
-export function registrySummary(states: readonly string[]): {
-  total: number;
-  candidates: number;
-  undecided: number;
-  registered: number;
-  published: number;
-} {
-  const count = (s: string) => states.filter((x) => x === s).length;
-  return {
-    total: states.length,
-    candidates: count("candidate"),
-    undecided: count("candidate") + count("declared"),
-    registered: count("registered"),
-    published: count("published"),
-  };
+/** The headline over the needs. */
+export function needsHeadline(n: number): string {
+  return n === 0 ? "Nothing needs you" : `${n} ${n === 1 ? "thing needs" : "things need"} you`;
 }

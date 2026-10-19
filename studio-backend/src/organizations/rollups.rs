@@ -208,6 +208,22 @@ impl Sources {
         }
     }
 
+    /// Every workspace of one organization and their projects, for the
+    /// organization's overview. The caller has already been shown to reach
+    /// `org`; the tree is still read as them.
+    pub async fn organization(&self, ctx: &SecurityContext, org: Uuid) -> Vec<Rollup> {
+        let workspaces = self.children_of(ctx, org, WORKSPACE_TENANT_TYPE).await;
+        let team = self.team_basis(ctx, Some(org)).await;
+        let mut out = Vec::new();
+        for (workspace_id, workspace_name) in workspaces {
+            out.extend(
+                self.workspace(ctx, workspace_id, workspace_name, team.as_ref())
+                    .await,
+            );
+        }
+        out
+    }
+
     /// A workspace's row, then one row per project in it.
     async fn workspace(
         &self,

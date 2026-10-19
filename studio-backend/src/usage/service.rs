@@ -364,7 +364,7 @@ impl UsageService {
     }
 
     /// The organization, its workspaces and its projects.
-    async fn places(&self, ctx: &SecurityContext, org: Uuid) -> Result<Vec<Place>> {
+    pub(super) async fn places(&self, ctx: &SecurityContext, org: Uuid) -> Result<Vec<Place>> {
         let name = self
             .am
             .get_tenant(ctx, org)
@@ -457,7 +457,7 @@ fn payer(s: &str) -> Option<Payer> {
 }
 
 /// Everything recorded in `tenant` over the period, as facts.
-async fn facts_of(
+pub(super) async fn facts_of(
     collector: &dyn UsageCollectorClientV1,
     ctx: &SecurityContext,
     tenant: Uuid,

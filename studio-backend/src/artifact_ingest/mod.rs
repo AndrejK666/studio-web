@@ -283,6 +283,9 @@ impl RestApiCapability for StudioArtifactIngestGear {
             // CI runs and review waits, for the stage gates (#782).
             ctx.client_hub()
                 .register::<dyn port::DeliveryEvidence>(service.clone());
+            // Open pull requests and who they wait on, for the organization's overview.
+            ctx.client_hub()
+                .register::<dyn port::OpenPullRequests>(service.clone());
             // The ingested files, for the gear that decides what each one is.
             ctx.client_hub()
                 .register::<dyn port::ArtifactFiles>(service.clone());

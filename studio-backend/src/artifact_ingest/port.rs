@@ -262,6 +262,35 @@ pub trait DeliveryEvidence: Send + Sync + 'static {
     ) -> anyhow::Result<u32>;
 }
 
+/// One open pull request and who it waits on, as `open-pull-requests`
+/// classifies it — the accounts as the provider names them, for a gear that
+/// reads them as people itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpenPull {
+    /// The project whose sync wrote it.
+    pub project_id: Option<String>,
+    pub author: Option<String>,
+    /// `review`, `author`, `merge`, `draft` or `nobody`.
+    pub waiting: String,
+    /// The accounts at the front of its queue.
+    pub waiting_on: Vec<String>,
+    /// Everybody asked to review it or who did.
+    pub reviewers: Vec<String>,
+    pub days_open: Option<u32>,
+    pub days_since_update: Option<u32>,
+}
+
+/// A project's open pull requests, classified — what the organization's
+/// overview counts stuck work from. One indexed read in scope.
+#[async_trait]
+pub trait OpenPullRequests: Send + Sync + 'static {
+    async fn open_pulls(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<OpenPull>>;
+}
+
 /// One piece of a project's work, as the sync keeps it: an issue, a pull
 /// request or a commit, with the text a person wrote on it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

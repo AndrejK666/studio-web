@@ -1,90 +1,100 @@
-/* The organization's dashboard: the level between the platform and the
- * workspaces, opened by clicking the organization in the path. Everything on
- * it is read from what the portal already serves -- the rollups (one
- * request for every workspace and project), the members, the component
- * registry and the background runs -- and every tile opens the place its
- * number comes from. Rules: `org-dashboard-model.ts`. */
+/* The organization's overview, for the people who lead it: opened by clicking
+ * the organization in the path. It answers what is on fire and where (by
+ * workspace, then project), whether money grows and who grows it, whether
+ * work moves, and what waits on the organization's decision.
+ *
+ * One request: `GET /studio-organizations/v1/overview` composes it on the
+ * server, rules and all. No run log is shown here: a refused connection is
+ * said as one, the rest is a count. Words: `org-dashboard-model.ts`. */
 
 import { LevelBadge, OrgMark } from "./level-marks";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { api, type RollupRow, type TaskRun } from "./api";
-import { errText, relTime } from "./format";
+import { api, type CostGroup, type OrgOverview, type OrgProjectHealth, type OrgWorkspace } from "./api";
+import { GROUPS, money } from "./costs";
+import { DataTable } from "./data-table";
+import { errText } from "./format";
 import {
-  attentionLine,
-  groupFailures,
-  needsAttention,
-  orgTotals,
-  recentlyActive,
-  registrySummary,
-  rowsOfOrg,
+  growthText,
+  moneyFor,
+  moneyLabel,
+  needText,
+  needsHeadline,
+  queueLabel,
+  quietText,
+  reasonLine,
+  workspaceLine,
 } from "./org-dashboard-model";
 
-type Target = "projects" | "people" | "gears" | "platform" | "tasks" | "connectors";
+type Target = "projects" | "people" | "gears" | "platform" | "tasks" | "connectors" | "costs";
 
 export function OrgDashboard({
   token,
   org,
-  workspaceIds,
   onOpen,
   onOpenProject,
 }: {
   token: string;
   org: { id: string; name: string };
-  /** The organization's workspaces: which rollup rows are its own. */
-  workspaceIds: readonly string[];
   onOpen: (target: Target) => void;
   onOpenProject: (workspaceId: string, projectId: string, name: string) => void;
 }) {
-  const [rows, setRows] = useState<RollupRow[] | null>(null);
-  const [rowsErr, setRowsErr] = useState<string | null>(null);
-  const [members, setMembers] = useState<number | null>(null);
-  const [registry, setRegistry] = useState<string[] | null>(null);
-  const [failed, setFailed] = useState<TaskRun[] | null>(null);
-  const wsKey = workspaceIds.join(",");
+  const [o, setO] = useState<OrgOverview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [group, setGroup] = useState<CostGroup>("project");
+  const [personal, setPersonal] = useState(false);
 
   useEffect(() => {
     let live = true;
-    const own = new Set(workspaceIds);
+    setO(null);
+    setError(null);
     api
-      .rollups(token)
-      .then((p) => live && setRows(rowsOfOrg(p.items ?? [], own)))
-      .catch((e) => live && setRowsErr(errText(e)));
-    api
-      .orgMembers(token, org.id)
-      .then((m) => live && setMembers(m.filter((x) => x.status === "active").length))
-      .catch(() => live && setMembers(null));
-    api
-      .componentRegistry(token)
-      .then((r) => live && setRegistry(r.items.map((e) => e.state)))
-      .catch(() => live && setRegistry(null));
-    api
-      .taskRuns(token, { state: "failed", limit: 20 })
-      .then((r) => live && setFailed(r.items))
-      .catch(() => live && setFailed(null));
+      .orgOverview(token, org.id)
+      .then((r) => live && setO(r))
+      .catch((e) => live && setError(errText(e)));
     return () => {
       live = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, org.id, wsKey]);
+  }, [token, org.id]);
 
-  const totals = useMemo(() => (rows ? orgTotals(rows) : null), [rows]);
-  const attention = useMemo(() => (rows ? needsAttention(rows) : []), [rows]);
-  const recent = useMemo(() => (rows ? recentlyActive(rows) : []), [rows]);
-  const reg = registry ? registrySummary(registry) : null;
+  const cash = (n: number) => money(n, o?.spend?.currency || "USD");
   const n = (v: number | null | undefined) => (v === null || v === undefined ? "—" : String(v));
+  const stuckDays = o?.stuck_days ?? 7;
+  const spend = o?.spend ?? null;
+  const breakdown = o ? moneyFor(o, group, personal) : null;
+  const queues = o?.waiting_on ?? null;
+  const people = o?.people;
 
-  const projectRow = (r: RollupRow, line: string) => (
-    <li key={r.id}>
-      <button
-        type="button"
-        className="ghost org-dash-link"
-        onClick={() => r.parent_id && onOpenProject(r.parent_id, r.id, r.name)}
-      >
-        {r.name}
-      </button>
-      <span className="sub">{line}</span>
-    </li>
+  const projectTable = (ws: OrgWorkspace) => (
+    <table className="org-sub">
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th className="num">Spend, 30 d</th>
+          <th className="num">Δ</th>
+          <th className="num">Failing specs</th>
+          <th className="num">PRs &gt; {stuckDays} d</th>
+          <th className="num">Quiet</th>
+        </tr>
+      </thead>
+      <tbody>
+        {ws.projects.map((p: OrgProjectHealth) => (
+          <tr key={p.id}>
+            <td>
+              <button type="button" className="ghost org-dash-link" onClick={() => onOpenProject(ws.id, p.id, p.name)}>
+                {p.name}
+              </button>
+              <div className="sub">{reasonLine(p.reasons, stuckDays) || "nothing wrong"}</div>
+            </td>
+            <td className="num">{p.spend === null ? "—" : cash(p.spend)}</td>
+            <td className="num">{p.spend === null || p.previous === null ? "—" : growthText(p.spend, p.previous)}</td>
+            <td className="num">{n(p.specs_failing)}</td>
+            <td className="num">{p.stuck || "—"}</td>
+            <td className="num">{quietText(p.quiet_days)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 
   return (
@@ -94,93 +104,266 @@ export function OrgDashboard({
         <LevelBadge level="organization" />
         <OrgMark token={token} orgId={org.id} name={org.name} />
         <h1>{org.name}</h1>
-        <span className="sub">
-          Between the platform and its workspaces: its projects, people and own components.
-        </span>
+        <span className="sub">What needs you, where the problems are, what it costs and whether work moves.</span>
       </div>
 
-      <div className="dash-stats">
-        <button className="stat" onClick={() => onOpen("projects")}>
-          <span className="stat-k">Workspaces</span>
-          <span className="stat-n">{totals ? totals.workspaces : "…"}</span>
-          <span className="stat-sub">{totals ? `${totals.projects} projects` : ""}</span>
-        </button>
-        <button className="stat" onClick={() => onOpen("people")}>
-          <span className="stat-k">People</span>
-          <span className="stat-n">{members === null ? "—" : members}</span>
-          <span className="stat-sub">active members</span>
-        </button>
-        <button className="stat" onClick={() => onOpen("connectors")}>
-          <span className="stat-k">Repositories</span>
-          <span className="stat-n">{totals ? n(totals.repos) : "…"}</span>
-          <span className="stat-sub">attached to projects</span>
-        </button>
-        <button className={`stat${totals?.specsFailing ? " tone-danger" : ""}`} onClick={() => onOpen("projects")}>
-          <span className="stat-k">Specs</span>
-          <span className="stat-n">{totals ? n(totals.specs) : "…"}</span>
+      {error && <p className="gcat-err">{error}</p>}
+
+      <section className={`card org-needs${o?.needs.length ? " has-needs" : ""}`} data-org-needs>
+        <div className="card-head">
+          <h3>{o ? needsHeadline(o.needs.length) : error ? "Not readable" : "Looking for what needs you…"}</h3>
+        </div>
+        {o && o.needs.length > 0 && (
+          <ul className="org-dash-list">
+            {o.needs.map((need, i) => {
+              const t = needText(need, stuckDays, cash);
+              return (
+                <li key={`${need.kind}|${i}`} className={`org-need tone-${need.tone}`} data-need={need.kind}>
+                  <div>
+                    <strong>{t.title}</strong>
+                    <span className="sub">{t.detail}</span>
+                  </div>
+                  <button type="button" className="ghost" onClick={() => onOpen(t.target)}>
+                    Open
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <div className="dash-stats org-trends">
+        <button className="stat" onClick={() => onOpen("costs")} data-trend="spend">
+          <span className="stat-k">Spend, 30 days</span>
+          <span className="stat-n">{spend ? cash(spend.current) : o ? "—" : "…"}</span>
           <span className="stat-sub">
-            {totals?.specsFailing ? `${totals.specsFailing} failing` : totals?.openFindings ? `${totals.openFindings} open findings` : ""}
+            {o?.costs === "hidden"
+              ? "costs are not yours to see"
+              : o?.costs === "unreadable"
+                ? "costs could not be read"
+                : spend
+                  ? `${growthText(spend.current, spend.previous)} vs the same days last month · month ends near ${cash(spend.forecast)}` +
+                    (spend.own_keys > 0 ? ` · ${cash(spend.own_keys)} more on people's own keys` : "")
+                  : ""}
           </span>
         </button>
-        <button className={`stat${totals?.pullsOpen ? " tone-warn" : ""}`} onClick={() => onOpen("projects")}>
-          <span className="stat-k">Open pull requests</span>
-          <span className="stat-n">{totals ? n(totals.pullsOpen) : "…"}</span>
-          <span className="stat-sub">across projects</span>
+        <button className="stat" onClick={() => onOpen("projects")} data-trend="delivery">
+          <span className="stat-k">Delivery</span>
+          <span className="stat-n">{o ? n(o.delivery.merged) : "…"}</span>
+          <span className="stat-sub">
+            {o
+              ? `merged in ${o.delivery.window_days} days · ${n(o.delivery.open)} open` +
+                (o.delivery.median_wait_days !== null ? ` · median wait ${Math.round(o.delivery.median_wait_days)} d` : "")
+              : ""}
+          </span>
         </button>
-        <button className={`stat${reg?.undecided ? " tone-warn" : ""}`} onClick={() => onOpen("gears")}>
-          <span className="stat-k">Components</span>
-          <span className="stat-n">{reg ? reg.total : "—"}</span>
-          <span className="stat-sub">{reg ? `${reg.registered} registered · ${reg.undecided} to decide` : ""}</span>
+        <button className={`stat${o?.specs.failing ? " tone-danger" : ""}`} onClick={() => onOpen("projects")} data-trend="specs">
+          <span className="stat-k">Spec health</span>
+          <span className="stat-n">{o ? n(o.specs.failing) : "…"}</span>
+          <span className="stat-sub">
+            {o ? `failing · ${n(o.specs.open_findings)} open findings · ${n(o.specs.specs)} specs` : ""}
+          </span>
+        </button>
+        <button className="stat" onClick={() => onOpen("people")} data-trend="people">
+          <span className="stat-k">People</span>
+          <span className="stat-n">{o ? n(people?.active) : "…"}</span>
+          <span className="stat-sub">
+            {"active members" +
+              (people?.with_spend !== null && people?.with_spend !== undefined
+                ? ` · ${people.with_spend} used a model` +
+                  (people.per_person !== null ? `, ${cash(people.per_person)} each` : "")
+                : "") +
+              (people?.idle ? ` · ${people.idle.length} idle` : "")}
+          </span>
         </button>
       </div>
 
-      {rowsErr && <p className="gcat-err">{rowsErr}</p>}
+      <DataTable<OrgWorkspace>
+        list="org-workspaces"
+        urlPrefix="ows."
+        title="Workspaces"
+        rows={o ? o.workspaces : error ? [] : null}
+        rowKey={(w) => w.id}
+        rowLabel={(w) => w.name}
+        expand={projectTable}
+        empty={{ title: "No workspace in this organization yet." }}
+        columns={[
+          {
+            id: "name",
+            header: "Workspace",
+            cell: (w) => (
+              <>
+                <strong>{w.name}</strong>
+                <div className="sub">{workspaceLine(w, stuckDays)}</div>
+              </>
+            ),
+          },
+          {
+            id: "spend",
+            header: "Spend, 30 d",
+            num: true,
+            cell: (w) => (w.spend === null ? "—" : cash(w.spend)),
+            compare: (a, b) => (a.spend ?? 0) - (b.spend ?? 0),
+          },
+          {
+            id: "delta",
+            header: "Δ",
+            num: true,
+            cell: (w) => (w.spend === null || w.previous === null ? "—" : growthText(w.spend, w.previous)),
+          },
+          {
+            id: "failing",
+            header: "Failing specs",
+            num: true,
+            cell: (w) => w.specs_failing || "—",
+            compare: (a, b) => a.specs_failing - b.specs_failing,
+          },
+          {
+            id: "stuck",
+            header: `PRs > ${stuckDays} d`,
+            num: true,
+            cell: (w) => w.stuck || "—",
+            compare: (a, b) => a.stuck - b.stuck,
+          },
+          {
+            id: "quiet",
+            header: "Quiet",
+            num: true,
+            cell: (w) => quietText(w.quiet_days),
+            compare: (a, b) => (a.quiet_days ?? -1) - (b.quiet_days ?? -1),
+          },
+        ]}
+      />
 
       <div className="dash-grid">
         <div className="dash-col">
-          <section className="card">
+          <section className="card" data-org-money>
             <div className="card-head">
-              <h3>Needs attention</h3>
-              <button className="ghost" onClick={() => onOpen("projects")}>All projects</button>
+              <h3>Where the money goes</h3>
+              <button className="ghost" onClick={() => onOpen("costs")}>Costs</button>
             </div>
-            {rows === null ? (
-              <p className="sub">Loading…</p>
-            ) : attention.length === 0 ? (
-              <p className="sub">Nothing failing or waiting: no failing specs, open findings or open pull requests.</p>
+            {o === null ? (
+              <p className="sub">{error ? "Not readable." : "Loading…"}</p>
+            ) : o.costs !== "shown" ? (
+              <p className="sub">
+                {o.costs === "hidden" ? "Costs are shown to those who may see them." : "Costs could not be read."}
+              </p>
             ) : (
-              <ul className="org-dash-list">{attention.map((r) => projectRow(r, attentionLine(r)))}</ul>
-            )}
-          </section>
-          <section className="card">
-            <div className="card-head">
-              <h3>Recently active</h3>
-            </div>
-            {rows === null ? (
-              <p className="sub">Loading…</p>
-            ) : recent.length === 0 ? (
-              <p className="sub">No activity synced yet.</p>
-            ) : (
-              <ul className="org-dash-list">
-                {recent.map((r) =>
-                  projectRow(r, [r.last_event, r.last_subject].filter(Boolean).join(": ") + ` · ${relTime(r.last_at)}`),
+              <>
+                <div className="org-money-controls">
+                  <label>
+                    By
+                    <select value={group} onChange={(e) => setGroup(e.target.value as CostGroup)} aria-label="Group by">
+                      {GROUPS.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label title="What people spent on keys in their own profiles or personal connections">
+                    <input type="checkbox" checked={personal} onChange={(e) => setPersonal(e.target.checked)} />
+                    Include people&apos;s own keys
+                  </label>
+                </div>
+                {!breakdown || breakdown.rows.length === 0 ? (
+                  <p className="sub">Nothing spent in the last 60 days.</p>
+                ) : (
+                  <table className="org-money">
+                    <thead>
+                      <tr>
+                        <th>{GROUPS.find((g) => g.id === group)?.label}</th>
+                        <th className="num">30 days</th>
+                        <th className="num">Before</th>
+                        <th className="num">Δ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {breakdown.rows.slice(0, 8).map((r) => (
+                        <tr key={r.key || "-"}>
+                          <td>
+                            {moneyLabel(group, r)}
+                            {r.unpriced && <span className="sub"> · unpriced</span>}
+                          </td>
+                          <td className="num">{cash(r.cost)}</td>
+                          <td className="num">{cash(r.previous)}</td>
+                          <td
+                            className={`num${r.previous > 0 && (r.cost - r.previous) / r.previous >= o.growth_alert ? " grows" : ""}`}
+                          >
+                            {growthText(r.cost, r.previous)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 )}
-              </ul>
+                {spend && spend.unattributed > 0 && (
+                  <p className="sub org-unpriced">
+                    {cash(spend.unattributed)} was spent through sign-ins that are no active member&apos;s: it is
+                    counted, under &ldquo;Unattributed&rdquo;.
+                  </p>
+                )}
+                {spend && spend.unpriced.length > 0 && (
+                  <p className="sub org-unpriced">
+                    No price for {spend.unpriced.join(", ")}: their calls count as nothing until the price list names
+                    them.
+                  </p>
+                )}
+              </>
             )}
           </section>
         </div>
         <div className="dash-col">
-          <section className="card">
+          <section className="card" data-org-waiting>
             <div className="card-head">
-              <h3>Components</h3>
+              <h3>Waiting on people</h3>
+              <button className="ghost" onClick={() => onOpen("projects")}>All projects</button>
+            </div>
+            {o === null ? (
+              <p className="sub">{error ? "Not readable." : "Loading…"}</p>
+            ) : queues === null ? (
+              <p className="sub">Pull requests could not be read.</p>
+            ) : queues.length === 0 ? (
+              <p className="sub">No pull request has waited over {stuckDays} days.</p>
+            ) : (
+              <ul className="org-dash-list">
+                {queues.slice(0, 6).map((q) => (
+                  <li key={q.person_id ?? q.who ?? "nobody"}>
+                    <strong>{queueLabel(q)}</strong>
+                    <span className="sub">
+                      {q.count} pull {q.count === 1 ? "request" : "requests"} · the oldest {q.oldest_days} days without a
+                      move
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {people?.idle && people.idle.length > 0 && (
+              <p className="sub org-idle" data-org-idle>
+                Idle for 30 days (no model use, no open pull request):{" "}
+                {people.idle
+                  .slice(0, 6)
+                  .map((p) => p.name ?? `Person ${p.person_id.slice(0, 8)}`)
+                  .join(", ")}
+                {people.idle.length > 6 ? ` and ${people.idle.length - 6} more` : ""}
+              </p>
+            )}
+          </section>
+          <section className="card" data-org-decisions>
+            <div className="card-head">
+              <h3>Decisions for the organization</h3>
             </div>
             <ul className="org-dash-list">
               <li>
                 <button type="button" className="ghost org-dash-link" onClick={() => onOpen("gears")}>
-                  Components
+                  {o?.decisions
+                    ? `${o.decisions.undecided} ${o.decisions.undecided === 1 ? "component" : "components"} to decide`
+                    : "Components"}
                 </button>
                 <span className="sub">
-                  {reg
-                    ? `${reg.total} in the registry · ${reg.candidates} could become gears · ${reg.published} given to the platform`
+                  {o?.decisions
+                    ? `${o.decisions.candidates} could become gears · ${o.decisions.registered} registered · ${o.decisions.published} given to the platform`
                     : "registry not readable"}
                 </span>
               </li>
@@ -191,29 +374,6 @@ export function OrgDashboard({
                 <span className="sub">the common set every organization builds on, one level up</span>
               </li>
             </ul>
-          </section>
-          <section className="card">
-            <div className="card-head">
-              <h3>Background work</h3>
-              <button className="ghost" onClick={() => onOpen("tasks")}>All runs</button>
-            </div>
-            {failed === null ? (
-              <p className="sub">Not readable.</p>
-            ) : failed.length === 0 ? (
-              <p className="sub">No failed runs.</p>
-            ) : (
-              <ul className="org-dash-list">
-                {groupFailures(failed).slice(0, 5).map((g) => (
-                  <li key={`${g.task_type}|${g.error}`}>
-                    <code>
-                      {g.task_type}
-                      {g.count > 1 ? ` ×${g.count}` : ""}
-                    </code>
-                    <span className="sub">{g.error.slice(0, 140)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
           </section>
         </div>
       </div>
@@ -228,6 +388,22 @@ const ORG_DASH_CSS = `
 .org-dash .card-head h3 { margin:0; font-size:14px; }
 .org-dash .org-dash-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
 .org-dash .org-dash-list li { display:flex; flex-direction:column; gap:2px; min-width:0; }
-.org-dash .org-dash-list .sub { color:var(--muted-foreground); font-size:12px; overflow-wrap:anywhere; }
+.org-dash .sub { color:var(--muted-foreground); font-size:12px; overflow-wrap:anywhere; }
 .org-dash .org-dash-link { padding:0; font-weight:600; text-align:left; justify-content:flex-start; }
+.org-dash .org-needs { margin-bottom:12px; }
+.org-dash .org-needs.has-needs { border-color:var(--warning); }
+.org-dash .org-need { flex-direction:row !important; align-items:center; justify-content:space-between; gap:12px;
+  padding:8px 10px; border-radius:8px; background:var(--warning-soft); }
+.org-dash .org-need.tone-danger { background:var(--destructive-soft); }
+.org-dash .org-need > div { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.org-dash .org-trends { margin-bottom:16px; }
+.org-dash .org-trends .stat-sub { white-space:normal; }
+.org-dash .org-money-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:8px; }
+.org-dash .org-money-controls label { display:inline-flex; gap:6px; align-items:center; font-size:12px; }
+.org-dash table.org-money, .org-dash table.org-sub { width:100%; border-collapse:collapse; font-size:13px; }
+.org-dash table.org-money th, .org-dash table.org-money td,
+.org-dash table.org-sub th, .org-dash table.org-sub td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--border); }
+.org-dash table.org-money .num, .org-dash table.org-sub .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.org-dash table.org-money td.grows { color:var(--warning); font-weight:600; }
+.org-dash .org-unpriced, .org-dash .org-idle { margin-top:8px; }
 `;

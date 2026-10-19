@@ -12,6 +12,7 @@
 //! resumed (see `service`).
 
 pub mod logo;
+mod overview;
 /// The logo document only this gear writes, for the PDP's gear-held list.
 pub use logo::LOGO_METADATA_TYPE;
 pub mod port;
@@ -158,12 +159,28 @@ impl RestApiCapability for StudioOrganizationsGear {
                 "studio-organizations: account-management is not available — the portfolio's                  counts answer 503 rather than reporting every column as unknown"
             );
         }
+        // The organization's overview reads its other gears per request:
+        // several publish in their own REST phase, after this one.
+        let overview = sources.as_ref().map(|sources| {
+            Arc::new(overview::Overview {
+                sources: Arc::clone(sources),
+                hub: ctx.client_hub(),
+            })
+        });
+        // `?organization_id=` resolves through it.
+        let access = sources.as_ref().map(|sources| {
+            crate::org_scope::OrgAccess(Arc::new(
+                crate::studio_session::sdk::TenantMembership::new(Arc::clone(&sources.am)),
+            ))
+        });
         Ok(rest::register_routes(
             router,
             openapi,
             service,
             rest::SelfService(self_service),
             sources,
+            overview,
+            access,
         ))
     }
 }
