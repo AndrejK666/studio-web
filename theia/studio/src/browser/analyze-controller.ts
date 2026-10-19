@@ -28,6 +28,7 @@ import {
     AnalyzeStudioClient, DocumentBinding, FindingToSave, InlineDocument, SpecDetector, SpecVerdict, TaskRun,
     matchBindingByPath, pathCandidates,
 } from './analyze-studio-client';
+import { StudioApi } from './studio-api';
 
 export type { AnalyzeMetric, AnalyzeMetricKey, AnalyzeMetricLevel } from './analyze-metrics';
 
@@ -210,7 +211,20 @@ export class AnalyzeFrontendController implements FrontendApplicationContributio
         if (typeof shell.onDidChangeCurrentWidget === 'function') {
             this.editorListener.push(shell.onDidChangeCurrentWidget(() => this.syncActiveEditor()));
         }
+        // The editor restored at start-up is usually resolved before the
+        // portal has posted the scope and token, which reads as "not
+        // connected". Ask again once they arrive.
+        this.toDispose.push(StudioApi.onSessionChanged(() => this.retryUnresolved()));
         this.syncActiveEditor();
+    }
+
+    /** Read the document in front again if Studio has not placed it yet. A
+     *  placed one keeps what it has: a token renew changes nothing about it. */
+    protected retryUnresolved(): void {
+        if (this.stopped || !this.currentDocument || this.currentTarget) {
+            return;
+        }
+        void this.refresh();
     }
 
     onStop(): void {

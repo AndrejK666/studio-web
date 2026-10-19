@@ -138,6 +138,28 @@ fn fixture() -> Vec<GtsNode> {
         "c-1",
         json!({ "workspace_id": WS, "project_id": PROJECT, "repo": "acme/web", "sha": "abc" }),
     ));
+    // Findings: three detectors on two documents of the project, one on a
+    // document of another project, and a subject a naive SQL string would
+    // break on.
+    let findings = [
+        ("sf-1", "f-001", PROJECT, "purpose"),
+        ("sf-2", "f-001", PROJECT, "leak"),
+        ("sf-3", "f-001", PROJECT, "bloat"),
+        ("sf-4", "f-002", PROJECT, "purpose"),
+        ("sf-5", "f-001", OTHER, "purpose"),
+        ("sf-6", "studio-doc:it's", PROJECT, "purpose"),
+    ];
+    for (id, subject, project, detector) in findings {
+        out.push(node(
+            gts::SPEC_FINDING_TYPE,
+            id,
+            json!({
+                "workspace_id": WS, "project_id": project,
+                "subject": subject, "detector": detector,
+                "details": { "findings": [] },
+            }),
+        ));
+    }
     out
 }
 
@@ -215,6 +237,7 @@ async fn every_page_matches_the_graph() {
                                 type_filter,
                                 scope: Some(scope),
                                 repo,
+                                subject: None,
                                 needle,
                                 by_updated,
                                 start,
@@ -245,6 +268,7 @@ async fn a_page_carries_the_graph_payload() {
         type_filter: Some("file"),
         scope: Some(PROJECT),
         repo: None,
+        subject: None,
         needle: None,
         by_updated: false,
         start: PageStart::Offset(0),
@@ -316,6 +340,7 @@ async fn a_sync_after_the_fill_is_visible_at_once() {
                 type_filter: Some("issue"),
                 scope: Some(PROJECT),
                 repo: None,
+                subject: None,
                 needle: None,
                 by_updated: true,
                 start: PageStart::Offset(0),
@@ -348,6 +373,7 @@ async fn a_forgotten_file_leaves_every_page_at_once() {
         type_filter: Some("file"),
         scope: Some(PROJECT),
         repo: None,
+        subject: None,
         needle: None,
         by_updated: false,
         start: PageStart::Offset(0),
@@ -387,6 +413,7 @@ async fn a_files_content_never_becomes_a_row() {
         type_filter,
         scope: Some(PROJECT),
         repo: None,
+        subject: None,
         needle: None,
         by_updated: false,
         start: PageStart::Offset(0),
@@ -552,4 +579,46 @@ fn nul_is_stripped_before_it_reaches_postgres() {
 #[test]
 fn like_metacharacters_are_escaped() {
     assert_eq!(super::escape_like(r"100%_\x"), r"100\%\_\\x");
+}
+
+/// One document's verdicts, asked by subject, are the page the in-process
+/// listing gives: the IDE reads them on every open, and a page that differed
+/// from the graph would show one document another's findings.
+#[tokio::test]
+async fn a_subject_page_matches_the_graph() {
+    let ctx = ctx();
+    let (graph, store) = filled(&ctx).await;
+    let projection = graph
+        .list(&ctx, Some("spec_finding"))
+        .await
+        .expect("graph list");
+    let cases = [
+        (PROJECT, Some("f-001"), vec!["sf-1", "sf-2", "sf-3"]),
+        (PROJECT, Some("f-002"), vec!["sf-4"]),
+        (OTHER, Some("f-001"), vec!["sf-5"]),
+        (WS, Some("f-001"), vec!["sf-1", "sf-2", "sf-3", "sf-5"]),
+        (PROJECT, Some("studio-doc:it's"), vec!["sf-6"]),
+        (PROJECT, Some("nobody"), vec![]),
+        (PROJECT, None, vec!["sf-1", "sf-2", "sf-3", "sf-4", "sf-6"]),
+    ];
+    for (scope, subject, expected) in cases {
+        let q = NodePageQuery {
+            type_filter: Some("spec_finding"),
+            scope: Some(scope),
+            repo: None,
+            subject,
+            needle: None,
+            by_updated: false,
+            start: PageStart::Offset(0),
+            limit: 200,
+        };
+        let want = page_of_nodes(&projection, &q);
+        let got = store.page(&ctx, &q).await.expect("index page");
+        assert_eq!(ids(&want.nodes), expected, "graph: {q:?}");
+        assert_eq!(
+            (ids(&got.nodes), got.total),
+            (ids(&want.nodes), want.total),
+            "index: {q:?}"
+        );
+    }
 }

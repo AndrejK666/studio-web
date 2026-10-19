@@ -44,7 +44,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use sea_orm::sea_query::LikeExpr;
+use sea_orm::sea_query::{Expr, LikeExpr};
 use sea_orm::{
     ActiveValue, ColumnTrait, Condition, DbErr, EntityTrait, FromQueryResult, IntoActiveModel,
     Order, QuerySelect,
@@ -314,6 +314,17 @@ impl ArtifactIndex {
         let mut filter = Self::in_scope(&types, scope);
         if let Some(repo) = q.repo {
             filter = filter.add(node::Column::Repo.eq(repo));
+        }
+        // Not a column: only findings carry it, and the (tenant, project, type)
+        // index already narrows to one project's findings before this reads a
+        // payload.
+        if let Some(subject) = q.subject {
+            // Spelled out, not imported: both traits are implemented for every
+            // type, so a `use` gives `u64::min` and `str::contains` a second,
+            // SQL meaning across this whole module.
+            use sea_orm::sea_query::extension::postgres::PgExpr as _;
+            let field = Expr::col(node::Column::Payload).cast_json_field("subject");
+            filter = filter.add(sea_orm::sea_query::ExprTrait::eq(field, subject));
         }
         if let Some(needle) = q.needle {
             let pattern = format!("%{}%", escape_like(needle));

@@ -201,6 +201,10 @@ pub struct NodePageQuery<'a> {
     pub scope: Option<&'a str>,
     /// Keep nodes whose payload `repo` equals this.
     pub repo: Option<&'a str>,
+    /// Keep nodes whose payload `subject` equals this — a `spec_finding`'s
+    /// document, so one document's verdicts are a page of their own rather
+    /// than a filter over every finding in the project.
+    pub subject: Option<&'a str>,
     /// Already lower-cased. Matched against title, author, path, full path
     /// and the number, as the listing always has.
     pub needle: Option<&'a str>,
@@ -241,6 +245,10 @@ pub fn page_of_nodes(nodes: &[GtsNode], q: &NodePageQuery<'_>) -> NodePage {
         // filter is set — which is the intent (you're listing its contents).
         .filter(|n| match q.repo {
             Some(r) => n.value.get("repo").and_then(Value::as_str) == Some(r),
+            None => true,
+        })
+        .filter(|n| match q.subject {
+            Some(s) => n.value.get("subject").and_then(Value::as_str) == Some(s),
             None => true,
         })
         .filter(|n| match q.needle {

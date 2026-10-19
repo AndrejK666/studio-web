@@ -55,6 +55,8 @@ export function isSignedOut(error: unknown): boolean {
 /** Server-side ceiling on `limit` (studio-backend `src/pagination.rs`). */
 const MAX_PAGE = 200;
 
+const sessionListeners = new Set<() => void>();
+
 /** Latest portal-issued API context, kept in memory and shared by the Studio
  * browser widgets that call backend gears through the session gate. */
 export const StudioApi = {
@@ -72,6 +74,25 @@ export const StudioApi = {
     viewer: undefined as { sub?: string; name?: string; kind?: string } | undefined,
     /** Tenant scope from the portal handshake (`studio.init` workspaceId). */
     scope: '' as string,
+    /**
+     * Said by whoever has just set `scope` or `token` (the portal handshake
+     * and every silent renew). A hosted session restores its editors before
+     * the portal has posted either, so a view that asked Studio in that
+     * window got "not connected" and, without this, kept saying it.
+     */
+    sessionChanged(): void {
+        for (const listener of [...sessionListeners]) {
+            try {
+                listener();
+            } catch (error) {
+                console.warn('[studio] a session listener failed', error);
+            }
+        }
+    },
+    onSessionChanged(listener: () => void): { dispose(): void } {
+        sessionListeners.add(listener);
+        return { dispose: () => { sessionListeners.delete(listener); } };
+    },
     scoped(path: string): string {
         if (!StudioApi.scope) {
             return path;

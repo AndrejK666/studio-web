@@ -27,14 +27,18 @@ const { JSDOM } = require('jsdom');
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 for (const k of ['window', 'document', 'Node', 'DOMParser', 'navigator', 'Element', 'HTMLElement',
     'customElements', 'getComputedStyle', 'MutationObserver', 'Event', 'MouseEvent', 'KeyboardEvent',
-    'CustomEvent', 'localStorage']) {
+    'CustomEvent', 'localStorage', 'innerHeight', 'innerWidth']) {
     if (dom.window[k]) { global[k] = dom.window[k]; }
 }
 global.requestAnimationFrame = fn => setTimeout(fn, 0);
+global.cancelAnimationFrame = id => clearTimeout(id);
+global.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 global.DragEvent = class DragEvent extends dom.window.Event {};
 global.ClipboardEvent = class ClipboardEvent extends dom.window.Event {};
 
-const { MarkdownEditorWidget } = require('../src/browser/markdown-editor');
+const { Editor } = require('@tiptap/core');
+const { MarkdownEditorWidget, buildExtensions } = require('../src/browser/markdown-editor');
+const { markdownToDoc } = require('../src/browser/markdown');
 const studioQuality = require('../src/browser/studio-quality');
 const URI = require('@theia/core/lib/common/uri').default;
 
@@ -278,6 +282,43 @@ async function test(name, fn) {
         w.setStudioFindings({ verdicts: [purposeVerdict()], paths: 'docs/adr/0019.md' });
         assert.deepStrictEqual(w.studioQuality.paths, []);
         await settle();
+    });
+
+    /*
+     * THE ORDER A REAL OPEN HAS. The widget builds its TipTap editor last —
+     * after comments, history and the collaboration claim have loaded — while
+     * the Analyze panel hands the findings over as soon as Studio answers, and
+     * from its cache that is almost at once. So the findings are usually
+     * loaded BEFORE the editor exists, and the decoration plugin's first look
+     * happens inside `new Editor()`, before `widget.editor` is assigned.
+     * It used to read the text off `widget.editor`, find nothing, and draw
+     * nothing until some later transaction asked again: the document opened
+     * with no findings in it although Studio had them.
+     */
+    await test('findings handed over before the editor exists are drawn when it is built', async () => {
+        const w = fakeWidget(fakeStore());
+        w.setStudioFindings({ verdicts: [purposeVerdict('8. The config read gets a cache')], paths: [] });
+        await settle();
+        assert.strictEqual(w.qualityFindings.length, 1, 'loaded while there is no editor yet');
+        assert.strictEqual(w.editor, undefined);
+
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        const md = [
+            '# ADR', '', '## 7. Context', '', 'Why.', '',
+            '## 8. The config read gets a cache', '', 'A cache in front of the read.', ''
+        ].join('\n');
+        // As the widget does it: the editor is assigned only once built.
+        const editor = new Editor({ element: host, extensions: buildExtensions(w), content: markdownToDoc(md).doc });
+        try {
+            assert.ok(host.querySelector('.studio-quality-section'),
+                'the section the finding names is marked from the first paint');
+            w.editor = editor;
+            assert.ok(w.qualityRanges().length > 0, 'and the widget agrees once it holds the editor');
+        } finally {
+            editor.destroy();
+            host.remove();
+        }
     });
 
     console.info = realInfo;

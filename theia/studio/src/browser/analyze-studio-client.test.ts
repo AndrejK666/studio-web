@@ -151,6 +151,9 @@ describe('AnalyzeStudioClient', () => {
             }
             expect(url.searchParams.get('type')).toBe('spec_finding');
             expect(url.searchParams.get('scope')).toBe('p-1');
+            expect(url.searchParams.get('subject')).toBe('studio-doc:d-1');
+            // Answered as a backend from before `subject` would: the whole
+            // project. The client still keeps only this document's.
             return {
                 body: {
                     total: 3,
@@ -167,6 +170,46 @@ describe('AnalyzeStudioClient', () => {
             detector: 'purpose', subject: 'studio-doc:d-1', score: 0.9, severity: 'gate-passed', recordedAt: '2026-09-24T08:00:00Z',
             path: undefined, summary: undefined, details: undefined,
         }]);
+    });
+
+    it('asks Studio once per document, and asks again after a run on its project', async () => {
+        const fetchMock = stubFetch(url => {
+            if (url.pathname !== '/studio-api/studio-artifact-ingest/v1/nodes') {
+                return undefined;
+            }
+            const subject = url.searchParams.get('subject');
+            return { body: { total: 1, nodes: [{ value: { detector: 'purpose', subject } }] } };
+        });
+        const client = new AnalyzeStudioClient();
+        const [a, b] = await Promise.all([client.findings('p-1', 'node-a'), client.findings('p-1', 'node-b')]);
+        expect(a.map(f => f.subject)).toEqual(['node-a']);
+        expect(b.map(f => f.subject)).toEqual(['node-b']);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        // Flipping back to a document is answered from what was read.
+        await client.findings('p-1', 'node-a');
+        await client.findings('p-1', 'node-a');
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        // A run on the project forgets its documents, and only its.
+        await client.findings('p-2', 'node-a');
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        client.invalidate('ws-1', 'p-1');
+        await client.findings('p-1', 'node-a');
+        await client.findings('p-2', 'node-a');
+        expect(fetchMock).toHaveBeenCalledTimes(4);
+    });
+
+    it('does not keep a failed read: the next open asks again', async () => {
+        let fail = true;
+        const fetchMock = stubFetch(url => url.pathname === '/studio-api/studio-artifact-ingest/v1/nodes'
+            ? (fail ? { status: 503, body: { detail: 'down' } } : { body: { total: 0, nodes: [] } })
+            : undefined);
+        const client = new AnalyzeStudioClient();
+        await expect(client.findings('p-1', 'node-a')).rejects.toBeDefined();
+        fail = false;
+        await expect(client.findings('p-1', 'node-a')).resolves.toEqual([]);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it('starts a detector with the text on screen, and reports Studio\'s reason when it refuses', async () => {

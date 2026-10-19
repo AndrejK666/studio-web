@@ -160,7 +160,11 @@ function qualityMarksExtension(getRanges) {
             return [new Plugin({
                 key: qualityMarksKey,
                 state: {
-                    init(_, state) { return buildDecorations(state.doc, getRanges()); },
+                    /* The document is handed over rather than read off the
+                     * editor: `init` runs inside `new Editor()`, before the
+                     * widget holds the editor, and findings that arrived first
+                     * were drawn nowhere until something else refreshed. */
+                    init(_, state) { return buildDecorations(state.doc, getRanges(state.doc)); },
                     apply(tr, value, oldState, newState) {
                         /*
                          * A selection-only transaction — every arrow key — must
@@ -175,7 +179,7 @@ function qualityMarksExtension(getRanges) {
                         if (!tr.getMeta(qualityMarksKey)) {
                             return tr.docChanged ? value.map(tr.mapping, tr.doc) : value;
                         }
-                        return buildDecorations(newState.doc, getRanges());
+                        return buildDecorations(newState.doc, getRanges(newState.doc));
                     }
                 },
                 props: {

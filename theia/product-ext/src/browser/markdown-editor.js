@@ -746,7 +746,7 @@ function buildExtensions(widget) {
          * being selected or a finding being dismissed. An empty array is how the
          * marks are off, which is every document nobody has checked.
          */
-        qualityMarksExtension(() => (widget && widget.qualityRanges ? widget.qualityRanges() : [])),
+        qualityMarksExtension(doc => (widget && widget.qualityRanges ? widget.qualityRanges(doc) : [])),
         /*
          * Cards for recognised links, on the same callback shape: the plugin
          * asks per transaction, so turning the feature on in the Project page
@@ -6076,9 +6076,8 @@ class MarkdownEditorWidget extends Widget {
      * heading. A level-0 sentinel is shallower than every real heading, so the
      * rule needs no special case for the final section.
      */
-    qualityIndex() {
-        if (!this.editor) { return undefined; }
-        const doc = this.editor.state.doc;
+    qualityIndex(doc = this.editor && this.editor.state.doc) {
+        if (!doc) { return undefined; }
         const index = buildTextIndex(doc);
         const headings = [];
         const seen = new Map();
@@ -6124,9 +6123,9 @@ class MarkdownEditorWidget extends Widget {
         return !!this.uri && fileTypeSettings.writingHintsForFile(this.uri);
     }
 
-    qualityRanges() {
-        if (!this.editor || !this.qualityFindings.length) { return []; }
-        const resolved = this.qualityIndex();
+    qualityRanges(doc = this.editor && this.editor.state.doc) {
+        if (!doc || !this.qualityFindings.length) { return []; }
+        const resolved = this.qualityIndex(doc);
         if (!resolved) { return []; }
         const relPath = this.qualityRelPath;
         const ranges = [];

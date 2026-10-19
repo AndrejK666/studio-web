@@ -207,6 +207,12 @@ pub struct NodesQuery {
     /// field carried by issue/pull_request/file/comment/commit nodes).
     #[serde(default)]
     pub repo: Option<String>,
+    /// Filter to the nodes about one document — the `subject` a
+    /// `spec_finding` carries (a file node id, or `studio-doc:<id>`). The IDE
+    /// asks this for the document on screen instead of reading every finding
+    /// in the project.
+    #[serde(default)]
+    pub subject: Option<String>,
     /// Sort order: `updated` (newest `updated_at` first) or the default stable
     /// order by instance id.
     #[serde(default)]
@@ -850,6 +856,7 @@ async fn list_nodes(
             .map(str::to_owned)
     };
     let (filter, scope, repo) = (trimmed(&q.r#type), trimmed(&q.scope), trimmed(&q.repo));
+    let subject = trimmed(&q.subject);
     let needle = trimmed(&q.q).map(|s| s.to_lowercase());
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     // Offset wins when present (classic paginator); otherwise the legacy cursor
@@ -866,6 +873,7 @@ async fn list_nodes(
                 type_filter: filter.as_deref(),
                 scope: scope.as_deref(),
                 repo: repo.as_deref(),
+                subject: subject.as_deref(),
                 needle: needle.as_deref(),
                 by_updated: q.sort.as_deref() == Some("updated"),
                 start,
