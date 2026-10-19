@@ -2,14 +2,27 @@
  *
  * What its model calls and IDE sessions cost over a period, grouped by
  * project, person, model, source or who paid, with a switch for what people
- * spent on their own keys; and the price list those costs are priced with.
+ * spent on their own keys; the monthly budgets and where this month stands
+ * against them (warnings only, nothing is stopped); and the price list those
+ * costs are priced with.
  * The records are quantities kept by the platform's usage collector; the money
  * is computed from the price list when the report is read, so changing a price
  * reprices the past too. */
 
 import { useCallback, useEffect, useState } from "react";
 
-import { ApiError, api, type CostGroup, type CostReport, type ModelPrice, type PriceList, type SessionPrice } from "./api";
+import {
+  ApiError,
+  api,
+  type BudgetList,
+  type BudgetStatus,
+  type CostGroup,
+  type CostReport,
+  type ModelPrice,
+  type PriceList,
+  type SessionPrice,
+} from "./api";
+import { budgetProblem, budgetWarnings, budgetsOf, levelBadge, nextPlace, percent, placeLabel, rowsOf, standingText, type BudgetRow } from "./budgets";
 import { GROUPS, PERIODS, blankModel, hours, money, periodRange, priceProblem, rowLabel, tokens, type Period } from "./costs";
 import { errText } from "./format";
 
@@ -24,6 +37,13 @@ const CSS = `
 .costs .price-grid input { width: 100%; box-sizing: border-box; }
 .costs .price-grid input[type=number] { max-width: 110px; }
 .costs .price-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.costs .budget-warnings { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); }
+.costs .budget-warnings ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.costs .budget-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); }
+.costs .budget-badge[data-level=warning] { color: var(--warning, #b45309); border-color: currentColor; }
+.costs .budget-badge[data-level=over] { color: var(--destructive, #dc2626); border-color: currentColor; }
+.costs .budget-grid select { max-width: 320px; }
+.costs .budget-grid input[type=number] { max-width: 130px; }
 `;
 
 function num(v: string): number {
@@ -122,6 +142,8 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
       {prices && !prices.may_view_costs && (
         <p className="hint">Only the organization&apos;s administrators, or people granted cost.view, see the costs.</p>
       )}
+
+      {prices?.may_view_costs && <OrgBudgets token={token} org={org} personal={personal} prices={prices} />}
 
       {prices?.may_view_costs && (
         <section className="card" data-cost-report>
@@ -282,5 +304,203 @@ export function OrgCosts({ token, org, you }: { token: string; org: { id: string
         </section>
       )}
     </div>
+  );
+}
+
+/** The organization's monthly budgets: this month's standing, worst first,
+ *  and the editor for whoever holds cost.manage. Spend on people's own keys
+ *  counts as the report's switch says. */
+function OrgBudgets({
+  token,
+  org,
+  personal,
+  prices,
+}: {
+  token: string;
+  org: { id: string; name: string };
+  personal: boolean;
+  prices: PriceList;
+}) {
+  const [list, setList] = useState<BudgetList | null>(null);
+  const [status, setStatus] = useState<BudgetStatus | null>(null);
+  const [rows, setRows] = useState<BudgetRow[]>([]);
+  const [warnAt, setWarnAt] = useState(80);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .budgets(token, org.id)
+      .then((l) => {
+        if (!live) return;
+        setList(l);
+        setRows(rowsOf(l.budgets));
+        setWarnAt(l.warn_at_percent);
+      })
+      .catch((e) => {
+        if (!live) return;
+        setError(e instanceof ApiError && e.status === 404 ? "This Studio has no budgets yet (the backend predates them)." : errText(e));
+      });
+    return () => {
+      live = false;
+    };
+  }, [token, org.id]);
+
+  // A changed price reprices this month too, so the standing follows `prices`.
+  useEffect(() => {
+    if (!list || list.budgets.length === 0) {
+      setStatus(null);
+      return;
+    }
+    let live = true;
+    api
+      .budgetStatus(token, org.id, personal)
+      .then((st) => live && setStatus(st))
+      .catch((e) => live && setError(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [token, org.id, personal, list, prices]);
+
+  if (!list && !error) return null;
+  const currency = status?.currency ?? list?.currency ?? prices.currency;
+  const warnings = budgetWarnings(status);
+  const problem = budgetProblem(rows, warnAt);
+  const editable = list?.may_manage ?? false;
+  const places = list?.places ?? [];
+  const free = nextPlace(places, rows);
+  const setRow = (i: number, patch: Partial<BudgetRow>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  const save = async () => {
+    if (problem) return;
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const l = await api.updateBudgets(token, org.id, { warn_at_percent: warnAt, budgets: budgetsOf(rows) });
+      setList(l);
+      setRows(rowsOf(l.budgets));
+      setWarnAt(l.warn_at_percent);
+      setNotice("Budgets saved.");
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="card" data-budgets>
+      <h3>Budgets this month</h3>
+      {error && <div className="error">{error}</div>}
+      {notice && <div className="hint">{notice}</div>}
+      {warnings.length > 0 && status && (
+        <div className="budget-warnings" role="status" data-budget-warnings>
+          <strong>
+            {warnings.length === 1 ? "One budget needs attention" : `${warnings.length} budgets need attention`}
+          </strong>
+          <ul>
+            {warnings.map((w) => (
+              <li key={w.tenant_id ?? "org"} data-budget-warning={w.level}>
+                {w.label}: {standingText(w, currency)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="hint">
+        What the organization, a workspace or a project may spend in a calendar month (UTC), in {currency}. A budget
+        warns at {list?.warn_at_percent ?? warnAt}% and when this month&apos;s pace would pass it; it never stops anyone.
+        {!personal && " People's own keys are left out, as in the report."}
+      </p>
+      {status && status.standings.length > 0 && (
+        <table data-budget-standings>
+          <thead>
+            <tr>
+              <th>Budget for</th>
+              <th className="num">Spent</th>
+              <th className="num">Budget</th>
+              <th className="num">Used</th>
+              <th className="num">Month&apos;s end</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {status.standings.map((st) => (
+              <tr key={st.tenant_id ?? "org"} data-budget-row={st.tenant_id ?? "org"}>
+                <td>{st.label}</td>
+                <td className="num">{money(st.spent, currency)}</td>
+                <td className="num">{money(st.monthly, currency)}</td>
+                <td className="num">{percent(st.spent, st.monthly)}%</td>
+                <td className="num" title={st.forecast == null ? "Projected from the fourth day of the month" : undefined}>
+                  {st.forecast == null ? "—" : money(st.forecast, currency)}
+                </td>
+                <td>
+                  <span className="budget-badge" data-level={st.level}>
+                    {levelBadge(st)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {status && status.unpriced.length > 0 && (
+        <p className="cost-unpriced">
+          No price for {status.unpriced.join(", ")}: not in the spend above, so a budget may be nearer than it shows.
+        </p>
+      )}
+      {list && list.budgets.length === 0 && !editable && <p className="empty">No budget is set.</p>}
+
+      {editable && (
+        <>
+          <table className="budget-grid">
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td>
+                    <select value={r.tenant_id} onChange={(e) => setRow(i, { tenant_id: e.target.value })} aria-label="Budget for">
+                      {places.map((p) => {
+                        const value = p.kind === "organization" ? "" : p.id;
+                        return (
+                          <option key={p.id} value={value}>
+                            {placeLabel(p)}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </td>
+                  <td className="num">
+                    <input type="number" min={0} step="1" value={Number.isNaN(r.monthly) ? "" : r.monthly} onChange={(e) => setRow(i, { monthly: num(e.target.value) })} aria-label="Monthly budget" />{" "}
+                    {currency} / month
+                  </td>
+                  <td>
+                    <button type="button" className="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="price-actions">
+            <button type="button" disabled={free === null} onClick={() => free !== null && setRows((rs) => [...rs, { tenant_id: free, monthly: 0 }])}>
+              Add a budget
+            </button>
+            <label>
+              Warn at{" "}
+              <input type="number" min={1} max={99} step="1" value={warnAt} onChange={(e) => setWarnAt(num(e.target.value))} aria-label="Warn at percent" size={3} />%
+            </label>
+            <button type="button" className="primary" disabled={saving || !!problem} onClick={() => void save()} data-budget-save>
+              {saving ? "Saving…" : "Save budgets"}
+            </button>
+            {problem && <span className="error">{problem}</span>}
+          </div>
+        </>
+      )}
+      {list && !editable && <p className="hint">Only the organization&apos;s administrators, or people granted cost.manage, change budgets.</p>}
+    </section>
   );
 }

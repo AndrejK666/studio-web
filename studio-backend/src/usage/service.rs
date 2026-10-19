@@ -13,6 +13,11 @@
 //! organization would see only the organization's own records. Each tenant is
 //! asked with the caller acting in it, after the caller has been shown to
 //! administer the organization (`cost.view`).
+//!
+//! **Budgets** are a second metadata row on the organization
+//! (`super::BUDGETS_METADATA_TYPE`), read by `cost.view` and written by
+//! `cost.manage` the same way as the price list. Their standing is this
+//! month's costs by project, summed per budget (`super::budgets`).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -34,11 +39,12 @@ use usage_collector_sdk::{
 };
 use uuid::Uuid;
 
-use super::PRICES_METADATA_TYPE;
+use super::budgets::{self, Budgets, Standing};
 use super::costs::{self, Fact, FactKind, GroupBy, Report};
 use super::port::Payer;
 use super::prices::PriceList;
 use super::types;
+use super::{BUDGETS_METADATA_TYPE, PRICES_METADATA_TYPE};
 
 /// Reads an organization's costs.
 pub const VIEW_PRIVILEGE: &str = "cost.view";
@@ -69,6 +75,20 @@ type Result<T> = std::result::Result<T, Refusal>;
 pub struct Place {
     pub id: Uuid,
     pub label: String,
+    /// A project's workspace; `None` for a workspace and the organization.
+    pub workspace: Option<Uuid>,
+}
+
+/// This month's standing against each budget.
+pub struct BudgetStatus {
+    pub currency: String,
+    pub warn_at_percent: u8,
+    pub month: (OffsetDateTime, OffsetDateTime),
+    pub as_of: OffsetDateTime,
+    pub standings: Vec<Standing>,
+    /// What had no price this month: the spend above leaves it out.
+    pub unpriced: Vec<String>,
+    pub places: Vec<Place>,
 }
 
 /// A report and what its tenant keys are called.
@@ -102,23 +122,63 @@ impl UsageService {
         }
     }
 
-    pub async fn prices(&self, ctx: &SecurityContext, org: Uuid) -> Result<(PriceList, i64)> {
+    /// One of this gear's metadata rows on the organization, and its version;
+    /// the default and version 0 when it was never written.
+    async fn row<T: serde::de::DeserializeOwned + Default>(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        type_id: &str,
+        what: &str,
+    ) -> Result<(T, i64)> {
         match self
             .am
-            .get_metadata(ctx, org, GtsTypeId::new(PRICES_METADATA_TYPE))
+            .get_metadata(ctx, org, GtsTypeId::new(type_id))
             .await
         {
             Ok(entry) => Ok((
                 serde_json::from_value(entry.value).map_err(|e| {
-                    Refusal::Internal(format!("the stored price list is unreadable: {e}"))
+                    Refusal::Internal(format!("the stored {what} is unreadable: {e}"))
                 })?,
                 entry.version,
             )),
-            Err(CanonicalError::NotFound { .. }) => Ok((PriceList::default(), 0)),
+            Err(CanonicalError::NotFound { .. }) => Ok((T::default(), 0)),
             Err(e) => Err(Refusal::Unavailable(format!(
-                "the price list cannot be read: {e}"
+                "the {what} cannot be read: {e}"
             ))),
         }
+    }
+
+    /// Replace one of this gear's rows, as the service, over `version`.
+    async fn write_row<T: serde::Serialize>(
+        &self,
+        org: Uuid,
+        type_id: &str,
+        what: &str,
+        value: &T,
+        version: i64,
+    ) -> Result<()> {
+        let service = SecurityContext::builder()
+            .subject_id(SERVICE_SUBJECT_ID)
+            .subject_type("service")
+            .subject_tenant_id(org)
+            .token_scopes(vec!["*".to_owned()])
+            .build()
+            .map_err(|e| Refusal::Internal(format!("cannot build a service context: {e}")))?;
+        let value = serde_json::to_value(value).map_err(|e| Refusal::Internal(e.to_string()))?;
+        let mut request = UpsertMetadataRequest::new(GtsTypeId::new(type_id), value);
+        if version > 0 {
+            request = request.with_expected_version(version);
+        }
+        self.am
+            .upsert_metadata(&service, org, request)
+            .await
+            .map_err(|e| Refusal::Unavailable(format!("the {what} cannot be written: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn prices(&self, ctx: &SecurityContext, org: Uuid) -> Result<(PriceList, i64)> {
+        self.row(ctx, org, PRICES_METADATA_TYPE, "price list").await
     }
 
     /// Replace the organization's price list.
@@ -133,23 +193,120 @@ impl UsageService {
         }
         list.validate().map_err(|e| Refusal::Invalid(e.0))?;
         let (_, version) = self.prices(ctx, org).await?;
-        let service = SecurityContext::builder()
-            .subject_id(SERVICE_SUBJECT_ID)
-            .subject_type("service")
-            .subject_tenant_id(org)
-            .token_scopes(vec!["*".to_owned()])
-            .build()
-            .map_err(|e| Refusal::Internal(format!("cannot build a service context: {e}")))?;
-        let value = serde_json::to_value(&list).map_err(|e| Refusal::Internal(e.to_string()))?;
-        let mut request = UpsertMetadataRequest::new(GtsTypeId::new(PRICES_METADATA_TYPE), value);
-        if version > 0 {
-            request = request.with_expected_version(version);
-        }
-        self.am
-            .upsert_metadata(&service, org, request)
-            .await
-            .map_err(|e| Refusal::Unavailable(format!("the price list cannot be written: {e}")))?;
+        self.write_row(org, PRICES_METADATA_TYPE, "price list", &list, version)
+            .await?;
         Ok(list)
+    }
+
+    /// The organization's budgets and the places one can be set on
+    /// (`cost.view`).
+    pub async fn budgets(&self, ctx: &SecurityContext, org: Uuid) -> Result<(Budgets, Vec<Place>)> {
+        if !self.may(ctx, org, VIEW_PRIVILEGE).await {
+            return Err(Refusal::Forbidden("COST_ADMIN_REQUIRED"));
+        }
+        let (list, _) = self.row(ctx, org, BUDGETS_METADATA_TYPE, "budgets").await?;
+        Ok((list, self.places(ctx, org).await?))
+    }
+
+    /// Replace the organization's budgets (`cost.manage`). A budget names the
+    /// organization, or one of its workspaces or projects.
+    pub async fn put_budgets(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        mut list: Budgets,
+    ) -> Result<(Budgets, Vec<Place>)> {
+        if !self.may(ctx, org, MANAGE_PRIVILEGE).await {
+            return Err(Refusal::Forbidden("COST_ADMIN_REQUIRED"));
+        }
+        for b in &mut list.items {
+            if b.tenant_id == Some(org) {
+                b.tenant_id = None;
+            }
+        }
+        list.validate().map_err(|e| Refusal::Invalid(e.0))?;
+        let places = self.places(ctx, org).await?;
+        if let Some(stranger) = list
+            .items
+            .iter()
+            .filter_map(|b| b.tenant_id)
+            .find(|id| !places.iter().any(|p| p.id == *id))
+        {
+            return Err(Refusal::Invalid(format!(
+                "{stranger} is not a workspace or project of this organization"
+            )));
+        }
+        let (_, version) = self
+            .row::<Budgets>(ctx, org, BUDGETS_METADATA_TYPE, "budgets")
+            .await?;
+        self.write_row(org, BUDGETS_METADATA_TYPE, "budgets", &list, version)
+            .await?;
+        Ok((list, places))
+    }
+
+    /// Where this month's spend stands against each budget (`cost.view`).
+    /// Without a budget nothing is read from the collector.
+    pub async fn budget_status(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        include_personal: bool,
+        now: OffsetDateTime,
+    ) -> Result<BudgetStatus> {
+        if !self.may(ctx, org, VIEW_PRIVILEGE).await {
+            return Err(Refusal::Forbidden("COST_ADMIN_REQUIRED"));
+        }
+        let (list, _) = self
+            .row::<Budgets>(ctx, org, BUDGETS_METADATA_TYPE, "budgets")
+            .await?;
+        let month = budgets::month_of(now);
+        let warn_at_percent = list.warn_at_percent();
+        if list.items.is_empty() {
+            let (prices, _) = self.prices(ctx, org).await?;
+            return Ok(BudgetStatus {
+                currency: prices.currency().to_owned(),
+                warn_at_percent,
+                month,
+                as_of: now,
+                standings: Vec::new(),
+                unpriced: Vec::new(),
+                places: Vec::new(),
+            });
+        }
+        let costs = self
+            .costs(
+                ctx,
+                org,
+                month.0,
+                month.1,
+                GroupBy::Project,
+                include_personal,
+            )
+            .await?;
+        let spent: HashMap<Uuid, f64> = costs
+            .report
+            .rows
+            .iter()
+            .filter_map(|r| Some((r.key.parse().ok()?, r.cost)))
+            .collect();
+        let projects: Vec<(Uuid, Uuid)> = costs
+            .places
+            .iter()
+            .filter_map(|p| Some((p.id, p.workspace?)))
+            .collect();
+        let tree = budgets::Tree {
+            org,
+            projects: &projects,
+        };
+        Ok(BudgetStatus {
+            standings: budgets::standings(&list, &spent, costs.report.total, &tree, month, now),
+            currency: costs.currency,
+            warn_at_percent,
+            month,
+            as_of: now,
+            unpriced: costs.report.unpriced,
+            places: costs.places,
+        })
     }
 
     /// The organization's costs from `from` up to (not including) `to`.
@@ -217,6 +374,7 @@ impl UsageService {
         let mut places = vec![Place {
             id: org,
             label: name,
+            workspace: None,
         }];
         let projects = self
             .hub
@@ -232,11 +390,13 @@ impl UsageService {
                 places.push(Place {
                     id: p.workspace_id,
                     label: p.workspace_name.clone(),
+                    workspace: None,
                 });
             }
             places.push(Place {
                 id: p.id,
                 label: format!("{} / {}", p.workspace_name, p.name),
+                workspace: Some(p.workspace_id),
             });
         }
         Ok(places)

@@ -19,9 +19,10 @@ This README is what you need to work in the directory.
   the Studio PDP admits a record only in the tenant it is asked in.
 - The price list is account-management metadata on the organization,
   `cf.studio.usage.prices.v1~`, declared in every `config/*.yaml` and held by
-  this gear (`studio_authz_plugin::GEAR_HELD_METADATA`).
-- Privileges `cost.view` (the report) and `cost.manage` (the price list), in
-  `access_config::PRIVILEGES`.
+  this gear (`studio_authz_plugin::GEAR_HELD_METADATA`). So are the budgets,
+  `cf.studio.usage.budgets.v1~`.
+- Privileges `cost.view` (the report, the budgets) and `cost.manage` (the
+  price list, the budgets), in `access_config::PRIVILEGES`.
 
 ## Where things are
 
@@ -30,5 +31,7 @@ This README is what you need to work in the directory.
 - `sdk.rs` — the recording handle; catalogues the types on first use.
 - `prices.rs` — the price list and what a quantity costs under it. No I/O.
 - `costs.rs` — facts priced and grouped into a report. No I/O.
-- `service.rs` — who may; the price list row; the per-tenant collector sums.
-- `rest.rs` — `/studio-usage/v1/{prices,costs}`.
+- `budgets.rs` — the budgets, the month, and a budget's standing. No I/O.
+- `service.rs` — who may; the price list and budgets rows; the per-tenant
+  collector sums; this month's standing.
+- `rest.rs` — `/studio-usage/v1/{prices,costs,budgets,budget-status}`.

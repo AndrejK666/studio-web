@@ -95,6 +95,8 @@ acting in it.
 | Usage type | `types.rs` | Seven collector counters: `cf.studio.llm.{input,output,cache_read,cache_write}_tokens.v1`, `cf.studio.session.{seconds,cpu_millicore_seconds,memory_mib_seconds}.v1` |
 | `PriceList` | `prices.rs` | Per model, prices per million tokens of each kind; per hour, a requested CPU core and GiB; a currency |
 | `Report` | `costs.rs` | Rows of quantities and cost, a total, what was unpriced |
+| `Budgets` | `budgets.rs` | Monthly amounts for the organization, a workspace or a project, and the share at which they warn |
+| `Standing` | `budgets.rs` | A budget against this month's spend: spent, forecast, `ok` / `warning` / `over`, whether only the forecast reaches it |
 
 ### 3.2 Component Model
 
@@ -114,7 +116,8 @@ administrators or holders of `cost.view`.
 
 ##### Responsibility boundaries
 
-Records nothing; does not decide budgets or stop anything.
+Records nothing and stops nothing: a budget warns, it never refuses a call or a
+session.
 
 ##### Related components (by ID)
 
@@ -129,6 +132,9 @@ All under `/studio-usage/v1`, the organization named with `?organization_id=`.
 | `GET /prices` | member | the price list, `may_manage`, `may_view_costs` |
 | `PUT /prices` | `cost.manage` | replace the price list |
 | `GET /costs?from=&to=&group_by=&include_personal=` | `cost.view` | the report for `[from, to)` |
+| `GET /budgets` | `cost.view` | the budgets, the warning share, the places a budget can be set on, `may_manage` |
+| `PUT /budgets` | `cost.manage` | replace the budgets |
+| `GET /budget-status?include_personal=` | `cost.view` | this month's standing against each budget, worst first |
 
 ### 3.4 Internal Dependencies
 
@@ -136,7 +142,7 @@ All under `/studio-usage/v1`, the organization named with `?organization_id=`.
 |---|---|---|
 | `studio-user` | `OrgAuthority` | Whether the caller holds `cost.view` / `cost.manage` |
 | `studio-organizations` | `organizations::port::ProjectsOf` | The organization's workspaces and projects |
-| account-management | `AccountManagementClient` | The price list row |
+| account-management | `AccountManagementClient` | The price list and budgets rows |
 | `usage-collector` (platform) | `UsageCollectorClientV1` | The sums the report is made of |
 
 ### 3.5 External Dependencies
@@ -150,17 +156,28 @@ tenants → for each, as the caller acting in it, sum each usage type over the
 period grouped by person, provider, model and payer (calls) or driver and payer
 (sessions) → price → group → sort by cost.
 
+A budget standing: check `cost.view` → read the budgets (none: stop, nothing is
+read from the collector) → this calendar month's report by project → a
+workspace's spend is its own row plus its projects', the organization's the
+total → from the fourth day, the month's forecast at the pace so far → the
+level each reaches, now or by forecast. People's own keys count only when asked
+(`include_personal`, default false: a budget is the organization's money).
+Amounts are in the price list's currency; changing the currency does not
+convert them.
+
 ### 3.7 Database schemas & tables
 
 None of its own. The records are the collector's (`usage_records`,
 `usage_type_catalog` in `studio_usage`, owned by the storage plugin); the price
-list is an account-management metadata row,
-`gts.cf.core.am.tenant_metadata.v1~cf.studio.usage.prices.v1~`, held by this
-gear (`studio_authz_plugin::GEAR_HELD_METADATA`).
+list and the budgets are account-management metadata rows,
+`gts.cf.core.am.tenant_metadata.v1~cf.studio.usage.prices.v1~` and
+`…~cf.studio.usage.budgets.v1~`, held by this gear
+(`studio_authz_plugin::GEAR_HELD_METADATA`).
 
 ## 4. Additional context
 
-Not yet: budgets and limits (issue #781 step 4, `quota-enforcement` upstream),
+Not yet: limits that stop spending (`quota-enforcement` upstream, unpublished —
+budgets only warn), notifications when a budget is crossed,
 environments' estimate and real billing (step 3), and calls made outside a
 workspace, which land in the caller's home tenant rather than an
 organization's.
