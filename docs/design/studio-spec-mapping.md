@@ -278,7 +278,10 @@ changes.
 
 The paths are under `/studio-spec-mapping/v1`. The plan, conformance and findings read
 the catalogue of `?organization_id=` when one is named. Every list answers
-`{items, total}` and is read whole.
+`{items, total}` and is read whole. Conformance and findings answer 400
+`CODE_UNREADABLE`, naming the repository and why, when the project's gear
+repository cannot be read -- typically a connection whose token is personal,
+which the organization cannot read.
 
 ### 3.4 Internal Dependencies
 
