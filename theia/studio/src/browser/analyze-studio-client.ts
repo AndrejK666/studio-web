@@ -242,29 +242,40 @@ export class AnalyzeStudioClient {
         return readJson(res);
     }
 
-    /** The findings recorded for one document in a project. */
-    async findings(projectId: string, subject: string): Promise<SpecFinding[]> {
-        const all = await this.projectFindings(projectId);
-        return all.filter(finding => finding.subject === subject);
-    }
-
-    protected projectFindings(projectId: string): Promise<SpecFinding[]> {
-        const held = this.findingCache.get(projectId);
+    /**
+     * The findings recorded for one document in a project: its verdicts — a handful of nodes, asked by subject,
+     * so opening a document costs the same in a project with five findings or
+     * five thousand. Every open used to read every finding in the project
+     * (hundreds of nodes, details and all) to keep three of them.
+     *
+     * Still filtered here: a backend from before `subject` ignores it and
+     * answers with the whole project, and a document must not show another's.
+     */
+    findings(projectId: string, subject: string): Promise<SpecFinding[]> {
+        const key = `${projectId}/${subject}`;
+        const held = this.findingCache.get(key);
         if (held && Date.now() - held.at < CACHE_MS) {
             return held.items;
         }
+        const query = new URLSearchParams({ type: 'spec_finding', scope: projectId, subject });
         const items = StudioApi.fetchAllPages<{ value?: Record<string, unknown> }>(
-            `/studio-artifact-ingest/v1/nodes?type=spec_finding&scope=${encodeURIComponent(projectId)}`,
+            `/studio-artifact-ingest/v1/nodes?${query.toString()}`,
             'nodes',
-        ).then(nodes => nodes.map(node => toFinding(node.value)).filter((f): f is SpecFinding => f !== undefined));
-        items.catch(() => this.findingCache.delete(projectId));
-        this.findingCache.set(projectId, { at: Date.now(), items });
+        ).then(nodes => nodes
+            .map(node => toFinding(node.value))
+            .filter((f): f is SpecFinding => f !== undefined && f.subject === subject));
+        items.catch(() => this.findingCache.delete(key));
+        this.findingCache.set(key, { at: Date.now(), items });
         return items;
     }
 
     /** Forget what a run has just changed. */
     invalidate(workspaceId: string, projectId: string): void {
-        this.findingCache.delete(projectId);
+        for (const key of [...this.findingCache.keys()]) {
+            if (key.startsWith(`${projectId}/`)) {
+                this.findingCache.delete(key);
+            }
+        }
         this.bindingCache.delete(`${workspaceId}/${projectId}`);
     }
 

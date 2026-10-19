@@ -16,6 +16,7 @@ import { ANALYZE_WIDGET_ID, AnalyzeFrontendController, AnalyzeViewModel, finding
 import type { AnalyzeScope, AnalyzeStudioClient, DocumentBinding, TaskRun } from './analyze-studio-client';
 import type { ConformanceReport } from './analyze-metrics';
 import { studioDocumentUri } from '../common/studio-document-uri';
+import { StudioApi } from './studio-api';
 
 const PRD = binding('b-prd', 'docs/prd.md', {
     type_key: 'prd',
@@ -86,6 +87,43 @@ describe('AnalyzeFrontendController', () => {
         expect(model.status).toBe('unknown');
         expect(model.message).toContain('not connected to a Studio project');
         expect(studio.bindings).not.toHaveBeenCalled();
+    });
+
+    it('asks again when the portal\'s scope and token arrive after the document was opened', async () => {
+        // A hosted session restores its editor before the portal handshake:
+        // the first ask finds no project, the one after the handshake does.
+        const studio = createStudio();
+        studio.scope.mockResolvedValueOnce(undefined);
+        studio.findings.mockResolvedValue([
+            { detector: 'purpose', subject: 'node-b-prd', score: 0.9, severity: 'gate-passed' },
+        ]);
+        const editor = {
+            id: 'studio-md:file:///workspace/docs/prd.md',
+            uri: new URI('file:///workspace/docs/prd.md'),
+            readDocumentText: () => '# PRD',
+            onDocumentTextChanged: () => ({ dispose: () => undefined }),
+            setStudioFindings: jest.fn(),
+        };
+        const { controller } = await start(studio, editor);
+        expect(controller.getViewModel().status).toBe('unknown');
+        expect(editor.setStudioFindings).not.toHaveBeenCalled();
+
+        StudioApi.sessionChanged();
+        await settle();
+        expect(controller.getViewModel().status).toBe('ready');
+        expect(editor.setStudioFindings).toHaveBeenCalledWith(expect.objectContaining({ paths: ['docs/prd.md'] }));
+
+        // A renew once the document is placed reads nothing again.
+        const asked = studio.findings.mock.calls.length;
+        StudioApi.sessionChanged();
+        await settle();
+        expect(studio.findings).toHaveBeenCalledTimes(asked);
+
+        // And a stopped controller no longer listens.
+        controller.onStop();
+        StudioApi.sessionChanged();
+        await settle();
+        expect(studio.findings).toHaveBeenCalledTimes(asked);
     });
 
     it('reports Studio being unreachable as that, not as a verdict', async () => {

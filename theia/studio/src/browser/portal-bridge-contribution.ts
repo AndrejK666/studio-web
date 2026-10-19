@@ -295,6 +295,7 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 // hosted session outlives a token, and the person can change
                 // under a live page when the portal posts a different one.
                 this.adoptPortalViewer(msg.viewer);
+                StudioApi.sessionChanged();
             }
             if (typeof msg.workspaceName === 'string') {
                 this.workspaceName.setName(msg.workspaceName);
