@@ -2010,6 +2010,22 @@ pub struct PreviewInput {
     pub profile: String,
     /// The product's configuration of its gears, by crate name or engine id.
     pub config: GearConfig,
+    /// `owner/name` of the repository the description is saved to, when
+    /// known: a project root in it is a `path(...)` beside the file; one in
+    /// another repository is pinned by its git url instead.
+    pub repo: Option<String>,
+}
+
+/// Where a pinned root sits for the description: inside the repository the
+/// file is saved to (`within` its directory) only when the root's checkout is
+/// that repository. Another project's directory of the organization would be
+/// a path that does not exist beside this file.
+fn within_product_repo<'a>(
+    subdir: Option<&'a str>,
+    root_url: &str,
+    product_repo: Option<&str>,
+) -> Option<&'a str> {
+    subdir.filter(|_| product_repo.is_some_and(|repo| repo_key(repo) == repo_key(root_url)))
 }
 
 pub struct Preview {
@@ -2981,7 +2997,11 @@ impl Gearbox {
                 id: &r.root.id,
                 url: &r.root.source.url,
                 rev: r.commit.as_deref(),
-                within: r.root.subdir.as_deref(),
+                within: within_product_repo(
+                    r.root.subdir.as_deref(),
+                    &r.root.source.url,
+                    input.repo.as_deref(),
+                ),
             })
             .collect();
         // Config arrives keyed as the picks are (crate names); the description
@@ -4413,6 +4433,25 @@ mod tests {
 
         g.use_repositories(Vec::new());
         assert_eq!(ids(&g), ["gears-rust"]);
+    }
+
+    #[test]
+    fn a_project_root_is_a_path_only_inside_the_repository_the_file_is_saved_to() {
+        let url = "https://github.com/Acme/Shop.git";
+        assert_eq!(
+            within_product_repo(Some("shop-backend"), url, Some("acme/shop")),
+            Some("shop-backend")
+        );
+        assert_eq!(
+            within_product_repo(Some("shop-backend"), url, Some("acme/crm")),
+            None,
+            "another project's directory is pinned by its git url, not a path here"
+        );
+        assert_eq!(
+            within_product_repo(Some("shop-backend"), url, None),
+            None
+        );
+        assert_eq!(within_product_repo(None, url, Some("acme/shop")), None);
     }
 
     #[test]

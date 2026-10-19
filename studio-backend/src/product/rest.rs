@@ -1630,6 +1630,10 @@ async fn preview_product(
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let product_path = product_path_for(record.as_ref().map(|n| &n.value), &body.product_id);
     let scope = product.scope(&ctx, project_id, false).await;
+    let repo = product
+        .service
+        .write_repo(&ctx, &project_id.to_string())
+        .await;
     let preview = gearbox
         .preview(
             scope,
@@ -1640,6 +1644,7 @@ async fn preview_product(
                 gears: body.gears.clone(),
                 profile: profile.clone(),
                 config: config.clone(),
+                repo,
             },
         )
         .await
