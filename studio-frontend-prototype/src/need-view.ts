@@ -163,6 +163,28 @@ export function needDocument(accepted: SpecModelFact[]): string {
   return out.join("\n");
 }
 
+/** A material as the built-in `material` document keeps it: what it is, then
+ *  the text as it was given. */
+export function materialDocument(title: string, content: string): string {
+  return `# ${title}\n\n## Source\n\n${title}\n\n## Material\n\n${content}\n`;
+}
+
+/** The largest material one file may be: what a document holds. */
+export const MATERIAL_MAX_BYTES = 512 * 1024;
+
+const TEXT_FILE = /\.(md|markdown|txt|text|csv|tsv|json|html?|eml|vtt|srt|log|ya?ml)$/i;
+
+/** A file someone dropped in, as a material, or why it is not taken: only
+ *  text is read as it is, so a PDF or a Word file is refused with a word on
+ *  what to do instead, never read as garbage. */
+export function materialFromFile(name: string, size: number, text: string): { title: string; content: string } | { refused: string } {
+  if (!TEXT_FILE.test(name)) return { refused: `${name}: only text files are read as they are (Markdown, plain text, CSV, HTML, e-mail, subtitles); paste the text of anything else` };
+  if (size > MATERIAL_MAX_BYTES) return { refused: `${name}: larger than ${MATERIAL_MAX_BYTES / 1024} KiB; split it or paste the part that matters` };
+  if (!text.trim()) return { refused: `${name}: empty` };
+  if (text.includes("\u0000")) return { refused: `${name}: not text` };
+  return { title: name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || name, content: text };
+}
+
 /** Functional requirements that name no problem or goal the materials give,
  *  once the need is described at all: functionality nobody said why for.
  *  `requirements` are the identifiers the documents define, with their

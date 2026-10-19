@@ -14,6 +14,8 @@ import {
   CHECK_METHOD_WHAT,
   EVIDENCE_LABEL,
   hypothesesOf,
+  materialFromFile,
+  MATERIAL_MAX_BYTES,
   needGaps,
   needsByRole,
   needDocument,
@@ -32,9 +34,12 @@ export function NeedsScreen({
   onAddMaterial,
   onPropose,
   requirements,
+  readStopped,
 }: {
   facts: SpecModelFact[];
   onOpenFile: OpenFile;
+  /** Why the last reading stopped — no model key anyone reaches, most often. */
+  readStopped?: string | null;
   /** Whether a member accepted a reading. */
   accepted: (f: SpecModelFact) => boolean;
   /** Keep a pasted material in the project and read it at once. */
@@ -67,6 +72,25 @@ export function NeedsScreen({
   );
   const [adding, setAdding] = useState<{ title: string; content: string } | null>(null);
   const [state, setState] = useState<{ busy: boolean; error?: string; done?: SpecModelWrite; added?: string }>({ busy: false });
+  const [refused, setRefused] = useState<string[]>([]);
+  /** Each text file a material of its own, read once all are added. */
+  const addFiles = async (files: FileList | null) => {
+    if (!files?.length || !onAddMaterial) return;
+    const took: string[] = [];
+    const no: string[] = [];
+    await run(async () => {
+      for (const file of [...files]) {
+        const m = materialFromFile(file.name, file.size, file.size <= MATERIAL_MAX_BYTES ? await file.text() : "");
+        if ("refused" in m) no.push(m.refused);
+        else {
+          await onAddMaterial(m.title, m.content);
+          took.push(m.title);
+        }
+      }
+    }, undefined);
+    setRefused(no);
+    setState((s) => ({ ...s, added: took.length ? took.map((t) => `“${t}”`).join(", ") : undefined }));
+  };
   const run = async (act: () => Promise<SpecModelWrite | void>, added?: string) => {
     setState({ busy: true });
     try {
@@ -109,9 +133,25 @@ export function NeedsScreen({
       ) : (
         <div className="dm-actions">
           {onAddMaterial && (
-            <button type="button" className="ghost" onClick={() => setAdding({ title: "", content: "" })}>
-              Add material
-            </button>
+            <>
+              <button type="button" className="ghost" onClick={() => setAdding({ title: "", content: "" })}>
+                Paste material
+              </button>
+              <label className="nd-file" title="Markdown, plain text, CSV, HTML, e-mail or subtitles; each file is one material">
+                Add files
+                <input
+                  type="file"
+                  multiple
+                  className="sr-only"
+                  accept=".md,.markdown,.txt,.text,.csv,.tsv,.json,.html,.htm,.eml,.vtt,.srt,.log,.yaml,.yml"
+                  disabled={state.busy}
+                  onChange={(e) => {
+                    void addFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </>
           )}
           {onPropose && (
             <button
@@ -124,10 +164,23 @@ export function NeedsScreen({
               Accept the need ({acceptedNeed.filter((f) => f.kind !== "role").length} readings)
             </button>
           )}
-          <span className="hint">Materials are read as soon as they are added, on your model key.</span>
+          <span className="hint">
+            Materials are read as soon as they are added: on your own model key, else an AI connection you reach — yours, the
+            workspace&apos;s or the organization&apos;s.
+          </span>
         </div>
       )}
-      {state.added && <span className="dm-saved">✓ “{state.added}” added; it is being read.</span>}
+      {state.added && <span className="dm-saved">✓ {state.added.startsWith("“") ? state.added : `“${state.added}”`} added; being read.</span>}
+      {readStopped && (
+        <span className="error-inline" data-read-stopped>
+          Reading stopped: {readStopped}
+        </span>
+      )}
+      {refused.map((r) => (
+        <span key={r} className="error-inline">
+          Not added — {r}
+        </span>
+      ))}
       {state.done && (
         <span className="dm-saved">
           ✓ Proposed{" "}

@@ -28,7 +28,7 @@ import { GlossaryScreen } from "./glossary-screen";
 import { PrioritiesScreen } from "./priorities-screen";
 import type { Obligation } from "./behaviour";
 import { BehaviourScreen, HypothesesScreen, NeedsScreen, RulesScreen } from "./discovery-screens";
-import type { EvidenceState } from "./need-view";
+import { materialDocument, type EvidenceState } from "./need-view";
 import { decisionIndex, EVIDENCE_PREFIX, evidenceIndex, FactReviewContext, factKey, reviewIndex, withoutRejected, type FactReview, type SpecModelReview } from "./review-state";
 import { overlaySaved, pruneSaved, savedWrites, withSaved, type SavedEdit } from "./saved-entities";
 import { useGearCatalogue } from "./product-configurator-view";
@@ -545,6 +545,7 @@ export function SpecModelTab({
         <NeedsScreen
           facts={facts}
           onOpenFile={onOpenFile}
+          readStopped={model.build.error}
           accepted={(f) => reviewByKey.get(factKey(f)) === "accepted"}
           onAddMaterial={
             workspaceId
@@ -552,16 +553,7 @@ export function SpecModelTab({
                   const doc = await api.createProjectDocument(token, workspaceId, projectId, {
                     type_key: "material",
                     title,
-                    content: `# ${title}
-
-## Source
-
-${title}
-
-## Material
-
-${content}
-`,
+                    content: materialDocument(title, content),
                   });
                   // Read at once, on the key of whoever added it: no separate start.
                   await startBuild(`studio:${doc.id}`);

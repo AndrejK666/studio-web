@@ -3,7 +3,7 @@
 // benefit becomes a hypothesis with a proposed check.
 import { describe, expect, it } from "vitest";
 
-import { hypothesesOf, needGaps, needsByRole, proposeMethod } from "./need-view";
+import { hypothesesOf, materialDocument, materialFromFile, MATERIAL_MAX_BYTES, needGaps, needsByRole, proposeMethod } from "./need-view";
 import { entitiesOf, type SpecModelFact } from "./spec-model";
 
 const f = (kind: SpecModelFact["kind"], subject: string, aspect = "", value = "", text = `${subject}.`): SpecModelFact => ({
@@ -74,5 +74,22 @@ describe("requirements and the need", () => {
     ];
     expect(unlinkedRequirements(reqs, [f("problem", "slow request search", "operator")]).map((r) => r.id)).toEqual(["cpt-b"]);
     expect(unlinkedRequirements(reqs, [])).toEqual([]);
+  });
+});
+
+describe("materials from files", () => {
+  it("takes a text file as a material, titled from its name", () => {
+    expect(materialFromFile("operator_interview-2026-10-12.md", 40, "We lose requests.")).toEqual({
+      title: "operator interview 2026 10 12",
+      content: "We lose requests.",
+    });
+    expect(materialDocument("Call", "text")).toBe("# Call\n\n## Source\n\nCall\n\n## Material\n\ntext\n");
+  });
+
+  it("refuses what is not text, too large or empty, saying why", () => {
+    expect(materialFromFile("deck.pdf", 10, "%PDF")).toHaveProperty("refused");
+    expect(materialFromFile("big.txt", MATERIAL_MAX_BYTES + 1, "x")).toHaveProperty("refused");
+    expect(materialFromFile("blank.md", 3, "  \n")).toHaveProperty("refused");
+    expect(materialFromFile("odd.txt", 3, "a\u0000b")).toHaveProperty("refused");
   });
 });

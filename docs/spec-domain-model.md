@@ -454,10 +454,16 @@ Read off the same facts, for the PM workflow the PRDs *Describe the need*,
 last five describe the need, not a thing the application keeps, and stay off
 the model map.
 
-- **Materials.** A pasted interview, request or report is a Studio document of
-  the built-in `material` type (Source, Material). A project's Studio-held
+- **Materials.** A pasted interview, request or report, or a text file
+  dropped in (Markdown, plain text, CSV, HTML, e-mail, subtitles; at most
+  512 KiB each, one material per file), is a Studio document of the built-in
+  `material` type (Source, Material). Anything else — a PDF, a Word file — is
+  refused with the reason, never read as garbage. A project's Studio-held
   documents are read beside its repository files, under `studio:<id>`, and a
-  material is read as soon as it is added, on the key of whoever added it.
+  material is read as soon as it is added, on the key of whoever added it:
+  their own, else an AI connection they reach (personal, workspace,
+  organization). When none answers, the reading stops and the Needs view says
+  why beside the intake.
 - **Needs** groups problems, outcomes, ideas and scenarios by role and shows
   the gaps — a problem nothing proposes to solve, an idea that names no
   problem — without filling them in. What a member accepted is proposed as
