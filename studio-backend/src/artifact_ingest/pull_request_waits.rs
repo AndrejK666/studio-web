@@ -283,6 +283,8 @@ pub struct WaitingPull {
     pub number: i64,
     pub title: String,
     pub url: Option<String>,
+    /// The branch it would merge: what its CI runs ran on.
+    pub source_branch: Option<String>,
     pub facts: PullFacts,
     pub assignees: Vec<String>,
     pub verdict: Verdict,
@@ -330,6 +332,7 @@ pub fn waiting_pulls(pulls: &[(String, Value)], now_ms: i64) -> Vec<WaitingPull>
                 number: value.get("number").and_then(Value::as_i64).unwrap_or(0),
                 title: text("title").unwrap_or_default(),
                 url: text("url"),
+                source_branch: text("source_branch"),
                 assignees: strings(value, "assignees"),
                 verdict,
                 review_decision,
@@ -634,6 +637,25 @@ mod tests {
         assert_eq!(got[0].days_since_update, Some(1));
         assert_eq!(got[0].url.as_deref(), Some("https://example.test/pull/7"));
         assert_eq!(got[0].verdict.waiting, Waiting::Nobody);
+    }
+
+    #[test]
+    fn a_pull_names_the_branch_its_ci_ran_on() {
+        let pulls = vec![
+            (
+                "p1".to_owned(),
+                node(json!({ "source_branch": "feat/tests" })),
+            ),
+            ("p2".to_owned(), node(json!({ "source_branch": "" }))),
+        ];
+        let got = waiting_pulls(&pulls, NOW);
+        let branch = |id: &str| {
+            got.iter()
+                .find(|p| p.id == id)
+                .and_then(|p| p.source_branch.clone())
+        };
+        assert_eq!(branch("p1").as_deref(), Some("feat/tests"));
+        assert_eq!(branch("p2"), None, "an empty branch is no branch");
     }
 
     #[test]

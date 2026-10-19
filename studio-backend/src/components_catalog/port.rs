@@ -166,6 +166,29 @@ pub struct EngineChange {
     pub reason: String,
 }
 
+/// The project's gear repository could not be read: its connection's token is
+/// not readable from the organization (a personal token, or removed), or the
+/// repository is gone. The caller can fix that and the server cannot, so a
+/// reader answers it as a refused precondition rather than a server error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeUnreadable {
+    /// `owner/name`.
+    pub repo: String,
+    pub reason: String,
+}
+
+impl std::fmt::Display for CodeUnreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the project's gear repository {} could not be read: {}",
+            self.repo, self.reason
+        )
+    }
+}
+
+impl std::error::Error for CodeUnreadable {}
+
 /// What the catalogue offers the spec-mapping gear (`crate::spec_mapping`): the
 /// components a specification is matched against, and the code a project is
 /// made of. The rules of the matching live in that gear; the facts here.
@@ -182,7 +205,9 @@ pub trait ComponentCatalog: Send + Sync {
     ) -> anyhow::Result<(Vec<Value>, Map<String, Value>)>;
 
     /// The project's code: the repository read, and the crate names every
-    /// `Cargo.toml` in it depends on. `None` when there is no code to read.
+    /// `Cargo.toml` in it depends on. `None` when there is no code to read;
+    /// a [`CodeUnreadable`] error when the project's gear repository cannot
+    /// be read.
     async fn project_dependencies(
         &self,
         ctx: &SecurityContext,

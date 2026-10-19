@@ -107,3 +107,54 @@ fn the_mainline_speaks_first_and_an_unfinished_run_does_not() {
     assert_eq!(latest_completed(&no_main).map(|r| r.id.as_str()), Some("f"));
     assert!(latest_completed(&[]).is_none());
 }
+
+#[test]
+fn a_job_needs_its_run_and_keeps_the_failed_step() {
+    assert!(job_of("j", &json!({ "title": "build" })).is_none());
+    let j = job_of(
+        "j",
+        &json!({ "run": "r", "attempt": 2, "title": "test-backend",
+                 "conclusion": "failure", "failed_step": "cargo test" }),
+    )
+    .expect("a job");
+    assert_eq!(j.name, "test-backend");
+    assert_eq!(j.attempt, Some(2));
+    assert_eq!(j.failed_step.as_deref(), Some("cargo test"));
+}
+
+#[test]
+fn a_run_shows_only_the_jobs_of_the_attempt_it_is_at() {
+    let mut r = run(
+        "r",
+        "abc",
+        "main",
+        "completed",
+        Some("success"),
+        "2026-10-01T00:00:00Z",
+    );
+    r.attempt = Some(2);
+    let job = |id: &str, run: &str, attempt: i64, at: &str| {
+        job_of(
+            id,
+            &json!({ "run": run, "attempt": attempt, "title": id, "started_at": at }),
+        )
+        .unwrap()
+    };
+    let jobs = vec![
+        job("test", "r", 2, "2026-10-01T00:05:00Z"),
+        job("old-test", "r", 1, "2026-10-01T00:00:00Z"),
+        job("build", "r", 2, "2026-10-01T00:01:00Z"),
+        job("other", "s", 2, "2026-10-01T00:00:00Z"),
+    ];
+    let names: Vec<&str> = jobs_of_run(&r, &jobs)
+        .iter()
+        .map(|j| j.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["build", "test"]);
+    r.attempt = None;
+    assert_eq!(
+        jobs_of_run(&r, &jobs).len(),
+        3,
+        "a run that never said its attempt takes all its jobs"
+    );
+}

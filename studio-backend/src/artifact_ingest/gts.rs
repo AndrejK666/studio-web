@@ -12,7 +12,7 @@ use super::comment_threads::{ThreadCounts, Waiting};
 use super::graph::{GtsEdge, GtsNode};
 use crate::connectors::sdk::{
     PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteIssue, RemotePullRequest,
-    RemoteWorkflowRun,
+    RemoteWorkflowJob, RemoteWorkflowRun,
 };
 
 /// Fixed namespace for uuid5 instance ids (studio artifact graph).
@@ -33,6 +33,10 @@ pub const COMMIT_TYPE: &str = "gts.cf.studio.artifact.commit.v1~";
 /// A CI run in a repository: one run of one workflow on one commit
 /// (ADR-0045). A build of the project's product, when its workflow builds it.
 pub const WORKFLOW_RUN_TYPE: &str = "gts.cf.studio.artifact.workflow_run.v1~";
+/// One job of a CI run's latest attempt: which part of the run failed, and at
+/// which step. Beside the run rather than inside it, so a sync that re-reads
+/// the run without its jobs does not wipe them.
+pub const WORKFLOW_JOB_TYPE: &str = "gts.cf.studio.artifact.workflow_job.v1~";
 /// A build of the project's product that the IDE ran -- in a member's desktop
 /// or in a session -- and reported (ADR-0045 phase 2): what was built, where,
 /// and with what result. Written by the report, never edited once finished.
@@ -53,7 +57,7 @@ pub const FILE_CONTENT_TYPE: &str = "gts.cf.studio.artifact.file_content.v1~";
 pub const MAPPING_DECISION_TYPE: &str = "gts.cf.studio.artifact.mapping_decision.v1~";
 
 /// Every artifact node type, for registering and enumerating.
-pub const ALL_NODE_TYPES: [&str; 12] = [
+pub const ALL_NODE_TYPES: [&str; 13] = [
     REPO_TYPE,
     ISSUE_TYPE,
     PULL_REQUEST_TYPE,
@@ -65,6 +69,7 @@ pub const ALL_NODE_TYPES: [&str; 12] = [
     FILE_CONTENT_TYPE,
     MAPPING_DECISION_TYPE,
     WORKFLOW_RUN_TYPE,
+    WORKFLOW_JOB_TYPE,
     BUILD_TYPE,
 ];
 
@@ -190,7 +195,7 @@ pub fn our_type_from_graph(graph_type: &str) -> Option<&'static str> {
 }
 
 /// The node types, with a title and a description each.
-const NODE_TYPE_DOCS: [(&str, &str, &str); 12] = [
+const NODE_TYPE_DOCS: [(&str, &str, &str); 13] = [
     (
         REPO_TYPE,
         "Repository",
@@ -245,6 +250,11 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 12] = [
         WORKFLOW_RUN_TYPE,
         "WorkflowRun",
         "A CI run of one workflow on one commit, pulled from the connector API.",
+    ),
+    (
+        WORKFLOW_JOB_TYPE,
+        "WorkflowJob",
+        "One job of a CI run's latest attempt and the step it failed at, pulled from the connector API.",
     ),
     (
         BUILD_TYPE,
@@ -906,6 +916,38 @@ pub fn workflow_run_node(
     }
 }
 
+/// A CI job's node, keyed by the provider's job id; `run` names the run's
+/// node, and `attempt` the run attempt the job belongs to, so a re-run is
+/// read again.
+pub fn workflow_job_node(
+    scope_key: &str,
+    repo_id: &str,
+    connector_id: &str,
+    repo_full_path: &str,
+    run_node: &str,
+    attempt: Option<i64>,
+    j: RemoteWorkflowJob,
+) -> GtsNode {
+    let id = j.id.to_string();
+    GtsNode {
+        type_id: WORKFLOW_JOB_TYPE,
+        instance_id: anon_id(&[scope_key, connector_id, repo_full_path, "workflow_job", &id]),
+        value: json!({
+            "repo": repo_id,
+            "run": run_node,
+            "attempt": attempt,
+            "external_id": id,
+            "title": j.name,
+            "status": j.status,
+            "conclusion": j.conclusion,
+            "failed_step": j.failed_step,
+            "started_at": j.started_at,
+            "completed_at": j.completed_at,
+            "url": j.url,
+        }),
+    }
+}
+
 /// A build's node id: one per reported build, so the report of its end lands
 /// on the report of its start.
 pub fn build_instance_id(project_id: &str, build_id: &str) -> String {
@@ -1442,6 +1484,29 @@ mod listable_type_tests {
         assert_eq!(a.value["short_sha"], "abcdef1");
         assert_eq!(a.value["repo"], "repo-id");
         assert_eq!(a.value["conclusion"], "failure");
+    }
+
+    #[test]
+    fn a_workflow_job_names_its_run_and_attempt_and_is_keyed_by_job() {
+        assert_eq!(
+            resolve_listable_types(Some("workflow_job")),
+            vec![WORKFLOW_JOB_TYPE]
+        );
+        let job = |id| RemoteWorkflowJob {
+            id,
+            name: "test-backend".into(),
+            conclusion: Some("failure".into()),
+            failed_step: Some("cargo test".into()),
+            ..Default::default()
+        };
+        let a = workflow_job_node("t", "repo-id", "c", "o/r", "run-node", Some(2), job(9));
+        let b = workflow_job_node("t", "repo-id", "c", "o/r", "run-node", Some(2), job(10));
+        assert_ne!(a.instance_id, b.instance_id, "one node per job");
+        assert_eq!(a.type_id, WORKFLOW_JOB_TYPE);
+        assert_eq!(a.value["run"], "run-node");
+        assert_eq!(a.value["attempt"], 2);
+        assert_eq!(a.value["title"], "test-backend");
+        assert_eq!(a.value["failed_step"], "cargo test");
     }
 
     #[test]

@@ -63,6 +63,7 @@ import { ProjectComponentsInventory } from "./project-components-view";
 import { makeZip } from "./zip";
 import { SpecModelTab } from "./spec-model-tab";
 import { ProjectBuilds } from "./builds-tab";
+import { ProjectTests } from "./tests-tab";
 import { ProjectTabHowto } from "./project-path-view";
 import { GearsTable, PermissionsTable } from "./system-tables";
 import {
@@ -724,6 +725,12 @@ function NavIcon({ name }: { name: string }) {
       <>
         <circle cx="12" cy="12" r="9" />
         <path d="M12 7v5h4" />
+      </>
+    ),
+    check: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <path d="m8 12 3 3 5-6" />
       </>
     ),
   };
@@ -5281,6 +5288,11 @@ const PROJECT_TABS: { id: ProjTab; icon: string; label: string }[] = [
   // the tab that says what it is made of, before where it runs. The portal
   // does not build; CI and the IDE do.
   { id: "builds", icon: "activity", label: "Builds" },
+  // Whether what was built works, and whether what the specs say is checked:
+  // the CI jobs of the mainline and of the open pull requests, and a summary
+  // of spec against code that opens Specs. After Builds, which it reads, and
+  // before Deploys, which should take only what passed.
+  { id: "tests", icon: "check", label: "Tests" },
   // Where the product runs (ADR-0043): the organization's environments this
   // project may deploy to, its namespace in each, its bindings and deploys.
   // After Builds, because a deploy takes what a build made. It was a block at
@@ -5636,6 +5648,9 @@ function ProjectScreen({
         )}
         {tab === "builds" && (
           <ProjectBuilds token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />
+        )}
+        {tab === "tests" && (
+          <ProjectTests token={token} projectId={proj.id} workspaceId={workspace.id} onOpenSpecs={() => setTab("specs")} />
         )}
         {tab === "deploys" && (
           <ProjectDeploys token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />

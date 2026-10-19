@@ -26,7 +26,7 @@ use super::local;
 use super::plan::{self, PastDecision, Vocabulary};
 use super::product;
 use crate::artifact_ingest::port::{MappingDecision, MappingDecisionStore};
-use crate::components_catalog::port::ComponentCatalog;
+use crate::components_catalog::port::{CodeUnreadable, ComponentCatalog};
 use crate::documents::port::{Capability, CapabilitySource, DeclaredCapability, SpecNeeds};
 use crate::org_scope::OrgCtx;
 
@@ -87,6 +87,22 @@ impl Ports {
 
 fn internal(e: anyhow::Error) -> CanonicalError {
     CanonicalError::internal(format!("{e:#}")).create()
+}
+
+/// Reading the project's code failed: a gear repository that cannot be read
+/// is the caller's to fix (400 `CODE_UNREADABLE`, naming the repository and
+/// why), anything else the server's.
+fn code_error(e: anyhow::Error) -> CanonicalError {
+    match e.downcast_ref::<CodeUnreadable>() {
+        Some(u) => SpecMappingError::failed_precondition()
+            .with_precondition_violation(
+                format!("repository:{}", u.repo),
+                u.to_string(),
+                "CODE_UNREADABLE",
+            )
+            .create(),
+        None => internal(e),
+    }
 }
 
 fn invalid(field: &str, why: String) -> CanonicalError {
@@ -922,7 +938,7 @@ async fn list_product_findings(
         .catalog()?
         .project_dependencies(&org, &project_id.to_string())
         .await
-        .map_err(internal)?;
+        .map_err(code_error)?;
     // No code to read is not a finding about every capability: it says so
     // once and lists none.
     let Some((repo, deps)) = code else {
@@ -1030,7 +1046,7 @@ async fn create_conformance_report(
     let Some((repo, deps)) = catalog
         .project_dependencies(&org, project_id)
         .await
-        .map_err(internal)?
+        .map_err(code_error)?
     else {
         return Err(SpecMappingError::invalid_argument()
             .with_constraint(
@@ -1405,7 +1421,9 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, ports: Por
              catalogue component that fills it, and which. Then the components the code uses \
              that no capability accounts for -- what the specs may be missing -- and what the \
              Gearbox engine says about the code's own set of gears. The code is the project's \
-             gear repository, read as the run-time dependencies of every Cargo.toml in it.",
+             gear repository, read as the run-time dependencies of every Cargo.toml in it. \
+             400 `CODE_UNREADABLE` when that repository cannot be read -- its connection's \
+             token is not readable from the organization, or the repository is gone.",
         )
         .tag("StudioSpecMapping")
         .authenticated()
@@ -1473,7 +1491,27 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, ports: Por
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::response::IntoResponse;
     use serde_json::json;
+
+    #[test]
+    fn an_unreadable_gear_repository_is_the_callers_to_fix_not_a_server_error() {
+        let unreadable = anyhow::Error::new(CodeUnreadable {
+            repo: "o/gears".into(),
+            reason: "the token for connection 'mine' is not readable".into(),
+        })
+        .context("reading the project's code");
+        assert_eq!(
+            code_error(unreadable).into_response().status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            code_error(anyhow::anyhow!("the database went away"))
+                .into_response()
+                .status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
 
     fn source(id: Uuid, revision: &str) -> CapabilitySource {
         CapabilitySource {

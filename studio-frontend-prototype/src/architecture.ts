@@ -631,6 +631,14 @@ export const SURFACES: Surface[] = [
     gears: ["account-management", "studio-artifact-ingest"],
   },
   {
+    id: "project-tests",
+    area: "project",
+    title: "Tests",
+    does: "See whether what the project built works: the mainline's CI and its 7-day pass rate, each open pull request's CI and document checks, the CI runs of the last two weeks with the job and step that failed; and how much of what the specs declare the code answers, which opens Specs.",
+    components: ["ProjectTests"],
+    gears: ["studio-artifact-ingest", "studio-documents", "studio-spec-mapping"],
+  },
+  {
     id: "project-deploys",
     area: "project",
     title: "Deploys",

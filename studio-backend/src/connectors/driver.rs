@@ -365,6 +365,24 @@ pub struct RemoteWorkflow {
     pub state: Option<String>,
 }
 
+/// One job of a CI run's latest attempt (`build-backend`, `test-prototype`):
+/// what a run's single result does not say — which part of it failed, and at
+/// which step.
+#[derive(Debug, Clone, Default)]
+pub struct RemoteWorkflowJob {
+    pub id: i64,
+    pub name: String,
+    /// `queued`, `in_progress`, `completed`, …
+    pub status: Option<String>,
+    /// For a completed job: `success`, `failure`, `skipped`, …
+    pub conclusion: Option<String>,
+    /// The first step that failed, when one did.
+    pub failed_step: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub url: Option<String>,
+}
+
 /// A repository tree read at a ref, for the knowledge-graph sync.
 #[derive(Debug, Clone)]
 pub struct RepoTree {
@@ -664,6 +682,18 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         per_page: u32,
     ) -> anyhow::Result<Vec<RemoteWorkflowRun>> {
         let _ = (auth, repo_full_path, workflow, page, per_page);
+        Ok(Vec::new())
+    }
+
+    /// The jobs of one CI run's latest attempt, by the provider's run id.
+    /// Defaulted to empty so a driver without CI contributes no jobs.
+    async fn list_workflow_jobs(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        run_id: i64,
+    ) -> anyhow::Result<Vec<RemoteWorkflowJob>> {
+        let _ = (auth, repo_full_path, run_id);
         Ok(Vec::new())
     }
 

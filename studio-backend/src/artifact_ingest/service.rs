@@ -45,6 +45,10 @@ const MAX_COMMITS: usize = 20_000;
 const MAX_RUN_PAGES: u32 = 3;
 /// Workflows whose runs are read, one page of 100 each.
 const MAX_WORKFLOWS: usize = 20;
+/// Completed runs whose jobs one sync reads, newest first, one request each.
+/// Runs whose jobs are already kept are not counted, so the first sync of a
+/// busy repository fills its history in over a few syncs.
+const MAX_JOB_RUNS: usize = 40;
 /// How many open pull requests the review-thread query walks.
 ///
 /// Not a flood guard — the query stores nothing per pull request beyond one
@@ -1097,6 +1101,8 @@ impl IngestService {
         progress.set("pulling CI runs…");
         let mut runs = 0usize;
         let mut ci_error: Option<String> = None;
+        // Completed runs, for their jobs: (created_at, run node, run id, attempt).
+        let mut finished_runs: Vec<(Option<String>, String, i64, Option<i64>)> = Vec::new();
         let reads: Vec<(Option<i64>, u32)> = match driver
             .list_workflows(&auth, repo_full_path)
             .await
@@ -1140,6 +1146,8 @@ impl IngestService {
                 runs += batch.len();
                 for r in batch {
                     let author = r.actor.clone();
+                    let finished = r.status.as_deref() == Some("completed");
+                    let (external, attempt, created) = (r.id, r.attempt, r.created_at.clone());
                     let node = gts::workflow_run_node(
                         source_scope,
                         &repo_id,
@@ -1151,6 +1159,9 @@ impl IngestService {
                     edges.push(gts::artifact_of_edge(&run_id, &repo_id));
                     author_edge(&mut edges, &mut users, &run_id, author.as_deref());
                     nodes.push(node);
+                    if finished {
+                        finished_runs.push((created, run_id, external, attempt));
+                    }
                 }
                 self.flush_and_report(
                     ctx,
@@ -1174,6 +1185,72 @@ impl IngestService {
             runs,
             "studio-artifact-ingest: pulled CI runs"
         );
+
+        // The jobs of the newest completed runs: which part of a run failed,
+        // and at which step. A finished attempt's jobs never change, so a run
+        // whose attempt already has its jobs is not asked again -- a steady
+        // sync asks only for the runs that finished since the last one. Best
+        // effort, like the runs.
+        if ci_error.is_none() && !finished_runs.is_empty() {
+            progress.set("pulling CI jobs…");
+            let known: HashSet<(String, Option<i64>)> = match project_id.or(workspace_id) {
+                Some(scope) => self
+                    .list_in_scope(ctx, Some("workflow_job"), scope)
+                    .await
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|n| {
+                        let run = n.value.get("run")?.as_str()?.to_string();
+                        Some((
+                            run,
+                            n.value.get("attempt").and_then(serde_json::Value::as_i64),
+                        ))
+                    })
+                    .collect(),
+                None => HashSet::new(),
+            };
+            finished_runs.sort_by(|a, b| b.0.cmp(&a.0));
+            let mut jobs = 0usize;
+            for (_, run_node, external, attempt) in finished_runs
+                .into_iter()
+                .filter(|(_, run, _, attempt)| !known.contains(&(run.clone(), *attempt)))
+                .take(MAX_JOB_RUNS)
+            {
+                let batch = match driver
+                    .list_workflow_jobs(&auth, repo_full_path, external)
+                    .await
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = repo_full_path,
+                            "studio-artifact-ingest: CI job listing failed — skipping CI jobs"
+                        );
+                        break;
+                    }
+                };
+                jobs += batch.len();
+                for j in batch {
+                    let node = gts::workflow_job_node(
+                        source_scope,
+                        &repo_id,
+                        connector_id,
+                        repo_full_path,
+                        &run_node,
+                        attempt,
+                        j,
+                    );
+                    edges.push(gts::artifact_of_edge(&node.instance_id, &repo_id));
+                    nodes.push(node);
+                }
+            }
+            tracing::info!(
+                repo = repo_full_path,
+                jobs,
+                "studio-artifact-ingest: pulled CI jobs"
+            );
+        }
 
         // Author nodes discovered along the way join the batch, then a final
         // flush stores them plus anything appended since the last page. Node

@@ -1807,7 +1807,12 @@ impl CatalogService {
                     deps.extend(found);
                     read.push(target.repo);
                 }
-                Err(e) if target.owned => return Err(e),
+                Err(e) if target.owned => {
+                    return Err(anyhow::Error::new(super::port::CodeUnreadable {
+                        repo: target.repo,
+                        reason: format!("{e:#}"),
+                    }));
+                }
                 Err(e) => {
                     tracing::warn!(project_id, repo = target.repo, error = %format!("{e:#}"), "studio-components-catalog: a project source could not be read");
                 }
