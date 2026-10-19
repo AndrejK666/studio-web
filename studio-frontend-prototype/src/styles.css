@@ -2775,3 +2775,8 @@ div.dm-block { padding-left: 0; }
 .tt-day.red { background: var(--destructive); }
 .tt-job td { background: var(--accent); font-size: 13px; }
 .tt-job td:nth-child(2) { padding-left: 24px; }
+
+/* Artifacts › Outputs: a build's or a release's files, under its row. */
+.output-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.output-files li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.output-files .error { flex-basis: 100%; }

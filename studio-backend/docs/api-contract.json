@@ -407,6 +407,39 @@
     },
     {
       "method": "GET",
+      "path": "/studio-artifact-ingest/v1/outputs",
+      "operation_id": "studio_artifact_ingest.list_outputs",
+      "tag": "StudioArtifactIngest",
+      "summary": "What a project's builds produced: CI artifacts and releases",
+      "authenticated": true,
+      "responses": [
+        "OutputListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-artifact-ingest/v1/outputs/{output_id}/download",
+      "operation_id": "studio_artifact_ingest.get_output_download",
+      "tag": "StudioArtifactIngest",
+      "summary": "A short-lived link that downloads one output",
+      "authenticated": true,
+      "responses": [
+        "OutputDownloadDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-artifact-ingest/v1/repo-files",
       "operation_id": "studio_artifact_ingest.repo_files",
       "tag": "StudioArtifactIngest",

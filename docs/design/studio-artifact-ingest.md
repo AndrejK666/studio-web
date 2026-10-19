@@ -162,7 +162,8 @@ Per sync: 10,000 files, 20,000 comments, 20,000 commits, the newest 100 CI
 runs of each of up to 20 active workflows (300 repository-wide when the
 workflows cannot be listed; read again every sync, so a run that was in
 progress shows how it ended; a failed read is kept on the repository node as
-`ci_error`, beside `ci_runs`), 50 pages of 100 per API channel, and review threads of at most 200 open pull requests. Nodes and
+`ci_error`, beside `ci_runs`), the newest 200 CI artifacts and 200 releases
+(read again every sync: artifacts expire, releases gain files), 50 pages of 100 per API channel, and review threads of at most 200 open pull requests. Nodes and
 edges are flushed 1,000 per call (edges went from 5,000 after a large ingest
 took part in an OOM kill, studio-web#561), and a process runs one ingest at a
 time while other task types proceed. A comment thread beyond the file cap is
@@ -175,7 +176,13 @@ cap closes.
 
 - [x] `p2` - **ID**: `cpt-studio-entity-artifact-node`
 
-Node types `gts.cf.studio.artifact.{repo,issue,pull_request,file,user,spec_finding,comment,commit,file_content,mapping_decision,workflow_run,workflow_job,build}.v1~`;
+Node types `gts.cf.studio.artifact.{repo,issue,pull_request,file,user,spec_finding,comment,commit,file_content,mapping_decision,workflow_run,workflow_job,build,build_artifact,release}.v1~`;
+`build_artifact` is a file a CI run uploaded and the provider keeps until
+`expires_at`, keyed by the provider's artifact id; `run` names the
+`workflow_run` node that kept it; `release` is a repository's release with
+its attached files in `assets`. Both carry `repo_full_path` and only a
+description: the bytes stay with the provider, and a download is a link it
+signs for about a minute, asked for when someone clicks (`outputs.rs`);
 `workflow_run` is one CI run of one workflow on one commit, keyed by the
 provider's run id (a re-run upserts over it), and is what a project's Builds
 tab reads (ADR-0045);
@@ -338,6 +345,8 @@ and unscoped listings.
 | `GET` | `/studio-artifact-ingest/v1/edges` | Relations as endpoint pairs, by `scope` | unstable |
 | `GET` | `/studio-artifact-ingest/v1/source-activity` | Pull requests and commits per repository over `days` (default 7, at most 90) | unstable |
 | `GET` | `/studio-artifact-ingest/v1/activity` | One project's checks and comments, newest first | unstable |
+| `GET` | `/studio-artifact-ingest/v1/outputs` | What a `?project_id=` project's builds produced: the `build_artifact` and `release` nodes, newest first; `kind` keeps one of the two, `run` one run's artifacts. The Artifacts tab's Outputs | unstable |
+| `GET` | `/studio-artifact-ingest/v1/outputs/{output_id}/download` | For a member of the project: the provider's signed link to a CI artifact's zip or to the release file `asset_id` names, asked for through the connection of the repository it came from (only one the organization owns, `CONNECTION_NOT_OWNED`). Answered as `{url}`, not as a redirect -- a browser navigation carries no bearer token -- and nothing is downloaded through Studio. 400 `NOT_DOWNLOADABLE` (expired, or a release without `asset_id`), 400 `DOWNLOAD_REFUSED` (the provider's words) | unstable |
 | `GET` | `/studio-artifact-ingest/v1/runs` | One project's CI runs (the `workflow_run` nodes the sync keeps, ADR-0045), by `revision` (full or short sha) or `branch`, newest first; `latest_completed` names the newest completed run on a mainline (main, master, trunk), else the newest completed run: the execution evidence the `tests` stage check reads (issue #783). Each run carries `jobs`, those of the attempt it is at, with `failed_step` and `duration_seconds`. The `DeliveryEvidence` port gives the documents gear the same runs and the count of open pull requests waiting on review | unstable |
 | `GET` | `/studio-artifact-ingest/v1/open-pull-requests` | One project's (or, by `workspace_id`, a workspace's) open pull requests, each in one bucket (`review`, `author`, `merge`, `draft`, `nobody`) with the people it waits on, longest-quiet first; `members_known` says whether accounts were matched to members; `waiting_on=me` keeps the caller's | unstable |
 | `GET` | `/studio-artifact-ingest/v1/repo-files` | Text files of a session checkout | unstable |

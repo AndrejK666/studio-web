@@ -149,6 +149,7 @@ export const TAB_HOWTO: Partial<Record<ProjTab, { lead: string; rest: string }>>
   specs: { lead: "Type the documents.", rest: "Confirm the template each file was written against; what Studio could not decide waits under Needs review." },
   components: { lead: "Compose the product.", rest: "Pick the gears the specs ask for, preview until it resolves, then save it to the repository." },
   builds: { lead: "See what was built.", rest: "The CI runs of the project's repositories, newest first; a passing run on the main branch closes the path." },
+  artifacts: { lead: "Take what the project produced.", rest: "Download the files its CI builds kept and its releases; its typed documents and the files kept in Studio are beside them." },
   kits: { lead: "Install the project's ways of working.", rest: "Kits add workflows and conventions to the repository, pinned to a version." },
   people: { lead: "Choose who works here.", rest: "Add people from the organization and give each a role on this project." },
 };

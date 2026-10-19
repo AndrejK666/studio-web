@@ -363,6 +363,50 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.build_artifact.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "A file a CI run uploaded and the provider keeps, pulled from the connector API.",
+        "title": "BuildArtifact",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/title",
+            "/payload/path",
+            "/payload/full_path",
+            "/payload/state",
+            "/payload/author",
+            "/payload/login",
+            "/payload/labels",
+            "/payload/body",
+            "/payload/message",
+            "/payload/summary",
+            "/payload/severity",
+            "/payload/text_excerpt"
+          ],
+          "vector_search": [
+            "/payload/title",
+            "/payload/path",
+            "/payload/full_path",
+            "/payload/body",
+            "/payload/message",
+            "/payload/summary",
+            "/payload/login",
+            "/payload/text_excerpt"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.build_artifact.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.comment.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -649,6 +693,50 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.pull_request.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.release.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "description": "A release of a repository and the files attached to it, pulled from the connector API.",
+        "title": "Release",
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/payload/title",
+            "/payload/path",
+            "/payload/full_path",
+            "/payload/state",
+            "/payload/author",
+            "/payload/login",
+            "/payload/labels",
+            "/payload/body",
+            "/payload/message",
+            "/payload/summary",
+            "/payload/severity",
+            "/payload/text_excerpt"
+          ],
+          "vector_search": [
+            "/payload/title",
+            "/payload/path",
+            "/payload/full_path",
+            "/payload/body",
+            "/payload/message",
+            "/payload/summary",
+            "/payload/login",
+            "/payload/text_excerpt"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.artifact.release.v1~"
     },
     {
       "gear": "studio-artifact-ingest",
@@ -7754,6 +7842,19 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
+        "$id": "gts://gts.cf.studio.artifact.build_artifact.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A file a CI run uploaded and the provider keeps, pulled from the connector API.",
+        "title": "BuildArtifact",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.artifact.build_artifact.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
         "$id": "gts://gts.cf.studio.artifact.comment.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "A comment on an issue or pull request pulled from the connector API.",
@@ -7839,6 +7940,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.artifact.pull_request.v1~"
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.artifact.release.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A release of a repository and the files attached to it, pulled from the connector API.",
+        "title": "Release",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.artifact.release.v1~"
     },
     {
       "gear": "studio-artifact-ingest",

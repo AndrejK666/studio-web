@@ -25,6 +25,7 @@ mod ingest_task;
 pub mod sdk;
 pub(crate) use ingest_task::{IngestPayload, TASK_TYPE as INGEST_TASK_TYPE};
 mod migrations;
+mod outputs; // what the builds produced: CI artifacts and releases
 pub mod port;
 mod pull_request_waits;
 mod rest;
