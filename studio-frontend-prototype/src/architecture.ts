@@ -712,8 +712,8 @@ export const SURFACES: Surface[] = [
     id: "costs",
     area: "organization",
     title: "Costs",
-    does: "See what the organization's model calls and IDE sessions cost over a period -- by project, person, model, source or who paid, with or without people's own keys -- and keep the price list they are priced with.",
-    components: ["OrgCosts"],
+    does: "See what the organization's model calls and IDE sessions cost over a period -- by project, person, model, source or who paid, with or without people's own keys -- set monthly budgets that warn when this month's spend or its forecast nears or passes them, and keep the price list they are priced with.",
+    components: ["OrgBudgets", "OrgCosts"],
     gears: ["studio-usage"],
   },
   {

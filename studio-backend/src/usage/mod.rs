@@ -11,11 +11,14 @@
 //! account-management metadata row on the organization, [`PRICES_METADATA_TYPE`])
 //! and a report of its usage over a period, priced with that list and grouped
 //! (`rest.rs`, `service.rs`). Records stay quantities; money is derived when
-//! the report is read.
+//! the report is read. Its monthly budgets ([`BUDGETS_METADATA_TYPE`]) warn
+//! when this month's spend, or its forecast, nears or passes them, and stop
+//! nothing.
 //!
 //! No database of its own: the records are the collector's and the price list
 //! is bounded.
 
+mod budgets;
 mod costs;
 mod prices;
 mod rest;
@@ -36,6 +39,10 @@ use toolkit::{Gear, GearCtx};
 /// An organization's price list.
 pub const PRICES_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.usage.prices.v1~";
+
+/// An organization's monthly budgets: warnings, never limits.
+pub const BUDGETS_METADATA_TYPE: &str =
+    "gts.cf.core.am.tenant_metadata.v1~cf.studio.usage.budgets.v1~";
 
 #[toolkit::gear(
     name = "studio-usage",

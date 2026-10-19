@@ -1473,6 +1473,57 @@ export interface CostReport {
   unpriced: string[];
 }
 
+/** A monthly budget: the organization's (no `tenant_id`), a workspace's or a
+ *  project's, in the price list's currency. It warns and stops nothing. */
+export interface Budget {
+  tenant_id?: string | null;
+  monthly: number;
+}
+
+/** What a budget can be set on. */
+export interface BudgetPlace {
+  id: string;
+  label: string;
+  kind: "organization" | "workspace" | "project";
+}
+
+export interface BudgetList {
+  currency: string;
+  /** Percent of a budget at which it warns. */
+  warn_at_percent: number;
+  budgets: Budget[];
+  places: BudgetPlace[];
+  may_manage: boolean;
+}
+
+export type BudgetLevel = "ok" | "warning" | "over";
+
+/** A budget against this month's spend. */
+export interface BudgetStanding {
+  tenant_id?: string | null;
+  label: string;
+  monthly: number;
+  spent: number;
+  /** The month's spend at the pace so far; absent in the first three days. */
+  forecast?: number | null;
+  level: BudgetLevel;
+  /** Only the forecast reaches the level. */
+  by_forecast: boolean;
+}
+
+export interface BudgetStatus {
+  currency: string;
+  warn_at_percent: number;
+  from: string;
+  to: string;
+  measured_at: string;
+  include_personal: boolean;
+  /** Worst first. */
+  standings: BudgetStanding[];
+  /** What had no price this month, so is not in the spend. */
+  unpriced: string[];
+}
+
 /** One place an organization's products run: a cluster reached through a
  *  `kubernetes` connection, a registry, a namespace per project. */
 export interface DeployEnvironment {
@@ -3973,6 +4024,26 @@ export const api = {
         to: q.to,
         group_by: q.group_by,
         include_personal: String(q.include_personal),
+      })}`,
+      token,
+    ),
+
+  /** The organization's monthly budgets and what one can be set on (`cost.view`). */
+  budgets: (token: string, org: string) =>
+    request<BudgetList>(`/studio-usage/v1/budgets?organization_id=${encodeURIComponent(org)}`, token),
+  /** Replace the budgets (`cost.manage`). */
+  updateBudgets: (token: string, org: string, body: { warn_at_percent?: number; budgets: Budget[] }) =>
+    request<BudgetList>(`/studio-usage/v1/budgets?organization_id=${encodeURIComponent(org)}`, token, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  /** Where this month's spend stands against each budget, worst first (`cost.view`).
+   *  People's own keys count only with `include_personal`. */
+  budgetStatus: (token: string, org: string, include_personal = false) =>
+    request<BudgetStatus>(
+      `/studio-usage/v1/budget-status?${new URLSearchParams({
+        organization_id: org,
+        include_personal: String(include_personal),
       })}`,
       token,
     ),

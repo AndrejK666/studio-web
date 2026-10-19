@@ -286,6 +286,16 @@ gears:
             - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
           x-gts-traits:
             inheritance_policy: "override_only"
+        - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.usage.budgets.v1~"
+          # An organization's monthly budgets (issue #781): warnings, never
+          # limits. Written only by studio-usage, on the organization; not inherited.
+          "$schema": "http://json-schema.org/draft-07/schema#"
+          description: "Studio budgets of an organization (free-form until gears issue #4)"
+          type: "object"
+          allOf:
+            - "$ref": "gts://gts.cf.core.am.tenant_metadata.v1~"
+          x-gts-traits:
+            inheritance_policy: "override_only"
         - "$id": "gts://gts.cf.core.am.tenant_metadata.v1~cf.studio.environment.list.v1~"
           # An organization's deployment environments (ADR-0043): cluster
           # connection, registry, namespace pattern, protection. Written only by

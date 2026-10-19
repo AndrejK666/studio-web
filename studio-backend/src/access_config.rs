@@ -70,8 +70,9 @@ pub const PRIVILEGES: [&str; 18] = [
     // Deployment environments (ADR-0043): changing them, and deciding about a
     // deploy to a protected one, is administration asked of studio-user.
     "environment.manage",
-    // An organization's costs (issue #781): reading them, and changing the
-    // price list they are priced with, is administration asked of studio-user.
+    // An organization's costs (issue #781): reading them and its budgets, and
+    // changing the price list they are priced with and the budgets, is
+    // administration asked of studio-user.
     "cost.view",
     "cost.manage",
 ];

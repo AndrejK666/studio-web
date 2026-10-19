@@ -1,5 +1,5 @@
-//! REST surface of `studio-usage`: an organization's price list and its costs
-//! (issue #781). The organization is named with `?organization_id=` (the
+//! REST surface of `studio-usage`: an organization's price list, its costs
+//! and its budgets (issue #781). The organization is named with `?organization_id=` (the
 //! `OrgCtx` extractor): a scope never goes in the path (`api_contract`, rule C).
 
 use std::sync::Arc;
@@ -14,9 +14,10 @@ use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseF
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
 use toolkit_canonical_errors::resource_error;
 
+use super::budgets::{Budget, Budgets};
 use super::costs::GroupBy;
 use super::prices::{ModelPrice, PriceList, SessionPrice};
-use super::service::{MANAGE_PRIVILEGE, Refusal, UsageService, VIEW_PRIVILEGE};
+use super::service::{MANAGE_PRIVILEGE, Place, Refusal, UsageService, VIEW_PRIVILEGE};
 use crate::org_scope::OrgCtx;
 
 /// Errors attributable to an organization's prices or costs.
@@ -137,6 +138,94 @@ pub struct CostsDto {
     pub unpriced: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct BudgetDto {
+    /// A workspace or project of the organization; absent for the whole
+    /// organization.
+    pub tenant_id: Option<String>,
+    /// What may be spent in a calendar month (UTC), in the price list's
+    /// currency.
+    pub monthly: f64,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BudgetPlaceDto {
+    pub id: String,
+    pub label: String,
+    /// `organization`, `workspace` or `project`.
+    pub kind: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BudgetsDto {
+    /// The price list's currency, the one budgets are in.
+    pub currency: String,
+    /// Percent of a budget at which it warns.
+    pub warn_at_percent: u32,
+    pub budgets: Vec<BudgetDto>,
+    /// What a budget can be set on: the organization, its workspaces, its
+    /// projects.
+    pub places: Vec<BudgetPlaceDto>,
+    /// Whether the caller may change them (`cost.manage`).
+    pub may_manage: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct BudgetsRequest {
+    /// 1-99; 80 when absent.
+    pub warn_at_percent: Option<u32>,
+    pub budgets: Vec<BudgetDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BudgetStandingDto {
+    /// Absent for the organization.
+    pub tenant_id: Option<String>,
+    pub label: String,
+    pub monthly: f64,
+    /// Spent so far this month: the organization's total, a workspace's own
+    /// and its projects', a project's own.
+    pub spent: f64,
+    /// The month's spend if it goes on as so far; absent in the first three
+    /// days of a month.
+    pub forecast: Option<f64>,
+    /// `ok`, `warning` (at or past `warn_at_percent`) or `over` (at or past
+    /// the budget).
+    pub level: String,
+    /// The level is reached only by the forecast.
+    pub by_forecast: bool,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BudgetStatusDto {
+    pub currency: String,
+    pub warn_at_percent: u32,
+    /// The month, RFC 3339, `[from, to)`.
+    pub from: String,
+    pub to: String,
+    /// RFC 3339: when the spend was read.
+    pub measured_at: String,
+    /// Whether spend on people's own keys counts against the budgets.
+    pub include_personal: bool,
+    /// Worst first.
+    pub standings: Vec<BudgetStandingDto>,
+    /// `provider/model` (or `session`) that had no price this month: the spend
+    /// leaves it out, so a budget may be nearer than it shows.
+    pub unpriced: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BudgetStatusQuery {
+    #[serde(default)]
+    include_personal: Option<bool>,
+}
+
 #[derive(Debug, Deserialize)]
 struct CostsQuery {
     from: String,
@@ -181,6 +270,50 @@ fn instant(field: &str, raw: &str) -> Result<OffsetDateTime, CanonicalError> {
             .with_constraint(format!("{field} {raw:?} is not an RFC 3339 time"))
             .create()
     })
+}
+
+fn rfc3339(t: OffsetDateTime) -> String {
+    t.format(&Rfc3339).unwrap_or_default()
+}
+
+fn place_kind(org: uuid::Uuid, p: &Place) -> &'static str {
+    if p.id == org {
+        "organization"
+    } else if p.workspace.is_some() {
+        "project"
+    } else {
+        "workspace"
+    }
+}
+
+fn budgets_dto(
+    org: uuid::Uuid,
+    list: Budgets,
+    places: &[Place],
+    currency: String,
+    may_manage: bool,
+) -> BudgetsDto {
+    BudgetsDto {
+        currency,
+        warn_at_percent: u32::from(list.warn_at_percent()),
+        budgets: list
+            .items
+            .into_iter()
+            .map(|b| BudgetDto {
+                tenant_id: b.tenant_id.map(|id| id.to_string()),
+                monthly: b.monthly,
+            })
+            .collect(),
+        places: places
+            .iter()
+            .map(|p| BudgetPlaceDto {
+                id: p.id.to_string(),
+                label: p.label.clone(),
+                kind: place_kind(org, p).to_owned(),
+            })
+            .collect(),
+        may_manage,
+    }
 }
 
 /* ── Handlers ── */
@@ -286,6 +419,125 @@ async fn get_costs(
     }))
 }
 
+async fn get_budgets(
+    OrgCtx(ctx): OrgCtx,
+    Extension(usage): Extension<Usage>,
+) -> ApiResult<JsonBody<BudgetsDto>> {
+    let org = ctx.subject_tenant_id();
+    let (list, places) = usage.0.budgets(&ctx, org).await.map_err(problem)?;
+    let (prices, _) = usage.0.prices(&ctx, org).await.map_err(problem)?;
+    let manage = usage.0.may(&ctx, org, MANAGE_PRIVILEGE).await;
+    Ok(Json(budgets_dto(
+        org,
+        list,
+        &places,
+        prices.currency().to_owned(),
+        manage,
+    )))
+}
+
+async fn update_budgets(
+    OrgCtx(ctx): OrgCtx,
+    Extension(usage): Extension<Usage>,
+    Json(body): Json<BudgetsRequest>,
+) -> ApiResult<JsonBody<BudgetsDto>> {
+    let org = ctx.subject_tenant_id();
+    let invalid = |detail: String| {
+        StudioUsageError::invalid_argument()
+            .with_constraint(detail)
+            .create()
+    };
+    let warn_at_percent = match body.warn_at_percent {
+        None => 0,
+        Some(p) if (1..100).contains(&p) => p as u8,
+        Some(p) => return Err(invalid(format!("warn_at_percent {p} is not 1-99"))),
+    };
+    let mut items = Vec::with_capacity(body.budgets.len());
+    for b in body.budgets {
+        let tenant_id = match b.tenant_id.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(raw) => Some(
+                raw.parse()
+                    .map_err(|_| invalid(format!("tenant_id {raw:?} is not an id")))?,
+            ),
+        };
+        items.push(Budget {
+            tenant_id,
+            monthly: b.monthly,
+        });
+    }
+    let (saved, places) = usage
+        .0
+        .put_budgets(
+            &ctx,
+            org,
+            Budgets {
+                warn_at_percent,
+                items,
+            },
+        )
+        .await
+        .map_err(problem)?;
+    let (prices, _) = usage.0.prices(&ctx, org).await.map_err(problem)?;
+    Ok(Json(budgets_dto(
+        org,
+        saved,
+        &places,
+        prices.currency().to_owned(),
+        true,
+    )))
+}
+
+async fn get_budget_status(
+    OrgCtx(ctx): OrgCtx,
+    Extension(usage): Extension<Usage>,
+    Query(q): Query<BudgetStatusQuery>,
+) -> ApiResult<JsonBody<BudgetStatusDto>> {
+    let org = ctx.subject_tenant_id();
+    let include_personal = q.include_personal.unwrap_or(false);
+    let status = usage
+        .0
+        .budget_status(&ctx, org, include_personal, OffsetDateTime::now_utc())
+        .await
+        .map_err(problem)?;
+    let label = |id: Option<uuid::Uuid>| match id {
+        None => status
+            .places
+            .iter()
+            .find(|p| p.id == org)
+            .map(|p| p.label.clone())
+            .unwrap_or_else(|| "The organization".to_owned()),
+        Some(id) => status
+            .places
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.label.clone())
+            .unwrap_or_else(|| id.to_string()),
+    };
+    Ok(Json(BudgetStatusDto {
+        currency: status.currency.clone(),
+        warn_at_percent: u32::from(status.warn_at_percent),
+        from: rfc3339(status.month.0),
+        to: rfc3339(status.month.1),
+        measured_at: rfc3339(status.as_of),
+        include_personal,
+        standings: status
+            .standings
+            .iter()
+            .map(|s| BudgetStandingDto {
+                tenant_id: s.tenant_id.map(|id| id.to_string()),
+                label: label(s.tenant_id),
+                monthly: s.monthly,
+                spent: s.spent,
+                forecast: s.forecast,
+                level: s.level.as_str().to_owned(),
+                by_forecast: s.by_forecast,
+            })
+            .collect(),
+        unpriced: status.unpriced.clone(),
+    }))
+}
+
 /* ── Routes ── */
 
 pub fn register_routes(
@@ -377,6 +629,83 @@ pub fn register_routes(
         .handler(get_costs)
         .json_response_with_schema::<CostsDto>(openapi, StatusCode::OK, "The costs")
         .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-usage/v1/budgets")
+        .operation_id("studio_usage.get_budgets")
+        .summary("An organization's monthly budgets")
+        .description(
+            "What the organization, a workspace or a project may spend in a calendar month \
+             (UTC), in the price list's currency, and the share at which a budget warns. A \
+             budget warns and stops nothing. `places` lists what a budget can be set on. \
+             Organization administrators, or holders of `cost.view`, only; `may_manage` says \
+             whether the caller may change them.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .handler(get_budgets)
+        .json_response_with_schema::<BudgetsDto>(openapi, StatusCode::OK, "The budgets")
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-usage/v1/budgets")
+        .operation_id("studio_usage.update_budgets")
+        .summary("Replace an organization's monthly budgets")
+        .description(
+            "Organization administrators, or holders of `cost.manage`, only. The whole list \
+             is sent and replaces the stored one. A budget without `tenant_id` is the \
+             organization's; otherwise it names one of its workspaces or projects, each at \
+             most once. Refused when an amount is not above zero, `warn_at_percent` is not \
+             1-99, or a tenant is not the organization's.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .json_request::<BudgetsRequest>(openapi, "The budgets")
+        .handler(update_budgets)
+        .json_response_with_schema::<BudgetsDto>(openapi, StatusCode::OK, "Stored")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-usage/v1/budget-status")
+        .operation_id("studio_usage.get_budget_status")
+        .summary("Where this month's spend stands against each budget")
+        .description(
+            "For each budget: what was spent this calendar month (UTC) in what it covers, the \
+             month's forecast at the pace so far (from the fourth day), and a level — `ok`, \
+             `warning` at or past `warn_at_percent`, `over` at or past the budget — with \
+             `by_forecast` when only the forecast reaches it. Worst first. Spend on people's \
+             own keys counts only with `include_personal=true` (default false: a budget is \
+             the organization's money). What had no price is listed in `unpriced` and not in \
+             the spend. Organization administrators, or holders of `cost.view`, only.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .query_param_typed(
+            "include_personal",
+            false,
+            "Count spend on people's own keys (default false)",
+            "boolean",
+        )
+        .handler(get_budget_status)
+        .json_response_with_schema::<BudgetStatusDto>(openapi, StatusCode::OK, "The standing")
         .error_401(openapi)
         .error_403(openapi)
         .error_404(openapi)

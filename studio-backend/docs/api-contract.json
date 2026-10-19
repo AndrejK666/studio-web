@@ -2668,6 +2668,40 @@
     },
     {
       "method": "GET",
+      "path": "/studio-usage/v1/budget-status",
+      "operation_id": "studio_usage.get_budget_status",
+      "tag": "",
+      "summary": "Where this month's spend stands against each budget",
+      "authenticated": true,
+      "responses": [
+        "BudgetStatusDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-usage/v1/budgets",
+      "operation_id": "studio_usage.get_budgets",
+      "tag": "",
+      "summary": "An organization's monthly budgets",
+      "authenticated": true,
+      "responses": [
+        "BudgetsDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-usage/v1/costs",
       "operation_id": "studio_usage.get_costs",
       "tag": "",
@@ -5657,6 +5691,25 @@
       "errors": [
         "400",
         "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-usage/v1/budgets",
+      "operation_id": "studio_usage.update_budgets",
+      "tag": "",
+      "summary": "Replace an organization's monthly budgets",
+      "authenticated": true,
+      "request": "BudgetsRequest",
+      "responses": [
+        "BudgetsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "404",
         "500"
       ]
