@@ -477,7 +477,11 @@ the model map.
 - **Behaviour**: for each action a role takes on a thing and each state the
   thing goes through, whether it may happen then. A passage that names both
   answers it; otherwise it is asked, or excluded with a reason kept as a
-  review keyed `ob:`.
+  review keyed `ob:`. Above the questions: each action, and each scenario
+  whose steps take one, that a permission rule a member accepted forbids to
+  that role as written ("only owners may delete a project", yet a viewer
+  deletes it), with both passages. Deterministic, and only over accepted
+  rules; a passage that names no role is not judged.
 - **Priorities**: ICE, the mean of Impact, Confidence and Ease, each 1–10;
   Ease from person-weeks by the PRD's bands, Confidence first proposed from a
   requirement's basis (an assumption 1, a citation 3, no basis unknown). Every

@@ -4,9 +4,13 @@
 // may this role do this to it while it is in that state? A question counts as
 // answered only where one passage names both the action and the state; a name
 // found elsewhere is not an answer. What is left is asked, or excluded with a
-// reason a person gives. Pure: discovery-screens.tsx draws it.
+// reason a person gives. And whether what the documents describe can happen
+// at all under the rules a member confirmed (fr-scenario-feasibility): an
+// action or a scenario step a permission forbids to that role. Pure:
+// discovery-screens.tsx draws it.
 
 import { factKey } from "./review-state";
+import { describe, role, type ReadRule, type RuleForm } from "./rule-checks";
 import { subjectKey, type SpecModelFact } from "./spec-model";
 
 export interface Obligation {
@@ -71,6 +75,61 @@ export function obligations(facts: SpecModelFact[]): Obligation[] {
         state,
         answer,
         from: a,
+      });
+    }
+  }
+  return out;
+}
+
+/** An action or a scenario the documents describe that a confirmed rule
+ *  forbids as written: the role is denied the action, or the rule allows it
+ *  only to others (PRD fr-scenario-feasibility). The witness says both. */
+export interface Blocked {
+  fact: SpecModelFact;
+  role: string;
+  rule: ReadRule;
+  witness: string;
+}
+
+/** A verb's stem: "edits", "edited", "editing" and "edit" read the same. */
+const stem = (w: string) => (w.length > 4 ? w.replace(/(ing|ed|es|e|s)$/, "") : w.replace(/s$/, ""));
+
+/** The thing's head noun: "the approved request" is about a request. */
+const head = (s: string) => subjectKey(s).split(" ").pop() ?? "";
+
+/** Whether `who`, as the documents name it, is one of `roles`. */
+function among(who: string, roles: string[]): boolean {
+  const w = ` ${role(who)} `;
+  return roles.some((r) => w.includes(` ${r} `) || ` ${r} `.includes(w));
+}
+
+/** Each action a role takes on a thing, and each scenario whose steps take
+ *  it, checked against the confirmed permission rules about that thing and
+ *  verb. Deterministic: only rules a member accepted are passed in, and a
+ *  passage with no role named is not judged. */
+export function blockedByRules(facts: SpecModelFact[], rules: ReadRule[]): Blocked[] {
+  const perms = rules.filter((r) => r.reading?.form === "permission");
+  if (perms.length === 0) return [];
+  const live = facts.filter((f) => (f.kind === "action" || f.kind === "scenario") && f.status !== "superseded" && f.status !== "resolved");
+  const out: Blocked[] = [];
+  for (const f of live) {
+    const who = f.aspect.trim();
+    if (!who) continue;
+    const said = subjectKey(f.kind === "action" ? `${f.value} ${f.subject}` : `${f.value} ${f.text}`).split(" ");
+    const verbs = new Set(said.map(stem));
+    for (const r of perms) {
+      const p = r.reading as Extract<RuleForm, { form: "permission" }>;
+      if (!verbs.has(stem(p.action))) continue;
+      const thing = head(p.object);
+      if (!thing || (f.kind === "action" ? head(f.subject) !== thing : !said.includes(thing))) continue;
+      const named = among(who, p.roles);
+      const forbidden = (p.deny && named) || (p.only && !p.deny && !named);
+      if (!forbidden) continue;
+      out.push({
+        fact: f,
+        role: who,
+        rule: r,
+        witness: `${f.kind === "scenario" ? `In “${f.subject}”, ` : ""}${who} ${f.kind === "action" ? f.value : `${p.action} ${p.object}`} — but ${describe(p)}`,
       });
     }
   }

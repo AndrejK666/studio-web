@@ -6,7 +6,7 @@ import { useState } from "react";
 
 import type { SpecModelWrite } from "./api";
 import { DataTable } from "./data-table";
-import { obligations, type Obligation } from "./behaviour";
+import { blockedByRules, obligations, type Obligation } from "./behaviour";
 import { conflicts, describe as sayRule, readRule } from "./rule-checks";
 import { FactRow } from "./domain-model-screens";
 import {
@@ -402,23 +402,48 @@ export function HypothesesScreen({
  *  reason. Nothing here is a release gate. */
 export function BehaviourScreen({
   facts,
+  rules,
   decisionOf,
   onExclude,
   onOpenFile,
 }: {
   facts: SpecModelFact[];
+  /** The constraints a member accepted, read: what an action is checked against. */
+  rules: ReturnType<typeof readRule>[];
   decisionOf: (key: string) => { state: string; note: string | null } | undefined;
   /** Record a reason an obligation does not apply, or `null` to ask it again. */
   onExclude?: (o: Obligation, reason: string | null) => Promise<void>;
   onOpenFile: OpenFile;
 }) {
   const list = obligations(facts);
+  const blocked = blockedByRules(facts, rules);
   const [reason, setReason] = useState<Record<string, string>>({});
+  const cannot = blocked.length > 0 && (
+    <details className="card dm-rproblems" open aria-label="Cannot happen as written">
+      <summary className="dm-h">
+        {blocked.length} action{blocked.length === 1 ? "" : "s"} or scenario{blocked.length === 1 ? "" : "s"} a confirmed rule
+        forbids as written
+      </summary>
+      {blocked.map((b, i) => (
+        <div key={i} className="dm-rproblem">
+          <span className="dm-pill dm-bad">Cannot happen</span>
+          <div>
+            <b>{b.witness}.</b>
+            <FactRow fact={b.fact} onOpenFile={onOpenFile} />
+            <FactRow fact={b.rule.fact} onOpenFile={onOpenFile} />
+          </div>
+        </div>
+      ))}
+    </details>
+  );
   if (list.length === 0)
     return (
-      <div className="empty">
-        No behaviour questions yet. They come from an entity&apos;s states (a lifecycle that lists them) and the actions roles
-        take on it, once a build reads them with the current extractor.
+      <div className="nd">
+        {cannot}
+        <div className="empty">
+          No behaviour questions yet. They come from an entity&apos;s states (a lifecycle that lists them) and the actions roles
+          take on it, once a build reads them with the current extractor.
+        </div>
       </div>
     );
   const excluded = list.filter((o) => decisionOf(o.key)?.state === "excluded");
@@ -464,8 +489,10 @@ export function BehaviourScreen({
       <p className="dm-howto">
         <b>What the specification must say about behaviour.</b> For each action roles take on a thing and each state it goes
         through: may it happen then? A question is answered only where one passage names both; otherwise answer it in the
-        documents, or exclude it with a reason. None of this blocks a build.
+        documents, or exclude it with a reason. What a rule you accepted forbids is shown first. None of this blocks a
+        build.
       </p>
+      {cannot}
       <div className="card">
         <DataTable<Obligation>
           list="dm-behaviour"

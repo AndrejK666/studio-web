@@ -33,7 +33,7 @@ const ROLE_WORDS = /\b(only|admins?|administrators?|owners?|members?|viewers?|ed
 const words = (s: string) => subjectKey(s);
 
 /** A role named as a plural or singular reads the same. */
-const role = (r: string) => words(r).replace(/^(admin|administrator)$/, "administrator");
+export const role = (r: string) => words(r).replace(/^(admin|administrator)$/, "administrator");
 
 /** Read one constraint into a form; null with a reason where it has none. */
 export function readRule(f: SpecModelFact): ReadRule {

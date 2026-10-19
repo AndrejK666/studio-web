@@ -29,6 +29,7 @@ import { PrioritiesScreen } from "./priorities-screen";
 import type { Obligation } from "./behaviour";
 import { BehaviourScreen, HypothesesScreen, NeedsScreen, RulesScreen } from "./discovery-screens";
 import { materialDocument, type EvidenceState } from "./need-view";
+import { readRule } from "./rule-checks";
 import { decisionIndex, EVIDENCE_PREFIX, evidenceIndex, FactReviewContext, factKey, reviewIndex, withoutRejected, type FactReview, type SpecModelReview } from "./review-state";
 import { overlaySaved, pruneSaved, savedWrites, withSaved, type SavedEdit } from "./saved-entities";
 import { useGearCatalogue } from "./product-configurator-view";
@@ -582,6 +583,7 @@ export function SpecModelTab({
       {model && view === "behaviour" && (
         <BehaviourScreen
           facts={facts}
+          rules={facts.filter((f) => f.kind === "constraint" && f.status === "active" && reviewByKey.get(factKey(f)) === "accepted").map(readRule)}
           decisionOf={(key) => decisions.get(key)}
           onExclude={(o: Obligation, reason) => recordDecision(o.key, reason === null ? "proposed" : "excluded", reason, o.from.source.path)}
           onOpenFile={onOpenFile}
