@@ -91,6 +91,19 @@ pub fn readable_path(id: &str, path: &str) -> Option<String> {
     (path.rsplit('/').next() == Some(id)).then(|| path.to_owned())
 }
 
+/// `sub` of a checkout as a directory the engine may read: what it resolves to
+/// once links are followed must be a directory strictly inside the checkout.
+/// [`readable_path`] judges the text only, and git checks out committed
+/// symlinks -- a `studio-backend -> ../../<another checkout>` link would
+/// otherwise hand the engine another repository, another tenant's included.
+/// Asked again after every refresh, since a pull can turn a directory into a
+/// link.
+pub fn contained_dir(checkout: &std::path::Path, sub: &str) -> Option<std::path::PathBuf> {
+    let base = checkout.canonicalize().ok()?;
+    let dir = checkout.join(sub).canonicalize().ok()?;
+    (dir != base && dir.starts_with(&base) && dir.is_dir()).then_some(dir)
+}
+
 /// The organization's projects' own gear directories as roots, and each
 /// project's product file. Errors are logged and the project skipped: one
 /// unreadable repository does not take the organization's corpus with it.
@@ -182,7 +195,7 @@ pub async fn read(
                 let Some(sub) = readable_path(id, path) else {
                     continue;
                 };
-                if !clone.dir.join(&sub).is_dir() || !taken.insert(id.clone()) {
+                if contained_dir(&clone.dir, &sub).is_none() || !taken.insert(id.clone()) {
                     continue;
                 }
                 roots.push(GearRoot {
@@ -287,5 +300,37 @@ mod tests {
         assert_eq!(readable_path("x", "/abs/x"), None);
         assert_eq!(readable_path("x", "."), None);
         assert_eq!(readable_path("backend", "studio-backend"), None);
+    }
+
+    #[test]
+    fn a_root_is_read_only_where_it_resolves_inside_its_checkout() {
+        let scratch =
+            std::env::temp_dir().join(format!("studio-project-roots-{}", uuid::Uuid::new_v4()));
+        let checkout = scratch.join("checkout");
+        let elsewhere = scratch.join("another-tenant");
+        std::fs::create_dir_all(checkout.join("crates/gears")).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(checkout.join("README.md"), "").unwrap();
+
+        let inside = contained_dir(&checkout, "crates/gears").expect("a real directory");
+        assert!(inside.ends_with("gears"));
+        assert_eq!(contained_dir(&checkout, "missing"), None);
+        assert_eq!(contained_dir(&checkout, "README.md"), None, "a file is no root");
+        assert_eq!(contained_dir(&checkout, "crates/.."), None, "the checkout itself");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&elsewhere, checkout.join("studio-backend")).unwrap();
+            assert_eq!(
+                contained_dir(&checkout, "studio-backend"),
+                None,
+                "a committed link out of the checkout is not followed"
+            );
+            std::os::unix::fs::symlink(checkout.join("crates"), checkout.join("linked")).unwrap();
+            assert!(
+                contained_dir(&checkout, "linked/gears").is_some(),
+                "a link that stays inside is fine"
+            );
+        }
+        std::fs::remove_dir_all(&scratch).unwrap();
     }
 }

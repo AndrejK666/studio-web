@@ -2675,14 +2675,26 @@ impl Gearbox {
             let mut roots = Vec::with_capacity(wanted.len());
             for (r, result) in wanted.iter().zip(cloned) {
                 match result {
-                    Ok(c) => roots.push(Root {
-                        id: r.id.clone(),
-                        dir: match &r.subdir {
-                            Some(sub) => c.dir.join(sub),
+                    Ok(c) => {
+                        // A project's directory is judged again on the
+                        // refreshed checkout: the pull may have made it a
+                        // link out of the repository.
+                        let dir = match &r.subdir {
+                            Some(sub) => match super::project_roots::contained_dir(&c.dir, sub) {
+                                Some(dir) => dir,
+                                None => {
+                                    warn!(source = %r.id, subdir = %sub, "gearbox: a project's gear directory is not a directory inside its repository; not read");
+                                    continue;
+                                }
+                            },
                             None => c.dir,
-                        },
-                        commit: c.commit,
-                    }),
+                        };
+                        roots.push(Root {
+                            id: r.id.clone(),
+                            dir,
+                            commit: c.commit,
+                        });
+                    }
                     // Keep serving the checkout we have; a flaky fetch should
                     // not turn every preview into an error.
                     Err(e) => match previous.and_then(|p| p.roots.iter().find(|x| x.id == r.id)) {
