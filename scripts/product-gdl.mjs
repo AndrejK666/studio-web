@@ -108,6 +108,19 @@ const [prog, rpcArgs] = engine("rpc", "--stdio");
 const child = spawn(prog, rpcArgs, { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, MSYS_NO_PATHCONV: "1" } });
 let buf = Buffer.alloc(0);
 const waiting = new Map();
+// The engine gone -- it could not start, or it exited before answering --
+// settles every call still waiting with why, and refuses the next ones: an
+// await that never settles ends the script with Node's unsettled-await code
+// and no word about the engine.
+let gone = null;
+const fail = (why) => {
+  if (gone) return;
+  gone = why;
+  for (const settle of waiting.values()) settle({ error: { message: why } });
+  waiting.clear();
+};
+child.on("error", (e) => fail(`the engine could not start: ${e.message}`));
+child.on("exit", (code, signal) => fail(`the engine exited (${signal ?? code}) before answering`));
 child.stdout.on("data", (d) => {
   buf = Buffer.concat([buf, d]);
   for (;;) {
@@ -130,6 +143,7 @@ const send = (msg) => {
   child.stdin.write(body);
 };
 const call = async (method, params) => {
+  if (gone) throw new Error(`${method}: ${gone}`);
   const answer = await new Promise((r) => {
     const id = next++;
     waiting.set(id, r);
@@ -162,9 +176,11 @@ try {
   console.error(`product.gdl: ${sorted.length} gears, ${plugins.length} plugins${applied?.written === false ? " (not written)" : ""}`);
   if (!linkedNames.size) throw new Error("the gear list is empty");
 } finally {
-  await call("shutdown", null).catch(() => undefined);
-  send({ jsonrpc: "2.0", method: "exit" });
-  child.stdin.end();
+  if (!gone) {
+    await call("shutdown", null).catch(() => undefined);
+    send({ jsonrpc: "2.0", method: "exit" });
+    child.stdin.end();
+  }
 }
 
 // GDL 1.1: a profile whose gears keep data names the Postgres they keep it in,
