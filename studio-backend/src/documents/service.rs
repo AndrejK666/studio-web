@@ -1341,6 +1341,8 @@ impl DocumentsService {
                 conforms: false,
                 sections: Vec::new(),
                 issues: vec!["unknown document type".to_string()],
+                maturity: None,
+                open: Vec::new(),
             },
         };
         row.conforms = report.conforms;

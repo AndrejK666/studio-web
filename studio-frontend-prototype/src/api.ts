@@ -2909,6 +2909,12 @@ export interface DocValidation {
   conforms: boolean;
   sections: DocSectionStatus[];
   issues: string[];
+  /** The `maturity:` the document declares (design | experimental | preview |
+   *  stable | deprecated). Below stable the check is lighter. */
+  maturity?: string;
+  /** What the full check would reject and this maturity lets stand. Shown,
+   *  never counted against `conforms`. */
+  open?: string[];
 }
 
 /** The gear repository connected to a project — where its gears live and where

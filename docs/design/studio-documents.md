@@ -31,6 +31,17 @@ This gear makes those opinions data: a document **type** carries a markdown
 template, a section checklist and structural conformance rules, so "is this
 document complete" has an answer that is not a person reading it.
 
+How complete depends on what the document is for. Its front matter may
+declare a `maturity`, the level a gear declares in its `gear.gdl`
+(gears-rust #5275), and the check follows it. At `design` or `experimental`,
+a required section may be missing or short. At `preview`, every section has to
+be written, but `TODO` and `TBD` may stay, because an open question is closed
+with a spike or a follow-up change, not with another review round. At `stable`
+or `deprecated`, and when nothing is declared, the full check applies. An
+unedited template (`{{…}}`, `<…>`) fails at every level. What a level lets
+stand is still listed in the report's `open` and shown in the checklist; it
+just does not count against `conforms`.
+
 Documents reach a project two ways. Somebody writes one in Studio, and its
 content is a column here; or the repository already had one, and a sync binds
 the file to a type. The binding records a verdict and a path, never the text:
