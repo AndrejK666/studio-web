@@ -8,10 +8,10 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, CreatedRepository,
-    DriverIdentity, FileToWrite, OpenedPullRequest, PullRequestThreads, RemoteComment,
-    RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText, RemoteIssue, RemotePullRequest,
-    RemoteRepo, RemoteReview, RemoteWorkflow, RemoteWorkflowRun, RepoTree, RepoTreeEntry,
-    WrittenFile,
+    DownloadTarget, DriverIdentity, FileToWrite, OpenedPullRequest, PullRequestThreads,
+    RemoteBuildArtifact, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText,
+    RemoteIssue, RemotePullRequest, RemoteRelease, RemoteReleaseAsset, RemoteRepo, RemoteReview,
+    RemoteWorkflow, RemoteWorkflowRun, RepoTree, RepoTreeEntry, WrittenFile,
 };
 
 pub struct GitHubDriver {
@@ -300,6 +300,133 @@ impl From<GitHubRun> for RemoteWorkflowRun {
             created_at: r.created_at,
             started_at: r.run_started_at,
             updated_at: r.updated_at,
+        }
+    }
+}
+
+/// `/repos/{path}/actions/artifacts`.
+#[derive(Deserialize)]
+struct GitHubArtifacts {
+    #[serde(default)]
+    artifacts: Vec<GitHubArtifact>,
+}
+
+#[derive(Deserialize)]
+struct GitHubArtifact {
+    id: i64,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    size_in_bytes: Option<i64>,
+    #[serde(default)]
+    expired: bool,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    expires_at: Option<String>,
+    #[serde(default)]
+    workflow_run: Option<GitHubArtifactRun>,
+}
+
+#[derive(Deserialize)]
+struct GitHubArtifactRun {
+    #[serde(default)]
+    id: Option<i64>,
+    #[serde(default)]
+    head_branch: Option<String>,
+    #[serde(default)]
+    head_sha: Option<String>,
+}
+
+impl From<GitHubArtifact> for RemoteBuildArtifact {
+    fn from(a: GitHubArtifact) -> Self {
+        let run = a.workflow_run;
+        RemoteBuildArtifact {
+            id: a.id,
+            name: a.name,
+            size_in_bytes: a.size_in_bytes,
+            expired: a.expired,
+            created_at: a.created_at,
+            expires_at: a.expires_at,
+            run_id: run.as_ref().and_then(|r| r.id),
+            branch: run.as_ref().and_then(|r| r.head_branch.clone()),
+            sha: run.and_then(|r| r.head_sha),
+        }
+    }
+}
+
+/// `/repos/{path}/releases`.
+#[derive(Deserialize)]
+struct GitHubRelease {
+    id: i64,
+    #[serde(default)]
+    tag_name: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    html_url: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    assets: Vec<GitHubReleaseAsset>,
+}
+
+#[derive(Deserialize)]
+struct GitHubReleaseAsset {
+    id: i64,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    size: Option<i64>,
+    #[serde(default)]
+    content_type: Option<String>,
+    #[serde(default)]
+    download_count: Option<i64>,
+}
+
+impl From<GitHubRelease> for RemoteRelease {
+    fn from(r: GitHubRelease) -> Self {
+        RemoteRelease {
+            id: r.id,
+            tag: r.tag_name,
+            name: r.name.filter(|n| !n.trim().is_empty()),
+            draft: r.draft,
+            prerelease: r.prerelease,
+            url: r.html_url,
+            created_at: r.created_at,
+            published_at: r.published_at,
+            assets: r
+                .assets
+                .into_iter()
+                .map(|a| RemoteReleaseAsset {
+                    id: a.id,
+                    name: a.name,
+                    size: a.size,
+                    content_type: a.content_type,
+                    download_count: a.download_count,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The API path that answers a download of `target` with a redirect to a
+/// signed link. A release asset redirects only when asked for its bytes
+/// (`Accept: application/octet-stream`); otherwise it answers its metadata.
+fn download_path(target: DownloadTarget) -> (String, &'static str) {
+    match target {
+        DownloadTarget::BuildArtifact(id) => (
+            format!("actions/artifacts/{id}/zip"),
+            "application/vnd.github+json",
+        ),
+        DownloadTarget::ReleaseAsset(id) => {
+            (format!("releases/assets/{id}"), "application/octet-stream")
         }
     }
 }
@@ -1002,6 +1129,104 @@ impl ConnectorDriver for GitHubDriver {
             .into_iter()
             .map(RemoteWorkflowRun::from)
             .collect())
+    }
+
+    async fn list_build_artifacts(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteBuildArtifact>> {
+        let url = format!(
+            "{}/repos/{repo_full_path}/actions/artifacts?per_page={}&page={}",
+            auth.root(),
+            per_page.clamp(1, 100),
+            page.max(1),
+        );
+        let res = self.request(&url, auth).send().await?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let listed: GitHubArtifacts = res.json().await?;
+        Ok(listed
+            .artifacts
+            .into_iter()
+            .map(RemoteBuildArtifact::from)
+            .collect())
+    }
+
+    async fn list_releases(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteRelease>> {
+        let url = format!(
+            "{}/repos/{repo_full_path}/releases?per_page={}&page={}",
+            auth.root(),
+            per_page.clamp(1, 100),
+            page.max(1),
+        );
+        let res = self.request(&url, auth).send().await?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let listed: Vec<GitHubRelease> = res.json().await?;
+        Ok(listed.into_iter().map(RemoteRelease::from).collect())
+    }
+
+    /// GitHub answers both downloads with a 302 to a signed link that lives
+    /// about a minute. The request goes out on a client that does not follow
+    /// it -- following would pull the file through this pod -- and the
+    /// `Location` is the answer.
+    async fn download_link(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        target: DownloadTarget,
+    ) -> anyhow::Result<String> {
+        let (path, accept) = download_path(target);
+        let url = format!("{}/repos/{repo_full_path}/{path}", auth.root());
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        // Not `headers()`: a request builder appends headers, and a second
+        // Accept beside the JSON one makes GitHub answer an asset's metadata.
+        let mut rb = client
+            .get(&url)
+            .header("Accept", accept)
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "constructor-studio");
+        if !auth.token.trim().is_empty() {
+            rb = rb.header("Authorization", format!("Bearer {}", auth.token));
+        }
+        let res = rb.send().await?;
+        let status = res.status();
+        if status.is_redirection()
+            && let Some(location) = res
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+        {
+            return Ok(location.to_owned());
+        }
+        let body = res.text().await.unwrap_or_default();
+        anyhow::bail!(
+            "GitHub {status} for a download link to {repo_full_path}/{path}: {}",
+            body.chars().take(200).collect::<String>()
+        )
     }
 
     async fn read_file(
@@ -2527,6 +2752,130 @@ mod tests {
         assert_eq!(
             runs[0].workflow, "",
             "a run with almost nothing still reads"
+        );
+    }
+
+    #[test]
+    fn a_build_artifact_names_the_run_that_kept_it() {
+        let body = json!({
+            "total_count": 2,
+            "artifacts": [{
+                "id": 4402,
+                "name": "studio-backend",
+                "size_in_bytes": 88_080_384_i64,
+                "expired": false,
+                "created_at": "2026-10-19T06:50:00Z",
+                "expires_at": "2027-01-17T06:50:00Z",
+                "workflow_run": { "id": 39211473339_i64, "head_branch": "main", "head_sha": "01be2b55" }
+            }, { "id": 7, "expired": true }]
+        });
+        let listed: GitHubArtifacts = serde_json::from_value(body).unwrap();
+        let mut got: Vec<RemoteBuildArtifact> =
+            listed.artifacts.into_iter().map(Into::into).collect();
+        let a = got.remove(0);
+        assert_eq!(a.name, "studio-backend");
+        assert_eq!(a.run_id, Some(39211473339));
+        assert_eq!(a.branch.as_deref(), Some("main"));
+        assert_eq!(a.sha.as_deref(), Some("01be2b55"));
+        assert_eq!(a.size_in_bytes, Some(88_080_384));
+        assert!(got[0].expired && got[0].run_id.is_none());
+    }
+
+    #[test]
+    fn a_release_keeps_its_assets_and_drops_an_empty_name() {
+        let body = json!([{
+            "id": 1,
+            "tag_name": "v0.9.0",
+            "name": " ",
+            "prerelease": true,
+            "html_url": "https://github.com/o/r/releases/tag/v0.9.0",
+            "published_at": "2026-10-18T10:00:00Z",
+            "assets": [{ "id": 11, "name": "studio.dmg", "size": 1024, "download_count": 3 }]
+        }]);
+        let listed: Vec<GitHubRelease> = serde_json::from_value(body).unwrap();
+        let r = RemoteRelease::from(listed.into_iter().next().unwrap());
+        assert_eq!(r.tag, "v0.9.0");
+        assert_eq!(r.name, None);
+        assert!(r.prerelease && !r.draft);
+        assert_eq!(r.assets.len(), 1);
+        assert_eq!(r.assets[0].name, "studio.dmg");
+        assert_eq!(r.assets[0].download_count, Some(3));
+    }
+
+    /// The signed link is read off the redirect, never followed: the host it
+    /// points at does not even resolve, so following it would fail the call.
+    #[tokio::test]
+    async fn a_download_link_is_the_redirect_github_answers_not_the_file() {
+        use axum::http::HeaderMap;
+        async fn artifact_zip(headers: HeaderMap) -> Response {
+            assert_eq!(
+                headers.get("authorization").and_then(|v| v.to_str().ok()),
+                Some("Bearer test-token")
+            );
+            (
+                StatusCode::FOUND,
+                [("location", "https://signed.invalid/zip?sig=a")],
+            )
+                .into_response()
+        }
+        async fn asset(headers: HeaderMap) -> Response {
+            let accept = headers.get("accept").and_then(|v| v.to_str().ok());
+            if accept == Some("application/octet-stream") {
+                (
+                    StatusCode::FOUND,
+                    [("location", "https://signed.invalid/asset?sig=b")],
+                )
+                    .into_response()
+            } else {
+                Json(json!({ "id": 9, "name": "metadata, not bytes" })).into_response()
+            }
+        }
+        async fn gone() -> Response {
+            (StatusCode::GONE, "Artifact has expired").into_response()
+        }
+        let app = Router::new()
+            .route(
+                "/repos/{owner}/{repo}/actions/artifacts/5/zip",
+                get(artifact_zip),
+            )
+            .route("/repos/{owner}/{repo}/actions/artifacts/6/zip", get(gone))
+            .route("/repos/{owner}/{repo}/releases/assets/{id}", get(asset));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let (driver, auth) = driver_and_auth(format!("http://{addr}"));
+
+        let zip = driver
+            .download_link(&auth, "o/r", DownloadTarget::BuildArtifact(5))
+            .await
+            .unwrap();
+        assert_eq!(zip, "https://signed.invalid/zip?sig=a");
+        let bytes = driver
+            .download_link(&auth, "o/r", DownloadTarget::ReleaseAsset(9))
+            .await
+            .unwrap();
+        assert_eq!(bytes, "https://signed.invalid/asset?sig=b");
+        let expired = driver
+            .download_link(&auth, "o/r", DownloadTarget::BuildArtifact(6))
+            .await
+            .unwrap_err();
+        assert!(format!("{expired:#}").contains("410"), "{expired:#}");
+    }
+
+    #[test]
+    fn a_release_asset_is_asked_for_its_bytes_and_an_artifact_for_its_zip() {
+        assert_eq!(
+            download_path(DownloadTarget::BuildArtifact(5)),
+            (
+                "actions/artifacts/5/zip".to_owned(),
+                "application/vnd.github+json"
+            )
+        );
+        assert_eq!(
+            download_path(DownloadTarget::ReleaseAsset(9)),
+            ("releases/assets/9".to_owned(), "application/octet-stream")
         );
     }
 }

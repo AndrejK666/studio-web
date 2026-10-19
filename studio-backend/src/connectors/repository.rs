@@ -16,7 +16,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::driver::{
-    ConnectionAuth, ConnectorDriver, CreatedIssue, CreatedRepository, FileToWrite,
+    ConnectionAuth, ConnectorDriver, CreatedIssue, CreatedRepository, DownloadTarget, FileToWrite,
     OpenedPullRequest, RemoteCommit, RemoteFileList, RemoteFileText,
 };
 use super::service::ConnectorService;
@@ -112,6 +112,14 @@ impl Repository {
             .dispatch_workflow(&self.auth, &self.repo, workflow, &git_ref)
             .await?;
         Ok(git_ref)
+    }
+
+    /// A short-lived, provider-signed link that downloads a CI artifact or a
+    /// release asset of this repository ([`ConnectorDriver::download_link`]).
+    pub async fn download_link(&self, target: DownloadTarget) -> Result<String> {
+        self.driver
+            .download_link(&self.auth, &self.repo, target)
+            .await
     }
 
     /// One page of tag names.
