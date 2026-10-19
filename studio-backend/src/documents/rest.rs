@@ -2587,6 +2587,51 @@ pub struct SpecModelReviewListDto {
     pub total: u32,
 }
 
+/// A hypothesis check method a kit adds, as its `check-methods.json` says.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitCheckMethodDto {
+    /// The kit that adds it.
+    pub kit: String,
+    pub id: String,
+    pub label: String,
+    /// The uncertainty it addresses.
+    pub uncertainty: String,
+    /// What it needs from earlier steps or materials.
+    pub inputs: String,
+    /// What to do and what comes out.
+    pub action: String,
+    /// What a result of it cannot establish.
+    pub limits: String,
+    /// Words in a claim that make it apply.
+    pub applies_to: Vec<String>,
+}
+
+/// A kit whose methods were not read, and why.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitCheckMethodsUnreadDto {
+    pub kit: String,
+    pub why: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitCheckMethodListDto {
+    pub items: Vec<KitCheckMethodDto>,
+    pub total: u32,
+    /// Kits named whose file was absent, unreadable or out of shape.
+    pub unread: Vec<KitCheckMethodsUnreadDto>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CheckMethodsQuery {
+    pub project_id: String,
+    /// The kits to read, comma-separated slugs: the project's installed kits.
+    #[serde(default)]
+    pub kits: String,
+}
+
 /// One fact to accept, reject, or put back as proposed.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -5458,14 +5503,22 @@ async fn create_spec_model_issue(
 }
 
 /// Whether a review state belongs to what its key names: a fact, a
-/// hypothesis (`ev:`), a behaviour obligation (`ob:`) or a match across
-/// projects (`rel:`). `proposed` withdraws any of them.
+/// hypothesis's evidence (`ev:`) or its check (`hyp:`), a behaviour
+/// obligation (`ob:`), a match across projects (`rel:`), an item being
+/// prioritised (`pri:`) or a confirmed order (`prc:`). `proposed` withdraws
+/// any of them.
 fn review_state_fits(key: &str, state: &str) -> bool {
     if state == "proposed" {
         return true;
     }
     if key.starts_with("ev:") {
         matches!(state, "supports" | "contradicts" | "insufficient")
+    } else if key.starts_with("hyp:") {
+        state == "check"
+    } else if key.starts_with("pri:") {
+        state == "scored"
+    } else if key.starts_with("prc:") {
+        state == "confirmed"
     } else if key.starts_with("ob:") {
         state == "excluded"
     } else if key.starts_with("rel:") {
@@ -5475,6 +5528,12 @@ fn review_state_fits(key: &str, state: &str) -> bool {
     } else {
         matches!(state, "accepted" | "rejected")
     }
+}
+
+/// How long a review's note may be: a hypothesis's check keeps its brief and
+/// what checking found, so it gets more room than a reason in a sentence.
+fn review_note_max(key: &str) -> usize {
+    if key.starts_with("hyp:") { 8000 } else { 2000 }
 }
 
 /// Propose a whole document for the project's repository, as a pull request:
@@ -5557,6 +5616,74 @@ fn glossary_row_dto(r: super::spec_model::glossary_doc::Row) -> GlossaryDocRowDt
 
 /// The glossary the project's documents keep — `docs/glossary.md`, or a
 /// glossary section inside another document — read as written.
+/// The hypothesis check methods the named kits add, each read from the
+/// kit's `check-methods.json` in the project's repository. A kit with no
+/// file, or one out of shape, is listed with the reason; nothing is guessed.
+async fn list_kit_check_methods(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<CheckMethodsQuery>,
+) -> ApiResult<JsonBody<KitCheckMethodListDto>> {
+    use super::spec_model::check_methods::{KITS_MAX, is_kit_slug, parse, path_of};
+    let project_id = parse_project_id(&query.project_id)?;
+    let _ = parent_workspace(&service, &ctx, project_id).await?;
+    let mut kits: Vec<&str> = query
+        .kits
+        .split(',')
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .collect();
+    kits.dedup();
+    if kits.len() > KITS_MAX || !kits.iter().all(|k| is_kit_slug(k)) {
+        return Err(DocumentsError::invalid_argument()
+            .with_field_violation(
+                "kits",
+                format!("at most {KITS_MAX} kit slugs: lowercase letters, digits and dashes"),
+                "INVALID",
+            )
+            .create());
+    }
+    let mut items = Vec::new();
+    let mut unread = Vec::new();
+    if !kits.is_empty() {
+        let files = project_files(&quality)?;
+        let project = project_id.to_string();
+        for kit in kits {
+            let why = match files.read(&ctx, &project, &path_of(kit)).await {
+                Ok(Some(text)) => match parse(&text) {
+                    Ok(methods) => {
+                        items.extend(methods.into_iter().map(|m| KitCheckMethodDto {
+                            kit: kit.to_owned(),
+                            id: m.id,
+                            label: m.label,
+                            uncertainty: m.uncertainty,
+                            inputs: m.inputs,
+                            action: m.action,
+                            limits: m.limits,
+                            applies_to: m.applies_to,
+                        }));
+                        continue;
+                    }
+                    Err(why) => why,
+                },
+                // Most kits add no methods: that is no failure to report.
+                Ok(None) => continue,
+                Err(e) => format!("the repository could not be read: {e}"),
+            };
+            unread.push(KitCheckMethodsUnreadDto {
+                kit: kit.to_owned(),
+                why,
+            });
+        }
+    }
+    Ok(Json(KitCheckMethodListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        unread,
+    }))
+}
+
 async fn get_glossary_document(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
@@ -5743,13 +5870,21 @@ async fn review_spec_model_facts(
         if !review_state_fits(key, &i.state) {
             return Err(invalid(
                 "state",
-                "must be accepted, rejected or proposed; for a hypothesis (ev:) supports, contradicts or \
-                 insufficient; for an obligation (ob:) excluded; for a match across projects (rel:) \
-                 reuse, coordinate, separate or unrelated",
+                "must be accepted, rejected or proposed; for a hypothesis's evidence (ev:) supports, \
+                 contradicts or insufficient; for its check (hyp:) check; for an obligation (ob:) \
+                 excluded; for a match across projects (rel:) reuse, coordinate, separate or \
+                 unrelated; for a prioritised item (pri:) scored; for a confirmed order (prc:) \
+                 confirmed",
             ));
         }
-        if i.note.as_ref().is_some_and(|n| n.len() > 2000) {
-            return Err(invalid("note", "must be at most 2000 bytes"));
+        if i.note
+            .as_ref()
+            .is_some_and(|n| n.len() > review_note_max(key))
+        {
+            return Err(invalid(
+                "note",
+                "must be at most 2000 bytes, or 8000 for a hypothesis's check (hyp:)",
+            ));
         }
         if i.path.len() > 1024 || i.revision.len() > 128 {
             return Err(invalid("path", "must be a document path and its revision"));
@@ -8058,6 +8193,39 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/check-methods")
+        .operation_id("studio_documents.list_spec_model_check_methods")
+        .summary("The hypothesis check methods the project's kits add")
+        .description(
+            "Each named kit's `.cf-studio/config/kits/<kit>/check-methods.json` in the project's \
+             repository, read as written: a JSON array of methods, each with the uncertainty it \
+             addresses, what it needs, what it does, what a result of it cannot establish and \
+             the words in a claim it applies to. A kit with no such file adds nothing; one whose \
+             file is out of shape or unreadable is listed in `unread` with the reason. The five \
+             built-in methods are the portal's and are not listed.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose kits to read")
+        .query_param(
+            "kits",
+            false,
+            "The kits to read: comma-separated slugs, at most 20",
+        )
+        .handler(list_kit_check_methods)
+        .json_response_with_schema::<KitCheckMethodListDto>(
+            openapi,
+            StatusCode::OK,
+            "The methods the kits add",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
     router = OperationBuilder::get("/studio-documents/v1/spec-model/glossary/document")
         .operation_id("studio_documents.get_spec_model_glossary_document")
         .summary("The glossary the project's documents keep, read as written")
@@ -8148,7 +8316,12 @@ pub fn register_routes(
         .summary("Accept, reject or put back a selection of facts in one action")
         .description(
             "Each item is a fact's key with `accepted`, `rejected`, or `proposed` to withdraw an \
-             earlier review, and where it was read. At most 500 in one call.",
+             earlier review, and where it was read. Prefixed keys carry the project's other \
+             decisions under the same rule: a hypothesis's evidence (`ev:`) and its check \
+             (`hyp:`, a note of up to 8000 bytes), an excluded obligation (`ob:`), a match \
+             across projects (`rel:`), an opened issue (`iss:`), an item being prioritised \
+             (`pri:`, state `scored`) and a confirmed order (`prc:`, state `confirmed`). At most \
+             500 in one call.",
         )
         .tag("StudioDocuments")
         .authenticated()
@@ -9881,6 +10054,20 @@ pub fn register_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_review_state_fits_only_what_its_key_names() {
+        assert!(review_state_fits("0123456789abcdef", "accepted"));
+        assert!(review_state_fits("hyp:0123456789abcdef", "check"));
+        assert!(review_state_fits("pri:cpt-a-fr-search", "scored"));
+        assert!(review_state_fits("prc:2026-10-19T08:00:00Z", "confirmed"));
+        assert!(review_state_fits("pri:cpt-a-fr-search", "proposed"));
+        assert!(!review_state_fits("pri:cpt-a-fr-search", "accepted"));
+        assert!(!review_state_fits("hyp:0123456789abcdef", "supports"));
+        assert!(!review_state_fits("0123456789abcdef", "scored"));
+        assert_eq!(review_note_max("hyp:0123456789abcdef"), 8000);
+        assert_eq!(review_note_max("pri:cpt-a"), 2000);
+    }
 
     #[test]
     fn an_analysis_request_may_carry_inline_texts_alone() {

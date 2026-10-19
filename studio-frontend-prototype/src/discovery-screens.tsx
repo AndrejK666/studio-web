@@ -6,20 +6,31 @@ import { useState } from "react";
 
 import type { SpecModelWrite } from "./api";
 import { DataTable } from "./data-table";
-import { obligations, type Obligation } from "./behaviour";
+import { blockedByRules, obligations, type Obligation } from "./behaviour";
 import { conflicts, describe as sayRule, readRule } from "./rule-checks";
 import { FactRow } from "./domain-model-screens";
 import {
-  CHECK_METHOD_LABEL,
-  CHECK_METHOD_WHAT,
+  CHECK_NOTE_MAX,
+  checkSize,
+  hypothesesDocument,
+  proposedBrief,
+  proposedMethods,
+  TIMING_LABEL,
+  type Check,
+  type MethodDef,
+  type Timing,
+} from "./hypothesis-check";
+import {
   EVIDENCE_LABEL,
   hypothesesOf,
+  materialFromFile,
+  MATERIAL_MAX_BYTES,
   needGaps,
   needsByRole,
   needDocument,
   unlinkedRequirements,
-  type CheckMethod,
   type EvidenceState,
+  type Hypothesis,
 } from "./need-view";
 import type { SpecModelFact, SpecRequirement } from "./spec-model";
 
@@ -32,9 +43,12 @@ export function NeedsScreen({
   onAddMaterial,
   onPropose,
   requirements,
+  readStopped,
 }: {
   facts: SpecModelFact[];
   onOpenFile: OpenFile;
+  /** Why the last reading stopped — no model key anyone reaches, most often. */
+  readStopped?: string | null;
   /** Whether a member accepted a reading. */
   accepted: (f: SpecModelFact) => boolean;
   /** Keep a pasted material in the project and read it at once. */
@@ -67,6 +81,25 @@ export function NeedsScreen({
   );
   const [adding, setAdding] = useState<{ title: string; content: string } | null>(null);
   const [state, setState] = useState<{ busy: boolean; error?: string; done?: SpecModelWrite; added?: string }>({ busy: false });
+  const [refused, setRefused] = useState<string[]>([]);
+  /** Each text file a material of its own, read once all are added. */
+  const addFiles = async (files: FileList | null) => {
+    if (!files?.length || !onAddMaterial) return;
+    const took: string[] = [];
+    const no: string[] = [];
+    await run(async () => {
+      for (const file of [...files]) {
+        const m = materialFromFile(file.name, file.size, file.size <= MATERIAL_MAX_BYTES ? await file.text() : "");
+        if ("refused" in m) no.push(m.refused);
+        else {
+          await onAddMaterial(m.title, m.content);
+          took.push(m.title);
+        }
+      }
+    }, undefined);
+    setRefused(no);
+    setState((s) => ({ ...s, added: took.length ? took.map((t) => `“${t}”`).join(", ") : undefined }));
+  };
   const run = async (act: () => Promise<SpecModelWrite | void>, added?: string) => {
     setState({ busy: true });
     try {
@@ -109,9 +142,25 @@ export function NeedsScreen({
       ) : (
         <div className="dm-actions">
           {onAddMaterial && (
-            <button type="button" className="ghost" onClick={() => setAdding({ title: "", content: "" })}>
-              Add material
-            </button>
+            <>
+              <button type="button" className="ghost" onClick={() => setAdding({ title: "", content: "" })}>
+                Paste material
+              </button>
+              <label className="nd-file" title="Markdown, plain text, CSV, HTML, e-mail or subtitles; each file is one material">
+                Add files
+                <input
+                  type="file"
+                  multiple
+                  className="sr-only"
+                  accept=".md,.markdown,.txt,.text,.csv,.tsv,.json,.html,.htm,.eml,.vtt,.srt,.log,.yaml,.yml"
+                  disabled={state.busy}
+                  onChange={(e) => {
+                    void addFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </>
           )}
           {onPropose && (
             <button
@@ -124,10 +173,23 @@ export function NeedsScreen({
               Accept the need ({acceptedNeed.filter((f) => f.kind !== "role").length} readings)
             </button>
           )}
-          <span className="hint">Materials are read as soon as they are added, on your model key.</span>
+          <span className="hint">
+            Materials are read as soon as they are added: on your own model key, else an AI connection you reach — yours, the
+            workspace&apos;s or the organization&apos;s.
+          </span>
         </div>
       )}
-      {state.added && <span className="dm-saved">✓ “{state.added}” added; it is being read.</span>}
+      {state.added && <span className="dm-saved">✓ {state.added.startsWith("“") ? state.added : `“${state.added}”`} added; being read.</span>}
+      {readStopped && (
+        <span className="error-inline" data-read-stopped>
+          Reading stopped: {readStopped}
+        </span>
+      )}
+      {refused.map((r) => (
+        <span key={r} className="error-inline">
+          Not added — {r}
+        </span>
+      ))}
       {state.done && (
         <span className="dm-saved">
           ✓ Proposed{" "}
@@ -250,16 +312,44 @@ export function HypothesesScreen({
   facts,
   stateOf,
   onEvidence,
+  catalogue,
+  kitNote,
+  checkOf,
+  onSaveCheck,
+  onPropose,
   onOpenFile,
 }: {
   facts: SpecModelFact[];
   /** Where a hypothesis stands, as members recorded it. */
   stateOf: (f: SpecModelFact) => EvidenceState;
   onEvidence?: (f: SpecModelFact, state: EvidenceState) => Promise<void>;
+  /** The check methods: built in, then the project's kits'. */
+  catalogue: MethodDef[];
+  /** Which kits' methods were read, or why some were not. */
+  kitNote?: string | null;
+  /** The check a member planned or recorded for a hypothesis. */
+  checkOf: (h: Hypothesis) => Check | undefined;
+  onSaveCheck?: (h: Hypothesis, check: Check) => Promise<void>;
+  /** Propose the hypotheses as docs/hypotheses.md. */
+  onPropose?: (content: string) => Promise<SpecModelWrite>;
   onOpenFile: OpenFile;
 }) {
   const list = hypothesesOf(facts);
-  const [method, setMethod] = useState<Record<number, CheckMethod>>({});
+  const [draft, setDraft] = useState<Record<number, Check>>({});
+  const [saving, setSaving] = useState<{ i?: number; error?: string; done?: SpecModelWrite; busy?: boolean }>({});
+  const label = (id: string) => catalogue.find((m) => m.id === id)?.label ?? id;
+  /** What the row shows: the draft being edited, else the record, else a
+   *  first proposal nobody saved. */
+  const checkAt = (i: number, h: Hypothesis): Check =>
+    draft[i] ??
+    checkOf(h) ?? {
+      methods: proposedMethods(h, catalogue).map((p) => p.id).slice(0, 1),
+      timing: null,
+      brief: "",
+      criterion: "",
+      result: "",
+    };
+  const edit = (i: number, h: Hypothesis, patch: Partial<Check>) => setDraft((d) => ({ ...d, [i]: { ...checkAt(i, h), ...patch } }));
   if (list.length === 0)
     return (
       <div className="empty">
@@ -278,6 +368,40 @@ export function HypothesesScreen({
         for whom, with what effect. Studio proposes how to check it; what the check found is yours to record. Accepting the
         wording is not validating it, and an unchecked hypothesis stops nothing.
       </p>
+      {(onPropose || kitNote) && (
+        <div className="dm-actions">
+          {onPropose && (
+            <button
+              type="button"
+              className="ghost"
+              disabled={saving.busy}
+              title="Write every hypothesis, where it stands and how it is checked to docs/hypotheses.md, as a pull request"
+              onClick={() => {
+                setSaving({ busy: true });
+                onPropose(hypothesesDocument(list, (h) => stateOf(h.fact), (h) => checkOf(h), catalogue))
+                  .then((done) => setSaving({ done }))
+                  .catch((e: unknown) => setSaving({ error: e instanceof Error ? e.message : String(e) }));
+              }}
+            >
+              {saving.busy ? "Proposing…" : "Propose as docs/hypotheses.md"}
+            </button>
+          )}
+          {saving.done && (
+            <span className="dm-saved">
+              ✓ Proposed{" "}
+              {saving.done.pr_url ? (
+                <a href={saving.done.pr_url} target="_blank" rel="noreferrer">
+                  as a pull request
+                </a>
+              ) : (
+                <>on {saving.done.branch}</>
+              )}
+            </span>
+          )}
+          {kitNote && <span className="hint">{kitNote}</span>}
+        </div>
+      )}
+      {saving.error && <div className="error">{saving.error}</div>}
       <div className="card">
         <DataTable<HypRow>
           list="dm-hypotheses"
@@ -305,25 +429,117 @@ export function HypothesesScreen({
             { id: "solution", header: "Solution", compare: (a, b) => a.h.solution.localeCompare(b.h.solution), cell: (r) => <b>{r.h.solution || <i>not named</i>}</b> },
             { id: "role", header: "For whom", cell: (r) => r.h.role || <i className="sub">not named</i> },
             { id: "effect", header: "Expected", cell: (r) => r.h.effect || <i className="sub">not stated</i> },
-            { id: "method", header: "Check by", cell: (r) => CHECK_METHOD_LABEL[method[r.i] ?? r.h.method] },
+            {
+              id: "method",
+              header: "Check by",
+              cell: (r) => {
+                const c = checkOf(r.h);
+                return c ? (
+                  <span>
+                    {c.methods.map(label).join(", ") || <i className="sub">no method</i>}
+                    {c.timing && <small className="hint" style={{ display: "block" }}>{TIMING_LABEL[c.timing]}</small>}
+                  </span>
+                ) : (
+                  <span className="sub">proposed: {label(proposedMethods(r.h, catalogue)[0].id)}</span>
+                );
+              },
+            },
           ]}
           expand={(r) => {
-            const m = method[r.i] ?? r.h.method;
+            const c = checkAt(r.i, r.h);
+            const chosen = catalogue.filter((m) => c.methods.includes(m.id));
+            const proposals = proposedMethods(r.h, catalogue);
+            const size = checkSize(c);
             return (
               <div className="nd-hyp-detail">
                 <FactRow fact={r.h.fact} onOpenFile={onOpenFile} />
                 <div className="nd-check">
+                  <span className="hint">
+                    Proposed: {proposals.map((p) => `${label(p.id)} — ${p.why}`).join("; ")}.
+                  </span>
+                  <div className="nd-methods" role="group" aria-label="Check by">
+                    {catalogue.map((m) => (
+                      <label key={m.id} title={`${m.uncertainty} Needs: ${m.inputs} Limit: ${m.limits}`}>
+                        <input
+                          type="checkbox"
+                          checked={c.methods.includes(m.id)}
+                          onChange={(e) =>
+                            edit(r.i, r.h, { methods: e.target.checked ? [...c.methods, m.id] : c.methods.filter((x) => x !== m.id) })
+                          }
+                        />{" "}
+                        {m.label}
+                        {m.kit && <small className="hint"> · {m.kit} kit</small>}
+                      </label>
+                    ))}
+                  </div>
+                  {chosen.map((m) => (
+                    <span key={m.id} className="hint">
+                      <b>{m.label}:</b> {m.uncertainty} {m.action} <i>Limit: {m.limits}</i>
+                    </span>
+                  ))}
                   <label>
-                    Check by{" "}
-                    <select value={m} onChange={(e) => setMethod((x) => ({ ...x, [r.i]: e.target.value as CheckMethod }))}>
-                      {(Object.keys(CHECK_METHOD_LABEL) as CheckMethod[]).map((k) => (
-                        <option key={k} value={k}>
-                          {CHECK_METHOD_LABEL[k]}
+                    When{" "}
+                    <select value={c.timing ?? ""} onChange={(e) => edit(r.i, r.h, { timing: (e.target.value || null) as Timing | null })}>
+                      <option value="">not chosen</option>
+                      {(Object.keys(TIMING_LABEL) as Timing[]).map((t) => (
+                        <option key={t} value={t}>
+                          {TIMING_LABEL[t]}
                         </option>
                       ))}
                     </select>
                   </label>
-                  <span className="hint">{CHECK_METHOD_WHAT[m]}</span>
+                  <label className="nd-field">
+                    Brief{" "}
+                    <button type="button" className="dm-link" onClick={() => edit(r.i, r.h, { brief: proposedBrief(r.h, chosen, c.timing) })}>
+                      {c.brief ? "propose again" : "propose one"}
+                    </button>
+                    <textarea rows={c.brief ? 7 : 2} value={c.brief} onChange={(e) => edit(r.i, r.h, { brief: e.target.value })} />
+                  </label>
+                  <label className="nd-field">
+                    Criterion to read a result by
+                    <input
+                      type="text"
+                      placeholder="Not agreed: a result is then exploratory"
+                      value={c.criterion}
+                      onChange={(e) => edit(r.i, r.h, { criterion: e.target.value })}
+                    />
+                  </label>
+                  <label className="nd-field">
+                    What checking found
+                    <textarea
+                      rows={3}
+                      placeholder="Paste or write the result: who was observed or asked, under what conditions, what was seen."
+                      value={c.result}
+                      onChange={(e) => edit(r.i, r.h, { result: e.target.value })}
+                    />
+                  </label>
+                  {onSaveCheck && (
+                    <div className="dm-actions">
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={size > CHECK_NOTE_MAX || saving.i === r.i}
+                        onClick={() => {
+                          setSaving({ i: r.i });
+                          onSaveCheck(r.h, c)
+                            .then(() => {
+                              setDraft((d) => {
+                                const { [r.i]: _saved, ...rest } = d;
+                                return rest;
+                              });
+                              setSaving({});
+                            })
+                            .catch((e: unknown) => setSaving({ error: e instanceof Error ? e.message : String(e) }));
+                        }}
+                      >
+                        {saving.i === r.i ? "Saving…" : "Save the check"}
+                      </button>
+                      <span className={size > CHECK_NOTE_MAX ? "error-inline" : "hint"}>
+                        {size} / {CHECK_NOTE_MAX} bytes
+                      </span>
+                      {!c.criterion.trim() && c.result.trim() && <span className="hint">No criterion agreed: the result is kept as exploratory.</span>}
+                    </div>
+                  )}
                 </div>
                 {onEvidence && (
                   <div className="dm-actions">
@@ -349,23 +565,48 @@ export function HypothesesScreen({
  *  reason. Nothing here is a release gate. */
 export function BehaviourScreen({
   facts,
+  rules,
   decisionOf,
   onExclude,
   onOpenFile,
 }: {
   facts: SpecModelFact[];
+  /** The constraints a member accepted, read: what an action is checked against. */
+  rules: ReturnType<typeof readRule>[];
   decisionOf: (key: string) => { state: string; note: string | null } | undefined;
   /** Record a reason an obligation does not apply, or `null` to ask it again. */
   onExclude?: (o: Obligation, reason: string | null) => Promise<void>;
   onOpenFile: OpenFile;
 }) {
   const list = obligations(facts);
+  const blocked = blockedByRules(facts, rules);
   const [reason, setReason] = useState<Record<string, string>>({});
+  const cannot = blocked.length > 0 && (
+    <details className="card dm-rproblems" open aria-label="Cannot happen as written">
+      <summary className="dm-h">
+        {blocked.length} action{blocked.length === 1 ? "" : "s"} or scenario{blocked.length === 1 ? "" : "s"} a confirmed rule
+        forbids as written
+      </summary>
+      {blocked.map((b, i) => (
+        <div key={i} className="dm-rproblem">
+          <span className="dm-pill dm-bad">Cannot happen</span>
+          <div>
+            <b>{b.witness}.</b>
+            <FactRow fact={b.fact} onOpenFile={onOpenFile} />
+            <FactRow fact={b.rule.fact} onOpenFile={onOpenFile} />
+          </div>
+        </div>
+      ))}
+    </details>
+  );
   if (list.length === 0)
     return (
-      <div className="empty">
-        No behaviour questions yet. They come from an entity&apos;s states (a lifecycle that lists them) and the actions roles
-        take on it, once a build reads them with the current extractor.
+      <div className="nd">
+        {cannot}
+        <div className="empty">
+          No behaviour questions yet. They come from an entity&apos;s states (a lifecycle that lists them) and the actions roles
+          take on it, once a build reads them with the current extractor.
+        </div>
       </div>
     );
   const excluded = list.filter((o) => decisionOf(o.key)?.state === "excluded");
@@ -411,8 +652,10 @@ export function BehaviourScreen({
       <p className="dm-howto">
         <b>What the specification must say about behaviour.</b> For each action roles take on a thing and each state it goes
         through: may it happen then? A question is answered only where one passage names both; otherwise answer it in the
-        documents, or exclude it with a reason. None of this blocks a build.
+        documents, or exclude it with a reason. What a rule you accepted forbids is shown first. None of this blocks a
+        build.
       </p>
+      {cannot}
       <div className="card">
         <DataTable<Obligation>
           list="dm-behaviour"

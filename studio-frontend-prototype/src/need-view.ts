@@ -73,29 +73,14 @@ export function needGaps(facts: SpecModelFact[]): NeedGap[] {
   return out;
 }
 
-/** How a claim is checked: the five methods the PRD confirms. */
+/** How a claim is checked: the five methods the PRD confirms, described in
+ *  hypothesis-check.ts BUILTIN_METHODS; a kit may add more. */
 export type CheckMethod = "problem" | "benefit" | "tco" | "demand" | "existing";
-
-export const CHECK_METHOD_LABEL: Record<CheckMethod, string> = {
-  problem: "Problem evidence",
-  benefit: "Expected benefit",
-  tco: "Time / TCO estimate",
-  demand: "Demand",
-  existing: "Existing capability",
-};
-
-export const CHECK_METHOD_WHAT: Record<CheckMethod, string> = {
-  problem: "do the people named actually have this problem, how often, how badly",
-  benefit: "does the solution produce the effect for these people under these conditions",
-  tco: "a rough estimate of the time or cost saved, its units, horizon and assumptions",
-  demand: "how many independent customers ask for it, not how many messages",
-  existing: "does the product, or another of the company's, already do this",
-};
 
 /** A first method for a claim, read from its words; a person changes it. */
 export function proposeMethod(text: string): CheckMethod {
   const t = text.toLowerCase();
-  if (/\b(time|hours?|minutes?|days?|faster|quicker|cost|cheaper|save[sd]?|saving|tco|effort)\b/.test(t)) return "tco";
+  if (/\b(time|seconds?|hours?|minutes?|days?|faster|quicker|cost|cheaper|save[sd]?|saving|tco|effort)\b/.test(t)) return "tco";
   if (/\b(demand|customers? (want|ask)|ask(ed)? for|requests?|wanted by)\b/.test(t)) return "demand";
   if (/\b(already|existing|currently|today)\b/.test(t)) return "existing";
   if (/\b(problem|pain|struggl\w*|difficult\w*|frustrat\w*|cannot|can't)\b/.test(t)) return "problem";
@@ -161,6 +146,28 @@ export function needDocument(accepted: SpecModelFact[]): string {
     }
   }
   return out.join("\n");
+}
+
+/** A material as the built-in `material` document keeps it: what it is, then
+ *  the text as it was given. */
+export function materialDocument(title: string, content: string): string {
+  return `# ${title}\n\n## Source\n\n${title}\n\n## Material\n\n${content}\n`;
+}
+
+/** The largest material one file may be: what a document holds. */
+export const MATERIAL_MAX_BYTES = 512 * 1024;
+
+const TEXT_FILE = /\.(md|markdown|txt|text|csv|tsv|json|html?|eml|vtt|srt|log|ya?ml)$/i;
+
+/** A file someone dropped in, as a material, or why it is not taken: only
+ *  text is read as it is, so a PDF or a Word file is refused with a word on
+ *  what to do instead, never read as garbage. */
+export function materialFromFile(name: string, size: number, text: string): { title: string; content: string } | { refused: string } {
+  if (!TEXT_FILE.test(name)) return { refused: `${name}: only text files are read as they are (Markdown, plain text, CSV, HTML, e-mail, subtitles); paste the text of anything else` };
+  if (size > MATERIAL_MAX_BYTES) return { refused: `${name}: larger than ${MATERIAL_MAX_BYTES / 1024} KiB; split it or paste the part that matters` };
+  if (!text.trim()) return { refused: `${name}: empty` };
+  if (text.includes("\u0000")) return { refused: `${name}: not text` };
+  return { title: name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || name, content: text };
 }
 
 /** Functional requirements that name no problem or goal the materials give,

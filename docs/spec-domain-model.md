@@ -310,8 +310,9 @@ Under `/studio-documents/v1`, beside the gear's other routes:
 | `POST` | `/spec-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
 | `GET` | `/spec-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
 | `GET` | `/spec-model/reviews?project_id=` | Every accept or reject members gave on the facts the model read, by the key the tab gives a fact (kind, subject, aspect and the folded quote, hashed) |
-| `POST` | `/spec-model/reviews` | Accept, reject, or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same |
-| `POST` | `/spec-model/files/proposals` | A whole Markdown document under `docs/` as a pull request: the need a member accepted (`docs/discovery.md`), a confirmed prioritisation (`docs/priorities.md`); `201` with the pull request |
+| `POST` | `/spec-model/reviews` | Accept, reject, or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same. Prefixed keys carry the project's other decisions: `ev:` evidence, `hyp:` a hypothesis's check, `ob:` an excluded obligation, `rel:` a match across projects, `iss:` an opened issue, `pri:` an item being prioritised, `prc:` a confirmed order |
+| `POST` | `/spec-model/files/proposals` | A whole Markdown document under `docs/` as a pull request: the need a member accepted (`docs/discovery.md`), a confirmed prioritisation (`docs/priorities.md`), the hypotheses and their checks (`docs/hypotheses.md`); `201` with the pull request |
+| `GET` | `/spec-model/check-methods?project_id=&kits=` | The hypothesis check methods the named kits add, each read from `.cf-studio/config/kits/<kit>/check-methods.json`; a kit whose file is out of shape is listed in `unread` with the reason |
 | `POST` | `/spec-model/glossary/distinct` | Two entries are different things: kept on both as `distinct_from`, so they are not offered as one thing again; `204` |
 | `POST` | `/spec-model/glossary/decisions` | Name an entry, or make it an alias of another; `201` with the decision |
 | `POST` | `/spec-model/glossary/proposals?project_id=` | Rename `from` to `to` in the documents' prose (whole words, first letter's case kept; code, links and front matter untouched) as one pull request; `201` with the files and the pull request, `400` when no document uses `from` |
@@ -454,10 +455,16 @@ Read off the same facts, for the PM workflow the PRDs *Describe the need*,
 last five describe the need, not a thing the application keeps, and stay off
 the model map.
 
-- **Materials.** A pasted interview, request or report is a Studio document of
-  the built-in `material` type (Source, Material). A project's Studio-held
+- **Materials.** A pasted interview, request or report, or a text file
+  dropped in (Markdown, plain text, CSV, HTML, e-mail, subtitles; at most
+  512 KiB each, one material per file), is a Studio document of the built-in
+  `material` type (Source, Material). Anything else — a PDF, a Word file — is
+  refused with the reason, never read as garbage. A project's Studio-held
   documents are read beside its repository files, under `studio:<id>`, and a
-  material is read as soon as it is added, on the key of whoever added it.
+  material is read as soon as it is added, on the key of whoever added it:
+  their own, else an AI connection they reach (personal, workspace,
+  organization). When none answers, the reading stops and the Needs view says
+  why beside the intake.
 - **Needs** groups problems, outcomes, ideas and scenarios by role and shows
   the gaps — a problem nothing proposes to solve, an idea that names no
   problem — without filling them in. What a member accepted is proposed as
@@ -467,17 +474,43 @@ the model map.
   expected benefit, time/TCO, demand, existing capability) and one of four
   states — not checked, supports, contradicts, insufficient — kept as a
   review keyed `ev:`. Accepting the wording is not validating it, and an
-  unchecked hypothesis stops nothing.
+  unchecked hypothesis stops nothing. Its **check** is an object of its own,
+  kept beside it as a review keyed `hyp:` (state `check`, a JSON note of up
+  to 8000 bytes): the methods chosen, when (research among available
+  materials, an experiment with people, after implementation), a brief
+  Studio proposes and the member edits, the criterion to read a result by
+  (left empty, a result stays exploratory) and what checking found. The
+  methods are a catalogue: the five built in, each with the uncertainty it
+  addresses, its inputs, its action and its limits, then any a kit installed
+  in the project adds through `.cf-studio/config/kits/<kit>/check-methods.json`
+  (a JSON array of `id`, `label`, `uncertainty`, `inputs`, `action`,
+  `limits`, `applies_to`), proposed for a claim whose words it names. The
+  hypotheses, where they stand and how they are checked are proposed as
+  `docs/hypotheses.md` for reading; the records stay the source. Priorities
+  reads them: a requirement whose title or text names a hypothesis's solution
+  gets its first Confidence from what checking found — supports the effect
+  5, supports only a problem, demand or capability 3, contradicts or too
+  little 1, both ways unresolved — shown beside the score.
 - **Behaviour**: for each action a role takes on a thing and each state the
   thing goes through, whether it may happen then. A passage that names both
   answers it; otherwise it is asked, or excluded with a reason kept as a
-  review keyed `ob:`.
+  review keyed `ob:`. Above the questions: each action, and each scenario
+  whose steps take one, that a permission rule a member accepted forbids to
+  that role as written ("only owners may delete a project", yet a viewer
+  deletes it), with both passages. Deterministic, and only over accepted
+  rules; a passage that names no role is not judged.
 - **Priorities**: ICE, the mean of Impact, Confidence and Ease, each 1–10;
   Ease from person-weeks by the PRD's bands, Confidence first proposed from a
   requirement's basis (an assumption 1, a citation 3, no basis unknown). Every
   value shows its origin, an unknown leaves the score incomplete, a tie stays a
   tie, and a prerequisite comes before what needs it while a cycle is shown.
-  A confirmed order is proposed as `docs/priorities.md`.
+  The working set is the project's, shared by everyone who opens it: each
+  item compared is a review keyed `pri:` (state `scored`) whose note keeps
+  what was entered. A confirmed order is proposed as `docs/priorities.md` and
+  recorded keyed `prc:` (state `confirmed`) with the pull request and the
+  order, so the view says whether the order changed since it was confirmed
+  last and lists every confirmation. A comparison an earlier version kept in
+  one browser is brought into the project only when someone asks.
 - **Elsewhere**: a pair with another project's requirement is decided —
   reuse, coordinate, keep separate, unrelated — and kept, keyed `rel:`.
 
