@@ -107,6 +107,70 @@ impl GearboxConfig {
 pub struct EngineCatalogue {
     #[serde(default)]
     pub gears: BTreeMap<String, EngineGear>,
+    /// What the engine refused or warned about while reading the roots.
+    #[serde(default)]
+    pub diagnostics: Vec<CatalogueDiagnostic>,
+}
+
+/// A diagnostic as the catalogue prints it; [`parse_diagnostics`] makes the
+/// repository-relative [`EngineDiagnostic`] a person reads.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CatalogueDiagnostic {
+    pub code: String,
+    #[serde(default)]
+    pub severity: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub location: Option<CatalogueLocation>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CatalogueLocation {
+    pub uri: String,
+}
+
+impl EngineCatalogue {
+    /// A root the engine read no gear from while refusing files in it: the
+    /// engine cannot read that root's GDL (a corpus moved past the pinned
+    /// engine reads like this: GBX0102 on every gear.gdl and zero gears).
+    /// Without this the catalogue loads with the root's gears silently gone.
+    pub fn unreadable_root(&self, roots: &[(String, PathBuf)]) -> Option<String> {
+        roots.iter().find_map(|(id, dir)| {
+            if self
+                .gears
+                .values()
+                .any(|g| g.source.as_deref() == Some(id.as_str()))
+            {
+                return None;
+            }
+            let dir = dir.to_string_lossy().replace('\\', "/");
+            let dir = dir.trim_end_matches('/');
+            let errors: Vec<&CatalogueDiagnostic> = self
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity == "error")
+                .filter(|d| d.location.as_ref().is_some_and(|l| l.uri.contains(dir)))
+                .collect();
+            let first = errors.first()?;
+            let mut codes: BTreeMap<&str, usize> = BTreeMap::new();
+            for d in &errors {
+                *codes.entry(d.code.as_str()).or_default() += 1;
+            }
+            let codes: Vec<String> = codes
+                .iter()
+                .map(|(c, n)| format!("{c} \u{d7}{n}"))
+                .collect();
+            Some(format!(
+                "the gear engine read no gear from the repository `{id}`: {} error(s) ({}), \
+                 first: {}. The repository has likely moved to a GDL this engine cannot read; \
+                 point the deployment at a ref this engine reads, or move the engine",
+                errors.len(),
+                codes.join(", "),
+                first.message
+            ))
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -2682,6 +2746,9 @@ impl Gearbox {
             })?;
             let parsed: EngineCatalogue = serde_json::from_value(raw.clone())
                 .context("the engine's catalogue does not have the expected shape")?;
+            if let Some(why) = parsed.unreadable_root(&named) {
+                bail!(why);
+            }
             corpus.catalogue = Some(Arc::new(parsed));
             corpus.raw = Some(Arc::new(raw));
         }
@@ -3180,6 +3247,50 @@ mod tests {
             vec!["gts.x.core.orphan.plugin.v1~".to_string()]
         );
         assert!(catalogue.host_of(gear).is_none());
+    }
+
+    #[test]
+    fn a_root_the_engine_cannot_read_is_named_not_dropped() {
+        // The pinned engine over a corpus moved to a newer GDL: every
+        // gear.gdl refused, no gear from it, the project's own gears still read.
+        let diag = |file: &str| {
+            json!({
+                "code": "GBX0102",
+                "severity": "error",
+                "message": "Variable `git` not found, did you mean `dict`?",
+                "location": {"uri": format!("file:///var/lib/studio/gearbox/gears-rust/{file}/gear.gdl")}
+            })
+        };
+        let catalogue: EngineCatalogue = serde_json::from_value(json!({
+            "gears": {
+                "studio-authz-plugin": {
+                    "id": "studio-authz-plugin",
+                    "package": {"crate_name": "studio-authz-plugin"},
+                    "source": "studio-web"
+                }
+            },
+            "diagnostics": [diag("gears/a"), diag("gears/b")]
+        }))
+        .expect("a catalogue with diagnostics deserializes");
+        let roots = vec![
+            (
+                "gears-rust".to_string(),
+                PathBuf::from("/var/lib/studio/gearbox/gears-rust"),
+            ),
+            (
+                "studio-web".to_string(),
+                PathBuf::from("/var/lib/studio/gearbox/studio-web"),
+            ),
+        ];
+        let why = catalogue
+            .unreadable_root(&roots)
+            .expect("the corpus root is reported");
+        assert!(why.contains("`gears-rust`"), "{why}");
+        assert!(why.contains("GBX0102 \u{d7}2"), "{why}");
+
+        // A root with no gears and no errors (a project without gear.gdl) is fine.
+        let quiet: EngineCatalogue = serde_json::from_value(json!({"gears": {}})).unwrap();
+        assert!(quiet.unreadable_root(&roots).is_none());
     }
 
     /// The corpus shape that matters: a host with an extension point, two
