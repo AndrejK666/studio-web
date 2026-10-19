@@ -6,7 +6,9 @@
 // confirmed it, when, the pull request and the order itself. Pure:
 // priorities-screen.tsx loads and saves.
 
-import { fnv64, type SpecModelReview } from "./review-state";
+import { fnv64, type ReviewWrite, type SpecModelReview } from "./review-state";
+
+export type { ReviewWrite };
 
 /** What a person entered for one item. */
 export interface Entry {
@@ -20,15 +22,6 @@ export interface WorkingSet {
   /** The items compared, in the order they were added. */
   items: string[];
   entries: Record<string, Entry>;
-}
-
-/** One review as the reviews endpoint takes it. */
-export interface ReviewWrite {
-  fact_key: string;
-  state: string;
-  path: string;
-  revision: string;
-  note?: string | null;
 }
 
 export const PRIORITY_PREFIX = "pri:";

@@ -102,6 +102,39 @@ export function confidenceFromBasis(basis: RequirementBasis): Criterion {
   }
 }
 
+/** A hypothesis about an item, as far as checking it went. */
+export interface CheckedClaim {
+  claim: string;
+  state: "unchecked" | "supports" | "contradicts" | "insufficient";
+  /** The methods its check used: built-in ids or a kit's. */
+  methods: string[];
+}
+
+/** A first Confidence from what checking the item's hypotheses found, on the
+ *  PRD's evidence anchors (fr-confidence). Checking that supports the expected
+ *  effect is direct evidence at best (5) — a pilot (7) or a measurement (9)
+ *  is the person's to say; support from problem, demand or capability
+ *  evidence alone — or a kit's method, whose reach Studio does not know — is
+ *  indirect for the effect (3); a contradiction is a weak
+ *  claim (1); for and against together stays unresolved. Null when nothing
+ *  was checked: the requirement's own basis then speaks. */
+export function confidenceFromHypotheses(claims: CheckedClaim[]): Criterion | null {
+  const checked = claims.filter((c) => c.state !== "unchecked");
+  if (checked.length === 0) return null;
+  const names = (cs: CheckedClaim[]) => cs.map((c) => `“${c.claim}”`).join(", ");
+  const supports = checked.filter((c) => c.state === "supports");
+  const against = checked.filter((c) => c.state === "contradicts");
+  if (supports.length && against.length)
+    return unknown(`Checking supports ${names(supports)} and contradicts ${names(against)}: conflicting evidence, for a person to weigh.`);
+  if (against.length) return { score: 1, origin: "estimated", basis: `Checking contradicts ${names(against)}.` };
+  const forEffect = supports.filter((c) => c.methods.length === 0 || c.methods.some((m) => m === "benefit" || m === "tco"));
+  if (forEffect.length)
+    return { score: 5, origin: "estimated", basis: `Checking supports the expected effect of ${names(forEffect)}: direct evidence at best; a pilot is 7, a measurement 9.` };
+  if (supports.length)
+    return { score: 3, origin: "estimated", basis: `Checking supports ${names(supports)} as a problem, demand or capability: indirect evidence of the effect.` };
+  return { score: 1, origin: "estimated", basis: `Checking found too little on ${names(checked)}: still an unverified claim.` };
+}
+
 export interface Ranked {
   id: string;
   score: number | null;

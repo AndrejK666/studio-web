@@ -8,11 +8,13 @@ import { DataTable } from "./data-table";
 
 import {
   confidenceFromBasis,
+  confidenceFromHypotheses,
   easeFromEffort,
   ICE_LABEL,
   iceScore,
   orderItems,
   unknown,
+  type CheckedClaim,
   type Criterion,
   type IceCriterion,
   type IceInputs,
@@ -30,6 +32,7 @@ import {
   type ReviewWrite,
   type WorkingSet,
 } from "./priority-store";
+import { EVIDENCE_LABEL } from "./need-view";
 import { classify, REQUIREMENT_TYPE_LABEL } from "./requirement-types";
 import type { SpecModelReview } from "./review-state";
 import type { SpecRequirement, SpecRequirements } from "./spec-model";
@@ -82,12 +85,16 @@ function parseEffort(text: string | undefined): number | [number, number] | unde
 }
 
 /** The three criteria of one item: what was entered, else what Studio can
- *  propose, else unknown. */
-function inputsOf(r: SpecRequirement, e: Entry): IceInputs {
+ *  propose — Confidence from its checked hypotheses first, else from what
+ *  the requirement rests on — else unknown. */
+function inputsOf(r: SpecRequirement, e: Entry, claims: CheckedClaim[]): IceInputs {
   const effort = parseEffort(e.effort);
   return {
     impact: e.impact !== undefined ? { score: e.impact, origin: "entered", basis: "Entered by a person." } : unknown("Needs the expected contribution to the goal."),
-    confidence: e.confidence !== undefined ? { score: e.confidence, origin: "entered", basis: "Entered by a person." } : confidenceFromBasis(r.basis),
+    confidence:
+      e.confidence !== undefined
+        ? { score: e.confidence, origin: "entered", basis: "Entered by a person." }
+        : (confidenceFromHypotheses(claims) ?? confidenceFromBasis(r.basis)),
     ease: effort !== undefined ? easeFromEffort(effort, `${e.effort} person-weeks, entered.`, "entered") : unknown("Needs an effort estimate in person-weeks."),
   };
 }
@@ -97,11 +104,15 @@ export function PrioritiesScreen({
   projectId,
   reviews,
   onSave,
+  claimsFor,
   onTrace,
   onConfirm,
 }: {
   read: SpecRequirements | { error: string } | null;
   projectId: string;
+  /** The hypotheses about a requirement, as far as checking them went:
+   *  what Confidence is first proposed from. */
+  claimsFor?: (r: SpecRequirement) => CheckedClaim[];
   /** The project's decisions: the working set and the confirmed orders are among them. */
   reviews: SpecModelReview[];
   /** Keep changes to the working set, or a confirmed order, with the project. */
@@ -142,8 +153,9 @@ export function PrioritiesScreen({
   const byId = useMemo(() => new Map(items.map((r) => [r.id, r])), [items]);
   const chosen = saved.items.map((id) => byId.get(id)).filter((r): r is SpecRequirement => !!r);
   const scored = chosen.map((r) => {
-    const inputs = inputsOf(r, saved.entries[r.id] ?? {});
-    return { r, inputs, ice: iceScore(inputs) };
+    const claims = claimsFor?.(r) ?? [];
+    const inputs = inputsOf(r, saved.entries[r.id] ?? {}, claims);
+    return { r, inputs, claims, ice: iceScore(inputs) };
   });
   const ordering = orderItems(
     scored.map((s) => ({ id: s.r.id, score: s.ice.score ?? s.ice.range?.[0] ?? null })),
@@ -295,7 +307,7 @@ export function PrioritiesScreen({
               {
                 id: "confidence",
                 header: "Confidence",
-                cell: ({ r, inputs }) => (
+                cell: ({ r, inputs, claims }) => (
                   <Cell c={inputs.confidence}>
                     <input
                       type="number"
@@ -306,6 +318,11 @@ export function PrioritiesScreen({
                       value={(saved.entries[r.id] ?? {}).confidence ?? ""}
                       onChange={(ev) => setEntry(r.id, { confidence: num(ev.target.value) })}
                     />
+                    {claims.length > 0 && (
+                      <small className="pr-claims" title={inputs.confidence.basis}>
+                        {claims.map((c) => `${c.claim}: ${EVIDENCE_LABEL[c.state].toLowerCase()}`).join("; ")}
+                      </small>
+                    )}
                   </Cell>
                 ),
               },

@@ -2587,6 +2587,51 @@ pub struct SpecModelReviewListDto {
     pub total: u32,
 }
 
+/// A hypothesis check method a kit adds, as its `check-methods.json` says.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitCheckMethodDto {
+    /// The kit that adds it.
+    pub kit: String,
+    pub id: String,
+    pub label: String,
+    /// The uncertainty it addresses.
+    pub uncertainty: String,
+    /// What it needs from earlier steps or materials.
+    pub inputs: String,
+    /// What to do and what comes out.
+    pub action: String,
+    /// What a result of it cannot establish.
+    pub limits: String,
+    /// Words in a claim that make it apply.
+    pub applies_to: Vec<String>,
+}
+
+/// A kit whose methods were not read, and why.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitCheckMethodsUnreadDto {
+    pub kit: String,
+    pub why: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitCheckMethodListDto {
+    pub items: Vec<KitCheckMethodDto>,
+    pub total: u32,
+    /// Kits named whose file was absent, unreadable or out of shape.
+    pub unread: Vec<KitCheckMethodsUnreadDto>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct CheckMethodsQuery {
+    pub project_id: String,
+    /// The kits to read, comma-separated slugs: the project's installed kits.
+    #[serde(default)]
+    pub kits: String,
+}
+
 /// One fact to accept, reject, or put back as proposed.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -5575,6 +5620,74 @@ fn glossary_row_dto(r: super::spec_model::glossary_doc::Row) -> GlossaryDocRowDt
 
 /// The glossary the project's documents keep — `docs/glossary.md`, or a
 /// glossary section inside another document — read as written.
+/// The hypothesis check methods the named kits add, each read from the
+/// kit's `check-methods.json` in the project's repository. A kit with no
+/// file, or one out of shape, is listed with the reason; nothing is guessed.
+async fn list_kit_check_methods(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<CheckMethodsQuery>,
+) -> ApiResult<JsonBody<KitCheckMethodListDto>> {
+    use super::spec_model::check_methods::{KITS_MAX, is_kit_slug, parse, path_of};
+    let project_id = parse_project_id(&query.project_id)?;
+    let _ = parent_workspace(&service, &ctx, project_id).await?;
+    let mut kits: Vec<&str> = query
+        .kits
+        .split(',')
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .collect();
+    kits.dedup();
+    if kits.len() > KITS_MAX || !kits.iter().all(|k| is_kit_slug(k)) {
+        return Err(DocumentsError::invalid_argument()
+            .with_field_violation(
+                "kits",
+                format!("at most {KITS_MAX} kit slugs: lowercase letters, digits and dashes"),
+                "INVALID",
+            )
+            .create());
+    }
+    let mut items = Vec::new();
+    let mut unread = Vec::new();
+    if !kits.is_empty() {
+        let files = project_files(&quality)?;
+        let project = project_id.to_string();
+        for kit in kits {
+            let why = match files.read(&ctx, &project, &path_of(kit)).await {
+                Ok(Some(text)) => match parse(&text) {
+                    Ok(methods) => {
+                        items.extend(methods.into_iter().map(|m| KitCheckMethodDto {
+                            kit: kit.to_owned(),
+                            id: m.id,
+                            label: m.label,
+                            uncertainty: m.uncertainty,
+                            inputs: m.inputs,
+                            action: m.action,
+                            limits: m.limits,
+                            applies_to: m.applies_to,
+                        }));
+                        continue;
+                    }
+                    Err(why) => why,
+                },
+                // Most kits add no methods: that is no failure to report.
+                Ok(None) => continue,
+                Err(e) => format!("the repository could not be read: {e}"),
+            };
+            unread.push(KitCheckMethodsUnreadDto {
+                kit: kit.to_owned(),
+                why,
+            });
+        }
+    }
+    Ok(Json(KitCheckMethodListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        unread,
+    }))
+}
+
 async fn get_glossary_document(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
@@ -8079,6 +8192,39 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/check-methods")
+        .operation_id("studio_documents.list_spec_model_check_methods")
+        .summary("The hypothesis check methods the project's kits add")
+        .description(
+            "Each named kit's `.cf-studio/config/kits/<kit>/check-methods.json` in the project's \
+             repository, read as written: a JSON array of methods, each with the uncertainty it \
+             addresses, what it needs, what it does, what a result of it cannot establish and \
+             the words in a claim it applies to. A kit with no such file adds nothing; one whose \
+             file is out of shape or unreadable is listed in `unread` with the reason. The five \
+             built-in methods are the portal's and are not listed.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose kits to read")
+        .query_param(
+            "kits",
+            false,
+            "The kits to read: comma-separated slugs, at most 20",
+        )
+        .handler(list_kit_check_methods)
+        .json_response_with_schema::<KitCheckMethodListDto>(
+            openapi,
+            StatusCode::OK,
+            "The methods the kits add",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/spec-model/glossary/document")

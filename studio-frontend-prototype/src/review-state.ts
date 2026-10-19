@@ -22,6 +22,15 @@ export interface SpecModelReview {
   decided_at: string;
 }
 
+/** One review as the reviews endpoint takes it. */
+export interface ReviewWrite {
+  fact_key: string;
+  state: string;
+  path: string;
+  revision: string;
+  note?: string | null;
+}
+
 /** 64-bit FNV-1a as 16 hex digits: short, stable, the same everywhere. */
 export function fnv64(text: string): string {
   let h1 = 0x811c9dc5;

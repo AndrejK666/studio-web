@@ -10,8 +10,17 @@ import { blockedByRules, obligations, type Obligation } from "./behaviour";
 import { conflicts, describe as sayRule, readRule } from "./rule-checks";
 import { FactRow } from "./domain-model-screens";
 import {
-  CHECK_METHOD_LABEL,
-  CHECK_METHOD_WHAT,
+  CHECK_NOTE_MAX,
+  checkSize,
+  hypothesesDocument,
+  proposedBrief,
+  proposedMethods,
+  TIMING_LABEL,
+  type Check,
+  type MethodDef,
+  type Timing,
+} from "./hypothesis-check";
+import {
   EVIDENCE_LABEL,
   hypothesesOf,
   materialFromFile,
@@ -20,8 +29,8 @@ import {
   needsByRole,
   needDocument,
   unlinkedRequirements,
-  type CheckMethod,
   type EvidenceState,
+  type Hypothesis,
 } from "./need-view";
 import type { SpecModelFact, SpecRequirement } from "./spec-model";
 
@@ -303,16 +312,44 @@ export function HypothesesScreen({
   facts,
   stateOf,
   onEvidence,
+  catalogue,
+  kitNote,
+  checkOf,
+  onSaveCheck,
+  onPropose,
   onOpenFile,
 }: {
   facts: SpecModelFact[];
   /** Where a hypothesis stands, as members recorded it. */
   stateOf: (f: SpecModelFact) => EvidenceState;
   onEvidence?: (f: SpecModelFact, state: EvidenceState) => Promise<void>;
+  /** The check methods: built in, then the project's kits'. */
+  catalogue: MethodDef[];
+  /** Which kits' methods were read, or why some were not. */
+  kitNote?: string | null;
+  /** The check a member planned or recorded for a hypothesis. */
+  checkOf: (h: Hypothesis) => Check | undefined;
+  onSaveCheck?: (h: Hypothesis, check: Check) => Promise<void>;
+  /** Propose the hypotheses as docs/hypotheses.md. */
+  onPropose?: (content: string) => Promise<SpecModelWrite>;
   onOpenFile: OpenFile;
 }) {
   const list = hypothesesOf(facts);
-  const [method, setMethod] = useState<Record<number, CheckMethod>>({});
+  const [draft, setDraft] = useState<Record<number, Check>>({});
+  const [saving, setSaving] = useState<{ i?: number; error?: string; done?: SpecModelWrite; busy?: boolean }>({});
+  const label = (id: string) => catalogue.find((m) => m.id === id)?.label ?? id;
+  /** What the row shows: the draft being edited, else the record, else a
+   *  first proposal nobody saved. */
+  const checkAt = (i: number, h: Hypothesis): Check =>
+    draft[i] ??
+    checkOf(h) ?? {
+      methods: proposedMethods(h, catalogue).map((p) => p.id).slice(0, 1),
+      timing: null,
+      brief: "",
+      criterion: "",
+      result: "",
+    };
+  const edit = (i: number, h: Hypothesis, patch: Partial<Check>) => setDraft((d) => ({ ...d, [i]: { ...checkAt(i, h), ...patch } }));
   if (list.length === 0)
     return (
       <div className="empty">
@@ -331,6 +368,40 @@ export function HypothesesScreen({
         for whom, with what effect. Studio proposes how to check it; what the check found is yours to record. Accepting the
         wording is not validating it, and an unchecked hypothesis stops nothing.
       </p>
+      {(onPropose || kitNote) && (
+        <div className="dm-actions">
+          {onPropose && (
+            <button
+              type="button"
+              className="ghost"
+              disabled={saving.busy}
+              title="Write every hypothesis, where it stands and how it is checked to docs/hypotheses.md, as a pull request"
+              onClick={() => {
+                setSaving({ busy: true });
+                onPropose(hypothesesDocument(list, (h) => stateOf(h.fact), (h) => checkOf(h), catalogue))
+                  .then((done) => setSaving({ done }))
+                  .catch((e: unknown) => setSaving({ error: e instanceof Error ? e.message : String(e) }));
+              }}
+            >
+              {saving.busy ? "Proposing…" : "Propose as docs/hypotheses.md"}
+            </button>
+          )}
+          {saving.done && (
+            <span className="dm-saved">
+              ✓ Proposed{" "}
+              {saving.done.pr_url ? (
+                <a href={saving.done.pr_url} target="_blank" rel="noreferrer">
+                  as a pull request
+                </a>
+              ) : (
+                <>on {saving.done.branch}</>
+              )}
+            </span>
+          )}
+          {kitNote && <span className="hint">{kitNote}</span>}
+        </div>
+      )}
+      {saving.error && <div className="error">{saving.error}</div>}
       <div className="card">
         <DataTable<HypRow>
           list="dm-hypotheses"
@@ -358,25 +429,117 @@ export function HypothesesScreen({
             { id: "solution", header: "Solution", compare: (a, b) => a.h.solution.localeCompare(b.h.solution), cell: (r) => <b>{r.h.solution || <i>not named</i>}</b> },
             { id: "role", header: "For whom", cell: (r) => r.h.role || <i className="sub">not named</i> },
             { id: "effect", header: "Expected", cell: (r) => r.h.effect || <i className="sub">not stated</i> },
-            { id: "method", header: "Check by", cell: (r) => CHECK_METHOD_LABEL[method[r.i] ?? r.h.method] },
+            {
+              id: "method",
+              header: "Check by",
+              cell: (r) => {
+                const c = checkOf(r.h);
+                return c ? (
+                  <span>
+                    {c.methods.map(label).join(", ") || <i className="sub">no method</i>}
+                    {c.timing && <small className="hint" style={{ display: "block" }}>{TIMING_LABEL[c.timing]}</small>}
+                  </span>
+                ) : (
+                  <span className="sub">proposed: {label(proposedMethods(r.h, catalogue)[0].id)}</span>
+                );
+              },
+            },
           ]}
           expand={(r) => {
-            const m = method[r.i] ?? r.h.method;
+            const c = checkAt(r.i, r.h);
+            const chosen = catalogue.filter((m) => c.methods.includes(m.id));
+            const proposals = proposedMethods(r.h, catalogue);
+            const size = checkSize(c);
             return (
               <div className="nd-hyp-detail">
                 <FactRow fact={r.h.fact} onOpenFile={onOpenFile} />
                 <div className="nd-check">
+                  <span className="hint">
+                    Proposed: {proposals.map((p) => `${label(p.id)} — ${p.why}`).join("; ")}.
+                  </span>
+                  <div className="nd-methods" role="group" aria-label="Check by">
+                    {catalogue.map((m) => (
+                      <label key={m.id} title={`${m.uncertainty} Needs: ${m.inputs} Limit: ${m.limits}`}>
+                        <input
+                          type="checkbox"
+                          checked={c.methods.includes(m.id)}
+                          onChange={(e) =>
+                            edit(r.i, r.h, { methods: e.target.checked ? [...c.methods, m.id] : c.methods.filter((x) => x !== m.id) })
+                          }
+                        />{" "}
+                        {m.label}
+                        {m.kit && <small className="hint"> · {m.kit} kit</small>}
+                      </label>
+                    ))}
+                  </div>
+                  {chosen.map((m) => (
+                    <span key={m.id} className="hint">
+                      <b>{m.label}:</b> {m.uncertainty} {m.action} <i>Limit: {m.limits}</i>
+                    </span>
+                  ))}
                   <label>
-                    Check by{" "}
-                    <select value={m} onChange={(e) => setMethod((x) => ({ ...x, [r.i]: e.target.value as CheckMethod }))}>
-                      {(Object.keys(CHECK_METHOD_LABEL) as CheckMethod[]).map((k) => (
-                        <option key={k} value={k}>
-                          {CHECK_METHOD_LABEL[k]}
+                    When{" "}
+                    <select value={c.timing ?? ""} onChange={(e) => edit(r.i, r.h, { timing: (e.target.value || null) as Timing | null })}>
+                      <option value="">not chosen</option>
+                      {(Object.keys(TIMING_LABEL) as Timing[]).map((t) => (
+                        <option key={t} value={t}>
+                          {TIMING_LABEL[t]}
                         </option>
                       ))}
                     </select>
                   </label>
-                  <span className="hint">{CHECK_METHOD_WHAT[m]}</span>
+                  <label className="nd-field">
+                    Brief{" "}
+                    <button type="button" className="dm-link" onClick={() => edit(r.i, r.h, { brief: proposedBrief(r.h, chosen, c.timing) })}>
+                      {c.brief ? "propose again" : "propose one"}
+                    </button>
+                    <textarea rows={c.brief ? 7 : 2} value={c.brief} onChange={(e) => edit(r.i, r.h, { brief: e.target.value })} />
+                  </label>
+                  <label className="nd-field">
+                    Criterion to read a result by
+                    <input
+                      type="text"
+                      placeholder="Not agreed: a result is then exploratory"
+                      value={c.criterion}
+                      onChange={(e) => edit(r.i, r.h, { criterion: e.target.value })}
+                    />
+                  </label>
+                  <label className="nd-field">
+                    What checking found
+                    <textarea
+                      rows={3}
+                      placeholder="Paste or write the result: who was observed or asked, under what conditions, what was seen."
+                      value={c.result}
+                      onChange={(e) => edit(r.i, r.h, { result: e.target.value })}
+                    />
+                  </label>
+                  {onSaveCheck && (
+                    <div className="dm-actions">
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={size > CHECK_NOTE_MAX || saving.i === r.i}
+                        onClick={() => {
+                          setSaving({ i: r.i });
+                          onSaveCheck(r.h, c)
+                            .then(() => {
+                              setDraft((d) => {
+                                const { [r.i]: _saved, ...rest } = d;
+                                return rest;
+                              });
+                              setSaving({});
+                            })
+                            .catch((e: unknown) => setSaving({ error: e instanceof Error ? e.message : String(e) }));
+                        }}
+                      >
+                        {saving.i === r.i ? "Saving…" : "Save the check"}
+                      </button>
+                      <span className={size > CHECK_NOTE_MAX ? "error-inline" : "hint"}>
+                        {size} / {CHECK_NOTE_MAX} bytes
+                      </span>
+                      {!c.criterion.trim() && c.result.trim() && <span className="hint">No criterion agreed: the result is kept as exploratory.</span>}
+                    </div>
+                  )}
                 </div>
                 {onEvidence && (
                   <div className="dm-actions">

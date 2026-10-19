@@ -152,6 +152,18 @@ export interface GlossaryDoc {
   path: string;
 }
 
+/** A hypothesis check method a kit adds (its `check-methods.json`). */
+export interface KitCheckMethod {
+  kit: string;
+  id: string;
+  label: string;
+  uncertainty: string;
+  inputs: string;
+  action: string;
+  limits: string;
+  applies_to: string[];
+}
+
 export interface SpecModelWrite {
   path: string;
   branch: string;
@@ -3355,6 +3367,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ project_id: projectId, path, content, title }),
     }),
+  /** The hypothesis check methods the named kits add, read from each one's
+   *  `check-methods.json` in the project's repository; a kit whose file is
+   *  absent or unreadable is listed under `unread` with the reason. */
+  specModelCheckMethods: (token: string, projectId: string, kits: string[]) =>
+    request<{ items: KitCheckMethod[]; total: number; unread: { kit: string; why: string }[] }>(
+      `/studio-documents/v1/spec-model/check-methods?project_id=${encodeURIComponent(projectId)}&kits=${encodeURIComponent(kits.join(","))}`,
+      token,
+    ),
   /** The glossary the project's documents keep, read as written. */
   glossaryDocument: (token: string, projectId: string) =>
     request<GlossaryDoc>(`/studio-documents/v1/spec-model/glossary/document?project_id=${encodeURIComponent(projectId)}`, token),

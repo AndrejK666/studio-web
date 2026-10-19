@@ -73,29 +73,14 @@ export function needGaps(facts: SpecModelFact[]): NeedGap[] {
   return out;
 }
 
-/** How a claim is checked: the five methods the PRD confirms. */
+/** How a claim is checked: the five methods the PRD confirms, described in
+ *  hypothesis-check.ts BUILTIN_METHODS; a kit may add more. */
 export type CheckMethod = "problem" | "benefit" | "tco" | "demand" | "existing";
-
-export const CHECK_METHOD_LABEL: Record<CheckMethod, string> = {
-  problem: "Problem evidence",
-  benefit: "Expected benefit",
-  tco: "Time / TCO estimate",
-  demand: "Demand",
-  existing: "Existing capability",
-};
-
-export const CHECK_METHOD_WHAT: Record<CheckMethod, string> = {
-  problem: "do the people named actually have this problem, how often, how badly",
-  benefit: "does the solution produce the effect for these people under these conditions",
-  tco: "a rough estimate of the time or cost saved, its units, horizon and assumptions",
-  demand: "how many independent customers ask for it, not how many messages",
-  existing: "does the product, or another of the company's, already do this",
-};
 
 /** A first method for a claim, read from its words; a person changes it. */
 export function proposeMethod(text: string): CheckMethod {
   const t = text.toLowerCase();
-  if (/\b(time|hours?|minutes?|days?|faster|quicker|cost|cheaper|save[sd]?|saving|tco|effort)\b/.test(t)) return "tco";
+  if (/\b(time|seconds?|hours?|minutes?|days?|faster|quicker|cost|cheaper|save[sd]?|saving|tco|effort)\b/.test(t)) return "tco";
   if (/\b(demand|customers? (want|ask)|ask(ed)? for|requests?|wanted by)\b/.test(t)) return "demand";
   if (/\b(already|existing|currently|today)\b/.test(t)) return "existing";
   if (/\b(problem|pain|struggl\w*|difficult\w*|frustrat\w*|cannot|can't)\b/.test(t)) return "problem";

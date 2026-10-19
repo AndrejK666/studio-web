@@ -592,9 +592,9 @@ export const SURFACES: Surface[] = [
     id: "project-domain-model",
     area: "project",
     title: "Domain model",
-    does: "The application the specs describe, read out of them fact by fact, where they disagree about it, and what they ask for that the code is not made of; the project's Issues tab is the same component, opening an issue for a person to take.",
+    does: "The application the specs describe, read out of them fact by fact, where they disagree about it, and what they ask for that the code is not made of; the project's Issues tab is the same component, opening an issue for a person to take. Its installed kits are asked which hypothesis check methods they add.",
     components: ["SpecModelTab"],
-    gears: ["studio-documents", "studio-product", "studio-spec-mapping", "studio-user"],
+    gears: ["studio-documents", "studio-kits", "studio-product", "studio-spec-mapping", "studio-user"],
   },
   {
     id: "project-components",

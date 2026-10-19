@@ -310,8 +310,9 @@ Under `/studio-documents/v1`, beside the gear's other routes:
 | `POST` | `/spec-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
 | `GET` | `/spec-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
 | `GET` | `/spec-model/reviews?project_id=` | Every accept or reject members gave on the facts the model read, by the key the tab gives a fact (kind, subject, aspect and the folded quote, hashed) |
-| `POST` | `/spec-model/reviews` | Accept, reject, or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same |
-| `POST` | `/spec-model/files/proposals` | A whole Markdown document under `docs/` as a pull request: the need a member accepted (`docs/discovery.md`), a confirmed prioritisation (`docs/priorities.md`); `201` with the pull request |
+| `POST` | `/spec-model/reviews` | Accept, reject, or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same. Prefixed keys carry the project's other decisions: `ev:` evidence, `hyp:` a hypothesis's check, `ob:` an excluded obligation, `rel:` a match across projects, `iss:` an opened issue, `pri:` an item being prioritised, `prc:` a confirmed order |
+| `POST` | `/spec-model/files/proposals` | A whole Markdown document under `docs/` as a pull request: the need a member accepted (`docs/discovery.md`), a confirmed prioritisation (`docs/priorities.md`), the hypotheses and their checks (`docs/hypotheses.md`); `201` with the pull request |
+| `GET` | `/spec-model/check-methods?project_id=&kits=` | The hypothesis check methods the named kits add, each read from `.cf-studio/config/kits/<kit>/check-methods.json`; a kit whose file is out of shape is listed in `unread` with the reason |
 | `POST` | `/spec-model/glossary/distinct` | Two entries are different things: kept on both as `distinct_from`, so they are not offered as one thing again; `204` |
 | `POST` | `/spec-model/glossary/decisions` | Name an entry, or make it an alias of another; `201` with the decision |
 | `POST` | `/spec-model/glossary/proposals?project_id=` | Rename `from` to `to` in the documents' prose (whole words, first letter's case kept; code, links and front matter untouched) as one pull request; `201` with the files and the pull request, `400` when no document uses `from` |
@@ -473,7 +474,23 @@ the model map.
   expected benefit, time/TCO, demand, existing capability) and one of four
   states — not checked, supports, contradicts, insufficient — kept as a
   review keyed `ev:`. Accepting the wording is not validating it, and an
-  unchecked hypothesis stops nothing.
+  unchecked hypothesis stops nothing. Its **check** is an object of its own,
+  kept beside it as a review keyed `hyp:` (state `check`, a JSON note of up
+  to 8000 bytes): the methods chosen, when (research among available
+  materials, an experiment with people, after implementation), a brief
+  Studio proposes and the member edits, the criterion to read a result by
+  (left empty, a result stays exploratory) and what checking found. The
+  methods are a catalogue: the five built in, each with the uncertainty it
+  addresses, its inputs, its action and its limits, then any a kit installed
+  in the project adds through `.cf-studio/config/kits/<kit>/check-methods.json`
+  (a JSON array of `id`, `label`, `uncertainty`, `inputs`, `action`,
+  `limits`, `applies_to`), proposed for a claim whose words it names. The
+  hypotheses, where they stand and how they are checked are proposed as
+  `docs/hypotheses.md` for reading; the records stay the source. Priorities
+  reads them: a requirement whose title or text names a hypothesis's solution
+  gets its first Confidence from what checking found — supports the effect
+  5, supports only a problem, demand or capability 3, contradicts or too
+  little 1, both ways unresolved — shown beside the score.
 - **Behaviour**: for each action a role takes on a thing and each state the
   thing goes through, whether it may happen then. A passage that names both
   answers it; otherwise it is asked, or excluded with a reason kept as a

@@ -1158,6 +1158,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/check-methods",
+      "operation_id": "studio_documents.list_spec_model_check_methods",
+      "tag": "StudioDocuments",
+      "summary": "The hypothesis check methods the project's kits add",
+      "authenticated": true,
+      "responses": [
+        "KitCheckMethodListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model/decisions",
       "operation_id": "studio_documents.list_spec_model_decisions",
       "tag": "StudioDocuments",

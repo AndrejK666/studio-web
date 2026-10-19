@@ -3,7 +3,28 @@
 // prerequisites and cycles shape the order without entering the score.
 import { describe, expect, it } from "vitest";
 
-import { confidenceFromBasis, easeFromEffort, iceScore, orderItems, unknown, type Criterion } from "./prioritise";
+import { confidenceFromBasis, confidenceFromHypotheses, easeFromEffort, iceScore, orderItems, unknown, type Criterion } from "./prioritise";
+
+describe("Confidence from checked hypotheses", () => {
+  const claim = (state: "unchecked" | "supports" | "contradicts" | "insufficient", methods: string[] = []) => ({ claim: "search", state, methods });
+
+  it("leaves it to the requirement's basis when nothing was checked", () => {
+    expect(confidenceFromHypotheses([])).toBeNull();
+    expect(confidenceFromHypotheses([claim("unchecked")])).toBeNull();
+  });
+
+  it("follows the anchors: direct evidence 5, indirect 3, against 1", () => {
+    expect(confidenceFromHypotheses([claim("supports", ["benefit"])])?.score).toBe(5);
+    expect(confidenceFromHypotheses([claim("supports", ["problem"])])?.score).toBe(3);
+    expect(confidenceFromHypotheses([claim("supports", ["ux/usability-test"])])?.score).toBe(3);
+    expect(confidenceFromHypotheses([claim("contradicts")])?.score).toBe(1);
+    expect(confidenceFromHypotheses([claim("insufficient")])?.score).toBe(1);
+  });
+
+  it("keeps evidence for and against unresolved", () => {
+    expect(confidenceFromHypotheses([claim("supports", ["benefit"]), claim("contradicts")])).toMatchObject({ origin: "unknown" });
+  });
+});
 
 const v = (score: number): Criterion => ({ score, origin: "entered", basis: "" });
 
