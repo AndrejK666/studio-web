@@ -2607,21 +2607,14 @@ pub struct KitCheckMethodDto {
     pub applies_to: Vec<String>,
 }
 
-/// A kit whose methods were not read, and why.
-#[derive(Debug)]
-#[toolkit_macros::api_dto(response)]
-pub struct KitCheckMethodsUnreadDto {
-    pub kit: String,
-    pub why: String,
-}
-
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct KitCheckMethodListDto {
     pub items: Vec<KitCheckMethodDto>,
     pub total: u32,
-    /// Kits named whose file was absent, unreadable or out of shape.
-    pub unread: Vec<KitCheckMethodsUnreadDto>,
+    /// Kits named whose file was unreadable or out of shape, each with why.
+    /// A map rather than a second list: a collection is `items`.
+    pub unread: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -5645,7 +5638,7 @@ async fn list_kit_check_methods(
             .create());
     }
     let mut items = Vec::new();
-    let mut unread = Vec::new();
+    let mut unread = std::collections::BTreeMap::new();
     if !kits.is_empty() {
         let files = project_files(&quality)?;
         let project = project_id.to_string();
@@ -5671,10 +5664,7 @@ async fn list_kit_check_methods(
                 Ok(None) => continue,
                 Err(e) => format!("the repository could not be read: {e}"),
             };
-            unread.push(KitCheckMethodsUnreadDto {
-                kit: kit.to_owned(),
-                why,
-            });
+            unread.insert(kit.to_owned(), why);
         }
     }
     Ok(Json(KitCheckMethodListDto {
@@ -8201,7 +8191,7 @@ pub fn register_routes(
              repository, read as written: a JSON array of methods, each with the uncertainty it \
              addresses, what it needs, what it does, what a result of it cannot establish and \
              the words in a claim it applies to. A kit with no such file adds nothing; one whose \
-             file is out of shape or unreadable is listed in `unread` with the reason. The five \
+             file is out of shape or unreadable is named in `unread`, mapped to the reason. The five \
              built-in methods are the portal's and are not listed.",
         )
         .tag("StudioDocuments")

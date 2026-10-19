@@ -332,7 +332,9 @@ export function SpecModelTab({
           items: got.items.map((m) => ({ id: m.id, kit: m.kit, label: m.label, uncertainty: m.uncertainty, inputs: m.inputs, action: m.action, limits: m.limits, appliesTo: m.applies_to })),
           note: [
             from.length ? `Methods from the ${from.join(", ")} kit${from.length === 1 ? "" : "s"} included.` : "",
-            got.unread.length ? `Not read: ${got.unread.map((u) => `${u.kit} (${u.why})`).join(", ")}.` : "",
+            Object.keys(got.unread).length
+              ? `Not read: ${Object.entries(got.unread).map(([kit, why]) => `${kit} (${why})`).join(", ")}.`
+              : "",
           ]
             .filter(Boolean)
             .join(" ") || null,

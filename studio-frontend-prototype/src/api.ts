@@ -3615,7 +3615,7 @@ export const api = {
    *  `check-methods.json` in the project's repository; a kit whose file is
    *  absent or unreadable is listed under `unread` with the reason. */
   specModelCheckMethods: (token: string, projectId: string, kits: string[]) =>
-    request<{ items: KitCheckMethod[]; total: number; unread: { kit: string; why: string }[] }>(
+    request<{ items: KitCheckMethod[]; total: number; unread: Record<string, string> }>(
       `/studio-documents/v1/spec-model/check-methods?project_id=${encodeURIComponent(projectId)}&kits=${encodeURIComponent(kits.join(","))}`,
       token,
     ),
