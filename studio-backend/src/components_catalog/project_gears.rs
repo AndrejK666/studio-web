@@ -409,7 +409,16 @@ pub fn readme<'a>(dir: &str, paths: &[&'a str]) -> Option<&'a str> {
 /// Add a gear found in source to those found by manifest. A name already
 /// there, or an attribute inside a manifest gear's directory, is that gear:
 /// it gives its runtime labels and its code, not a second entry.
-pub fn absorb(gears: &mut Vec<LocalGear>, found: LocalGear) {
+///
+/// `crate_dirs` are the manifest gears' directories whose name came from a
+/// Cargo package there: that name is what crates.io and the engine's
+/// `package.crate_name` key the gear by, so an attribute never replaces it --
+/// not even when the package happens to be named like its directory.
+pub fn absorb(
+    gears: &mut Vec<LocalGear>,
+    found: LocalGear,
+    crate_dirs: &std::collections::HashSet<String>,
+) {
     let home =
         |g: &LocalGear| g.declared_in.ends_with("gear.toml") || g.declared_in.ends_with("gear.gdl");
     let inside = |g: &LocalGear| {
@@ -426,11 +435,11 @@ pub fn absorb(gears: &mut Vec<LocalGear>, found: LocalGear) {
         // larger crate (Studio's gears are `studio-backend/src/<module>/` with a
         // `gear.gdl` each), so it was named after the directory: the attribute
         // inside it says the gear's real name.
-        let named_by_dir = g
-            .path
-            .rsplit('/')
-            .next()
-            .is_some_and(|slug| slug.eq_ignore_ascii_case(&g.name));
+        let named_by_dir = !crate_dirs.contains(&g.path)
+            && g.path
+                .rsplit('/')
+                .next()
+                .is_some_and(|slug| slug.eq_ignore_ascii_case(&g.name));
         if named_by_dir && home(g) && !g.name.eq_ignore_ascii_case(&found.name) {
             g.name = found.name.clone();
         }

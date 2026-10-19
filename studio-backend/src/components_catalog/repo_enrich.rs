@@ -793,6 +793,7 @@ impl RepoEnricher {
 
         // Described by a manifest: the catalogue's own rule for a gear directory.
         let mut gears: Vec<LocalGear> = Vec::new();
+        let mut crate_dirs = std::collections::HashSet::new();
         for dir in gear_dirs(&paths).into_iter().take(MAX_PROJECT_GEARS) {
             let slug = dir
                 .rsplit('/')
@@ -837,8 +838,12 @@ impl RepoEnricher {
             }
             let prefix = joined(&dir, "");
             let plugin = declared.is_plugin == Some(true);
+            let crate_name = primary_crate(&slug, &named);
+            if crate_name.is_some() {
+                crate_dirs.insert(dir.clone());
+            }
             gears.push(LocalGear {
-                name: primary_crate(&slug, &named).unwrap_or(slug),
+                name: crate_name.unwrap_or(slug),
                 kind: if plugin { "plugin" } else { "gear" }.to_string(),
                 description: declared.description,
                 category: declared.category,
@@ -898,6 +903,7 @@ impl RepoEnricher {
                         built: true,
                         doc: None,
                     },
+                    &crate_dirs,
                 );
             }
         }

@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashSet;
 
 const SPEC_MAPPING: &str = r#"//! studio-spec-mapping: from a project's specification to the gears that
 //! build it.
@@ -199,7 +200,7 @@ fn an_attribute_inside_a_described_gear_is_that_gear() {
     );
     code.runtime = vec!["rest".into()];
     code.description = Some("The gateway.".into());
-    absorb(&mut gears, code);
+    absorb(&mut gears, code, &HashSet::new());
     assert_eq!(gears.len(), 1);
     assert!(gears[0].built);
     assert_eq!(gears[0].runtime, vec!["rest"]);
@@ -209,6 +210,7 @@ fn an_attribute_inside_a_described_gear_is_that_gear() {
     absorb(
         &mut gears,
         gear("x", "gears/api-gateway-x", "gears/api-gateway-x/src/lib.rs"),
+        &HashSet::new(),
     );
     assert_eq!(gears.len(), 2);
 }
@@ -237,6 +239,7 @@ fn a_described_module_takes_its_attributes_name() {
             "studio-backend/src/documents",
             "studio-backend/src/documents/mod.rs",
         ),
+        &HashSet::new(),
     );
     absorb(
         &mut gears,
@@ -245,6 +248,7 @@ fn a_described_module_takes_its_attributes_name() {
             "studio-backend/src/connectors/plugins/github",
             "studio-backend/src/connectors/plugins/github/mod.rs",
         ),
+        &HashSet::new(),
     );
     let names: Vec<&str> = gears.iter().map(|g| g.name.as_str()).collect();
     assert_eq!(names, vec!["studio-documents", "github-connector-plugin"]);
@@ -264,8 +268,21 @@ fn a_described_module_takes_its_attributes_name() {
             "gears/api-gateway",
             "gears/api-gateway/src/lib.rs",
         ),
+        &HashSet::new(),
     );
     assert_eq!(crate_gear[0].name, "cf-gears-api-gateway");
+
+    // Nor when the package is named like its directory: `oagw/Cargo.toml`
+    // says `oagw`, which is what crates.io and the engine key it by, whatever
+    // its attribute calls the gear.
+    let mut same_named = vec![gear("oagw", "gears/oagw", "gears/oagw/gear.gdl")];
+    absorb(
+        &mut same_named,
+        gear("api-egress", "gears/oagw", "gears/oagw/src/lib.rs"),
+        &HashSet::from(["gears/oagw".to_owned()]),
+    );
+    assert_eq!(same_named[0].name, "oagw");
+    assert!(same_named[0].built);
 }
 
 #[test]
