@@ -39,9 +39,11 @@ fn a_product_description_names_its_gears_and_plugins() {
     assert_eq!(named(gdl), want);
 }
 
-// The file is written for the default build; `theia-bridge` links one gear
-// more (studio-theia), which the product does not name.
-#[cfg(not(feature = "theia-bridge"))]
+// The file is written for the default build: `llm` links mini-chat and oagw,
+// `graph` graph-storage, and `theia-bridge` one gear more (studio-theia),
+// which the product does not name. Any other feature set links something
+// else, and this would report the difference as drift.
+#[cfg(all(feature = "llm", feature = "graph", not(feature = "theia-bridge")))]
 #[test]
 fn product_gdl_names_what_this_binary_links() {
     // Linked, and named by no product: the toolkit's runtime, which every
