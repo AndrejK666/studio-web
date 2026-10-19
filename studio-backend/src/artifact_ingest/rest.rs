@@ -1357,6 +1357,8 @@ pub struct WaitingPullRequestDto {
     pub title: String,
     /// The pull request on the provider's site.
     pub url: Option<String>,
+    /// The branch it would merge: what its CI runs ran on.
+    pub source_branch: Option<String>,
     pub author: Option<PullRequestPersonDto>,
     /// The one bucket it is in: `review`, `author`, `merge`, `draft` or
     /// `nobody`.
@@ -1568,6 +1570,7 @@ async fn open_pull_requests(
                 number: p.number,
                 title: p.title,
                 url: p.url,
+                source_branch: p.source_branch,
                 author: p.facts.author.as_deref().map(|a| person(provider_ref, a)),
                 waiting: p.verdict.waiting.as_str().to_owned(),
                 waiting_on: p
@@ -1668,6 +1671,25 @@ pub struct CiRunDto {
     pub number: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    /// The jobs of the attempt the run is at, in the order they started;
+    /// empty until a sync has read them.
+    pub jobs: Vec<CiJobDto>,
+}
+
+/// One job of a CI run: which part of it passed or failed, and where.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct CiJobDto {
+    pub name: String,
+    pub status: Option<String>,
+    pub conclusion: Option<String>,
+    /// The first step that failed, when one did.
+    pub failed_step: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    /// From start to finish, for a finished job.
+    pub duration_seconds: Option<i64>,
+    pub url: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1688,8 +1710,35 @@ pub struct CiRunQuery {
     pub branch: Option<String>,
 }
 
-fn ci_run_dto(r: super::ci_runs::CiRun) -> CiRunDto {
+fn ci_job_dto(j: &super::ci_runs::CiJob) -> CiJobDto {
+    let at = |s: &Option<String>| {
+        s.as_deref().and_then(|s| {
+            time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
+        })
+    };
+    let duration_seconds = match (at(&j.started_at), at(&j.completed_at)) {
+        (Some(start), Some(end)) if end >= start => Some((end - start).whole_seconds()),
+        _ => None,
+    };
+    CiJobDto {
+        name: j.name.clone(),
+        status: j.status.clone(),
+        conclusion: j.conclusion.clone(),
+        failed_step: j.failed_step.clone(),
+        started_at: j.started_at.clone(),
+        completed_at: j.completed_at.clone(),
+        duration_seconds,
+        url: j.url.clone(),
+    }
+}
+
+fn ci_run_dto(r: super::ci_runs::CiRun, jobs: &[super::ci_runs::CiJob]) -> CiRunDto {
+    let jobs = super::ci_runs::jobs_of_run(&r, jobs)
+        .into_iter()
+        .map(ci_job_dto)
+        .collect();
     CiRunDto {
+        jobs,
         id: r.id,
         repo: r.repo,
         workflow: r.workflow,
@@ -1725,11 +1774,16 @@ async fn list_ci_runs(
         .iter()
         .filter_map(|(id, v)| super::ci_runs::run_of(id, v))
         .collect();
+    let jobs: Vec<super::ci_runs::CiJob> = scoped_entries(service, &ctx, "workflow_job", scope)
+        .await?
+        .iter()
+        .filter_map(|(id, v)| super::ci_runs::job_of(id, v))
+        .collect();
     let latest = super::ci_runs::latest_completed(&runs).map(|r| r.id.clone());
     let items: Vec<CiRunDto> =
         super::ci_runs::filter(runs, query.revision.as_deref(), query.branch.as_deref())
             .into_iter()
-            .map(ci_run_dto)
+            .map(|r| ci_run_dto(r, &jobs))
             .collect();
     Ok(Json(CiRunListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
@@ -1939,7 +1993,9 @@ pub fn register_routes(
              narrowed to a revision (a full or short sha) or a branch: workflow, revision, \
              branch, status, conclusion and when. `latest_completed` names the newest \
              completed run on a mainline (main, master, trunk), else the newest completed run \
-             — what a `tests` stage gate reads (issue #783). As fresh as the last sync.",
+             — what a `tests` stage gate reads (issue #783). Each run carries the jobs of \
+             the attempt it is at, with the step a failed job failed at, once a sync has \
+             read them. As fresh as the last sync.",
         )
         .tag("StudioArtifactIngest")
         .authenticated()

@@ -10,8 +10,8 @@ use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, CreatedRepository,
     DriverIdentity, FileToWrite, OpenedPullRequest, PullRequestThreads, RemoteComment,
     RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText, RemoteIssue, RemotePullRequest,
-    RemoteRepo, RemoteReview, RemoteWorkflow, RemoteWorkflowRun, RepoTree, RepoTreeEntry,
-    WrittenFile,
+    RemoteRepo, RemoteReview, RemoteWorkflow, RemoteWorkflowJob, RemoteWorkflowRun, RepoTree,
+    RepoTreeEntry, WrittenFile,
 };
 
 pub struct GitHubDriver {
@@ -300,6 +300,63 @@ impl From<GitHubRun> for RemoteWorkflowRun {
             created_at: r.created_at,
             started_at: r.run_started_at,
             updated_at: r.updated_at,
+        }
+    }
+}
+
+/// `/repos/{path}/actions/runs/{id}/jobs`: the latest attempt's jobs.
+#[derive(Deserialize)]
+struct GitHubJobs {
+    #[serde(default)]
+    jobs: Vec<GitHubJob>,
+}
+
+#[derive(Deserialize)]
+struct GitHubJob {
+    id: i64,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    conclusion: Option<String>,
+    #[serde(default)]
+    started_at: Option<String>,
+    #[serde(default)]
+    completed_at: Option<String>,
+    #[serde(default)]
+    html_url: Option<String>,
+    #[serde(default)]
+    steps: Vec<GitHubStep>,
+}
+
+#[derive(Deserialize)]
+struct GitHubStep {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    conclusion: Option<String>,
+    #[serde(default)]
+    number: Option<i64>,
+}
+
+impl From<GitHubJob> for RemoteWorkflowJob {
+    fn from(j: GitHubJob) -> Self {
+        let mut steps = j.steps;
+        steps.sort_by_key(|s| s.number);
+        let failed_step = steps
+            .into_iter()
+            .find(|s| s.conclusion.as_deref() == Some("failure"))
+            .and_then(|s| s.name);
+        RemoteWorkflowJob {
+            id: j.id,
+            name: j.name.unwrap_or_default(),
+            status: j.status,
+            conclusion: j.conclusion,
+            failed_step,
+            started_at: j.started_at,
+            completed_at: j.completed_at,
+            url: j.html_url,
         }
     }
 }
@@ -1002,6 +1059,31 @@ impl ConnectorDriver for GitHubDriver {
             .into_iter()
             .map(RemoteWorkflowRun::from)
             .collect())
+    }
+
+    async fn list_workflow_jobs(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        run_id: i64,
+    ) -> anyhow::Result<Vec<RemoteWorkflowJob>> {
+        // One page of 100: a workflow with more jobs than that is a matrix
+        // nobody reads job by job.
+        let url = format!(
+            "{}/repos/{repo_full_path}/actions/runs/{run_id}/jobs?per_page=100",
+            auth.root(),
+        );
+        let res = self.request(&url, auth).send().await?;
+        let status = res.status();
+        if !status.is_success() {
+            let body = res.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "GitHub {status}: {}",
+                body.chars().take(200).collect::<String>()
+            );
+        }
+        let jobs: GitHubJobs = res.json().await?;
+        Ok(jobs.jobs.into_iter().map(RemoteWorkflowJob::from).collect())
     }
 
     async fn read_file(
@@ -2528,5 +2610,40 @@ mod tests {
             runs[0].workflow, "",
             "a run with almost nothing still reads"
         );
+    }
+
+    #[test]
+    fn a_job_names_the_first_step_that_failed() {
+        let body = json!({
+            "total_count": 2,
+            "jobs": [{
+                "id": 501,
+                "name": "test-backend",
+                "status": "completed",
+                "conclusion": "failure",
+                "started_at": "2026-10-14T07:20:00Z",
+                "completed_at": "2026-10-14T07:31:30Z",
+                "html_url": "https://github.com/o/r/actions/runs/1/job/501",
+                "steps": [
+                    { "name": "cargo test", "conclusion": "failure", "number": 4 },
+                    { "name": "Set up job", "conclusion": "success", "number": 1 },
+                    { "name": "cargo clippy", "conclusion": "failure", "number": 3 },
+                    { "name": "Post", "conclusion": "skipped", "number": 5 }
+                ]
+            }, { "id": 502 }]
+        });
+        let jobs: GitHubJobs = serde_json::from_value(body).unwrap();
+        let mut jobs: Vec<RemoteWorkflowJob> = jobs.jobs.into_iter().map(Into::into).collect();
+        let j = jobs.remove(0);
+        assert_eq!(j.name, "test-backend");
+        assert_eq!(j.conclusion.as_deref(), Some("failure"));
+        assert_eq!(
+            j.failed_step.as_deref(),
+            Some("cargo clippy"),
+            "the earliest failed step by number, not by position in the list"
+        );
+        assert_eq!(j.completed_at.as_deref(), Some("2026-10-14T07:31:30Z"));
+        assert_eq!(jobs[0].name, "", "a job with almost nothing still reads");
+        assert_eq!(jobs[0].failed_step, None);
     }
 }

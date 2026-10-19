@@ -26,8 +26,54 @@ pub struct CiRun {
     pub conclusion: Option<String>,
     pub url: Option<String>,
     pub number: Option<i64>,
+    /// Which attempt the run is at: a re-run reads the same run again.
+    pub attempt: Option<i64>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+}
+
+/// One job of a CI run's latest attempt, as the sync kept it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CiJob {
+    pub id: String,
+    /// The run's node.
+    pub run: String,
+    pub attempt: Option<i64>,
+    pub name: String,
+    pub status: Option<String>,
+    pub conclusion: Option<String>,
+    /// The first step that failed, when one did.
+    pub failed_step: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub url: Option<String>,
+}
+
+/// A `workflow_job` node's payload as a job; `None` without its run.
+pub fn job_of(id: &str, v: &Value) -> Option<CiJob> {
+    Some(CiJob {
+        id: id.to_string(),
+        run: s(v, "run")?,
+        attempt: v.get("attempt").and_then(Value::as_i64),
+        name: s(v, "title").unwrap_or_default(),
+        status: s(v, "status"),
+        conclusion: s(v, "conclusion"),
+        failed_step: s(v, "failed_step"),
+        started_at: s(v, "started_at"),
+        completed_at: s(v, "completed_at"),
+        url: s(v, "url"),
+    })
+}
+
+/// A run's jobs, in the order they started: those of the attempt the run is
+/// at, so the jobs of an attempt a re-run replaced are not shown as its own.
+pub fn jobs_of_run<'a>(run: &CiRun, jobs: &'a [CiJob]) -> Vec<&'a CiJob> {
+    let mut mine: Vec<&CiJob> = jobs
+        .iter()
+        .filter(|j| j.run == run.id && (run.attempt.is_none() || j.attempt == run.attempt))
+        .collect();
+    mine.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.name.cmp(&b.name)));
+    mine
 }
 
 fn s(v: &Value, key: &str) -> Option<String> {
@@ -49,6 +95,7 @@ pub fn run_of(id: &str, v: &Value) -> Option<CiRun> {
         conclusion: s(v, "conclusion"),
         url: s(v, "url"),
         number: v.get("number").and_then(Value::as_i64),
+        attempt: v.get("attempt").and_then(Value::as_i64),
         created_at: s(v, "created_at"),
         updated_at: s(v, "updated_at"),
     })

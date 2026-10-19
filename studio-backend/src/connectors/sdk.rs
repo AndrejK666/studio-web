@@ -26,7 +26,7 @@ pub use super::driver::RemoteReview;
 pub use super::driver::{
     ConnectionAuth, ConnectorDriver, CreatedRepository, FileToWrite, NotifyMessage,
     PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList, RemoteIssue,
-    RemotePullRequest, RemoteWorkflowRun,
+    RemotePullRequest, RemoteWorkflowJob, RemoteWorkflowRun,
 };
 pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
 pub use super::kubernetes::ClusterAccess;
