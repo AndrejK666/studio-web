@@ -195,7 +195,11 @@ impl EngineGear {
     pub fn contracts(&self) -> Vec<String> {
         let mut out: Vec<String> = self.provides.iter().map(|p| p.contract.clone()).collect();
         out.extend(self.extension_points.iter().filter_map(|p| p.spec.clone()));
-        out.extend(self.fills.as_ref().and_then(|f| f.point.spec.clone()));
+        out.extend(
+            self.fills
+                .as_ref()
+                .and_then(|f| f.spec().map(str::to_owned)),
+        );
         out.sort();
         out.dedup();
         out
@@ -281,10 +285,27 @@ pub fn config_schemas(catalogue: &EngineCatalogue, names: &[String]) -> Vec<Gear
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct EngineFills {
-    pub point: EnginePoint,
+    /// The full GTS type id of the spec it implements. The engine states it
+    /// on every plugin since gearbox#2; the old `fills` only had `point`.
+    #[serde(default)]
+    pub spec: Option<String>,
+    /// The host's declaration of that point. The engine leaves it out when no
+    /// gear in the corpus declares the spec (GBX0519), so one such plugin
+    /// must not fail the whole catalogue: it is a plugin without a host.
+    #[serde(default)]
+    pub point: Option<EnginePoint>,
     /// Lower wins, as the runtime's plugin selector reads it.
     #[serde(default)]
     pub default_priority: Option<i64>,
+}
+
+impl EngineFills {
+    /// The spec of the point it implements, wherever the engine stated it.
+    pub fn spec(&self) -> Option<&str> {
+        self.spec
+            .as_deref()
+            .or_else(|| self.point.as_ref().and_then(|p| p.spec.as_deref()))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -3106,9 +3127,12 @@ fn fills_point(plugin: &EngineGear, point: &EnginePoint) -> bool {
     let Some(f) = plugin.fills.as_ref() else {
         return false;
     };
-    match (f.point.spec.as_deref(), point.spec.as_deref()) {
+    match (f.spec(), point.spec.as_deref()) {
         (Some(a), Some(b)) => a == b,
-        _ => f.point.sdk.crate_name == point.sdk.crate_name,
+        _ => f
+            .point
+            .as_ref()
+            .is_some_and(|p| p.sdk.crate_name == point.sdk.crate_name),
     }
 }
 
@@ -3132,8 +3156,30 @@ mod tests {
         let point = gear
             .fills
             .expect("`implements` is the plugin's point")
-            .point;
+            .point
+            .expect("the host's declaration is carried");
         assert_eq!(point.sdk.crate_name, "cf-gears-authn-resolver-sdk");
+    }
+
+    #[test]
+    fn a_plugin_no_host_declares_does_not_fail_the_catalogue() {
+        // The engine omits `point` when no gear declares the spec (GBX0519).
+        let catalogue: EngineCatalogue = serde_json::from_value(json!({
+            "gears": {
+                "orphan-plugin": {
+                    "id": "orphan-plugin",
+                    "package": {"crate_name": "cf-gears-orphan-plugin"},
+                    "implements": {"spec": "gts.x.core.orphan.plugin.v1~"}
+                }
+            }
+        }))
+        .expect("a plugin without the host's declaration deserializes");
+        let gear = &catalogue.gears["orphan-plugin"];
+        assert_eq!(
+            gear.contracts(),
+            vec!["gts.x.core.orphan.plugin.v1~".to_string()]
+        );
+        assert!(catalogue.host_of(gear).is_none());
     }
 
     /// The corpus shape that matters: a host with an extension point, two
