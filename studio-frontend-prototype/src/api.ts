@@ -5622,6 +5622,8 @@ export const api = {
       roots?: { source_id: string; tier?: string | null }[];
       /** The roots read out of the organization's projects' own repositories. */
       project_sources?: string[];
+      /** Whose each of those roots is: project ids by source id. */
+      project_source_owners?: Record<string, string[]>;
     }>(
       `/studio-product/v1/gearbox/catalogue`,
       token,

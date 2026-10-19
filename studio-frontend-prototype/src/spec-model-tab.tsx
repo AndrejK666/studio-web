@@ -407,7 +407,7 @@ export function SpecModelTab({
   );
   // Which gear keeps each Domain entity: read when the map is first opened.
   // Without the catalogue no gear is known, so no gap is claimed either.
-  const catalogue = useGearCatalogue(token, view === "map");
+  const catalogue = useGearCatalogue(token, view === "map", projectId);
 
   const index = catalogue && "index" in catalogue ? catalogue.index : null;
   const gears = useMemo(() => (index ? gearRefs(index, ownGears) : null), [index, ownGears]);

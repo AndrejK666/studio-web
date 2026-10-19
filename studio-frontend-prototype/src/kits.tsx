@@ -1567,7 +1567,7 @@ function ProductCard({
 
   // The product as a map when the catalogue can be read; the plain list of
   // picks and settings otherwise.
-  const catalogue = useGearCatalogue(token, product.composing);
+  const catalogue = useGearCatalogue(token, product.composing, projectId);
   const map = catalogue && "index" in catalogue ? catalogue.index : null;
   const kept = useKeptEntities(token, projectId, map);
 

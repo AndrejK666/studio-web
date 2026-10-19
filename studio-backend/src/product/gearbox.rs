@@ -2305,6 +2305,17 @@ impl Gearbox {
             .cloned()
     }
 
+    /// Every product file organization `org`'s projects keep, by project.
+    pub fn project_files_of(&self, org: uuid::Uuid) -> Vec<(uuid::Uuid, ProjectFile)> {
+        self.project_files
+            .lock()
+            .expect("gearbox project files")
+            .iter()
+            .filter(|(_, f)| f.organization == org)
+            .map(|(p, f)| (*p, f.clone()))
+            .collect()
+    }
+
     /// The platform's roots, in the engine's order.
     #[cfg(test)]
     pub fn roots(&self) -> Vec<GearRoot> {

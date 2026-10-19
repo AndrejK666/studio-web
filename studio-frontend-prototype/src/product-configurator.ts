@@ -63,6 +63,8 @@ export interface CatalogueRoots {
   roots?: { source_id: string; tier?: string | null }[] | null;
   /** The roots read out of the organization's projects' own repositories. */
   project_sources?: string[] | null;
+  /** Whose each of those roots is: project ids by source id. */
+  project_source_owners?: Record<string, string[]> | null;
 }
 
 /** The catalogue looked up by engine id and by crate name. */
@@ -76,11 +78,32 @@ export interface CatalogueIndex {
   name: (g: CatalogueGear) => string;
 }
 
-export function indexCatalogue(catalogue: GearCatalogue | null | undefined, from: CatalogueRoots = {}): CatalogueIndex {
+/** `projectId`: the project on screen. Another project's root is the
+ *  organization's from here -- its code is not in this project's repository.
+ *  A root whose owners are not known is taken as this project's, as before
+ *  the backend said whose each is. */
+export function indexCatalogue(
+  catalogue: GearCatalogue | null | undefined,
+  from: CatalogueRoots = {},
+  projectId?: string,
+): CatalogueIndex {
+  const owners = from.project_source_owners ?? {};
+  const ours = (source: string) => {
+    const of = owners[source];
+    return !projectId || !of?.length || of.includes(projectId);
+  };
   const projectRoots = new Set(from.project_sources ?? []);
   const orgRoots = new Set((from.roots ?? []).filter((r) => r.tier === "organization").map((r) => r.source_id));
   const origin = (g: CatalogueGear | undefined): GearOrigin =>
-    !g?.source ? "platform" : projectRoots.has(g.source) ? "project" : orgRoots.has(g.source) ? "organization" : "platform";
+    !g?.source
+      ? "platform"
+      : projectRoots.has(g.source)
+        ? ours(g.source)
+          ? "project"
+          : "organization"
+        : orgRoots.has(g.source)
+          ? "organization"
+          : "platform";
   const gears = Object.values(catalogue?.gears ?? {}).sort((a, b) => a.id.localeCompare(b.id));
   const byId = new Map(gears.map((g) => [g.id, g]));
   // A crate can hold several gears (`cf-gears-mini-chat` is mini-chat and its

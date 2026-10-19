@@ -71,7 +71,7 @@ export function ProjectComponentsInventory({
   }, [scaffold, entities, token, projectId]);
   // The catalogue says which subsystem the new gear most likely joins; a
   // catalogue that cannot be read leaves the choice to the server's default.
-  const catalogue = useGearCatalogue(token, !!scaffold);
+  const catalogue = useGearCatalogue(token, !!scaffold, projectId);
   const index = catalogue && "index" in catalogue ? catalogue.index : null;
   const draft = useMemo(() => {
     if (!scaffold || !entities || !catalogue) return null;

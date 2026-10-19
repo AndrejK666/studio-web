@@ -63,20 +63,21 @@ export type ConfiguredProduct = {
 
 type Catalogue = { index: CatalogueIndex } | { error: string } | null;
 
-/** The engine's catalogue, read once per token; null while it is read. */
-export function useGearCatalogue(token: string, on: boolean): Catalogue {
+/** The engine's catalogue, read once per token; null while it is read.
+ *  `projectId`: the project on screen, whose own roots are "this project". */
+export function useGearCatalogue(token: string, on: boolean, projectId?: string): Catalogue {
   const [read, setRead] = useState<Catalogue>(null);
   useEffect(() => {
     if (!on) return;
     let live = true;
     api
       .gearboxCatalogue(token)
-      .then((r) => live && setRead({ index: indexCatalogue(r.catalogue, r) }))
+      .then((r) => live && setRead({ index: indexCatalogue(r.catalogue, r, projectId) }))
       .catch((e: unknown) => live && setRead({ error: e instanceof Error ? e.message : String(e) }));
     return () => {
       live = false;
     };
-  }, [token, on]);
+  }, [token, on, projectId]);
   return read;
 }
 

@@ -289,4 +289,22 @@ describe("whose a part is", () => {
     expect(idx.origin(idx.find("api-gateway"))).toBe("platform");
     expect(idx.origin(undefined)).toBe("platform");
   });
+
+  it("calls only the viewed project's own roots this project's; another project's are the organization's", () => {
+    const two = indexCatalogue(
+      {
+        gears: {
+          "shop-orders": { id: "shop-orders", source: "shop-backend", package: { crate_name: "shop-orders" } },
+          "crm-leads": { id: "crm-leads", source: "crm-backend", package: { crate_name: "crm-leads" } },
+        },
+      },
+      {
+        project_sources: ["shop-backend", "crm-backend"],
+        project_source_owners: { "shop-backend": ["p-shop"], "crm-backend": ["p-crm"] },
+      },
+      "p-shop",
+    );
+    expect(two.origin(two.find("shop-orders"))).toBe("project");
+    expect(two.origin(two.find("crm-leads"))).toBe("organization");
+  });
 });

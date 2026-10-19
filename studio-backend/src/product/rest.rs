@@ -21,7 +21,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::gearbox::{CORPUS_SOURCE_ID, Gearbox, PROFILES, PreviewInput, Scope};
+use super::gearbox::{CORPUS_SOURCE_ID, GearRoot, Gearbox, PROFILES, PreviewInput, Scope};
 use super::service::ProductService;
 use crate::catalog_graph::gts::GtsNode;
 use crate::org_scope::OrgCtx;
@@ -250,6 +250,12 @@ pub struct GearboxCatalogueDto {
     /// and must not clone it a second time as a corpus.
     #[serde(default)]
     pub project_sources: Vec<String>,
+    /// Whose each of `project_sources` is: the projects whose product file
+    /// was read from the repository and branch the root is in, by source id.
+    /// Several when projects share a repository. A screen about one project
+    /// calls only its own roots' gears "this project's".
+    #[serde(default)]
+    pub project_source_owners: std::collections::BTreeMap<String, Vec<String>>,
     /// `gearbox catalogue --format json` verbatim: `gears` by id, each a
     /// `GearDescriptor`, plus `contracts`, `sources` and `diagnostics`.
     pub catalogue: Value,
@@ -1215,7 +1221,14 @@ async fn gearbox_catalogue(
         .await
         .into_iter()
         .partition(|r| r.root.subdir.is_some());
-    let project_sources = project_roots.into_iter().map(|r| r.root.id).collect();
+    let project_roots: Vec<GearRoot> = project_roots.into_iter().map(|r| r.root).collect();
+    let project_source_owners = project_source_owners(
+        &project_roots,
+        &scope
+            .map(|org| gearbox.project_files_of(org))
+            .unwrap_or_default(),
+    );
+    let project_sources = project_roots.into_iter().map(|r| r.id).collect();
     let roots = corpus_roots
         .into_iter()
         .map(|r| catalogue_root(scope, r))
@@ -1230,8 +1243,29 @@ async fn gearbox_catalogue(
         corpus_needs_token,
         roots,
         project_sources,
+        project_source_owners,
         catalogue: Value::clone(&raw),
     }))
+}
+
+/// For each project root, the projects whose product file was read from the
+/// same repository and branch: the root is a directory that file names.
+fn project_source_owners(
+    roots: &[GearRoot],
+    files: &[(Uuid, super::gearbox::ProjectFile)],
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    roots
+        .iter()
+        .map(|r| {
+            let mut owners: Vec<String> = files
+                .iter()
+                .filter(|(_, f)| f.repo == r.source.repo && f.branch == r.source.git_ref)
+                .map(|(p, _)| p.to_string())
+                .collect();
+            owners.sort();
+            (r.id.clone(), owners)
+        })
+        .collect()
 }
 
 /// One root as an IDE brings it in: where to clone it from, at which commit,
@@ -2393,8 +2427,55 @@ mod save_mode_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{file_in_scope, product_path_for};
+    use super::{file_in_scope, product_path_for, project_source_owners};
     use serde_json::json;
+
+    #[test]
+    fn a_project_root_is_owned_by_the_projects_whose_file_it_was_read_beside() {
+        use super::super::gearbox::{CorpusSource, GearRoot, ProjectFile};
+        let root = |id: &str, repo: &str| GearRoot {
+            id: id.into(),
+            source: CorpusSource {
+                label: repo.into(),
+                key: repo.into(),
+                repo: repo.into(),
+                url: format!("https://example.test/{repo}.git"),
+                username: String::new(),
+                token: String::new(),
+                git_ref: "main".into(),
+            },
+            connection_id: None,
+            organization: true,
+            subdir: Some(id.into()),
+        };
+        let file = |repo: &str, branch: &str| ProjectFile {
+            organization: uuid::Uuid::nil(),
+            repo: repo.into(),
+            branch: branch.into(),
+            path: "product.gdl".into(),
+            commit: None,
+            gears: Vec::new(),
+        };
+        let (a, b, c) = (
+            uuid::Uuid::from_u128(1),
+            uuid::Uuid::from_u128(2),
+            uuid::Uuid::from_u128(3),
+        );
+        let owners = project_source_owners(
+            &[root("shop-backend", "acme/shop"), root("crm-backend", "acme/crm")],
+            &[
+                (a, file("acme/shop", "main")),
+                (b, file("acme/crm", "main")),
+                (c, file("acme/crm", "release")),
+            ],
+        );
+        assert_eq!(owners["shop-backend"], vec![a.to_string()]);
+        assert_eq!(
+            owners["crm-backend"],
+            vec![b.to_string()],
+            "another branch of the same repository is another project's file"
+        );
+    }
 
     #[test]
     fn a_cached_product_file_reaches_only_its_own_organization() {
