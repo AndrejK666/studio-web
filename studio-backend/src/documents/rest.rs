@@ -5533,11 +5533,7 @@ fn review_state_fits(key: &str, state: &str) -> bool {
 /// How long a review's note may be: a hypothesis's check keeps its brief and
 /// what checking found, so it gets more room than a reason in a sentence.
 fn review_note_max(key: &str) -> usize {
-    if key.starts_with("hyp:") {
-        8000
-    } else {
-        2000
-    }
+    if key.starts_with("hyp:") { 8000 } else { 2000 }
 }
 
 /// Propose a whole document for the project's repository, as a pull request:
@@ -5881,7 +5877,10 @@ async fn review_spec_model_facts(
                  confirmed",
             ));
         }
-        if i.note.as_ref().is_some_and(|n| n.len() > review_note_max(key)) {
+        if i.note
+            .as_ref()
+            .is_some_and(|n| n.len() > review_note_max(key))
+        {
             return Err(invalid(
                 "note",
                 "must be at most 2000 bytes, or 8000 for a hypothesis's check (hyp:)",

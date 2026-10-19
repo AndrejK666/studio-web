@@ -20,7 +20,11 @@ fn a_kit_file_gives_its_methods() {
 
 #[test]
 fn a_file_out_of_shape_is_refused_whole_with_the_reason() {
-    assert!(parse("{}").unwrap_err().starts_with("not a list of methods"));
+    assert!(
+        parse("{}")
+            .unwrap_err()
+            .starts_with("not a list of methods")
+    );
     let no_limits = ONE.replace(r#""limits": "Five people are not a population.","#, "");
     assert!(parse(&no_limits).is_err());
     let bad_id = ONE.replace("usability-test", "Usability Test");
