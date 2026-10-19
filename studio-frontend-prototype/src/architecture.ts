@@ -617,6 +617,7 @@ export const SURFACES: Surface[] = [
     gears: [
       "studio-components-catalog",
       "studio-documents",
+      "studio-environments",
       "studio-kits",
       "studio-product",
       "studio-spec-mapping",
