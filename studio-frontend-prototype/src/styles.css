@@ -2767,3 +2767,11 @@ div.dm-block { padding-left: 0; }
 .pcomp-create { background: color-mix(in srgb, #dc2626 12%, transparent); color: #b91c1c; }
 .pcomp-organization { background: color-mix(in srgb, #16a34a 14%, transparent); color: #15803d; }
 .pcomp-platform, .pcomp-service { background: var(--accent); }
+
+/* Tests tab: a day per square, red when any run failed that day. */
+.tt-strip { display: flex; gap: 3px; margin: 0 0 12px; }
+.tt-day { flex: 1 1 0; max-width: 22px; height: 14px; border-radius: 3px; background: var(--muted, #e5e7eb); }
+.tt-day.green { background: var(--success); }
+.tt-day.red { background: var(--destructive); }
+.tt-job td { background: var(--accent); font-size: 13px; }
+.tt-job td:nth-child(2) { padding-left: 24px; }

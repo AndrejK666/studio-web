@@ -1195,6 +1195,46 @@ export interface PullReviewer {
   state: string;
 }
 
+/** One job of a CI run's attempt (`GET /studio-artifact-ingest/v1/runs`). */
+export interface CiJob {
+  name: string;
+  status: string | null;
+  conclusion: string | null;
+  /** The first step that failed, when one did. */
+  failed_step: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_seconds: number | null;
+  url: string | null;
+}
+
+/** One CI run as the sync kept it, with its jobs once a sync read them. */
+export interface CiRun {
+  id: string;
+  /** The repository node it ran in. */
+  repo: string | null;
+  workflow: string;
+  workflow_path: string | null;
+  title: string | null;
+  event: string | null;
+  branch: string | null;
+  sha: string;
+  status: string | null;
+  conclusion: string | null;
+  url: string | null;
+  number: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  jobs?: CiJob[];
+}
+
+export interface CiRunList {
+  items: CiRun[];
+  total: number;
+  /** The newest completed run on a mainline (else the newest completed run). */
+  latest_completed: string | null;
+}
+
 /** One open pull request and who it is waiting on. */
 export interface OpenPullRequest {
   id: string;
@@ -1206,6 +1246,8 @@ export interface OpenPullRequest {
   number: number;
   title: string;
   url: string | null;
+  /** The branch it would merge: what its CI runs ran on. */
+  source_branch?: string | null;
   author: PullPerson | null;
   waiting: PullWaiting;
   waiting_on: PullPerson[];
@@ -3447,6 +3489,17 @@ export const api = {
     request<{ items: RepoActivity[]; total: number; days: number }>(
       `/studio-artifact-ingest/v1/source-activity?scope=${encodeURIComponent(scope)}` +
         (days ? `&days=${days}` : ""),
+      token,
+    ),
+
+  /** A project's CI runs, newest first, each with the jobs of its attempt;
+   *  `latest_completed` names the run that speaks for the mainline. As fresh
+   *  as the project's last sync. */
+  ciRuns: (token: string, projectId: string, filter: { revision?: string; branch?: string } = {}) =>
+    request<CiRunList>(
+      `/studio-artifact-ingest/v1/runs?project_id=${encodeURIComponent(projectId)}` +
+        (filter.revision ? `&revision=${encodeURIComponent(filter.revision)}` : "") +
+        (filter.branch ? `&branch=${encodeURIComponent(filter.branch)}` : ""),
       token,
     ),
 
