@@ -9,7 +9,8 @@
  *   sources     workspace settings (the repositories attached to the project)
  *               crossed with the artifact graph's repo nodes, which carry the
  *               last sync and what it pulled. Sync runs from this screen.
- *   artifacts   studio-artifact-ingest node counts, scoped to this project.
+ *   artifacts   what the builds produced: the CI artifacts and releases the
+ *               sync keeps (studio-artifact-ingest), scoped to this project.
  *   quality     spec_finding nodes the Spec Quality tab wrote back.
  *   pull requests  who each open one is waiting on, from
  *               studio-artifact-ingest's /open-pull-requests
@@ -202,10 +203,9 @@ export function ProjectOverview({
   /** One row per declared type, folded by studio-documents. */
   const [rows, setRows] = useState<PipelineRow[]>([]);
   const [repoNodes, setRepoNodes] = useState<ArtifactNode[]>([]);
-  const [counts, setCounts] = useState<{ issue: number; pull_request: number; file: number }>({
-    issue: 0,
-    pull_request: 0,
-    file: 0,
+  const [counts, setCounts] = useState<{ build_artifact: number; release: number }>({
+    build_artifact: 0,
+    release: 0,
   });
   const [findings, setFindings] = useState<ArtifactNode[]>([]);
   const [findingTotal, setFindingTotal] = useState(0);
@@ -243,9 +243,8 @@ export function ProjectOverview({
         docPage,
         pipelinePage,
         repoPage,
-        issue,
-        prs,
-        files,
+        buildArtifacts,
+        releases,
         findingPage,
         kitPage,
         users,
@@ -287,9 +286,8 @@ export function ProjectOverview({
             { nodes: [] as ArtifactNode[], total: 0 },
             misses,
           ),
-          optional("issues", countNodes(token, "issue", project.id), 0, misses),
-          optional("pull requests", countNodes(token, "pull_request", project.id), 0, misses),
-          optional("files", countNodes(token, "file", project.id), 0, misses),
+          optional("CI artifacts", countNodes(token, "build_artifact", project.id), 0, misses),
+          optional("releases", countNodes(token, "release", project.id), 0, misses),
           optional(
             "spec-quality findings",
             api.listArtifactNodes(token, "spec_finding", project.id, undefined, 200),
@@ -318,7 +316,7 @@ export function ProjectOverview({
       setDocs(docPage.items ?? []);
       setRows(pipelinePage.items ?? []);
       setRepoNodes(repoPage.nodes ?? []);
-      setCounts({ issue, pull_request: prs, file: files });
+      setCounts({ build_artifact: buildArtifacts, release: releases });
       setFindings(findingPage.nodes ?? []);
       setFindingTotal(findingPage.total ?? (findingPage.nodes ?? []).length);
       setKits(kitPage.items ?? []);
@@ -363,8 +361,8 @@ export function ProjectOverview({
   );
 
   const syncedRepos = repos.filter((r) => graphRepo(r) !== undefined).length;
-  const artifactTotal = counts.issue + counts.pull_request + counts.file;
-  const artifactsKnown = !["issues", "pull requests", "files"].some(missed);
+  const artifactTotal = counts.build_artifact + counts.release;
+  const artifactsKnown = !["CI artifacts", "releases"].some(missed);
 
   const started = rows.filter((r) => !r.untouched);
   const notStarted = rows.filter((r) => r.untouched);
@@ -549,7 +547,7 @@ export function ProjectOverview({
         <Stat
           label="Artifacts"
           value={artifactsKnown ? artifactTotal : "—"}
-          sub={`${counts.issue} issues · ${counts.pull_request} PRs · ${counts.file} files`}
+          sub={`${counts.build_artifact} from CI · ${counts.release} releases`}
           onClick={() => onOpenTab("artifacts")}
         />
         <Stat
