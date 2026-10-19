@@ -2505,6 +2505,43 @@ impl super::port::DeliveryEvidence for IngestService {
 }
 
 #[async_trait::async_trait]
+impl super::port::OpenPullRequests for IngestService {
+    async fn open_pulls(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<super::port::OpenPull>> {
+        let pulls: Vec<(String, serde_json::Value)> = self
+            .list_in_scope(ctx, Some("pull_request"), scope)
+            .await?
+            .into_iter()
+            .map(|n| (n.instance_id, n.value))
+            .collect();
+        let now = time::OffsetDateTime::now_utc().unix_timestamp() * 1000;
+        Ok(super::pull_request_waits::waiting_pulls(&pulls, now)
+            .into_iter()
+            .map(|w| {
+                let mut reviewers = w.facts.requested_reviewers.clone();
+                for r in w.facts.reviews.iter().flatten() {
+                    if !reviewers.contains(&r.login) {
+                        reviewers.push(r.login.clone());
+                    }
+                }
+                super::port::OpenPull {
+                    project_id: w.project_id,
+                    author: w.facts.author,
+                    waiting: w.verdict.waiting.as_str().to_owned(),
+                    waiting_on: w.verdict.on,
+                    reviewers,
+                    days_open: w.days_open,
+                    days_since_update: w.days_since_update,
+                }
+            })
+            .collect())
+    }
+}
+
+#[async_trait::async_trait]
 impl super::port::ArtifactFiles for IngestService {
     async fn list_files(
         &self,

@@ -706,14 +706,7 @@ export const SURFACES: Surface[] = [
     title: "Organization overview",
     does: "Open the organization from the path and see what needs its leaders: refused connections, spend against the same days last month with a month-end forecast, pull requests stuck over 7 days and who they wait on, components to decide; its workspaces worst first, down to projects; and where the money goes.",
     components: ["OrgDashboard"],
-    gears: [
-      "studio-artifact-ingest",
-      "studio-components-catalog",
-      "studio-organizations",
-      "studio-tasks",
-      "studio-usage",
-      "studio-user",
-    ],
+    gears: ["studio-organizations"],
   },
   {
     id: "costs",

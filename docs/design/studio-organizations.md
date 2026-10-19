@@ -214,6 +214,60 @@ rollups keep their own rule and settle the same failure as an empty subtree.
 - `cpt-studio-component-account-management` — lists tenants in
 - `cpt-studio-component-components-catalog-registry` — is called by
 
+#### Overview
+
+- [x] `p2` - **ID**: `cpt-studio-component-organizations-overview`
+
+##### Why this component exists
+
+An organization's leaders ask what is on fire, where (by workspace, then
+project), whether money grows and who grows it, and whether work moves. The
+prototype answered that by composing about ten requests across six gears and
+applying rules of its own to them; the next portal would have had to copy both.
+
+##### Responsibility scope
+
+`overview.rs`, `GET /studio-organizations/v1/overview?organization_id=`: one
+organization over the last 30 UTC days against the same 30 days a month
+earlier, with a month-end forecast at this month's pace. The rules, stated as
+tests in `overview_tests.rs`:
+
+- a **refused connection** is a repository whose newest run failed with 401 or
+  403; a rate limit (also a 403) is not one, and a repository that synced since
+  is fine;
+- a pull request is **stuck** after 7 days without a move; a draft never is;
+- **spend is a member's** when the token subject that made the call is one of
+  their sign-ins (the roster's subjects); any other subject is `unattributed`
+  and sessions name nobody — both are counted and shown, never dropped;
+- a member is **idle** with no model use and no open pull request they wrote or
+  review in the period;
+- workspaces and projects are ordered by a score (a refused connection 10,
+  each failing spec 3, each open finding 1, each stuck pull request 2, growing
+  spend 2, quiet 14 days 1), the worst first.
+
+Money is read only for a caller holding `cost.view`; without it every money
+field is null (`costs: hidden`) and the rest is the same.
+
+##### Responsibility boundaries
+
+Owns none of the numbers. Reads the rollups as the caller, the costs through
+studio-usage's `OrganizationUsage` (the Costs report's gate and reads), the runs
+through studio-tasks' `RecentRuns`, the open pull requests through
+artifact-ingest's `OpenPullRequests`, the roster, names and account aliases
+through studio-user, the registry through the components catalogue. Each is
+resolved per request and each may be missing: its part of the answer is then
+null. This is an endpoint shaped by one screen, which API rule A5 discourages;
+it exists because the alternative was that composition in every portal.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-organizations-rollups` — its rows
+- `cpt-studio-component-usage` — priced usage through `OrganizationUsage`
+- `cpt-studio-component-tasks` — recent runs through `RecentRuns`
+- `cpt-studio-component-artifact-ingest` — open pull requests through `OpenPullRequests`
+- `cpt-studio-component-user` — `OrganizationRoster` (members, subjects, names), `MemberAliases`
+- `cpt-studio-component-components-catalog-registry` — open decisions through `Registry`
+
 ### 3.3 API Contracts
 
 - [x] `p2` - **ID**: `cpt-studio-interface-organizations-rest`
@@ -231,6 +285,7 @@ rollups keep their own rule and settle the same failure as an empty subtree.
 | `GET` | `/studio-organizations/v1/capabilities` | Whether a person may create an organization here | stable |
 | `GET` | `/studio-organizations/v1/access-catalogue` | Every privilege id the PDP understands, and the seeded role ladder; no labels | stable |
 | `GET` | `/studio-organizations/v1/rollups` | The portfolio, or one workspace or project; every count nullable | stable |
+| `GET` | `/studio-organizations/v1/overview?organization_id=` | One organization for its leaders: needs, spend vs last month, workspaces worst first, money, stuck work, idle people | unstable |
 | `GET` | `/studio-organizations/v1/logo?organization_id=` | Its logo, read as the caller; 404 when none | unstable |
 | `PUT` | `/studio-organizations/v1/logo?organization_id=` | Set it: PNG, JPEG, WebP or GIF up to 256 KiB, by whoever holds `access.manage` | unstable |
 | `DELETE` | `/studio-organizations/v1/logo?organization_id=` | Remove it; the portal shows the initial again | unstable |
@@ -243,10 +298,14 @@ rollups keep their own rule and settle the same failure as an empty subtree.
 | `cpt-studio-component-user` | `AssignmentRecorder`, `MembershipEvictor`, `OrgAuthority`, `OrganizationRoster` | Owner membership and grant, eviction, the deletion gate, the team count |
 | `cpt-studio-component-access-config` | `access_config` module | Read the access model and project grants for the team count; the privilege catalogue |
 | `cpt-studio-component-documents` | `DocumentCounter` (optional) | Rollup counts |
-| `cpt-studio-component-artifact-ingest` | `ArtifactCounter`, `ProjectSignalSource` (optional) | Rollup counts and activity |
+| `cpt-studio-component-artifact-ingest` | `ArtifactCounter`, `ProjectSignalSource`, `OpenPullRequests` (optional) | Rollup counts and activity; the overview's stuck work |
+| `cpt-studio-component-usage` | `OrganizationUsage` (optional) | The overview's spend |
+| `cpt-studio-component-tasks` | `RecentRuns` (optional) | The overview's refused connections |
+| `cpt-studio-component-components-catalog-registry` | `Registry` (optional) | The overview's open decisions |
 
 The rollup sources are resolved in the REST phase and each is optional; without
-account-management the rollups answer 503.
+account-management the rollups answer 503. The overview resolves its other
+sources per request, since several publish in their own REST phase.
 
 ### 3.5 External Dependencies
 

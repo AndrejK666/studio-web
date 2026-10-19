@@ -40,6 +40,13 @@ This README is what you need to work in the directory.
   "access.manage")`, and the PDP refuses anybody else's write of the row
   (`studio_authz_plugin::GEAR_HELD_METADATA`).
 
+- The organization's overview ([`overview.rs`](overview.rs)): `GET
+  /studio-organizations/v1/overview?organization_id=`. Its rules are tests in
+  `overview_tests.rs`; its sources (studio-usage `OrganizationUsage`,
+  studio-tasks `RecentRuns`, artifact-ingest `OpenPullRequests`, the registry,
+  studio-user's roster and aliases) are resolved per request, and each one
+  missing nulls its part of the answer.
+
 ## Working here
 
 - `clean_name` and the rollup rules are unit tests in `service.rs` and

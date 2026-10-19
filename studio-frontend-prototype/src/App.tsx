@@ -2736,7 +2736,6 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             key={orgAsSpace.id}
             token={token}
             org={{ id: orgAsSpace.id, name: orgAsSpace.name }}
-            workspaceIds={workspaces.filter((w) => w.orgId === orgAsSpace.id).map((w) => w.id)}
             onOpen={(target) => {
               setCrumb({});
               setView(target);

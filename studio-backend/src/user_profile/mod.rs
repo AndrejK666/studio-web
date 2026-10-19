@@ -573,10 +573,33 @@ pub trait OrganizationRoster: Send + Sync + 'static {
     /// answers with an empty list, which is a real answer; a failed read is an
     /// error, which is not.
     async fn active_members(&self, org_id: uuid::Uuid) -> anyhow::Result<Vec<RosterMember>>;
+
+    /// The names the profiles of `people` (person ids from
+    /// [`Self::active_members`]) carry; a person whose profile has none is
+    /// absent. For a screen that says who, never an address.
+    async fn display_names(&self, _people: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
+        Ok(BTreeMap::new())
+    }
 }
 
 #[async_trait]
 impl OrganizationRoster for IdentityService {
+    async fn display_names(&self, people: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
+        let mut out = BTreeMap::new();
+        for person in people {
+            if let Some(name) = self
+                .get_profile(person)
+                .await?
+                .and_then(|p| p.display_name)
+                .map(|n| n.trim().to_owned())
+                .filter(|n| !n.is_empty())
+            {
+                out.insert(person.clone(), name);
+            }
+        }
+        Ok(out)
+    }
+
     async fn active_members(&self, org_id: uuid::Uuid) -> anyhow::Result<Vec<RosterMember>> {
         let mut out = Vec::new();
         for membership in self.members_of(&org_id.to_string()).await? {

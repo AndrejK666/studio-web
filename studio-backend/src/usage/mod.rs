@@ -21,9 +21,14 @@ mod prices;
 mod rest;
 mod service;
 
+mod reader;
+
 pub mod port;
 pub mod sdk;
 pub mod types;
+
+/// An organization's priced usage, for the organization's overview.
+pub use reader::{Fact, FactKind, GroupBy, OrganizationUsage, PricedUsage};
 
 use std::sync::Arc;
 
@@ -47,7 +52,18 @@ pub struct StudioUsageGear;
 
 #[async_trait]
 impl Gear for StudioUsageGear {
-    async fn init(&self, _ctx: &GearCtx) -> anyhow::Result<()> {
+    async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // An organization's priced usage, for the organization's overview.
+        if let Ok(am) = ctx
+            .client_hub()
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+        {
+            ctx.client_hub()
+                .register::<dyn reader::OrganizationUsage>(Arc::new(reader::UsageReader::new(
+                    am,
+                    ctx.client_hub(),
+                )));
+        }
         Ok(())
     }
 }

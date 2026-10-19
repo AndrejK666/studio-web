@@ -2984,6 +2984,112 @@ export interface RollupRow {
   last_at?: string | null;
 }
 
+/** `GET /studio-organizations/v1/overview`: an organization for its leaders.
+ *  Money fields are null unless `costs` is `shown`; any other null is a
+ *  source that could not be asked, never zero. */
+export interface OrgOverview {
+  organization_id: string;
+  name: string;
+  period_from: string;
+  period_to: string;
+  previous_from: string;
+  previous_to: string;
+  stuck_days: number;
+  growth_alert: number;
+  quiet_days: number;
+  costs: "shown" | "hidden" | "unreadable";
+  needs: OrgNeed[];
+  spend: OrgSpend | null;
+  delivery: { merged: number | null; window_days: number; open: number | null; median_wait_days: number | null };
+  specs: { specs: number | null; failing: number | null; open_findings: number | null };
+  people: {
+    active: number | null;
+    with_spend: number | null;
+    per_person: number | null;
+    idle: { person_id: string; name: string | null }[] | null;
+  };
+  workspaces: OrgWorkspace[];
+  money: OrgMoney[] | null;
+  waiting_on: OrgQueue[] | null;
+  decisions: { undecided: number; candidates: number; registered: number; published: number } | null;
+}
+
+/** One thing that waits on the leaders; `kind` says which fields are set. */
+export interface OrgNeed {
+  kind: "connection" | "spend" | "pulls" | "components" | "runs";
+  tone: "danger" | "warn";
+  provider?: string | null;
+  status?: string | null;
+  projects: string[];
+  repos?: number | null;
+  current?: number | null;
+  previous?: number | null;
+  forecast?: number | null;
+  grower?: string | null;
+  pulls?: number | null;
+  people?: number | null;
+  components?: number | null;
+  runs?: number | null;
+}
+
+export interface OrgSpend {
+  currency: string;
+  current: number;
+  previous: number;
+  forecast: number;
+  own_keys: number;
+  attributed: number;
+  unattributed: number;
+  sessions: number;
+  unpriced: string[];
+}
+
+export interface OrgReason {
+  kind: "refused" | "specs_failing" | "stuck" | "spend_grows" | "quiet";
+  value: number | null;
+}
+
+export interface OrgProjectHealth {
+  id: string;
+  name: string;
+  spend: number | null;
+  previous: number | null;
+  specs_failing: number | null;
+  open_findings: number | null;
+  stuck: number;
+  quiet_days: number | null;
+  broken: boolean;
+  score: number;
+  reasons: OrgReason[];
+}
+
+export interface OrgWorkspace {
+  id: string;
+  name: string;
+  spend: number | null;
+  previous: number | null;
+  specs_failing: number;
+  stuck: number;
+  quiet_days: number | null;
+  score: number;
+  projects: OrgProjectHealth[];
+}
+
+export interface OrgMoney {
+  group_by: CostGroup;
+  include_personal: boolean;
+  /** By person: `key` is the member, `unattributed`, or empty for IDE sessions. */
+  rows: { key: string; label: string | null; cost: number; previous: number; unpriced: boolean }[];
+}
+
+export interface OrgQueue {
+  person_id: string | null;
+  /** Null: pull requests nobody was asked to review. */
+  who: string | null;
+  count: number;
+  oldest_days: number;
+}
+
 /** A verdict as the server read it. Fields follow the detector, so most are
  *  absent for any one answer; the nulls are load-bearing where present. */
 export interface SpecQualityVerdict {
@@ -3055,6 +3161,14 @@ export const api = {
       token,
     );
   },
+
+  /** What an organization's leaders ask of it, over the last 30 days — one
+   *  request; the rules are the server's (`organizations/overview.rs`). */
+  orgOverview: (token: string, org: string) =>
+    request<OrgOverview>(
+      `/studio-organizations/v1/overview?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
 
   /* ── studio-documents gear (types + templates + validation) ── */
 
@@ -3458,15 +3572,6 @@ export const api = {
   openPullRequests: (token: string, projectId: string, offset = 0) =>
     request<{ items: OpenPullRequest[]; total: number; members_known: boolean }>(
       `/studio-artifact-ingest/v1/open-pull-requests?project_id=${encodeURIComponent(projectId)}` +
-        `&limit=200&offset=${offset}`,
-      token,
-    ),
-
-  /** The open pull requests of every project in a workspace, each with who
-   *  it is waiting on. One page of up to 200. */
-  workspacePullRequests: (token: string, workspaceId: string, offset = 0) =>
-    request<{ items: OpenPullRequest[]; total: number; members_known: boolean }>(
-      `/studio-artifact-ingest/v1/open-pull-requests?workspace_id=${encodeURIComponent(workspaceId)}` +
         `&limit=200&offset=${offset}`,
       token,
     ),
