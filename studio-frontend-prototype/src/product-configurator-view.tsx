@@ -27,8 +27,10 @@ import {
   indexCatalogue,
   offers,
   plainWords,
+  readinessBreakdown,
   removePart,
   subsystemOf,
+  subsystemReadiness,
   subsystems,
   todos,
   unexplained,
@@ -37,6 +39,7 @@ import {
   type ExplanationIndex,
   type GearOrigin,
   type Part,
+  type Readiness,
 } from "./product-configurator";
 
 /** Whose a part is, in a tooltip. */
@@ -250,6 +253,7 @@ export function ProductConfigurator({
   const [dragging, setDragging] = useState<string | null>(null);
   const composition = useMemo(() => compose(index, picks, config, preview), [index, picks, config, preview]);
   const zones = useMemo(() => subsystems(index), [index]);
+  const ready = useMemo(() => subsystemReadiness(index), [index]);
   const left = todos(composition);
   const chosen = composition.parts.find((p) => p.name === selected) ?? null;
   const deployOf = (p: Part): GearDeployState | null => gearDeployState(p, running ?? null, productAt);
@@ -363,6 +367,7 @@ export function ProductConfigurator({
                   <header>
                     <b>{z}</b>
                     <span>{parts.length || ""}</span>
+                    <ReadyPill r={ready.get(z)} />
                   </header>
                   {parts.length === 0 && <div className="pm-hint">Drop it here</div>}
                   {parts.map((p) => (
@@ -499,6 +504,21 @@ function Tile({
   );
 }
 
+/** How far a subsystem of the catalogue is towards v1, from its gears'
+ *  maturity -- the number the catalogue slide used to be tallied by hand. */
+function ReadyPill({ r }: { r: Readiness | undefined }) {
+  if (!r) return null;
+  return (
+    <span
+      className="pm-ready"
+      data-ready={r.percent}
+      title={`v1 readiness of the whole catalogue's ${r.gears} gear${r.gears === 1 ? "" : "s"} here: ${readinessBreakdown(r)}`}
+    >
+      {r.percent} % ready
+    </span>
+  );
+}
+
 function Palette({
   token,
   index,
@@ -518,6 +538,7 @@ function Palette({
   const [only, setOnly] = useState<string | null>(null);
   const [looking, setLooking] = useState<string | null>(null);
   const all = offers(index, product.picks, query);
+  const ready = useMemo(() => subsystemReadiness(index), [index]);
   const groups = only ? all.filter((g) => g.category === only) : all;
   return (
     <div className="pm-box pm-palette" aria-label="Parts you can add">
@@ -541,7 +562,11 @@ function Palette({
       {groups.length === 0 && <div className="empty">Nothing matches. Try other words.</div>}
       {groups.map((g) => (
         <div key={g.category} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {!only && <div className="pm-h" style={{ margin: "4px 0 0" }}>{g.category}</div>}
+          {!only && (
+            <div className="pm-h" style={{ margin: "4px 0 0" }}>
+              {g.category} <ReadyPill r={ready.get(g.category)} />
+            </div>
+          )}
           {g.items.map((o) => (
             <div
               key={o.name}
