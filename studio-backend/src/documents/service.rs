@@ -3265,8 +3265,10 @@ fn gate_on_approvals(
         };
         let reviewers = current.reviewers();
         let facts = current.verdict_facts();
-        let maturity =
-            super::approvals::governing_maturity(current.maturity().as_deref(), maturity.as_deref());
+        let maturity = super::approvals::governing_maturity(
+            current.maturity().as_deref(),
+            maturity.as_deref(),
+        );
         let waiting = super::approvals::holding(
             &reviewers,
             &facts,
@@ -3278,11 +3280,12 @@ fn gate_on_approvals(
             .map(|r| r.name.clone().unwrap_or_else(|| r.person.clone()))
             .collect();
         if !super::approvals::advisory(maturity.as_deref()) {
-            req.approvals_outstanding.extend(super::approvals::silent_stakeholders(
-                &current.stakeholders(),
-                &reviewers,
-                &facts,
-            ));
+            req.approvals_outstanding
+                .extend(super::approvals::silent_stakeholders(
+                    &current.stakeholders(),
+                    &reviewers,
+                    &facts,
+                ));
         }
     }
     status.complete = status.requirements.iter().all(|r| {
@@ -4496,7 +4499,11 @@ mod tests {
             std::slice::from_ref(&file),
             std::slice::from_ref(&asked),
         );
-        assert_eq!(held.requirements[0].approvals_outstanding, ["Ann"], "{held:?}");
+        assert_eq!(
+            held.requirements[0].approvals_outstanding,
+            ["Ann"],
+            "{held:?}"
+        );
 
         let mut approved = review_of("sha-1", "approved", &["ann"]);
         approved.request.stakeholders = serde_json::json!(["Virtuozzo"]);

@@ -6955,7 +6955,10 @@ fn with_rules(
     mut dto: ReviewRequestDto,
     now: &std::collections::HashMap<String, String>,
 ) -> ReviewRequestDto {
-    dto.rules_changed = match (&dto.rules_digest, dto.type_key.as_ref().and_then(|k| now.get(k))) {
+    dto.rules_changed = match (
+        &dto.rules_digest,
+        dto.type_key.as_ref().and_then(|k| now.get(k)),
+    ) {
         (Some(then), Some(now)) => then != now,
         _ => false,
     };

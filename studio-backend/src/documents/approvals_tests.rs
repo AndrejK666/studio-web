@@ -69,7 +69,11 @@ fn the_latest_verdict_wins_whatever_order_they_are_read_in() {
 fn with_no_required_reviewer_one_approval_is_enough() {
     let reviewers = [reviewer("ann", false), reviewer("bob", false)];
     assert!(!approved(&reviewers, &[], &[]));
-    assert!(approved(&reviewers, &[verdict("bob", "approved", t(10))], &[]));
+    assert!(approved(
+        &reviewers,
+        &[verdict("bob", "approved", t(10))],
+        &[]
+    ));
 }
 
 #[test]
@@ -211,7 +215,11 @@ fn one_approval_answers_for_its_stakeholder() {
         .iter()
         .map(|r| r.person.as_str())
         .collect();
-    assert_eq!(waiting, ["vic"], "abe speaks for Acronis, which ann answered for");
+    assert_eq!(
+        waiting,
+        ["vic"],
+        "abe speaks for Acronis, which ann answered for"
+    );
     assert!(!approved(&reviewers, &ann, &[]));
     let both = [ann[0].clone(), verdict("vic", "approved", t(2))];
     assert!(approved(&reviewers, &both, &[]));
@@ -222,8 +230,14 @@ fn a_required_stakeholder_nobody_approved_for_holds_the_request() {
     let reviewers = [speaking_for("ann", "Acronis"), reviewer("bob", false)];
     let required = ["Acronis".to_string(), "Constructor".to_string()];
     let ann = [verdict("ann", "approved", t(1))];
-    assert_eq!(silent_stakeholders(&required, &reviewers, &ann), ["Constructor"]);
-    assert!(!approved(&reviewers, &ann, &required), "nobody speaks for Constructor yet");
+    assert_eq!(
+        silent_stakeholders(&required, &reviewers, &ann),
+        ["Constructor"]
+    );
+    assert!(
+        !approved(&reviewers, &ann, &required),
+        "nobody speaks for Constructor yet"
+    );
     let states = stakeholders(&required, &reviewers, &ann);
     assert_eq!(states.len(), 2);
     assert_eq!(states[0].approved_by, ["ANN"]);
@@ -232,8 +246,21 @@ fn a_required_stakeholder_nobody_approved_for_holds_the_request() {
 
 #[test]
 fn a_maturity_lowered_mid_review_does_not_lower_the_bar() {
-    assert_eq!(governing_maturity(Some("stable"), Some("design")).as_deref(), Some("stable"));
-    assert_eq!(governing_maturity(Some("preview"), Some("stable")).as_deref(), Some("stable"));
-    assert_eq!(governing_maturity(Some("preview"), None), None, "no level now is the full gate");
-    assert_eq!(governing_maturity(None, Some("experimental")).as_deref(), Some("experimental"));
+    assert_eq!(
+        governing_maturity(Some("stable"), Some("design")).as_deref(),
+        Some("stable")
+    );
+    assert_eq!(
+        governing_maturity(Some("preview"), Some("stable")).as_deref(),
+        Some("stable")
+    );
+    assert_eq!(
+        governing_maturity(Some("preview"), None),
+        None,
+        "no level now is the full gate"
+    );
+    assert_eq!(
+        governing_maturity(None, Some("experimental")).as_deref(),
+        Some("experimental")
+    );
 }

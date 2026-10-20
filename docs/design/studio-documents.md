@@ -365,8 +365,25 @@ question closes with a spike or a follow-up change, not another review round.
 A request whose latest verdicts include a security concern is not `approved`,
 since an approved request takes no more verdicts and the concern could never be
 lifted. Each request answers its `maturity`, read from the text it was asked
-about, and `advisory` when that is below `stable`; the stage reads the
-maturity the document declares now. Reviewer suggestions are the
+about, and `advisory` when that is below `stable`. The stage holds a review to
+that maturity, or to a stricter one the document declares since
+(`governing_maturity`): a level lowered mid-review does not turn a gate into
+advice.
+
+A reviewer may speak for a **stakeholder**, an organization the document
+answers to (as a gear's demand names its consumers: Acronis, Constructor,
+Virtuozzo). One approval answers for its stakeholder, so the other required
+reviewers of the same one are no longer awaited. A request may also name the
+stakeholders that must approve (`stakeholders`, migration m0027); one that
+nobody of theirs approved for keeps the request from closing as `approved` and,
+at `stable`, holds the stage, listed in `approvals_outstanding` by name. Each
+request answers every stakeholder with who approved for it and who was asked.
+
+A review is judged by the **rules it started with**. The request keeps its
+type's review guide and a digest of that guide and the template
+(`rules_snapshot`); `GET /review-criteria?review_request_id=` serves the
+criteria kept, and the request says `rules_changed` when the type's rules moved
+since. Asking again reviews against the new ones. Reviewer suggestions are the
 reviewers of earlier requests on the document, then on its type, ranked by how
 often they were asked. Each request change is announced on `studio-events` as
 `review_request.created`, `.decided` or `.cancelled`

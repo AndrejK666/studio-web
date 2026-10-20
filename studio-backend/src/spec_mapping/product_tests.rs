@@ -211,7 +211,11 @@ fn a_capability_filled_only_by_immature_gears_says_so_and_names_what_is_further_
     assert_eq!(f.severity, "medium");
     assert_eq!(f.gear.as_deref(), Some("file-storage"));
     assert_eq!(f.candidates, ["blob-store"]);
-    assert!(f.message.contains("`file-storage` is experimental"), "{}", f.message);
+    assert!(
+        f.message.contains("`file-storage` is experimental"),
+        "{}",
+        f.message
+    );
 }
 
 #[test]

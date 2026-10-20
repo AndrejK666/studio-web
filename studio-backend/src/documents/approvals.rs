@@ -173,7 +173,9 @@ pub fn stakeholders(
         }
         let theirs: Vec<&Reviewer> = reviewers
             .iter()
-            .filter(|r| r.stakeholder.as_deref().map(stakeholder_key).as_deref() == Some(key.as_str()))
+            .filter(|r| {
+                r.stakeholder.as_deref().map(stakeholder_key).as_deref() == Some(key.as_str())
+            })
             .collect();
         out.push(StakeholderState {
             name: name.trim().to_owned(),

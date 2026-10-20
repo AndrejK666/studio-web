@@ -576,7 +576,10 @@ pub(crate) fn declared_capabilities(component: &Value, profile: Option<&Value>) 
 pub(crate) fn maturity_of(component: &Value, profile: Option<&Value>) -> Option<String> {
     let values = crate::components_catalog::sdk::resolve(component, profile);
     let field = values.get("maturity")?;
-    let text = field.get("v").and_then(Value::as_str).or_else(|| field.as_str())?;
+    let text = field
+        .get("v")
+        .and_then(Value::as_str)
+        .or_else(|| field.as_str())?;
     let text = text.trim().to_ascii_lowercase();
     (!text.is_empty()).then_some(text)
 }

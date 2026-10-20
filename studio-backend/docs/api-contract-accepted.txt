@@ -374,6 +374,8 @@ request	POST /studio-documents/v1/review-requests	reviewers	Vec<{}>	required
 request	POST /studio-documents/v1/review-requests	reviewers.name	String	optional
 request	POST /studio-documents/v1/review-requests	reviewers.person	String	required
 request	POST /studio-documents/v1/review-requests	reviewers.required	bool	optional
+request	POST /studio-documents/v1/review-requests	reviewers.stakeholder	String	optional
+request	POST /studio-documents/v1/review-requests	stakeholders	Vec<String>	optional
 request	POST /studio-documents/v1/review-requests	subject_id	String	required
 request	POST /studio-documents/v1/review-requests	subject_kind	String	required
 request	POST /studio-documents/v1/review-requests	title	String	required
@@ -1745,7 +1747,16 @@ response	GET /studio-documents/v1/review-requests	items.reviewers.name	String	op
 response	GET /studio-documents/v1/review-requests	items.reviewers.person	String	always
 response	GET /studio-documents/v1/review-requests	items.reviewers.required	bool	always
 response	GET /studio-documents/v1/review-requests	items.reviewers.security	bool	always
+response	GET /studio-documents/v1/review-requests	items.reviewers.stakeholder	String	optional
 response	GET /studio-documents/v1/review-requests	items.reviewers.verdict	String	optional
+response	GET /studio-documents/v1/review-requests	items.rules_changed	bool	always
+response	GET /studio-documents/v1/review-requests	items.rules_digest	String	optional
+response	GET /studio-documents/v1/review-requests	items.stakeholders	Vec<{}>	always
+response	GET /studio-documents/v1/review-requests	items.stakeholders.approved	bool	always
+response	GET /studio-documents/v1/review-requests	items.stakeholders.approved_by	Vec<String>	always
+response	GET /studio-documents/v1/review-requests	items.stakeholders.asked	Vec<String>	always
+response	GET /studio-documents/v1/review-requests	items.stakeholders.name	String	always
+response	GET /studio-documents/v1/review-requests	items.stakeholders.required	bool	always
 response	GET /studio-documents/v1/review-requests	items.stale	bool	always
 response	GET /studio-documents/v1/review-requests	items.state	String	always
 response	GET /studio-documents/v1/review-requests	items.subject_id	String	always
@@ -2455,6 +2466,13 @@ response	GET /studio-environments/v1/targets	environments.environment.updated_by
 response	GET /studio-environments/v1/targets	environments.namespace	String	always
 response	GET /studio-environments/v1/targets	organization_id	Uuid	always
 response	GET /studio-environments/v1/targets	project_name	String	always
+response	GET /studio-events/v1/catalog	items	Vec<{}>	always
+response	GET /studio-events/v1/catalog	items.fields	Vec<String>	always
+response	GET /studio-events/v1/catalog	items.kind	String	always
+response	GET /studio-events/v1/catalog	items.publisher	String	optional
+response	GET /studio-events/v1/catalog	items.subject_type	String	always
+response	GET /studio-events/v1/catalog	items.when	String	always
+response	GET /studio-events/v1/catalog	total	u32	always
 response	GET /studio-events/v1/events	events	Vec<{}>	always
 response	GET /studio-events/v1/events	events.at_ms	i64	always
 response	GET /studio-events/v1/events	events.kind	String	always
@@ -3066,6 +3084,7 @@ response	GET /studio-spec-mapping/v1/plan	items.candidates.decision.decision	Str
 response	GET /studio-spec-mapping/v1/plan	items.candidates.decision.needs_review	bool	optional
 response	GET /studio-spec-mapping/v1/plan	items.candidates.declared	bool	always
 response	GET /studio-spec-mapping/v1/plan	items.candidates.kind	String	always
+response	GET /studio-spec-mapping/v1/plan	items.candidates.maturity	String	optional
 response	GET /studio-spec-mapping/v1/plan	items.candidates.name	String	always
 response	GET /studio-spec-mapping/v1/plan	items.candidates.origin	String	always
 response	GET /studio-spec-mapping/v1/plan	items.candidates.passage	String	optional
@@ -3083,6 +3102,7 @@ response	GET /studio-spec-mapping/v1/plan	items.gap	bool	always
 response	GET /studio-spec-mapping/v1/plan	items.label	String	optional
 response	GET /studio-spec-mapping/v1/plan	items.nonfunctional	bool	always
 response	GET /studio-spec-mapping/v1/plan	items.providers	Vec<{}>	always
+response	GET /studio-spec-mapping/v1/plan	items.providers.maturity	String	optional
 response	GET /studio-spec-mapping/v1/plan	items.providers.name	String	always
 response	GET /studio-spec-mapping/v1/plan	items.providers.strong	bool	always
 response	GET /studio-spec-mapping/v1/plan	items.sources	Vec<{}>	always
@@ -3936,7 +3956,16 @@ response	POST /studio-documents/v1/review-requests	reviewers.name	String	optiona
 response	POST /studio-documents/v1/review-requests	reviewers.person	String	always
 response	POST /studio-documents/v1/review-requests	reviewers.required	bool	always
 response	POST /studio-documents/v1/review-requests	reviewers.security	bool	always
+response	POST /studio-documents/v1/review-requests	reviewers.stakeholder	String	optional
 response	POST /studio-documents/v1/review-requests	reviewers.verdict	String	optional
+response	POST /studio-documents/v1/review-requests	rules_changed	bool	always
+response	POST /studio-documents/v1/review-requests	rules_digest	String	optional
+response	POST /studio-documents/v1/review-requests	stakeholders	Vec<{}>	always
+response	POST /studio-documents/v1/review-requests	stakeholders.approved	bool	always
+response	POST /studio-documents/v1/review-requests	stakeholders.approved_by	Vec<String>	always
+response	POST /studio-documents/v1/review-requests	stakeholders.asked	Vec<String>	always
+response	POST /studio-documents/v1/review-requests	stakeholders.name	String	always
+response	POST /studio-documents/v1/review-requests	stakeholders.required	bool	always
 response	POST /studio-documents/v1/review-requests	stale	bool	always
 response	POST /studio-documents/v1/review-requests	state	String	always
 response	POST /studio-documents/v1/review-requests	subject_id	String	always
@@ -3982,7 +4011,16 @@ response	POST /studio-documents/v1/review-requests/{}/cancel	reviewers.name	Stri
 response	POST /studio-documents/v1/review-requests/{}/cancel	reviewers.person	String	always
 response	POST /studio-documents/v1/review-requests/{}/cancel	reviewers.required	bool	always
 response	POST /studio-documents/v1/review-requests/{}/cancel	reviewers.security	bool	always
+response	POST /studio-documents/v1/review-requests/{}/cancel	reviewers.stakeholder	String	optional
 response	POST /studio-documents/v1/review-requests/{}/cancel	reviewers.verdict	String	optional
+response	POST /studio-documents/v1/review-requests/{}/cancel	rules_changed	bool	always
+response	POST /studio-documents/v1/review-requests/{}/cancel	rules_digest	String	optional
+response	POST /studio-documents/v1/review-requests/{}/cancel	stakeholders	Vec<{}>	always
+response	POST /studio-documents/v1/review-requests/{}/cancel	stakeholders.approved	bool	always
+response	POST /studio-documents/v1/review-requests/{}/cancel	stakeholders.approved_by	Vec<String>	always
+response	POST /studio-documents/v1/review-requests/{}/cancel	stakeholders.asked	Vec<String>	always
+response	POST /studio-documents/v1/review-requests/{}/cancel	stakeholders.name	String	always
+response	POST /studio-documents/v1/review-requests/{}/cancel	stakeholders.required	bool	always
 response	POST /studio-documents/v1/review-requests/{}/cancel	stale	bool	always
 response	POST /studio-documents/v1/review-requests/{}/cancel	state	String	always
 response	POST /studio-documents/v1/review-requests/{}/cancel	subject_id	String	always
@@ -4615,6 +4653,7 @@ response	POST /studio-spec-mapping/v1/plan	items.candidates.decision.decision	St
 response	POST /studio-spec-mapping/v1/plan	items.candidates.decision.needs_review	bool	optional
 response	POST /studio-spec-mapping/v1/plan	items.candidates.declared	bool	always
 response	POST /studio-spec-mapping/v1/plan	items.candidates.kind	String	always
+response	POST /studio-spec-mapping/v1/plan	items.candidates.maturity	String	optional
 response	POST /studio-spec-mapping/v1/plan	items.candidates.name	String	always
 response	POST /studio-spec-mapping/v1/plan	items.candidates.origin	String	always
 response	POST /studio-spec-mapping/v1/plan	items.candidates.passage	String	optional
@@ -4632,6 +4671,7 @@ response	POST /studio-spec-mapping/v1/plan	items.gap	bool	always
 response	POST /studio-spec-mapping/v1/plan	items.label	String	optional
 response	POST /studio-spec-mapping/v1/plan	items.nonfunctional	bool	always
 response	POST /studio-spec-mapping/v1/plan	items.providers	Vec<{}>	always
+response	POST /studio-spec-mapping/v1/plan	items.providers.maturity	String	optional
 response	POST /studio-spec-mapping/v1/plan	items.providers.name	String	always
 response	POST /studio-spec-mapping/v1/plan	items.providers.strong	bool	always
 response	POST /studio-spec-mapping/v1/plan	items.sources	Vec<{}>	always
@@ -5284,6 +5324,7 @@ route	GET /studio-environments/v1/deployments
 route	GET /studio-environments/v1/deployments/{}/status
 route	GET /studio-environments/v1/environments
 route	GET /studio-environments/v1/targets
+route	GET /studio-events/v1/catalog
 route	GET /studio-events/v1/events
 route	GET /studio-events/v1/stream
 route	GET /studio-git/v1/sources
