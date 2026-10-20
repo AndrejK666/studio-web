@@ -24,6 +24,7 @@ import {
   type ProductFinding,
   type SpecModelFact,
   type SpecModelFinding,
+  unreadNote,
 } from "./spec-model";
 import type { RelatedRequirement, RequirementTrace, SpecRequirement } from "./spec-model";
 
@@ -318,5 +319,23 @@ describe("requirement traces", () => {
     expect(traceGaps(items, "no-test").map((t) => t.id)).toEqual(["b", "c", "d"]);
     expect(traceGaps(items, "untraced").map((t) => t.id)).toEqual(["c"]);
     expect(traceGaps(items, "all")).toHaveLength(4);
+  });
+});
+
+describe("unread documents", () => {
+  const model = (documents: number, unread?: number) =>
+    ({
+      build: {} as never,
+      documents: Array.from({ length: documents }, () => ({}) as never),
+      facts: [],
+      unread_documents: unread,
+    }) as never;
+  it("says the repository copy is missing, not that nothing is typed", () => {
+    expect(unreadNote(model(0, 101))).toMatch(/^101 typed documents cannot be read: this server has no copy/);
+    expect(unreadNote(model(3, 1))).toMatch(/^1 typed document cannot be read/);
+  });
+  it("keeps the plain advice when nothing is typed, and says nothing when all were read", () => {
+    expect(unreadNote(model(0))).toMatch(/None are yet/);
+    expect(unreadNote(model(4, 0))).toBeNull();
   });
 });

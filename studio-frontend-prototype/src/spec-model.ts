@@ -82,6 +82,25 @@ export interface SpecModel {
   build: SpecModelBuild;
   documents: SpecModelDocument[];
   facts: SpecModelFact[];
+  /** Typed documents this server has no copy of: the repository is not
+   *  synced here (or its clone went with a restarted backend). Absent from
+   *  an older server. */
+  unread_documents?: number;
+}
+
+/** Why the model has nothing to read, or reads less than is typed, in one
+ *  line. `null` when every typed document was read. */
+export function unreadNote(model: SpecModel): string | null {
+  const unread = model.unread_documents ?? 0;
+  if (unread === 0) {
+    return model.documents.length === 0
+      ? "The domain model is read from the project's documentation: the documents whose type was settled in the Specs tab (its Bound list). None are yet. Type the documents there first, then build the model."
+      : null;
+  }
+  const n = `${unread} typed document${unread === 1 ? "" : "s"}`;
+  return model.documents.length === 0
+    ? `${n} cannot be read: this server has no copy of the repository right now (it is lost when the backend restarts). Sync the repository on the Sources tab, then build the model.`
+    : `${n} cannot be read: the server's copy of the repository is missing. Sync it on the Sources tab to read them too.`;
 }
 
 export interface SpecModelFinding {

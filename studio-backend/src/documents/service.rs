@@ -1953,7 +1953,8 @@ impl DocumentsService {
                 node: String::new(),
                 binding: None,
             });
-        let documents = rows
+        let typed = rows.len();
+        let documents: Vec<super::spec_model::SourceText> = rows
             .into_iter()
             .filter_map(|row| {
                 by_path
@@ -1967,18 +1968,20 @@ impl DocumentsService {
                         node: row.node_id,
                     })
             })
-            .chain(unbound_domain_doc)
             .collect();
+        let unread = typed - documents.len();
+        let documents = documents.into_iter().chain(unbound_domain_doc);
         let files = by_path
             .into_iter()
             .filter_map(|(path, text)| text.map(|t| (path, t)))
             .collect();
-        let mut documents: Vec<super::spec_model::SourceText> = documents;
+        let mut documents: Vec<super::spec_model::SourceText> = documents.collect();
         documents.extend(self.studio_sources(workspace_id, project_id).await?);
         Ok(super::spec_model::Sources {
             documents,
             tree,
             files,
+            unread,
         })
     }
 
