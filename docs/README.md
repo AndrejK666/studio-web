@@ -68,6 +68,12 @@ repository.
 - [desktop-release-notes.md](desktop-release-notes.md) — what a member notices in each desktop release, and what does not work yet.
 - [sharing-documents-without-git.md](sharing-documents-without-git.md) — *Share with the team*, saves that change only what was edited, and why the assistant panel no longer opens on its own.
 
+**For coding agents** — what the engineering skills (`CLAUDE.md`, "Agent skills") read:
+
+- [agents/issue-tracker.md](agents/issue-tracker.md) — issues live in GitHub, through the `gh` CLI.
+- [agents/triage-labels.md](agents/triage-labels.md) — the five triage roles and the labels they map to.
+- [agents/domain.md](agents/domain.md) — where the domain docs are, and which to read before exploring.
+
 **Requests to the platform** — [upstream/](upstream/README.md): what Studio asks
 of graph-storage, account-management, gears-rust and the spec-quality service,
 kept current.
