@@ -1059,6 +1059,15 @@ function SuggestedComponents({
                                 </span>
                               )}
                               {c.built === "docs-only" && <span style={{ marginLeft: 5, fontWeight: 700 }}>docs only</span>}
+                              {(c.maturity === "design" || c.maturity === "experimental") && (
+                                <span
+                                  style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: "var(--warning, #b7791f)" }}
+                                  title="Not ready to be relied on: what it promises can still change"
+                                  data-maturity={c.maturity}
+                                >
+                                  {c.maturity.toUpperCase()}
+                                </span>
+                              )}
                               {c.decision?.decision === "rejected" && !c.decision.needs_review && (
                                 <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700 }}>REJECTED</span>
                               )}

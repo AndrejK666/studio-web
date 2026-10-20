@@ -1025,6 +1025,9 @@ export interface Candidate {
   /** Whose component it is (ADR-0042): the shared set, the organization's
    *  own, or this project's. Absent from a server older than the tiers. */
   tier?: ComponentTier;
+  /** Its gear.gdl maturity (design | experimental | preview | stable |
+   *  deprecated). Absent when unknown, or from an older server. */
+  maturity?: string | null;
 }
 
 /** Where a component comes from (ADR-0042): `platform` -- the shared set,
