@@ -5249,7 +5249,13 @@ async fn list_requirement_trace(
         .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
         .await
         .map_err(internal)?;
-    let traced = sources.trace();
+    // Reading every checkout file is CPU work, not waiting: off the async
+    // workers, so a large project does not stall every other request and the
+    // health check with them.
+    let (traced, files) =
+        tokio::task::spawn_blocking(move || (sources.trace(), sources.files.len()))
+            .await
+            .map_err(|e| internal(anyhow::anyhow!("tracing requirements: {e}")))?;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let sides = |c: Vec<super::spec_model::trace::Cited>| -> Vec<SpecModelSideDto> {
         c.into_iter().map(|x| side_at(&x.path, x.line)).collect()
@@ -5273,7 +5279,7 @@ async fn list_requirement_trace(
         items,
         implemented: count(implemented),
         tested: count(tested),
-        files: count(sources.files.len()),
+        files: count(files),
     }))
 }
 
