@@ -173,6 +173,15 @@ backend:
     enabled: true
     sizeLimit: 4Gi
     mountPath: /var/lib/studio/artifact-clones
+    # A claim instead of the emptyDir, so the clones outlive the Pod: with
+    # the emptyDir, every restart left the Domain model reading none of a
+    # project's documents until somebody synced again (#835). One replica
+    # only (ReadWriteOnce); `sizeLimit` does not apply to it, `size` does.
+    persistence:
+      enabled: false
+      size: 8Gi
+      # Empty leaves it to the cluster default.
+      storageClass: ""
   # The Gearbox engine: the gear catalogue an IDE lists when its workspace
   # holds no gear corpus (`/studio-product/v1/gearbox/catalogue`),
   # product previews, and the corpus clone relay. Off, those routes do not
