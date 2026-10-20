@@ -92,7 +92,10 @@ revisited; they are listed here so nobody copies the shape.
 `cargo test` reads this page, so its shape is part of it: a section about a
 subject names its `subject_type` in backticks in its `## ` heading, and every
 table whose first column is `kind` has a `Payload fields` column with the field
-names in backticks.
+names in backticks. A section's line that starts `Published by` names the gear
+that publishes its kinds, in backticks: `GET /studio-events/v1/catalog` serves
+the page as the backend was built with it, and the Architecture page lists each
+gear's kinds from it.
 
 - **Against the producers.** Each producer's tests compare the kinds it can
   publish with the rows here for its prefix (`task.`, `review_request.`,
