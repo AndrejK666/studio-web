@@ -1912,6 +1912,33 @@ impl DocumentsService {
         project_id: Uuid,
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
     ) -> Result<super::spec_model::Sources> {
+        self.read_spec_model_sources(ctx, workspace_id, project_id, reader, false)
+            .await
+    }
+
+    /// [`Self::spec_model_sources`] with the text of every other file of the
+    /// checkouts in `files`: what tracing a requirement to code and tests
+    /// reads. Every other reader of the model leaves `files` empty, so it
+    /// does not hold a whole repository's text for documents it never reads.
+    pub async fn spec_model_sources_with_code(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Result<super::spec_model::Sources> {
+        self.read_spec_model_sources(ctx, workspace_id, project_id, reader, true)
+            .await
+    }
+
+    async fn read_spec_model_sources(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+        with_code: bool,
+    ) -> Result<super::spec_model::Sources> {
         use super::spec_model::domain_doc::{DOMAIN_DOC_PATH, DOMAIN_DOC_TYPE, read_as};
         let all = self.all_bindings(workspace_id, Some(project_id)).await?;
         let domain_doc_bound = all.iter().any(|row| row.path == DOMAIN_DOC_PATH);
@@ -1938,8 +1965,17 @@ impl DocumentsService {
             workspace_id,
         );
         // The whole listing, not the text files alone: a link that leads to a
-        // template or an image resolves as surely as one to a document.
-        let mut by_path = self.checkout_listing(ctx, &tenants, reader).await;
+        // template or an image resolves as surely as one to a document. The
+        // text, though, of the documents alone unless the code is asked for.
+        let wanted: Option<std::collections::BTreeSet<String>> = (!with_code).then(|| {
+            rows.iter()
+                .map(|r| r.path.clone())
+                .chain([DOMAIN_DOC_PATH.to_owned()])
+                .collect()
+        });
+        let mut by_path = self
+            .checkout_listing(ctx, &tenants, reader, wanted.as_ref())
+            .await;
         let tree = by_path.keys().cloned().collect();
         // Written by Studio but not synced yet: no binding, so no graph node
         // to record a verdict on, but read all the same.
@@ -2837,7 +2873,7 @@ impl DocumentsService {
         tenants: &[Uuid],
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
     ) -> std::collections::BTreeMap<String, String> {
-        self.checkout_listing(ctx, tenants, reader)
+        self.checkout_listing(ctx, tenants, reader, None)
             .await
             .into_iter()
             .filter_map(|(path, text)| text.map(|t| (path, t)))
@@ -2851,6 +2887,7 @@ impl DocumentsService {
         ctx: &SecurityContext,
         tenants: &[Uuid],
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+        wanted: Option<&std::collections::BTreeSet<String>>,
     ) -> std::collections::BTreeMap<String, Option<String>> {
         let mut by_path: std::collections::BTreeMap<String, Option<String>> =
             std::collections::BTreeMap::new();
@@ -2870,7 +2907,15 @@ impl DocumentsService {
                     .secret_ref
                     .as_ref()
                     .map(|secret_ref| (secret_ref, &resolved.source.full_path));
-                let mut files = match reader.read_repo_listing(&tenant.to_string(), dir).await {
+                let listed = match wanted {
+                    Some(w) => {
+                        reader
+                            .read_repo_listing_of(&tenant.to_string(), dir, w)
+                            .await
+                    }
+                    None => reader.read_repo_listing(&tenant.to_string(), dir).await,
+                };
+                let mut files = match listed {
                     Ok(files) => files,
                     Err(error) => {
                         tracing::warn!(%error, dir, "studio-documents: a checkout could not be read");
@@ -2883,9 +2928,19 @@ impl DocumentsService {
                 if files.is_empty()
                     && let Some((secret_ref, full_path)) = clone
                 {
-                    files = reader
-                        .read_synced_clone_listing(secret_ref, full_path)
-                        .await
+                    let listed = match wanted {
+                        Some(w) => {
+                            reader
+                                .read_synced_clone_listing_of(secret_ref, full_path, w)
+                                .await
+                        }
+                        None => {
+                            reader
+                                .read_synced_clone_listing(secret_ref, full_path)
+                                .await
+                        }
+                    };
+                    files = listed
                         .unwrap_or_else(|error| {
                             tracing::warn!(%error, dir, "studio-documents: the synced clone could not be read");
                             Vec::new()

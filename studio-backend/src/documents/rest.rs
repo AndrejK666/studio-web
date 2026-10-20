@@ -5252,7 +5252,7 @@ async fn list_requirement_trace(
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let reader = quality.reader()?;
     let sources = service
-        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
+        .spec_model_sources_with_code(&ctx, workspace_id, project_id, reader.as_ref())
         .await
         .map_err(internal)?;
     // Reading every checkout file is CPU work, not waiting: off the async
