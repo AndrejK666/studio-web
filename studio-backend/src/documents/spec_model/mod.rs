@@ -49,6 +49,10 @@ pub struct Sources {
     /// The checkouts' other text files, `(path, text)`: the code and tests a
     /// requirement can be traced to.
     pub files: Vec<(String, String)>,
+    /// Typed documents whose text no checkout on this server holds: the
+    /// repository was never synced here, or the copy went with a restarted
+    /// pod (the clones live on an `emptyDir`). A sync brings them back.
+    pub unread: usize,
 }
 
 impl Sources {

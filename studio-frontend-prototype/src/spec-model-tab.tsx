@@ -55,6 +55,7 @@ import {
   type WorkLinks,
   workLabel,
   workState,
+  unreadNote,
 } from "./spec-model";
 
 /** The three questions first; the rest stays a click away under More. */
@@ -530,10 +531,9 @@ export function SpecModelTab({
 
       {error && <div className="error">{error}</div>}
       {!model && !error && <div className="empty">Loading…</div>}
-      {model && model.documents.length === 0 && (
-        <div className="hint" data-no-documentation>
-          The domain model is read from the project&apos;s documentation: the documents whose type was settled in the Specs tab
-          (its Bound list). None are yet. Type the documents there first, then build the model.
+      {model && unreadNote(model) && (
+        <div className="hint" data-no-documentation data-unread={model.unread_documents ?? 0}>
+          {unreadNote(model)}
         </div>
       )}
 

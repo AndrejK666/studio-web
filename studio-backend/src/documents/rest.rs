@@ -2955,6 +2955,10 @@ pub struct SpecModelDto {
     pub build: SpecModelBuildDto,
     pub documents: Vec<SpecModelDocumentDto>,
     pub facts: Vec<SpecModelFactDto>,
+    /// Typed documents (the Specs tab's Bound list) whose text this server
+    /// has no copy of: the repository was not synced here yet, or its clone
+    /// went with a restarted pod. Syncing the repository brings them back.
+    pub unread_documents: u32,
 }
 
 /// The project's sources, the facts of their current revisions, and where
@@ -3003,10 +3007,11 @@ async fn get_spec_model(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let reader = quality.reader()?;
-    let (_, facts, coverage) =
+    let (sources, facts, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     Ok(Json(SpecModelDto {
+        unread_documents: count(sources.unread),
         build: super::spec_model::build::state(project_id).into(),
         documents: coverage
             .into_iter()
@@ -3073,6 +3078,7 @@ async fn start_spec_model_build(
         tree: sources.tree,
         // Recording findings needs no code files.
         files: Vec::new(),
+        unread: sources.unread,
     };
     let documents = sources.documents;
     tokio::spawn(async move {
