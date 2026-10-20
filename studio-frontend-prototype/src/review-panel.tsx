@@ -12,8 +12,11 @@ import {
   currentRequest,
   gateNote,
   isStale,
+  parseStakeholders,
   reviewRequestBody,
   reviewState,
+  rulesNote,
+  stakeholderLines,
   type ReviewerInput,
   type ReviewRequest,
   type ReviewSubject,
@@ -44,6 +47,7 @@ export function ReviewPanel({
   const [asking, setAsking] = useState(false);
   const [picked, setPicked] = useState<ReviewerInput[]>([]);
   const [due, setDue] = useState("");
+  const [mustApprove, setMustApprove] = useState("");
   const [note, setNote] = useState("");
   const [security, setSecurity] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -89,10 +93,14 @@ export function ReviewPanel({
   const send = async () => {
     setBusy(true);
     try {
-      await api.createReviewRequest(token, reviewRequestBody(projectId, subject, picked, due || null));
+      await api.createReviewRequest(
+        token,
+        reviewRequestBody(projectId, subject, picked, due || null, parseStakeholders(mustApprove)),
+      );
       setAsking(false);
       setPicked([]);
       setDue("");
+      setMustApprove("");
       await load();
       onChanged?.();
     } catch (e) {
@@ -134,6 +142,8 @@ export function ReviewPanel({
   const current = currentRequest(requests);
   const state = current ? reviewState(current) : null;
   const gate = current ? gateNote(current) : null;
+  const rules = current ? rulesNote(current) : null;
+  const holders = current ? stakeholderLines(current) : [];
   const nameOf = (person: string) =>
     people.find((p) => p.user_id === person)?.display_name ?? picked.find((p) => p.person === person)?.name ?? person;
 
@@ -154,6 +164,11 @@ export function ReviewPanel({
       </div>
       {err && <div className="rv-err">{err}</div>}
       {gate && <div className="rv-muted">{gate}</div>}
+      {rules && (
+        <div className="rv-muted" data-rules-changed>
+          {rules}
+        </div>
+      )}
 
       {current && (
         <>
@@ -161,6 +176,7 @@ export function ReviewPanel({
             {current.reviewers.map((r) => (
               <li key={r.person}>
                 {r.name ?? r.person}
+                {r.stakeholder ? ` for ${r.stakeholder}` : ""}
                 {r.required ? "" : " (optional)"}:{" "}
                 <b>
                   {r.verdict === "approved"
@@ -174,6 +190,13 @@ export function ReviewPanel({
               </li>
             ))}
           </ul>
+          {holders.length > 0 && (
+            <ul className="rv-reviewers" aria-label="Stakeholders">
+              {holders.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          )}
           {current.due_at && <div className="rv-muted">Due {current.due_at.slice(0, 10)}</div>}
           {canDecide(current, me) && (
             <div className="rv-decide">
@@ -239,6 +262,17 @@ export function ReviewPanel({
                   />{" "}
                   required
                 </label>
+                <input
+                  className="rv-for"
+                  placeholder="for (org)"
+                  title="The stakeholder they speak for: one approval answers for it"
+                  aria-label={`Whom ${p.name ?? p.person} speaks for`}
+                  value={p.stakeholder ?? ""}
+                  onChange={(e) =>
+                    setPicked(picked.map((x) => (x.person === p.person ? { ...x, stakeholder: e.target.value } : x)))
+                  }
+                  style={{ width: 90, fontSize: 11 }}
+                />
                 <button
                   className="rv-x"
                   aria-label={`Remove ${p.name ?? p.person}`}
@@ -268,6 +302,14 @@ export function ReviewPanel({
           </select>
           <label className="rv-due">
             Due <input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+          </label>
+          <label className="rv-due" title="Each must approve through somebody speaking for it">
+            Must be approved by{" "}
+            <input
+              placeholder="Acronis, Constructor, Virtuozzo"
+              value={mustApprove}
+              onChange={(e) => setMustApprove(e.target.value)}
+            />
           </label>
           <div className="rv-actions">
             <button className="primary" disabled={busy || picked.length === 0} onClick={() => void send()}>

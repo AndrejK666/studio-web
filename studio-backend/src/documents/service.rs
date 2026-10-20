@@ -721,7 +721,8 @@ impl DocumentsService {
     }
 
     /// Ask for a review of one version of a document. An earlier open request
-    /// on the same document is superseded.
+    /// on the same document is superseded. `types` are the types as the
+    /// workspace sees them now: the review keeps its type's rules from them.
     pub async fn request_review(
         &self,
         workspace_id: Uuid,
@@ -729,6 +730,7 @@ impl DocumentsService {
         ask: ReviewAsk,
         requester: (String, Option<String>),
         reviewed_text: Option<String>,
+        types: &[DocumentType],
     ) -> Result<Review> {
         if !matches!(ask.subject_kind.as_str(), "document" | "binding") {
             bail!("subject_kind must be `document` or `binding`");
@@ -769,7 +771,25 @@ impl DocumentsService {
             .reviewers
             .into_iter()
             .filter(|r| !r.person.trim().is_empty() && seen.insert(r.person.clone()))
+            .map(|mut r| {
+                r.stakeholder = r
+                    .stakeholder
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                r
+            })
             .collect();
+        let mut named = std::collections::BTreeSet::new();
+        let stakeholders: Vec<String> = ask
+            .stakeholders
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && named.insert(s.to_lowercase()))
+            .collect();
+        let rules = type_key
+            .as_deref()
+            .and_then(|k| types.iter().find(|t| t.key == k))
+            .map(super::review_guide::rules_snapshot);
         let model = super::entity::review_request::Model {
             id: Uuid::new_v4(),
             tenant_id: workspace_id,
@@ -786,6 +806,8 @@ impl DocumentsService {
             state: "open".to_string(),
             created_at: OffsetDateTime::now_utc(),
             reviewed_text: reviewed_text.map(|t| clip_text(&t, REVIEWED_TEXT_MAX)),
+            stakeholders: serde_json::to_value(&stakeholders)?,
+            rules_snapshot: rules.map(serde_json::to_value).transpose()?,
         };
         self.repo.put_review_request(model.clone()).await?;
         Ok(Review {
@@ -854,7 +876,7 @@ impl DocumentsService {
             .await?
             .pop()
             .context("the request was just read")?;
-        if super::approvals::approved(&reviewers, &review.verdict_facts()) {
+        if super::approvals::approved(&reviewers, &review.verdict_facts(), &review.stakeholders()) {
             self.repo
                 .set_review_request_state(workspace_id, request_id, "approved")
                 .await?;
@@ -3110,6 +3132,9 @@ pub struct ReviewAsk {
     pub version: String,
     pub reviewers: Vec<super::approvals::Reviewer>,
     pub due_at: Option<OffsetDateTime>,
+    /// The stakeholders that must approve (organizations), beyond the
+    /// required reviewers.
+    pub stakeholders: Vec<String>,
 }
 
 /// A review request with every verdict given on it, oldest first.
@@ -3144,6 +3169,21 @@ impl Review {
             .reviewed_text
             .as_deref()
             .and_then(super::validate::maturity_of)
+    }
+
+    /// The stakeholders the request requires. A row this code did not write
+    /// reads as none.
+    pub fn stakeholders(&self) -> Vec<String> {
+        serde_json::from_value(self.request.stakeholders.clone()).unwrap_or_default()
+    }
+
+    /// The rules the review is judged by, as they were when it was asked
+    /// for. `None` for a request from before they were kept.
+    pub fn rules(&self) -> Option<super::review_guide::RulesSnapshot> {
+        self.request
+            .rules_snapshot
+            .clone()
+            .and_then(|v| serde_json::from_value(v).ok())
     }
 }
 
@@ -3181,9 +3221,11 @@ fn reviewers_of(request: &super::entity::review_request::Model) -> Vec<super::ap
 /// an earlier version -- a Studio document's `updated_at`, a file's
 /// `content_sha` -- than the one there now: every required reviewer is then
 /// outstanding. Nothing is outstanding for a document nobody asked to review.
-/// Below `stable` the document's maturity, as it declares it now, makes the
-/// review advice: only a security concern holds the stage
-/// (`approvals::holding`).
+/// Below `stable` the document's maturity makes the review advice: only a
+/// security concern holds the stage (`approvals::holding`). The maturity is
+/// the one declared when the review was asked for, or a stricter one declared
+/// since (`approvals::governing_maturity`). A required stakeholder nobody of
+/// theirs approved for holds it like a required reviewer.
 fn gate_on_approvals(
     mut status: StageStatus,
     docs: &[Document],
@@ -3222,9 +3264,12 @@ fn gate_on_approvals(
             continue;
         };
         let reviewers = current.reviewers();
+        let facts = current.verdict_facts();
+        let maturity =
+            super::approvals::governing_maturity(current.maturity().as_deref(), maturity.as_deref());
         let waiting = super::approvals::holding(
             &reviewers,
-            &current.verdict_facts(),
+            &facts,
             maturity.as_deref(),
             current.request.version == version,
         );
@@ -3232,6 +3277,13 @@ fn gate_on_approvals(
             .into_iter()
             .map(|r| r.name.clone().unwrap_or_else(|| r.person.clone()))
             .collect();
+        if !super::approvals::advisory(maturity.as_deref()) {
+            req.approvals_outstanding.extend(super::approvals::silent_stakeholders(
+                &current.stakeholders(),
+                &reviewers,
+                &facts,
+            ));
+        }
     }
     status.complete = status.requirements.iter().all(|r| {
         r.present
@@ -4366,6 +4418,8 @@ mod tests {
             state: state.to_string(),
             created_at: OffsetDateTime::UNIX_EPOCH,
             reviewed_text: None,
+            stakeholders: serde_json::json!([]),
+            rules_snapshot: None,
         };
         let verdicts = approved_by
             .iter()
@@ -4410,6 +4464,46 @@ mod tests {
         let later = gate_on_approvals(stage(&file), &[], std::slice::from_ref(&file), &approved);
         assert_eq!(later.requirements[0].approvals_outstanding, ["Ann"]);
         assert!(!later.complete);
+    }
+
+    /// A level lowered mid-review does not lower the bar, and a required
+    /// stakeholder nobody approved for holds the stage like a reviewer.
+    #[test]
+    fn a_review_keeps_the_maturity_it_started_at_and_waits_on_silent_stakeholders() {
+        let mut file = bound("prd", BindingState::Confirmed, Some(true));
+        file.content_sha = "sha-1".to_string();
+        file.validation = Some(ValidationReport {
+            conforms: true,
+            sections: Vec::new(),
+            issues: Vec::new(),
+            maturity: Some("experimental".to_string()),
+            open: Vec::new(),
+        });
+        let stage = |file: &_| {
+            evaluate_stage(
+                stage_with(&["prd"], &[]),
+                &[],
+                std::slice::from_ref(file),
+                &[],
+                &[],
+            )
+        };
+        let mut asked = review_of("sha-1", "open", &[]);
+        asked.request.reviewed_text = Some("---\nmaturity: stable\n---\n# PRD\n".to_string());
+        let held = gate_on_approvals(
+            stage(&file),
+            &[],
+            std::slice::from_ref(&file),
+            std::slice::from_ref(&asked),
+        );
+        assert_eq!(held.requirements[0].approvals_outstanding, ["Ann"], "{held:?}");
+
+        let mut approved = review_of("sha-1", "approved", &["ann"]);
+        approved.request.stakeholders = serde_json::json!(["Virtuozzo"]);
+        file.validation = None;
+        let waits = gate_on_approvals(stage(&file), &[], std::slice::from_ref(&file), &[approved]);
+        assert_eq!(waits.requirements[0].approvals_outstanding, ["Virtuozzo"]);
+        assert!(!waits.complete);
     }
 
     /// gears-rust #5275: below stable a review is advice, and only a security

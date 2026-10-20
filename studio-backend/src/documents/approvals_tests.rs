@@ -5,6 +5,7 @@ fn reviewer(person: &str, required: bool) -> Reviewer {
         person: person.to_string(),
         name: Some(person.to_uppercase()),
         required,
+        stakeholder: None,
     }
 }
 
@@ -48,7 +49,7 @@ fn a_request_waits_on_its_required_reviewers_until_their_latest_verdict_approves
         verdict("bob", "approved", t(10)),
     ];
     assert!(outstanding(&reviewers, &some).is_empty());
-    assert!(approved(&reviewers, &some));
+    assert!(approved(&reviewers, &some, &[]));
     // An optional reviewer who never answered does not hold it, but is
     // still awaited.
     assert_eq!(names(awaiting(&reviewers, &some)), ["cy"]);
@@ -61,14 +62,14 @@ fn the_latest_verdict_wins_whatever_order_they_are_read_in() {
         verdict("ann", "changes_requested", t(11)),
         verdict("ann", "approved", t(10)),
     ];
-    assert!(!approved(&reviewers, &back_to_changes));
+    assert!(!approved(&reviewers, &back_to_changes, &[]));
 }
 
 #[test]
 fn with_no_required_reviewer_one_approval_is_enough() {
     let reviewers = [reviewer("ann", false), reviewer("bob", false)];
-    assert!(!approved(&reviewers, &[]));
-    assert!(approved(&reviewers, &[verdict("bob", "approved", t(10))]));
+    assert!(!approved(&reviewers, &[], &[]));
+    assert!(approved(&reviewers, &[verdict("bob", "approved", t(10))], &[]));
 }
 
 #[test]
@@ -174,7 +175,7 @@ fn a_security_concern_holds_at_any_maturity_until_its_reviewer_answers_again() {
         );
     }
     // Every required reviewer approved, and still the request stays open.
-    assert!(!approved(&reviewers, &concern));
+    assert!(!approved(&reviewers, &concern, &[]));
     assert_eq!(people(security_concerns(&reviewers, &concern)), ["cy"]);
 
     let answered = [
@@ -183,10 +184,56 @@ fn a_security_concern_holds_at_any_maturity_until_its_reviewer_answers_again() {
         verdict("cy", "approved", t(11)),
     ];
     assert!(holding(&reviewers, &answered, Some("experimental"), true).is_empty());
-    assert!(approved(&reviewers, &answered));
+    assert!(approved(&reviewers, &answered, &[]));
 
     // Asking for changes without marking them a security concern is advice
     // below stable.
     let plain = [verdict("cy", "changes_requested", t(10))];
     assert!(holding(&reviewers, &plain, Some("experimental"), true).is_empty());
+}
+
+fn speaking_for(person: &str, stakeholder: &str) -> Reviewer {
+    Reviewer {
+        stakeholder: Some(stakeholder.to_string()),
+        ..reviewer(person, true)
+    }
+}
+
+#[test]
+fn one_approval_answers_for_its_stakeholder() {
+    let reviewers = [
+        speaking_for("ann", "Acronis"),
+        speaking_for("abe", "acronis "),
+        speaking_for("vic", "Virtuozzo"),
+    ];
+    let ann = [verdict("ann", "approved", t(1))];
+    let waiting: Vec<&str> = outstanding(&reviewers, &ann)
+        .iter()
+        .map(|r| r.person.as_str())
+        .collect();
+    assert_eq!(waiting, ["vic"], "abe speaks for Acronis, which ann answered for");
+    assert!(!approved(&reviewers, &ann, &[]));
+    let both = [ann[0].clone(), verdict("vic", "approved", t(2))];
+    assert!(approved(&reviewers, &both, &[]));
+}
+
+#[test]
+fn a_required_stakeholder_nobody_approved_for_holds_the_request() {
+    let reviewers = [speaking_for("ann", "Acronis"), reviewer("bob", false)];
+    let required = ["Acronis".to_string(), "Constructor".to_string()];
+    let ann = [verdict("ann", "approved", t(1))];
+    assert_eq!(silent_stakeholders(&required, &reviewers, &ann), ["Constructor"]);
+    assert!(!approved(&reviewers, &ann, &required), "nobody speaks for Constructor yet");
+    let states = stakeholders(&required, &reviewers, &ann);
+    assert_eq!(states.len(), 2);
+    assert_eq!(states[0].approved_by, ["ANN"]);
+    assert!(states[1].required && states[1].asked.is_empty());
+}
+
+#[test]
+fn a_maturity_lowered_mid_review_does_not_lower_the_bar() {
+    assert_eq!(governing_maturity(Some("stable"), Some("design")).as_deref(), Some("stable"));
+    assert_eq!(governing_maturity(Some("preview"), Some("stable")).as_deref(), Some("stable"));
+    assert_eq!(governing_maturity(Some("preview"), None), None, "no level now is the full gate");
+    assert_eq!(governing_maturity(None, Some("experimental")).as_deref(), Some("experimental"));
 }

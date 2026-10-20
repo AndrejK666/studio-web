@@ -6573,6 +6573,9 @@ pub struct ReviewerInput {
     pub name: Option<String>,
     /// Defaults to true: the request is not approved until they approve.
     pub required: Option<bool>,
+    /// The stakeholder (an organization) they speak for. One approval from
+    /// a stakeholder answers for every reviewer of it.
+    pub stakeholder: Option<String>,
 }
 
 /// Ask for a review of one version of one document.
@@ -6594,6 +6597,9 @@ pub struct ReviewRequestInput {
     pub reviewers: Vec<ReviewerInput>,
     /// RFC 3339.
     pub due_at: Option<String>,
+    /// The stakeholders (organizations) that must approve: one nobody of
+    /// theirs approved for holds the request.
+    pub stakeholders: Option<Vec<String>>,
 }
 
 /// A reviewer's verdict on a request.
@@ -6627,6 +6633,24 @@ pub struct ReviewerDto {
     pub verdict: Option<String>,
     /// That verdict asks for changes over a security concern.
     pub security: bool,
+    /// The stakeholder they speak for, when the requester named one.
+    pub stakeholder: Option<String>,
+}
+
+/// Where one stakeholder stands on a request.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct StakeholderDto {
+    pub name: String,
+    /// The request names it as one that must approve.
+    pub required: bool,
+    /// Somebody speaking for it approved.
+    pub approved: bool,
+    /// Its reviewers who approved, by name.
+    pub approved_by: Vec<String>,
+    /// Every reviewer asked on its behalf, by name. Empty for a required
+    /// stakeholder nobody was asked for yet.
+    pub asked: Vec<String>,
 }
 
 /// One verdict, as it was recorded. Never edited.
@@ -6682,6 +6706,15 @@ pub struct ReviewRequestDto {
     pub stale: bool,
     /// The detectors that pass on the document now.
     pub recorded_checks: Vec<String>,
+    /// The stakeholders it requires, then any other a reviewer speaks for.
+    pub stakeholders: Vec<StakeholderDto>,
+    /// The digest of the type's template and review guide when the review
+    /// was asked for: what it is judged by. `null` for an older request.
+    pub rules_digest: Option<String>,
+    /// The type's rules changed since the review was asked for. The review
+    /// is still judged by the ones it started with
+    /// (`GET /review-criteria?review_request_id=`).
+    pub rules_changed: bool,
 }
 
 /// What a review was asked about, against what the document is now and the
@@ -6861,6 +6894,16 @@ fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> Rev
     };
     let open = r.state == "open";
     let maturity = review.maturity();
+    let stakeholders = super::approvals::stakeholders(&review.stakeholders(), &reviewers, &facts)
+        .into_iter()
+        .map(|s| StakeholderDto {
+            approved: !s.approved_by.is_empty(),
+            name: s.name,
+            required: s.required,
+            approved_by: s.approved_by,
+            asked: s.asked,
+        })
+        .collect();
     ReviewRequestDto {
         id: r.id.to_string(),
         project_id: r.project_id.to_string(),
@@ -6890,8 +6933,12 @@ fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> Rev
                 person: x.person.clone(),
                 name: x.name.clone(),
                 required: x.required,
+                stakeholder: x.stakeholder.clone(),
             })
             .collect(),
+        stakeholders,
+        rules_digest: review.rules().map(|s| s.digest),
+        rules_changed: false,
         due_at: r.due_at.map(rfc3339),
         state: r.state.clone(),
         created_at: rfc3339(r.created_at),
@@ -6900,6 +6947,34 @@ fn review_dto(review: &super::service::Review, now: time::OffsetDateTime) -> Rev
         stale: false,
         recorded_checks: Vec::new(),
     }
+}
+
+/// Say whether the type's rules moved since the review was asked for, from
+/// each type's digest now (`type_key` -> digest).
+fn with_rules(
+    mut dto: ReviewRequestDto,
+    now: &std::collections::HashMap<String, String>,
+) -> ReviewRequestDto {
+    dto.rules_changed = match (&dto.rules_digest, dto.type_key.as_ref().and_then(|k| now.get(k))) {
+        (Some(then), Some(now)) => then != now,
+        _ => false,
+    };
+    dto
+}
+
+/// Each type's rules digest as `workspace_id` sees them now.
+async fn rules_now(
+    service: &DocumentsService,
+    ctx: &SecurityContext,
+    workspace_id: Uuid,
+) -> std::collections::HashMap<String, String> {
+    service
+        .list_types(ctx, workspace_id)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|t| (t.key.clone(), super::review_guide::rules_snapshot(t).digest))
+        .collect()
 }
 
 /// Fold the document's current version and passing checks into a request.
@@ -6972,12 +7047,18 @@ async fn create_review_request(
                 person: r.person.trim().to_string(),
                 name: r.name,
                 required: r.required.unwrap_or(true),
+                stakeholder: r.stakeholder,
             })
             .collect(),
         due_at,
+        stakeholders: body.stakeholders.unwrap_or_default(),
     };
+    let types = service
+        .list_types(&ctx, workspace_id)
+        .await
+        .map_err(internal)?;
     let review = service
-        .request_review(workspace_id, project_id, ask, requester, text)
+        .request_review(workspace_id, project_id, ask, requester, text, &types)
         .await
         .map_err(invalid)?;
     let versions = service
@@ -7069,9 +7150,24 @@ async fn list_review_requests(
             versions.extend(v);
         }
     }
+    let mut rules: std::collections::HashMap<Uuid, std::collections::HashMap<String, String>> =
+        std::collections::HashMap::new();
+    for ws in reviews
+        .iter()
+        .map(|r| r.request.tenant_id)
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        rules.insert(ws, rules_now(&service, &ctx, ws).await);
+    }
+    let no_rules = std::collections::HashMap::new();
     let items: Vec<ReviewRequestDto> = reviews
         .iter()
-        .map(|r| with_version(review_dto(r, now), &versions))
+        .map(|r| {
+            with_rules(
+                with_version(review_dto(r, now), &versions),
+                rules.get(&r.request.tenant_id).unwrap_or(&no_rules),
+            )
+        })
         .collect();
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let open: Vec<&ReviewRequestDto> = items.iter().filter(|r| r.state == "open").collect();
@@ -7694,6 +7790,10 @@ pub struct ReviewCriteriaQuery {
     /// included. Omitted, the platform's built-in guide is read.
     #[serde(default)]
     pub project_id: Option<String>,
+    /// Read the criteria a review is judged by: the ones kept when it was
+    /// asked for, however the type changed since. Needs `project_id`.
+    #[serde(default)]
+    pub review_request_id: Option<String>,
 }
 
 /// One criterion of a type's review checklist.
@@ -7768,8 +7868,35 @@ async fn list_review_criteria(
             .with_resource(key.to_owned())
             .create()
     })?;
-    let (guide, owner) =
+    let (mut guide, owner) =
         effective_guide(&ty).unwrap_or_else(|| (ReviewGuide::default(), ty.owner.clone()));
+    // A review is judged by the rules it started with.
+    if let (Some(raw), Some(project)) = (
+        query.review_request_id.as_deref(),
+        query.project_id.as_deref(),
+    ) {
+        let request_id = parse_uuid_field("review_request_id", raw)?;
+        let project_id = parse_project_id(project)?;
+        let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+        let kept = service
+            .reviews_with_verdicts(workspace_id, project_id, None)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .find(|r| r.request.id == request_id)
+            .ok_or_else(|| {
+                DocumentsError::not_found("no such review request in this project")
+                    .with_resource("review_request")
+                    .create()
+            })?
+            .rules();
+        if let Some(kept) = kept {
+            guide = ReviewGuide {
+                checklist: kept.checklist,
+                rules: kept.rules,
+            };
+        }
+    }
     let (owner, owner_tenant_id) = match owner {
         Owner::Builtin => ("builtin".to_string(), None),
         Owner::Organization { tenant_id } => ("organization".to_string(), Some(tenant_id)),

@@ -9,8 +9,21 @@
 //! gate and the inbox read the same answer. How much a review holds a stage
 //! follows the document's maturity ([`holding`]): below `stable` it is advice,
 //! and a security concern holds it at every level.
+//!
+//! A reviewer may speak for a stakeholder -- an organization the document
+//! answers to, as a gear's demand names its consumers (Acronis, Constructor,
+//! Virtuozzo). One approval from a stakeholder answers for it: the other
+//! required reviewers of the same stakeholder are no longer awaited. A request
+//! may also name the stakeholders that must approve ([`stakeholders`]); one
+//! nobody of theirs has approved for holds the request like a required
+//! reviewer.
+//!
+//! What a review is judged by is fixed when it is asked for: the maturity the
+//! version declared then ([`governing_maturity`]) and the type's template and
+//! review guide then (`review_guide::RulesSnapshot`). A level lowered or a
+//! convention changed mid-review does not move the bar under it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -25,6 +38,10 @@ pub struct Reviewer {
     /// The request is not approved until every required reviewer approves.
     #[serde(default = "yes")]
     pub required: bool,
+    /// The stakeholder they speak for (an organization), when the requester
+    /// named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stakeholder: Option<String>,
 }
 
 fn yes() -> bool {
@@ -57,6 +74,23 @@ pub fn advisory(maturity: Option<&str>) -> bool {
     maturity.is_some_and(|m| ADVISORY_MATURITIES.contains(&m))
 }
 
+/// The maturity a review is held to: the one the version declared when the
+/// review was asked for, unless the document declares a stricter one now. A
+/// level lowered mid-review does not turn a gate into advice; a level raised
+/// does raise the bar. `at_start` is `None` for a request from before the
+/// text was kept, which then follows the document as it is now.
+pub fn governing_maturity(at_start: Option<&str>, now: Option<&str>) -> Option<String> {
+    match at_start {
+        Some(start) if !advisory(Some(start)) => Some(start.to_owned()),
+        _ => now.map(str::to_owned),
+    }
+}
+
+/// A stakeholder's name as it is compared: trimmed, case ignored.
+fn stakeholder_key(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
 /// Each reviewer's latest verdict, by person.
 fn latest(verdicts: &[Verdict]) -> BTreeMap<&str, &Verdict> {
     let mut out: BTreeMap<&str, &Verdict> = BTreeMap::new();
@@ -73,16 +107,103 @@ fn latest(verdicts: &[Verdict]) -> BTreeMap<&str, &Verdict> {
 
 /// The required reviewers whose latest verdict is not an approval: what keeps
 /// the request, and the stage gated on it, open.
+/// A required reviewer is not awaited once somebody speaking for the same
+/// stakeholder approved: one approval answers for the stakeholder.
 pub fn outstanding<'r>(reviewers: &'r [Reviewer], verdicts: &[Verdict]) -> Vec<&'r Reviewer> {
     let latest = latest(verdicts);
+    let approves = |r: &Reviewer| {
+        latest
+            .get(r.person.as_str())
+            .is_some_and(|v| v.verdict == "approved")
+    };
+    let answered: BTreeSet<String> = reviewers
+        .iter()
+        .filter(|r| approves(r))
+        .filter_map(|r| r.stakeholder.as_deref().map(stakeholder_key))
+        .collect();
     reviewers
         .iter()
         .filter(|r| r.required)
+        .filter(|r| !approves(r))
         .filter(|r| {
-            latest
-                .get(r.person.as_str())
-                .is_none_or(|v| v.verdict != "approved")
+            !r.stakeholder
+                .as_deref()
+                .is_some_and(|s| answered.contains(&stakeholder_key(s)))
         })
+        .collect()
+}
+
+/// Where one stakeholder stands on a request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StakeholderState {
+    /// As the request or the first reviewer spelled it.
+    pub name: String,
+    /// The request names it as one that must approve.
+    pub required: bool,
+    /// Its reviewers whose latest verdict is an approval, by name.
+    pub approved_by: Vec<String>,
+    /// Every reviewer asked on its behalf, by name.
+    pub asked: Vec<String>,
+}
+
+/// Every stakeholder of a request: the ones it requires, in its order, then
+/// any other a reviewer speaks for, by name.
+pub fn stakeholders(
+    required: &[String],
+    reviewers: &[Reviewer],
+    verdicts: &[Verdict],
+) -> Vec<StakeholderState> {
+    let latest = latest(verdicts);
+    let shown = |r: &Reviewer| r.name.clone().unwrap_or_else(|| r.person.clone());
+    let mut others: Vec<&str> = reviewers
+        .iter()
+        .filter_map(|r| r.stakeholder.as_deref())
+        .collect();
+    others.sort_by_key(|s| stakeholder_key(s));
+    let names = required
+        .iter()
+        .map(|s| (s.as_str(), true))
+        .chain(others.into_iter().map(|s| (s, false)));
+    let mut seen = BTreeSet::new();
+    let mut out: Vec<StakeholderState> = Vec::new();
+    for (name, is_required) in names {
+        let key = stakeholder_key(name);
+        if key.is_empty() || !seen.insert(key.clone()) {
+            continue;
+        }
+        let theirs: Vec<&Reviewer> = reviewers
+            .iter()
+            .filter(|r| r.stakeholder.as_deref().map(stakeholder_key).as_deref() == Some(key.as_str()))
+            .collect();
+        out.push(StakeholderState {
+            name: name.trim().to_owned(),
+            required: is_required,
+            approved_by: theirs
+                .iter()
+                .filter(|r| {
+                    latest
+                        .get(r.person.as_str())
+                        .is_some_and(|v| v.verdict == "approved")
+                })
+                .map(|r| shown(r))
+                .collect(),
+            asked: theirs.iter().map(|r| shown(r)).collect(),
+        });
+    }
+    out
+}
+
+/// The required stakeholders nobody of theirs has approved for: each holds
+/// the request, whether anyone was asked on its behalf or not.
+pub fn silent_stakeholders(
+    required: &[String],
+    reviewers: &[Reviewer],
+    verdicts: &[Verdict],
+) -> Vec<String> {
+    stakeholders(required, reviewers, verdicts)
+        .into_iter()
+        .filter(|s| s.required && s.approved_by.is_empty())
+        .map(|s| s.name)
         .collect()
 }
 
@@ -138,13 +259,16 @@ pub fn holding<'r>(
         .collect()
 }
 
-/// Whether every required reviewer approved and nobody's latest verdict is a
-/// security concern. A request with no required reviewer is approved by its
-/// first approval.
-pub fn approved(reviewers: &[Reviewer], verdicts: &[Verdict]) -> bool {
+/// Whether every required reviewer and every required stakeholder approved
+/// and nobody's latest verdict is a security concern. A request with no
+/// required reviewer is approved by its first approval.
+pub fn approved(reviewers: &[Reviewer], verdicts: &[Verdict], stakeholders: &[String]) -> bool {
     // A request closed as approved takes no more verdicts, so one closed over
     // a security concern would hold its stage with nobody able to lift it.
     if !security_concerns(reviewers, verdicts).is_empty() {
+        return false;
+    }
+    if !silent_stakeholders(stakeholders, reviewers, verdicts).is_empty() {
         return false;
     }
     if reviewers.iter().any(|r| r.required) {
@@ -161,7 +285,7 @@ pub fn overdue(
     verdicts: &[Verdict],
     now: OffsetDateTime,
 ) -> bool {
-    due_at.is_some_and(|due| due < now) && !approved(reviewers, verdicts)
+    due_at.is_some_and(|due| due < now) && !approved(reviewers, verdicts, &[])
 }
 
 /// One earlier request, as a suggestion reads it.
@@ -205,6 +329,7 @@ pub fn suggest(
                 person: r.person.clone(),
                 name: r.name.clone().or(entry.2.name.clone()),
                 required: r.required,
+                stakeholder: r.stakeholder.clone().or(entry.2.stakeholder.clone()),
             };
         }
     }
