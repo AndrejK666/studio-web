@@ -107,9 +107,14 @@ impl TaskHandler for CatalogSyncTask {
         let left = if sources.platform || super::tiers::is_platform(&security) {
             Vec::new()
         } else {
-            self.service
+            let left = self
+                .service
                 .leave_to_platform(&security, &mut sources)
-                .await
+                .await;
+            // What an earlier sync read from the platform's repositories is
+            // the organization's copy of the platform's components.
+            self.service.forget_platform_copies(&security).await;
+            left
         };
         // An organization reads only through connections it owns; the
         // platform's sync, in the root, reads with the root's by design.

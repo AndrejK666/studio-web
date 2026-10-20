@@ -39,6 +39,10 @@ function titleize(s: string): string {
 
 type Lens = "all" | "components" | "described" | "abstract";
 
+/** The metadata Studio keeps beside a component (it names its gear in
+ *  `gear_name`), never a component of its own; the server refuses the mark. */
+export const COMPANION_TYPES = new Set(["gts.cf.studio.catalog.gear_profile.v1~"]);
+
 const LENS_LABEL: Record<Lens, string> = {
   all: "All types",
   components: "Components",
@@ -237,7 +241,12 @@ export function ObjectTypes({ token, query = "" }: { token: string; query?: stri
                     // An abstract type is a family: it is derived from and
                     // never instantiated, so marking one would produce a page
                     // that can never have a card on it.
-                    disabled={t.is_abstract || busy === t.leaf_id}
+                    disabled={t.is_abstract || COMPANION_TYPES.has(t.leaf_id) || busy === t.leaf_id}
+                    title={
+                      COMPANION_TYPES.has(t.leaf_id)
+                        ? "Studio keeps this beside a component; it is not one of its own"
+                        : undefined
+                    }
                     onChange={() => void toggle(t)}
                     aria-label={`Treat ${nameOf(t)} as a component`}
                   />

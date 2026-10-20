@@ -24,4 +24,9 @@ describe("one list of components", () => {
       ["previews", "candidate", true, false],
     ]);
   });
+
+  it("names a node without a name by whose it is, never by its id", () => {
+    const profile = { type_id: "p", instance_id: "0eb1662c-2f35", value: { gear_name: "@gears-frontx/auth" } } as unknown as CatalogNode;
+    expect(componentRows([], [profile])[0].name).toBe("@gears-frontx/auth");
+  });
 });

@@ -167,6 +167,80 @@ impl SyncSources {
 }
 
 impl CatalogService {
+    /// Delete the organization's own copies of what the platform's catalogue
+    /// reads: the gears, kits and micro-frontends an earlier sync of this
+    /// organization read from a repository the platform now reads. A sync
+    /// prunes only what it reads, so a repository handed to the platform --
+    /// left by [`Self::leave_to_platform`], or taken out of the organization's
+    /// sources -- left its copies in the organization's tenant for good.
+    /// Profiles stay: an organization's annotations of a platform gear live
+    /// there. Answers how many went.
+    pub async fn forget_platform_copies(&self, ctx: &SecurityContext) -> usize {
+        let Some(pctx) = self.platform_ctx(ctx) else {
+            return 0;
+        };
+        // By repository and mode, as `tiers::shadowed_by_platform` compares
+        // them: the platform reading a repository's gears says nothing about
+        // its kits.
+        let left: BTreeSet<(String, &'static str)> = match self.list_sources(&pctx).await {
+            Ok(platform) => platform
+                .iter()
+                .filter(|r| !r.repo.trim().is_empty())
+                .map(|r| {
+                    let mode = match RepoMode::parse(&r.mode) {
+                        RepoMode::Kits => "kits",
+                        RepoMode::Frontx => "frontx",
+                        RepoMode::Gears => "gears",
+                    };
+                    (r.repo.trim().to_ascii_lowercase(), mode)
+                })
+                .collect(),
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), "components-catalog: the platform's sources could not be read; no copies forgotten");
+                return 0;
+            }
+        };
+        if left.is_empty() {
+            return 0;
+        }
+        let mut forgotten = 0usize;
+        for (type_id, mode) in [
+            (gts::GEAR_TYPE, "gears"),
+            (gts::KIT_TYPE, "kits"),
+            (gts::FRONTX_TYPE, "frontx"),
+        ] {
+            let repos: BTreeSet<String> = left
+                .iter()
+                .filter(|(_, m)| *m == mode)
+                .map(|(repo, _)| repo.clone())
+                .collect();
+            if repos.is_empty() {
+                continue;
+            }
+            let existing = match self.sink.list(ctx, Some(type_id)).await {
+                Ok(nodes) => nodes,
+                Err(error) => {
+                    tracing::warn!(%error, type_id, "components-catalog: copies left to the platform not read");
+                    continue;
+                }
+            };
+            for node in left_behind(&existing, &repos) {
+                match self.sink.delete(ctx, &node.instance_id).await {
+                    Ok(()) => forgotten += 1,
+                    Err(error) => tracing::warn!(
+                        %error,
+                        instance_id = %node.instance_id,
+                        "components-catalog: a copy left to the platform not deleted"
+                    ),
+                }
+            }
+        }
+        if forgotten > 0 {
+            tracing::info!(organization_id = %ctx.subject_tenant_id(), forgotten, "components-catalog: deleted the organization's copies of what the platform reads");
+        }
+        forgotten
+    }
+
     /// Take out of an organization's sync what the platform's catalogue
     /// already reads ([`super::tiers::leave_to_platform`]), and say what was
     /// taken. Nothing is taken in the platform's own tenant, or when there is
@@ -1415,11 +1489,13 @@ impl CatalogService {
             Some(p) => self.stored_field_schemas(&p).await,
             None => Vec::new(),
         };
-        Ok(super::tiers::layered_schemas(
-            field_schema::builtin_schemas(),
-            platform,
-            own,
-        ))
+        let mut schemas =
+            super::tiers::layered_schemas(field_schema::builtin_schemas(), platform, own);
+        // A mark stored before it was refused does not count.
+        for s in &mut schemas {
+            s.component &= field_schema::may_be_component(&s.describes);
+        }
+        Ok(schemas)
     }
 
     /// One tenant's own field-schema records, unparseable ones skipped.
@@ -1646,6 +1722,11 @@ impl CatalogService {
         let describes = describes.trim();
         if !is_gts_type_id(describes) {
             anyhow::bail!("`{describes}` is not a GTS type id");
+        }
+        if component && !field_schema::may_be_component(describes) {
+            anyhow::bail!(
+                "`{describes}` is the metadata Studio keeps beside a component, not a component of its own"
+            );
         }
         let mut record = self
             .stored_field_schema(ctx, describes)
@@ -2201,6 +2282,23 @@ fn build_gear(detail: &CrateDetail) -> (Vec<GtsNode>, Vec<GtsEdge>, usize) {
     (nodes, edges, vers)
 }
 
+/// The organization's nodes from repositories its sync now leaves to the
+/// platform (`left`, by repository): copies the platform's catalogue reads
+/// for everyone. Only a node that says it came from one of them
+/// (`synced_from`) qualifies; a crates.io gear, which records none, is the
+/// platform's to shadow by name and is left alone.
+fn left_behind<'a>(existing: &'a [GtsNode], left: &BTreeSet<String>) -> Vec<&'a GtsNode> {
+    existing
+        .iter()
+        .filter(|node| {
+            node.value
+                .get("synced_from")
+                .and_then(Value::as_str)
+                .is_some_and(|from| left.contains(&from.trim().to_ascii_lowercase()))
+        })
+        .collect()
+}
+
 /// Which of the catalogue's existing nodes this run has made stale.
 ///
 /// A node qualifies on two counts, and both matter:
@@ -2349,6 +2447,22 @@ mod prune_tests {
 
     fn repos(list: &[&str]) -> BTreeSet<String> {
         list.iter().map(|r| r.to_string()).collect()
+    }
+
+    #[test]
+    fn the_copies_a_platform_repository_produced_are_left_behind_and_nothing_else() {
+        let existing = vec![
+            node("api-gateway", Some("ConstructorFabric/gears-rust ")),
+            node("crates-io-only", None),
+            node("my-gear", Some("AndrejK666/gears")),
+        ];
+        let out = left_behind(&existing, &repos(&["constructorfabric/gears-rust"]));
+        let ids: Vec<&str> = out.iter().map(|n| n.instance_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["api-gateway"],
+            "case and spacing aside; a crates.io gear records no source"
+        );
     }
 
     #[test]
@@ -3004,6 +3118,32 @@ mod component_list_tests {
         );
     }
 
+    /// A profile is the metadata kept beside a component: it cannot be
+    /// marked one, and a mark stored before that was refused does not count.
+    #[tokio::test]
+    async fn a_gear_profile_is_never_a_component() {
+        let service = with_two_kinds_of_node().await;
+        let ctx = ctx();
+        let profile_type = crate::components_catalog::gts::GEAR_PROFILE_TYPE;
+        assert!(
+            service
+                .set_type_component(&ctx, profile_type, true)
+                .await
+                .is_err()
+        );
+        let mut stored = TypeFieldSchema::empty_for(profile_type);
+        stored.component = true;
+        service
+            .put_or_prune(&ctx, stored)
+            .await
+            .expect("an old mark");
+        let (nodes, _) = service
+            .list_component_nodes(&ctx)
+            .await
+            .expect("list components");
+        assert!(!nodes.iter().any(|n| n.type_id == profile_type));
+    }
+
     /// The mark decides the list. That is the whole feature, stated once.
     #[tokio::test]
     async fn unmarking_a_type_takes_its_nodes_off_the_page() {
@@ -3026,7 +3166,20 @@ mod component_list_tests {
     async fn marking_a_type_puts_its_nodes_on_the_page() {
         let service = with_two_kinds_of_node().await;
         let ctx = ctx();
-        let profile_type = crate::components_catalog::gts::GEAR_PROFILE_TYPE;
+        let profile_type = crate::components_catalog::gts::PROJECT_PRODUCT_TYPE;
+        service
+            .sink
+            .upsert(
+                &ctx,
+                &[GtsNode {
+                    type_id: profile_type,
+                    instance_id: "product:studio-web".to_owned(),
+                    value: json!({ "name": "studio-web" }),
+                }],
+                &[],
+            )
+            .await
+            .expect("seed");
         service
             .set_type_component(&ctx, profile_type, true)
             .await

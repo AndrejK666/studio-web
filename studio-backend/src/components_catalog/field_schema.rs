@@ -43,7 +43,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::gts::{FRONTX_TYPE, GEAR_TYPE, KIT_TYPE, ROADMAP_ITEM_TYPE};
+use super::gts::{FRONTX_TYPE, GEAR_PROFILE_TYPE, GEAR_TYPE, KIT_TYPE, ROADMAP_ITEM_TYPE};
 /// A document type is a component, but studio-documents owns it and keeps its
 /// identity: the catalogue lists it, it does not annex it (see ADR-0014).
 use crate::documents::sdk::DOCUMENT_TYPE;
@@ -452,6 +452,15 @@ impl TypeFieldSchema {
 
 /// Whether the deployment ships this type as a component. What a stored
 /// record is compared against before it is kept or pruned.
+/// Whether a type may be marked a component at all. A gear profile is the
+/// metadata Studio keeps BESIDE a component (`gear_name` names it), so marking
+/// it listed every profile as a second, nameless component of its own: on
+/// studio-dev, 79 rows titled by their node ids next to the FrontX packages
+/// they describe.
+pub fn may_be_component(describes: &str) -> bool {
+    describes.trim() != GEAR_PROFILE_TYPE
+}
+
 pub fn builtin_component(describes: &str) -> bool {
     builtin_schemas()
         .into_iter()
@@ -474,6 +483,15 @@ pub fn to_payload(schema: &TypeFieldSchema) -> anyhow::Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_gear_profile_may_not_be_a_component_and_the_component_types_may() {
+        assert!(!may_be_component(GEAR_PROFILE_TYPE));
+        assert!(!may_be_component(&format!(" {GEAR_PROFILE_TYPE} ")));
+        for t in [GEAR_TYPE, KIT_TYPE, FRONTX_TYPE] {
+            assert!(may_be_component(t), "{t}");
+        }
+    }
 
     /// The committed JSON is compiled in, so a malformed one is a build-time
     /// mistake — but only if something parses it before a request does.

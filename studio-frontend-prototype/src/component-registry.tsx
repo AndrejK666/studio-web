@@ -1311,7 +1311,9 @@ export function sameComponent(e: Pick<RegistryEntry, "name" | "aliases" | "extra
  *  catalogue's nodes no entry is, as rows of one list. */
 export function componentRows(entries: RegistryEntry[], catalogue: CatalogNode[]): ComponentRow[] {
   const used = new Set<string>();
-  const nodeName = (n: CatalogNode) => String(n.value.name ?? n.instance_id);
+  // A node with no `name` of its own may still say whose it is (a profile's
+  // `gear_name`); its id is the last resort, never the first thing shown.
+  const nodeName = (n: CatalogNode) => String(n.value.name ?? n.value.gear_name ?? n.instance_id);
   const rows: ComponentRow[] = entries.map((e) => {
     const node = catalogue.find((n) => !used.has(n.instance_id) && sameComponent(e, nodeName(n)));
     if (node) used.add(node.instance_id);
