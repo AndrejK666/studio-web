@@ -12,7 +12,7 @@
 //! connection is passed explicitly (`provider`, `base_url`, `connector_id`) so
 //! it stays testable on its own.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -1563,9 +1563,20 @@ impl IngestService {
         &self,
         dir: PathBuf,
     ) -> anyhow::Result<(PathBuf, git_checkout::Walk, Option<String>)> {
+        self.walk_checkout_reading(dir, None).await
+    }
+
+    /// [`Self::walk_checkout`], reading the text of the `wanted` paths only
+    /// when given: the rest are listed by path, and never loaded.
+    async fn walk_checkout_reading(
+        &self,
+        dir: PathBuf,
+        wanted: Option<BTreeSet<String>>,
+    ) -> anyhow::Result<(PathBuf, git_checkout::Walk, Option<String>)> {
         tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let commit = git_checkout::head_commit(&dir);
-            let walked = git_checkout::walk(&dir, &|_| true)?;
+            let read = |path: &str| wanted.as_ref().is_none_or(|w| w.contains(path));
+            let walked = git_checkout::walk(&dir, &read)?;
             Ok((dir, walked, commit))
         })
         .await
@@ -2867,6 +2878,40 @@ impl super::port::RepoFileReader for IngestService {
         repo_full_path: &str,
     ) -> anyhow::Result<Vec<(String, Option<String>)>> {
         IngestService::read_synced_clone_listing(self, secret_ref, repo_full_path).await
+    }
+
+    async fn read_repo_listing_of(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+        wanted: &BTreeSet<String>,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
+        let Some(dir) = self.shared_checkout_dir(Some(workspace_id), Some(repo_dir)) else {
+            return Ok(Vec::new());
+        };
+        let (_dir, walked, _commit) = self
+            .walk_checkout_reading(dir, Some(wanted.clone()))
+            .await?;
+        Ok(walked.files.into_iter().map(|f| (f.path, f.text)).collect())
+    }
+
+    async fn read_synced_clone_listing_of(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+        wanted: &BTreeSet<String>,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
+        let Some(root) = self.work_root.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let dir = root.join(git_checkout::checkout_key(secret_ref, repo_full_path));
+        if !dir.join(".git").is_dir() {
+            return Ok(Vec::new());
+        }
+        let (_dir, walked, _commit) = self
+            .walk_checkout_reading(dir, Some(wanted.clone()))
+            .await?;
+        Ok(walked.files.into_iter().map(|f| (f.path, f.text)).collect())
     }
 
     async fn read_repo_file(

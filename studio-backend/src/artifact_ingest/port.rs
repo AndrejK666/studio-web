@@ -21,6 +21,8 @@
 //! reason as the other seam: a deployment without a checkout volume simply has
 //! no reader, and a consumer that resolves nothing says so instead of failing.
 
+use std::collections::BTreeSet;
+
 use async_trait::async_trait;
 
 /// Reads the working copy a sync left on disk.
@@ -84,6 +86,37 @@ pub trait RepoFileReader: Send + Sync + 'static {
             .collect())
     }
 
+    /// [`Self::read_repo_listing`], with the text of the `wanted` paths only:
+    /// every other file is listed by its path alone. What a caller reading a
+    /// few documents out of a large checkout asks, so the rest of its text is
+    /// never loaded. The default reads the whole listing and drops the rest;
+    /// an implementation that walks the checkout should not read it at all.
+    async fn read_repo_listing_of(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+        wanted: &BTreeSet<String>,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
+        Ok(text_of(
+            self.read_repo_listing(workspace_id, repo_dir).await?,
+            wanted,
+        ))
+    }
+
+    /// The same, from the sync's clone [`Self::read_synced_clone`] reads.
+    async fn read_synced_clone_listing_of(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+        wanted: &BTreeSet<String>,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
+        Ok(text_of(
+            self.read_synced_clone_listing(secret_ref, repo_full_path)
+                .await?,
+            wanted,
+        ))
+    }
+
     /// One text file of the checkout [`Self::read_repo_files`] reads, by its
     /// repo-relative `path`. `None` when the checkout does not hold it as text.
     ///
@@ -115,6 +148,20 @@ pub trait RepoFileReader: Send + Sync + 'static {
             .into_iter()
             .find_map(|(p, text)| (p == path).then_some(text)))
     }
+}
+
+/// `listing` with the text of the `wanted` paths only.
+pub fn text_of(
+    listing: Vec<(String, Option<String>)>,
+    wanted: &BTreeSet<String>,
+) -> Vec<(String, Option<String>)> {
+    listing
+        .into_iter()
+        .map(|(path, text)| {
+            let text = text.filter(|_| wanted.contains(&path));
+            (path, text)
+        })
+        .collect()
 }
 
 /// How much of the artifact graph belongs to one scope.
@@ -380,4 +427,27 @@ pub trait MappingDecisionStore: Send + Sync + 'static {
         ctx: &toolkit_security::SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<(String, serde_json::Value)>>;
+}
+
+#[cfg(test)]
+mod text_of_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_wanted_paths_keep_their_text_and_every_path_stays_listed() {
+        let listing = vec![
+            ("docs/PRD.md".to_owned(), Some("# PRD".to_owned())),
+            ("src/main.rs".to_owned(), Some("fn main() {}".to_owned())),
+            ("logo.png".to_owned(), None),
+        ];
+        let wanted = BTreeSet::from(["docs/PRD.md".to_owned(), "logo.png".to_owned()]);
+        assert_eq!(
+            text_of(listing, &wanted),
+            [
+                ("docs/PRD.md".to_owned(), Some("# PRD".to_owned())),
+                ("src/main.rs".to_owned(), None),
+                ("logo.png".to_owned(), None),
+            ]
+        );
+    }
 }
