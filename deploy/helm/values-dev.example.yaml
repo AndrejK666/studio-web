@@ -29,6 +29,11 @@ backend:
   resources:
     requests: { cpu: 200m, memory: 256Mi }
     limits: { cpu: "2", memory: 4Gi }
+  # The clones outlive a restart (#835). One replica, rolled out in place
+  # (maxSurge 0 below), so ReadWriteOnce is enough.
+  artifactClone:
+    persistence:
+      enabled: true
   image:
     tag: "sha-REPLACE_ME"
   replicas: 1

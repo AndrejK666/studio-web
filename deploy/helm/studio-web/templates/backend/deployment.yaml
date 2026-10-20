@@ -381,8 +381,13 @@ spec:
         # per-environment claim. The pod's fsGroup (1000) is what makes it
         # writable by a container that runs as uid 1000.
         - name: artifact-clones
+          {{- if .Values.backend.artifactClone.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "studio-web.fullname" . }}-artifact-clones
+          {{- else }}
           emptyDir:
             sizeLimit: {{ .Values.backend.artifactClone.sizeLimit }}
+          {{- end }}
         {{- end }}
         {{- if .Values.backend.gearbox.enabled }}
         # The gear corpus checkout. Disposable, like artifact-clones.

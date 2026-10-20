@@ -1,0 +1,30 @@
+{{- if and .Values.backend.artifactClone.enabled .Values.backend.artifactClone.persistence.enabled }}
+{{- /*
+  The repository clones artifact-ingest reads, kept across backend restarts.
+
+  On an emptyDir they went with every new Pod, and until somebody synced again
+  the Domain model read none of a project's typed documents (2026-10-20, #835).
+  Kept with the release (helm.sh/resource-policy: keep) like the workspaces
+  claim: losing it costs a re-clone, not work, but an uninstall should not be
+  what decides that.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "studio-web.fullname" . }}-artifact-clones
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    # One backend replica mounts it. A second replica, or a rollout that
+    # surges, would need ReadWriteMany or a claim per Pod.
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.backend.artifactClone.persistence.size | quote }}
+  {{- with .Values.backend.artifactClone.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}
