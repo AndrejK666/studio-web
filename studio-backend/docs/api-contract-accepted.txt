@@ -1829,6 +1829,7 @@ response	GET /studio-documents/v1/spec-model	facts.status_because	String	always
 response	GET /studio-documents/v1/spec-model	facts.subject	String	always
 response	GET /studio-documents/v1/spec-model	facts.text	String	always
 response	GET /studio-documents/v1/spec-model	facts.value	String	always
+response	GET /studio-documents/v1/spec-model	unread_because	String	optional
 response	GET /studio-documents/v1/spec-model	unread_documents	u32	always
 response	GET /studio-documents/v1/spec-model/build-estimate	characters	u64	always
 response	GET /studio-documents/v1/spec-model/build-estimate	documents	u32	always
