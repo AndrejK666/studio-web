@@ -1594,10 +1594,14 @@ jobs:
           # Kubernetes API correctly rejects as immutable. Helm's
           # before-hook-creation policy deletes and recreates it during the
           # actual upgrade, so validate only the ordinary release resources.
+          # Apply as `helm`, the manager the upgrade itself uses. Under any
+          # other name, server-side apply keeps every field helm owns, so a
+          # volume that changes type (emptyDir → claim) renders with both and
+          # is rejected, although the upgrade would pass.
           helm template studio deploy/helm/studio-web \
             -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
             | kubectl apply --server-side --force-conflicts --dry-run=server \
-                --field-manager=studio-deploy-validation \
+                --field-manager=helm \
                 -n "$NAMESPACE" -f - >/dev/null
 
       - name: Deploy with automatic rollback
@@ -1920,7 +1924,7 @@ jobs:
           helm template studio deploy/helm/studio-web \
             -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
             | kubectl apply --server-side --force-conflicts --dry-run=server \
-                --field-manager=studio-infra-validation \
+                --field-manager=helm \
                 -n "$NAMESPACE" -f - >/dev/null
 
       - name: Reconcile graph PostgreSQL
