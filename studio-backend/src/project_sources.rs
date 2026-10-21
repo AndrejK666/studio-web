@@ -264,12 +264,19 @@ pub async fn resolve(
     project: Uuid,
 ) -> Option<Vec<Resolved>> {
     let sources = read(am, ctx, project).await?;
-    let mut out = Vec::with_capacity(sources.len());
-    for source in sources {
-        let found = match source.connection_id {
+    // Each lookup walks the catalogue up from the project, and they do not
+    // depend on one another: asked together, a project of several sources
+    // waits for one walk rather than one per source. `join_all` keeps the
+    // sources' order.
+    let lookups = futures_util::future::join_all(sources.iter().map(|source| async move {
+        match source.connection_id {
             Some(id) => connection_by_id(am, ctx, project, id).await,
             None => None,
-        };
+        }
+    }))
+    .await;
+    let mut out = Vec::with_capacity(sources.len());
+    for (source, found) in sources.into_iter().zip(lookups) {
         let holder = found.as_ref().map(|(at, c)| holder_of_row(c, *at));
         let connection = found.map(|(_, c)| c);
         out.push(Resolved {

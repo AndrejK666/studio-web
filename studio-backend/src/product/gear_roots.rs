@@ -9,15 +9,18 @@
 //! engine -- the platform's by this layer, on every engine route of this gear
 //! and the catalogue's, an organization's by [`scope_for`], when a request
 //! names it -- at most once a minute; a change is checked out on the next use.
+//! Only a first read is waited for; a due one runs in the background while
+//! the request is served from the roots read last.
 //! While the platform has none, the deployment's corpus stays its one root.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Response;
 use toolkit_security::SecurityContext;
-use tracing::warn;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::gearbox::{CorpusSource, GearRoot, Gearbox, Scope};
@@ -70,25 +73,173 @@ fn acting_in(ctx: &SecurityContext, tenant: Uuid) -> anyhow::Result<SecurityCont
 /// right after it adds or removes a repository, and reads the list anew.
 const STATUS_ROUTE: &str = "/studio-product/v1/gearbox";
 
+/// How long the warm-up waits for the connector service: another gear
+/// publishes it, and this gear's `init` may run first.
+const WARM_UP_WAIT: Duration = Duration::from_secs(30);
+
+/// The subject the warm-up reads the platform's gear repositories as: the
+/// gear's own, the one its explanations are written with.
+fn service_context() -> anyhow::Result<SecurityContext> {
+    SecurityContext::builder()
+        .subject_id(super::explanations::SERVICE_SUBJECT_ID)
+        .subject_type("service")
+        .subject_tenant_id(PLATFORM_ROOT_TENANT)
+        .token_scopes(vec!["*".to_owned()])
+        .build()
+        .map_err(|e| anyhow::anyhow!("studio-product: cannot build a service context: {e}"))
+}
+
+/// Read the platform's list into the engine, then load its corpus, at start.
+/// Warming the deployment's corpus alone, as before, was a clone the first
+/// request threw away as soon as it read the platform's repositories in its
+/// place. When the list cannot be read here the first request reads it, as
+/// it did before.
+pub async fn warm_up(gearbox: &Gearbox, connectors: &Connectors) {
+    let deadline = tokio::time::Instant::now() + WARM_UP_WAIT;
+    while connectors.get().is_none() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    if connectors.get().is_some() {
+        let _reading = gearbox.roots_reading().lock().await;
+        let read = match service_context() {
+            Ok(ctx) => read_platform(gearbox, connectors, &ctx).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = read {
+            warn!(error = %format!("{e:#}"), "studio-product: the platform's gear repositories could not be read at start; the first request reads them");
+        }
+    }
+    let started = std::time::Instant::now();
+    match gearbox.catalogue_json(None).await {
+        Ok(_) => info!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "studio-product: corpus warmed up"
+        ),
+        Err(e) => warn!(error = %format!("{e:#}"), "studio-product: corpus warm-up failed"),
+    }
+}
+
+/// The platform's gear repositories, read into the engine.
+async fn read_platform(
+    gearbox: &Gearbox,
+    connectors: &Connectors,
+    ctx: &SecurityContext,
+) -> anyhow::Result<()> {
+    let Some(service) = connectors.get() else {
+        return Ok(());
+    };
+    let root = acting_in(ctx, PLATFORM_ROOT_TENANT)?;
+    let list = service
+        .gear_repositories(&root, PLATFORM_ROOT_TENANT)
+        .await?;
+    gearbox.use_repositories(list.into_iter().map(root_of).collect());
+    Ok(())
+}
+
 /// Read the platform's gear repositories into the engine, when due or when
-/// `now`.
+/// `now`, and wait for it. One read runs at a time: a request that arrives
+/// during one waits for it and then finds the list read.
 pub async fn refresh(gearbox: &Gearbox, connectors: &Connectors, ctx: &SecurityContext, now: bool) {
     if !now && !gearbox.roots_due() {
         return;
     }
+    let _reading = gearbox.roots_reading().lock().await;
+    if !now && !gearbox.roots_due() {
+        return;
+    }
+    if let Err(e) = read_platform(gearbox, connectors, ctx).await {
+        // Keep the roots there are; the next request tries again.
+        gearbox.mark_roots_checked();
+        warn!(error = %format!("{e:#}"), "studio-product: the platform's gear repositories could not be read");
+    }
+}
+
+/// [`refresh`] on a task of its own: the request goes on with the list there
+/// is. Nothing is started while a read is running.
+fn refresh_in_background(gearbox: Arc<Gearbox>, connectors: Connectors, ctx: SecurityContext) {
+    tokio::spawn(async move {
+        let Ok(_reading) = gearbox.roots_reading().try_lock() else {
+            return;
+        };
+        if !gearbox.roots_due() {
+            return;
+        }
+        if let Err(e) = read_platform(&gearbox, &connectors, &ctx).await {
+            gearbox.mark_roots_checked();
+            warn!(error = %format!("{e:#}"), "studio-product: the platform's gear repositories could not be read");
+        }
+    });
+}
+
+/// Organization `org`'s own gear repositories followed by its projects' own
+/// roots, less any project root whose id a repository already has.
+fn org_roots(listed: Vec<GearRepositorySource>, project_roots: Vec<GearRoot>) -> Vec<GearRoot> {
+    let mut roots: Vec<GearRoot> = listed.into_iter().map(root_of).collect();
+    let fresh: Vec<GearRoot> = project_roots
+        .into_iter()
+        .filter(|p| roots.iter().all(|r| r.id != p.id))
+        .collect();
+    roots.extend(fresh);
+    roots
+}
+
+/// Read organization `org`'s gear repositories and its projects' own roots
+/// and product files into the engine: the slow part is the projects', a
+/// clone or fetch of each repository (bounded by `project_roots`' deadline).
+async fn read_org(
+    gearbox: &Arc<Gearbox>,
+    connectors: &Connectors,
+    hub: &Arc<toolkit::client_hub::ClientHub>,
+    ctx: &SecurityContext,
+    org: Uuid,
+) {
     let Some(service) = connectors.get() else {
         return;
     };
-    let listed = match acting_in(ctx, PLATFORM_ROOT_TENANT) {
-        Ok(root) => service.gear_repositories(&root, PLATFORM_ROOT_TENANT).await,
+    let started = std::time::Instant::now();
+    let listed = match acting_in(ctx, org) {
+        Ok(octx) => service.gear_repositories(&octx, org).await,
+        Err(e) => Err(e),
+    };
+    // Its projects' own gears too: the directories their product.gdl
+    // names, read from the repositories they are already connected by.
+    let (project_roots, files) = match acting_in(ctx, org) {
+        Ok(octx) => super::project_roots::read(gearbox, connectors, hub, &octx, org).await,
+        Err(_) => Default::default(),
+    };
+    gearbox.use_project_files(org, files);
+    match listed {
+        Ok(list) => gearbox.use_org_repositories(org, org_roots(list, project_roots)),
+        Err(e) => {
+            gearbox.mark_org_roots_checked(org);
+            warn!(organization_id = %org, error = %format!("{e:#}"), "studio-product: the organization's gear repositories could not be read");
+        }
+    }
+    info!(organization_id = %org, elapsed_ms = started.elapsed().as_millis(), "studio-product: the organization's roots were read");
+}
+
+/// Organization `org`'s own gear repositories read now, beside the project
+/// roots read last time: what `?refresh=true` needs to show a repository just
+/// added, without waiting for every project's repository to be fetched.
+async fn list_org_now(
+    gearbox: &Gearbox,
+    connectors: &Connectors,
+    ctx: &SecurityContext,
+    org: Uuid,
+) {
+    let Some(service) = connectors.get() else {
+        return;
+    };
+    let listed = match acting_in(ctx, org) {
+        Ok(octx) => service.gear_repositories(&octx, org).await,
         Err(e) => Err(e),
     };
     match listed {
-        Ok(list) => gearbox.use_repositories(list.into_iter().map(root_of).collect()),
-        // Keep the roots there are; the next request tries again.
+        Ok(list) => {
+            gearbox.use_org_repositories(org, org_roots(list, gearbox.org_project_roots(org)));
+        }
         Err(e) => {
-            gearbox.mark_roots_checked();
-            warn!(error = %format!("{e:#}"), "studio-product: the platform's gear repositories could not be read");
+            warn!(organization_id = %org, error = %format!("{e:#}"), "studio-product: the organization's gear repositories could not be read");
         }
     }
 }
@@ -97,6 +248,12 @@ pub async fn refresh(gearbox: &Gearbox, connectors: &Connectors, ctx: &SecurityC
 /// organization's own gear repositories read into the engine when due (or
 /// `now`). The platform's root and no organization are the platform's scope.
 /// The caller has already shown that `ctx` reaches `org`.
+///
+/// Only the first read of an organization is waited for: there is nothing to
+/// serve before it. After that a due read runs on a task of its own, one per
+/// organization at a time, and the request serves the roots there are -- on
+/// studio-dev a read on the way in fetched every project's repository and
+/// held the request up to 25 s once a minute.
 pub async fn scope_for(
     gearbox: &Arc<Gearbox>,
     connectors: &Connectors,
@@ -106,42 +263,41 @@ pub async fn scope_for(
     now: bool,
 ) -> Scope {
     let org = org.filter(|o| *o != PLATFORM_ROOT_TENANT)?;
-    // One read at a time per organization: the request that claims it reads,
-    // the others serve the roots there are meanwhile.
-    if let Some(service) = connectors.get()
-        && gearbox.begin_org_refresh(org, now)
-    {
-        let listed = match acting_in(ctx, org) {
-            Ok(octx) => service.gear_repositories(&octx, org).await,
-            Err(e) => Err(e),
-        };
-        // Its projects' own gears too: the directories their product.gdl
-        // names, read from the repositories they are already connected by.
-        let (project_roots, files) = match acting_in(ctx, org) {
-            Ok(octx) => super::project_roots::read(gearbox, connectors, hub, &octx, org).await,
-            Err(_) => Default::default(),
-        };
-        gearbox.use_project_files(org, files);
-        match listed {
-            Ok(list) => {
-                let mut roots: Vec<GearRoot> = list.into_iter().map(root_of).collect();
-                let fresh: Vec<GearRoot> = project_roots
-                    .into_iter()
-                    .filter(|p| roots.iter().all(|r| r.id != p.id))
-                    .collect();
-                roots.extend(fresh);
-                gearbox.use_org_repositories(org, roots);
-            }
-            Err(e) => {
-                gearbox.mark_org_roots_checked(org);
-                warn!(organization_id = %org, error = %format!("{e:#}"), "studio-product: the organization's gear repositories could not be read");
-            }
-        }
+    if connectors.get().is_none() {
+        return Some(org);
     }
+    let first = !gearbox.org_roots_ever_read(org);
+    // One request claims a due read; the others serve the roots there are.
+    if !gearbox.begin_org_refresh(org, now) {
+        return Some(org);
+    }
+    if first {
+        if let Some(_reading) = gearbox.claim_org_read(org) {
+            read_org(gearbox, connectors, hub, ctx, org).await;
+        }
+        return Some(org);
+    }
+    if now {
+        list_org_now(gearbox, connectors, ctx, org).await;
+    }
+    let (gearbox, connectors, hub, ctx) = (
+        Arc::clone(gearbox),
+        connectors.clone(),
+        Arc::clone(hub),
+        ctx.clone(),
+    );
+    tokio::spawn(async move {
+        let Some(_reading) = gearbox.claim_org_read(org) else {
+            return;
+        };
+        read_org(&gearbox, &connectors, &hub, &ctx, org).await;
+    });
     Some(org)
 }
 
-/// The layer that does [`refresh`] on the way into an engine route.
+/// The layer that does [`refresh`] on the way into an engine route. Only a
+/// list never read, or one asked for `now`, is waited for; a due one is read
+/// in the background while the request goes on with the list there is.
 pub async fn layer(
     gearbox: Arc<Gearbox>,
     connectors: Connectors,
@@ -157,7 +313,11 @@ pub async fn layer(
     if ENGINE_ROUTES.iter().any(|p| path.starts_with(p))
         && let Some(ctx) = request.extensions().get::<SecurityContext>()
     {
-        refresh(&gearbox, &connectors, ctx, now).await;
+        if now || !gearbox.roots_ever_read() {
+            refresh(&gearbox, &connectors, ctx, now).await;
+        } else if gearbox.roots_due() {
+            refresh_in_background(Arc::clone(&gearbox), connectors.clone(), ctx.clone());
+        }
     }
     next.run(request).await
 }
@@ -173,5 +333,55 @@ mod tests {
         assert_ne!(a, checkout_key("https://github.com/acme/gears.git", "v2"));
         assert_ne!(a, checkout_key("https://github.com/acme/other.git", ""));
         assert!(a.starts_with("gearbox-") && a.len() == "gearbox-".len() + 12);
+    }
+
+    fn repository(source_id: &str) -> GearRepositorySource {
+        GearRepositorySource {
+            connection_id: Uuid::from_u128(1),
+            source_id: source_id.into(),
+            repo: format!("acme/{source_id}"),
+            url: format!("https://github.com/acme/{source_id}.git"),
+            git_ref: String::new(),
+            username: "x-access-token".into(),
+            token: String::new(),
+            create_target: false,
+        }
+    }
+
+    #[test]
+    fn an_organizations_repositories_come_first_and_a_project_root_never_doubles_one() {
+        let project_root = |id: &str| GearRoot {
+            subdir: Some(id.to_owned()),
+            ..root_of(repository(id))
+        };
+        let roots = org_roots(
+            vec![repository("acme-gears")],
+            vec![project_root("shop-backend"), project_root("acme-gears")],
+        );
+        let ids: Vec<(&str, bool)> = roots
+            .iter()
+            .map(|r| (r.id.as_str(), r.subdir.is_some()))
+            .collect();
+        assert_eq!(ids, [("acme-gears", false), ("shop-backend", true)]);
+    }
+
+    #[test]
+    fn one_read_of_an_organizations_roots_runs_at_a_time() {
+        let gearbox = Arc::new(Gearbox::new(super::super::gearbox::GearboxConfig {
+            bin: "gearbox".into(),
+            workdir: std::env::temp_dir(),
+            corpus_url: String::new(),
+            corpus_ref: "main".into(),
+            refresh: Duration::from_secs(600),
+        }));
+        let org = Uuid::from_u128(0x0a);
+        assert!(!gearbox.org_roots_ever_read(org));
+        gearbox.use_org_repositories(org, vec![root_of(repository("acme-gears"))]);
+        assert!(gearbox.org_roots_ever_read(org));
+        // A read running holds the organization: a second is not started.
+        let reading = gearbox.claim_org_read(org).expect("nothing reads yet");
+        assert!(gearbox.claim_org_read(org).is_none());
+        drop(reading);
+        assert!(gearbox.claim_org_read(org).is_some());
     }
 }

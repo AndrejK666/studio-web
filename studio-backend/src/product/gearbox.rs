@@ -33,7 +33,7 @@
 //! (`STUDIO_GEARBOX_CORPUS_URL` / `_REF`) is the one root, under the source id
 //! `gears-rust`. No organization's settings or sync can change either.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -41,6 +41,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
+use futures_util::StreamExt as _;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -59,6 +60,15 @@ const ROOTS_RECHECK: Duration = Duration::from_secs(60);
 /// A catalogue load plus a resolve is well under a second on the corpus; a
 /// minute is for a cold disk, not for a healthy run.
 const ENGINE_TIMEOUT: Duration = Duration::from_secs(60);
+/// How many roots are fetched or cloned at once when a corpus is refreshed.
+/// Each is a git process mostly waiting on the network; one after another,
+/// a corpus of several repositories took their sum.
+const PARALLEL_CHECKOUTS: usize = 4;
+/// How many previews' engine answers are kept, and for how long. A person
+/// toggling gears back and forth asks the same question again within
+/// minutes; the answer cannot change while the corpus stays at its commits.
+const EVALUATIONS_KEPT: usize = 64;
+const EVALUATION_TTL: Duration = Duration::from_secs(600);
 
 /// The three deployment profiles a generated description declares, by id.
 /// Every one is declared so the file can be resolved for any of them later;
@@ -2014,6 +2024,10 @@ pub struct PreviewInput {
     /// known: a project root in it is a `path(...)` beside the file; one in
     /// another repository is pinned by its git url instead.
     pub repo: Option<String>,
+    /// Whether the engine's answer may come from an earlier preview of the
+    /// same description against the same commits. A preview that is saved
+    /// asks the engine afresh.
+    pub reuse: bool,
 }
 
 /// Where a pinned root sits for the description: inside the repository the
@@ -2098,14 +2112,16 @@ pub struct GearRoot {
 }
 
 impl GearRoot {
-    /// What decides whether a checkout is still the one asked for.
+    /// What decides whether a checkout is still the one asked for. Not the
+    /// token: a rotated token reads the same repository, and is taken into
+    /// the list without making it a new generation -- which would have
+    /// made every request wait for a fetch and a catalogue it already had.
     fn same(&self, other: &Self) -> bool {
         self.id == other.id
             && self.connection_id == other.connection_id
             && self.source.key == other.source.key
             && self.source.url == other.source.url
             && self.source.git_ref == other.source.git_ref
-            && self.source.token == other.source.token
             && self.subdir == other.subdir
     }
 }
@@ -2118,6 +2134,46 @@ struct Root {
     commit: Option<String>,
 }
 
+/// Whether a catalogue the engine read over `before` still describes
+/// `after`: the same roots, in the same directories, at the same commits.
+/// Within one generation that is the rule it always was; across generations
+/// (the list read again and found different) every commit must be known as
+/// well, since a root without one could hold anything.
+fn same_checkouts(before: &[Root], after: &[Root], same_generation: bool) -> bool {
+    before.len() == after.len()
+        && before.iter().zip(after).all(|(a, b)| {
+            a.id == b.id
+                && a.dir == b.dir
+                && a.commit == b.commit
+                && (same_generation || a.commit.is_some())
+        })
+}
+
+/// A corpus as a request reads it: its roots, the catalogue and the engine's
+/// answer verbatim.
+#[derive(Clone)]
+struct Loaded {
+    roots: Vec<Root>,
+    catalogue: Arc<EngineCatalogue>,
+    raw: Arc<Value>,
+}
+
+impl Loaded {
+    /// Each root's id and directory, as the engine is handed them.
+    fn named(&self) -> Vec<(String, PathBuf)> {
+        self.roots
+            .iter()
+            .map(|r| (r.id.clone(), r.dir.clone()))
+            .collect()
+    }
+
+    /// The first root's commit: the one a single-corpus client shows.
+    fn commit(&self) -> Option<String> {
+        self.roots.first().and_then(|r| r.commit.clone())
+    }
+}
+
+#[derive(Clone)]
 struct Corpus {
     roots: Vec<Root>,
     /// The generations (the platform's list, the organization's) these roots
@@ -2131,10 +2187,349 @@ struct Corpus {
 }
 
 impl Corpus {
-    /// The first root's commit: the one a single-corpus client shows.
-    fn commit(&self) -> Option<String> {
-        self.roots.first().and_then(|r| r.commit.clone())
+    /// What a request reads, once the catalogue is loaded.
+    fn loaded(&self) -> Option<Loaded> {
+        Some(Loaded {
+            roots: self.roots.clone(),
+            catalogue: self.catalogue.clone()?,
+            raw: self.raw.clone()?,
+        })
     }
+}
+
+/// One scope's corpus, and the lock a refresh of it holds.
+struct ScopeCell {
+    /// What requests read. Held only to look, or to put a refreshed corpus
+    /// in: never across a fetch or an engine run.
+    corpus: Mutex<Option<Corpus>>,
+    /// Held for a whole refresh -- every root fetched, the catalogue loaded
+    /// -- so one runs at a time per scope. A request that has a corpus to
+    /// serve never waits on it.
+    sync: Mutex<()>,
+}
+
+impl ScopeCell {
+    fn new() -> Self {
+        Self {
+            corpus: Mutex::new(None),
+            sync: Mutex::new(()),
+        }
+    }
+}
+
+/// What a refresh needs, owned, so it can run on a task of its own after the
+/// request that noticed the corpus was stale has been answered.
+#[derive(Clone)]
+struct Syncer {
+    bin: PathBuf,
+    workdir: PathBuf,
+    checkouts: CheckoutLocks,
+    refresh: Duration,
+}
+
+impl Syncer {
+    /// Bring `cell` to `wanted` at `generation`: fetch every root (unless a
+    /// corpus of this generation was fetched within the refresh period and
+    /// only its catalogue is missing), reuse the catalogue when the commits
+    /// are the ones it was read at, else run the engine. With `keep_partial`
+    /// the fetched roots are kept even when the catalogue fails, so the next
+    /// call only retries the engine; a refresh in the background keeps the
+    /// corpus it is replacing instead.
+    async fn sync(
+        &self,
+        cell: &ScopeCell,
+        wanted: &[GearRoot],
+        generation: (u64, u64),
+        keep_partial: bool,
+    ) -> anyhow::Result<Loaded> {
+        let previous: Option<Corpus> = cell.corpus.lock().await.clone();
+        let fetched_recently = previous
+            .as_ref()
+            .filter(|p| p.generation == generation && p.refreshed.elapsed() < self.refresh);
+        let (roots, refreshed) = match fetched_recently {
+            Some(p) => (p.roots.clone(), p.refreshed),
+            None => {
+                let same_generation = previous.as_ref().filter(|p| p.generation == generation);
+                (self.fetch(wanted, same_generation).await?, Instant::now())
+            }
+        };
+        let reusable = previous.as_ref().filter(|p| {
+            p.catalogue.is_some()
+                && p.raw.is_some()
+                && same_checkouts(&p.roots, &roots, p.generation == generation)
+        });
+        let loaded = match reusable {
+            Some(p) => Loaded {
+                roots,
+                catalogue: p.catalogue.clone().expect("checked above"),
+                raw: p.raw.clone().expect("checked above"),
+            },
+            None => {
+                let named: Vec<(String, PathBuf)> = roots
+                    .iter()
+                    .map(|r| (r.id.clone(), r.dir.clone()))
+                    .collect();
+                match self.load_catalogue(named).await {
+                    Ok((catalogue, raw)) => Loaded {
+                        roots,
+                        catalogue,
+                        raw,
+                    },
+                    Err(e) => {
+                        if keep_partial {
+                            *cell.corpus.lock().await = Some(Corpus {
+                                roots,
+                                generation,
+                                refreshed,
+                                catalogue: None,
+                                raw: None,
+                            });
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+        };
+        *cell.corpus.lock().await = Some(Corpus {
+            roots: loaded.roots.clone(),
+            generation,
+            refreshed,
+            catalogue: Some(Arc::clone(&loaded.catalogue)),
+            raw: Some(Arc::clone(&loaded.raw)),
+        });
+        Ok(loaded)
+    }
+
+    /// Every root of `wanted` fetched or cloned, a few at once. A root whose
+    /// fetch fails keeps its checkout from `previous` (the same generation),
+    /// so a flaky fetch does not turn every preview into an error; one with
+    /// nothing to keep fails the refresh.
+    async fn fetch(
+        &self,
+        wanted: &[GearRoot],
+        previous: Option<&Corpus>,
+    ) -> anyhow::Result<Vec<Root>> {
+        let results: Vec<anyhow::Result<crate::connectors::sdk::git_checkout::CloneResult>> =
+            futures_util::stream::iter(wanted.iter().cloned())
+                .map(|r| {
+                    let (workdir, locks) = (self.workdir.clone(), Arc::clone(&self.checkouts));
+                    async move {
+                        tokio::task::spawn_blocking(move || checkout_root(&workdir, &locks, &r))
+                            .await
+                            .unwrap_or_else(|e| Err(anyhow!("corpus sync task: {e}")))
+                    }
+                })
+                .buffered(PARALLEL_CHECKOUTS)
+                .collect()
+                .await;
+        let mut roots = Vec::with_capacity(wanted.len());
+        for (r, result) in wanted.iter().zip(results) {
+            match result {
+                Ok(c) => {
+                    // A project's directory is judged again on the
+                    // refreshed checkout: the pull may have made it a
+                    // link out of the repository.
+                    let dir = match &r.subdir {
+                        Some(sub) => match super::project_roots::contained_dir(&c.dir, sub) {
+                            Some(dir) => dir,
+                            None => {
+                                warn!(source = %r.id, subdir = %sub, "gearbox: a project's gear directory is not a directory inside its repository; not read");
+                                continue;
+                            }
+                        },
+                        None => c.dir,
+                    };
+                    roots.push(Root {
+                        id: r.id.clone(),
+                        dir,
+                        commit: c.commit,
+                    });
+                }
+                Err(e) => match previous.and_then(|p| p.roots.iter().find(|x| x.id == r.id)) {
+                    Some(kept) => {
+                        warn!(source = %r.id, error = %format!("{e:#}"), "gearbox: gear repository refresh failed; using the last checkout");
+                        roots.push(kept.clone());
+                    }
+                    None => {
+                        return Err(e.context(format!(
+                            "cannot check out the gear repository `{}` ({})",
+                            r.id, r.source.label
+                        )));
+                    }
+                },
+            }
+        }
+        Ok(roots)
+    }
+
+    /// `gearbox catalogue` over `named`, parsed, and verbatim.
+    async fn load_catalogue(
+        &self,
+        named: Vec<(String, PathBuf)>,
+    ) -> anyhow::Result<(Arc<EngineCatalogue>, Arc<Value>)> {
+        let bin = self.bin.clone();
+        let mut args: Vec<String> = vec!["catalogue".into()];
+        // Each root under a directory named by its source id: the engine
+        // takes a root's id from its directory's name when there are
+        // several (`--source-id` names one root only).
+        for (_, dir) in &named {
+            args.push("--root".into());
+            args.push(dir.to_string_lossy().into_owned());
+        }
+        args.extend(["--format".into(), "json".into()]);
+        let out = tokio::task::spawn_blocking(move || run_engine(&bin, &args, None))
+            .await
+            .context("catalogue task")??;
+        let raw: Value = serde_json::from_str(&out.stdout).with_context(|| {
+            format!("the engine's catalogue is not JSON: {}", out.stderr_tail())
+        })?;
+        let parsed: EngineCatalogue = serde_json::from_value(raw.clone())
+            .context("the engine's catalogue does not have the expected shape")?;
+        if let Some(why) = parsed.unreadable_root(&named) {
+            bail!(why);
+        }
+        Ok((Arc::new(parsed), Arc::new(raw)))
+    }
+}
+
+/// Check one root out under `workdir` (see [`checkout_dir`]), holding its
+/// directory's lock: a platform root is read by the platform's corpus and by
+/// every organization's, and two fetches into one directory at once break it.
+/// Blocking.
+fn checkout_root(
+    workdir: &Path,
+    locks: &CheckoutLocks,
+    r: &GearRoot,
+) -> anyhow::Result<crate::connectors::sdk::git_checkout::CloneResult> {
+    let s = &r.source;
+    let git_ref = Some(s.git_ref.as_str()).filter(|g| !g.trim().is_empty());
+    // `gearbox-roots/<key>/<source id>`: the engine names a root by its
+    // directory -- the real one, after links are followed -- so the checkout
+    // itself carries the id; the key keeps two repositories apart.
+    let dir = checkout_dir(workdir, r);
+    let lock = Arc::clone(
+        locks
+            .lock()
+            .expect("gearbox checkout locks")
+            .entry(dir.clone())
+            .or_default(),
+    );
+    let _held = lock.lock().unwrap_or_else(|p| p.into_inner());
+    crate::connectors::sdk::git_checkout::clone_or_update_into(
+        &dir,
+        &s.url,
+        &s.username,
+        &s.token,
+        git_ref,
+    )
+}
+
+/// Keys with a refresh running, so a second one is not started beside it.
+pub struct InFlight<K>(std::sync::Mutex<HashSet<K>>);
+
+impl<K: Eq + std::hash::Hash + Clone> InFlight<K> {
+    pub fn new() -> Self {
+        Self(std::sync::Mutex::new(HashSet::new()))
+    }
+
+    /// `key`'s refresh, claimed until the claim is dropped; `None` while
+    /// another holds it.
+    pub fn claim(&self, key: K) -> Option<Claim<'_, K>> {
+        let mut held = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        // Built only when claimed: a claim built and dropped on refusal would
+        // free the key its holder still has.
+        if held.insert(key.clone()) {
+            Some(Claim { set: self, key })
+        } else {
+            None
+        }
+    }
+}
+
+impl<K: Eq + std::hash::Hash + Clone> Default for InFlight<K> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A claimed refresh; dropping it, however the refresh ended, frees the key.
+pub struct Claim<'a, K: Eq + std::hash::Hash> {
+    set: &'a InFlight<K>,
+    key: K,
+}
+
+impl<K: Eq + std::hash::Hash> Drop for Claim<'_, K> {
+    fn drop(&mut self) {
+        self.set
+            .0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&self.key);
+    }
+}
+
+/// The engine's answers to recent previews, by [`evaluation_key`].
+#[derive(Default)]
+struct Evaluations {
+    /// Each answer with when it was kept and its place in the order kept.
+    entries: HashMap<[u8; 32], (Instant, u64, Resolution)>,
+    kept: u64,
+}
+
+impl Evaluations {
+    fn get(&mut self, key: &[u8; 32]) -> Option<Resolution> {
+        self.entries
+            .retain(|_, (at, _, _)| at.elapsed() < EVALUATION_TTL);
+        self.entries.get(key).map(|(_, _, r)| r.clone())
+    }
+
+    fn put(&mut self, key: [u8; 32], resolution: Resolution) {
+        self.entries
+            .retain(|_, (at, _, _)| at.elapsed() < EVALUATION_TTL);
+        // The first kept goes first: by order, not by clock, which can read
+        // the same for two answers kept in quick succession.
+        if !self.entries.contains_key(&key)
+            && self.entries.len() >= EVALUATIONS_KEPT
+            && let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, (_, n, _))| *n)
+                .map(|(k, _)| *k)
+        {
+            self.entries.remove(&oldest);
+        }
+        self.kept += 1;
+        self.entries
+            .insert(key, (Instant::now(), self.kept, resolution));
+    }
+}
+
+/// What decides the engine's answer to a preview: the scope asking (so no
+/// answer crosses from one organization to another), every root's directory
+/// and commit, and the description with where it sits and the profile.
+/// `None` when a root's commit is unknown: its content could be anything.
+fn evaluation_key(
+    scope: Scope,
+    roots: &[Root],
+    product_id: &str,
+    product_path: &str,
+    profile: &str,
+    gdl: &str,
+) -> Option<[u8; 32]> {
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
+    h.update(format!("{scope:?}\0").as_bytes());
+    for r in roots {
+        let commit = r.commit.as_deref()?;
+        h.update(format!("{}\0{}\0{commit}\0", r.id, r.dir.display()).as_bytes());
+    }
+    for part in [product_id, product_path, profile, gdl] {
+        h.update(part.as_bytes());
+        h.update([0u8]);
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&h.finalize());
+    Some(key)
 }
 
 /// The roots asked for, and when their list was last read.
@@ -2157,13 +2552,15 @@ impl RootSet {
         self.checked.is_none_or(|t| t.elapsed() >= ROOTS_RECHECK)
     }
 
-    /// Take `list`; a list unlike the last one is a new generation.
+    /// Take `list`; a list unlike the last one is a new generation. The list
+    /// is taken either way, so a rotated token is the one the next fetch
+    /// uses.
     fn take(&mut self, list: Vec<GearRoot>) {
         self.checked = Some(Instant::now());
         let unchanged =
             self.list.len() == list.len() && self.list.iter().zip(&list).all(|(a, b)| a.same(b));
+        self.list = list;
         if !unchanged {
-            self.list = list;
             self.generation += 1;
         }
     }
@@ -2202,17 +2599,26 @@ type CheckoutLocks = Arc<std::sync::Mutex<HashMap<PathBuf, Arc<std::sync::Mutex<
 
 pub struct Gearbox {
     cfg: GearboxConfig,
-    /// One corpus per scope, each behind its own lock, so one organization's
+    /// One corpus per scope, each behind its own locks, so one organization's
     /// fetch does not hold up another's previews.
-    corpora: std::sync::Mutex<HashMap<Scope, Arc<Mutex<Option<Corpus>>>>>,
+    corpora: std::sync::Mutex<HashMap<Scope, Arc<ScopeCell>>>,
     /// The platform's roots.
     roots: std::sync::Mutex<RootSet>,
+    /// Held while the platform's list is read, so one read runs at a time.
+    roots_reading: Mutex<()>,
     /// Each organization's own roots, by organization.
     org_roots: std::sync::Mutex<HashMap<uuid::Uuid, RootSet>>,
+    /// The organizations whose roots are being read.
+    org_reads: InFlight<uuid::Uuid>,
     checkouts: CheckoutLocks,
     /// The `product.gdl` each project keeps in its repository, read with its
     /// organization's roots (`project_roots`), by project.
     project_files: std::sync::Mutex<HashMap<uuid::Uuid, ProjectFile>>,
+    /// `gearbox --version`, asked once: the binary does not change under a
+    /// running process, and the status page asked it on every load.
+    version: std::sync::OnceLock<String>,
+    /// Recent previews' answers.
+    evaluations: std::sync::Mutex<Evaluations>,
 }
 
 /// A project's own product description, as its repository holds it.
@@ -2291,9 +2697,65 @@ impl Gearbox {
             cfg,
             corpora: std::sync::Mutex::new(HashMap::new()),
             roots: std::sync::Mutex::new(RootSet::new(list)),
+            roots_reading: Mutex::new(()),
             org_roots: std::sync::Mutex::new(HashMap::new()),
+            org_reads: InFlight::new(),
             checkouts: Arc::new(std::sync::Mutex::new(HashMap::new())),
             project_files: std::sync::Mutex::new(HashMap::new()),
+            version: std::sync::OnceLock::new(),
+            evaluations: std::sync::Mutex::new(Evaluations::default()),
+        }
+    }
+
+    /// The lock a read of the platform's list holds (`gear_roots::refresh`).
+    pub fn roots_reading(&self) -> &Mutex<()> {
+        &self.roots_reading
+    }
+
+    /// Whether the platform's list has been read (or tried) at all: before
+    /// that, a request waits for it rather than read the deployment's corpus
+    /// it is about to replace.
+    pub fn roots_ever_read(&self) -> bool {
+        self.roots.lock().expect("gearbox roots").checked.is_some()
+    }
+
+    /// Whether organization `org`'s roots have been read (or tried) at all.
+    pub fn org_roots_ever_read(&self, org: uuid::Uuid) -> bool {
+        self.org_roots
+            .lock()
+            .expect("gearbox org roots")
+            .get(&org)
+            .is_some_and(|s| s.checked.is_some())
+    }
+
+    /// The roots organization `org`'s projects keep in their own
+    /// repositories, as last read.
+    pub fn org_project_roots(&self, org: uuid::Uuid) -> Vec<GearRoot> {
+        self.org_roots
+            .lock()
+            .expect("gearbox org roots")
+            .get(&org)
+            .map(|s| {
+                s.list
+                    .iter()
+                    .filter(|r| r.subdir.is_some())
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Claim the read of `org`'s roots; `None` while one is running.
+    pub fn claim_org_read(&self, org: uuid::Uuid) -> Option<Claim<'_, uuid::Uuid>> {
+        self.org_reads.claim(org)
+    }
+
+    fn syncer(&self) -> Syncer {
+        Syncer {
+            bin: self.cfg.bin.clone(),
+            workdir: self.cfg.workdir.clone(),
+            checkouts: Arc::clone(&self.checkouts),
+            refresh: self.cfg.refresh,
         }
     }
 
@@ -2470,13 +2932,13 @@ impl Gearbox {
             .checked = Some(Instant::now());
     }
 
-    fn cell(&self, scope: Scope) -> Arc<Mutex<Option<Corpus>>> {
+    fn cell(&self, scope: Scope) -> Arc<ScopeCell> {
         Arc::clone(
             self.corpora
                 .lock()
                 .expect("gearbox corpora")
                 .entry(scope)
-                .or_insert_with(|| Arc::new(Mutex::new(None))),
+                .or_insert_with(|| Arc::new(ScopeCell::new())),
         )
     }
 
@@ -2594,7 +3056,7 @@ impl Gearbox {
     pub async fn read_roots(&self, scope: Scope) -> Vec<ReadRoot> {
         let view = self.view(scope);
         let cell = self.cell(view.scope);
-        let guard = cell.lock().await;
+        let guard = cell.corpus.lock().await;
         let commits: BTreeMap<String, Option<String>> = guard
             .as_ref()
             .map(|c| {
@@ -2627,7 +3089,12 @@ impl Gearbox {
             .collect()
     }
 
-    pub async fn status(&self, scope: Scope) -> GearboxStatus {
+    /// `gearbox --version` with the engine's commit, asked once per process.
+    /// A failed run is not remembered, so the next status asks again.
+    async fn engine_version(&self) -> Option<String> {
+        if let Some(v) = self.version.get() {
+            return Some(v.clone());
+        }
         let bin = self.cfg.bin.clone();
         let version =
             tokio::task::spawn_blocking(move || run_engine(&bin, &["--version".into()], None).ok())
@@ -2635,7 +3102,12 @@ impl Gearbox {
                 .ok()
                 .flatten()
                 .filter(|o| o.success)
-                .map(|o| with_revision(o.stdout.trim(), engine_revision().as_deref()));
+                .map(|o| with_revision(o.stdout.trim(), engine_revision().as_deref()))?;
+        Some(self.version.get_or_init(|| version).clone())
+    }
+
+    pub async fn status(&self, scope: Scope) -> GearboxStatus {
+        let version = self.engine_version().await;
         let (commit, problem) = match self.ensure_corpus(scope).await {
             Ok((_, commit, _)) => (commit, None),
             Err(e) => (None, Some(format!("{e:#}"))),
@@ -2677,14 +3149,28 @@ impl Gearbox {
         }
     }
 
-    /// `scope`'s roots checked out, refreshed at most once per `refresh` and
-    /// whenever the roots asked for change, and their catalogue, loaded once
-    /// per set of commits. Returns each root's id and directory, the first
-    /// root's commit, and the catalogue.
+    /// `scope`'s roots checked out and their catalogue, loaded once per set of
+    /// commits. Returns each root's id and directory, the first root's
+    /// commit, and the catalogue.
     async fn ensure_corpus(
         &self,
         scope: Scope,
     ) -> anyhow::Result<(Vec<(String, PathBuf)>, Option<String>, Arc<EngineCatalogue>)> {
+        let loaded = self.ensure(scope).await?;
+        Ok((loaded.named(), loaded.commit(), loaded.catalogue))
+    }
+
+    /// `scope`'s corpus as a request reads it.
+    ///
+    /// A corpus of the roots asked for is served as it is, even past its
+    /// refresh period: then it is refreshed on a task of its own (one at a
+    /// time per scope) and the next request reads the refreshed one. Only a
+    /// scope with nothing to serve yet -- never read, its roots changed, or
+    /// its catalogue not loaded -- waits for the fetch and the engine. On
+    /// studio-dev a request that found the corpus stale paid for every
+    /// root's fetch, one after another, and maybe a catalogue: 6.6 s on
+    /// average for the status page.
+    async fn ensure(&self, scope: Scope) -> anyhow::Result<Loaded> {
         let view = self.view(scope);
         let (wanted, generation) = (view.roots, view.generation);
         if wanted.is_empty() {
@@ -2694,143 +3180,72 @@ impl Gearbox {
             );
         }
         let cell = self.cell(view.scope);
-        let mut guard = cell.lock().await;
-        let stale = guard.as_ref().is_none_or(|c| {
-            c.generation != generation || c.refreshed.elapsed() >= self.cfg.refresh
-        });
-        if stale {
-            let workdir = self.cfg.workdir.clone();
-            let locks = Arc::clone(&self.checkouts);
-            let asked = wanted.clone();
-            let cloned = tokio::task::spawn_blocking(move || {
-                asked
-                    .iter()
-                    .map(|r| {
-                        let s = &r.source;
-                        let git_ref = Some(s.git_ref.as_str()).filter(|g| !g.trim().is_empty());
-                        // `gearbox-roots/<key>/<source id>`: the engine names a
-                        // root by its directory -- the real one, after links
-                        // are followed -- so the checkout itself carries the
-                        // id; the key keeps two repositories apart.
-                        let dir = checkout_dir(&workdir, r);
-                        let lock = Arc::clone(
-                            locks
-                                .lock()
-                                .expect("gearbox checkout locks")
-                                .entry(dir.clone())
-                                .or_default(),
-                        );
-                        let _held = lock.lock().unwrap_or_else(|p| p.into_inner());
-                        crate::connectors::sdk::git_checkout::clone_or_update_into(
-                            &dir,
-                            &s.url,
-                            &s.username,
-                            &s.token,
-                            git_ref,
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })
+        {
+            let guard = cell.corpus.lock().await;
+            if let Some(corpus) = guard.as_ref().filter(|c| c.generation == generation)
+                && let Some(loaded) = corpus.loaded()
+            {
+                if corpus.refreshed.elapsed() >= self.cfg.refresh {
+                    self.refresh_in_background(Arc::clone(&cell), wanted, generation);
+                }
+                return Ok(loaded);
+            }
+        }
+        let _syncing = cell.sync.lock().await;
+        // Another request may have brought it in while this one waited.
+        if let Some(loaded) = cell
+            .corpus
+            .lock()
             .await
-            .context("corpus sync task")?;
-            let previous = guard.as_ref().filter(|c| c.generation == generation);
-            let mut roots = Vec::with_capacity(wanted.len());
-            for (r, result) in wanted.iter().zip(cloned) {
-                match result {
-                    Ok(c) => {
-                        // A project's directory is judged again on the
-                        // refreshed checkout: the pull may have made it a
-                        // link out of the repository.
-                        let dir = match &r.subdir {
-                            Some(sub) => match super::project_roots::contained_dir(&c.dir, sub) {
-                                Some(dir) => dir,
-                                None => {
-                                    warn!(source = %r.id, subdir = %sub, "gearbox: a project's gear directory is not a directory inside its repository; not read");
-                                    continue;
-                                }
-                            },
-                            None => c.dir,
-                        };
-                        roots.push(Root {
-                            id: r.id.clone(),
-                            dir,
-                            commit: c.commit,
-                        });
+            .as_ref()
+            .filter(|c| c.generation == generation)
+            .and_then(Corpus::loaded)
+        {
+            return Ok(loaded);
+        }
+        self.syncer().sync(&cell, &wanted, generation, true).await
+    }
+
+    /// Refresh `cell` on a task of its own, unless a refresh of it is running
+    /// already. A failed refresh keeps the corpus there is and tries again
+    /// after another refresh period, rather than on every request.
+    fn refresh_in_background(
+        &self,
+        cell: Arc<ScopeCell>,
+        wanted: Vec<GearRoot>,
+        generation: (u64, u64),
+    ) {
+        let syncer = self.syncer();
+        tokio::spawn(async move {
+            let Ok(_syncing) = cell.sync.try_lock() else {
+                return;
+            };
+            let due = cell.corpus.lock().await.as_ref().is_none_or(|c| {
+                c.generation != generation || c.refreshed.elapsed() >= syncer.refresh
+            });
+            if !due {
+                return;
+            }
+            let started = Instant::now();
+            match syncer.sync(&cell, &wanted, generation, false).await {
+                Ok(_) => tracing::info!(
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "gearbox: corpus refreshed in the background"
+                ),
+                Err(e) => {
+                    warn!(error = %format!("{e:#}"), "gearbox: background corpus refresh failed; serving the last one");
+                    if let Some(c) = cell
+                        .corpus
+                        .lock()
+                        .await
+                        .as_mut()
+                        .filter(|c| c.generation == generation)
+                    {
+                        c.refreshed = Instant::now();
                     }
-                    // Keep serving the checkout we have; a flaky fetch should
-                    // not turn every preview into an error.
-                    Err(e) => match previous.and_then(|p| p.roots.iter().find(|x| x.id == r.id)) {
-                        Some(kept) => {
-                            warn!(source = %r.id, error = %format!("{e:#}"), "gearbox: gear repository refresh failed; using the last checkout");
-                            roots.push(kept.clone());
-                        }
-                        None => {
-                            return Err(e.context(format!(
-                                "cannot check out the gear repository `{}` ({})",
-                                r.id, r.source.label
-                            )));
-                        }
-                    },
                 }
             }
-            let same = previous.is_some_and(|p| {
-                p.roots.len() == roots.len()
-                    && p.roots
-                        .iter()
-                        .zip(&roots)
-                        .all(|(a, b)| a.id == b.id && a.commit == b.commit)
-            });
-            let (catalogue, raw) = if same {
-                previous
-                    .map(|p| (p.catalogue.clone(), p.raw.clone()))
-                    .unwrap_or_default()
-            } else {
-                (None, None)
-            };
-            *guard = Some(Corpus {
-                roots,
-                generation,
-                refreshed: Instant::now(),
-                catalogue,
-                raw,
-            });
-        }
-        let corpus = guard.as_mut().expect("corpus is set above");
-        let named: Vec<(String, PathBuf)> = corpus
-            .roots
-            .iter()
-            .map(|r| (r.id.clone(), r.dir.clone()))
-            .collect();
-        if corpus.catalogue.is_none() {
-            let bin = self.cfg.bin.clone();
-            let mut args: Vec<String> = vec!["catalogue".into()];
-            // Each root under a directory named by its source id: the engine
-            // takes a root's id from its directory's name when there are
-            // several (`--source-id` names one root only).
-            for (_, dir) in &named {
-                args.push("--root".into());
-                args.push(dir.to_string_lossy().into_owned());
-            }
-            args.extend(["--format".into(), "json".into()]);
-            let out = tokio::task::spawn_blocking(move || run_engine(&bin, &args, None))
-                .await
-                .context("catalogue task")??;
-            let raw: Value = serde_json::from_str(&out.stdout).with_context(|| {
-                format!("the engine's catalogue is not JSON: {}", out.stderr_tail())
-            })?;
-            let parsed: EngineCatalogue = serde_json::from_value(raw.clone())
-                .context("the engine's catalogue does not have the expected shape")?;
-            if let Some(why) = parsed.unreadable_root(&named) {
-                bail!(why);
-            }
-            corpus.catalogue = Some(Arc::new(parsed));
-            corpus.raw = Some(Arc::new(raw));
-        }
-        Ok((
-            named,
-            corpus.commit(),
-            corpus.catalogue.clone().expect("catalogue is set above"),
-        ))
+        });
     }
 
     /// The corpus's catalogue as the engine printed it (`gearbox catalogue
@@ -2840,12 +3255,9 @@ impl Gearbox {
         &self,
         scope: Scope,
     ) -> anyhow::Result<(Arc<Value>, Option<String>)> {
-        self.ensure_corpus(scope).await?;
-        let cell = self.cell(self.view(scope).scope);
-        let guard = cell.lock().await;
-        let corpus = guard.as_ref().context("the corpus is not checked out")?;
-        let raw = corpus.raw.clone().context("the corpus has no catalogue")?;
-        Ok((raw, corpus.commit()))
+        let loaded = self.ensure(scope).await?;
+        let commit = loaded.commit();
+        Ok((loaded.raw, commit))
     }
 
     /// The facts an explanation of the gear `name` is written from, with its
@@ -2971,8 +3383,11 @@ impl Gearbox {
                 PROFILES.join(", ")
             );
         }
-        let (named, commit, catalogue) = self.ensure_corpus(scope).await?;
-        let composition = compose(&catalogue, &input.gears);
+        let started = Instant::now();
+        let loaded = self.ensure(scope).await?;
+        let corpus_ms = started.elapsed().as_millis();
+        let (named, commit, catalogue) = (loaded.named(), loaded.commit(), &loaded.catalogue);
+        let composition = compose(catalogue, &input.gears);
         // Each root at the commit it was read at, so the description says by
         // itself what it was built from.
         let read = self.read_roots(scope).await;
@@ -3039,16 +3454,56 @@ impl Gearbox {
             });
         }
 
-        let bin = self.cfg.bin.clone();
-        let gdl = product_gdl.clone();
-        let product_id = input.product_id.clone();
-        let product_path = input.product_path.clone();
-        let profile = input.profile.clone();
-        let resolution = tokio::task::spawn_blocking(move || {
-            evaluate(&bin, &named, &product_id, &product_path, &gdl, &profile)
-        })
-        .await
-        .context("engine task")??;
+        let key = input
+            .reuse
+            .then(|| {
+                evaluation_key(
+                    scope,
+                    &loaded.roots,
+                    &input.product_id,
+                    &input.product_path,
+                    &input.profile,
+                    &product_gdl,
+                )
+            })
+            .flatten();
+        let started = Instant::now();
+        let kept = key.as_ref().and_then(|k| {
+            self.evaluations
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(k)
+        });
+        let reused = kept.is_some();
+        let resolution = match kept {
+            Some(r) => r,
+            None => {
+                let bin = self.cfg.bin.clone();
+                let gdl = product_gdl.clone();
+                let product_id = input.product_id.clone();
+                let product_path = input.product_path.clone();
+                let profile = input.profile.clone();
+                let r = tokio::task::spawn_blocking(move || {
+                    evaluate(&bin, &named, &product_id, &product_path, &gdl, &profile)
+                })
+                .await
+                .context("engine task")??;
+                if let Some(k) = key {
+                    self.evaluations
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .put(k, r.clone());
+                }
+                r
+            }
+        };
+        tracing::info!(
+            corpus_ms,
+            evaluate_ms = started.elapsed().as_millis(),
+            reused,
+            gears = input.gears.len(),
+            "gearbox: preview evaluated"
+        );
         Ok(Preview {
             product_gdl,
             composition,
@@ -3098,6 +3553,9 @@ pub(crate) fn is_product_path(path: &str) -> bool {
 /// repository, with the description at `product_path` in it, beside a
 /// directory per gear repository, named by its source id — then validate and,
 /// if that is clean, resolve. A diagnostic's file is `<source id>/<path>`.
+/// The two runs go side by side, each reading the corpus on its own: the
+/// answer is the one the sequence gave -- validation's errors alone when it
+/// has any, the resolve's output discarded unread -- in about half the time.
 /// Blocking.
 fn evaluate(
     bin: &Path,
@@ -3131,6 +3589,18 @@ fn evaluate(
             "--format".into(),
             "json".into(),
         ]);
+        let mut resolve_args: Vec<String> = vec!["resolve".into()];
+        resolve_args.extend(root_args);
+        resolve_args.extend([
+            "--product".into(),
+            product,
+            "--profile".into(),
+            profile.into(),
+            "--format".into(),
+            "json".into(),
+        ]);
+        // One engine run at a time: both work in `scratch`, and two at once
+        // double the engine's peak memory inside the backend's own limit.
         let validate = run_engine(bin, &args, Some(&scratch))?;
         let parsed: Value = serde_json::from_str(&validate.stdout).with_context(|| {
             format!(
@@ -3147,17 +3617,7 @@ fn evaluate(
             });
         }
 
-        let mut args: Vec<String> = vec!["resolve".into()];
-        args.extend(root_args);
-        args.extend([
-            "--product".into(),
-            product,
-            "--profile".into(),
-            profile.into(),
-            "--format".into(),
-            "json".into(),
-        ]);
-        let resolve = run_engine(bin, &args, Some(&scratch))?;
+        let resolve = run_engine(bin, &resolve_args, Some(&scratch))?;
         let parsed: Value = serde_json::from_str(&resolve.stdout).with_context(|| {
             format!(
                 "the engine's resolution is not JSON: {}",
@@ -4621,5 +5081,108 @@ mod tests {
             with_revision("gearbox 0.2.0 (ea964f9)", Some("ea964f94a5")),
             "gearbox 0.2.0 (ea964f9)"
         );
+    }
+
+    #[test]
+    fn a_rotated_token_is_taken_without_a_new_generation() {
+        let g = Gearbox::new(config(""));
+        let core = repo_root(
+            "gears-core",
+            "https://github.com/constructorfabric/gears-core.git",
+        );
+        g.use_repositories(vec![core.clone()]);
+        let generation = g.roots.lock().expect("roots").generation;
+        let mut rotated = core;
+        rotated.source.token = "new-token".into();
+        g.use_repositories(vec![rotated]);
+        assert_eq!(
+            g.roots.lock().expect("roots").generation,
+            generation,
+            "the same repository with another token is the same checkout"
+        );
+        assert_eq!(
+            g.roots()[0].source.token,
+            "new-token",
+            "the next fetch uses the token read last"
+        );
+    }
+
+    fn checked_out(id: &str, commit: Option<&str>) -> Root {
+        Root {
+            id: id.into(),
+            dir: PathBuf::from(format!("/work/gearbox-roots/k/{id}")),
+            commit: commit.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_catalogue_is_reused_while_every_root_is_at_the_commit_it_was_read_at() {
+        let before = [checked_out("a", Some("1")), checked_out("b", Some("2"))];
+        assert!(same_checkouts(&before, &before, true));
+        assert!(
+            same_checkouts(&before, &before, false),
+            "a new generation at the same commits is the same corpus"
+        );
+        let moved = [checked_out("a", Some("1")), checked_out("b", Some("3"))];
+        assert!(!same_checkouts(&before, &moved, true));
+        let reordered = [checked_out("b", Some("2")), checked_out("a", Some("1"))];
+        assert!(
+            !same_checkouts(&before, &reordered, false),
+            "the order decides which declaration wins"
+        );
+        let unknown = [checked_out("a", None)];
+        assert!(same_checkouts(&unknown, &unknown, true));
+        assert!(
+            !same_checkouts(&unknown, &unknown, false),
+            "across generations a root with no commit could hold anything"
+        );
+        let elsewhere = [Root {
+            dir: PathBuf::from("/work/gearbox-roots/other/a"),
+            ..checked_out("a", Some("1"))
+        }];
+        assert!(!same_checkouts(&before[..1], &elsewhere, false));
+    }
+
+    #[test]
+    fn one_refresh_per_key_runs_at_a_time() {
+        let flights: InFlight<u32> = InFlight::new();
+        let first = flights.claim(1).expect("nothing runs yet");
+        assert!(flights.claim(1).is_none(), "a second refresh is refused");
+        assert!(
+            flights.claim(1).is_none(),
+            "a refused claim does not free the key it was refused"
+        );
+        assert!(flights.claim(2).is_some(), "another key is its own");
+        drop(first);
+        assert!(
+            flights.claim(1).is_some(),
+            "a finished refresh frees its key"
+        );
+    }
+
+    #[test]
+    fn a_preview_is_answered_again_only_for_the_same_scope_commits_and_text() {
+        let roots = [checked_out("a", Some("1"))];
+        let key = |scope: Scope, roots: &[Root], gdl: &str| {
+            evaluation_key(scope, roots, "p", "product.gdl", "dev", gdl)
+        };
+        let org = Some(uuid::Uuid::from_u128(7));
+        let k = key(org, &roots, "x").expect("every commit is known");
+        assert_eq!(key(org, &roots, "x"), Some(k));
+        assert_ne!(key(None, &roots, "x"), Some(k), "no answer crosses scopes");
+        assert_ne!(key(org, &roots, "y"), Some(k));
+        assert_ne!(key(org, &[checked_out("a", Some("2"))], "x"), Some(k));
+        assert_eq!(key(org, &[checked_out("a", None)], "x"), None);
+
+        let mut kept = Evaluations::default();
+        assert!(kept.get(&k).is_none());
+        kept.put(k, Resolution::default());
+        assert!(kept.get(&k).is_some());
+        for i in 0..EVALUATIONS_KEPT {
+            let other = key(org, &roots, &i.to_string()).expect("key");
+            kept.put(other, Resolution::default());
+        }
+        assert_eq!(kept.entries.len(), EVALUATIONS_KEPT, "bounded");
+        assert!(kept.get(&k).is_none(), "the oldest answer went first");
     }
 }

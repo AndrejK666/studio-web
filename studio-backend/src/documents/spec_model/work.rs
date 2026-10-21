@@ -7,7 +7,7 @@
 //! proposed link for work that names nothing is a later step, decided by a
 //! member like a finding.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use super::finding::Side;
 use crate::artifact_ingest::port::WorkItem;
@@ -28,11 +28,33 @@ pub struct Linked {
 pub fn link(ids: &BTreeMap<String, Vec<Side>>, work: &[WorkItem]) -> (Vec<Linked>, usize) {
     let mut by_id: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     let mut unlinked = 0;
+    // Each id lower-cased once, not once per piece of work. An id made of
+    // token characters alone is named exactly when it is one of the text's
+    // tokens, so it is looked up in the item's token set; any other id is
+    // searched for the slow way.
+    let wanted: Vec<(&String, String, bool)> = ids
+        .keys()
+        .map(|id| {
+            let lower = id.to_ascii_lowercase();
+            let token = is_token(&lower);
+            (id, lower, token)
+        })
+        .collect();
     for (i, item) in work.iter().enumerate() {
-        let text = format!("{}\n{}", item.title, item.text).to_ascii_lowercase();
+        let mut text = String::with_capacity(item.title.len() + 1 + item.text.len());
+        text.push_str(&item.title);
+        text.push('\n');
+        text.push_str(&item.text);
+        text.make_ascii_lowercase();
+        let tokens: HashSet<&str> = text.split(|c: char| !is_part(c)).collect();
         let mut named = false;
-        for id in ids.keys() {
-            if names(&text, id) {
+        for (id, lower, token) in &wanted {
+            let found = if *token {
+                tokens.contains(lower.as_str())
+            } else {
+                named_at(&text, lower).is_some()
+            };
+            if found {
                 by_id.entry(id.as_str()).or_default().push(i);
                 named = true;
             }
@@ -62,23 +84,38 @@ pub fn link(ids: &BTreeMap<String, Vec<Side>>, work: &[WorkItem]) -> (Vec<Linked
 /// `-` or `_` on either side, so `cpt-x-fr-1` is not found inside
 /// `cpt-x-fr-12` or `cpt-x-fr-1-draft`.
 pub(super) fn names(text: &str, id: &str) -> bool {
-    let id = id.to_ascii_lowercase();
-    let part = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    named_at(text, &id.to_ascii_lowercase()).is_some()
+}
+
+/// Where [`names`] first finds `id` (already lower-cased) in `text`, as a
+/// byte offset.
+pub(super) fn named_at(text: &str, id: &str) -> Option<usize> {
     let mut from = 0;
-    while let Some(at) = text[from..].find(&id) {
+    while let Some(at) = text[from..].find(id) {
         let start = from + at;
         let end = start + id.len();
         let before = text[..start].chars().next_back();
         let after = text[end..].chars().next();
-        if !before.is_some_and(part) && !after.is_some_and(part) {
-            return true;
+        if !before.is_some_and(is_part) && !after.is_some_and(is_part) {
+            return Some(start);
         }
         from = start + 1;
         while !text.is_char_boundary(from) {
             from += 1;
         }
     }
-    false
+    None
+}
+
+/// What a token is made of, as [`names`] reads a whole token.
+pub(super) fn is_part(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
+}
+
+/// An id [`names`] can only find as one whole token, so finding it is
+/// looking it up among the text's tokens.
+pub(super) fn is_token(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(is_part)
 }
 
 #[cfg(test)]

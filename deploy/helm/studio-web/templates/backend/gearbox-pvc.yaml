@@ -1,0 +1,31 @@
+{{- if and .Values.backend.gearbox.enabled .Values.backend.gearbox.persistence.enabled }}
+{{- /*
+  The Gearbox engine's checkouts of the gear repositories, kept across
+  backend restarts.
+
+  On an emptyDir every new Pod cloned each gear repository again before the
+  first catalogue or preview could answer (over 10 s on studio-dev after a
+  restart, #848). On the claim a restart fetches what changed. Kept with the
+  release (helm.sh/resource-policy: keep) like the artifact clones: losing it
+  costs a re-clone, not work.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "studio-web.fullname" . }}-gearbox
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    # One backend replica mounts it. A second replica, or a rollout that
+    # surges, would need ReadWriteMany or a claim per Pod.
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.backend.gearbox.persistence.size | quote }}
+  {{- with .Values.backend.gearbox.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

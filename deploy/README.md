@@ -57,8 +57,10 @@ One image, any environment:
   Empty is a legitimate setting and the gear says so at boot rather than
   failing; it is only wrong if somebody expected to administer the place.
 - **The Gearbox engine is environment-controlled** (`backend.gearbox.enabled`,
-  off by default). On, the backend keeps a checkout of the gear corpus in an
-  `emptyDir` (`sizeLimit: 2Gi`) and serves the gear catalogue an IDE lists when
+  off by default). On, the backend keeps a checkout of each gear repository in
+  an `emptyDir` (`sizeLimit: 2Gi`), or on a `ReadWriteOnce` claim kept across
+  restarts with `backend.gearbox.persistence.enabled` (on in the dev example;
+  one replica rolled out with `maxSurge: 0`), and serves the gear catalogue an IDE lists when
   its workspace has no gears, product previews, and the corpus clone relay
   (`/studio-product/v1/gearbox/*`, run by the `studio-product` gear; three
   deprecated aliases stay under `/studio-components-catalog/v1/gearbox/`);

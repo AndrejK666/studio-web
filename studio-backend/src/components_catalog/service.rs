@@ -1395,8 +1395,11 @@ impl CatalogService {
     /// platform's, with this organization's annotations over them, and the
     /// organization's own (`super::tiers::join_profiles`).
     pub async fn list_profiles(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<GtsNode>> {
-        let own = self.sink.list(ctx, Some("gear_profile")).await?;
-        let platform = self.platform_profiles(ctx).await;
+        let (own, platform) = tokio::join!(
+            self.sink.list(ctx, Some("gear_profile")),
+            self.platform_profiles(ctx)
+        );
+        let own = own?;
         Ok(match platform {
             Some(platform) => super::tiers::join_profiles(platform, own),
             None => super::tiers::join_profiles(Vec::new(), own)
@@ -1484,11 +1487,14 @@ impl CatalogService {
         &self,
         ctx: &SecurityContext,
     ) -> anyhow::Result<Vec<TypeFieldSchema>> {
-        let own = self.stored_field_schemas(ctx).await;
-        let platform = match self.platform_ctx(ctx) {
-            Some(p) => self.stored_field_schemas(&p).await,
-            None => Vec::new(),
-        };
+        // The two tiers are independent walks, read side by side.
+        let platform_ctx = self.platform_ctx(ctx);
+        let (own, platform) = tokio::join!(self.stored_field_schemas(ctx), async {
+            match &platform_ctx {
+                Some(p) => self.stored_field_schemas(p).await,
+                None => Vec::new(),
+            }
+        });
         let mut schemas =
             super::tiers::layered_schemas(field_schema::builtin_schemas(), platform, own);
         // A mark stored before it was refused does not count.
@@ -1610,22 +1616,27 @@ impl CatalogService {
                 shadowed: Vec::new(),
             });
         }
-        let (mut nodes, truncated) = self
-            .sink
-            .list_of_types(ctx, &marked, COMPONENT_LIST_CAP)
-            .await?;
+        // The organization's tier and the platform's are independent walks,
+        // read side by side.
+        let platform_ctx = self.platform_ctx(ctx);
+        let (own, platform) = tokio::join!(
+            self.sink.list_of_types(ctx, &marked, COMPONENT_LIST_CAP),
+            async {
+                match &platform_ctx {
+                    Some(p) => best_effort(
+                        self.sink
+                            .list_of_types(p, &marked, COMPONENT_LIST_CAP)
+                            .await,
+                    ),
+                    None => None,
+                }
+            }
+        );
+        let (mut nodes, truncated) = own?;
         // A planned gear is a component until code for it is catalogued; then
         // that component carries the plan, and listing both would show one
         // gear twice.
         nodes.retain(|n| !is_implemented_plan(n));
-        let platform = match self.platform_ctx(ctx) {
-            Some(p) => best_effort(
-                self.sink
-                    .list_of_types(&p, &marked, COMPONENT_LIST_CAP)
-                    .await,
-            ),
-            None => None,
-        };
         Ok(match platform {
             Some((mut platform, platform_truncated)) => {
                 platform.retain(|n| !is_implemented_plan(n));
@@ -1880,10 +1891,22 @@ impl CatalogService {
         if repos.is_empty() {
             return Ok(None);
         }
+        // The repositories are read side by side, then judged in their order,
+        // so an owned repository that cannot be read still fails the call
+        // the way it did when they were read one after another.
+        let enrichers = self.enrichers(repos)?;
+        // A loop rather than a closure over `iter()`: a closure borrowing
+        // each pair is not general enough for the `Send` the async trait
+        // asks of this future.
+        let mut reads = Vec::with_capacity(enrichers.len());
+        for (_, enricher) in &enrichers {
+            reads.push(enricher.cargo_dependencies(ctx));
+        }
+        let found = futures_util::future::join_all(reads).await;
         let mut read = Vec::new();
         let mut deps = BTreeSet::new();
-        for (target, enricher) in self.enrichers(repos)? {
-            match enricher.cargo_dependencies(ctx).await {
+        for ((target, _), found) in enrichers.into_iter().zip(found) {
+            match found {
                 Ok(found) => {
                     deps.extend(found);
                     read.push(target.repo);

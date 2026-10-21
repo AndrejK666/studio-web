@@ -800,15 +800,89 @@ pub enum Refusal {
 pub struct Overview {
     pub sources: Arc<Sources>,
     pub hub: Arc<ClientHub>,
+    /// Answers kept for a minute, per organization and caller.
+    pub answers: Answers,
+}
+
+/// How long one caller's overview of one organization is reused. A leader's
+/// screen asks again on every open, and the answer is a dozen gears' worth
+/// of reads that move by the hour, not the second.
+const ANSWER_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Overviews kept per `(organization, caller)`. The caller is part of the
+/// key because the answer is theirs: the tree is read as them, and the money
+/// is there only for someone who may see costs. The organization is checked
+/// for this caller before a kept answer is served ([`Overview::answer`]).
+pub struct Answers<V = OrganizationOverviewDto> {
+    ttl: std::time::Duration,
+    kept: std::sync::Mutex<HashMap<(Uuid, Uuid), (std::time::Instant, V)>>,
+}
+
+impl<V> Default for Answers<V> {
+    fn default() -> Self {
+        Self::with_ttl(ANSWER_TTL)
+    }
+}
+
+impl<V> Answers<V> {
+    fn with_ttl(ttl: std::time::Duration) -> Self {
+        Self {
+            ttl,
+            kept: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<V: Clone> Answers<V> {
+    /// Answers remembered at most; past it, the cache starts over.
+    const CAPACITY: usize = 256;
+
+    fn get(&self, org: Uuid, caller: Uuid) -> Option<V> {
+        let kept = self.kept.lock().ok()?;
+        kept.get(&(org, caller))
+            .filter(|(at, _)| at.elapsed() < self.ttl)
+            .map(|(_, v)| v.clone())
+    }
+
+    fn put(&self, org: Uuid, caller: Uuid, answer: V) {
+        if let Ok(mut kept) = self.kept.lock() {
+            if kept.len() >= Self::CAPACITY && !kept.contains_key(&(org, caller)) {
+                kept.clear();
+            }
+            kept.insert((org, caller), (std::time::Instant::now(), answer));
+        }
+    }
 }
 
 impl Overview {
-    pub async fn read(
+    /// The organization's overview for this caller, from the last minute's
+    /// answer when there is one. The organization is read as the caller
+    /// first either way, so a caller who no longer reaches it is refused
+    /// rather than served what they saw before.
+    pub async fn answer(
         &self,
         ctx: &SecurityContext,
         org: Uuid,
         now: OffsetDateTime,
-    ) -> Result<Read, Refusal> {
+    ) -> Result<OrganizationOverviewDto, Refusal> {
+        let tenant = self.admit(ctx, org).await?;
+        let caller = ctx.subject_id();
+        if let Some(kept) = self.answers.get(org, caller) {
+            return Ok(kept);
+        }
+        let read = self.read_admitted(ctx, org, tenant.name, now).await;
+        let answer = compose(org, &read, now);
+        self.answers.put(org, caller, answer.clone());
+        Ok(answer)
+    }
+
+    /// The organization as the caller reads it, or [`Refusal::NotFound`] when
+    /// they do not reach it or it is not an organization.
+    async fn admit(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> Result<account_management_sdk::Tenant, Refusal> {
         let tenant = self
             .sources
             .am
@@ -818,27 +892,96 @@ impl Overview {
         if tenant.tenant_type.as_deref() != Some(ORGANIZATION_TENANT_TYPE) {
             return Err(Refusal::NotFound);
         }
-        let windows = windows(now);
-        let rows: Vec<Row> = self
-            .sources
-            .organization(ctx, org)
-            .await
-            .iter()
-            .map(row_of)
-            .collect();
-        let projects: Vec<Uuid> = rows
-            .iter()
-            .filter(|r| r.workspace.is_some())
-            .map(|r| r.id)
-            .collect();
-        let mut tenants = vec![org];
-        tenants.extend(rows.iter().map(|r| r.id));
+        Ok(tenant)
+    }
 
-        let members = async {
-            match &self.sources.roster {
+    /// Everything the overview is computed from, for an organization
+    /// [`Self::admit`] let the caller into.
+    async fn read_admitted(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        name: String,
+        now: OffsetDateTime,
+    ) -> Read {
+        let windows = windows(now);
+
+        // Three independent strands, read side by side: the organization's
+        // tree with everything that hangs off its projects, the registry, and
+        // the spend. Within the first, each read starts as soon as what it
+        // needs is in: the roster feeds both the teams and the names, the
+        // rows feed the runs and the pull requests, and the pull requests
+        // feed whose accounts they are.
+        let people_and_work = async {
+            let members = match &self.sources.roster {
                 Some(roster) => roster.active_members(org).await.ok(),
                 None => None,
-            }
+            };
+            let names = async {
+                match (&self.sources.roster, &members) {
+                    (Some(roster), Some(members)) => {
+                        let people: Vec<String> =
+                            members.iter().map(|m| m.person.clone()).collect();
+                        roster.display_names(&people).await.unwrap_or_default()
+                    }
+                    _ => BTreeMap::new(),
+                }
+            };
+            let work = async {
+                let rows: Vec<Row> = self
+                    .sources
+                    .organization_with(ctx, org, members.clone())
+                    .await
+                    .iter()
+                    .map(row_of)
+                    .collect();
+                let projects: Vec<Uuid> = rows
+                    .iter()
+                    .filter(|r| r.workspace.is_some())
+                    .map(|r| r.id)
+                    .collect();
+                let mut tenants = vec![org];
+                tenants.extend(rows.iter().map(|r| r.id));
+                let runs = async {
+                    let source = self.hub.get::<dyn RecentRuns>().ok()?;
+                    let reads = futures_util::future::join_all(
+                        tenants
+                            .iter()
+                            .map(|t| source.recent_runs(*t, RUNS_PER_TENANT)),
+                    )
+                    .await;
+                    let mut all: Vec<RunSummary> =
+                        reads.into_iter().filter_map(Result::ok).flatten().collect();
+                    all.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+                    Some(all)
+                };
+                let pulls_and_accounts = async {
+                    let pulls = async {
+                        let source = self.hub.get::<dyn OpenPullRequests>().ok()?;
+                        let scopes: Vec<String> = projects.iter().map(Uuid::to_string).collect();
+                        let reads = futures_util::future::join_all(
+                            scopes.iter().map(|scope| source.open_pulls(ctx, scope)),
+                        )
+                        .await;
+                        Some(
+                            reads
+                                .into_iter()
+                                .filter_map(Result::ok)
+                                .flatten()
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                    .await;
+                    let accounts = self
+                        .accounts(org, pulls.as_deref().unwrap_or_default())
+                        .await;
+                    (pulls, accounts)
+                };
+                let (runs, (pulls, accounts)) = tokio::join!(runs, pulls_and_accounts);
+                (rows, runs, pulls, accounts)
+            };
+            let (names, (rows, runs, pulls, accounts)) = tokio::join!(names, work);
+            (members, names, rows, runs, pulls, accounts)
         };
         let registry = async {
             let registry = self
@@ -850,34 +993,6 @@ impl Overview {
                 .await
                 .ok()
                 .map(|es| es.into_iter().map(|e| e.entry.state).collect::<Vec<_>>())
-        };
-        let runs = async {
-            let source = self.hub.get::<dyn RecentRuns>().ok()?;
-            let reads = futures_util::future::join_all(
-                tenants
-                    .iter()
-                    .map(|t| source.recent_runs(*t, RUNS_PER_TENANT)),
-            )
-            .await;
-            let mut all: Vec<RunSummary> =
-                reads.into_iter().filter_map(Result::ok).flatten().collect();
-            all.sort_by_key(|r| std::cmp::Reverse(r.created_at));
-            Some(all)
-        };
-        let pulls = async {
-            let source = self.hub.get::<dyn OpenPullRequests>().ok()?;
-            let scopes: Vec<String> = projects.iter().map(Uuid::to_string).collect();
-            let reads = futures_util::future::join_all(
-                scopes.iter().map(|scope| source.open_pulls(ctx, scope)),
-            )
-            .await;
-            Some(
-                reads
-                    .into_iter()
-                    .filter_map(Result::ok)
-                    .flatten()
-                    .collect::<Vec<_>>(),
-            )
         };
         let spend = async {
             let usage = self.hub.get::<dyn OrganizationUsage>().ok()?;
@@ -898,19 +1013,17 @@ impl Overview {
                 (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(format!("{e:#}")),
             })
         };
-        let (members, registry, runs, pulls, spend) =
-            tokio::join!(members, registry, runs, pulls, spend);
-
-        let mut names = BTreeMap::new();
-        if let (Some(roster), Some(members)) = (&self.sources.roster, &members) {
-            let people: Vec<String> = members.iter().map(|m| m.person.clone()).collect();
-            names = roster.display_names(&people).await.unwrap_or_default();
-        }
-        let accounts = self
-            .accounts(org, pulls.as_deref().unwrap_or_default())
-            .await;
-        Ok(Read {
-            name: tenant.name,
+        let started = std::time::Instant::now();
+        let ((members, names, rows, runs, pulls, accounts), registry, spend) =
+            tokio::join!(people_and_work, registry, spend);
+        tracing::info!(
+            %org,
+            rows = rows.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "organizations: overview read"
+        );
+        Read {
+            name,
             rows,
             members,
             names,
@@ -920,7 +1033,7 @@ impl Overview {
             accounts,
             spend,
             windows,
-        })
+        }
     }
 
     /// The pull requests' accounts that are the organization's people.
@@ -944,11 +1057,17 @@ impl Overview {
         if logins.is_empty() {
             return out;
         }
-        for kind in ACCOUNT_KINDS {
-            if let Ok(found) = directory.members_by_alias(org, kind, &logins).await {
-                for (login, m) in found {
-                    out.entry(login).or_insert((m.person, m.display_name));
-                }
+        // One lookup per kind, asked together; merged in the kinds' order, so
+        // a login known under both is still the first kind's.
+        let found = futures_util::future::join_all(
+            ACCOUNT_KINDS
+                .iter()
+                .map(|kind| directory.members_by_alias(org, kind, &logins)),
+        )
+        .await;
+        for found in found.into_iter().filter_map(Result::ok) {
+            for (login, m) in found {
+                out.entry(login).or_insert((m.person, m.display_name));
             }
         }
         out

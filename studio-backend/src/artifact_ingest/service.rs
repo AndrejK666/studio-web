@@ -2646,11 +2646,21 @@ impl super::port::ProjectWork for IngestService {
         ctx: &SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<super::port::WorkItem>> {
-        let mut out = Vec::new();
-        for kind in ["issue", "pull_request", "commit"] {
-            for node in self.list_in_scope(ctx, Some(kind), scope).await? {
-                out.push(work_item(kind, &node.value));
-            }
+        // Three independent queries: asked together, the read waits for the
+        // slowest rather than for the sum. Kept in this order, issues and pull
+        // requests before commits.
+        let (issues, pulls, commits) = tokio::try_join!(
+            self.list_in_scope(ctx, Some("issue"), scope),
+            self.list_in_scope(ctx, Some("pull_request"), scope),
+            self.list_in_scope(ctx, Some("commit"), scope),
+        )?;
+        let mut out = Vec::with_capacity(issues.len() + pulls.len() + commits.len());
+        for (kind, nodes) in [
+            ("issue", issues),
+            ("pull_request", pulls),
+            ("commit", commits),
+        ] {
+            out.extend(nodes.iter().map(|node| work_item(kind, &node.value)));
         }
         Ok(out)
     }
@@ -2699,10 +2709,17 @@ impl super::port::ProjectSignalSource for IngestService {
         let values = |nodes: Vec<GtsNode>| -> Vec<serde_json::Value> {
             nodes.into_iter().map(|n| n.value).collect()
         };
-        let findings = entries(self.list_in_scope(ctx, Some("spec_finding"), scope).await?);
-        let comments = entries(self.list_in_scope(ctx, Some("comment"), scope).await?);
-        let pulls = values(self.list_in_scope(ctx, Some("pull_request"), scope).await?);
-        let repos = values(self.list_in_scope(ctx, Some("repo"), scope).await?);
+        // Four independent queries, asked together.
+        let (findings, comments, pulls, repos) = tokio::try_join!(
+            self.list_in_scope(ctx, Some("spec_finding"), scope),
+            self.list_in_scope(ctx, Some("comment"), scope),
+            self.list_in_scope(ctx, Some("pull_request"), scope),
+            self.list_in_scope(ctx, Some("repo"), scope),
+        )?;
+        let findings = entries(findings);
+        let comments = entries(comments);
+        let pulls = values(pulls);
+        let repos = values(repos);
         let now = i64::try_from(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

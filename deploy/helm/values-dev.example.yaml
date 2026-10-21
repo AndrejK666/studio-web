@@ -16,6 +16,9 @@ backend:
     enabled: true
     corpusUrl: "https://github.com/MikeFalcon77/gears-rust.git"
     corpusRef: "feature/gearbox"
+    # The checkouts outlive a restart (#848), as the artifact clones do.
+    persistence:
+      enabled: true
   # The Gearbox engine runs as a child of the backend, inside its container
   # and its memory limit, and projects the whole corpus on the first catalogue
   # request. With the chart's 1Gi the container was OOM-killed seconds after

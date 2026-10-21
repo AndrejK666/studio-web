@@ -36,6 +36,9 @@ pub struct DocumentsService {
     repo: Arc<DocumentsRepo>,
     account_management: Arc<dyn AccountManagementClient>,
     sync_analysis: Option<SyncAnalysis>,
+    /// The last requirement trace of each project, for a while
+    /// (see [`Self::requirement_trace`]).
+    trace_cache: super::spec_model::trace::TraceCache,
 }
 
 /// Spec Quality analysis a source sync starts for the documents it changed.
@@ -64,6 +67,7 @@ impl DocumentsService {
             repo,
             account_management,
             sync_analysis: None,
+            trace_cache: super::spec_model::trace::TraceCache::default(),
         }
     }
 
@@ -1795,8 +1799,11 @@ impl crate::documents::port::DocumentCounter for DocumentsService {
     ) -> anyhow::Result<crate::documents::port::SpecSummary> {
         // The whole set, as the Specs rows read it: a page would summarise
         // the first 200 and call that the project.
-        let bindings = self.all_bindings(workspace_id, Some(project_id)).await?;
-        let documents = self.all_documents(workspace_id, Some(project_id)).await?;
+        // Two independent reads, asked together.
+        let (bindings, documents) = tokio::try_join!(
+            self.all_bindings(workspace_id, Some(project_id)),
+            self.all_documents(workspace_id, Some(project_id)),
+        )?;
         Ok(super::spec_rows::summary(
             bindings.into_iter().map(|b| {
                 (
@@ -1941,23 +1948,99 @@ impl DocumentsService {
         project_id: Uuid,
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
     ) -> Result<super::spec_model::Sources> {
-        self.read_spec_model_sources(ctx, workspace_id, project_id, reader, false)
-            .await
+        Ok(self
+            .read_spec_model_sources(ctx, workspace_id, project_id, reader)
+            .await?
+            .sources)
     }
 
-    /// [`Self::spec_model_sources`] with the text of every other file of the
-    /// checkouts in `files`: what tracing a requirement to code and tests
-    /// reads. Every other reader of the model leaves `files` empty, so it
-    /// does not hold a whole repository's text for documents it never reads.
-    pub async fn spec_model_sources_with_code(
+    /// Where each of the project's requirements is cited -- documents, code,
+    /// tests -- and how many code and test files that read.
+    ///
+    /// The code is read in a second pass over the checkout, and only the
+    /// files a trace uses ([`super::spec_model::trace::is_traced_path`]):
+    /// reading every text file of a large repository, bundles and all, is
+    /// what held this read for most of a minute.
+    ///
+    /// The answer is kept for a while per project
+    /// ([`super::spec_model::trace::TraceCache`]), under a fingerprint of the
+    /// documents and of the checkout's listing: the documents and the tree
+    /// are read on every call anyway, and the code is the expensive part. A
+    /// code edit that adds or removes no file shows once the entry expires.
+    pub async fn requirement_trace(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
-    ) -> Result<super::spec_model::Sources> {
-        self.read_spec_model_sources(ctx, workspace_id, project_id, reader, true)
-            .await
+    ) -> Result<Arc<super::spec_model::trace::Traced>> {
+        use super::spec_model::trace;
+        let started = std::time::Instant::now();
+        let read = self
+            .read_spec_model_sources(ctx, workspace_id, project_id, reader)
+            .await?;
+        let mut sources = read.sources;
+        let scope = (workspace_id, project_id);
+        let fingerprint = trace::fingerprint(&sources.documents, &sources.tree);
+        if let Some(traced) = self.trace_cache.get(scope, fingerprint) {
+            tracing::info!(
+                %project_id,
+                elapsed_ms = millis(started.elapsed()),
+                "spec-model trace: answered from the cache"
+            );
+            return Ok(traced);
+        }
+        let documents_ms = millis(started.elapsed());
+
+        let code: std::collections::BTreeSet<String> = sources
+            .tree
+            .iter()
+            .filter(|path| trace::is_traced_path(path) && !read.documents.contains(*path))
+            .cloned()
+            .collect();
+        if !code.is_empty() {
+            sources.files = self
+                .checkout_listing(ctx, &read.tenants, reader, Some(&code))
+                .await
+                .into_iter()
+                .filter_map(|(path, text)| text.map(|t| (path, t)))
+                .collect();
+        }
+        let files_read = sources.files.len();
+        let bytes_read: usize = sources.files.iter().map(|(_, text)| text.len()).sum();
+        let read_ms = millis(started.elapsed());
+
+        // Scanning the code is CPU work, not waiting: off the async workers,
+        // so a large project does not stall every other request and the
+        // health check with them.
+        let tracing_started = std::time::Instant::now();
+        let traced = tokio::task::spawn_blocking(move || {
+            let files = sources
+                .files
+                .iter()
+                .filter(|(path, text)| trace::is_traced(path, text))
+                .count();
+            trace::Traced {
+                traces: sources.trace(),
+                files,
+            }
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("tracing requirements: {e}"))?;
+        let traced = Arc::new(traced);
+        self.trace_cache
+            .put(scope, fingerprint, Arc::clone(&traced));
+        tracing::info!(
+            %project_id,
+            documents_ms,
+            read_ms,
+            files_read,
+            bytes_read,
+            trace_ms = millis(tracing_started.elapsed()),
+            total_ms = millis(started.elapsed()),
+            "spec-model trace: computed"
+        );
+        Ok(traced)
     }
 
     async fn read_spec_model_sources(
@@ -1966,8 +2049,7 @@ impl DocumentsService {
         workspace_id: Uuid,
         project_id: Uuid,
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
-        with_code: bool,
-    ) -> Result<super::spec_model::Sources> {
+    ) -> Result<ReadSources> {
         use super::spec_model::domain_doc::{DOMAIN_DOC_PATH, DOMAIN_DOC_TYPE, read_as};
         let all = self.all_bindings(workspace_id, Some(project_id)).await?;
         let domain_doc_bound = all.iter().any(|row| row.path == DOMAIN_DOC_PATH);
@@ -1986,7 +2068,7 @@ impl DocumentsService {
             })
             .collect();
         if rows.is_empty() {
-            return Ok(super::spec_model::Sources::default());
+            return Ok(ReadSources::default());
         }
         let tenants = checkout_tenants(
             rows.iter().map(|r| r.project_id),
@@ -1995,15 +2077,14 @@ impl DocumentsService {
         );
         // The whole listing, not the text files alone: a link that leads to a
         // template or an image resolves as surely as one to a document. The
-        // text, though, of the documents alone unless the code is asked for.
-        let wanted: Option<std::collections::BTreeSet<String>> = (!with_code).then(|| {
-            rows.iter()
-                .map(|r| r.path.clone())
-                .chain([DOMAIN_DOC_PATH.to_owned()])
-                .collect()
-        });
+        // text, though, of the documents alone.
+        let wanted: std::collections::BTreeSet<String> = rows
+            .iter()
+            .map(|r| r.path.clone())
+            .chain([DOMAIN_DOC_PATH.to_owned()])
+            .collect();
         let mut by_path = self
-            .checkout_listing(ctx, &tenants, reader, wanted.as_ref())
+            .checkout_listing(ctx, &tenants, reader, Some(&wanted))
             .await;
         let tree = by_path.keys().cloned().collect();
         // Written by Studio but not synced yet: no binding, so no graph node
@@ -2036,17 +2117,17 @@ impl DocumentsService {
             .collect();
         let unread = typed - documents.len();
         let documents = documents.into_iter().chain(unbound_domain_doc);
-        let files = by_path
-            .into_iter()
-            .filter_map(|(path, text)| text.map(|t| (path, t)))
-            .collect();
         let mut documents: Vec<super::spec_model::SourceText> = documents.collect();
         documents.extend(self.studio_sources(workspace_id, project_id).await?);
-        Ok(super::spec_model::Sources {
-            documents,
-            tree,
-            files,
-            unread,
+        Ok(ReadSources {
+            sources: super::spec_model::Sources {
+                documents,
+                tree,
+                files: Vec::new(),
+                unread,
+            },
+            tenants,
+            documents: wanted,
         })
     }
 
@@ -2985,6 +3066,21 @@ impl DocumentsService {
         }
         by_path
     }
+}
+
+/// The spec model's sources as one read found them, with what a second read
+/// of the same checkouts needs: the tenants tried, and the paths whose text
+/// the first one already took as documents.
+#[derive(Default)]
+struct ReadSources {
+    sources: super::spec_model::Sources,
+    tenants: Vec<Uuid>,
+    documents: std::collections::BTreeSet<String>,
+}
+
+/// A duration in whole milliseconds, as a log line reports it.
+fn millis(elapsed: std::time::Duration) -> u64 {
+    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Which tenants may hold the checkout, most specific first: the projects the
@@ -4972,10 +5068,11 @@ impl crate::documents::port::SpecNeeds for DocumentsService {
         ctx: &SecurityContext,
         project_id: Uuid,
     ) -> anyhow::Result<Option<Uuid>> {
-        if self.authorize(ctx, project_id).await.is_err() {
+        // One read of the project both authorizes it and names its parent.
+        let Ok(project) = self.resolve_tenant(ctx, project_id).await else {
             return Ok(None);
-        }
-        let Some(parent) = self.parent_of(ctx, project_id).await? else {
+        };
+        let Some(parent) = project.parent_id.map(|p| p.0) else {
             return Ok(None);
         };
         Ok(self.authorize(ctx, parent).await.is_ok().then_some(parent))

@@ -165,6 +165,7 @@ impl RestApiCapability for StudioOrganizationsGear {
             Arc::new(overview::Overview {
                 sources: Arc::clone(sources),
                 hub: ctx.client_hub(),
+                answers: overview::Answers::default(),
             })
         });
         // `?organization_id=` resolves through it.

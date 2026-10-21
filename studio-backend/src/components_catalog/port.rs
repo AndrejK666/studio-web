@@ -234,18 +234,35 @@ pub trait ComponentCatalog: Send + Sync {
     ) -> Option<anyhow::Result<Vec<EngineChange>>>;
 }
 
+/// What [`ComponentCatalog::components`] answers, kept between requests.
+type ComponentSet = Arc<(Vec<Value>, Map<String, Value>)>;
+
 /// The catalogue's answer to [`ComponentCatalog`].
 pub struct CatalogComponents {
     service: Arc<CatalogService>,
     gearbox: Option<Arc<crate::product::sdk::Gearbox>>,
+    /// The components and profiles per tenant. The plan, the findings and
+    /// the conformance check each read them, and each read is four graph
+    /// walks; a mapping screen asks for all three at once.
+    components: super::memo::Memo<Uuid, ComponentSet>,
 }
+
+/// How long a tenant's component set is reused. Short, because the
+/// generation only moves for writes through this replica's catalogue: a
+/// node another gear wrote, of a type marked as a component, shows up within
+/// this.
+const COMPONENTS_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl CatalogComponents {
     pub fn new(
         service: Arc<CatalogService>,
         gearbox: Option<Arc<crate::product::sdk::Gearbox>>,
     ) -> Self {
-        Self { service, gearbox }
+        Self {
+            service,
+            gearbox,
+            components: super::memo::Memo::new(COMPONENTS_TTL, 256),
+        }
     }
 }
 
@@ -271,12 +288,25 @@ impl ComponentCatalog for CatalogComponents {
         &self,
         ctx: &SecurityContext,
     ) -> anyhow::Result<(Vec<Value>, Map<String, Value>)> {
-        let (nodes, _truncated) = self.service.list_component_nodes(ctx).await?;
-        let profiles = self.service.list_profiles(ctx).await?;
-        Ok((
-            nodes.into_iter().map(|n| n.value).collect(),
+        // Keyed by the tenant the caller was scoped to, so one organization
+        // is never answered with another's set; the generation is read before
+        // the walks, so a write during them leaves the result already old.
+        let tenant = ctx.subject_tenant_id();
+        let generation = self.service.generation();
+        if let Some(kept) = self.components.get(&tenant, generation) {
+            return Ok(kept.as_ref().clone());
+        }
+        let ((nodes, _truncated), profiles) = tokio::try_join!(
+            self.service.list_component_nodes(ctx),
+            self.service.list_profiles(ctx),
+        )?;
+        let set = (
+            nodes.into_iter().map(|n| n.value).collect::<Vec<Value>>(),
             profiles_by_gear(profiles.into_iter().map(|n| n.value)),
-        ))
+        );
+        self.components
+            .put(tenant, generation, Arc::new(set.clone()));
+        Ok(set)
     }
 
     async fn project_dependencies(
@@ -359,13 +389,6 @@ pub trait Registry: Send + Sync {
     async fn entries(&self, ctx: &SecurityContext, org: Uuid)
     -> anyhow::Result<Vec<RegistryEntry>>;
 
-    /// The entries found in one project of the context's organization.
-    async fn project_entries(
-        &self,
-        ctx: &SecurityContext,
-        project_id: Uuid,
-    ) -> anyhow::Result<Vec<RegistryEntry>>;
-
     /// Queue a walk of the named projects of `org` (all of them when none is
     /// named). Answers the run's id.
     async fn queue_refresh(
@@ -415,19 +438,6 @@ impl Registry for CatalogRegistry {
         let acting = crate::org_scope::acting_in(ctx, org)
             .map_err(|e| anyhow::anyhow!("acting in organization {org}: {e}"))?;
         self.service.registry_entries(&acting).await
-    }
-
-    async fn project_entries(
-        &self,
-        ctx: &SecurityContext,
-        project_id: Uuid,
-    ) -> anyhow::Result<Vec<RegistryEntry>> {
-        Ok(super::registry::filter_entries(
-            self.entries(ctx, ctx.subject_tenant_id()).await?,
-            None,
-            Some(project_id),
-            None,
-        ))
     }
 
     async fn queue_refresh(
@@ -532,6 +542,12 @@ pub fn organization_gears_of(
         nodes.push(node);
     }
     (nodes, profiles, places)
+}
+
+/// The entries found in one project, out of the organization's entries
+/// already read: a caller that needs both reads the registry once.
+pub fn project_entries_of(entries: Vec<RegistryEntry>, project_id: Uuid) -> Vec<RegistryEntry> {
+    super::registry::filter_entries(entries, None, Some(project_id), None)
 }
 
 /// A project's own gears as the registry knows them, in the shape

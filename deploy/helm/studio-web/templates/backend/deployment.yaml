@@ -390,10 +390,16 @@ spec:
           {{- end }}
         {{- end }}
         {{- if .Values.backend.gearbox.enabled }}
-        # The gear corpus checkout. Disposable, like artifact-clones.
+        # The gear corpus checkouts. On the claim they outlive the Pod, so a
+        # restart fetches instead of cloning every gear repository again.
         - name: gearbox
+          {{- if .Values.backend.gearbox.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "studio-web.fullname" . }}-gearbox
+          {{- else }}
           emptyDir:
             sizeLimit: {{ .Values.backend.gearbox.sizeLimit }}
+          {{- end }}
         {{- end }}
         {{- if and .Values.backend.sessions.enabled .Values.backend.sessions.sharedWorkspaces.enabled }}
         - name: workspaces

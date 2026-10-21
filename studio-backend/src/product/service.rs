@@ -86,6 +86,10 @@ pub struct ProductService {
     /// Who answers whether a write's connection is the organization's: the
     /// connector service unless a test set a table.
     ownership: std::sync::OnceLock<Arc<dyn Ownership>>,
+    /// The tenants this process has registered the graph's types in. Every
+    /// preview records the project's product, and registering again on each
+    /// write was a round trip to graph-storage that never changed anything.
+    registered: std::sync::Mutex<std::collections::HashSet<Uuid>>,
 }
 
 impl ProductService {
@@ -95,7 +99,27 @@ impl ProductService {
             connectors,
             account_management: std::sync::OnceLock::new(),
             ownership: std::sync::OnceLock::new(),
+            registered: std::sync::Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    /// The graph's types, registered in `ctx`'s tenant once per process. A
+    /// failed registration is not remembered, so the next write tries again.
+    async fn register_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        let tenant = ctx.subject_tenant_id();
+        let known = self
+            .registered
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(&tenant);
+        if !known {
+            self.sink.register_types(ctx).await?;
+            self.registered
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(tenant);
+        }
+        Ok(())
     }
 
     /// Answer the ownership rule from `ownership` instead of the connector
@@ -176,7 +200,7 @@ impl ProductService {
             Value::String(project_id.to_owned()),
         );
         let node = gts::project_gear_repo_node(project_id, Value::Object(value));
-        self.sink.register_types(ctx).await?;
+        self.register_types(ctx).await?;
         self.sink
             .upsert(ctx, std::slice::from_ref(&node), &[])
             .await?;
@@ -224,7 +248,7 @@ impl ProductService {
             ),
         );
         let node = gts::project_product_node(project_id, Value::Object(value));
-        self.sink.register_types(ctx).await?;
+        self.register_types(ctx).await?;
         self.sink
             .upsert(ctx, std::slice::from_ref(&node), &[])
             .await?;

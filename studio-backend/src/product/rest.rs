@@ -903,15 +903,16 @@ async fn get_project_product(
     Extension(product): Extension<Product>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<JsonBody<ProductRecordListDto>> {
-    let node = product
-        .service
-        .get_project_product(&ctx, &project_id.to_string())
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     // A project whose repository keeps its own product.gdl is that product:
     // its gears are what the file names, whatever was picked here. Read with
     // the organization's roots, so asking for the scope reads it when due.
-    let scope = product.scope(&ctx, project_id, false).await;
+    // The record and the scope do not need each other: read side by side.
+    let project = project_id.to_string();
+    let (node, scope) = tokio::join!(
+        product.service.get_project_product(&ctx, &project),
+        product.scope(&ctx, project_id, false),
+    );
+    let node = node.map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let file = file_in_scope(
         product
             .gearbox
@@ -1208,7 +1209,7 @@ async fn gear_config_schemas(
 async fn gearbox_catalogue(
     OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
-) -> ApiResult<JsonBody<GearboxCatalogueDto>> {
+) -> ApiResult<Response> {
     let gearbox = product.gearbox()?;
     let scope = product.scope(&ctx, ctx.subject_tenant_id(), false).await;
     let (raw, commit) = gearbox
@@ -1233,7 +1234,7 @@ async fn gearbox_catalogue(
         .into_iter()
         .map(|r| catalogue_root(scope, r))
         .collect();
-    Ok(Json(GearboxCatalogueDto {
+    let dto = GearboxCatalogueDto {
         source_id: gearbox.corpus_source_id(scope),
         corpus: gearbox.corpus_label(scope),
         corpus_url,
@@ -1244,8 +1245,46 @@ async fn gearbox_catalogue(
         roots,
         project_sources,
         project_source_owners,
-        catalogue: Value::clone(&raw),
-    }))
+        // Written from the shared copy below instead of cloned into here.
+        catalogue: Value::Null,
+    };
+    let internal = |e: serde_json::Error| CanonicalError::internal(format!("{e}")).create();
+    let Value::Object(head) = serde_json::to_value(&dto).map_err(internal)? else {
+        return Err(CanonicalError::internal("the catalogue response is not an object").create());
+    };
+    let body = serde_json::to_vec(&WithCatalogue {
+        head: &head,
+        catalogue: &raw,
+    })
+    .map_err(internal)?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(axum::body::Body::from(body))
+        .map_err(|e| CanonicalError::internal(format!("{e}")).create())
+}
+
+/// [`GearboxCatalogueDto`] as it serializes, with its `catalogue` written
+/// straight from the engine's answer that every request shares. Cloning that
+/// answer into each response copied the whole corpus's descriptors per call.
+struct WithCatalogue<'a> {
+    head: &'a serde_json::Map<String, Value>,
+    catalogue: &'a Value,
+}
+
+impl serde::Serialize for WithCatalogue<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        let mut map = s.serialize_map(Some(self.head.len()))?;
+        for (k, v) in self.head {
+            if k == "catalogue" {
+                map.serialize_entry(k, self.catalogue)?;
+            } else {
+                map.serialize_entry(k, v)?;
+            }
+        }
+        map.end()
+    }
 }
 
 /// For each project root, the projects whose product file was read from the
@@ -1597,6 +1636,14 @@ fn product_path_for(record: Option<&Value>, product_id: &str) -> String {
         )
 }
 
+/// `f`'s output and how long it took, in milliseconds: a slow stage shows up
+/// in the log by name.
+async fn timed<T>(f: impl std::future::Future<Output = T>) -> (T, u128) {
+    let started = std::time::Instant::now();
+    let out = f.await;
+    (out, started.elapsed().as_millis())
+}
+
 async fn preview_product(
     OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
@@ -1623,17 +1670,24 @@ async fn preview_product(
         .unwrap_or_else(|| body.product_id.clone());
     let name_for_record = name.clone();
     let config = super::gearbox::gear_config_from(body.config.as_ref()).map_err(invalid)?;
-    let record = product
-        .service
-        .get_project_product(&ctx, &project_id.to_string())
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // Three reads that do not need each other: the record, the corpus the
+    // project's organization reads, and the repository the description goes
+    // to. Read side by side; each stage's time is logged.
+    let project = project_id.to_string();
+    let ((record, record_ms), (scope, scope_ms), (repo, repo_ms)) = tokio::join!(
+        timed(product.service.get_project_product(&ctx, &project)),
+        timed(product.scope(&ctx, project_id, false)),
+        timed(product.service.write_repo(&ctx, &project)),
+    );
+    tracing::info!(
+        %project_id,
+        record_ms,
+        scope_ms,
+        repo_ms,
+        "studio-product: preview inputs read"
+    );
+    let record = record.map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let product_path = product_path_for(record.as_ref().map(|n| &n.value), &body.product_id);
-    let scope = product.scope(&ctx, project_id, false).await;
-    let repo = product
-        .service
-        .write_repo(&ctx, &project_id.to_string())
-        .await;
     let preview = gearbox
         .preview(
             scope,
@@ -1645,6 +1699,7 @@ async fn preview_product(
                 profile: profile.clone(),
                 config: config.clone(),
                 repo,
+                reuse: !body.write.unwrap_or(false),
             },
         )
         .await

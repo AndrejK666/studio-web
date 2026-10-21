@@ -483,7 +483,7 @@ async fn list_rollups(
 /// last 30 days against the same days a month earlier. Every money field is
 /// null unless the caller holds `cost.view`; every other null means that
 /// source could not be asked, never zero.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OrganizationOverviewDto {
     pub organization_id: String,
@@ -526,7 +526,7 @@ pub struct OrganizationOverviewDto {
 /// fields are set: `connection` (`provider`, `status`, `projects`, `repos`),
 /// `spend` (`current`, `previous`, `forecast`, `grower`), `pulls` (`pulls`,
 /// `people`), `components` (`components`), `runs` (`runs`).
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewNeedDto {
     pub kind: String,
@@ -551,7 +551,7 @@ pub struct OverviewNeedDto {
 
 /// The organization's spend. People's own keys are never in it: `own_keys`
 /// says what they spent on top.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewSpendDto {
     pub currency: String,
@@ -569,7 +569,7 @@ pub struct OverviewSpendDto {
     pub unpriced: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewDeliveryDto {
     /// Pull requests merged over the last `window_days` days.
@@ -580,7 +580,7 @@ pub struct OverviewDeliveryDto {
     pub median_wait_days: Option<f64>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewSpecsDto {
     pub specs: Option<u32>,
@@ -588,7 +588,7 @@ pub struct OverviewSpecsDto {
     pub open_findings: Option<u32>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewPeopleDto {
     /// Active members.
@@ -602,14 +602,14 @@ pub struct OverviewPeopleDto {
     pub idle: Option<Vec<OverviewPersonDto>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewPersonDto {
     pub person_id: String,
     pub name: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewWorkspaceDto {
     pub id: String,
@@ -625,7 +625,7 @@ pub struct OverviewWorkspaceDto {
     pub projects: Vec<OverviewProjectDto>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewProjectDto {
     pub id: String,
@@ -646,14 +646,14 @@ pub struct OverviewProjectDto {
 /// One thing wrong with a project: `refused`, `specs_failing` (`value` =
 /// how many), `stuck` (how many pull requests), `spend_grows` (the growth, a
 /// share), `quiet` (days).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewReasonDto {
     pub kind: String,
     pub value: Option<f64>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewMoneyDto {
     /// `project`, `person`, `model`, `source` or `payer`.
@@ -665,7 +665,7 @@ pub struct OverviewMoneyDto {
 /// One row of a breakdown. By person, `key` is the member's person id,
 /// `unattributed` for subjects no active member signs in with, and empty for
 /// IDE sessions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewMoneyRowDto {
     pub key: String,
@@ -676,7 +676,7 @@ pub struct OverviewMoneyRowDto {
     pub unpriced: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewQueueDto {
     /// The member, when the account is one of the organization's people.
@@ -688,7 +688,7 @@ pub struct OverviewQueueDto {
     pub oldest_days: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewDecisionsDto {
     /// Candidates and declared entries: waiting for the organization to decide.
@@ -709,12 +709,12 @@ async fn get_organization_overview(
     })?;
     let org = ctx.subject_tenant_id();
     let now = time::OffsetDateTime::now_utc();
-    let read = overview.read(&ctx, org, now).await.map_err(|_| {
+    let answer = overview.answer(&ctx, org, now).await.map_err(|_| {
         OrganizationError::not_found(format!("there is no organization {org} for this caller"))
             .with_resource(org.to_string())
             .create()
     })?;
-    Ok(Json(super::overview::compose(org, &read, now)))
+    Ok(Json(answer))
 }
 
 pub fn register_routes(

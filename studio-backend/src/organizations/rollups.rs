@@ -145,6 +145,9 @@ pub struct Sources {
     pub roster: Option<Arc<dyn OrganizationRoster>>,
 }
 
+/// Workspaces of one organization read at once for its overview.
+const PARALLEL_WORKSPACES: usize = 4;
+
 /// What every project of one workspace counts its team from: the
 /// organization's active members and its access config.
 ///
@@ -210,18 +213,41 @@ impl Sources {
 
     /// Every workspace of one organization and their projects, for the
     /// organization's overview. The caller has already been shown to reach
-    /// `org`; the tree is still read as them.
-    pub async fn organization(&self, ctx: &SecurityContext, org: Uuid) -> Vec<Rollup> {
-        let workspaces = self.children_of(ctx, org, WORKSPACE_TENANT_TYPE).await;
-        let team = self.team_basis(ctx, Some(org)).await;
-        let mut out = Vec::new();
-        for (workspace_id, workspace_name) in workspaces {
-            out.extend(
-                self.workspace(ctx, workspace_id, workspace_name, team.as_ref())
-                    .await,
-            );
-        }
-        out
+    /// `org`, and that it is an organization; the tree is still read as them.
+    ///
+    /// `members` are the organization's active members, which the overview
+    /// has read for itself: they are what the teams are counted from, and
+    /// asking the roster again here was the same question twice. `None`
+    /// leaves every team unknown, as an unreadable roster does.
+    pub async fn organization_with(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        members: Option<Vec<RosterMember>>,
+    ) -> Vec<Rollup> {
+        let team = async {
+            let members = members.filter(|_| self.roster.is_some())?;
+            let access = crate::access_config::try_read(self.am.as_ref(), ctx, org).await?;
+            Some(TeamBasis { members, access })
+        };
+        let (workspaces, team) =
+            tokio::join!(self.children_of(ctx, org, WORKSPACE_TENANT_TYPE), team);
+        // A few workspaces at once, in the order they were listed: each is a
+        // listing of its projects and then their rows (themselves read side
+        // by side), and an organization with several waited on each in turn.
+        // Bounded, because every one of them fans out further.
+        use futures_util::StreamExt;
+        let team = team.as_ref();
+        futures_util::stream::iter(workspaces)
+            .map(|(workspace_id, workspace_name)| {
+                self.workspace(ctx, workspace_id, workspace_name, team)
+            })
+            .buffered(PARALLEL_WORKSPACES)
+            .collect::<Vec<Vec<Rollup>>>()
+            .await
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     /// A workspace's row, then one row per project in it.

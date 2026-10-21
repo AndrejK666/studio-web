@@ -45,7 +45,13 @@ pub struct Catalog {
     gearbox: Option<Arc<Gearbox>>,
     /// What the components reference reuses between requests.
     reference: Arc<ReferenceCache>,
+    /// `/activity` answers by tenant, window and comparison.
+    activity: Arc<super::memo::Memo<ActivityKey, GearActivityListDto>>,
 }
+
+/// Whose `/activity` answer, over which window, with or without the previous
+/// window: every query parameter the answer depends on.
+type ActivityKey = (Uuid, u32, bool);
 
 impl Catalog {
     pub fn new(
@@ -58,6 +64,7 @@ impl Catalog {
             hub,
             gearbox,
             reference: Arc::new(ReferenceCache::default()),
+            activity: Arc::new(super::memo::Memo::new(ACTIVITY_TTL, 256)),
         }
     }
 
@@ -757,7 +764,7 @@ const DEFAULT_ACTIVITY_DAYS: u32 = 30;
 const MAX_ACTIVITY_DAYS: u32 = 730;
 
 /// One weekly bar of a gear's churn.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct ActivityPointDto {
     /// The bucket's first day (a Monday), `YYYY-MM-DD`.
@@ -774,7 +781,7 @@ pub struct ActivityPointDto {
 /// and a screen showing them has to say so. Dependable for what merged (~97%
 /// of merged pull requests reach their files), only indicative for what was
 /// abandoned (~29% of closed, ~46% of open).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct GearPullRequestsDto {
     pub open: u64,
@@ -788,7 +795,7 @@ pub struct GearPullRequestsDto {
 }
 
 /// What one gear did over the window.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct GearActivityDto {
     /// The component's catalogue name, so a caller can join it to its row.
@@ -817,7 +824,7 @@ pub struct GearActivityDto {
 /// pages through — it is what a reader needs in order to know whether the list
 /// beside it is the whole answer. Rule B1: the envelope carries one collection,
 /// and here that is the gears.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct ActivitySourcesDto {
     /// The window the warehouse actually used, which is not always the one
@@ -832,7 +839,7 @@ pub struct ActivitySourcesDto {
     pub repositories: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct GearActivityListDto {
     pub items: Vec<GearActivityDto>,
@@ -874,13 +881,6 @@ async fn gear_activity(
             .create());
     }
     let delivery = catalog.delivery()?;
-
-    let (nodes, _truncated) = catalog
-        .service
-        .list_component_nodes(&ctx)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    let components: Vec<Value> = nodes.into_iter().map(|n| n.value).collect();
     let compare_previous = match query.compare.as_deref() {
         None => false,
         Some("previous") => true,
@@ -894,9 +894,42 @@ async fn gear_activity(
                 .create());
         }
     };
+
+    // `OrgCtx` has already shown the caller reaches this tenant; the answer
+    // is the tenant's, the same for every member, and moves by the day, so
+    // it is reused until the catalogue changes or `ACTIVITY_TTL` passes.
+    let key = (ctx.subject_tenant_id(), days, compare_previous);
+    let generation = catalog.service.generation();
+    if let Some(kept) = catalog.activity.get(&key, generation) {
+        tracing::info!(
+            days,
+            compare_previous,
+            "components-catalog: activity served from memory"
+        );
+        return Ok(Json(kept));
+    }
+
+    let started = std::time::Instant::now();
+    let (nodes, _truncated) = catalog
+        .service
+        .list_component_nodes(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let listed_ms = started.elapsed().as_millis();
+    let components: Vec<Value> = nodes.into_iter().map(|n| n.value).collect();
     let answer = activity_of(delivery.as_ref(), &components, days, compare_previous)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    tracing::info!(
+        days,
+        compare_previous,
+        components = components.len(),
+        repositories = answer.sources.repositories.len(),
+        listed_ms,
+        warehouse_ms = started.elapsed().as_millis() - listed_ms,
+        "components-catalog: activity read"
+    );
+    catalog.activity.put(key, generation, answer.clone());
     Ok(Json(answer))
 }
 
@@ -917,8 +950,13 @@ async fn activity_of(
     let mut pages = Vec::with_capacity(plan.len());
     let mut pr_pages = Vec::with_capacity(plan.len());
     let mut previous_pages = Vec::new();
-    let mut repositories = Vec::with_capacity(plan.len());
-    for repo in &plan {
+    let repositories: Vec<String> = plan.iter().map(|r| r.repository.clone()).collect();
+    // Every repository, and every question about one, is its own warehouse
+    // round trip: asked one after another they were up to twelve in a row.
+    // They are independent, so they are asked together, and the answers are
+    // put back in the plan's order so the merge below sees what it did.
+    let (from, previous) = (&from, &previous);
+    let asked = futures_util::future::join_all(plan.iter().map(|repo| async move {
         let query = crate::insight::port::DeliveryQuery {
             repository: repo.repository.clone(),
             from: Some(from.clone()),
@@ -926,25 +964,36 @@ async fn activity_of(
             components: repo.components.clone(),
             limit: u32::try_from(repo.components.len()).ok(),
         };
-        repositories.push(repo.repository.clone());
-        pages.push(delivery.metrics(&query).await?);
+        let earlier = compare_previous.then(|| crate::insight::port::DeliveryQuery {
+            from: Some(previous.0.clone()),
+            to: Some(previous.1.clone()),
+            ..query.clone()
+        });
+        let (metrics, prs, earlier) = tokio::join!(
+            delivery.metrics(&query),
+            delivery.pull_requests(&query),
+            async {
+                match &earlier {
+                    Some(q) => Some(delivery.pull_requests(q).await),
+                    None => None,
+                }
+            }
+        );
+        (metrics, prs, earlier)
+    }))
+    .await;
+    for (metrics, prs, earlier) in asked {
+        pages.push(metrics?);
         // Pull requests are a second question with its own coverage, so they
         // get their own failure: a warehouse without them is not a reason to
         // lose the commit activity as well.
-        if let Ok(page) = delivery.pull_requests(&query).await {
+        if let Ok(page) = prs {
             pr_pages.push(page);
         }
-        if compare_previous {
-            let earlier = crate::insight::port::DeliveryQuery {
-                from: Some(previous.0.clone()),
-                to: Some(previous.1.clone()),
-                ..query
-            };
-            // As above: the comparison is an extra, and losing it loses
-            // only the comparison.
-            if let Ok(page) = delivery.pull_requests(&earlier).await {
-                previous_pages.push(page);
-            }
+        // As above: the comparison is an extra, and losing it loses only the
+        // comparison.
+        if let Some(Ok(page)) = earlier {
+            previous_pages.push(page);
         }
     }
 

@@ -7,11 +7,17 @@
 //! implements what. A test is told from code by its path, the conventions of
 //! the common languages; nothing about a project is assumed beyond them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
+use uuid::Uuid;
+
+use super::SourceText;
 use super::index::SourceDoc;
 use super::requirements::Requirement;
-use super::work::names;
+use super::work::{is_part, is_token, named_at, names};
 
 /// One place an identifier is named.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,13 +64,56 @@ pub fn is_test_path(path: &str) -> bool {
 
 /// Whether a path is something a requirement can be implemented in: source
 /// code and configuration, not prose or data dumps.
-fn is_code_path(path: &str) -> bool {
+pub(crate) fn is_code_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     const CODE: [&str; 22] = [
         ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".go", ".py", ".java", ".kt", ".cs", ".rb",
         ".php", ".swift", ".scala", ".c", ".cc", ".cpp", ".h", ".sql", ".proto", ".gdl",
     ];
     CODE.iter().any(|ext| lower.ends_with(ext))
+}
+
+/// The largest file a trace reads. Nobody writes a source file of a
+/// megabyte by hand; a file that size is a bundle or a dump, and one of them
+/// cost more to scan than the rest of a checkout.
+pub(crate) const TRACED_BYTES_MAX: usize = 1 << 20;
+
+/// Directories whose files a build or a package manager wrote: a bundle in
+/// `dist/` repeats the identifiers of the source it was built from, so it
+/// would only cite the same requirement twice, and it is most of the text.
+const GENERATED_DIRS: [&str; 8] = [
+    "dist",
+    "build",
+    "out",
+    "target",
+    "node_modules",
+    "vendor",
+    ".next",
+    "coverage",
+];
+
+/// Whether a path is generated or vendored rather than written in the
+/// project: under one of [`GENERATED_DIRS`], minified, or a source map.
+pub(crate) fn is_generated_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let mut segments = lower.split('/');
+    let name = segments.next_back().unwrap_or_default();
+    segments.any(|d| GENERATED_DIRS.contains(&d))
+        || name.contains(".min.")
+        || name.ends_with(".map")
+}
+
+/// Whether a trace reads the file at `path` at all: code or a test, written
+/// in the project. What a checkout read for the trace asks the text of, so
+/// the rest of a repository is never loaded.
+pub(crate) fn is_traced_path(path: &str) -> bool {
+    (is_code_path(path) || is_test_path(path)) && !is_generated_path(path)
+}
+
+/// Whether a trace reads this file: a traced path, and no larger than
+/// [`TRACED_BYTES_MAX`] (which only the text, once read, can tell).
+pub(crate) fn is_traced(path: &str, text: &str) -> bool {
+    text.len() <= TRACED_BYTES_MAX && is_traced_path(path)
 }
 
 fn first_line_naming(text: &str, id: &str) -> Option<usize> {
@@ -78,33 +127,61 @@ fn first_line_naming(text: &str, id: &str) -> Option<usize> {
         .map(|(i, _)| i + 1)
 }
 
-/// What a token is made of, as [`names`] reads a whole token.
-fn is_part(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '-' || c == '_'
-}
-
-/// An id [`names`] can only find as one whole token -- every id a document
-/// labels. Anything else is looked for the slow way, line by line.
-fn is_token(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(is_part)
+/// [`first_line_naming`] over a text lower-cased once for every id, rather
+/// than line by line for each: the same line, since an id with no line break
+/// in it cannot be found across one, and a line's ends read as no token
+/// character either way. An id that is empty or holds a carriage return is
+/// where the two could differ, so it goes the line-by-line way.
+fn first_line_naming_lower(text: &str, lower_text: &str, lower_id: &str) -> Option<usize> {
+    if lower_id.is_empty() || lower_id.contains('\r') {
+        return first_line_naming(text, lower_id);
+    }
+    if lower_id.contains('\n') {
+        return None;
+    }
+    let at = named_at(lower_text, lower_id)?;
+    Some(
+        lower_text.as_bytes()[..at]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count()
+            + 1,
+    )
 }
 
 /// The lines of `text` (from 1) naming each of `wanted` (lower-cased ids),
 /// at most `keep` per id, read in one pass over the text.
+///
+/// One buffer is lower-cased into for every token: a checkout holds millions
+/// of tokens and almost none is an id, so a string apiece was most of the
+/// work. A token longer or shorter than every id is not even copied.
 fn lines_naming(text: &str, wanted: &HashSet<String>, keep: usize) -> HashMap<String, Vec<usize>> {
     let mut out: HashMap<String, Vec<usize>> = HashMap::new();
+    let shortest = wanted.iter().map(String::len).min().unwrap_or(0);
+    let longest = wanted.iter().map(String::len).max().unwrap_or(0);
+    let mut lower = String::with_capacity(longest);
     for (i, line) in text.lines().enumerate() {
         for token in line.split(|c: char| !is_part(c)) {
-            if token.is_empty() {
+            if token.is_empty() || token.len() < shortest || token.len() > longest {
                 continue;
             }
-            let token = token.to_ascii_lowercase();
-            if !wanted.contains(&token) {
+            lower.clear();
+            lower.push_str(token);
+            lower.make_ascii_lowercase();
+            if !wanted.contains(lower.as_str()) {
                 continue;
             }
-            let at = out.entry(token).or_default();
-            if at.len() < keep && at.last() != Some(&(i + 1)) {
-                at.push(i + 1);
+            let add = |at: &mut Vec<usize>| {
+                if at.len() < keep && at.last() != Some(&(i + 1)) {
+                    at.push(i + 1);
+                }
+            };
+            if let Some(at) = out.get_mut(lower.as_str()) {
+                add(at);
+            } else {
+                let mut at = Vec::new();
+                add(&mut at);
+                out.insert(lower.clone(), at);
             }
         }
     }
@@ -135,12 +212,23 @@ pub fn trace(
         .collect();
     let sources: Vec<&(String, String)> = files
         .iter()
-        .filter(|(path, _)| is_code_path(path) || is_test_path(path))
+        .filter(|(path, text)| is_traced(path, text))
         .collect();
     let in_files: Vec<HashMap<String, Vec<usize>>> = sources
         .iter()
         .map(|(_, text)| lines_naming(text, &wanted, 1))
         .collect();
+    // An id that is not one token is searched for in every file, once per
+    // id: lower-case each file once for all of them, and only when there is
+    // such an id at all.
+    let lower_files: Vec<String> = if requirements.iter().any(|r| !is_token(&r.id)) {
+        sources
+            .iter()
+            .map(|(_, text)| text.to_ascii_lowercase())
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     requirements
         .iter()
@@ -188,11 +276,12 @@ pub fn trace(
             let (mut tests, mut code): (Vec<Cited>, Vec<Cited>) = sources
                 .iter()
                 .zip(&in_files)
-                .filter_map(|((path, text), found)| {
+                .enumerate()
+                .filter_map(|(k, ((path, text), found))| {
                     let line = if indexed {
                         found.get(&key)?.first().copied()?
                     } else {
-                        first_line_naming(text, &r.id)?
+                        first_line_naming_lower(text, &lower_files[k], &key)?
                     };
                     Some(Cited {
                         path: path.clone(),
@@ -210,6 +299,89 @@ pub fn trace(
             }
         })
         .collect()
+}
+
+/// A project's trace as `/spec-model/trace` answers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Traced {
+    pub traces: Vec<Trace>,
+    /// The code and test files read.
+    pub files: usize,
+}
+
+/// How long a kept trace answers. A trace keeps no state of its own, so an
+/// answer this old is only as stale as a code edit that moved no file.
+const KEPT_FOR: Duration = Duration::from_secs(10 * 60);
+
+/// The most projects whose trace is kept at once; past it the oldest goes.
+const KEPT_MAX: usize = 64;
+
+/// The last trace of each project, under the fingerprint of what it was read
+/// from (see [`fingerprint`]).
+///
+/// Keyed by the workspace and the project the caller was authorized for, so
+/// one project's trace is never another's answer; the caller authorizes
+/// before it asks.
+#[derive(Debug, Default)]
+pub struct TraceCache {
+    kept: Mutex<HashMap<(Uuid, Uuid), Kept>>,
+}
+
+#[derive(Debug)]
+struct Kept {
+    fingerprint: u64,
+    at: Instant,
+    traced: Arc<Traced>,
+}
+
+impl TraceCache {
+    /// The project's kept trace, when it was read from the same documents and
+    /// listing and is young enough.
+    pub fn get(&self, project: (Uuid, Uuid), fingerprint: u64) -> Option<Arc<Traced>> {
+        let kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.get(&project)
+            .filter(|k| k.fingerprint == fingerprint && k.at.elapsed() < KEPT_FOR)
+            .map(|k| Arc::clone(&k.traced))
+    }
+
+    /// Keep a project's trace, in place of the one it had.
+    pub fn put(&self, project: (Uuid, Uuid), fingerprint: u64, traced: Arc<Traced>) {
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.retain(|_, k| k.at.elapsed() < KEPT_FOR);
+        let oldest = (kept.len() >= KEPT_MAX && !kept.contains_key(&project))
+            .then(|| kept.iter().min_by_key(|(_, k)| k.at).map(|(p, _)| *p))
+            .flatten();
+        if let Some(oldest) = oldest {
+            kept.remove(&oldest);
+        }
+        kept.insert(
+            project,
+            Kept {
+                fingerprint,
+                at: Instant::now(),
+                traced,
+            },
+        );
+    }
+}
+
+/// What a trace was read from, as one number: every document's path, type
+/// and text, and every path of the checkout. Cheap, since both are read on
+/// every call anyway; the code's text is not in it, which is what a kept
+/// trace saves reading.
+pub fn fingerprint(documents: &[SourceText], tree: &BTreeSet<String>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    documents.len().hash(&mut hasher);
+    for d in documents {
+        d.path.hash(&mut hasher);
+        d.doc_type.hash(&mut hasher);
+        d.text.hash(&mut hasher);
+    }
+    tree.len().hash(&mut hasher);
+    for path in tree {
+        path.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 #[cfg(test)]

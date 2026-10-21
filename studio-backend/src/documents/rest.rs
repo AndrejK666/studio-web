@@ -2974,14 +2974,12 @@ async fn spec_model_state(
     Vec<super::spec_model::extract::Fact>,
     Vec<super::spec_model::Coverage>,
 )> {
-    let sources = service
-        .spec_model_sources(ctx, workspace_id, project_id, reader)
-        .await
-        .map_err(internal)?;
-    let rows = service
-        .spec_extractions(workspace_id, project_id)
-        .await
-        .map_err(internal)?;
+    // The checkout and the stored extractions are independent reads.
+    let (sources, rows) = tokio::try_join!(
+        service.spec_model_sources(ctx, workspace_id, project_id, reader),
+        service.spec_extractions(workspace_id, project_id),
+    )
+    .map_err(internal)?;
     let kept: Vec<super::spec_model::Kept<'_>> = rows
         .iter()
         .map(|r| super::spec_model::Kept {
@@ -3219,7 +3217,12 @@ async fn judged_candidates(
     Vec<usize>,
 )> {
     use super::spec_model as sm;
-    let rows = service.spec_extractions(workspace_id, project_id).await?;
+    // Three stored reads that do not depend on one another, asked together.
+    let (rows, choices, judgements) = tokio::try_join!(
+        service.spec_extractions(workspace_id, project_id),
+        service.glossary_choices(workspace_id, project_id),
+        service.spec_judgements(workspace_id, project_id),
+    )?;
     let kept: Vec<sm::Kept<'_>> = rows
         .iter()
         .map(|r| sm::Kept {
@@ -3232,10 +3235,8 @@ async fn judged_candidates(
         })
         .collect();
     let (facts, _) = sm::current(documents, &kept);
-    let choices = service.glossary_choices(workspace_id, project_id).await?;
     let facts = sm::glossary::apply(&facts, &choices);
     let candidates = sm::candidates(documents, &facts);
-    let judgements = service.spec_judgements(workspace_id, project_id).await?;
     let judged: Vec<sm::Judged<'_>> = judgements
         .iter()
         .map(|j| sm::Judged {
@@ -3313,12 +3314,13 @@ async fn spec_model_findings(
     std::collections::BTreeMap<String, String>,
 )> {
     let mut findings = sources.reference_findings();
-    let (_, judged, _) =
-        judged_candidates(service, workspace_id, project_id, &sources.documents).await?;
+    // The decisions do not depend on the judging: both read together.
+    let ((_, judged, _), decisions) = tokio::try_join!(
+        judged_candidates(service, workspace_id, project_id, &sources.documents),
+        service.spec_decisions(workspace_id, project_id),
+    )?;
     findings.extend(judged);
-    let decisions = service
-        .spec_decisions(workspace_id, project_id)
-        .await?
+    let decisions = decisions
         .into_iter()
         .map(|d| (d.fingerprint, d.decision))
         .collect();
@@ -3535,6 +3537,22 @@ async fn get_glossary(
     }))
 }
 
+/// The project's work when the ingest gear is in this deployment, `None`
+/// when it is not. Its own function so a handler can read it beside the
+/// checkout rather than after it: the two do not depend on each other.
+async fn read_project_work(
+    source: Option<&dyn crate::artifact_ingest::port::ProjectWork>,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+) -> anyhow::Result<Option<Vec<crate::artifact_ingest::port::WorkItem>>> {
+    match source {
+        Some(source) => Ok(Some(
+            source.project_work(ctx, &project_id.to_string()).await?,
+        )),
+        None => Ok(None),
+    }
+}
+
 /// Which issues, pull requests and commits name an identifier the project's
 /// documents define. Read whole on every call: no model, nothing stored.
 async fn list_work_links(
@@ -3546,13 +3564,15 @@ async fn list_work_links(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let reader = quality.reader()?;
-    let sources = service
-        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
-        .await
-        .map_err(internal)?;
+    let work_source = quality.work();
+    let (sources, work) = tokio::try_join!(
+        service.spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref()),
+        read_project_work(work_source.as_deref(), &ctx, project_id),
+    )
+    .map_err(internal)?;
     let ids = sources.labelled_ids();
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    let Some(source) = quality.work() else {
+    let Some(work) = work else {
         return Ok(Json(WorkLinkListDto {
             items: Vec::new(),
             total: 0,
@@ -3562,10 +3582,6 @@ async fn list_work_links(
             synced: false,
         }));
     };
-    let work = source
-        .project_work(&ctx, &project_id.to_string())
-        .await
-        .map_err(internal)?;
     let (linked, unlinked) = super::spec_model::work::link(&ids, &work);
     let items: Vec<WorkLinkDto> = linked
         .into_iter()
@@ -3624,20 +3640,18 @@ async fn list_spec_requirements(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let reader = quality.reader()?;
-    let sources = service
-        .spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref())
-        .await
-        .map_err(internal)?;
+    let work_source = quality.work();
+    let (sources, work) = tokio::try_join!(
+        service.spec_model_sources(&ctx, workspace_id, project_id, reader.as_ref()),
+        read_project_work(work_source.as_deref(), &ctx, project_id),
+    )
+    .map_err(internal)?;
     let requirements = sources.requirements();
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     let mut work_per_id: std::collections::BTreeMap<String, usize> =
         std::collections::BTreeMap::new();
-    let synced = match quality.work() {
-        Some(source) => {
-            let work = source
-                .project_work(&ctx, &project_id.to_string())
-                .await
-                .map_err(internal)?;
+    let synced = match work {
+        Some(work) => {
             let (linked, _) = super::spec_model::work::link(&sources.labelled_ids(), &work);
             for l in linked {
                 work_per_id.insert(l.id, l.work.len());
@@ -5257,33 +5271,31 @@ async fn list_requirement_trace(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let reader = quality.reader()?;
-    let sources = service
-        .spec_model_sources_with_code(&ctx, workspace_id, project_id, reader.as_ref())
+    // Authorized above, so the trace (possibly a kept one) is this caller's
+    // to read. The service reads off the async workers and logs where the
+    // time went.
+    let traced = service
+        .requirement_trace(&ctx, workspace_id, project_id, reader.as_ref())
         .await
         .map_err(internal)?;
-    // Reading every checkout file is CPU work, not waiting: off the async
-    // workers, so a large project does not stall every other request and the
-    // health check with them.
-    let (traced, files) =
-        tokio::task::spawn_blocking(move || (sources.trace(), sources.files.len()))
-            .await
-            .map_err(|e| internal(anyhow::anyhow!("tracing requirements: {e}")))?;
+    let files = traced.files;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    let sides = |c: Vec<super::spec_model::trace::Cited>| -> Vec<SpecModelSideDto> {
-        c.into_iter().map(|x| side_at(&x.path, x.line)).collect()
+    let sides = |c: &[super::spec_model::trace::Cited]| -> Vec<SpecModelSideDto> {
+        c.iter().map(|x| side_at(&x.path, x.line)).collect()
     };
-    let implemented = traced.iter().filter(|t| !t.code.is_empty()).count();
-    let tested = traced.iter().filter(|t| !t.tests.is_empty()).count();
+    let implemented = traced.traces.iter().filter(|t| !t.code.is_empty()).count();
+    let tested = traced.traces.iter().filter(|t| !t.tests.is_empty()).count();
     let items: Vec<RequirementTraceDto> = traced
-        .into_iter()
+        .traces
+        .iter()
         .map(|t| RequirementTraceDto {
             defined_in: side_at(&t.requirement.path, t.requirement.line),
-            id: t.requirement.id,
-            title: t.requirement.title,
-            text: t.requirement.text,
-            documents: sides(t.documents),
-            code: sides(t.code),
-            tests: sides(t.tests),
+            id: t.requirement.id.clone(),
+            title: t.requirement.title.clone(),
+            text: t.requirement.text.clone(),
+            documents: sides(&t.documents),
+            code: sides(&t.code),
+            tests: sides(&t.tests),
         })
         .collect();
     Ok(Json(RequirementTraceListDto {
@@ -7529,14 +7541,12 @@ async fn parent_workspace(
     ctx: &SecurityContext,
     project_id: Uuid,
 ) -> ApiResult<Uuid> {
-    service
-        .authorize(ctx, project_id)
-        .await
-        .map_err(no_tenant)?;
+    // Reading the project is what authorizes it: one `get_tenant` both
+    // checks the caller may see the project and says where it hangs from.
     let parent = service
         .parent_of(ctx, project_id)
         .await
-        .map_err(internal)?
+        .map_err(no_tenant)?
         .ok_or_else(|| {
             DocumentsError::not_found("that project has no parent workspace to read specs from")
                 .with_resource("tenant")

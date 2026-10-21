@@ -121,6 +121,60 @@ pub enum ProjectGearsRead {
     },
 }
 
+/// The Cargo dependencies read per repository, kept while its manifests'
+/// blob shas hold. Reading them costs one GitHub request per `Cargo.toml`
+/// (up to 300), which made the spec-mapping findings and the conformance
+/// check seconds slow and spent the organisation's rate limit on files that
+/// had not changed.
+static CARGO_DEPS: std::sync::LazyLock<CargoDepsCache> =
+    std::sync::LazyLock::new(CargoDepsCache::default);
+
+/// The Cargo dependencies one read found.
+type CargoDeps = Arc<std::collections::BTreeSet<String>>;
+
+/// One repository's Cargo dependencies under the fingerprint of the
+/// manifests they were read from. The key is [`RepoEnricher::repo_key`],
+/// which starts with the tenant, so no tenant is answered from another's
+/// read; and the caller has opened the repository and listed its tree with
+/// its own credentials before the cache is asked.
+#[derive(Default)]
+struct CargoDepsCache(std::sync::Mutex<std::collections::HashMap<String, (String, CargoDeps)>>);
+
+impl CargoDepsCache {
+    /// Repositories remembered at most; past it, the cache starts over, as
+    /// `project_gears::Cache` does.
+    const CAPACITY: usize = 64;
+
+    fn get(&self, key: &str, print: &str) -> Option<CargoDeps> {
+        let map = self.0.lock().ok()?;
+        map.get(key)
+            .filter(|(p, _)| p == print)
+            .map(|(_, deps)| Arc::clone(deps))
+    }
+
+    fn put(&self, key: String, print: String, deps: CargoDeps) {
+        if let Ok(mut map) = self.0.lock() {
+            if map.len() >= Self::CAPACITY && !map.contains_key(&key) {
+                map.clear();
+            }
+            map.insert(key, (print, deps));
+        }
+    }
+}
+
+/// The manifests' `(path, blob sha)` pairs as one value: equal while none of
+/// them was added, removed or edited.
+fn cargo_fingerprint(manifests: &[(String, String)]) -> String {
+    let mut text = String::from("cargo-deps/1");
+    for (path, sha) in manifests {
+        text.push('\n');
+        text.push_str(path);
+        text.push('\0');
+        text.push_str(sha);
+    }
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, text.as_bytes()).to_string()
+}
+
 /// Reads gear metadata from a repository, using a Studio GitHub connection for
 /// auth. Constructed per sync from the source the caller chose on the Gears page.
 pub struct RepoEnricher {
@@ -632,10 +686,14 @@ impl RepoEnricher {
         &self,
         ctx: &SecurityContext,
     ) -> Result<std::collections::BTreeSet<String>> {
+        use futures_util::{StreamExt, stream};
         const MAX_MANIFESTS: usize = 300;
+        // Manifests read at once: enough to hide the round trip, few enough
+        // not to look like a burst to the provider's abuse limits.
+        const PARALLEL_READS: usize = 8;
         let src = self.open(ctx).await?;
         let tree = self.tree(&src).await?;
-        let manifests: Vec<String> = tree
+        let manifests: Vec<(String, String)> = tree
             .files
             .iter()
             .filter(|e| !e.is_dir)
@@ -649,13 +707,36 @@ impl RepoEnricher {
                 })
             })
             .take(MAX_MANIFESTS)
-            .map(|e| e.path.clone())
+            .map(|e| (e.path.clone(), e.sha.clone()))
             .collect();
+        // The tree listing is paid for anyway, and the manifests' blob shas
+        // in it say whether any of them changed since the last read. A
+        // checkout is read from disk and costs no requests, so it is read as
+        // it is rather than trusted to match the API's tree.
+        let key = self.repo_key();
+        let print = cargo_fingerprint(&manifests);
+        if self.checkout.is_none()
+            && let Some(found) = CARGO_DEPS.get(&key, &print)
+        {
+            return Ok(found.as_ref().clone());
+        }
+        // The reads are made in a loop, not in a closure over the manifests:
+        // a closure borrowing each one is not general enough for the `Send`
+        // the catalogue's tasks ask of this future. They start only when
+        // polled, so no more than PARALLEL_READS are in flight.
+        let mut reads = Vec::with_capacity(manifests.len());
+        for (path, _) in &manifests {
+            reads.push(self.read_file(&src, path));
+        }
+        let mut bodies = stream::iter(reads).buffer_unordered(PARALLEL_READS);
         let mut out = std::collections::BTreeSet::new();
-        for path in manifests {
-            if let Some(body) = self.read_file(&src, &path).await {
+        while let Some(body) = bodies.next().await {
+            if let Some(body) = body {
                 out.extend(cargo_dependency_names(&body));
             }
+        }
+        if self.checkout.is_none() {
+            CARGO_DEPS.put(key, print, Arc::new(out.clone()));
         }
         Ok(out)
     }
@@ -2787,6 +2868,45 @@ fn toml_string(body: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn deps(names: &[&str]) -> CargoDeps {
+        Arc::new(names.iter().map(|n| n.to_string()).collect())
+    }
+
+    #[test]
+    fn cargo_dependencies_are_kept_while_the_manifests_are_unchanged() {
+        let cache = CargoDepsCache::default();
+        let print = cargo_fingerprint(&[("Cargo.toml".to_string(), "a1".to_string())]);
+        cache.put("t1/None/o/r@HEAD".into(), print.clone(), deps(&["serde"]));
+        assert_eq!(
+            cache.get("t1/None/o/r@HEAD", &print).as_deref(),
+            Some(&*deps(&["serde"]))
+        );
+    }
+
+    #[test]
+    fn an_added_or_edited_manifest_is_read_again() {
+        let cache = CargoDepsCache::default();
+        let before = cargo_fingerprint(&[("Cargo.toml".to_string(), "a1".to_string())]);
+        let edited = cargo_fingerprint(&[("Cargo.toml".to_string(), "b2".to_string())]);
+        let added = cargo_fingerprint(&[
+            ("Cargo.toml".to_string(), "a1".to_string()),
+            ("x/Cargo.toml".to_string(), "c3".to_string()),
+        ]);
+        assert_ne!(before, edited);
+        assert_ne!(before, added);
+        cache.put("t1/None/o/r@HEAD".into(), before, deps(&["serde"]));
+        assert!(cache.get("t1/None/o/r@HEAD", &edited).is_none());
+        assert!(cache.get("t1/None/o/r@HEAD", &added).is_none());
+    }
+
+    #[test]
+    fn one_tenants_cargo_dependencies_are_not_anothers() {
+        let cache = CargoDepsCache::default();
+        let print = cargo_fingerprint(&[("Cargo.toml".to_string(), "a1".to_string())]);
+        cache.put("t1/None/o/r@HEAD".into(), print.clone(), deps(&["serde"]));
+        assert!(cache.get("t2/None/o/r@HEAD", &print).is_none());
+    }
 
     #[test]
     fn a_gears_principal_document_is_found_by_its_name_not_one_path() {

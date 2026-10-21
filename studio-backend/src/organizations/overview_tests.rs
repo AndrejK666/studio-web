@@ -626,3 +626,35 @@ fn with_costs_spend_is_attributed_and_the_idle_are_named() {
     assert_eq!(projects.rows[0].label.as_deref(), Some("Checkout"));
     assert_eq!(dto.workspaces[0].spend, Some(40.0));
 }
+
+// ── Answers kept between requests ────────────────────────────────────────────
+
+#[test]
+fn a_kept_overview_is_served_to_the_same_caller() {
+    let answers: Answers<u32> = Answers::default();
+    answers.put(ORG, ADA, 7);
+    assert_eq!(answers.get(ORG, ADA), Some(7));
+}
+
+#[test]
+fn one_callers_overview_is_not_anothers() {
+    // The money is there only for someone who may see costs, so an answer
+    // read as one person is never shown to another.
+    let answers: Answers<u32> = Answers::default();
+    answers.put(ORG, ADA, 7);
+    assert_eq!(answers.get(ORG, BOB), None);
+}
+
+#[test]
+fn one_organizations_overview_is_not_anothers() {
+    let answers: Answers<u32> = Answers::default();
+    answers.put(ORG, ADA, 7);
+    assert_eq!(answers.get(GONE, ADA), None);
+}
+
+#[test]
+fn an_overview_past_its_minute_is_read_again() {
+    let answers: Answers<u32> = Answers::with_ttl(std::time::Duration::ZERO);
+    answers.put(ORG, ADA, 7);
+    assert_eq!(answers.get(ORG, ADA), None);
+}

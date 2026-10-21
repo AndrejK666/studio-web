@@ -187,10 +187,11 @@ backend:
   # product previews, and the corpus clone relay. Off, those routes do not
   # exist and the IDE's Building mode shows an empty catalogue.
   #
-  # The backend keeps one checkout of the corpus under `mountPath`, refreshed
-  # at most every `refreshSecs`. `emptyDir` for the reason artifactClone gives:
-  # a restart re-clones. `corpusUrl` (the platform's gears, ADR-0042)
-  # is required once enabled; an empty `corpusRef` means `main`.
+  # The backend keeps one checkout per gear repository under `mountPath`,
+  # refreshed in the background at most every `refreshSecs`. An `emptyDir`
+  # unless `persistence` is on: then a restart fetches instead of re-cloning.
+  # `corpusUrl` (the platform's gears, ADR-0042) is required once enabled;
+  # an empty `corpusRef` means `main`.
   gearbox:
     enabled: false
     sizeLimit: 2Gi
@@ -198,6 +199,14 @@ backend:
     corpusUrl: ""
     corpusRef: ""
     refreshSecs: ""
+    # A claim instead of the emptyDir, like artifactClone's (#848). One
+    # replica only (ReadWriteOnce): a rollout needs maxSurge 0. `sizeLimit`
+    # does not apply to it, `size` does.
+    persistence:
+      enabled: false
+      size: 4Gi
+      # Empty leaves it to the cluster default.
+      storageClass: ""
   # OpenTelemetry push to the cluster's collector (deploy/observability).
   #
   # The instruments already exist in the binary — the api-gateway gear installs

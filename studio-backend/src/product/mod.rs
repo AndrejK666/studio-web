@@ -70,13 +70,14 @@ impl Gear for StudioProductGear {
             let engine = Arc::new(gearbox::Gearbox::new(cfg));
             ctx.client_hub()
                 .register::<gearbox::Gearbox>(Arc::clone(&engine));
-            // Check the corpus out and run the engine once at start, so the
-            // first preview or components reference does not pay for a clone.
+            // Read the platform's gear repositories, check them out and run the
+            // engine once at start -- in the background, so readiness does not
+            // wait -- and the first preview or components reference does not
+            // pay for a clone.
             if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                let connectors = crate::connectors::sdk::Connectors::new(ctx.client_hub());
                 rt.spawn(async move {
-                    if let Err(e) = engine.catalogue_json(None).await {
-                        tracing::warn!(error = %format!("{e:#}"), "studio-product: corpus warm-up failed");
-                    }
+                    gear_roots::warm_up(&engine, &connectors).await;
                 });
             }
         }

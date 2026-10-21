@@ -12,6 +12,7 @@ mod candidates;
 mod cratesio;
 pub(crate) mod field_schema;
 mod history;
+mod memo;
 mod ownership;
 pub mod port;
 mod project_gears;

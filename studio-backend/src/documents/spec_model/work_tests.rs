@@ -74,3 +74,49 @@ fn one_piece_of_work_can_name_several_identifiers() {
     assert_eq!(linked.len(), 2);
     assert_eq!(unlinked, 0);
 }
+
+#[test]
+fn looking_up_tokens_links_the_same_work_as_searching_each_text() {
+    let work = [
+        item(
+            "issue",
+            Some(1),
+            "CPT-shop-fr-1 and fr.2",
+            "see FR-1.2, not fr-1.20",
+        ),
+        item(
+            "issue",
+            Some(2),
+            "cpt-shop-fr-1-draft",
+            "émigré cpt-shop-fr-1é",
+        ),
+        item("commit", None, "fr 3 lands", "x_cpt-shop-fr-1 _fr-1.2"),
+        item("pull_request", Some(3), "", ""),
+    ];
+    let wanted = ["cpt-shop-fr-1", "FR-1.2", "fr.2", "fr 3", "cpt-shop-fr-1é"];
+    let (linked, unlinked) = link(&ids(&wanted), &work);
+    // The rule as written, one text search per pair.
+    let mut expected: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut none = 0;
+    for (i, w) in work.iter().enumerate() {
+        let text = format!("{}\n{}", w.title, w.text).to_ascii_lowercase();
+        let mut named = false;
+        for id in wanted {
+            if names(&text, id) {
+                expected.entry(id.to_string()).or_default().push(i);
+                named = true;
+            }
+        }
+        none += usize::from(!named);
+    }
+    let got: BTreeMap<String, Vec<usize>> = linked
+        .into_iter()
+        .map(|l| {
+            let mut w = l.work;
+            w.sort_unstable();
+            (l.id, w)
+        })
+        .collect();
+    assert_eq!(got, expected);
+    assert_eq!(unlinked, none);
+}

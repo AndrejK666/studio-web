@@ -834,36 +834,63 @@ async fn read_project(
     project_id: Uuid,
 ) -> ApiResult<ProjectReading> {
     let docs = ports.documents()?;
+    // The project is shown to be the caller's before anything is read for it.
     let workspace_id = project_workspace(&docs, ctx, project_id).await?;
-    let (vocabulary, (needs, requirements)) = tokio::try_join!(
-        docs.vocabulary(ctx, workspace_id),
-        docs.needs(workspace_id, project_id),
-    )
-    .map_err(internal)?;
-    // Past decisions only rank the proposals; without the store the plan
-    // still stands.
-    let recorded = match ports.decisions() {
-        Ok(store) => store
-            .list_decisions(ctx, &project_id.to_string())
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(error = %format!("{e:#}"), "spec-mapping: decisions unreadable");
-                Vec::new()
-            }),
-        Err(_) => Vec::new(),
-    };
+    read_reachable_project(ctx, org, ports, project_id, workspace_id).await
+}
+
+/// [`read_project`] for a project already shown to be the caller's, in
+/// `workspace_id`: independent reads, asked together.
+async fn read_reachable_project(
+    ctx: &SecurityContext,
+    org: &SecurityContext,
+    ports: &Ports,
+    project_id: Uuid,
+    workspace_id: Uuid,
+) -> ApiResult<ProjectReading> {
+    let started = std::time::Instant::now();
+    let docs = ports.documents()?;
     let catalog = ports.catalog()?;
-    let (mut components, mut profiles) = catalog.components(org).await.map_err(internal)?;
     let registry = ports.registry();
+    let decisions = ports.decisions().ok();
+    let (vocabulary, (needs, requirements), recorded, (mut components, mut profiles), entries) =
+        tokio::try_join!(
+            docs.vocabulary(ctx, workspace_id),
+            docs.needs(workspace_id, project_id),
+            // Past decisions only rank the proposals; without the store the
+            // plan still stands.
+            async {
+                Ok::<_, anyhow::Error>(match &decisions {
+                    Some(store) => store
+                        .list_decisions(ctx, &project_id.to_string())
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(error = %format!("{e:#}"), "spec-mapping: decisions unreadable");
+                            Vec::new()
+                        }),
+                    None => Vec::new(),
+                })
+            },
+            catalog.components(org),
+            // Read once, for the project's gears and the organization's.
+            async {
+                Ok::<_, anyhow::Error>(local::registry_entries(registry.as_deref(), org).await)
+            },
+        )
+        .map_err(internal)?;
+    let read_ms = started.elapsed().as_millis();
     let (own, mut registry_states) =
-        local::project_gears(catalog.as_ref(), registry.as_deref(), org, project_id).await;
+        local::project_gears(catalog.as_ref(), entries.as_deref(), org, project_id).await;
     let in_repo = local::with_project_gears(&mut components, &mut profiles, own);
     // The organization's gears beyond this project's (ADR-0042 §3): a
     // capability one of them fills is not a gap either.
-    let (from_org, org_states) = match registry.as_deref() {
-        Some(registry) => local::organization_gears(registry, org, project_id).await,
-        None => Default::default(),
-    };
+    let (from_org, org_states) = local::organization_gears(entries.as_deref(), project_id);
+    tracing::info!(
+        %project_id,
+        read_ms,
+        project_gears_ms = started.elapsed().as_millis() - read_ms,
+        "spec-mapping: project read"
+    );
     for (name, state) in org_states {
         registry_states.entry(name).or_insert(state);
     }
@@ -941,12 +968,26 @@ async fn list_product_findings(
     Query(q): Query<ProjectQuery>,
 ) -> ApiResult<JsonBody<ProductFindingListDto>> {
     let project_id = parse_project(&q.project_id)?;
-    let reading = read_project(&ctx, &org, &ports, project_id).await?;
-    let code = ports
-        .catalog()?
-        .project_dependencies(&org, &project_id.to_string())
-        .await
-        .map_err(code_error)?;
+    let started = std::time::Instant::now();
+    let catalog = ports.catalog()?;
+    // A project the caller cannot reach is a 404 before its code is read:
+    // the code is read with the organization's token, and that read is not
+    // spent, nor cached, on a caller's behalf who may not see it. Past that,
+    // the code is read beside the documents: the two are the slow halves of
+    // this answer and neither needs the other.
+    let workspace_id = project_workspace(&ports.documents()?, &ctx, project_id).await?;
+    let project = project_id.to_string();
+    let (reading, code) = tokio::join!(
+        read_reachable_project(&ctx, &org, &ports, project_id, workspace_id),
+        catalog.project_dependencies(&org, &project),
+    );
+    let reading = reading?;
+    let code = code.map_err(code_error)?;
+    tracing::info!(
+        %project_id,
+        elapsed_ms = started.elapsed().as_millis(),
+        "spec-mapping: findings read"
+    );
     // No code to read is not a finding about every capability: it says so
     // once and lists none.
     let Some((repo, deps)) = code else {
@@ -1051,11 +1092,21 @@ async fn create_conformance_report(
         ));
     }
     let catalog = ports.catalog()?;
-    let Some((repo, deps)) = catalog
-        .project_dependencies(&org, project_id)
-        .await
-        .map_err(code_error)?
-    else {
+    let registry = ports.registry();
+    // The code, the catalogue and the registry are independent reads, asked
+    // together; their answers are judged in the order they were asked before.
+    let started = std::time::Instant::now();
+    let (code, components, entries) = tokio::join!(
+        catalog.project_dependencies(&org, project_id),
+        catalog.components(&org),
+        local::registry_entries(registry.as_deref(), &org),
+    );
+    tracing::info!(
+        project_id,
+        elapsed_ms = started.elapsed().as_millis(),
+        "spec-mapping: conformance read"
+    );
+    let Some((repo, deps)) = code.map_err(code_error)? else {
         return Err(SpecMappingError::invalid_argument()
             .with_constraint(
                 "the project has no gear repository and no GitHub source whose Cargo manifests \
@@ -1063,7 +1114,7 @@ async fn create_conformance_report(
             )
             .create());
     };
-    let (mut components, mut profiles) = catalog.components(&org).await.map_err(internal)?;
+    let (mut components, mut profiles) = components.map_err(internal)?;
 
     // The catalogue components the code is made of: gears and plugins its
     // manifests depend on. SDK crates and libraries are how a gear is used,
@@ -1091,9 +1142,8 @@ async fn create_conformance_report(
     // forty gears was in its code. Offered to the plan as candidates too, the
     // way the plan route offers them.
     if let Ok(project_uuid) = Uuid::parse_str(project_id) {
-        let registry = ports.registry();
         let (own, _) =
-            local::project_gears(catalog.as_ref(), registry.as_deref(), &org, project_uuid).await;
+            local::project_gears(catalog.as_ref(), entries.as_deref(), &org, project_uuid).await;
         let built: Vec<String> = own
             .0
             .iter()

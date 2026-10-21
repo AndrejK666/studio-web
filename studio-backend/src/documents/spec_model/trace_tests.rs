@@ -118,3 +118,165 @@ fn one_pass_finds_the_same_places_as_reading_each_requirement_alone() {
         "the mention after its own definition"
     );
 }
+
+#[test]
+fn generated_and_vendored_files_are_not_traced() {
+    for p in [
+        "src/export.rs",
+        "web/src/export.test.ts",
+        "build.rs",
+        "src/output.ts",
+        "tests/api.rs",
+    ] {
+        assert!(is_traced_path(p), "{p}");
+    }
+    for p in [
+        "theia/plugins/x/extension/dist/extension.js",
+        "web/build/app.js",
+        "out/main.js",
+        "target/debug/build/x.rs",
+        "web/node_modules/lib/index.js",
+        "vendor/github.com/x/y.go",
+        "web/.next/server/page.js",
+        "coverage/lcov-report/prettify.js",
+        "web/public/app.min.js",
+        "web/App.JS.map",
+        "Dist/Bundle.js",
+        "README.md",
+    ] {
+        assert!(!is_traced_path(p), "{p}");
+    }
+}
+
+#[test]
+fn a_file_over_the_size_limit_is_not_traced() {
+    let docs = [doc("prd.md", PRD)];
+    let reqs = requirements(&docs);
+    let mut big = "// cpt-app-fr-export\n".to_string();
+    big.push_str(&"x".repeat(TRACED_BYTES_MAX));
+    let files = vec![
+        ("src/big.rs".to_string(), big),
+        (
+            "src/small.rs".to_string(),
+            "// cpt-app-fr-export\n".to_string(),
+        ),
+    ];
+    let traced = trace(&reqs, &docs, &files);
+    let export = traced
+        .iter()
+        .find(|t| t.requirement.id == "cpt-app-fr-export")
+        .expect("export");
+    assert_eq!(export.code.len(), 1);
+    assert_eq!(export.code[0].path, "src/small.rs");
+}
+
+/// [`lines_naming`] as it was first written: a string per token.
+fn lines_naming_by_token(
+    text: &str,
+    wanted: &HashSet<String>,
+    keep: usize,
+) -> HashMap<String, Vec<usize>> {
+    let mut out: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, line) in text.lines().enumerate() {
+        for token in line.split(|c: char| !is_part(c)) {
+            if token.is_empty() {
+                continue;
+            }
+            let token = token.to_ascii_lowercase();
+            if !wanted.contains(&token) {
+                continue;
+            }
+            let at = out.entry(token).or_default();
+            if at.len() < keep && at.last() != Some(&(i + 1)) {
+                at.push(i + 1);
+            }
+        }
+    }
+    out
+}
+
+const MIXED: &str = "\
+fn a() {} // CPT-APP-FR-1 and cpt-app-fr-1 twice\r\n\
+let x = \"cpt-app-fr-12\"; // fr-1.2 é cpt-app-fr-2é\n\
+\n\
+cpt-app-fr-2_cpt-app-fr-1 x-y\n\
+FR-1.2 fr-1.2.3 X-Y\n\
+cpt-app-fr-2";
+
+#[test]
+fn reusing_one_buffer_finds_the_same_lines_as_a_string_per_token() {
+    let sets: [&[&str]; 4] = [
+        &["cpt-app-fr-1", "cpt-app-fr-2", "x-y"],
+        &["cpt-app-fr-12"],
+        &["x"],
+        &[],
+    ];
+    for set in sets {
+        let wanted: HashSet<String> = set.iter().map(|s| s.to_string()).collect();
+        for keep in [1, 2, 5] {
+            assert_eq!(
+                lines_naming(MIXED, &wanted, keep),
+                lines_naming_by_token(MIXED, &wanted, keep),
+                "{set:?} keep {keep}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_text_lowered_once_names_an_id_on_the_same_line() {
+    let lower = MIXED.to_ascii_lowercase();
+    for id in [
+        "fr-1.2",
+        "FR-1.2",
+        "fr-1.2.3",
+        "cpt-app-fr-2é",
+        "x-y",
+        "twice",
+        "\"cpt-app-fr-12\"",
+        "fr-9.9",
+        "",
+        "1\r",
+        "a\nb",
+    ] {
+        let key = id.to_ascii_lowercase();
+        assert_eq!(
+            first_line_naming_lower(MIXED, &lower, &key),
+            first_line_naming(MIXED, id),
+            "{id:?}"
+        );
+    }
+}
+
+#[test]
+fn a_kept_trace_answers_only_its_own_project_and_fingerprint() {
+    let cache = TraceCache::default();
+    let a = (Uuid::from_u128(1), Uuid::from_u128(2));
+    let b = (Uuid::from_u128(1), Uuid::from_u128(3));
+    let traced = Arc::new(Traced {
+        traces: Vec::new(),
+        files: 7,
+    });
+    cache.put(a, 42, Arc::clone(&traced));
+    assert_eq!(cache.get(a, 42).map(|t| t.files), Some(7));
+    assert!(cache.get(a, 43).is_none(), "another fingerprint");
+    assert!(cache.get(b, 42).is_none(), "another project");
+}
+
+#[test]
+fn the_fingerprint_moves_with_a_document_or_a_path() {
+    let source = |text: &str| SourceText {
+        path: "prd.md".into(),
+        text: text.into(),
+        doc_type: None,
+        node: String::new(),
+        binding: None,
+    };
+    let tree: BTreeSet<String> = ["prd.md".to_string(), "src/a.rs".to_string()].into();
+    let base = fingerprint(&[source("one")], &tree);
+    assert_eq!(base, fingerprint(&[source("one")], &tree));
+    assert_ne!(base, fingerprint(&[source("two")], &tree));
+    let mut more = tree.clone();
+    more.insert("src/b.rs".into());
+    assert_ne!(base, fingerprint(&[source("one")], &more));
+}

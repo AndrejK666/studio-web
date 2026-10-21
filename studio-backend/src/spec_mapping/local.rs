@@ -24,7 +24,7 @@ use uuid::Uuid;
 use super::rest::CandidateDto;
 use crate::components_catalog::port::{
     ComponentCatalog, Registry, RegistryEntry, STATE_DEPRECATED, TIER_ORGANIZATION, TIER_PROJECT,
-    offered, organization_gears_of, project_gears_of,
+    offered, organization_gears_of, project_entries_of, project_gears_of,
 };
 
 /// What the organization's registry says of each of its entries, by name
@@ -85,31 +85,27 @@ fn withhold(
 /// Also answers what the registry says of each of its entries, so the plan
 /// can mark the candidates it backs ([`mark_registry_state`]). A gear the
 /// registry rejected or merged into another is not offered either way.
+///
+/// `entries` are the organization's registry entries ([`registry_entries`]),
+/// read once per request and shared with [`organization_gears`]: each read
+/// is two walks of the graph, and this used to take up to three.
 pub(super) async fn project_gears(
     catalog: &dyn ComponentCatalog,
-    registry: Option<&dyn Registry>,
+    entries: Option<&[RegistryEntry]>,
     ctx: &SecurityContext,
     project_id: Uuid,
 ) -> ((Vec<Value>, Map<String, Value>), RegistryStates) {
     let mut states = RegistryStates::new();
-    if let Some(registry) = registry {
-        match registry.project_entries(ctx, project_id).await {
-            Ok(entries) => {
-                states = registry_states(&entries);
-                let found = project_gears_of(&entries, project_id);
-                if !found.0.is_empty() {
-                    return (found, states);
-                }
-                // Nothing found in this project yet; what the organization
-                // decided about a name still holds for an on-demand read.
-                if let Ok(all) = registry.entries(ctx, ctx.subject_tenant_id()).await {
-                    states = registry_states(&all);
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %format!("{e:#}"), "spec-mapping: the registry unreadable; reading the project's repositories");
-            }
+    if let Some(all) = entries {
+        let here = project_entries_of(all.to_vec(), project_id);
+        states = registry_states(&here);
+        let found = project_gears_of(&here, project_id);
+        if !found.0.is_empty() {
+            return (found, states);
         }
+        // Nothing found in this project yet; what the organization decided
+        // about a name still holds for an on-demand read.
+        states = registry_states(all);
     }
     let read = catalog
         .project_gears(ctx, &project_id.to_string())
@@ -124,24 +120,37 @@ pub(super) async fn project_gears(
 /// The organization's gears, in the shape `organization_gears_of` answers.
 pub(super) type OrganizationGears = (Vec<Value>, Map<String, Value>, BTreeMap<String, String>);
 
+/// The organization's registry entries, or `None` when there is no registry
+/// or it cannot be read: the plan stands without them, the project's own
+/// gears are then read from its repositories, and no organization gear is
+/// offered.
+pub(super) async fn registry_entries(
+    registry: Option<&dyn Registry>,
+    ctx: &SecurityContext,
+) -> Option<Vec<RegistryEntry>> {
+    match registry?.entries(ctx, ctx.subject_tenant_id()).await {
+        Ok(entries) => Some(entries),
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "spec-mapping: the registry unreadable; reading the project's repositories, no organization gears offered");
+            None
+        }
+    }
+}
+
 /// The organization's gears from other projects and its gear repository
 /// (`organization_gears_of`), with where each lives, and every entry's
-/// state; none when the registry cannot be read -- the plan stands without
-/// them.
-pub(super) async fn organization_gears(
-    registry: &dyn Registry,
-    ctx: &SecurityContext,
+/// state; none when the registry could not be read -- the plan stands
+/// without them.
+pub(super) fn organization_gears(
+    entries: Option<&[RegistryEntry]>,
     project_id: Uuid,
 ) -> (OrganizationGears, RegistryStates) {
-    match registry.entries(ctx, ctx.subject_tenant_id()).await {
-        Ok(entries) => (
-            organization_gears_of(&entries, project_id),
-            registry_states(&entries),
+    match entries {
+        Some(entries) => (
+            organization_gears_of(entries, project_id),
+            registry_states(entries),
         ),
-        Err(e) => {
-            tracing::warn!(error = %format!("{e:#}"), "spec-mapping: the registry unreadable; no organization gears offered");
-            Default::default()
-        }
+        None => Default::default(),
     }
 }
 

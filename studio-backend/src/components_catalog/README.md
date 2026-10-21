@@ -46,6 +46,11 @@ This README is what you need to work in the directory.
   [`taxonomy.rs`](taxonomy.rs).
 - The join with the engine: [`reference.rs`](reference.rs). Activity per gear:
   [`activity.rs`](activity.rs). History: [`history.rs`](history.rs).
+- Reads kept between requests: [`memo.rs`](memo.rs), keyed by tenant and
+  the catalogue generation, with a time to live for what this replica cannot
+  see. `/activity` (600 s) and `ComponentCatalog::components` (30 s) use it;
+  each repository's Cargo dependencies are kept by its manifests' blob shas
+  in [`repo_enrich.rs`](repo_enrich.rs).
 - Board reading: [`roadmap.rs`](roadmap.rs). Repository facts:
   [`repo_facts.rs`](repo_facts.rs), pure functions tested against real
   fragments of `gears-rust`.

@@ -500,26 +500,28 @@ impl ConnectorService {
             .collect();
         rows.sort_by_key(|c| c.created_at_epoch_secs);
         let driver = self.driver(PROVIDER)?;
-        let mut out = Vec::with_capacity(rows.len());
-        for c in rows {
-            let Some(source_id) = c.options.get(OPTION_SOURCE_ID).cloned() else {
-                continue;
-            };
-            let url = driver.clone_url(&c.base_url, "")?;
-            let token = self.auth(ctx, &c).await?.token;
-            let (username, _) = driver.clone_credentials(&token);
-            out.push(GearRepositorySource {
-                connection_id: c.id,
-                source_id,
-                repo: super::gear_repository::repository_of(&c.base_url)?,
-                url,
-                git_ref: c.options.get(OPTION_REF).cloned().unwrap_or_default(),
-                create_target: super::gear_repository::is_create_target(&c.options),
-                username: username.to_string(),
-                token,
-            });
-        }
-        Ok(out)
+        // Every token at once: each is a credstore read, and this list is read
+        // on the way into the engine's routes, where one read after another
+        // added up per repository. The rows' order is kept: it is the engine's.
+        let reads = rows.into_iter().filter_map(|c| {
+            let source_id = c.options.get(OPTION_SOURCE_ID).cloned()?;
+            Some(async move {
+                let url = driver.clone_url(&c.base_url, "")?;
+                let token = self.auth(ctx, &c).await?.token;
+                let (username, _) = driver.clone_credentials(&token);
+                anyhow::Ok(GearRepositorySource {
+                    connection_id: c.id,
+                    source_id,
+                    repo: super::gear_repository::repository_of(&c.base_url)?,
+                    url,
+                    git_ref: c.options.get(OPTION_REF).cloned().unwrap_or_default(),
+                    create_target: super::gear_repository::is_create_target(&c.options),
+                    username: username.to_string(),
+                    token,
+                })
+            })
+        });
+        futures_util::future::try_join_all(reads).await
     }
 
     /// The tenant, `from` or one of its ancestors, whose catalogue lists
