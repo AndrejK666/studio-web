@@ -12,7 +12,7 @@
         <mxCell id="p1-crates" value="&lt;b&gt;crates.io&lt;/b&gt;&lt;br&gt;&lt;i&gt;Gear registry&lt;/i&gt;&lt;br&gt;опубликованные gears + версии" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="320" y="30" width="200" height="70" as="geometry" />
         </mxCell>
-        <mxCell id="p1-kits" value="&lt;b&gt;Git (GitHub · GitLab · Bitbucket)&lt;/b&gt;&lt;br&gt;&lt;i&gt;Kit registry · репозитории проектов&lt;/i&gt;&lt;br&gt;issues · PR · исходники" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+        <mxCell id="p1-kits" value="&lt;b&gt;Git (GitHub · GitLab · Bitbucket)&lt;/b&gt;&lt;br&gt;&lt;i&gt;Kit registry · репозитории проектов и гиров (ADR-0046)&lt;/i&gt;&lt;br&gt;issues · PR · исходники · CI-прогоны" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="550" y="30" width="210" height="70" as="geometry" />
         </mxCell>
 
@@ -25,7 +25,7 @@
         </mxCell>
 
         <mxCell id="p1-be" value="&lt;b&gt;BACKEND STUDIO WEB&lt;/b&gt; — cf-studio-backend&lt;br&gt;&lt;i&gt;один бинарь, ассамбля CF/Gears (состав — стр. 2)&lt;/i&gt;" style="swimlane;whiteSpace=wrap;html=1;startSize=50;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="1">
-          <mxGeometry x="320" y="150" width="440" height="635" as="geometry" />
+          <mxGeometry x="320" y="150" width="440" height="665" as="geometry" />
         </mxCell>
         <mxCell id="p1-be-entry" value="&lt;b&gt;api-gateway&lt;/b&gt; · :8090 · префикс /cf · OpenAPI /cf/docs&lt;br&gt;&lt;i&gt;единый axum-роутер; политика аутентификации выводится из деклараций операций&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="p1-be">
           <mxGeometry x="20" y="60" width="400" height="50" as="geometry" />
@@ -33,17 +33,17 @@
         <mxCell id="p1-be-id" value="&lt;b&gt;Идентичность и доступ&lt;/b&gt;&lt;br&gt;account-management (тенанты · пользователи · conversions) · resource-group&lt;br&gt;studio-user · studio-identity-directory · studio-authz-plugin (PDP)&lt;br&gt;studio-organizations (владелец орг.) · studio-presence (кто онлайн)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
           <mxGeometry x="20" y="120" width="400" height="85" as="geometry" />
         </mxCell>
-        <mxCell id="p1-be-know" value="&lt;b&gt;Знание (граф)&lt;/b&gt;&lt;br&gt;graph-storage · studio-connector (+11 плагинов-драйверов)&lt;br&gt;studio-artifact-ingest · studio-components-catalog · studio-domain-model&lt;br&gt;studio-spec-mapping (спецификация → гиры)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
+        <mxCell id="p1-be-know" value="&lt;b&gt;Знание (граф)&lt;/b&gt;&lt;br&gt;graph-storage · studio-connector (+13 плагинов-драйверов)&lt;br&gt;studio-artifact-ingest · studio-components-catalog · studio-domain-model&lt;br&gt;studio-spec-mapping (спецификация → гиры)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
           <mxGeometry x="20" y="215" width="400" height="85" as="geometry" />
         </mxCell>
-        <mxCell id="p1-be-prod" value="&lt;b&gt;Продукт и фон&lt;/b&gt;&lt;br&gt;studio-product (Gearbox) · studio-documents · studio-kits&lt;br&gt;studio-insight · studio-spec-quality · studio-reports&lt;br&gt;studio-tasks (очередь) · studio-scheduler (расписания) · studio-notify&lt;br&gt;studio-events (push в портал, SSE)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
-          <mxGeometry x="20" y="310" width="400" height="100" as="geometry" />
+        <mxCell id="p1-be-prod" value="&lt;b&gt;Продукт и фон&lt;/b&gt;&lt;br&gt;studio-product (Gearbox) · studio-documents · studio-kits&lt;br&gt;studio-insight · studio-spec-quality · studio-reports&lt;br&gt;studio-tasks (очередь) · studio-scheduler (расписания) · studio-notify&lt;br&gt;studio-events (push в портал, SSE)&lt;br&gt;studio-usage (метеринг и затраты, на usage-collector)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
+          <mxGeometry x="20" y="310" width="400" height="115" as="geometry" />
         </mxCell>
-        <mxCell id="p1-be-exec" value="&lt;b&gt;Исполнение и AI&lt;/b&gt;&lt;br&gt;studio-session (драйверы docker · k8s) · studio-theia (мост, ADR-0022)&lt;br&gt;studio-git (Git-ремоут desktop) · studio-llm-proxy (всегда, ADR-0039)&lt;br&gt;mini-chat · oagw (egress) — только с *llm" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
-          <mxGeometry x="20" y="420" width="400" height="85" as="geometry" />
+        <mxCell id="p1-be-exec" value="&lt;b&gt;Исполнение и AI&lt;/b&gt;&lt;br&gt;studio-session (драйверы docker · k8s) · studio-theia (мост, ADR-0022)&lt;br&gt;studio-git (Git-ремоут desktop) · studio-llm-proxy (всегда, ADR-0039)&lt;br&gt;studio-environments (окружения орг., деплои — ADR-0043)&lt;br&gt;mini-chat · oagw (egress) — только с *llm" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
+          <mxGeometry x="20" y="435" width="400" height="100" as="geometry" />
         </mxCell>
         <mxCell id="p1-be-infra" value="&lt;b&gt;Платформа и инфраструктура&lt;/b&gt;&lt;br&gt;types-registry · nodes-registry · grpc-hub · gear-orchestrator&lt;br&gt;tenant/authn/authz-resolver · credstore (+ studio-credstore-pg)&lt;br&gt;file-storage · simple-user-settings · studio-secrets-bootstrap&lt;br&gt;studio-assembly (манифест сборки)" style="rounded=1;whiteSpace=wrap;html=1;align=left;spacingLeft=8;" vertex="1" parent="p1-be">
-          <mxGeometry x="20" y="515" width="400" height="100" as="geometry" />
+          <mxGeometry x="20" y="545" width="400" height="100" as="geometry" />
         </mxCell>
 
         <mxCell id="p1-kc" value="&lt;b&gt;Keycloak 26&lt;/b&gt;&lt;br&gt;&lt;i&gt;OIDC-логин (JWT · claim tenant_id)&lt;br&gt;Admin API — провижининг пользователей&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
@@ -59,45 +59,45 @@
           <mxGeometry x="830" y="470" width="230" height="60" as="geometry" />
         </mxCell>
 
-        <mxCell id="p1-rt" value="&lt;b&gt;Docker Engine / Kubernetes API&lt;/b&gt;&lt;br&gt;&lt;i&gt;два драйвера studio-session:&lt;br&gt;bollard (compose) · kube (кластер)&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="40" y="700" width="220" height="80" as="geometry" />
+        <mxCell id="p1-rt" value="&lt;b&gt;Docker Engine / Kubernetes API&lt;/b&gt;&lt;br&gt;&lt;i&gt;два драйвера studio-session:&lt;br&gt;bollard (compose) · kube (кластер);&lt;br&gt;кластеры организации — деплои studio-environments&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="40" y="700" width="220" height="95" as="geometry" />
         </mxCell>
 
         <mxCell id="p1-pg" value="&lt;b&gt;PostgreSQL 19 + pgvector&lt;/b&gt;&lt;br&gt;&lt;br&gt;одна БД на каждый гир,&lt;br&gt;граф в том же сервере&lt;br&gt;&lt;i&gt;миграции на старте&lt;/i&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
-          <mxGeometry x="330" y="810" width="240" height="130" as="geometry" />
+          <mxGeometry x="330" y="840" width="240" height="130" as="geometry" />
         </mxCell>
         <mxCell id="p1-s3" value="&lt;b&gt;S3 · Virtuozzo&lt;/b&gt;&lt;br&gt;&lt;br&gt;file-storage&lt;br&gt;&lt;i&gt;org / workspace / project&lt;/i&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
-          <mxGeometry x="750" y="810" width="180" height="130" as="geometry" />
+          <mxGeometry x="750" y="840" width="180" height="130" as="geometry" />
         </mxCell>
 
-        <mxCell id="p1-e-front" value="REST /cf · SSE · Bearer (OIDC)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="p1-front" target="p1-be">
+        <mxCell id="p1-e-front" value="REST /cf · SSE · Bearer (OIDC)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0;entryY=0.293;" edge="1" parent="1" source="p1-front" target="p1-be">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-theia-up" value="session gate token" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;" edge="1" parent="1" source="p1-theia" target="p1-be">
+        <mxCell id="p1-e-theia-up" value="session gate token" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=1;exitY=0.25;entryX=0;entryY=0.515;" edge="1" parent="1" source="p1-theia" target="p1-be">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-theia-down" value="создание · reap сессий&lt;br&gt;мост backend↔Theia" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;dashed=1;" edge="1" parent="1" source="p1-be" target="p1-theia">
+        <mxCell id="p1-e-theia-down" value="создание · reap сессий&lt;br&gt;мост backend↔Theia" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=0;exitY=0.643;entryX=1;entryY=0.75;dashed=1;" edge="1" parent="1" source="p1-be" target="p1-theia">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-rt" value="bollard / kube" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-rt">
+        <mxCell id="p1-e-rt" value="bollard / kube" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=0;exitY=0.898;entryX=1;entryY=0.5;" edge="1" parent="1" source="p1-be" target="p1-rt">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-crates" value="components-catalog" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-crates" target="p1-be">
+        <mxCell id="p1-e-crates" value="components-catalog" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.227;entryY=0;" edge="1" parent="1" source="p1-crates" target="p1-be">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-kits" value="studio-kits · connector · artifact-ingest" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-kits" target="p1-be">
+        <mxCell id="p1-e-kits" value="studio-kits · connector · artifact-ingest" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;entryX=0.761;entryY=0;" edge="1" parent="1" source="p1-kits" target="p1-be">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-kc" value="JWKS · Admin API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-kc">
+        <mxCell id="p1-e-kc" value="JWKS · Admin API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=1;exitY=0.075;entryX=0;entryY=0.5;" edge="1" parent="1" source="p1-be" target="p1-kc">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-llm" value="studio-llm-proxy (ADR-0039)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-llm">
+        <mxCell id="p1-e-llm" value="studio-llm-proxy (ADR-0039)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=1;exitY=0.256;entryX=0;entryY=0.5;" edge="1" parent="1" source="p1-be" target="p1-llm">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-insight" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-insight">
+        <mxCell id="p1-e-insight" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=1;exitY=0.391;entryX=0;entryY=0.5;" edge="1" parent="1" source="p1-be" target="p1-insight">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="p1-e-sq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-sq">
+        <mxCell id="p1-e-sq" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;labelBackgroundColor=#ffffff;exitX=1;exitY=0.526;entryX=0;entryY=0.5;" edge="1" parent="1" source="p1-be" target="p1-sq">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="p1-e-pg" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p1-be" target="p1-pg">
@@ -137,7 +137,7 @@
         <mxCell id="p2-sys-8" value="authz-resolver" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-sys"><mxGeometry y="240" width="220" height="30" as="geometry" /></mxCell>
 
         <mxCell id="p2-plat" value="Платформенные гиры (gears-rust)" style="swimlane;whiteSpace=wrap;html=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=0;collapsible=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
-          <mxGeometry x="290" y="90" width="240" height="270" as="geometry" />
+          <mxGeometry x="290" y="90" width="240" height="300" as="geometry" />
         </mxCell>
         <mxCell id="p2-plat-1" value="account-management &lt;i&gt;(+ TR-плагин)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plat"><mxGeometry y="30" width="240" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plat-2" value="resource-group &lt;i&gt;(проекты, ADR-0002)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plat"><mxGeometry y="60" width="240" height="30" as="geometry" /></mxCell>
@@ -145,11 +145,12 @@
         <mxCell id="p2-plat-4" value="file-storage" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plat"><mxGeometry y="120" width="240" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plat-5" value="simple-user-settings" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plat"><mxGeometry y="150" width="240" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plat-6" value="mini-chat &lt;b&gt;*llm&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-plat"><mxGeometry y="180" width="240" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-plat-7" value="oagw &lt;i&gt;(LLM egress)&lt;/i&gt; &lt;b&gt;*llm&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-plat"><mxGeometry y="210" width="240" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-plat-7" value="oagw / api-egress &lt;i&gt;(LLM egress)&lt;/i&gt; &lt;b&gt;*llm&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-plat"><mxGeometry y="210" width="240" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plat-8" value="graph-storage &lt;b&gt;*graph&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-plat"><mxGeometry y="240" width="240" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-plat-9" value="usage-collector &lt;i&gt;(+ наш PG-плагин)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plat"><mxGeometry y="270" width="240" height="30" as="geometry" /></mxCell>
 
-        <mxCell id="p2-own" value="Наши гиры — in-crate (src/, 25 + 2 плагина, ~134 000 LOC)" style="swimlane;whiteSpace=wrap;html=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=0;collapsible=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
-          <mxGeometry x="560" y="90" width="300" height="780" as="geometry" />
+        <mxCell id="p2-own" value="Наши гиры — in-crate (27 + 2 плагина, ~218K LOC)" style="swimlane;whiteSpace=wrap;html=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=0;collapsible=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="560" y="90" width="300" height="840" as="geometry" />
         </mxCell>
         <mxCell id="p2-own-1" value="studio-session &lt;i&gt;— IDE-контейнеры (ADR-0003)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="30" width="300" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-own-2" value="studio-theia &lt;i&gt;— мост в Theia&lt;/i&gt; &lt;b&gt;*theia-bridge&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;fontColor=#B85450;" vertex="1" parent="p2-own"><mxGeometry y="60" width="300" height="30" as="geometry" /></mxCell>
@@ -175,9 +176,11 @@
         <mxCell id="p2-own-22" value="studio-scheduler &lt;i&gt;— расписания, ставит в очередь&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="660" width="300" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-own-23" value="studio-notify &lt;i&gt;— доставка в чат-платформы&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="690" width="300" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-own-24" value="studio-secrets-bootstrap &lt;i&gt;— самолечение секретов&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="720" width="300" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-own-25" value="studio-assembly &lt;i&gt;— манифест сборки, границы гиров&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="750" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-25" value="studio-assembly &lt;i&gt;— манифест сборки&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="750" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-26" value="studio-environments &lt;i&gt;— окружения, деплои&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="780" width="300" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-own-27" value="studio-usage &lt;i&gt;— метеринг и затраты&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-own"><mxGeometry y="810" width="300" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plug" value="Плагины: выбор по vendor + priority&lt;br&gt;(МЕНЬШЕ ЧИСЛО = ВЫИГРЫВАЕТ)" style="swimlane;whiteSpace=wrap;html=1;childLayout=stackLayout;horizontal=1;startSize=45;horizontalStack=0;resizeParent=0;collapsible=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
-          <mxGeometry x="880" y="90" width="250" height="405" as="geometry" />
+          <mxGeometry x="880" y="90" width="250" height="450" as="geometry" />
         </mxCell>
         <mxCell id="p2-plug-1" value="&lt;b&gt;authn&lt;/b&gt;: static-authn ↔ oidc-authn" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="45" width="250" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plug-2" value="&lt;b&gt;authz&lt;/b&gt;: static-authz (100)" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="75" width="250" height="30" as="geometry" /></mxCell>
@@ -185,24 +188,24 @@
         <mxCell id="p2-plug-4" value="&lt;b&gt;IdP&lt;/b&gt;: static-idp (echo) ↔ keycloak-idp" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="145" width="250" height="30" as="geometry" /></mxCell>
         <mxCell id="p2-plug-5" value="&lt;b&gt;credstore value-store&lt;/b&gt;: static (в памяти!)&lt;br&gt;↔ studio-credstore-pg (PG, AES-256-GCM)" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="175" width="250" height="40" as="geometry" /></mxCell>
         <mxCell id="p2-plug-6" value="&lt;b&gt;tenant-resolver&lt;/b&gt;: плагин, живущий&lt;br&gt;внутри account-management" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="215" width="250" height="40" as="geometry" /></mxCell>
-        <mxCell id="p2-plug-7" value="&lt;b&gt;connector-драйверы&lt;/b&gt; (наши, 11):&lt;br&gt;github · gitlab · bitbucket · openai · anthropic&lt;br&gt;slack · zulip · discord (+ webhook-варианты)" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="255" width="250" height="40" as="geometry" /></mxCell>
-        <mxCell id="p2-plug-8" value="&lt;b&gt;model policy · audit&lt;/b&gt;: static (в mini-chat)" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="295" width="250" height="30" as="geometry" /></mxCell>
-        <mxCell id="p2-plug-9" value="&lt;i&gt;Выключить плагин можно только проиграв&lt;br&gt;по priority — линковка и есть активация.&lt;br&gt;Конвенция: победитель 40–100,&lt;br&gt;проигравший 1000+&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="325" width="250" height="70" as="geometry" /></mxCell>
+        <mxCell id="p2-plug-7" value="&lt;b&gt;connector-драйверы&lt;/b&gt; (наши, 13):&lt;br&gt;github · gitlab · bitbucket · gear-repository&lt;br&gt;openai · anthropic · kubernetes (кластер)&lt;br&gt;slack · zulip · discord (+ webhook-варианты)" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="255" width="250" height="70" as="geometry" /></mxCell>
+        <mxCell id="p2-plug-8" value="&lt;b&gt;model policy · audit&lt;/b&gt;: static (в mini-chat)" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="325" width="250" height="30" as="geometry" /></mxCell>
+        <mxCell id="p2-plug-9" value="&lt;i&gt;Выключить плагин можно только проиграв&lt;br&gt;по priority — линковка и есть активация.&lt;br&gt;Конвенция: победитель 40–100,&lt;br&gt;проигравший 1000+&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p2-plug"><mxGeometry y="355" width="250" height="85" as="geometry" /></mxCell>
 
         <mxCell id="p2-bound" value="&lt;b&gt;Граница гира (#680)&lt;/b&gt;&lt;br&gt;гир ходит к другому только через port / sdk / экспорт mod.rs — проверяет assembly::manifest" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=14;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="880" y="520" width="250" height="90" as="geometry" />
+          <mxGeometry x="880" y="560" width="250" height="90" as="geometry" />
         </mxCell>
 
-        <mxCell id="p2-feat" value="&lt;b&gt;Feature-флаги (Cargo.toml)&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;default = [llm, graph]&lt;/b&gt; — cargo run и docker compose&lt;br&gt;&lt;b&gt;llm&lt;/b&gt; → mini-chat + oagw&lt;br&gt;&lt;b&gt;graph&lt;/b&gt; → graph-storage (эмбеддинги onnx и remote)&lt;br&gt;&lt;b&gt;theia-bridge&lt;/b&gt; → studio-theia (opt-in)&lt;br&gt;&lt;b&gt;theia-event-broker&lt;/b&gt; ⊃ theia-bridge&lt;br&gt;studio-llm-proxy — в КАЖДОЙ сборке, не за флагом (ADR-0039)&lt;br&gt;&lt;br&gt;&lt;b&gt;Релизный образ (studio-delivery.yml:616):&lt;/b&gt;&lt;br&gt;--no-default-features --features graph,theia-bridge&lt;br&gt;&lt;font color=&quot;#B85450&quot;&gt;⇒ в проде НЕТ mini-chat / oagw; studio-llm-proxy есть.&lt;br&gt;Причина: post_init у oagw провижинит upstream под root-тенантом,&lt;br&gt;а root создаёт сага account-management в run-фазе → на свежей БД дедлок.&lt;/font&gt;&lt;br&gt;&lt;br&gt;CI компилирует обе комбинации отдельно (:209, :221):&lt;br&gt;--features theia-bridge и --no-default-features." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="40" y="390" width="490" height="250" as="geometry" />
+        <mxCell id="p2-feat" value="&lt;b&gt;Feature-флаги (Cargo.toml)&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;default = [llm, graph]&lt;/b&gt; — cargo run и docker compose&lt;br&gt;&lt;b&gt;llm&lt;/b&gt; → mini-chat + oagw (api-egress)&lt;br&gt;&lt;b&gt;graph&lt;/b&gt; → graph-storage (эмбеддинги onnx и remote)&lt;br&gt;&lt;b&gt;theia-bridge&lt;/b&gt; → studio-theia (opt-in)&lt;br&gt;&lt;b&gt;theia-event-broker&lt;/b&gt; ⊃ theia-bridge&lt;br&gt;studio-llm-proxy — в КАЖДОЙ сборке, не за флагом (ADR-0039)&lt;br&gt;&lt;br&gt;&lt;b&gt;Релизный образ (studio-delivery.yml:668):&lt;/b&gt;&lt;br&gt;--no-default-features --features graph,theia-bridge&lt;br&gt;&lt;font color=&quot;#B85450&quot;&gt;⇒ в проде НЕТ mini-chat / oagw; studio-llm-proxy есть.&lt;br&gt;Причина: post_init у oagw провижинит upstream под root-тенантом,&lt;br&gt;а root создаёт сага account-management в run-фазе → на свежей БД дедлок.&lt;/font&gt;&lt;br&gt;&lt;br&gt;CI: clippy и тесты с --features theia-bridge (:221, :235),&lt;br&gt;отдельно cargo check --no-default-features (:233)." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="410" width="490" height="275" as="geometry" />
         </mxCell>
 
         <mxCell id="p2-patch" value="&lt;b&gt;Откуда берутся зависимости&lt;/b&gt;&lt;br&gt;&lt;br&gt;Все cf-gears-* — с crates.io, в версиях, которые release-plz&lt;br&gt;опубликовал вместе; graph-storage тоже (cf-gears-graph-storage).&lt;br&gt;Блока [patch] нет — в бинаре один toolkit.&lt;br&gt;&lt;br&gt;Точные версии фиксирует Cargo.lock; сборки идут с --locked.&lt;br&gt;Гиры двигаем осознанно: cargo update → тесты → коммит Cargo.lock." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="40" y="670" width="490" height="150" as="geometry" />
+          <mxGeometry x="40" y="705" width="490" height="150" as="geometry" />
         </mxCell>
 
         <mxCell id="p2-gts" value="&lt;b&gt;Два реестра смысла (ADR-0013)&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;b&gt;types-registry&lt;/b&gt; — каталог: что вообще существует.&lt;br&gt;&lt;b&gt;graph-storage&lt;/b&gt; — контракты: схемы узлов и рёбер графа.&lt;br&gt;&lt;br&gt;Согласованность держится тремя вещами:&lt;br&gt;• &lt;b&gt;gts-types&lt;/b&gt; — офлайн-инвентарь из кода → docs/gts-types.json&lt;br&gt;• &lt;b&gt;cargo test gts_inventory&lt;/b&gt; — дрейф снапшота, полнота профилей,&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;грамматика идентификаторов, отсутствие расхождений реестров&lt;br&gt;• &lt;b&gt;gts-audit --base-url …&lt;/b&gt; — диф живого стенда с инвентарём;&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;ненулевой код выхода ⇒ годится в гейт деплоя&lt;br&gt;&lt;br&gt;Схема зарегистрированного типа неизменяема: правка = миграция графа.&lt;br&gt;Исключения (живут только в таблицах гира): gts.cf.studio.doc.*" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="560" y="900" width="570" height="250" as="geometry" />
+          <mxGeometry x="560" y="960" width="570" height="250" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
@@ -221,7 +224,7 @@
         <mxCell id="p3-store" value="Хранилища" style="swimlane;whiteSpace=wrap;html=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=0;collapsible=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
           <mxGeometry x="40" y="80" width="330" height="270" as="geometry" />
         </mxCell>
-        <mxCell id="p3-store-1" value="&lt;b&gt;sqlite_main&lt;/b&gt; — только config/dev.yaml&lt;br&gt;&lt;i&gt;~9 гиров; второй диалект миграций&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-store"><mxGeometry y="30" width="330" height="40" as="geometry" /></mxCell>
+        <mxCell id="p3-store-1" value="&lt;b&gt;sqlite_main&lt;/b&gt; — только config/dev.yaml&lt;br&gt;&lt;i&gt;~8 гиров; второй диалект миграций&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-store"><mxGeometry y="30" width="330" height="40" as="geometry" /></mxCell>
         <mxCell id="p3-store-2" value="&lt;b&gt;pg_main — PostgreSQL 19 + pgvector&lt;/b&gt;&lt;br&gt;&lt;i&gt;одна БД на гир, граф там же (#94); в k8s создаются заранее&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-store"><mxGeometry y="70" width="330" height="40" as="geometry" /></mxCell>
         <mxCell id="p3-store-3" value="&lt;b&gt;graph-storage&lt;/b&gt; — в том же сервере&lt;br&gt;&lt;i&gt;отдельного pg_graph больше нет; миграции идут в boot&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-store"><mxGeometry y="110" width="330" height="40" as="geometry" /></mxCell>
         <mxCell id="p3-store-4" value="&lt;b&gt;studio_credstore_values&lt;/b&gt; (PG)&lt;br&gt;&lt;i&gt;значения секретов, AES-256-GCM (issue #66)&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-store"><mxGeometry y="150" width="330" height="40" as="geometry" /></mxCell>
@@ -229,25 +232,149 @@
         <mxCell id="p3-store-6" value="&lt;b&gt;Keycloak&lt;/b&gt; — пользователи и атрибут tenant_id" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-store"><mxGeometry y="230" width="330" height="30" as="geometry" /></mxCell>
 
         <mxCell id="p3-prof" value="Профили конфигурации (config/*.yaml)" style="swimlane;whiteSpace=wrap;html=1;childLayout=stackLayout;horizontal=1;startSize=30;horizontalStack=0;resizeParent=0;collapsible=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" vertex="1" parent="1">
-          <mxGeometry x="400" y="80" width="420" height="270" as="geometry" />
+          <mxGeometry x="400" y="80" width="420" height="310" as="geometry" />
         </mxCell>
-        <mxCell id="p3-prof-1" value="&lt;b&gt;dev.yaml&lt;/b&gt; — SQLite, static-authn, static-idp&lt;br&gt;&lt;i&gt;550 строк · 27 секций гиров · без внешних зависимостей&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="30" width="420" height="40" as="geometry" /></mxCell>
-        <mxCell id="p3-prof-2" value="&lt;b&gt;postgres.yaml&lt;/b&gt; — PG с хоста, static-authn&lt;br&gt;&lt;i&gt;575 строк · 30 секций гиров&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="70" width="420" height="40" as="geometry" /></mxCell>
-        <mxCell id="p3-prof-3" value="&lt;b&gt;docker.yaml&lt;/b&gt; — всё в compose, keycloak-idp&lt;br&gt;&lt;i&gt;740 строк · 34 секции гиров · bind 0.0.0.0&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="110" width="420" height="40" as="geometry" /></mxCell>
-        <mxCell id="p3-prof-4" value="&lt;b&gt;oidc.yaml&lt;/b&gt; — Keycloak-логин, реальный провижининг&lt;br&gt;&lt;i&gt;751 строка · 44 секции гиров · дневной драйвер разработки&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="150" width="420" height="40" as="geometry" /></mxCell>
-        <mxCell id="p3-prof-5" value="&lt;b&gt;k8s.yaml&lt;/b&gt; — кластерный профиль (Virtuozzo)&lt;br&gt;&lt;i&gt;684 строки · 33 секции гиров · БД и секреты снаружи&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="190" width="420" height="40" as="geometry" /></mxCell>
-        <mxCell id="p3-prof-6" value="&lt;font color=&quot;#B85450&quot;&gt;Профили — не пять копий: 56% настроек есть не везде&lt;br&gt;(в dev нет 20 секций, которые есть в oidc).&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="230" width="420" height="40" as="geometry" /></mxCell>
+        <mxCell id="p3-prof-1" value="&lt;b&gt;dev.yaml&lt;/b&gt; — SQLite + PG, static-authn, static-idp&lt;br&gt;&lt;i&gt;687 строк · 27 секций гиров · без внешних зависимостей&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="30" width="420" height="40" as="geometry" /></mxCell>
+        <mxCell id="p3-prof-2" value="&lt;b&gt;postgres.yaml&lt;/b&gt; — PG с хоста, static-authn&lt;br&gt;&lt;i&gt;772 строки · 34 секции гиров&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="70" width="420" height="40" as="geometry" /></mxCell>
+        <mxCell id="p3-prof-3" value="&lt;b&gt;docker.yaml&lt;/b&gt; — всё в compose, keycloak-idp&lt;br&gt;&lt;i&gt;1007 строк · 38 секций гиров · bind 0.0.0.0&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="110" width="420" height="40" as="geometry" /></mxCell>
+        <mxCell id="p3-prof-4" value="&lt;b&gt;oidc.yaml&lt;/b&gt; — Keycloak-логин, реальный провижининг&lt;br&gt;&lt;i&gt;947 строк · 49 секций гиров · дневной драйвер разработки&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="150" width="420" height="40" as="geometry" /></mxCell>
+        <mxCell id="p3-prof-5" value="&lt;b&gt;k8s.yaml&lt;/b&gt; — кластерный профиль (Virtuozzo)&lt;br&gt;&lt;i&gt;1018 строк · 38 секций гиров · БД и секреты снаружи&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="190" width="420" height="40" as="geometry" /></mxCell>
+        <mxCell id="p3-prof-7" value="&lt;b&gt;stand-product.yaml&lt;/b&gt; — локальный стенд продукта: PG, static-authn&lt;br&gt;&lt;i&gt;672 строки · 33 секции гиров · токен GitHub из секрета&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="230" width="420" height="40" as="geometry" /></mxCell>
+        <mxCell id="p3-prof-6" value="&lt;font color=&quot;#B85450&quot;&gt;Профили — не копии: секции гиров есть не везде&lt;br&gt;(в dev 27, в oidc 49).&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;spacingLeft=6;overflow=hidden;whiteSpace=wrap;" vertex="1" parent="p3-prof"><mxGeometry y="270" width="420" height="40" as="geometry" /></mxCell>
 
-        <mxCell id="p3-cicd" value="&lt;b&gt;Сборка и доставка&lt;/b&gt;&lt;br&gt;&lt;br&gt;ci.yml — сборка + тесты на PR&lt;br&gt;release.yml — тег v* → образы в ghcr&lt;br&gt;deploy.yml — кластеры studio-dev / studio-test (Virtuozzo)&lt;br&gt;deploy/helm/studio-web — Postgres и IdP только через готовые Secrets&lt;br&gt;&lt;br&gt;Конвейер Constructor:&lt;br&gt;GitHub → зеркало GitLab → Harbor → Argo CD" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="850" y="80" width="280" height="270" as="geometry" />
+        <mxCell id="p3-cicd" value="&lt;b&gt;Сборка и доставка&lt;/b&gt;&lt;br&gt;&lt;br&gt;studio-delivery.yml — один конвейер:&lt;br&gt;тесты изменённых компонентов на PR и push;&lt;br&gt;сборка и публикация образов в ghcr;&lt;br&gt;деплой — только вручную: «Deploy existing images»&lt;br&gt;(sha-&amp;lt;коммит&amp;gt; или v*), отдельно сервисы и инфраструктура&lt;br&gt;desktop.yml · gearbox-engine.yml · studio-cli.yml —&lt;br&gt;desktop-приложение и расширения IDE&lt;br&gt;&lt;br&gt;Argo CD нет; правила тегов — deploy/PIPELINES.md" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="850" y="80" width="280" height="310" as="geometry" />
         </mxCell>
 
         <mxCell id="p3-life" value="&lt;b&gt;Фазы жизненного цикла гира&lt;/b&gt;&lt;br&gt;&lt;br&gt;pre_init → db (миграции) → init → post_init → rest (регистрация роутов) → grpc → start → … → stop&lt;br&gt;&lt;br&gt;Порядок между гирами — топологическая сортировка по deps. Внутри фазы гиры идут ПОСЛЕДОВАТЕЛЬНО." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="40" y="380" width="1090" height="120" as="geometry" />
+          <mxGeometry x="40" y="410" width="1090" height="120" as="geometry" />
         </mxCell>
 
         <mxCell id="p3-traps" value="&lt;b&gt;Ловушки, за которые уже заплачено&lt;/b&gt;&lt;br&gt;&lt;br&gt;1. &lt;b&gt;start не должен блокировать&lt;/b&gt; — иначе гиры после тебя не стартуют и порт не биндится. tokio::spawn и return.&lt;br&gt;2. &lt;b&gt;Приоритет плагина инвертирован&lt;/b&gt; — выигрывает меньшее число.&lt;br&gt;3. &lt;b&gt;Активация в link-time&lt;/b&gt; — конфигурируй каждый прилинкованный плагин в каждом профиле; отключай приоритетом, не отсутствием секции.&lt;br&gt;4. &lt;b&gt;Статический credstore держит значения В ПАМЯТИ&lt;/b&gt; — метаданные в PG, значения нет: после рестарта секрет существует (409 на create), но не читается. Ради этого и написан studio-credstore-pg.&lt;br&gt;5. &lt;b&gt;Keycloak 26 выбрасывает unmanaged-атрибуты&lt;/b&gt;, записанные через Admin API, без unmanagedAttributePolicy: ENABLED → приглашённый пользователь получает 401 (нет claim tenant_id).&lt;br&gt;6. &lt;b&gt;404 на барьере — это дизайн&lt;/b&gt;: тенант, ставший self_managed, отрезает своё поддерево от админов предка.&lt;br&gt;7. &lt;b&gt;OperationBuilder&lt;/b&gt;: ответ регистрируется ДО error_*; для 204 — no_content_response.&lt;br&gt;8. &lt;b&gt;api-gateway по умолчанию слушает loopback&lt;/b&gt; — контейнерам сессий нужен bind_addr 0.0.0.0 (аутентификация всё равно на каждом запросе)." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="40" y="530" width="1090" height="300" as="geometry" />
+          <mxGeometry x="40" y="560" width="1090" height="300" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="4 · Процесс изменения" id="change">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="1020" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="p4-title" value="&lt;b&gt;Процесс изменения — ADR-0047&lt;/b&gt;&lt;br&gt;&lt;i&gt;единица — изменение на work item; все объекты приходят через коннекторы&lt;/i&gt;" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="700" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-legend" value="&lt;b&gt;Легенда&lt;/b&gt;&lt;br&gt;оранжевый — внешние системы&lt;br&gt;зелёный — есть в коде&lt;br&gt;пунктир — фазы 2–6 ADR-0047" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="880" y="15" width="230" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-src-track" value="&lt;b&gt;Трекеры&lt;/b&gt;&lt;br&gt;GitHub / GitLab Issues&lt;br&gt;Jira · YouTrack&lt;br&gt;&lt;i&gt;work item · parent · iteration&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="40" y="100" width="196" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-src-docs" value="&lt;b&gt;Документы&lt;/b&gt;&lt;br&gt;файлы в репозитории&lt;br&gt;Confluence&lt;br&gt;&lt;i&gt;документ + ревизия&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="252" y="100" width="196" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-src-code" value="&lt;b&gt;Хостинг кода&lt;/b&gt;&lt;br&gt;GitHub PR · GitLab MR&lt;br&gt;Bitbucket PR&lt;br&gt;&lt;i&gt;change request · head/merge sha&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="464" y="100" width="196" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-src-ci" value="&lt;b&gt;CI и сборки&lt;/b&gt;&lt;br&gt;Actions · GitLab CI · Jenkins&lt;br&gt;сборки из IDE (ADR-0045)&lt;br&gt;&lt;i&gt;run · build&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="676" y="100" width="196" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-src-env" value="&lt;b&gt;Окружения&lt;/b&gt;&lt;br&gt;studio-environments (k8s)&lt;br&gt;внешний CD&lt;br&gt;&lt;i&gt;deployment · commit&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="888" y="100" width="196" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-conn" value="&lt;b&gt;studio-connector&lt;/b&gt; — по драйверу на провайдера; категории SourceCode · Cluster · &lt;i&gt;Tracker, Documents (фаза 2)&lt;/i&gt;&lt;br&gt;&lt;b&gt;connectors::references&lt;/b&gt; — один резолвер ссылок: #42 · owner/repo#42 · URL; «Closes #1, #2 and #3»; синтаксис объявляет драйвер (reference_syntax)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="230" width="1044" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-track" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-src-track" target="p4-conn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-docs" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-src-docs" target="p4-conn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-code" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-src-code" target="p4-conn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-ci" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-src-ci" target="p4-conn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-env" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-src-env" target="p4-conn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-graph" value="&lt;b&gt;studio-artifact-ingest → граф артефактов&lt;/b&gt; (graph-storage)&lt;br&gt;узлы: issue (work item) · pull_request (+ head_sha, merge_sha, links) · file · workflow_run · build · release&lt;br&gt;рёбра фазы 1: &lt;b&gt;closes&lt;/b&gt; · &lt;b&gt;references&lt;/b&gt; · &lt;b&gt;part_of&lt;/b&gt;; цель вне репозитория или вне окна синка остаётся в payload" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="320" width="1044" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-conn-graph" value="нормализованные объекты и связи" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-conn" target="p4-graph">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-change" value="&lt;b&gt;ИЗМЕНЕНИЕ&lt;/b&gt; = work item + всё, что на него ссылается — выводится, не хранится:&lt;br&gt;change requests → документы и изменённые разделы → дельта возможностей (spec-mapping) → дельта product.gdl → прогоны и сборки → деплои" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;dashed=1;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="420" width="1044" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-graph-change" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;" edge="1" parent="1" source="p4-graph" target="p4-change">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-st-1" value="&lt;b&gt;Замысел&lt;/b&gt;&lt;br&gt;intent · BRD&lt;br&gt;&lt;i&gt;studio-documents&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="40" y="540" width="120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-st-2" value="&lt;b&gt;Требования&lt;/b&gt;&lt;br&gt;PRD · user stories&lt;br&gt;&lt;i&gt;maturity, гейты документов&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="172" y="540" width="120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-st-3" value="&lt;b&gt;Архитектура&lt;/b&gt;&lt;br&gt;маршрут по вердиктам gears&lt;br&gt;&lt;i&gt;studio-spec-mapping&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="304" y="540" width="120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-st-4" value="&lt;b&gt;Код&lt;/b&gt;&lt;br&gt;change requests смёржены&lt;br&gt;&lt;i&gt;artifact-ingest&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="436" y="540" width="120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-st-5" value="&lt;b&gt;Тесты&lt;/b&gt;&lt;br&gt;прогоны merge-коммитов&lt;br&gt;&lt;i&gt;CI runs&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="568" y="540" width="120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-st-6" value="&lt;b&gt;Сборка&lt;/b&gt;&lt;br&gt;build по коммиту&lt;br&gt;&lt;i&gt;ADR-0045&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;dashed=1;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="700" y="540" width="120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-st-7" value="&lt;b&gt;Деплой&lt;/b&gt;&lt;br&gt;dev → test → prod&lt;br&gt;&lt;i&gt;ADR-0043, git ancestry&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;dashed=1;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="832" y="540" width="120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-st-8" value="&lt;b&gt;Наблюдение&lt;/b&gt;&lt;br&gt;гипотеза → метрика&lt;br&gt;&lt;i&gt;Objective&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;dashed=1;fontSize=11;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="964" y="540" width="120" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-st-1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-st-1" target="p4-st-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-st-2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-st-2" target="p4-st-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-st-3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-st-3" target="p4-st-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-st-4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-st-4" target="p4-st-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-st-5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-st-5" target="p4-st-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-st-6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-st-6" target="p4-st-7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-st-7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="p4-st-7" target="p4-st-8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-loop" value="то, что сказал прод, — новый work item: следующая итерация" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=1;" edge="1" parent="1" source="p4-st-8" target="p4-st-1">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1028" y="660" /><mxPoint x="100" y="660" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="p4-st-note" value="&lt;i&gt;Этапы 1–5 уже есть (builtin_stages, stage_status), но судятся для всего проекта; ADR-0047 судит их для изменения и добавляет хвост 6–8.&lt;/i&gt;" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="170" y="500" width="914" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-e-change-st" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;exitX=0.0575;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="p4-change" target="p4-st-1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-routes" value="&lt;b&gt;Маршрут — по тому, что умеют gears&lt;/b&gt; (для каждой возможности в дельте)&lt;br&gt;&lt;br&gt;&lt;b&gt;есть gear&lt;/b&gt; → композиция: документы → product.gdl → соответствие → деплой&lt;br&gt;&lt;b&gt;gear есть, нужна настройка&lt;/b&gt; → конфигурация: то же + настройки gear&lt;br&gt;&lt;b&gt;gear есть, возможности нет&lt;/b&gt; → расширение: архитектура → код в репозитории gear → тесты → сборка → деплой&lt;br&gt;&lt;b&gt;gear нет&lt;/b&gt; → новый gear: Create a gear (ADR-0044), свой путь maturity, затем расширение&lt;br&gt;&lt;br&gt;Этап, который маршруту не нужен, — «неприменим», а не «не пройден»." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="700" width="560" height="190" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-gates" value="&lt;b&gt;Гейты между этапами&lt;/b&gt; — уже существующие&lt;br&gt;&lt;br&gt;• maturity документа задаёт строгость ревью&lt;br&gt;• G4: опубликованный контракт остаётся совместимым&lt;br&gt;• возможность держится только на design/experimental gears — finding&lt;br&gt;• защищённое окружение — approve админа организации&lt;br&gt;&lt;br&gt;Уровень автоматизации воркспейса (manual · recommendations · autonomous) решает, кто делает шаг: человек или агент." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="620" y="700" width="464" height="190" as="geometry" />
+        </mxCell>
+        <mxCell id="p4-phases" value="&lt;b&gt;Фазы ADR-0047&lt;/b&gt;&lt;br&gt;&lt;b&gt;1 ✓&lt;/b&gt; связи в контракте драйвера, резолвер ссылок, рёбра closes/references/part_of (#860) · &lt;b&gt;2&lt;/b&gt; категории Tracker и Documents: YouTrack, затем Confluence · &lt;b&gt;3&lt;/b&gt; изменение, его этапы, доска Flow и страница изменения · &lt;b&gt;4&lt;/b&gt; маршруты · &lt;b&gt;5&lt;/b&gt; где изменение работает и порядок окружений · &lt;b&gt;6&lt;/b&gt; наблюдение: гипотеза → Objective" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;fillColor=#ffffff;align=left;spacingLeft=8;size=16;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="910" width="1044" height="80" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
