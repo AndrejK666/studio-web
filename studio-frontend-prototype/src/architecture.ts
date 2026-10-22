@@ -835,7 +835,7 @@ export const SURFACES: Surface[] = [
     area: "admin",
     title: "System and architecture",
     does: "Inspect the running platform: registries, outbound gateway, the domain model, and this page.",
-    components: ["SystemView", "ArchitecturePage"],
+    components: ["SystemView", "ArchitecturePage", "FlowDoors"],
     gears: [
       "gear-orchestrator",
       "oagw",

@@ -41,6 +41,7 @@ import {
   usedBy,
   usesOf,
 } from "./architecture";
+import { FlowDiagram, FlowDoors } from "./architecture-flow-view";
 import type { Edge, EventKind, GroupedDomain, Manifest, ManifestGear, PrototypeMap, RestSurface, Surface, Via } from "./architecture";
 import "./styles.css";
 import "./architecture.css";
@@ -1012,8 +1013,35 @@ function ArchitecturePage() {
 
       <div className="arch-layout">
         <div className="arch-views">
+          <section className="card arch-section" id="flow" aria-labelledby="flow-title">
+            <h2 id="flow-title">1 · From specs to a running product</h2>
+            <p className="arch-muted arch-intro">
+              Where each part of Studio runs, and the path one application takes through them. Choose a step to light
+              up the boxes it passes, in order; the numbers on a box are the steps that pass through it.
+            </p>
+            <FlowDiagram
+              renderGear={(g) => <GearChip name={g} gear={byName.get(g)} onSelect={onGear} />}
+              live={{
+                backend: (
+                  <>
+                    Now: {counts.studio} Studio gears and {counts.platform} platform gears, built from{" "}
+                    <CommitLink commit={backendCommit} />.
+                  </>
+                ),
+                sessions:
+                  manifest.sessions_enabled && manifest.session_image ? (
+                    <>
+                      Image <code>{manifest.session_image.split("/").pop()}</code>
+                    </>
+                  ) : (
+                    "Sessions are off on this backend."
+                  ),
+              }}
+            />
+          </section>
+
           <section className="card arch-section" id="map" aria-labelledby="map-title">
-            <h2 id="map-title">1 · What people do in Studio, and the gears behind it</h2>
+            <h2 id="map-title">2 · What people do in Studio, and the gears behind it</h2>
             <p className="arch-muted arch-intro">
               Every place in the portal, the IDE and the desktop app, with the backend gears it calls. Choose a place to
               light up its gears; choose a gear to see every place that relies on it.
@@ -1025,7 +1053,7 @@ function ArchitecturePage() {
           </section>
 
           <section className="card arch-section" id="uses" aria-labelledby="uses-title">
-            <h2 id="uses-title">2 · Who uses whom between Studio gears</h2>
+            <h2 id="uses-title">3 · Who uses whom between Studio gears</h2>
             {hasUses ? (
               <>
                 <p className="arch-muted arch-intro">
@@ -1067,7 +1095,7 @@ function ArchitecturePage() {
 
           {hasUses && (
             <section className="card arch-section" id="leaks" aria-labelledby="leaks-title">
-              <h2 id="leaks-title">3 · Where the boundaries leak</h2>
+              <h2 id="leaks-title">4 · Where the boundaries leak</h2>
               <p className="arch-muted arch-intro">
                 Each gear below has private modules that other gears import directly. Those gears break when the
                 module changes, and the owner cannot see them coming. The fix is a port on the owner and a move of the
@@ -1082,6 +1110,14 @@ function ArchitecturePage() {
               </div>
             </section>
           )}
+
+          <section className="card arch-section" id="doors" aria-labelledby="doors-title">
+            <h2 id="doors-title">{hasUses ? 5 : 4} · How another platform plugs in</h2>
+            <p className="arch-muted arch-intro">
+              The doors Studio has today, for a platform that wants to read it or be read by it.
+            </p>
+            <FlowDoors />
+          </section>
 
           <footer className="arch-build">
             <span>
