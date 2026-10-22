@@ -49,6 +49,7 @@ mod kubernetes; // a cluster an organization deploys into (ADR-0043)
 mod notify;
 mod ownership;
 mod plugin;
+mod references; // the one resolver of references (ADR-0047)
 mod repository;
 mod rest;
 pub mod sdk;

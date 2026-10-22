@@ -19,6 +19,7 @@
 //! order they go in is provider-independent — so the composition lives in the
 //! service, where it can be read and tested without a provider at all.
 
+use super::references::{NumberRef, ReferenceSyntax};
 use super::url_guard::HostRule;
 use async_trait::async_trait;
 
@@ -124,6 +125,12 @@ pub struct RemoteIssue {
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub labels: Vec<String>,
+    /// The work item this one is part of (a sub-issue's parent, an epic),
+    /// when the provider says.
+    pub parent: Option<NumberRef>,
+    /// The iteration it is planned into, by name: a milestone, a sprint, a
+    /// fix version.
+    pub iteration: Option<String>,
 }
 
 /// One file (or directory) entry in a repository tree, as the provider
@@ -248,6 +255,10 @@ pub struct RemotePullRequest {
     pub requested_teams: Vec<String>,
     /// Logins it is assigned to.
     pub assignees: Vec<String>,
+    /// The commit at the head of its source branch.
+    pub head_sha: Option<String>,
+    /// The commit its merge made on the target branch; `None` until merged.
+    pub merge_sha: Option<String>,
 }
 
 /// One reviewer's standing on a pull request: the last thing they said.
@@ -555,6 +566,16 @@ pub trait ConnectorDriver: Send + Sync + 'static {
 
     /// What this provider is for.
     fn category(&self) -> ConnectorCategory;
+
+    /// How this provider's text names a work item or a change request, for
+    /// the one resolver of references (ADR-0047 §3). Every git host Studio
+    /// knows writes `#42`, `group/repo#42` and links.
+    fn reference_syntax(&self) -> ReferenceSyntax {
+        match self.category() {
+            ConnectorCategory::SourceCode => ReferenceSyntax::Numbered,
+            _ => ReferenceSyntax::None,
+        }
+    }
 
     /// Label for the credential field: source hosts say "Personal Access
     /// Token", model providers say "API Key".

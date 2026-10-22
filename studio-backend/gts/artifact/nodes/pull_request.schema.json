@@ -58,6 +58,22 @@
       "type": ["string", "null"],
       "enum": ["approved", "changes_requested", "review_required", null],
       "description": "What the reviews amount to, derived by Studio (pull_request_waits.rs); null with no reviews read or nothing asked."
+    },
+    "head_sha": { "type": ["string", "null"], "description": "The commit at the head of the source branch." },
+    "merge_sha": { "type": ["string", "null"], "description": "The commit the merge made; null until merged." },
+    "links": {
+      "type": "array",
+      "description": "Items the title and body name (ADR-0047); repo is null for this repository.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "relation": { "type": "string", "enum": ["closes", "references"] },
+          "repo": { "type": ["string", "null"] },
+          "number": { "type": "integer" }
+        },
+        "required": ["relation", "number"],
+        "additionalProperties": false
+      }
     }
   },
   "required": ["repo", "external_id", "number", "title", "state"],

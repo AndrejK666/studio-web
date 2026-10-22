@@ -24,7 +24,10 @@ use super::comment_threads;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
 use crate::connectors::sdk::git_checkout;
-use crate::connectors::sdk::{ConnectionAuth, ConnectorDriver, PullRequestThreads};
+use crate::connectors::sdk::{
+    ConnectionAuth, ConnectorDriver, Mention, NumberRef, PullRequestThreads, Relation,
+    find_references,
+};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -488,6 +491,14 @@ impl IngestService {
         // issue/PR number → its node instance id, so a comment (which only knows
         // the number it is on) can be linked to the right artifact node.
         let mut by_number: HashMap<i64, String> = HashMap::new();
+        // The issues among them: only an issue can be closed or be a parent.
+        let mut issue_by_number: HashMap<i64, String> = HashMap::new();
+        // Links read off an issue or a pull request, made edges once the
+        // listing is done and every item of this repository has its node
+        // (ADR-0047 §3). A target outside the repository, or outside this
+        // sync's window, stays on the node's payload without an edge.
+        let mut item_links: Vec<(String, &'static str, NumberRef)> = Vec::new();
+        let syntax = driver.reference_syntax();
         // The same connector/repository may be attached to more than one
         // Studio project. Include that attachment scope in every deterministic
         // graph key so a sync in one project cannot overwrite the other.
@@ -544,10 +555,15 @@ impl IngestService {
             for i in batch {
                 let author = i.author.clone();
                 let number = i.number;
+                let parent = i.parent.clone();
                 let node = gts::issue_node(source_scope, &repo_id, connector_id, repo_full_path, i);
                 edges.push(gts::artifact_of_edge(&node.instance_id, &repo_id));
                 author_edge(&mut edges, &mut users, &node.instance_id, author.as_deref());
+                if let Some(parent) = parent {
+                    item_links.push((node.instance_id.clone(), gts::REL_PART_OF, parent));
+                }
                 by_number.insert(number, node.instance_id.clone());
+                issue_by_number.insert(number, node.instance_id.clone());
                 nodes.push(node);
             }
             // Flush this page of issues immediately — they show up in the graph
@@ -628,6 +644,16 @@ impl IngestService {
                         .flat_map(|r| r.reviews.iter().map(|rv| rv.login.clone())),
                 );
                 let assignees = p.assignees.clone();
+                let text = format!(
+                    "{}
+{}",
+                    p.title,
+                    p.body.as_deref().unwrap_or_default()
+                );
+                let links: Vec<Mention> = find_references(&text, syntax)
+                    .into_iter()
+                    .filter(|m| !(m.target.repo.is_none() && m.target.number == number))
+                    .collect();
                 let node = gts::pull_request_node(
                     source_scope,
                     &repo_id,
@@ -635,8 +661,16 @@ impl IngestService {
                     repo_full_path,
                     p,
                     review,
+                    &links,
                 );
                 let pr_id = node.instance_id.clone();
+                for m in links {
+                    let rel = match m.relation {
+                        Relation::Closes => gts::REL_CLOSES,
+                        Relation::References => gts::REL_REFERENCES,
+                    };
+                    item_links.push((pr_id.clone(), rel, m.target));
+                }
                 edges.push(gts::artifact_of_edge(&pr_id, &repo_id));
                 author_edge(&mut edges, &mut users, &pr_id, author.as_deref());
                 for (logins, edge) in [
@@ -676,6 +710,13 @@ impl IngestService {
             )
             .await?;
         }
+
+        edges.extend(item_link_edges(
+            &item_links,
+            &issue_by_number,
+            &by_number,
+            repo_full_path,
+        ));
 
         // Files come from, in order of preference:
         //   1. the studio-session workspace checkout, if the IDE already cloned
@@ -3044,9 +3085,87 @@ async fn read_one(dir: PathBuf, path: &str) -> anyhow::Result<Option<String>> {
         .map_err(|e| anyhow!("file read did not finish: {e}"))
 }
 
+/// The edges the links read off this repository's items make, for the
+/// targets this sync holds a node of (ADR-0047 §3). Only an issue is closed
+/// or is a parent: "closes" naming a pull request is a reference to it, and
+/// "part of" a pull request is nothing.
+fn item_link_edges(
+    links: &[(String, &'static str, NumberRef)],
+    issue_by_number: &HashMap<i64, String>,
+    by_number: &HashMap<i64, String>,
+    repo_full_path: &str,
+) -> Vec<GtsEdge> {
+    let mut out: Vec<GtsEdge> = Vec::new();
+    for (from, rel, target) in links {
+        if !target.is_in(repo_full_path) {
+            continue;
+        }
+        let (rel, to) = match (*rel, issue_by_number.get(&target.number)) {
+            (gts::REL_CLOSES | gts::REL_PART_OF, Some(issue)) => (*rel, issue),
+            (gts::REL_PART_OF, None) => continue,
+            (_, _) => match by_number.get(&target.number) {
+                Some(item) => (gts::REL_REFERENCES, item),
+                None => continue,
+            },
+        };
+        if to != from {
+            out.push(gts::item_link_edge(rel, from, to));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A link becomes an edge only to an item of this repository the sync
+    /// holds; closing a pull request is referencing it (ADR-0047 §3).
+    #[test]
+    fn links_become_edges_to_the_items_this_repository_holds() {
+        let here = |number| NumberRef { repo: None, number };
+        let issues = HashMap::from([(1, "i1".to_string()), (2, "i2".to_string())]);
+        let mut items = issues.clone();
+        items.insert(3, "p3".to_string());
+        let links = vec![
+            ("p3".to_string(), gts::REL_CLOSES, here(1)),
+            ("p3".to_string(), gts::REL_CLOSES, here(4)),
+            ("p3".to_string(), gts::REL_REFERENCES, here(2)),
+            ("p5".to_string(), gts::REL_CLOSES, here(3)),
+            ("p3".to_string(), gts::REL_REFERENCES, here(3)),
+            (
+                "p3".to_string(),
+                gts::REL_CLOSES,
+                NumberRef {
+                    repo: Some("other/repo".into()),
+                    number: 1,
+                },
+            ),
+            (
+                "i2".to_string(),
+                gts::REL_PART_OF,
+                NumberRef {
+                    repo: Some("Acme/Specs".into()),
+                    number: 1,
+                },
+            ),
+            ("i1".to_string(), gts::REL_PART_OF, here(3)),
+        ];
+        let got: Vec<(&str, String, String)> =
+            item_link_edges(&links, &issues, &items, "acme/specs")
+                .into_iter()
+                .map(|e| (e.type_id, e.from, e.to))
+                .collect();
+        assert_eq!(
+            got,
+            vec![
+                (gts::REL_CLOSES, "p3".into(), "i1".into()),
+                (gts::REL_REFERENCES, "p3".into(), "i2".into()),
+                (gts::REL_REFERENCES, "p5".into(), "p3".into()),
+                (gts::REL_PART_OF, "i2".into(), "i1".into()),
+            ]
+        );
+    }
 
     const CONNECTOR: &str = "conn-1";
     const REPO: &str = "constructorfabric/studio-web";

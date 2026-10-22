@@ -11,8 +11,8 @@ use uuid::Uuid;
 use super::comment_threads::{ThreadCounts, Waiting};
 use super::graph::{GtsEdge, GtsNode};
 use crate::connectors::sdk::{
-    PullRequestThreads, RemoteBuildArtifact, RemoteComment, RemoteCommit, RemoteFile, RemoteIssue,
-    RemotePullRequest, RemoteRelease, RemoteWorkflowJob, RemoteWorkflowRun,
+    Mention, PullRequestThreads, RemoteBuildArtifact, RemoteComment, RemoteCommit, RemoteFile,
+    RemoteIssue, RemotePullRequest, RemoteRelease, RemoteWorkflowJob, RemoteWorkflowRun,
 };
 
 /// Fixed namespace for uuid5 instance ids (studio artifact graph).
@@ -153,9 +153,15 @@ pub const REL_DECISION_ON: &str = "gts.cf.studio.rel.decision_on.v1~";
 pub const REL_REVIEWED_BY: &str = "gts.cf.studio.rel.reviewed_by.v1~";
 /// pull_request → user: an account it is assigned to.
 pub const REL_ASSIGNED_TO: &str = "gts.cf.studio.rel.assigned_to.v1~";
+/// pull_request → issue: an issue its merge closes (ADR-0047 §3).
+pub const REL_CLOSES: &str = "gts.cf.studio.rel.closes.v1~";
+/// pull_request → issue / pull_request: an item its text names otherwise.
+pub const REL_REFERENCES: &str = "gts.cf.studio.rel.references.v1~";
+/// issue → issue: the work item this one is part of.
+pub const REL_PART_OF: &str = "gts.cf.studio.rel.part_of.v1~";
 
 /// Every relation type, for registering in the graph.
-pub const ALL_EDGE_TYPES: [&str; 12] = [
+pub const ALL_EDGE_TYPES: [&str; 15] = [
     REL_ARTIFACT_OF,
     REL_CONTAINS,
     REL_AUTHORED_BY,
@@ -168,6 +174,9 @@ pub const ALL_EDGE_TYPES: [&str; 12] = [
     REL_DECISION_ON,
     REL_REVIEWED_BY,
     REL_ASSIGNED_TO,
+    REL_CLOSES,
+    REL_REFERENCES,
+    REL_PART_OF,
 ];
 
 /// The graph-storage families our types derive from.
@@ -284,7 +293,7 @@ const NODE_TYPE_DOCS: [(&str, &str, &str); 15] = [
 
 /// The relation types, with a title and a description each — the catalog side
 /// of [`ALL_EDGE_TYPES`].
-const EDGE_TYPE_DOCS: [(&str, &str, &str); 12] = [
+const EDGE_TYPE_DOCS: [(&str, &str, &str); 15] = [
     (
         REL_ARTIFACT_OF,
         "ArtifactOf",
@@ -344,6 +353,21 @@ const EDGE_TYPE_DOCS: [(&str, &str, &str); 12] = [
         REL_ASSIGNED_TO,
         "AssignedTo",
         "A pull request and an account it is assigned to.",
+    ),
+    (
+        REL_CLOSES,
+        "Closes",
+        "A pull request and an issue its merge closes.",
+    ),
+    (
+        REL_REFERENCES,
+        "References",
+        "A pull request and an issue or pull request its text names.",
+    ),
+    (
+        REL_PART_OF,
+        "PartOf",
+        "An issue and the issue it is part of.",
     ),
 ];
 
@@ -623,6 +647,8 @@ pub fn issue_node(
             "labels": i.labels,
             "created_at": i.created_at,
             "updated_at": i.updated_at,
+            "parent": i.parent.map(|r| json!({ "repo": r.repo, "number": r.number })),
+            "iteration": i.iteration,
         }),
     }
 }
@@ -744,6 +770,7 @@ pub fn pull_request_node(
     repo_full_path: &str,
     p: RemotePullRequest,
     review: Option<&PullRequestThreads>,
+    links: &[Mention],
 ) -> GtsNode {
     let open_threads = review.map(|r| r.open);
     let reviews = review.map(|r| {
@@ -797,6 +824,16 @@ pub fn pull_request_node(
             "assignees": p.assignees,
             "reviews": reviews,
             "review_decision": review_decision,
+            "head_sha": p.head_sha,
+            "merge_sha": p.merge_sha,
+            "links": links
+                .iter()
+                .map(|m| json!({
+                    "relation": m.relation.as_str(),
+                    "repo": m.target.repo,
+                    "number": m.target.number,
+                }))
+                .collect::<Vec<_>>(),
         }),
     }
 }
@@ -1165,6 +1202,16 @@ pub fn authored_by_edge(artifact_id: &str, user_id: &str) -> GtsEdge {
     }
 }
 
+/// A link between two items found in their text or told by their provider:
+/// [`REL_CLOSES`], [`REL_REFERENCES`] or [`REL_PART_OF`].
+pub fn item_link_edge(type_id: &'static str, from: &str, to: &str) -> GtsEdge {
+    GtsEdge {
+        type_id,
+        from: from.to_string(),
+        to: to.to_string(),
+    }
+}
+
 /// pull_request → file (a file it changed).
 pub fn modifies_edge(pr_id: &str, file_id: &str) -> GtsEdge {
     GtsEdge {
@@ -1332,6 +1379,7 @@ mod tests {
             "acme/specs",
             pull("open"),
             Some(&review),
+            &[],
         );
         let v = &node.value;
         assert_eq!(v["draft"], json!(false));
@@ -1357,6 +1405,7 @@ mod tests {
             "acme/specs",
             pull("merged"),
             None,
+            &[],
         );
         let v = &node.value;
         assert_eq!(v["reviews"], Value::Null);
@@ -1364,6 +1413,51 @@ mod tests {
         assert_eq!(v["open_threads"], Value::Null);
         // The listing's own fields are still there.
         assert_eq!(v["requested_reviewers"], json!(["carol"]));
+    }
+
+    /// A pull request keeps its commits and the items its text names, each
+    /// with its repository when the text named one (ADR-0047 §3).
+    #[test]
+    fn a_pull_request_keeps_its_commits_and_what_it_names() {
+        use crate::connectors::sdk::{NumberRef, Relation};
+        let mut p = pull("merged");
+        p.head_sha = Some("abc".into());
+        p.merge_sha = Some("def".into());
+        let links = [
+            Mention {
+                relation: Relation::Closes,
+                target: NumberRef {
+                    repo: None,
+                    number: 3,
+                },
+            },
+            Mention {
+                relation: Relation::References,
+                target: NumberRef {
+                    repo: Some("o/r".into()),
+                    number: 9,
+                },
+            },
+        ];
+        let node = pull_request_node(
+            "scope",
+            "repo-id",
+            "connector",
+            "acme/specs",
+            p,
+            None,
+            &links,
+        );
+        let v = &node.value;
+        assert_eq!(v["head_sha"], "abc");
+        assert_eq!(v["merge_sha"], "def");
+        assert_eq!(
+            v["links"],
+            json!([
+                { "relation": "closes", "repo": null, "number": 3 },
+                { "relation": "references", "repo": "o/r", "number": 9 },
+            ])
+        );
     }
 
     /// A file nobody has commented on carries no thread keys at all, and one
