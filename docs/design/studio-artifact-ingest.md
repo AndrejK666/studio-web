@@ -205,7 +205,7 @@ build is not changed: a further report is 400 `BUILD_FINISHED`. It carries
 pruning never takes it;
 `repo`, `file`, `issue` and `pull_request` are listed by default and the rest
 only when asked for by type. Edge types
-`gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of,decision_on,reviewed_by,assigned_to}.v1~`.
+`gts.cf.studio.rel.{artifact_of,contains,authored_by,modifies,duplicates,traces_to,finding_on,comment_on,content_of,decision_on,reviewed_by,assigned_to,closes,references,part_of}.v1~`.
 Instance ids are uuid5 of a stable key that includes the source scope, so the
 same repository attached to two projects is two sets of nodes. A
 `spec_finding` is keyed on (detector, subject), so re-running a detector
@@ -236,6 +236,22 @@ node. Only the GitHub driver lists pull requests at all
 (`cpt-studio-constraint-connector-github-depth`); its listing carries draft,
 reviewers, teams and assignees at no extra cost, and the reviews come in the
 review-threads GraphQL query the sync already ran, so nothing adds a call.
+
+Items are linked to each other for `cpt-studio-adr-change-unit` (ADR-0047 §3).
+A `pull_request` node also carries `head_sha`, `merge_sha` (only once merged)
+and `links`: every item its title and body name, each as `{relation, repo,
+number}`, where `relation` is `closes` (after a closing keyword: `Closes #1,
+#2 and #3`) or `references`, and `repo` is null for this repository. The text
+is read by `connectors::references`, the one resolver, in the syntax the
+driver declares (`reference_syntax`); code blocks and code spans are skipped.
+An `issue` node carries `parent` (`{repo, number}`, a sub-issue's parent) and
+`iteration` (the milestone's title). The links become edges once the
+repository's listing is done: `closes` (pull request → issue), `references`
+(pull request → issue or pull request; a "closes" that names a pull request is
+a reference) and `part_of` (issue → issue). Only a target in the same
+repository and in this sync gets an edge; the rest, another repository's item
+or one outside an incremental sync's window, stays on the payload for a reader
+to place.
 
 - [x] `p2` - **ID**: `cpt-studio-algo-artifact-ingest-pull-request-waits`
 

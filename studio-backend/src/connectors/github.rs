@@ -6,6 +6,8 @@ use serde::Deserialize;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 
+use super::references::NumberRef;
+
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, CreatedRepository,
     DownloadTarget, DriverIdentity, FileToWrite, OpenedPullRequest, PullRequestThreads,
@@ -118,6 +120,13 @@ struct GitHubLabel {
 struct GitHubRef {
     #[serde(rename = "ref")]
     ref_name: String,
+    #[serde(default)]
+    sha: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GitHubMilestone {
+    title: String,
 }
 
 #[derive(Deserialize)]
@@ -137,6 +146,11 @@ struct GitHubIssue {
     updated_at: Option<String>,
     #[serde(default)]
     labels: Vec<GitHubLabel>,
+    #[serde(default)]
+    milestone: Option<GitHubMilestone>,
+    /// `…/repos/{owner}/{repo}/issues/{n}` of its parent, for a sub-issue.
+    #[serde(default)]
+    parent_issue_url: Option<String>,
     /// Present only when this "issue" is actually a pull request — GitHub's
     /// `/issues` endpoint returns both, and we drop the PRs here.
     #[serde(default)]
@@ -569,6 +583,10 @@ struct GitHubPull {
     base: Option<GitHubRef>,
     #[serde(default)]
     merged_at: Option<String>,
+    /// For an open pull request, GitHub's trial merge; the merge itself only
+    /// once `merged_at` is set.
+    #[serde(default)]
+    merge_commit_sha: Option<String>,
     #[serde(default)]
     created_at: Option<String>,
     #[serde(default)]
@@ -941,6 +959,8 @@ impl ConnectorDriver for GitHubDriver {
                 created_at: i.created_at,
                 updated_at: i.updated_at,
                 labels: i.labels.into_iter().map(|l| l.name).collect(),
+                parent: i.parent_issue_url.as_deref().and_then(api_issue_ref),
+                iteration: i.milestone.map(|m| m.title),
             })
             .collect())
     }
@@ -976,6 +996,7 @@ impl ConnectorDriver for GitHubDriver {
             .into_iter()
             .map(|p| {
                 let merged = p.merged_at.is_some();
+                let head_sha = p.head.as_ref().and_then(|r| r.sha.clone());
                 RemotePullRequest {
                     id: p.id.to_string(),
                     number: p.number,
@@ -1005,6 +1026,8 @@ impl ConnectorDriver for GitHubDriver {
                         .filter_map(|t| t.name.or(t.slug))
                         .collect(),
                     assignees: p.assignees.into_iter().map(|u| u.login).collect(),
+                    head_sha,
+                    merge_sha: p.merge_commit_sha.filter(|_| merged),
                 }
             })
             .collect())
@@ -2067,6 +2090,17 @@ impl ConnectorDriver for GitHubDriver {
     }
 }
 
+/// The issue an API url names: `…/repos/{owner}/{repo}/issues/{n}`, as
+/// GitHub gives a sub-issue's parent.
+fn api_issue_ref(url: &str) -> Option<NumberRef> {
+    let (_, path) = url.split_once("/repos/")?;
+    let (repo, number) = path.rsplit_once("/issues/")?;
+    Some(NumberRef {
+        repo: Some(repo.to_string()),
+        number: number.parse().ok()?,
+    })
+}
+
 /// A repo-relative path we are willing to write to.
 ///
 /// Rejects what could let a caller write outside the tree it named — a `..` or
@@ -2122,6 +2156,28 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+
+    #[test]
+    fn a_sub_issue_names_its_parent_by_repository_and_number() {
+        assert_eq!(
+            api_issue_ref("https://api.github.com/repos/constructorfabric/studio-web/issues/643"),
+            Some(NumberRef {
+                repo: Some("constructorfabric/studio-web".into()),
+                number: 643
+            })
+        );
+        assert_eq!(
+            api_issue_ref("https://ghe.example/api/v3/repos/o/r/issues/7"),
+            Some(NumberRef {
+                repo: Some("o/r".into()),
+                number: 7
+            })
+        );
+        assert_eq!(
+            api_issue_ref("https://api.github.com/repos/o/r/pulls/7"),
+            None
+        );
+    }
 
     /// What the repository looks like to the driver under test.
     struct Fixture {

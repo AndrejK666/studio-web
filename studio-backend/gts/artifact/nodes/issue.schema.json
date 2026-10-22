@@ -15,7 +15,18 @@
     "url": { "type": ["string", "null"] },
     "labels": { "type": "array", "items": { "type": "string" } },
     "created_at": { "type": ["string", "null"], "format": "date-time" },
-    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+    "updated_at": { "type": ["string", "null"], "format": "date-time" },
+    "parent": {
+      "type": ["object", "null"],
+      "description": "The work item this one is part of; repo is null for this repository (ADR-0047).",
+      "properties": {
+        "repo": { "type": ["string", "null"] },
+        "number": { "type": "integer" }
+      },
+      "required": ["number"],
+      "additionalProperties": false
+    },
+    "iteration": { "type": ["string", "null"], "description": "The milestone, sprint or fix version it is planned into, by name." }
   },
   "required": ["repo", "external_id", "number", "title", "state"],
   "additionalProperties": false
