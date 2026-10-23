@@ -58,6 +58,9 @@ pub const KUBERNETES_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.st
 
 /// An OCI registry an organization's products ship through (ADR-0048).
 pub const REGISTRY_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.registry_connector.v1";
+/// Constructor Research, where a member's products are built and run
+/// (ADR-0049).
+pub const RESEARCH_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.research_connector.v1";
 
 /// A repository of gears a tier's corpus is read from (ADR-0046).
 pub const GEAR_REPOSITORY_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.gear_repository_connector.v1";

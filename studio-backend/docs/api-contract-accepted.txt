@@ -294,6 +294,13 @@ request	POST /studio-connector/v1/connections/{}/messages	target	String	optional
 request	POST /studio-connector/v1/connections/{}/messages	text	String	required
 request	POST /studio-connector/v1/connections/{}/messages	title	String	optional
 request	POST /studio-connector/v1/connections/{}/messages	topic	String	optional
+request	POST /studio-connector/v1/oauth/complete	code	String	required
+request	POST /studio-connector/v1/oauth/complete	state	String	required
+request	POST /studio-connector/v1/oauth/start	base_url	String	optional
+request	POST /studio-connector/v1/oauth/start	label	String	required
+request	POST /studio-connector/v1/oauth/start	owner_tenant_id	Uuid	optional
+request	POST /studio-connector/v1/oauth/start	provider	String	required
+request	POST /studio-connector/v1/oauth/start	scope	String	optional
 request	POST /studio-connector/v1/probe	base_url	String	optional
 request	POST /studio-connector/v1/probe	provider	String	required
 request	POST /studio-connector/v1/probe	token	String	optional
@@ -1600,6 +1607,7 @@ response	GET /studio-connector/v1/providers	items.display_name	String	always
 response	GET /studio-connector/v1/providers	items.fixed_target	bool	always
 response	GET /studio-connector/v1/providers	items.instance_id	String	always
 response	GET /studio-connector/v1/providers	items.provider	String	always
+response	GET /studio-connector/v1/providers	items.sign_in	bool	always
 response	GET /studio-connector/v1/providers	items.token_optional	bool	always
 response	GET /studio-connector/v1/sources/{}/sharing	base	String	optional
 response	GET /studio-connector/v1/sources/{}/sharing	open_pull_request	{}	optional
@@ -3848,6 +3856,20 @@ response	POST /studio-connector/v1/connections/{}/test	connection.provider	Strin
 response	POST /studio-connector/v1/connections/{}/test	connection.scope	String	always
 response	POST /studio-connector/v1/connections/{}/test	connection.secret_ref	String	always
 response	POST /studio-connector/v1/connections/{}/test	display_name	String	optional
+response	POST /studio-connector/v1/oauth/complete	account	String	always
+response	POST /studio-connector/v1/oauth/complete	connection	{}	always
+response	POST /studio-connector/v1/oauth/complete	connection.account	String	always
+response	POST /studio-connector/v1/oauth/complete	connection.base_url	String	always
+response	POST /studio-connector/v1/oauth/complete	connection.created_at_epoch_secs	u64	always
+response	POST /studio-connector/v1/oauth/complete	connection.id	Uuid	always
+response	POST /studio-connector/v1/oauth/complete	connection.label	String	always
+response	POST /studio-connector/v1/oauth/complete	connection.options	BTreeMap<String,String>	always
+response	POST /studio-connector/v1/oauth/complete	connection.owner_tenant_id	Uuid	always
+response	POST /studio-connector/v1/oauth/complete	connection.provider	String	always
+response	POST /studio-connector/v1/oauth/complete	connection.scope	String	always
+response	POST /studio-connector/v1/oauth/complete	connection.secret_ref	String	always
+response	POST /studio-connector/v1/oauth/complete	display_name	String	optional
+response	POST /studio-connector/v1/oauth/start	authorize_url	String	always
 response	POST /studio-connector/v1/probe	account	String	always
 response	POST /studio-connector/v1/probe	display_name	String	optional
 response	POST /studio-connector/v1/sources/{}/pull-requests	created	bool	always
@@ -5512,6 +5534,8 @@ route	POST /studio-connector/v1/connections/{}/files
 route	POST /studio-connector/v1/connections/{}/graph-sync
 route	POST /studio-connector/v1/connections/{}/messages
 route	POST /studio-connector/v1/connections/{}/test
+route	POST /studio-connector/v1/oauth/complete
+route	POST /studio-connector/v1/oauth/start
 route	POST /studio-connector/v1/probe
 route	POST /studio-connector/v1/sources/{}/pull-requests
 route	POST /studio-documents/v1/decisions
