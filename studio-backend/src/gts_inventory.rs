@@ -247,6 +247,7 @@ pub fn plugin_instances() -> Vec<Value> {
         ("studio-connector", connectors::DISCORD_INSTANCE_ID),
         ("studio-connector", connectors::DISCORD_WEBHOOK_INSTANCE_ID),
         ("studio-connector", connectors::KUBERNETES_INSTANCE_ID),
+        ("studio-connector", connectors::REGISTRY_INSTANCE_ID),
     ]
     .into_iter()
     .map(|(gear, instance_id)| json!({ "gear": gear, "instance_id": instance_id }))

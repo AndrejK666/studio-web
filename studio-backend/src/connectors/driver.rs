@@ -62,6 +62,10 @@ pub enum ConnectorCategory {
     /// connection is the repository itself; the server clones it for the
     /// Gearbox engine.
     Gears,
+    /// An OCI registry a product's images and chart are pushed to and its
+    /// clusters pull from (ADR-0048). Nothing to browse: an environment names
+    /// it, and only the server uses its credential.
+    Registry,
 }
 
 impl ConnectorCategory {
@@ -71,6 +75,7 @@ impl ConnectorCategory {
             Self::Ai => "ai",
             Self::Notification => "notification",
             Self::Cluster => "cluster",
+            Self::Registry => "registry",
             Self::Gears => "gears",
         }
     }
@@ -585,6 +590,7 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             ConnectorCategory::Ai => "API Key",
             ConnectorCategory::Notification => "Bot Token",
             ConnectorCategory::Cluster => "Service-account token",
+            ConnectorCategory::Registry => "username:token",
             ConnectorCategory::Gears => "Read token",
         }
     }

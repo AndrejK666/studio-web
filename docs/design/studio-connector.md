@@ -330,7 +330,7 @@ fail to compile: `github-connector-plugin`, `gitlab-connector-plugin`,
 `slack-webhook-connector-plugin`, `zulip-connector-plugin`,
 `zulip-webhook-connector-plugin`, `discord-connector-plugin`,
 `discord-webhook-connector-plugin`, `kubernetes-connector-plugin`,
-`gear-repository-connector-plugin`. Each registers its instance (vendor
+`gear-repository-connector-plugin`, `registry-connector-plugin`. Each registers its instance (vendor
 `constructorfabric`, priority 100 by default) and publishes its
 `ConnectorDriver`. A profile that does not declare the connector contract
 skips the scoped registration instead of failing the boot. Model providers
@@ -339,7 +339,12 @@ key can reach. The three chat drivers share rendering in `notify.rs`. The Kubern
 (`kubernetes.rs`) is a cluster an organization's environments deploy into
 (ADR-0043): its credential is a service-account token or a kubeconfig with
 inline data only, and `ClusterAccess` is what `studio-environments` reaches the
-cluster with.
+cluster with. The registry driver (`registry.rs`, category `registry`) is an
+OCI registry a product's images and chart are published to (ADR-0048): its
+credential is `username:token` (a token alone logs in as `studio`), its test
+logs in to `/v2/` and follows the registry's bearer challenge, its token
+service passing the same URL guard, and `RegistryAccess` gives
+`studio-environments` the namespace's pull secret and helm's registry login.
 
 ##### Responsibility boundaries
 

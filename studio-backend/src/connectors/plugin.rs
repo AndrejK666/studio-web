@@ -140,3 +140,6 @@ mod kubernetes_plugin;
 
 #[path = "plugins/gear_repository/mod.rs"]
 mod gear_repository_plugin;
+
+#[path = "plugins/registry/mod.rs"]
+mod registry_plugin;
