@@ -415,6 +415,10 @@ export const TENANT_TYPES = {
 /** Project attributes stored as tenant metadata on the project tenant. */
 export const PROJECT_CONFIG_TYPE =
   "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~";
+/** The project types a workspace offers (`project-types.ts`). Inherited: the
+ *  nearest tenant that sets it wins. */
+export const PROJECT_TYPES_TYPE =
+  "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.types.v1~";
 
 /** The three shapes the Gearbox engine scaffolds a gear in. */
 export type GearKind = "service" | "minimal" | "plugin";
@@ -923,6 +927,9 @@ export type ProjectKind = "new_gears" | "product" | "existing";
 export interface ProjectConfig {
   mode?: ProjectMode;
   kind?: ProjectKind;
+  /** The key of the project type it was created as (`project-types.ts`);
+   *  `kind` stays the recipe that created it. */
+  type?: string;
   stages?: string[];
   status?: ProjectStatus;
   /** Seed source: a git url, a brief, or an uploaded file id. */
@@ -4691,6 +4698,44 @@ export const api = {
       token,
       { method: "PUT", body: JSON.stringify(value) },
     ),
+
+  /* ── Project types (AM tenant metadata, inherited) ── */
+
+  /** The project types that apply at this tenant — its own, else the nearest
+   *  ancestor's. `null`: nobody set any (the built-in types apply). */
+  projectTypes: async (token: string, tenantId: string): Promise<unknown | null> => {
+    const r = await request<{ resolved: boolean; value?: unknown }>(
+      `/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}/resolved`,
+      token,
+    );
+    return r.resolved ? (r.value ?? null) : null;
+  },
+
+  /** What this tenant itself sets, ignoring its ancestors. `null`: nothing. */
+  ownProjectTypes: async (token: string, tenantId: string): Promise<unknown | null> => {
+    try {
+      const entry = await request<{ value: unknown }>(
+        `/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`,
+        token,
+      );
+      return entry.value;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    }
+  },
+
+  putProjectTypes: (token: string, tenantId: string, value: import("./project-types").ProjectTypesDoc) =>
+    request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`, token, {
+      method: "PUT",
+      body: JSON.stringify(value),
+    }),
+
+  /** Drop this tenant's own types, so what it inherits applies again. */
+  deleteProjectTypes: (token: string, tenantId: string) =>
+    request<unknown>(`/account-management/v1/tenants/${tenantId}/metadata/${PROJECT_TYPES_TYPE}`, token, {
+      method: "DELETE",
+    }),
 
   /* ── Organization access config (AM tenant metadata) ── */
 
