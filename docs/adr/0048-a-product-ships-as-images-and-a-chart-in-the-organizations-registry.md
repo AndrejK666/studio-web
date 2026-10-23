@@ -210,10 +210,16 @@ protected environment and the same record as a deploy.
    secret on every deploy, and a deploy that names an OCI chart. *Built.*
 2. **CI builds and publishes.** The proposed workflow, `studio-build.json`,
    images and chart on a build's record. *Built: `POST /build-workflows`
-   proposes `.github/workflows/studio-product.yml` as a pull request; the sync
+   proposes `.github/workflows/studio-build-<product>.yml` as a pull request, for any product description in the repository; the sync
    records a `ci-run-<id>` build from each run's `studio-build` artifact; a
    build reported as `ci` by anyone else is refused. GitLab CI is not written
-   yet.*
+   yet. The workflow builds any product description in
+   the repository (`product_file`); `products/sample/product.gdl` is the one
+   the path was first checked with. Until the engine fixes
+   constructorfabric/gearbox#12, the workflow and the desktop give each
+   generated Dockerfile its own `Dockerfile.dockerignore` (build.sh's
+   `--ignorefile` is no docker flag) and protoc, the protobuf well-known
+   types and cmake in its build stage.*
 3. **Deploy a build, from either surface.** *Built: a deploy that names only
    `build` takes its chart, images, commit and lock from the record (it must
    have passed and published a chart); the portal's Deploys tab offers the

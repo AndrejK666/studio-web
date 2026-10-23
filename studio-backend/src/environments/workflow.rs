@@ -13,13 +13,19 @@
 
 use super::model::{Invalid, is_dns_label};
 
-/// Where the workflow lives in the product's repository.
-pub const PATH: &str = ".github/workflows/studio-product.yml";
+/// Where the workflow of `product` lives in its repository: one per product,
+/// since a repository may hold several.
+pub fn path(product: &str) -> String {
+    format!(".github/workflows/studio-build-{product}.yml")
+}
 
 /// What the workflow is made from.
 #[derive(Debug, Clone)]
 pub struct Params {
-    /// The product's id, `product.gdl`'s `id`: the chart's name.
+    /// The product's description in the repository: `product.gdl`, or
+    /// `products/sample/product.gdl`.
+    pub product_file: String,
+    /// The product's id, the description's `id`: the chart's name.
     pub product: String,
     /// The `kubernetes` profile to generate (`prod`).
     pub profile: String,
@@ -36,6 +42,15 @@ fn bad(field: &'static str, reason: String) -> Invalid {
 
 /// `params` checked to be safe to write into the workflow.
 pub fn checked(p: &Params) -> Result<(), Invalid> {
+    if !is_product_file(&p.product_file) {
+        return Err(bad(
+            "product_file",
+            format!(
+                "'{}' is not a product description in the repository (product.gdl, products/shop/product.gdl)",
+                p.product_file
+            ),
+        ));
+    }
     if !is_dns_label(&p.product) {
         return Err(bad(
             "product",
@@ -85,6 +100,21 @@ pub fn checked(p: &Params) -> Result<(), Invalid> {
     Ok(())
 }
 
+/// A path in the repository to a `.gdl` file: relative, no `..`, plain
+/// characters.
+pub fn is_product_file(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 200
+        && path.ends_with(".gdl")
+        && !path.starts_with('/')
+        && !path
+            .split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/'))
+}
+
 /// The registry host of a prefix: `ghcr.io` of `ghcr.io/acme`.
 fn host(prefix: &str) -> &str {
     prefix.split('/').next().unwrap_or(prefix)
@@ -94,6 +124,7 @@ fn host(prefix: &str) -> &str {
 pub fn render(p: &Params) -> Result<String, Invalid> {
     checked(p)?;
     Ok(TEMPLATE
+        .replace("@PRODUCT_FILE@", &p.product_file)
         .replace("@PRODUCT@", &p.product)
         .replace("@PROFILE@", &p.profile)
         .replace("@REGISTRY@", host(&p.prefix))
@@ -108,7 +139,7 @@ const TEMPLATE: &str = r#"# Proposed by Constructor Studio (ADR-0048): builds th
 #
 # The registry login: GITHUB_TOKEN reaches ghcr.io. For another registry, set
 # the repository secrets STUDIO_REGISTRY_USERNAME and STUDIO_REGISTRY_TOKEN.
-name: Studio product
+name: Studio build @PRODUCT@
 
 on:
   workflow_dispatch:
@@ -120,7 +151,7 @@ permissions:
   packages: write
 
 env:
-  PRODUCT_FILE: product.gdl
+  PRODUCT_FILE: "@PRODUCT_FILE@"
   PRODUCT: "@PRODUCT@"
   PROFILE: "@PROFILE@"
   REGISTRY: "@REGISTRY@"
@@ -151,6 +182,8 @@ jobs:
           mkdir -p .gearbox-sources
           gearbox product --file "$PRODUCT_FILE" --format json > .gearbox-sources/product.json
           : > .gearbox-sources/roots
+          # A path source is relative to the product's description.
+          base="$(dirname "$PRODUCT_FILE")"
           # `|`, not a tab: a tab is whitespace to `read`, and the empty url and
           # rev of a path source would collapse into it.
           jq -r '.sources | to_entries[] | [.key, .value.kind, (.value.url // ""), (.value.rev // ""), (.value.at // "")] | join("|")' \
@@ -161,11 +194,14 @@ jobs:
               git -C ".gearbox-sources/$id" fetch -q --depth 1 "$url" "$rev"
               git -C ".gearbox-sources/$id" checkout -q FETCH_HEAD
               echo ".gearbox-sources/$id" >> .gearbox-sources/roots
-            elif [ "$(basename "$at")" = "$id" ]; then
-              echo "$at" >> .gearbox-sources/roots
             else
-              ln -s "../$at" ".gearbox-sources/$id"
-              echo ".gearbox-sources/$id" >> .gearbox-sources/roots
+              dir="$(realpath -m --relative-to=. "$base/$at")"
+              if [ "$(basename "$dir")" = "$id" ]; then
+                echo "$dir" >> .gearbox-sources/roots
+              else
+                ln -s "../$dir" ".gearbox-sources/$id"
+                echo ".gearbox-sources/$id" >> .gearbox-sources/roots
+              fi
             fi
           done
 
@@ -187,6 +223,17 @@ jobs:
       - name: Build and push the images
         run: |
           set -eu
+          # Two gaps of the generated tree, closed here until the engine does
+          # (constructorfabric/gearbox#12):
+          # build.sh passes `--ignorefile`, which no docker build takes -- a
+          # Dockerfile's own `<Dockerfile>.dockerignore` does the same; and the
+          # build stage has no protoc or cmake, which gRPC gears and zlib need.
+          for d in .gearbox/out/docker/*/; do
+            cp .gearbox/out/docker/.dockerignore "${d}Dockerfile.dockerignore"
+            grep -q protobuf-compiler "${d}Dockerfile" ||
+              sed -i '/^FROM rust:.* AS build$/a RUN apt-get update -qq \&\& apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev cmake \&\& rm -rf /var/lib/apt/lists/*' "${d}Dockerfile"
+          done
+          sed -i '/--ignorefile/d' .gearbox/out/docker/build.sh
           sh .gearbox/out/docker/build.sh
           short="$(echo "$GITHUB_SHA" | cut -c1-12)"
           echo '[]' > images.json
@@ -265,6 +312,7 @@ mod tests {
 
     fn params() -> Params {
         Params {
+            product_file: "products/sample/product.gdl".into(),
             product: "studio-web".into(),
             profile: "prod".into(),
             prefix: "ghcr.io/acme".into(),
@@ -280,7 +328,9 @@ mod tests {
         assert!(y.contains("REGISTRY: \"ghcr.io\""));
         assert!(y.contains("GEARBOX_REV: \"6d60603f8db36ef30ee50e1ff7008f3ee24a2501\""));
         assert!(y.contains("name: studio-build"));
+        assert!(y.contains("PRODUCT_FILE: \"products/sample/product.gdl\""));
         for placeholder in [
+            "@PRODUCT_FILE@",
             "@PRODUCT@",
             "@PROFILE@",
             "@REGISTRY@",
@@ -324,6 +374,24 @@ mod tests {
             f(&mut p);
             assert_eq!(render(&p).unwrap_err().field, field);
         }
+    }
+
+    #[test]
+    fn a_product_description_is_a_gdl_file_inside_the_repository() {
+        assert!(is_product_file("product.gdl"));
+        assert!(is_product_file("products/sample/product.gdl"));
+        for bad in [
+            "/etc/product.gdl",
+            "../x.gdl",
+            "a/../b.gdl",
+            "product.yml",
+            "a b.gdl",
+            "a//b.gdl",
+            "",
+        ] {
+            assert!(!is_product_file(bad), "{bad}");
+        }
+        assert_eq!(path("shop"), ".github/workflows/studio-build-shop.yml");
     }
 
     #[test]

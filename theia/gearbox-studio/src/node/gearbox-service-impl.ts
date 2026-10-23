@@ -69,6 +69,7 @@ import { LOCAL_POSTGRES, type BuildToolchain } from "../common/run-product";
 import type { DeployInfo } from "../common/deploy-product";
 import { deployInfo } from "./deploy-support";
 import { packChart } from "./chart-package";
+import { withBuildTools } from "../common/deploy-product";
 import { buildToolchain, containerOnPort, exec, fetchProtoc, portAnswers, startLocalPostgres, writeRunConfig } from "./run-support";
 import {
   LoadRecord,
@@ -1082,6 +1083,24 @@ export class GearboxServiceImpl implements GearboxService {
       throw new Error(`refusing to pack a chart outside a generated tree: ${dir}`);
     }
     return packChart(dir).toString("base64");
+  }
+
+  async prepareImageBuild(outRoot: string): Promise<void> {
+    const tree = path.resolve(outRoot);
+    if (!/\/\.gearbox\//.test(tree.replace(/\\/g, "/"))) {
+      throw new Error(`refusing to change files outside a generated tree: ${tree}`);
+    }
+    const docker = path.join(tree, "docker");
+    const ignore = await fs.promises.readFile(path.join(docker, ".dockerignore"), "utf8").catch(() => undefined);
+    for (const entry of await fs.promises.readdir(docker, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const file = path.join(docker, entry.name, "Dockerfile");
+      const text = await fs.promises.readFile(file, "utf8").catch(() => undefined);
+      if (text === undefined) continue;
+      const fixed = withBuildTools(text);
+      if (fixed !== text) await fs.promises.writeFile(file, fixed);
+      if (ignore !== undefined) await fs.promises.writeFile(`${file}.dockerignore`, ignore);
+    }
   }
 
   async writeRegistryConfig(host: string, token: string): Promise<string> {

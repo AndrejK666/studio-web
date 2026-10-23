@@ -239,12 +239,15 @@ pub struct BuildWorkflowRequest {
     /// The `kubernetes` profile it builds; default `prod`.
     #[serde(default)]
     pub profile: Option<String>,
+    /// The product's description in the repository; default `product.gdl`.
+    #[serde(default)]
+    pub product_file: Option<String>,
 }
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct BuildWorkflowDto {
-    /// `.github/workflows/studio-product.yml`.
+    /// `.github/workflows/studio-build-<product>.yml`.
     pub path: String,
     pub branch: String,
     pub pr_url: Option<String>,
@@ -647,9 +650,18 @@ async fn scaffold_build_workflow(
     Json(body): Json<BuildWorkflowRequest>,
 ) -> ApiResult<JsonBody<BuildWorkflowDto>> {
     let profile = body.profile.unwrap_or_else(|| "prod".to_owned());
+    let product_file = body
+        .product_file
+        .unwrap_or_else(|| "product.gdl".to_owned());
     let w = envs
         .0
-        .propose_workflow(&ctx, q.project_id, body.environment_id, &profile)
+        .propose_workflow(
+            &ctx,
+            q.project_id,
+            body.environment_id,
+            &profile,
+            &product_file,
+        )
         .await
         .map_err(problem)?;
     Ok(Json(BuildWorkflowDto {
@@ -1014,7 +1026,8 @@ pub fn register_routes(
         .summary("Propose the workflow that builds a project's product for an environment")
         .description(
             "For `?project_id=`: a pull request to the project's repository adding \
-             `.github/workflows/studio-product.yml` (ADR-0048 §5). It generates the profile with \
+             `.github/workflows/studio-build-<product>.yml` for `product_file` (default \
+             `product.gdl`; ADR-0048 §5). It generates the profile with \
              the Gearbox engine this Studio runs, pushes the images and the chart under the \
              environment's registry prefix, and uploads `studio-build.json`, which the sync \
              records as the run's build. Answers with the pull request.",

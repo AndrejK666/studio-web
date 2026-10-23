@@ -4386,7 +4386,11 @@ export const api = {
     }),
   /** Propose the workflow that builds the product for an environment, as a
    *  pull request to the project's repository. */
-  proposeBuildWorkflow: (token: string, projectId: string, body: { environment_id: string; profile: string }) =>
+  proposeBuildWorkflow: (
+    token: string,
+    projectId: string,
+    body: { environment_id: string; profile: string; product_file?: string },
+  ) =>
     request<{ path: string; branch: string; pr_url?: string | null }>(
       `/studio-environments/v1/build-workflows?project_id=${encodeURIComponent(projectId)}`,
       token,

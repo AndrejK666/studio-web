@@ -112,10 +112,12 @@ export function deployCommands(input: DeployInput): {
 } {
   const docker = join(input.outRoot, "docker");
   const context = join(docker, input.script.contextFromDocker);
+  // No `--ignorefile`, which build.sh passes and no docker build takes: the
+  // IDE backend gives each Dockerfile its own `Dockerfile.dockerignore`
+  // first (`prepareImageBuild`), which BuildKit reads instead.
   const build = input.script.images.map((image) =>
     [
       "docker build",
-      `--ignorefile ${q(join(docker, ".dockerignore"))}`,
       `-f ${q(join(docker, image.app, "Dockerfile"))}`,
       `-t ${registryImage(image.image, input.registry)}`,
       q(context),
@@ -320,6 +322,19 @@ export function deployBuildRequest(input: {
   readonly build: string;
 }): { readonly environment_id: string; readonly profile: string; readonly product: string; readonly build: string } {
   return { environment_id: input.environment.id, profile: input.profile, product: input.product, build: input.build };
+}
+
+/** The line a generated Dockerfile's build stage lacks: protoc and the
+ *  well-known types for the gRPC gears, cmake for zlib (`libz-ng-sys`).
+ *  Inserted after its `FROM rust:… AS build` until the engine writes it
+ *  (constructorfabric/gearbox#12). */
+export const BUILD_STAGE_TOOLS =
+  "RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev cmake && rm -rf /var/lib/apt/lists/*";
+
+/** A generated Dockerfile with the build stage's tools; unchanged when it has them. */
+export function withBuildTools(dockerfile: string): string {
+  if (dockerfile.includes("protobuf-compiler")) return dockerfile;
+  return dockerfile.replace(/^(FROM rust:\S+ AS build)\s*$/m, `$1\n${BUILD_STAGE_TOOLS}`);
 }
 
 /** What the server answered, as Deploy says it. */

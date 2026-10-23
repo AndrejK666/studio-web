@@ -977,7 +977,14 @@ impl EnvironmentService {
         project: Uuid,
         environment: Uuid,
         profile: &str,
+        product_file: &str,
     ) -> Result<WorkflowProposal> {
+        let product_file = product_file.trim().trim_start_matches("./").to_owned();
+        if !workflow::is_product_file(&product_file) {
+            return Err(Refusal::Invalid(format!(
+                "'{product_file}' is not a product description in the repository"
+            )));
+        }
         let org = self.organization_of_project(ctx, project).await?;
         let env = self.environment(ctx, org, environment).await?;
         if !env.admits(project) {
@@ -993,20 +1000,22 @@ impl EnvironmentService {
             })?;
         let project_key = project.to_string();
         let gdl = files
-            .read(ctx, &project_key, "product.gdl")
+            .read(ctx, &project_key, &product_file)
             .await
             .map_err(|e| Refusal::Invalid(format!("{e:#}")))?
             .ok_or_else(|| {
                 Refusal::Precondition(
                     "PRODUCT_NOT_SAVED",
-                    "the project's repository has no product.gdl yet: save the product first"
-                        .into(),
+                    format!(
+                        "the project's repository has no {product_file}: save the product first"
+                    ),
                 )
             })?;
         let product = workflow::product_id(&gdl)
-            .ok_or_else(|| Refusal::Invalid("product.gdl names no product id".into()))?;
+            .ok_or_else(|| Refusal::Invalid(format!("{product_file} names no product id")))?;
         let (engine_repo, engine_rev) = crate::product::sdk::engine_pin();
         let params = workflow::Params {
+            product_file: product_file.clone(),
             product,
             profile: profile.trim().to_owned(),
             prefix: env.registry.clone(),
@@ -1018,9 +1027,9 @@ impl EnvironmentService {
             .write(
                 ctx,
                 &project_key,
-                "studio/build-workflow",
+                &format!("studio/build-{}", params.product),
                 &[crate::product::port::DeclarationFile {
-                    path: workflow::PATH.to_owned(),
+                    path: workflow::path(&params.product),
                     content: text,
                 }],
                 &crate::product::port::PullRequestText {
@@ -1041,7 +1050,7 @@ impl EnvironmentService {
             .await
             .map_err(|e| Refusal::Invalid(format!("the workflow could not be proposed: {e:#}")))?;
         Ok(WorkflowProposal {
-            path: workflow::PATH.to_owned(),
+            path: workflow::path(&params.product),
             branch: written.branch,
             pr_url: written.pr_url,
         })

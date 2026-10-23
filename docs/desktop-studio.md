@@ -192,6 +192,10 @@ registry's token service for one that may push and pull only the product's
 image repositories and its chart, and it expires as the registry decides
 (minutes for ghcr.io and Harbor). The IDE backend removes the folder after 30
 minutes, and any older `studio-push-*` folder at the next Publish.
+**Build images** first changes the generated tree it builds: each
+application's Dockerfile gets protoc, the protobuf well-known types and cmake
+in its build stage, and a `Dockerfile.dockerignore` beside it, until the
+engine writes them (constructorfabric/gearbox#12).
 
 One more, when the member opens an Orca agent's terminal: the IDE streams it
 over the Orca runtime's WebSocket, which takes a paired device. A session is

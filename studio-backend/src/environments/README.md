@@ -23,7 +23,7 @@ All under `/studio-environments/v1`. An organization is named with
 | `GET /targets?project_id=` | member | the environments the project may deploy to, its namespace in each, its bindings |
 | `PUT /bindings?project_id=` | member | bind the product's kubernetes profiles to environments |
 | `POST /deployments?project_id=` | member | ask for a deploy: the chart (`.tgz`, base64), a published one (`chart_ref` `oci://<registry prefix>/…` and `chart_version`), or a build by id alone (`build`: its chart, images, commit and lock come from its record), or an earlier deployment again (`redeploy_of`), or `action: uninstall` of the release (`product`); refused into an environment with `promote_from` until the release succeeded there (ADR-0048); 202 `queued` or `awaiting_approval` |
-| `POST /build-workflows?project_id=` | member | propose `.github/workflows/studio-product.yml` to the project's repository as a pull request (ADR-0048 §5) |
+| `POST /build-workflows?project_id=` | member | propose `.github/workflows/studio-build-<product>.yml` for the product `product_file` describes (default `product.gdl`) to the project's repository as a pull request (ADR-0048 §5) |
 | `POST /environments/{environment_id}/push-tokens?project_id=` | member | a push-only token for named repositories under the environment's registry prefix, from the registry's token service (ADR-0048 §1); 201 |
 | `PUT`/`DELETE /config-secrets/{key}?project_id=&environment_id=` | member | set or remove a secret of the release's configuration there; the value goes to credstore and never comes back |
 | `GET /deployments` | member | the history, newest first; filter by `project_id`, `environment_id` |

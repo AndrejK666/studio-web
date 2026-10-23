@@ -463,6 +463,19 @@ export class GenerateWidget extends ReactWidget {
     });
   }
 
+  /** Build images: the tree made buildable first (see `prepareImageBuild`), then `docker build` per application. */
+  protected async buildImages(): Promise<void> {
+    const context = this.runContext();
+    if (context === undefined) return;
+    try {
+      await this.service.prepareImageBuild(context.cwd);
+    } catch (error) {
+      this.messages.error(`The generated Dockerfiles could not be prepared: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    await this.sendDeploy(this.deployCommandsFor()?.build ?? []);
+  }
+
   /** One step into the Deploy terminal: several commands run one after another, stopping at the first that fails. */
   protected async sendDeploy(commands: readonly string[]): Promise<void> {
     const context = this.runContext();
@@ -707,7 +720,7 @@ export class GenerateWidget extends ReactWidget {
         publishing={this.publishing}
         published={this.published !== undefined && this.deployTarget?.kind === "environment" && this.published.environmentId === this.deployTarget.id}
         {...(this.deployNote !== undefined ? { note: this.deployNote } : {})}
-        onBuildImages={() => void this.sendDeploy(this.deployCommandsFor()?.build ?? [])}
+        onBuildImages={() => void this.buildImages()}
         onPush={() => {
           const environment = targetEnvironment(this.deployTargets, this.deployTarget);
           if (environment?.registryLogin === true && this.environments?.pushToken !== undefined) void this.publish();

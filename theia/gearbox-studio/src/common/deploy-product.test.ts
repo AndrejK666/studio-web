@@ -7,6 +7,7 @@ import {
   parseBuildScript,
   publishPlan,
   publishStamp,
+  withBuildTools,
   parseTarget,
   registryImage,
   splitImage,
@@ -81,7 +82,7 @@ describe("the Deploy commands", () => {
   it("builds as build.sh would, without sh, and keeps images local without a registry", () => {
     const commands = deployCommands({ ...base, registry: undefined, kubeContext: "kind-local" });
     expect(commands.build[0]).toBe(
-      'docker build --ignorefile "C:/w/.gearbox/shop/prod/docker/.dockerignore" -f "C:/w/.gearbox/shop/prod/docker/api-gateway/Dockerfile" -t gbx-api-gateway:0.1.0 "C:/w/.gearbox/shop/prod/docker/../../../../.."',
+      'docker build -f "C:/w/.gearbox/shop/prod/docker/api-gateway/Dockerfile" -t gbx-api-gateway:0.1.0 "C:/w/.gearbox/shop/prod/docker/../../../../.."',
     );
     expect(commands.push).toEqual([]);
     expect(commands.install).toBe('helm upgrade --install shop "C:/w/.gearbox/shop/prod/helm/shop" --namespace shop --create-namespace --kube-context kind-local');
@@ -194,5 +195,19 @@ describe("publishing to an environment's registry (ADR-0048)", () => {
       product: "shop",
       build: "b-1-abc",
     });
+  });
+});
+
+describe("a generated Dockerfile's build stage", () => {
+  const generated = "# GENERATED\nFROM rust:1.97.0-bookworm AS build\nWORKDIR /src\nCOPY . .\n\nFROM debian:bookworm-slim\n";
+
+  it("gets protoc and cmake right after its FROM, once", () => {
+    const fixed = withBuildTools(generated);
+    expect(fixed.split("\n").slice(1, 3)).toEqual([
+      "FROM rust:1.97.0-bookworm AS build",
+      expect.stringContaining("protobuf-compiler cmake"),
+    ]);
+    expect(withBuildTools(fixed)).toBe(fixed);
+    expect(withBuildTools("FROM debian:bookworm-slim\n")).toBe("FROM debian:bookworm-slim\n");
   });
 });

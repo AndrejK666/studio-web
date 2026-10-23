@@ -542,6 +542,13 @@ export interface GearboxService {
    * `docker --config <dir>` and `helm push --registry-config <dir>/config.json`.
    */
   writeRegistryConfig(host: string, token: string): Promise<string>;
+  /**
+   * Make the generated tree buildable by `docker build` as it is today: each
+   * application's `Dockerfile.dockerignore` (build.sh's `--ignorefile` is no
+   * docker flag) and protoc and cmake in the build stage. Inside a generated
+   * tree only.
+   */
+  prepareImageBuild(outRoot: string): Promise<void>;
 
   /** Constructor Studio: the commit checked out where `file` is, when it is in a git checkout. */
   headCommitOf(file: string): Promise<string | undefined>;

@@ -539,6 +539,7 @@ request	POST /studio-domain-model/v1/types/{}/fields	name	String	required
 request	POST /studio-domain-model/v1/types/{}/fields	required	bool	optional
 request	POST /studio-domain-model/v1/types/{}/fields	type	String	required
 request	POST /studio-environments/v1/build-workflows	environment_id	Uuid	required
+request	POST /studio-environments/v1/build-workflows	product_file	String	optional
 request	POST /studio-environments/v1/build-workflows	profile	String	optional
 request	POST /studio-environments/v1/deployments	action	String	optional
 request	POST /studio-environments/v1/deployments	build	String	optional

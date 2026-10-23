@@ -251,6 +251,7 @@ export function BuildWorkflowProposal({
   const withRegistry = environments.filter((e) => e.registry.includes("/"));
   const [envId, setEnvId] = useState(withRegistry[0]?.id ?? "");
   const [profile, setProfile] = useState(profiles[0] ?? "prod");
+  const [productFile, setProductFile] = useState("product.gdl");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ pr_url?: string | null; branch: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -259,7 +260,7 @@ export function BuildWorkflowProposal({
     <div className="card" data-build-workflow>
       <h3>Build in CI</h3>
       <p className="hint">
-        A pull request adding <code>.github/workflows/studio-product.yml</code>: on every push to main it generates the profile
+        A pull request adding <code>.github/workflows/studio-build-&lt;product&gt;.yml</code>: on every push to main it generates the profile
         with the Gearbox engine this Studio runs, pushes the images and the chart under the environment&apos;s registry, and
         tells Studio what it published. Each run then appears under Deploy a build.
       </p>
@@ -271,6 +272,13 @@ export function BuildWorkflowProposal({
             </option>
           ))}
         </select>
+        <input
+          value={productFile}
+          onChange={(e) => setProductFile(e.target.value)}
+          aria-label="Product description"
+          title="The product's description in the repository: product.gdl, or products/<name>/product.gdl"
+          placeholder="product.gdl"
+        />
         <select value={profile} onChange={(e) => setProfile(e.target.value)} aria-label="Profile">
           {(profiles.length ? profiles : ["prod"]).map((p) => (
             <option key={p}>{p}</option>
@@ -283,7 +291,13 @@ export function BuildWorkflowProposal({
             setBusy(true);
             setError(null);
             try {
-              setResult(await api.proposeBuildWorkflow(token, projectId, { environment_id: envId, profile }));
+              setResult(
+                await api.proposeBuildWorkflow(token, projectId, {
+                  environment_id: envId,
+                  profile,
+                  product_file: productFile.trim() || "product.gdl",
+                }),
+              );
             } catch (e) {
               setError(errText(e));
             } finally {
