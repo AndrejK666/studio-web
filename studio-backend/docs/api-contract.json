@@ -3548,6 +3548,40 @@
     },
     {
       "method": "POST",
+      "path": "/studio-connector/v1/oauth/complete",
+      "operation_id": "studio_connector.confirm_sign_in",
+      "tag": "StudioConnectors",
+      "summary": "Finish a connection made by signing in",
+      "authenticated": true,
+      "request": "ConfirmSignInRequest",
+      "responses": [
+        "ConnectionTestDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-connector/v1/oauth/start",
+      "operation_id": "studio_connector.start_sign_in",
+      "tag": "StudioConnectors",
+      "summary": "Start a connection made by signing in",
+      "authenticated": true,
+      "request": "StartSignInRequest",
+      "responses": [
+        "SignInStartedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-connector/v1/probe",
       "operation_id": "studio_connector.probe_connection",
       "tag": "StudioConnectors",

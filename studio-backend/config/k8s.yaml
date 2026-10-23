@@ -767,6 +767,19 @@ gears:
   studio-notify:
     config: {}
 
+  # Constructor Research (ADR-0049): a connection made by signing in to the
+  # Constructor identity provider as the client Studio is registered as there.
+  # Until STUDIO_RESEARCH_CLIENT_ID and the rest are set, the driver is not
+  # registered and Constructor Research is not offered. The redirect URI is the
+  # portal's callback page, `https://<portal>/connections/oauth/callback`.
+  research-connector-plugin:
+    config:
+      issuer: "${STUDIO_RESEARCH_ISSUER:-}"
+      client_id: "${STUDIO_RESEARCH_CLIENT_ID:-}"
+      client_secret: "${STUDIO_RESEARCH_CLIENT_SECRET:-}"
+      redirect_uri: "${STUDIO_RESEARCH_REDIRECT_URI:-}"
+      api_url: "${STUDIO_RESEARCH_API_URL:-}"
+
   mini-chat:
     database:
       server: "pg_main"

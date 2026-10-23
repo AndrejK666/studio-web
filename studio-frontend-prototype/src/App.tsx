@@ -138,6 +138,7 @@ import { ProjectDeploys } from "./project-deploys-tab";
 import { KubeconfigField } from "./kubeconfig-field";
 import { kubeconfigServer } from "./kubeconfig";
 import { environmentsByConnection } from "./environments";
+import { SIGN_IN_CALLBACK_PATH, SignInCallback, startConnectionSignIn } from "./sign-in-connection";
 import { GEAR_REPOSITORY } from "./gear-repositories";
 import { OrgCosts } from "./costs-screen";
 import { PlatformSources } from "./platform-sources";
@@ -381,6 +382,11 @@ export function App() {
         }}
       />
     );
+  }
+  // Back from a connection's sign-in (ADR-0049): finish it before anything
+  // else reads the address.
+  if (window.location.pathname === SIGN_IN_CALLBACK_PATH) {
+    return <SignInCallback token={token} />;
   }
   return (
     // Wrapped at the top so one read of the gear serves every list below, and
@@ -7238,6 +7244,13 @@ const CATEGORIES: { key: string; title: string; blurb: string }[] = [
       "from: the address and username:token. Only the server uses it -- connect it for the " +
       "organization, not personally.",
   },
+  {
+    key: "compute",
+    title: "Compute",
+    blurb:
+      "Platforms that build and run your products on hardware they allocate: Constructor " +
+      "Research. You sign in with your Constructor account; no password or key is pasted here.",
+  },
 ];
 
 /** Where a connection is attached, and how widely its token is readable.
@@ -8325,6 +8338,8 @@ function AddConnector({
                       // An environment takes only a cluster the organization
                       // holds, so a cluster starts organization-wide.
                       if (p.provider === "kubernetes" || p.provider === "registry") setReach("organization");
+                      // A signed-in account is the person's own (ADR-0049 §5).
+                      if (p.sign_in) setReach("personal");
                     }}
                   >
                     <span className="conn-logo-slot" aria-hidden>
@@ -8373,6 +8388,54 @@ function AddConnector({
       setBusy(null);
     }
   };
+
+  // Signed in to, not pasted: no address to type and no credential field. The
+  // account is the person's own, so it is kept to them.
+  if (picked.sign_in) {
+    const signIn = async () => {
+      setBusy("save");
+      setError(null);
+      try {
+        await startConnectionSignIn(token, {
+          provider: picked.provider,
+          label: label.trim(),
+          scope: "personal",
+          owner_tenant_id: workspace.id,
+        });
+      } catch (e) {
+        setError(errText(e));
+        setBusy(null);
+      }
+    };
+    return (
+      <div className="card conn-picker">
+        <h2>Connect {picked.display_name}</h2>
+        <p className="hint">
+          You will sign in with your Constructor account — Google, Microsoft or a password, the
+          way you always do. Studio never sees the password; it keeps only an access key you can
+          revoke by removing this connection.
+        </p>
+        <label>Label</label>
+        <input
+          placeholder={`e.g. My ${picked.display_name}`}
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+        />
+        <p className="hint">Only you can use it: it is your own account.</p>
+        {error && <p className="error">{error}</p>}
+        <div className="row">
+          <button onClick={reset}>← Back</button>
+          <button className="ghost" onClick={onClose}>
+            Close
+          </button>
+          <span className="grow" />
+          <button className="primary" disabled={!label.trim() || busy !== null} onClick={() => void signIn()}>
+            {busy === "save" ? "Opening sign-in…" : "Sign in with Constructor"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card conn-picker">

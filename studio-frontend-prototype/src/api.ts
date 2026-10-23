@@ -1444,6 +1444,10 @@ export interface ConnectorProvider {
   /** True when a connection may be stored without a credential: a public
    *  gear repository. */
   token_optional?: boolean;
+  /** True when a connection is made by signing in to the provider's identity
+   *  provider rather than with a pasted credential: Constructor Research
+   *  (ADR-0049). */
+  sign_in?: boolean;
 }
 
 /** One channel a notification connection can post to.
@@ -4485,6 +4489,25 @@ export const api = {
     },
   ) =>
     request<ConnectionTest>("/studio-connector/v1/connections", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** First half of a connection made by signing in: where to send the person.
+   *  They come back to `/connections/oauth/callback` with `state` and `code`. */
+  startSignIn: (
+    token: string,
+    body: { provider: string; label: string; base_url?: string; scope?: string; owner_tenant_id?: string },
+  ) =>
+    request<{ authorize_url: string }>("/studio-connector/v1/oauth/start", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Second half: what the identity provider sent back becomes a stored,
+   *  verified connection. Only the person who started the sign-in can finish it. */
+  completeSignIn: (token: string, body: { state: string; code: string }) =>
+    request<ConnectionTest>("/studio-connector/v1/oauth/complete", token, {
       method: "POST",
       body: JSON.stringify(body),
     }),

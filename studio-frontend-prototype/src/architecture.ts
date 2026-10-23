@@ -768,8 +768,8 @@ export const SURFACES: Surface[] = [
     id: "connections",
     area: "organization",
     title: "Connections",
-    does: "Connect GitHub, GitLab, chats, LLM vendors and clusters once for the whole organization, and see which environments use each cluster.",
-    components: ["ConnectorsView", "ConnectionList", "AddConnector", "EditConnection"],
+    does: "Connect GitHub, GitLab, chats, LLM vendors and clusters once for the whole organization, sign in to Constructor Research, and see which environments use each cluster.",
+    components: ["ConnectorsView", "ConnectionList", "AddConnector", "EditConnection", "SignInCallback"],
     gears: ["studio-connector", "studio-environments"],
   },
   {
