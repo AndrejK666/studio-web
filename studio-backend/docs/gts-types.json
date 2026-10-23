@@ -35,6 +35,10 @@
     {
       "gear": "studio-projects",
       "type_id": "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~"
+    },
+    {
+      "gear": "studio-projects",
+      "type_id": "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.types.v1~"
     }
   ],
   "plugin_instance_segments": [

@@ -557,6 +557,14 @@ export const SURFACES: Surface[] = [
     gears: ["studio-documents", "studio-spec-quality"],
   },
   {
+    id: "project-types",
+    area: "portal",
+    title: "Project types",
+    does: "Decide which kinds of project an organization or a workspace offers, what each creates and which tabs its projects show.",
+    components: ["ProjectTypesTab"],
+    gears: ["account-management", "studio-kits"],
+  },
+  {
     id: "project-overview",
     area: "project",
     title: "Overview",

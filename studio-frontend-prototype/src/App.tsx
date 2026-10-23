@@ -168,6 +168,8 @@ import {
   stepBlocker,
   type RepoMode,
 } from "./project-form";
+import { ProjectTypesTab } from "./project-types-editor";
+import { BUILTIN_TYPES, landingTab, parseTypes, typeOfProject, visibleTabs, type ProjectType } from "./project-types";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -982,9 +984,13 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // "opening a different project", and resetting there would undo the restore
   // on the very first render.
   const tabbedProject = useRef(restoredPlace.crumb?.nestedId);
+  /** Set when a project was just opened: once its type is known it lands on
+   *  the type's first tab rather than on Overview. */
+  const landOnType = useRef(false);
   useEffect(() => {
     if (tabbedProject.current === crumb.nestedId) return;
     tabbedProject.current = crumb.nestedId;
+    landOnType.current = true;
     setProjectTab("overview");
   }, [crumb.nestedId]);
   // And a different workspace starts on its Projects, for the same reason: the
@@ -1719,6 +1725,34 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // When a project is open, the sidebar gains its tab nav (Overview / Artifacts
   // / Spec Quality / Team) so the tabs live on the panel rather than the page.
   const projectOpen = !adminOpen && !activeSpace && view === "projects" && !!crumb.nestedId;
+  // The open project's type (project-types.ts) decides which of its tabs show.
+  // Read on the project itself: the types are inherited metadata, so the
+  // project resolves its workspace's or its organization's. Until it is known,
+  // and when it cannot be read, every tab shows — hiding is never the fallback.
+  const [projectType, setProjectType] = useState<ProjectType | null>(null);
+  useEffect(() => {
+    setProjectType(null);
+    const id = crumb.nestedId;
+    if (!id) return;
+    let alive = true;
+    Promise.all([api.projectConfig(token, id), api.projectTypes(token, id)])
+      .then(([cfg, raw]) => {
+        if (alive) setProjectType(typeOfProject(cfg, parseTypes(raw, PROJECT_TABS.map((t) => t.id))));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [crumb.nestedId, token]);
+  const projectTabs = visibleTabs(PROJECT_TABS, projectType);
+  useEffect(() => {
+    if (!projectType) return;
+    const fresh = landOnType.current;
+    landOnType.current = false;
+    if (fresh || !projectTabs.some((t) => t.id === projectTab)) setProjectTab(landingTab(PROJECT_TABS, projectType));
+    // Only when the type arrives: a tab chosen afterwards is the person's.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectType]);
   /** A workspace is open when one is picked and no project inside it is. The
    *  two are mutually exclusive, so exactly one band ever shows. */
   const workspaceOpen =
@@ -2457,7 +2491,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         <nav className="project-sections" aria-label="Project sections">
           <OrderedSections
             prefKey={PREF_PROJECT_TAB_ORDER}
-            tabs={PROJECT_TABS}
+            tabs={projectTabs}
             active={projectTab}
             onOpen={setProjectTab}
             icon={(name) => <NavIcon name={name} />}
@@ -3708,7 +3742,7 @@ function ProjectsView({
           <WorkspaceHeader workspace={root} />
           <WorkspaceCatalogue
             token={token}
-            workspaceId={root.id}
+            workspace={root}
             tab={workspaceTab}
           />
         </>
@@ -3736,7 +3770,7 @@ function ProjectsView({
    had produced zero rows against one project-level document, which is what a
    section with no reader looks like. Authoring moved to the project's Documents
    section, where the writing actually happens. */
-type WorkspaceTab = "projects" | "types" | "process";
+type WorkspaceTab = "projects" | "ptypes" | "types" | "process";
 
 /** The workspace's page header, shown above EVERY one of its sections — the
  *  project screen does exactly this with its own name, and the level above
@@ -3768,17 +3802,18 @@ function WorkspaceHeader({
 
 const WORKSPACE_TABS: { id: WorkspaceTab; icon: string; label: string; hint: string }[] = [
   { id: "projects", icon: "grid", label: "Projects", hint: "The projects in this workspace" },
+  { id: "ptypes", icon: "layers", label: "Project types", hint: "What New project offers and which tabs each kind shows" },
   { id: "types", icon: "file", label: "Document types", hint: "Templates, section checklists and rules" },
   { id: "process", icon: "activity", label: "Process", hint: "The journey's stages and the capability vocabulary" },
 ];
 
 function WorkspaceCatalogue({
   token,
-  workspaceId,
+  workspace,
   tab,
 }: {
   token: string;
-  workspaceId: string;
+  workspace: Workspace;
   /* No studioTarget: the only screen here that handed off to the IDE was the
      Documents one, and documents are authored in a project now. */
   /** Which catalogue the band selected. "projects" never reaches here — the
@@ -3786,8 +3821,10 @@ function WorkspaceCatalogue({
    *  a project. */
   tab: Exclude<WorkspaceTab, "projects">;
 }) {
+  const workspaceId = workspace.id;
   return (
     <div>
+      {tab === "ptypes" && <ProjectTypesTab token={token} workspace={workspace} tabs={PROJECT_TABS} />}
       {tab === "types" && <DocumentTypesTab token={token} workspaceId={workspaceId} />}
       {tab === "process" && <ProcessCatalogTab token={token} workspaceId={workspaceId} />}
     </div>
@@ -3834,7 +3871,15 @@ function WorkspaceProjects({
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newKind, setNewKind] = useState<import("./api").ProjectKind>("new_gears");
+  // The types this workspace offers (project-types.ts), read when the card
+  // opens; until then, and when nobody set any, the built-in three.
+  const [offeredTypes, setOfferedTypes] = useState<ProjectType[]>(BUILTIN_TYPES);
+  const [newTypeKey, setNewTypeKey] = useState<string | null>(null);
+  const newType = offeredTypes.find((t) => t.key === newTypeKey) ?? offeredTypes[0];
+  // What creating it provisions: the type's recipe. Everything below the
+  // picker still branches on this, so a type only chooses among the roads the
+  // card already knows.
+  const newKind = newType.recipe;
   // What the new project takes from the shared catalogue. A kit is a component
   // like any other, and a project acquires one the same way it acquires
   // anything else: by picking it from the list, not by naming a repository.
@@ -4043,6 +4088,31 @@ function WorkspaceProjects({
     };
   }, [creating, newKind, repoMode, connId, repoSearch, token, workspace.id]);
 
+  useEffect(() => {
+    if (!creating) return;
+    let alive = true;
+    api
+      .projectTypes(token, workspace.id)
+      .then((raw) => {
+        if (!alive) return;
+        const types = parseTypes(raw, PROJECT_TABS.map((t) => t.id));
+        setOfferedTypes(types);
+        setNewTypeKey((k) => (k && types.some((t) => t.key === k) ? k : types[0].key));
+        setKitSel(new Set(types[0].kits ?? []));
+      })
+      // The built-in types stay offered: a card that cannot read the
+      // workspace's own list must still create a project.
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [creating, token, workspace.id]);
+
+  const pickType = (t: ProjectType) => {
+    setNewTypeKey(t.key);
+    setKitSel(new Set(t.kits ?? []));
+  };
+
   const toggleKit = (slug: string) =>
     setKitSel((prev) => {
       const next = new Set(prev);
@@ -4136,6 +4206,7 @@ function WorkspaceProjects({
           ...cfg,
           mode,
           kind: newKind,
+          type: newType.key,
           stages: normalizeStages(cfg.stages ?? [], stageCatalogue),
           status: cfg.status ?? "draft",
           brief: brief.trim() || cfg.brief,
@@ -4433,6 +4504,7 @@ function WorkspaceProjects({
     setBrief("");
     setStep(0);
     setKitSel(new Set());
+    setNewTypeKey(null);
     setRepoMode("new");
     setConnId("");
     setRepoOwner("");
@@ -4552,15 +4624,9 @@ function WorkspaceProjects({
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Project type</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {(
-                    [
-                      ["new_gears", "New Gears", "Build new gears. Create a new repo, or use an existing gear store."],
-                      ["product", "Product from Gears", "Assemble a product from gears. A new repository is created."],
-                      ["existing", "Existing Gears app", "Import a gears-based app already built. Attach its repository."],
-                    ] as [import("./api").ProjectKind, string, string][]
-                  ).map(([k, title, desc]) => (
+                  {offeredTypes.map((t) => (
                     <label
-                      key={k}
+                      key={t.key}
                       style={{
                         display: "flex",
                         gap: 8,
@@ -4568,20 +4634,20 @@ function WorkspaceProjects({
                         padding: "8px 10px",
                         border: "1px solid var(--border)",
                         borderRadius: 8,
-                        background: newKind === k ? "var(--accent)" : "transparent",
+                        background: newType.key === t.key ? "var(--accent)" : "transparent",
                         cursor: "pointer",
                       }}
                     >
                       <input
                         type="radio"
                         name="pkind"
-                        checked={newKind === k}
-                        onChange={() => setNewKind(k)}
+                        checked={newType.key === t.key}
+                        onChange={() => pickType(t)}
                         style={{ marginTop: 2 }}
                       />
                       <span>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
-                        <div style={{ fontSize: 11, opacity: 0.7 }}>{desc}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t.title}</div>
+                        <div style={{ fontSize: 11, opacity: 0.7 }}>{t.description}</div>
                       </span>
                     </label>
                   ))}
