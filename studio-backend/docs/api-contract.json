@@ -4315,6 +4315,25 @@
     },
     {
       "method": "POST",
+      "path": "/studio-environments/v1/builds",
+      "operation_id": "studio_environments.start_build",
+      "tag": "",
+      "summary": "Build a project's product in an environment's cluster",
+      "authenticated": true,
+      "request": "StudioBuildRequest",
+      "responses": [
+        "StudioBuildDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-environments/v1/deployments",
       "operation_id": "studio_environments.create_deployment",
       "tag": "",

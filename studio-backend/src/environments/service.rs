@@ -8,6 +8,7 @@ use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::build;
 use super::deploy::{self, DeployPayload, Rollout};
 use super::model::{
     self, Binding, BindingList, ConfigSecret, DeployImage, Deployment, DeploymentAction,
@@ -94,6 +95,14 @@ pub struct DeployRequest {
     /// rollback, or a promotion to the next environment. Takes the place of
     /// the chart, the images and the build.
     pub redeploy_of: Option<Uuid>,
+}
+
+/// A build Studio was asked to run.
+#[derive(Debug, Clone)]
+pub struct BuildStarted {
+    pub build_id: String,
+    pub run_id: Uuid,
+    pub namespace: String,
 }
 
 /// The build workflow as proposed.
@@ -1053,6 +1062,142 @@ impl EnvironmentService {
             path: workflow::path(&params.product),
             branch: written.branch,
             pr_url: written.pr_url,
+        })
+    }
+
+    /// Build the product in the environment's cluster (ADR-0048 §9): a run
+    /// that starts a Job in the project's namespace there, which clones,
+    /// generates, builds and pushes, and is watched until it ends. The build
+    /// is recorded as running now, as the member who asked.
+    pub async fn request_build(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        environment: Uuid,
+        profile: &str,
+        product_file: &str,
+        git_ref: Option<String>,
+    ) -> Result<BuildStarted> {
+        let org = self.organization_of_project(ctx, project).await?;
+        let env = self.environment(ctx, org, environment).await?;
+        if !env.admits(project) {
+            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
+        }
+        let Some(registry_connection_id) = env.registry_connection_id else {
+            return Err(Refusal::Precondition(
+                "ENVIRONMENT_HAS_NO_REGISTRY",
+                format!(
+                    "environment '{}' has no registry login: a build pushes its images there",
+                    env.name
+                ),
+            ));
+        };
+        let product_file = product_file.trim().trim_start_matches("./").to_owned();
+        if !workflow::is_product_file(&product_file) {
+            return Err(Refusal::Invalid(format!(
+                "'{product_file}' is not a product description in the repository"
+            )));
+        }
+        let profile = profile.trim().to_owned();
+        if profile.is_empty()
+            || !profile
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(Refusal::Invalid(format!("'{profile}' is not a profile id")));
+        }
+        let git_ref = git_ref
+            .map(|r| r.trim().to_owned())
+            .filter(|r| !r.is_empty());
+        if let Some(r) = &git_ref
+            && (r.len() > 200
+                || r.starts_with('-')
+                || !r
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'/')))
+        {
+            return Err(Refusal::Invalid(format!(
+                "'{r}' is not a branch, tag or commit"
+            )));
+        }
+        let builder_image = build::builder_image().ok_or_else(|| {
+            Refusal::Unavailable(
+                "this Studio does not know its own image to build with: set STUDIO_BUILDER_IMAGE"
+                    .into(),
+            )
+        })?;
+        let files = self
+            .hub
+            .get::<dyn crate::product::port::ProjectFiles>()
+            .map_err(|_| {
+                Refusal::Unavailable(
+                    "the project's repository is not available in this deployment".into(),
+                )
+            })?;
+        let target = files
+            .repository(ctx, &project.to_string())
+            .await
+            .map_err(|e| Refusal::Invalid(format!("{e:#}")))?;
+        let connection_id = target.connection_id.ok_or_else(|| {
+            Refusal::Precondition(
+                "REPOSITORY_HAS_NO_CONNECTION",
+                "the project's repository is reached through no connection the server can use"
+                    .into(),
+            )
+        })?;
+        let project_name = self.store.tenant_name(ctx, project).await;
+        let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
+        let build_id = format!("studio-{}", &Uuid::new_v4().simple().to_string()[..12]);
+        let payload = build::BuildPayload {
+            build_id: build_id.clone(),
+            organization_id: org,
+            project_id: project,
+            connection_id: env.connection_id,
+            registry_connection_id,
+            namespace: namespace.clone(),
+            prefix: env.registry.clone(),
+            profile: profile.clone(),
+            product_file,
+            repo: build::RepoRef {
+                tenant: target.tenant,
+                connection_id,
+                repo: target.repo.clone(),
+                branch: target.base_branch.clone(),
+            },
+            git_ref,
+            builder_image,
+        };
+        if let Ok(builds) = self
+            .hub
+            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
+        {
+            builds
+                .record(
+                    ctx,
+                    &project.to_string(),
+                    &crate::artifact_ingest::port::BuildOutcome::running(
+                        &build_id,
+                        &target.repo,
+                        &profile,
+                    ),
+                )
+                .await
+                .map_err(|e| Refusal::Internal(format!("{e:#}")))?;
+        }
+        let run_id = build::enqueue(
+            &self.hub,
+            org,
+            build::TASK_TYPE,
+            serde_json::to_value(&payload).map_err(anyhow::Error::from)?,
+            &format!("build:{namespace}"),
+            &build_id,
+        )
+        .await
+        .map_err(|e| Refusal::Unavailable(format!("the build could not be queued: {e:#}")))?;
+        Ok(BuildStarted {
+            build_id,
+            run_id,
+            namespace,
         })
     }
 

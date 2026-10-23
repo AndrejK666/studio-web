@@ -2943,6 +2943,38 @@ impl super::port::BuildRecords for IngestService {
             .find(|n| n.instance_id == instance)
             .map(|n| super::port::BuildRecord::of(&n.value)))
     }
+
+    async fn record(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        o: &super::port::BuildOutcome,
+    ) -> anyhow::Result<()> {
+        let report = super::builds::BuildReport {
+            build_id: o.build_id.clone(),
+            r#where: "studio".into(),
+            action: Some("build".into()),
+            status: o.status.clone(),
+            product: o.product.clone(),
+            profile: o.profile.clone(),
+            repository: o.repository.clone(),
+            commit: o.commit.clone(),
+            branch: None,
+            lock_hash: o.lock_hash.clone(),
+            started_at: None,
+            finished_at: None,
+            failure: o.failure.clone(),
+            failure_step: o.failure_step.clone(),
+            outputs: o.images.iter().map(|(_, i)| i.clone()).collect(),
+            images: o.images.clone(),
+            chart_ref: o.chart_ref.clone(),
+            chart_version: o.chart_version.clone(),
+        };
+        self.record_build(ctx, project_id, None, &report)
+            .await
+            .map(|_| ())
+            .map_err(|e| anyhow!("the build could not be recorded: {e:?}"))
+    }
 }
 
 /// The same store read and the same scope rule as the count beside it — the

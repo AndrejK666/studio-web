@@ -232,6 +232,34 @@ pub struct ConfigSecretRequest {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
+pub struct StudioBuildRequest {
+    /// The environment whose cluster builds it and whose registry gets it.
+    #[schema(value_type = String)]
+    pub environment_id: Uuid,
+    /// The `kubernetes` profile it builds; default `prod`.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// The product's description in the repository; default `product.gdl`.
+    #[serde(default)]
+    pub product_file: Option<String>,
+    /// A branch, tag or commit; the repository's branch when absent.
+    #[serde(default, rename = "ref")]
+    pub git_ref: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct StudioBuildDto {
+    /// The build's id, as the project's Builds list names it.
+    pub build_id: String,
+    #[schema(value_type = String)]
+    pub run_id: Uuid,
+    /// Where it runs.
+    pub namespace: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
 pub struct BuildWorkflowRequest {
     /// The environment whose registry the workflow publishes to.
     #[schema(value_type = String)]
@@ -643,6 +671,34 @@ async fn get_project_targets(
     }))
 }
 
+async fn start_build(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+    Json(body): Json<StudioBuildRequest>,
+) -> ApiResult<(StatusCode, JsonBody<StudioBuildDto>)> {
+    let started = envs
+        .0
+        .request_build(
+            &ctx,
+            q.project_id,
+            body.environment_id,
+            body.profile.as_deref().unwrap_or("prod"),
+            body.product_file.as_deref().unwrap_or("product.gdl"),
+            body.git_ref,
+        )
+        .await
+        .map_err(problem)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(StudioBuildDto {
+            build_id: started.build_id,
+            run_id: started.run_id,
+            namespace: started.namespace,
+        }),
+    ))
+}
+
 async fn scaffold_build_workflow(
     Extension(ctx): Extension<SecurityContext>,
     Extension(envs): Extension<Environments>,
@@ -1019,6 +1075,33 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-environments/v1/builds")
+        .operation_id("studio_environments.start_build")
+        .summary("Build a project's product in an environment's cluster")
+        .description(
+            "For `?project_id=` (ADR-0048 §9). Studio starts a Job in the project's namespace \
+             of the environment's cluster: it clones the product's repository and gear \
+             sources, generates the profile with the Gearbox engine this Studio runs, builds \
+             the images with rootless BuildKit, and pushes them and the chart under the \
+             environment's registry. Answers 202 with the build's id, recorded as running in \
+             the project's builds and as passed or failed when the Job ends; a passed build \
+             can then be deployed by id.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("project_id", true, "The project", "string")
+        .json_request::<StudioBuildRequest>(openapi, "What to build, where")
+        .handler(start_build)
+        .json_response_with_schema::<StudioBuildDto>(openapi, StatusCode::ACCEPTED, "Started")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::post("/studio-environments/v1/build-workflows")

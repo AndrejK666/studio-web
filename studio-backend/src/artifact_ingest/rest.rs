@@ -762,10 +762,9 @@ async fn upsert_build(
     let (_, workspace) = reachable_project(&ingest, &ctx, project_id).await?;
     // A pipeline's build is recorded from the manifest it uploaded, by the
     // sync; nobody reports one in its name.
-    if req.r#where.trim() == "ci" {
+    if super::builds::RECORDED_BY_STUDIO.contains(&req.r#where.trim()) {
         return Err(build_problem(super::builds::BuildRefusal::Invalid(
-            "a CI build is recorded from its pipeline's studio-build.json; report desktop or session"
-                .into(),
+            "a ci or studio build is recorded by Studio itself; report desktop or session".into(),
         )));
     }
     let report = super::builds::BuildReport {

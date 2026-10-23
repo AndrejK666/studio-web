@@ -541,6 +541,10 @@ request	POST /studio-domain-model/v1/types/{}/fields	type	String	required
 request	POST /studio-environments/v1/build-workflows	environment_id	Uuid	required
 request	POST /studio-environments/v1/build-workflows	product_file	String	optional
 request	POST /studio-environments/v1/build-workflows	profile	String	optional
+request	POST /studio-environments/v1/builds	environment_id	Uuid	required
+request	POST /studio-environments/v1/builds	product_file	String	optional
+request	POST /studio-environments/v1/builds	profile	String	optional
+request	POST /studio-environments/v1/builds	ref	String	optional
 request	POST /studio-environments/v1/deployments	action	String	optional
 request	POST /studio-environments/v1/deployments	build	String	optional
 request	POST /studio-environments/v1/deployments	chart	String	optional
@@ -4338,6 +4342,9 @@ response	POST /studio-domain-model/v1/types/{}/fields	version	u64	always
 response	POST /studio-environments/v1/build-workflows	branch	String	always
 response	POST /studio-environments/v1/build-workflows	path	String	always
 response	POST /studio-environments/v1/build-workflows	pr_url	String	optional
+response	POST /studio-environments/v1/builds	build_id	String	always
+response	POST /studio-environments/v1/builds	namespace	String	always
+response	POST /studio-environments/v1/builds	run_id	Uuid	always
 response	POST /studio-environments/v1/deployments	action	String	always
 response	POST /studio-environments/v1/deployments	build	String	optional
 response	POST /studio-environments/v1/deployments	chart_ref	String	optional
@@ -5548,6 +5555,7 @@ route	POST /studio-domain-model/v1/query
 route	POST /studio-domain-model/v1/relations
 route	POST /studio-domain-model/v1/types/{}/fields
 route	POST /studio-environments/v1/build-workflows
+route	POST /studio-environments/v1/builds
 route	POST /studio-environments/v1/deployments
 route	POST /studio-environments/v1/deployments/{}/decisions
 route	POST /studio-environments/v1/environments

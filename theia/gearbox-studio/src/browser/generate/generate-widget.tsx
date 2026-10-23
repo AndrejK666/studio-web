@@ -174,6 +174,9 @@ export class GenerateWidget extends ReactWidget {
       }
     | undefined;
   protected publishing = false;
+  /** The build Studio runs in an environment's cluster for this product (ADR-0048 §9): Deploy names it. */
+  protected studioBuild: { readonly environmentId: string; readonly buildId: string } | undefined;
+  protected startingBuild = false;
   protected fetchingProtoc = false;
 
   protected selected: string | undefined;
@@ -554,9 +557,55 @@ export class GenerateWidget extends ReactWidget {
     }
   }
 
+  /**
+   * Build in Studio: the server runs the build as a Job in the environment's
+   * cluster, from what is pushed to this branch, and records it; Deploy then
+   * names it.
+   */
+  protected async buildInStudio(): Promise<void> {
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    const source = this.environments;
+    const file = this.product.current.open?.path;
+    if (environment === undefined || source?.startBuild === undefined || this.deployTargets === undefined || file === undefined) return;
+    const where = await this.service.repositoryPathOf(file);
+    if (where === undefined) {
+      this.messages.error("This product is not in a git repository Studio can build from.");
+      return;
+    }
+    const ok = await new ConfirmDialog({
+      title: `Build in ${environment.name}?`,
+      msg:
+        `Studio builds ${where.path} as pushed to ${where.branch ?? "the repository's branch"} -- push your changes first -- ` +
+        `in a Job in ${environment.namespace} on ${environment.name}'s cluster, and pushes the images and the chart to ${environment.registry}.`,
+      ok: "Build",
+    }).open();
+    if (ok !== true) return;
+    this.startingBuild = true;
+    this.update();
+    try {
+      const started = await source.startBuild(this.deployTargets.projectId, {
+        environment_id: environment.id,
+        profile: this.product.current.profile ?? "prod",
+        product_file: where.path,
+        ...(where.branch !== undefined ? { ref: where.branch } : {}),
+      });
+      this.studioBuild = { environmentId: environment.id, buildId: started.build_id };
+      this.deployNote =
+        `Studio is building ${started.build_id} in ${started.namespace} (about ten minutes; the project's Builds tab shows it). ` +
+        `When it has passed, Deploy installs it into ${environment.name}.`;
+    } catch (error) {
+      this.messages.error(`The Studio server did not start the build: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.startingBuild = false;
+      this.update();
+    }
+  }
+
   protected async confirmDeploy(): Promise<void> {
     const target = this.deployTarget;
     if (target?.kind === "environment") {
+      const built = this.studioBuild;
+      if (built !== undefined && built.environmentId === target.id) return this.requestStudioBuildDeploy(built.buildId);
       const published = this.published;
       if (published !== undefined && published.environmentId === target.id) return this.requestBuildDeploy();
       return this.requestServerDeploy();
@@ -618,6 +667,36 @@ export class GenerateWidget extends ReactWidget {
       this.deployNote = deployAnswer(answer.state, answer.environment_name, answer.namespace);
     } catch (error) {
       this.deployNote = undefined;
+      this.messages.error(`The Studio server did not take the deploy: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.requestingDeploy = false;
+      this.update();
+    }
+  }
+
+  /** Deploy the build Studio ran: the server refuses it until it has passed. */
+  protected async requestStudioBuildDeploy(buildId: string): Promise<void> {
+    const context = this.runContext();
+    const environment = targetEnvironment(this.deployTargets, this.deployTarget);
+    const source = this.environments;
+    if (context === undefined || environment === undefined || source === undefined || this.deployTargets === undefined) return;
+    const ok = await new ConfirmDialog({
+      title: `Deploy to ${environment.name}?`,
+      msg:
+        `The Studio server installs build ${buildId} into ${environment.namespace} on ${environment.name} once it has passed.` +
+        (environment.protected ? " An organization administrator approves it before it runs." : ""),
+      ok: "Deploy",
+    }).open();
+    if (ok !== true) return;
+    this.requestingDeploy = true;
+    this.update();
+    try {
+      const answer = await source.requestDeploy(
+        this.deployTargets.projectId,
+        deployBuildRequest({ environment, profile: this.product.current.profile ?? "", product: context.product, build: buildId }),
+      );
+      this.deployNote = deployAnswer(answer.state, answer.environment_name, answer.namespace);
+    } catch (error) {
       this.messages.error(`The Studio server did not take the deploy: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.requestingDeploy = false;
@@ -718,6 +797,9 @@ export class GenerateWidget extends ReactWidget {
         }}
         requesting={this.requestingDeploy}
         publishing={this.publishing}
+        startingBuild={this.startingBuild}
+        studioBuild={this.studioBuild !== undefined && this.deployTarget?.kind === "environment" && this.studioBuild.environmentId === this.deployTarget.id}
+        {...(this.environments?.startBuild !== undefined ? { onBuildInStudio: () => void this.buildInStudio() } : {})}
         published={this.published !== undefined && this.deployTarget?.kind === "environment" && this.published.environmentId === this.deployTarget.id}
         {...(this.deployNote !== undefined ? { note: this.deployNote } : {})}
         onBuildImages={() => void this.buildImages()}

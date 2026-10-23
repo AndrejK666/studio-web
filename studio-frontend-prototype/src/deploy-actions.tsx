@@ -236,19 +236,23 @@ export function EnvironmentConfig({
   );
 }
 
-/** Propose the workflow that builds the product for an environment. */
+/** Build the product for an environment: in Studio, as a Job in the
+ *  environment's cluster, or by proposing a CI workflow to the repository. */
 export function BuildWorkflowProposal({
   token,
   projectId,
   environments,
   profiles,
+  onChanged,
 }: {
   token: string;
   projectId: string;
   environments: DeployEnvironment[];
   profiles: string[];
+  onChanged?: (message: string) => void;
 }) {
   const withRegistry = environments.filter((e) => e.registry.includes("/"));
+  const [building, setBuilding] = useState(false);
   const [envId, setEnvId] = useState(withRegistry[0]?.id ?? "");
   const [profile, setProfile] = useState(profiles[0] ?? "prod");
   const [productFile, setProductFile] = useState("product.gdl");
@@ -258,11 +262,12 @@ export function BuildWorkflowProposal({
   if (withRegistry.length === 0) return null;
   return (
     <div className="card" data-build-workflow>
-      <h3>Build in CI</h3>
+      <h3>Build</h3>
       <p className="hint">
-        A pull request adding <code>.github/workflows/studio-build-&lt;product&gt;.yml</code>: on every push to main it generates the profile
-        with the Gearbox engine this Studio runs, pushes the images and the chart under the environment&apos;s registry, and
-        tells Studio what it published. Each run then appears under Deploy a build.
+        <b>Build in Studio</b> runs the build as a Job in the environment&apos;s cluster, on the organization&apos;s nodes: it
+        clones the repository, generates the profile with the Gearbox engine this Studio runs, builds the images and pushes
+        them and the chart under the environment&apos;s registry. Or propose a workflow that does the same in the
+        repository&apos;s CI on every push to main. Either way the build appears under Deploy a build once it passes.
       </p>
       <div className="row">
         <select value={envId} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
@@ -286,6 +291,29 @@ export function BuildWorkflowProposal({
         </select>
         <button
           type="button"
+          className="primary"
+          disabled={building || !envId}
+          onClick={async () => {
+            setBuilding(true);
+            setError(null);
+            try {
+              const b = await api.startBuild(token, projectId, {
+                environment_id: envId,
+                profile,
+                product_file: productFile.trim() || "product.gdl",
+              });
+              onChanged?.(`Build ${b.build_id} started in ${b.namespace}: it shows under Builds, and under Deploy a build once it passes.`);
+            } catch (e) {
+              setError(errText(e));
+            } finally {
+              setBuilding(false);
+            }
+          }}
+        >
+          {building ? "Starting…" : "Build in Studio"}
+        </button>
+        <button
+          type="button"
           disabled={busy || !envId}
           onClick={async () => {
             setBusy(true);
@@ -305,7 +333,7 @@ export function BuildWorkflowProposal({
             }
           }}
         >
-          {busy ? "Proposing…" : "Propose the workflow"}
+          {busy ? "Proposing…" : "Propose a CI workflow"}
         </button>
       </div>
       {result && (

@@ -270,7 +270,7 @@ impl TaskHandler for DeployTask {
         if let Some(registry) = &registry {
             ctx.progress(format!("writing the pull secret for {}", registry.host))
                 .await;
-            if let Err(e) = ensure_pull_secret(&client, &payload.namespace, registry).await {
+            if let Err(e) = write_pull_secret(&client, &payload.namespace, registry).await {
                 return TaskOutcome::Failed(format!("{e:#}"));
             }
         }
@@ -366,14 +366,18 @@ fn tail(s: &str, n: usize) -> String {
 /// Make sure the namespace exists, creating it when the connection may. A
 /// connection limited to its namespaces cannot read namespaces at all, and is
 /// trusted to have been given this one.
-async fn ensure_namespace(client: &kube::Client, p: &DeployPayload) -> anyhow::Result<()> {
+pub(super) async fn prepare_namespace(
+    client: &kube::Client,
+    namespace: &str,
+    project: Uuid,
+) -> anyhow::Result<()> {
     let namespaces: kube::Api<Namespace> = kube::Api::all(client.clone());
-    match namespaces.get_opt(&p.namespace).await {
+    match namespaces.get_opt(namespace).await {
         Ok(Some(_)) => Ok(()),
         Ok(None) => {
             let ns = Namespace {
                 metadata: ObjectMeta {
-                    name: Some(p.namespace.clone()),
+                    name: Some(namespace.to_owned()),
                     labels: Some(
                         [
                             (
@@ -382,7 +386,7 @@ async fn ensure_namespace(client: &kube::Client, p: &DeployPayload) -> anyhow::R
                             ),
                             (
                                 "studio.constructor.tech/project".to_owned(),
-                                p.project_id.to_string(),
+                                project.to_string(),
                             ),
                         ]
                         .into(),
@@ -400,23 +404,27 @@ async fn ensure_namespace(client: &kube::Client, p: &DeployPayload) -> anyhow::R
                         "namespace {} does not exist and the cluster connection may not \
                          create it: create it, or let the connection's service account \
                          create namespaces ({e})",
-                        p.namespace
+                        namespace
                     )
                 })
         }
         Err(kube::Error::Api(status)) if status.code == 403 => {
-            warn!(namespace = %p.namespace, "studio-environments: cannot read namespaces; assuming it exists");
+            warn!(namespace = %namespace, "studio-environments: cannot read namespaces; assuming it exists");
             Ok(())
         }
         Err(e) => Err(anyhow!("the cluster did not answer: {e}")),
     }
 }
 
+async fn ensure_namespace(client: &kube::Client, p: &DeployPayload) -> anyhow::Result<()> {
+    prepare_namespace(client, &p.namespace, p.project_id).await
+}
+
 /// The registry's login as the namespace's pull secret, used by every pod
 /// that runs as the namespace's `default` service account (ADR-0048 §2). A
 /// chart need not know about it, and a rotated token reaches the cluster with
 /// the next deploy, because the secret is written on every one.
-async fn ensure_pull_secret(
+pub(super) async fn write_pull_secret(
     client: &kube::Client,
     namespace: &str,
     registry: &RegistryAccess,

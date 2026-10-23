@@ -74,4 +74,16 @@ describe('the organization\'s environments, for the desktop\'s Deploy', () => {
         const refused = new DeployEnvironments(async () => undefined, async () => json(400, { detail: 'ghcr.io has no token service' }));
         await expect(refused.pushToken('p', 'e', ['x'])).rejects.toThrow('no token service');
     });
+
+    it('start a build in Studio for the project (ADR-0048 §9)', async () => {
+        let asked: { path: string; init?: RequestInit } | undefined;
+        const source = new DeployEnvironments(async () => undefined, async (path, init) => {
+            asked = { path, init };
+            return json(202, { build_id: 'studio-0123456789ab', run_id: 'r', namespace: 'shop-dev' });
+        });
+        await expect(source.startBuild('p-1', { environment_id: 'e1', profile: 'prod', product_file: 'products/shop/product.gdl', ref: 'main' }))
+            .resolves.toMatchObject({ build_id: 'studio-0123456789ab' });
+        expect(asked?.path).toBe('/studio-environments/v1/builds?project_id=p-1');
+        expect(JSON.parse(String(asked?.init?.body))).toMatchObject({ product_file: 'products/shop/product.gdl', ref: 'main' });
+    });
 });

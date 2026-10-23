@@ -167,6 +167,7 @@ export function ProjectDeploys({
           projectId={projectId}
           environments={targets.environments.map((t) => t.environment)}
           profiles={[...new Set(targets.bindings.map((b) => b.profile))]}
+          onChanged={changed}
         />
       )}
       {targets && targets.environments.length > 0 && (

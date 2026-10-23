@@ -205,7 +205,7 @@ describe("a generated Dockerfile's build stage", () => {
     const fixed = withBuildTools(generated);
     expect(fixed.split("\n").slice(1, 3)).toEqual([
       "FROM rust:1.97.0-bookworm AS build",
-      expect.stringContaining("protobuf-compiler cmake"),
+      expect.stringContaining("protobuf-compiler libprotobuf-dev cmake"),
     ]);
     expect(withBuildTools(fixed)).toBe(fixed);
     expect(withBuildTools("FROM debian:bookworm-slim\n")).toBe("FROM debian:bookworm-slim\n");

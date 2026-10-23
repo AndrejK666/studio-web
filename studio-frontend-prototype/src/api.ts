@@ -4384,6 +4384,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ profile: "", product: "", ...body }),
     }),
+  /** Build the product in an environment's cluster (ADR-0048 §9): 202 with
+   *  the build's id, recorded as running and then passed or failed. */
+  startBuild: (
+    token: string,
+    projectId: string,
+    body: { environment_id: string; profile: string; product_file?: string; ref?: string },
+  ) =>
+    request<{ build_id: string; run_id: string; namespace: string }>(
+      `/studio-environments/v1/builds?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   /** Propose the workflow that builds the product for an environment, as a
    *  pull request to the project's repository. */
   proposeBuildWorkflow: (

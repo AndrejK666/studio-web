@@ -21,7 +21,11 @@ use crate::connectors::sdk::ownership::NotOwned;
 
 /// Where a build ran. `ci` is a pipeline's build, recorded from the
 /// `studio-build.json` it uploaded (ADR-0048 §4).
-pub const WHERE: [&str; 3] = ["desktop", "session", "ci"];
+pub const WHERE: [&str; 4] = ["desktop", "session", "ci", "studio"];
+
+/// Where only Studio records a build from: a pipeline's manifest, or a build
+/// it ran in the organization's cluster. Nobody reports one through REST.
+pub const RECORDED_BY_STUDIO: [&str; 2] = ["ci", "studio"];
 
 /// The workflow artifact a product's pipeline uploads its manifest in, and
 /// the file inside it.

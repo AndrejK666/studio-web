@@ -37,6 +37,12 @@ export interface DeployPanelProps {
   readonly publishing?: boolean;
   /** A build was published to the chosen environment: Deploy names it. */
   readonly published?: boolean;
+  /** Studio is asked to build in the chosen environment's cluster (ADR-0048 §9). */
+  readonly startingBuild?: boolean;
+  /** A build Studio runs for the chosen environment: Deploy names it. */
+  readonly studioBuild?: boolean;
+  /** Build in Studio; absent where the IDE cannot ask Studio. */
+  readonly onBuildInStudio?: () => void;
   /** What the server said about the last deploy asked of it. */
   readonly note?: string;
   readonly onBuildImages: () => void;
@@ -163,12 +169,30 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
             >
               {environment?.registryLogin === true ? (props.publishing === true ? "Getting a token…" : "Publish") : "Push"}
             </button>
+            {environment?.registryLogin === true && props.onBuildInStudio !== undefined && (
+              <button
+                type="button"
+                className="gbx-choice"
+                data-deploy-studio-build
+                disabled={props.startingBuild === true}
+                onClick={props.onBuildInStudio}
+                title={`Studio builds what is pushed, in ${environment.name}'s cluster, and pushes to ${environment.registry}: nothing is built on this machine`}
+              >
+                {props.startingBuild === true ? "Starting…" : "Build in Studio"}
+              </button>
+            )}
             <button type="button" className="gbx-choice" data-deploy-template disabled={props.helm === undefined} onClick={props.onTemplate}>
               Preview manifests
             </button>
             <button type="button" className="gbx-start-primary" data-deploy-install disabled={!canDeploy} onClick={props.onDeploy}
               title={environment !== undefined ? "Ask the Studio server to deploy; asks first" : "helm upgrade --install into the chosen cluster; asks first"}>
-              {props.requesting === true ? "Asking the server…" : props.published === true ? "Deploy the published build" : "Deploy"}
+              {props.requesting === true
+                ? "Asking the server…"
+                : props.studioBuild === true
+                  ? "Deploy Studio's build"
+                  : props.published === true
+                    ? "Deploy the published build"
+                    : "Deploy"}
             </button>
           </div>
           {props.note !== undefined && (

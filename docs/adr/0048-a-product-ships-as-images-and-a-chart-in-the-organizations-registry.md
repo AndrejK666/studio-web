@@ -25,6 +25,7 @@ Status: **proposed** · Date: 2026-10-23 · Completes `cpt-studio-adr-deployment
   - [6. A deploy names a build, from the portal or the desktop](#6-a-deploy-names-a-build-from-the-portal-or-the-desktop)
   - [7. Databases and configuration](#7-databases-and-configuration)
   - [8. Environments in order, rollback and uninstall](#8-environments-in-order-rollback-and-uninstall)
+  - [9. Studio builds in the organization's cluster](#9-studio-builds-in-the-organizations-cluster)
 - [Consequences](#consequences)
 - [More Information](#more-information)
 - [Traceability](#traceability)
@@ -67,7 +68,9 @@ same result.
 2. **The backend builds.** Docker or BuildKit in the portal's pods, per
    product. Rejected by ADR-0045 for the same reasons: a privileged builder
    in a multi-tenant service, toolchains per gear, and minutes of CPU per
-   build on the portal's budget.
+   build on the portal's budget. What stands of the option is the other
+   half: Studio may start a build, as long as it runs in the organization's
+   own cluster, unprivileged (§9).
 3. **Keep the upload, add CI uploads.** CI posts its chart and images to
    Studio. Studio becomes a store of build artifacts it has no reason to
    keep, and a chart larger than the limit cannot be deployed at all.
@@ -189,6 +192,39 @@ uninstall takes the release out with `helm uninstall`; its database and
 secrets stay. Both go through the same request, the same approval of a
 protected environment and the same record as a deploy.
 
+### 9. Studio builds in the organization's cluster
+
+A build need not wait for a pipeline. **Build in Studio** (portal or
+desktop) asks the server, which starts a Kubernetes Job in the project's
+namespace of the chosen environment: the organization's nodes do the work,
+nothing compiles in the portal, and nothing runs privileged.
+
+1. `prepare`, in this Studio's own backend image (`studio-backend
+   build-prepare`): clones the product's repository at its branch -- through
+   the repository's connection, whose token is a Secret in the namespace for
+   the Job's lifetime -- and the gear sources its description names, runs
+   `gearbox generate` with the engine this Studio runs, and makes the tree
+   buildable (constructorfabric/gearbox#12).
+2. `build`, rootless and daemonless BuildKit: builds each application's image
+   and pushes it, tagged with the commit, with the namespace's registry login
+   (the same `studio-registry` secret the cluster pulls with).
+3. `publish` (`studio-backend build-publish`): pushes the chart beside the
+   images and leaves the manifest -- images by digest, chart and version -- as
+   the container's termination message.
+
+The run that starts the Job ends at once; a watch run follows it, a few
+minutes at a time, so a build outlives the task queue's lease and a restart
+of the portal. When the Job ends the build is recorded -- `where: studio`,
+passed with what it published or failed with the step and its last words --
+and the token Secret is removed. A deploy then names the build like any
+other (§6).
+
+The namespace must admit a container with seccomp and AppArmor unconfined
+and no privilege (what rootless BuildKit needs for its user namespace); a
+cluster whose policy refuses that keeps building in CI (§5). BuildKit's cache
+lives as long as the Job: each build compiles from scratch, about six minutes
+for a two-gear product on the first test cluster.
+
 ## Consequences
 
 - One path from gears to a running product, whichever surface starts it. The
@@ -233,7 +269,15 @@ protected environment and the same record as a deploy.
 5. **Order of environments, rollback and uninstall** (§8). *Built:
    `promote_from`, `redeploy_of`, `action: uninstall`.*
 
-None of it has been run against a real cluster yet.
+6. **Studio builds in the organization's cluster** (§9). *Built:
+   `POST /builds`, the `environments.build` and `environments.build.watch`
+   runs, `studio-backend build-prepare` / `build-publish`; Build in Studio on
+   the Deploys tab and in the desktop's Deploy.*
+
+Checked on the first cluster: rootless BuildKit runs in a project namespace
+and compiled the sample product (`products/sample`) there, and
+`build-prepare` prepared it from the repository. A whole build Job, the
+pushes and a deploy of its result have not been run yet.
 
 ## Traceability
 

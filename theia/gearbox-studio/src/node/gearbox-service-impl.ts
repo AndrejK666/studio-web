@@ -1085,6 +1085,18 @@ export class GearboxServiceImpl implements GearboxService {
     return packChart(dir).toString("base64");
   }
 
+  async repositoryPathOf(file: string): Promise<{ path: string; branch?: string } | undefined> {
+    if (!path.isAbsolute(file)) return undefined;
+    const dir = path.dirname(file);
+    const top = await exec("git", ["-C", dir, "rev-parse", "--show-toplevel"]);
+    if (!top.ok) return undefined;
+    const relative = path.relative(path.resolve(top.stdout.trim()), path.resolve(file)).replace(/\\/g, "/");
+    if (relative.startsWith("..") || relative === "") return undefined;
+    const branch = await exec("git", ["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"]);
+    const name = branch.stdout.trim();
+    return { path: relative, ...(branch.ok && name !== "" && name !== "HEAD" ? { branch: name } : {}) };
+  }
+
   async prepareImageBuild(outRoot: string): Promise<void> {
     const tree = path.resolve(outRoot);
     if (!/\/\.gearbox\//.test(tree.replace(/\\/g, "/"))) {

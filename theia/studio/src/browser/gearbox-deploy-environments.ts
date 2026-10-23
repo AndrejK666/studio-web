@@ -92,6 +92,21 @@ export class DeployEnvironments {
         };
     }
 
+    /** Build the product in the environment's cluster (ADR-0048 §9); rejects with what the server said. */
+    async startBuild(
+        projectId: string,
+        body: { environment_id: string; profile: string; product_file: string; ref?: string },
+    ): Promise<{ build_id: string; namespace: string }> {
+        const res = await this.fetchApi(`/studio-environments/v1/builds?project_id=${encodeURIComponent(projectId)}`, {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            throw new Error(await refusal(res));
+        }
+        return await res.json() as { build_id: string; namespace: string };
+    }
+
     /** A push-only token for `repositories` under the environment's registry (ADR-0048); rejects with what the server said. */
     async pushToken(
         projectId: string,

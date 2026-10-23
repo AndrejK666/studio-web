@@ -549,6 +549,8 @@ export interface GearboxService {
    * tree only.
    */
   prepareImageBuild(outRoot: string): Promise<void>;
+  /** Where `file` is in its git repository, and the branch checked out: what a build in Studio clones. */
+  repositoryPathOf(file: string): Promise<{ readonly path: string; readonly branch?: string } | undefined>;
 
   /** Constructor Studio: the commit checked out where `file` is, when it is in a git checkout. */
   headCommitOf(file: string): Promise<string | undefined>;
@@ -765,6 +767,11 @@ export interface DeployEnvironmentsSource {
    * A short-lived token that may push `repositories` under the environment's
    * registry prefix, issued by the registry for the server (ADR-0048).
    */
+  /** Build the product in the environment's cluster (ADR-0048 §9); rejects with the server's words. */
+  startBuild?(
+    projectId: string,
+    body: { readonly environment_id: string; readonly profile: string; readonly product_file: string; readonly ref?: string },
+  ): Promise<{ readonly build_id: string; readonly namespace: string }>;
   pushToken?(
     projectId: string,
     environmentId: string,

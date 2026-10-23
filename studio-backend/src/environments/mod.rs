@@ -26,6 +26,7 @@
 //! #9): an environment records its database mode, nothing hands it on. Images
 //! are built and pushed before a deploy, by CI or by the desktop.
 
+pub(crate) mod build; // a product built by Studio in the organization's cluster (ADR-0048 §9)
 mod database;
 mod deploy;
 mod model;
@@ -65,6 +66,9 @@ pub struct StudioEnvironmentsGear;
 impl Gear for StudioEnvironmentsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         crate::tasks::sdk::register(Arc::new(deploy::DeployTask::new(ctx.client_hub())))?;
+        // A build in the organization's cluster, and the watch that records it (ADR-0048 §9).
+        crate::tasks::sdk::register(Arc::new(build::BuildTask::new(ctx.client_hub())))?;
+        crate::tasks::sdk::register(Arc::new(build::WatchTask::new(ctx.client_hub())))?;
         info!("studio-environments: deploy runs registered");
         Ok(())
     }
