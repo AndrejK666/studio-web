@@ -1,0 +1,195 @@
+---
+type: adr
+status: proposed
+date: 2026-10-23
+---
+
+# ADR-0048: A product ships as images and a chart in the organization's registry, built by CI or the desktop and deployed from either
+
+**ID**: `cpt-studio-adr-product-images`
+
+Status: **proposed** · Date: 2026-10-23 · Completes `cpt-studio-adr-deployment-environments` (ADR-0043: the registry connection it names, and its phase 3 for builds that do not come from a desktop) · Uses `cpt-studio-adr-project-builds` (ADR-0045) · Keeps `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` (ADR-0027)
+
+## Table of Contents
+
+<!-- toc -->
+
+- [Context and Problem Statement](#context-and-problem-statement)
+- [Considered Options](#considered-options)
+- [Decision Outcome](#decision-outcome)
+  - [1. A registry is a connection](#1-a-registry-is-a-connection)
+  - [2. The cluster pulls with the environment's registry](#2-the-cluster-pulls-with-the-environments-registry)
+  - [3. The chart is published beside the images](#3-the-chart-is-published-beside-the-images)
+  - [4. A build says what it published](#4-a-build-says-what-it-published)
+  - [5. CI builds the product from a workflow Studio proposes](#5-ci-builds-the-product-from-a-workflow-studio-proposes)
+  - [6. A deploy names a build, from the portal or the desktop](#6-a-deploy-names-a-build-from-the-portal-or-the-desktop)
+  - [7. Databases and configuration](#7-databases-and-configuration)
+- [Consequences](#consequences)
+- [More Information](#more-information)
+- [Traceability](#traceability)
+
+<!-- /toc -->
+
+## Context and Problem Statement
+
+An organization holds environments, each with a cluster (ADR-0043), and the
+server can install a chart into one: `environments.deploy` creates the
+namespace and runs `helm upgrade --install`. What reaches that run, and how,
+stops short of a product that runs:
+
+- **Only the desktop makes images.** Generate writes a Dockerfile per
+  application, `docker/build.sh` and an umbrella chart for a `kubernetes`
+  profile; the member runs `docker build` and pushes with their own
+  `docker login`. The backend never builds (ADR-0045 option 2), and no
+  product repository has a pipeline that would.
+- **The registry is a prefix.** `Environment.registry` is a string. There is
+  no credential, so a cluster cannot pull a private image, and nothing pushes
+  in the organization's name.
+- **The chart travels as an upload.** `POST /deployments` carries the
+  packaged chart (at most 512 KiB). Only a desktop that has just run Generate
+  has one, so the portal cannot deploy, and a CI build cannot be deployed.
+- **A build does not say what it made.** `BuildReport.outputs` is never
+  filled; a deploy cannot pick the images of a build.
+- **The product starts without its database and its configuration.**
+  `DatabaseMode::Shared` is recorded and unused; required gear
+  configuration is not in the chart's values.
+
+The organization wants one thing: build its product from gears into images
+and run it in its clusters, from Studio web or from the desktop, with the
+same result.
+
+## Considered Options
+
+1. **Images and chart are published to the organization's registry; a deploy
+   names what was published.** CI or the desktop builds and publishes, and
+   records the build. The server deploys by reference.
+2. **The backend builds.** Docker or BuildKit in the portal's pods, per
+   product. Rejected by ADR-0045 for the same reasons: a privileged builder
+   in a multi-tenant service, toolchains per gear, and minutes of CPU per
+   build on the portal's budget.
+3. **Keep the upload, add CI uploads.** CI posts its chart and images to
+   Studio. Studio becomes a store of build artifacts it has no reason to
+   keep, and a chart larger than the limit cannot be deployed at all.
+
+## Decision Outcome
+
+Chosen option: **1**.
+
+### 1. A registry is a connection
+
+A new connection kind, `registry`, holds an OCI registry (ghcr.io, a Harbor
+project, a GitLab registry): its address, and a credential
+`username:token` in credstore. Its test logs in to the registry's `/v2/`
+API, following the token challenge the registry answers with. Like a
+cluster, it is held by the organization and used by the server; the desktop
+gets a short-lived push credential from the server rather than the token
+(ADR-0027), as it does for git.
+
+An environment names its registry connection beside the prefix it already
+has. The prefix stays where images and the chart are pushed (`ghcr.io/acme`);
+the connection is how to get in. A prefix on another host than the
+connection's is refused.
+
+### 2. The cluster pulls with the environment's registry
+
+Before installing, the deploy run writes the registry's credential into the
+namespace as a `kubernetes.io/dockerconfigjson` secret, `studio-registry`,
+and adds it to the namespace's `default` service account's
+`imagePullSecrets`. Every pod of the release then pulls with it, whatever the
+chart says, so no chart has to learn a value for it. The secret is written
+on every deploy, so a rotated token reaches the cluster with the next one.
+
+### 3. The chart is published beside the images
+
+A build publishes the chart to the same registry as an OCI artifact
+(`helm push` to `oci://<prefix>/charts`). A deploy names it as
+`oci://…/<chart>` with a version. The server pulls it with the registry's
+credential and installs it; nothing is uploaded. A reference may name only
+the environment's registry, so the server never fetches from a host the
+organization did not connect.
+
+The upload stays for a chart that was never published: a desktop deploy to
+an environment without a registry, as today.
+
+### 4. A build says what it published
+
+A build's record (ADR-0045) carries what it published:
+
+- each application's image, with its digest;
+- the chart reference and version;
+- the product's revision and lock hash, as now.
+
+CI writes them into `studio-build.json`, uploaded as a workflow artifact;
+the sync reads it into the run's build. The desktop reports them with the
+build it already reports.
+
+### 5. CI builds the product from a workflow Studio proposes
+
+Studio proposes a workflow in the product's repository, through a change
+request as it does `product.gdl`. It:
+
+1. runs Generate for the `kubernetes` profile, with the engine the IDE pins;
+2. builds the images from the generated Dockerfiles;
+3. pushes them and the chart to the environment's registry;
+4. uploads `studio-build.json`.
+
+The portal's **Build** dispatches it (ADR-0045 §3). GitHub Actions comes
+first; GitLab CI follows through the same connector layer. A team with its
+own pipeline only has to upload the same file.
+
+### 6. A deploy names a build, from the portal or the desktop
+
+**Deploy** takes a build and an environment. The portal offers it on a
+passed build and on the project's Deploys tab. The desktop offers the same
+choice: the build it just made and pushed, or one from CI. Both call the
+same route; the server deploys the build's chart with its images, pinned by
+digest. The record keeps the build, so "what runs where" names a commit, a
+lock hash and the digests.
+
+### 7. Databases and configuration
+
+An environment whose database is `shared` names a Postgres connection. The
+deploy creates the product's databases and a role there, once, and writes the
+secret the profile's `database(existing_secret = …)` names into the
+namespace. A gear's required configuration and secrets become chart values
+through the schema the engine publishes with the chart (`values.schema.json`,
+constructorfabric/gearbox#8). An environment holds its values; secret ones
+are credstore references, written into the namespace by the deploy.
+
+## Consequences
+
+- One path from gears to a running product, whichever surface starts it. The
+  portal can build and deploy without a desktop; the desktop deploys what it
+  built through the same record.
+- The organization's registry becomes required for anything beyond a member's
+  own cluster. An environment without one keeps today's upload.
+- The run needs write access to secrets and service accounts in the project's
+  namespace. The `admin` role a deployer gets there already includes them.
+- A rotated registry token is picked up by the next deploy, not by running
+  pods; a pull after rotation and before a deploy fails until then.
+
+## More Information
+
+**Phases:**
+
+1. **Registry connection, pull secret, chart by reference.** The `registry`
+   kind and its test, an environment's `registry_connection_id`, the pull
+   secret on every deploy, and a deploy that names an OCI chart.
+2. **CI builds and publishes.** The proposed workflow, `studio-build.json`,
+   images and chart on a build's record, the portal's Build.
+3. **Deploy a build, from either surface.** Deploy on a build in the portal;
+   the desktop pushes through a server-issued credential, reports its build
+   with what it published, and deploys it by reference.
+4. **Databases and configuration** (§7), with the engine's schema.
+5. **Order of environments, rollback and uninstall** (with ADR-0047 phase 5).
+
+## Traceability
+
+- **PRD**: [PRD](../prd/constructor-studio.md)
+- **DESIGN**: [DESIGN](../design/constructor-studio.md)
+
+This decision directly addresses the following requirements or design elements:
+
+* `cpt-studio-adr-deployment-environments`
+* `cpt-studio-adr-project-builds`
+* `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server`
