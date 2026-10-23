@@ -180,7 +180,8 @@ function EnvironmentForm({
   const touch = (f: EnvironmentField) => setTouched((t) => (t.has(f) ? t : new Set(t).add(f)));
   const set = <K extends keyof DeployEnvironmentInput>(k: K, v: DeployEnvironmentInput[K]) => {
     setInput((i) => ({ ...i, [k]: v }));
-    if (k !== "description" && k !== "database" && k !== "protected") touch(k as EnvironmentField);
+    if (k !== "description" && k !== "database" && k !== "protected" && k !== "database_image" && k !== "promote_from")
+      touch(k as EnvironmentField);
   };
   const patternIsDefault = (input.namespace_pattern ?? "").trim() === "" || input.namespace_pattern === DEFAULT_NAMESPACE_PATTERN;
   const examples = (projects.length > 0 ? projects.slice(0, 3).map((p) => p.name) : ["Studio Web"]).map((p) =>
@@ -335,9 +336,41 @@ function EnvironmentForm({
       </details>
       <label className="field">
         Database
-        <select value={input.database} onChange={(e) => set("database", e.target.value as "none" | "shared")}>
+        <select
+          value={input.database}
+          onChange={(e) => set("database", e.target.value as "none" | "shared" | "namespace")}
+          aria-label="Database"
+        >
           <option value="none">None: the product brings its own</option>
+          <option value="namespace">A Postgres of the product&apos;s own, in its namespace, with the databases its gears keep</option>
           <option value="shared">The environment&apos;s shared Postgres — recorded only, not handed to the chart yet</option>
+        </select>
+      </label>
+      {input.database === "namespace" && (
+        <label className="field">
+          Postgres image
+          <input
+            value={input.database_image ?? ""}
+            onChange={(e) => set("database_image", e.target.value || null)}
+            placeholder="pgvector/pgvector:pg18 — graph-storage asks for pgvector"
+          />
+        </label>
+      )}
+      <label className="field">
+        Takes releases from
+        <select
+          value={input.promote_from ?? ""}
+          onChange={(e) => set("promote_from", e.target.value || null)}
+          aria-label="Takes releases from"
+        >
+          <option value="">Anywhere: any build may be deployed here</option>
+          {others
+            .filter((o) => o.id !== editing?.id)
+            .map((o) => (
+              <option key={o.id} value={o.id}>
+                Only what succeeded in {o.name}
+              </option>
+            ))}
         </select>
       </label>
       <label className="env-check">
@@ -741,6 +774,7 @@ export function OrgEnvironments({ token, org, workspaceIds }: { token: string; o
                       <b>{e.name}</b>
                       {e.protected && <span className="badge">protected</span>}
                       {e.database === "shared" && <span className="badge">shared database</span>}
+                      {e.database === "namespace" && <span className="badge">own Postgres</span>}
                     </div>
                     {e.description && <div className="sub">{e.description}</div>}
                     <Answer id={e.id} />

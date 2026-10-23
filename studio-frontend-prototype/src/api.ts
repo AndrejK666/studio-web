@@ -1599,9 +1599,14 @@ export interface DeployEnvironment {
   registry_connection_id?: string | null;
   /** `{project}-{environment}` by default. */
   namespace_pattern: string;
-  database: "none" | "shared";
+  /** `namespace`: a Postgres of the product's own in its namespace (ADR-0048). */
+  database: "none" | "shared" | "namespace";
+  /** The image of a `namespace` database; absent: pgvector/pgvector:pg18. */
+  database_image?: string | null;
   /** A deploy waits for an organization administrator's approval. */
   protected: boolean;
+  /** The environment a release must have succeeded in first. */
+  promote_from?: string | null;
   /** The projects that may deploy here; absent: all of them. */
   projects?: string[] | null;
   updated_by: string;
@@ -1616,8 +1621,10 @@ export interface DeployEnvironmentInput {
   registry: string;
   registry_connection_id?: string | null;
   namespace_pattern?: string;
-  database: "none" | "shared";
+  database: "none" | "shared" | "namespace";
+  database_image?: string | null;
   protected: boolean;
+  promote_from?: string | null;
   projects?: string[] | null;
 }
 
@@ -1625,6 +1632,14 @@ export interface DeployEnvironmentInput {
 export interface EnvironmentBinding {
   profile: string;
   environment_id: string;
+  /** Chart values the release gets there, under what a deploy sets. */
+  values?: Record<string, unknown> | null;
+}
+
+/** A secret of a project's configuration in an environment: the key only. */
+export interface ConfigSecret {
+  environment_id: string;
+  key: string;
 }
 
 /** Where a project's product can be deployed. */
@@ -1633,6 +1648,8 @@ export interface ProjectTargets {
   project_name: string;
   environments: { environment: DeployEnvironment; namespace: string }[];
   bindings: EnvironmentBinding[];
+  /** The secret keys of its configuration, per environment. */
+  secrets?: ConfigSecret[];
 }
 
 export type DeploymentState =
@@ -1653,11 +1670,20 @@ export interface Deployment {
   environment_name: string;
   profile: string;
   product: string;
+  /** `install` | `uninstall`; absent on records from before uninstall. */
+  action?: "install" | "uninstall";
+  /** The earlier deployment this one installs again. */
+  redeploy_of?: string | null;
   commit?: string | null;
   lock_hash?: string | null;
+  /** The build it came from. */
+  build?: string | null;
   images: { app: string; image: string }[];
   namespace: string;
   chart_sha256: string;
+  /** The published chart it installs (ADR-0048). */
+  chart_ref?: string | null;
+  chart_version?: string | null;
   state: DeploymentState;
   run_id?: string | null;
   requested_by: string;
@@ -4339,6 +4365,45 @@ export const api = {
       `/studio-environments/v1/bindings?project_id=${encodeURIComponent(projectId)}`,
       token,
       { method: "PUT", body: JSON.stringify({ items }) },
+    ),
+  /** Ask for a deploy (ADR-0048): a build by id, an earlier deployment again
+   *  (`redeploy_of`), or an uninstall of the release (`action`). */
+  createDeployment: (
+    token: string,
+    projectId: string,
+    body: {
+      environment_id: string;
+      profile?: string;
+      product?: string;
+      build?: string;
+      redeploy_of?: string;
+      action?: "install" | "uninstall";
+    },
+  ) =>
+    request<Deployment>(`/studio-environments/v1/deployments?project_id=${encodeURIComponent(projectId)}`, token, {
+      method: "POST",
+      body: JSON.stringify({ profile: "", product: "", ...body }),
+    }),
+  /** Propose the workflow that builds the product for an environment, as a
+   *  pull request to the project's repository. */
+  proposeBuildWorkflow: (token: string, projectId: string, body: { environment_id: string; profile: string }) =>
+    request<{ path: string; branch: string; pr_url?: string | null }>(
+      `/studio-environments/v1/build-workflows?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** Set a secret of the project's configuration in an environment. */
+  setConfigSecret: (token: string, projectId: string, environmentId: string, key: string, value: string) =>
+    request<ConfigSecret>(
+      `/studio-environments/v1/config-secrets/${encodeURIComponent(key)}?project_id=${encodeURIComponent(projectId)}&environment_id=${encodeURIComponent(environmentId)}`,
+      token,
+      { method: "PUT", body: JSON.stringify({ value }) },
+    ),
+  deleteConfigSecret: (token: string, projectId: string, environmentId: string, key: string) =>
+    request<void>(
+      `/studio-environments/v1/config-secrets/${encodeURIComponent(key)}?project_id=${encodeURIComponent(projectId)}&environment_id=${encodeURIComponent(environmentId)}`,
+      token,
+      { method: "DELETE" },
     ),
   /** What runs where: an organization's deployments, or one project's. */
   deployments: (token: string, params: { org?: string; project?: string; environment?: string }) => {

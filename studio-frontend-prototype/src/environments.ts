@@ -41,7 +41,9 @@ export function emptyEnvironment(): DeployEnvironmentInput {
     registry_connection_id: null,
     namespace_pattern: DEFAULT_NAMESPACE_PATTERN,
     database: "none",
+    database_image: null,
     protected: false,
+    promote_from: null,
     projects: null,
   };
 }
@@ -56,7 +58,9 @@ export function environmentInput(e: DeployEnvironment): DeployEnvironmentInput {
     registry_connection_id: e.registry_connection_id ?? null,
     namespace_pattern: e.namespace_pattern,
     database: e.database,
+    database_image: e.database_image ?? null,
     protected: e.protected,
+    promote_from: e.promote_from ?? null,
     projects: e.projects ?? null,
   };
 }
