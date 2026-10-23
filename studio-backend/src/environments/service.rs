@@ -10,10 +10,11 @@ use uuid::Uuid;
 
 use super::deploy::{self, DeployPayload, Rollout};
 use super::model::{
-    self, Binding, BindingList, DeployImage, Deployment, DeploymentList, DeploymentState,
-    Environment, EnvironmentInput, EnvironmentList, Invalid,
+    self, Binding, BindingList, ConfigSecret, DeployImage, Deployment, DeploymentAction,
+    DeploymentList, DeploymentState, Environment, EnvironmentInput, EnvironmentList, Invalid,
 };
 use super::store::{Store, service_context};
+use super::workflow;
 use super::{BINDINGS_METADATA_TYPE, DEPLOYMENTS_METADATA_TYPE, ENVIRONMENTS_METADATA_TYPE};
 use crate::connectors::sdk as connectors;
 
@@ -67,6 +68,7 @@ pub struct Targets {
     pub project_name: String,
     pub environments: Vec<(Environment, String)>,
     pub bindings: Vec<Binding>,
+    pub secrets: Vec<ConfigSecret>,
 }
 
 /// A deploy as asked for.
@@ -86,11 +88,46 @@ pub struct DeployRequest {
     /// its version.
     pub chart_ref: Option<String>,
     pub chart_version: Option<String>,
+    /// Install (the default) or uninstall the release.
+    pub action: DeploymentAction,
+    /// Install again what an earlier deployment of the project installed: a
+    /// rollback, or a promotion to the next environment. Takes the place of
+    /// the chart, the images and the build.
+    pub redeploy_of: Option<Uuid>,
+}
+
+/// The build workflow as proposed.
+#[derive(Debug, Clone)]
+pub struct WorkflowProposal {
+    pub path: String,
+    pub branch: String,
+    pub pr_url: Option<String>,
+}
+
+/// A token a member pushes a build's images and chart with.
+#[derive(Debug, Clone)]
+pub struct PushToken {
+    /// `ghcr.io`: the host the token is for.
+    pub registry: String,
+    /// `ghcr.io/acme`: where under it the images go.
+    pub prefix: String,
+    pub token: String,
+    /// Seconds, when the registry says.
+    pub expires_in: Option<u64>,
+}
+
+/// A project's configuration for one release (ADR-0048 §7).
+#[derive(Debug, Clone, Default)]
+struct Config {
+    values: Option<serde_json::Value>,
+    secret_keys: Vec<String>,
 }
 
 pub struct EnvironmentService {
     store: Store,
     hub: Arc<ClientHub>,
+    /// For the registries' token services.
+    http: reqwest::Client,
 }
 
 fn now() -> String {
@@ -125,7 +162,12 @@ fn check_build(v: Option<String>) -> Result<Option<String>> {
 
 impl EnvironmentService {
     pub fn new(store: Store, hub: Arc<ClientHub>) -> Self {
-        Self { store, hub }
+        let http = reqwest::Client::builder()
+            .user_agent("constructor-studio")
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .unwrap_or_default();
+        Self { store, hub, http }
     }
 
     fn service(&self, tenant: Uuid) -> Result<SecurityContext> {
@@ -405,17 +447,17 @@ impl EnvironmentService {
                 (e, ns)
             })
             .collect();
-        let bindings = self
+        let list = self
             .store
             .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
             .await?
-            .0
-            .items;
+            .0;
         Ok(Targets {
             organization_id: org,
             project_name,
             environments,
-            bindings,
+            bindings: list.items,
+            secrets: list.secrets,
         })
     }
 
@@ -450,11 +492,127 @@ impl EnvironmentService {
         // nothing -- a deploy is still checked against the environment.
         self.store
             .update::<BindingList, (), Refusal>(ctx, project, BINDINGS_METADATA_TYPE, |row| {
-                *row = list.clone();
+                // The secrets' keys are kept: they are set one by one.
+                row.items = list.items.clone();
                 Ok(())
             })
             .await?
             .map(|(row, ())| row.items)
+    }
+
+    /// Set (`Some`) or remove (`None`) one secret of the project's
+    /// configuration in an environment. The value goes to credstore, written
+    /// as the service; the project's row keeps only the key.
+    pub async fn put_config_secret(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        environment: Uuid,
+        key: &str,
+        value: Option<String>,
+    ) -> Result<ConfigSecret> {
+        let org = self.organization_of_project(ctx, project).await?;
+        let env = self.environment(ctx, org, environment).await?;
+        if !env.admits(project) {
+            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
+        }
+        let key = key.trim().to_owned();
+        if !model::is_secret_key(&key) {
+            return Err(Refusal::Invalid(format!(
+                "'{key}' is not a variable name: capitals, digits and _ (SMTP_PASSWORD)"
+            )));
+        }
+        let credstore = self
+            .hub
+            .get::<dyn credstore_sdk::CredStoreClientV1>()
+            .map_err(|_| {
+                Refusal::Unavailable("credstore is not available in this deployment".into())
+            })?;
+        let reference = model::config_secret_ref(project, env.id, &key);
+        let sref = credstore_sdk::SecretRef::new(&reference)
+            .map_err(|e| Refusal::Internal(format!("bad secret reference: {e}")))?;
+        let svc = self.service(org)?;
+        let entry = ConfigSecret {
+            environment_id: env.id,
+            key: key.clone(),
+        };
+        match value {
+            Some(value) => {
+                if value.is_empty() || value.len() > 64 * 1024 {
+                    return Err(Refusal::Invalid(
+                        "a secret's value is between 1 byte and 64 KiB".into(),
+                    ));
+                }
+                let bytes = value.into_bytes();
+                // Overwrite whatever is there; create when nothing is.
+                if credstore
+                    .put(
+                        &svc,
+                        &sref,
+                        credstore_sdk::SecretValue::new(bytes.clone()),
+                        credstore_sdk::SharingMode::Tenant,
+                        credstore_sdk::WritePrecondition::Exists,
+                    )
+                    .await
+                    .is_err()
+                {
+                    credstore
+                        .create(
+                            &svc,
+                            &sref,
+                            credstore_sdk::SecretValue::new(bytes),
+                            credstore_sdk::SharingMode::Tenant,
+                        )
+                        .await
+                        .map_err(|e| {
+                            Refusal::Internal(format!("the secret could not be stored: {e}"))
+                        })?;
+                }
+                self.store
+                    .update::<BindingList, (), Refusal>(
+                        ctx,
+                        project,
+                        BINDINGS_METADATA_TYPE,
+                        |row| {
+                            if !row.secrets.contains(&entry) {
+                                row.secrets.push(entry.clone());
+                            }
+                            Ok(())
+                        },
+                    )
+                    .await??;
+            }
+            None => {
+                self.store
+                    .update::<BindingList, (), Refusal>(
+                        ctx,
+                        project,
+                        BINDINGS_METADATA_TYPE,
+                        |row| {
+                            let before = row.secrets.len();
+                            row.secrets.retain(|s| s != &entry);
+                            if row.secrets.len() == before {
+                                return Err(Refusal::NotFound(
+                                    key.clone(),
+                                    format!("no secret {key} is set for this environment"),
+                                ));
+                            }
+                            Ok(())
+                        },
+                    )
+                    .await??;
+                if let Err(e) = credstore
+                    .delete(&svc, &sref, credstore_sdk::WritePrecondition::Exists)
+                    .await
+                {
+                    tracing::warn!(
+                        reference,
+                        "studio-environments: a secret's key was removed but its value could not be ({e})"
+                    );
+                }
+            }
+        }
+        Ok(entry)
     }
 
     /* ── deployments ── */
@@ -512,11 +670,40 @@ impl EnvironmentService {
         }
     }
 
+    /// The project's configuration for a release in `env`: the bound
+    /// profile's values, and the keys of its secrets there.
+    async fn project_config(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        env: &Environment,
+        profile: &str,
+    ) -> Result<Config> {
+        let (list, _) = self
+            .store
+            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+            .await?;
+        Ok(Config {
+            values: list
+                .items
+                .into_iter()
+                .find(|b| b.profile == profile && b.environment_id == env.id)
+                .and_then(|b| b.values),
+            secret_keys: list
+                .secrets
+                .into_iter()
+                .filter(|s| s.environment_id == env.id)
+                .map(|s| s.key)
+                .collect(),
+        })
+    }
+
     fn payload(
         org: Uuid,
         env: &Environment,
         d: &Deployment,
         chart: Option<String>,
+        config: Config,
     ) -> DeployPayload {
         DeployPayload {
             deployment_id: d.id,
@@ -526,9 +713,20 @@ impl EnvironmentService {
             registry_connection_id: env.registry_connection_id,
             namespace: d.namespace.clone(),
             release: d.product.clone(),
+            action: d.action,
+            environment_id: env.id,
+            secret_keys: config.secret_keys.clone(),
+            database: env.database,
+            database_image: env.database_image.clone(),
             chart,
             chart_ref: d.chart_ref.clone(),
-            values: model::image_values(env, &d.images),
+            values: model::deploy_values(
+                env,
+                &d.images,
+                config.values.as_ref(),
+                &config.secret_keys,
+                &d.product,
+            ),
         }
     }
 
@@ -563,49 +761,38 @@ impl EnvironmentService {
         Ok(hex::encode(Sha256::digest(&bytes)))
     }
 
+    /// A release name: a DNS label of at most 53, as Helm takes it.
+    fn release_name(product: &str) -> Result<String> {
+        let product = product.trim().to_owned();
+        if !model::is_dns_label(&product) || product.len() > 53 {
+            return Err(Refusal::Invalid(format!(
+                "'{product}' cannot be a release name"
+            )));
+        }
+        Ok(product)
+    }
+
     pub async fn request_deploy(
         &self,
         ctx: &SecurityContext,
         project: Uuid,
-        req: DeployRequest,
+        mut req: DeployRequest,
     ) -> Result<Deployment> {
         let org = self.organization_of_project(ctx, project).await?;
         let env = self.environment(ctx, org, req.environment_id).await?;
         if !env.admits(project) {
             return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
         }
-        let product = req.product.trim().to_owned();
-        // A Helm release name: a DNS label of at most 53.
-        if !model::is_dns_label(&product) || product.len() > 53 {
-            return Err(Refusal::Invalid(format!(
-                "'{product}' cannot be a release name"
-            )));
+        if let Some(earlier) = req.redeploy_of {
+            req = self.again(ctx, org, project, earlier, req).await?;
+        } else if req.action == DeploymentAction::Install
+            && req.chart.is_none()
+            && req.chart_ref.is_none()
+            && let Some(build) = req.build.clone()
+        {
+            req = self.what_build_published(ctx, project, &build, req).await?;
         }
-        model::check_images(&req.images)?;
-        let chart = req
-            .chart
-            .map(|c| c.trim().to_owned())
-            .filter(|c| !c.is_empty());
-        let chart_ref = req
-            .chart_ref
-            .map(|c| c.trim().to_owned())
-            .filter(|c| !c.is_empty());
-        let (chart_sha256, chart_ref) = match (&chart, chart_ref) {
-            (Some(chart), None) => (Self::checked_chart(chart)?, None),
-            (None, Some(reference)) => {
-                let version = req.chart_version.unwrap_or_default();
-                (
-                    String::new(),
-                    Some(model::check_chart_ref(&env, &reference, &version)?),
-                )
-            }
-            _ => {
-                return Err(Refusal::Invalid(
-                    "a deploy carries the chart or names a published one (chart_ref), one of them"
-                        .into(),
-                ));
-            }
-        };
+        let product = Self::release_name(&req.product)?;
         let project_name = self.store.tenant_name(ctx, project).await;
         let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
         let person = self.person(ctx).await;
@@ -617,13 +804,15 @@ impl EnvironmentService {
             environment_name: env.name.clone(),
             profile: req.profile.trim().to_owned(),
             product,
-            commit: check_hash("commit", req.commit)?,
-            lock_hash: check_hash("lock_hash", req.lock_hash)?,
-            build: check_build(req.build)?,
-            images: req.images,
+            action: req.action,
+            redeploy_of: req.redeploy_of,
+            commit: None,
+            lock_hash: None,
+            build: None,
+            images: Vec::new(),
             namespace,
-            chart_sha256,
-            chart_ref,
+            chart_sha256: String::new(),
+            chart_ref: None,
             state: DeploymentState::Queued,
             run_id: None,
             requested_by: person.id,
@@ -636,17 +825,314 @@ impl EnvironmentService {
             outcome: None,
             pending_chart: None,
         };
+        let mut chart = None;
+        if req.action == DeploymentAction::Install {
+            model::check_images(&req.images)?;
+            chart = req
+                .chart
+                .map(|c| c.trim().to_owned())
+                .filter(|c| !c.is_empty());
+            let chart_ref = req
+                .chart_ref
+                .map(|c| c.trim().to_owned())
+                .filter(|c| !c.is_empty());
+            match (&chart, chart_ref) {
+                (Some(chart), None) => d.chart_sha256 = Self::checked_chart(chart)?,
+                (None, Some(reference)) => {
+                    let version = req.chart_version.unwrap_or_default();
+                    d.chart_ref = Some(model::check_chart_ref(&env, &reference, &version)?);
+                }
+                _ => {
+                    return Err(Refusal::Invalid(
+                        "a deploy carries the chart or names a published one (chart_ref), one of them"
+                            .into(),
+                    ));
+                }
+            }
+            d.commit = check_hash("commit", req.commit)?;
+            d.lock_hash = check_hash("lock_hash", req.lock_hash)?;
+            d.build = check_build(req.build)?;
+            d.images = req.images;
+            self.check_promoted(ctx, org, &env, &d).await?;
+        }
+        let config = self.project_config(ctx, project, &env, &d.profile).await?;
+        self.submit(org, &env, d, chart, config).await
+    }
+
+    /// The request that installs again what `earlier` installed, into the
+    /// environment `req` names.
+    async fn again(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        earlier: Uuid,
+        req: DeployRequest,
+    ) -> Result<DeployRequest> {
+        let d = self.deployment(ctx, org, earlier).await?;
+        if d.project_id != project || d.action != DeploymentAction::Install {
+            return Err(Refusal::Invalid(format!(
+                "deployment {earlier} is not an install of this project's product"
+            )));
+        }
+        let Some(chart) = d.chart_ref else {
+            return Err(Refusal::Invalid(format!(
+                "deployment {earlier} carried its chart, which Studio does not keep: \
+                 deploy that build again from where it was built"
+            )));
+        };
+        Ok(DeployRequest {
+            environment_id: req.environment_id,
+            profile: d.profile,
+            product: d.product,
+            commit: d.commit,
+            lock_hash: d.lock_hash,
+            build: d.build,
+            images: d.images,
+            chart: None,
+            chart_ref: Some(chart.reference),
+            chart_version: Some(chart.version),
+            action: DeploymentAction::Install,
+            redeploy_of: Some(earlier),
+        })
+    }
+
+    /// The request that installs what build `build_id` published: its chart
+    /// and images, at its commit and lock (ADR-0048 §6). The build must have
+    /// passed and published a chart.
+    async fn what_build_published(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        build_id: &str,
+        req: DeployRequest,
+    ) -> Result<DeployRequest> {
+        let builds = self
+            .hub
+            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
+            .map_err(|_| {
+                Refusal::Unavailable("builds are not available in this deployment".into())
+            })?;
+        let b = builds
+            .build(ctx, &project.to_string(), build_id.trim())
+            .await
+            .map_err(|e| Refusal::Internal(format!("{e:#}")))?
+            .ok_or_else(|| {
+                Refusal::NotFound(
+                    build_id.to_owned(),
+                    format!("the project has no build {build_id}"),
+                )
+            })?;
+        if b.status != "passed" {
+            return Err(Refusal::Precondition(
+                "BUILD_NOT_PASSED",
+                format!("build {build_id} is {}, not passed", b.status),
+            ));
+        }
+        let (Some(chart_ref), Some(chart_version)) = (b.chart_ref, b.chart_version) else {
+            return Err(Refusal::Precondition(
+                "BUILD_PUBLISHED_NO_CHART",
+                format!(
+                    "build {build_id} published no chart: build it with the product's workflow, \
+                     or publish from the IDE"
+                ),
+            ));
+        };
+        let product = if req.product.trim().is_empty() {
+            b.product.unwrap_or_default()
+        } else {
+            req.product
+        };
+        let profile = if req.profile.trim().is_empty() {
+            b.profile.unwrap_or_default()
+        } else {
+            req.profile
+        };
+        Ok(DeployRequest {
+            environment_id: req.environment_id,
+            profile,
+            product,
+            commit: b.commit,
+            lock_hash: b.lock_hash,
+            build: Some(b.build_id),
+            images: b
+                .images
+                .into_iter()
+                .map(|(app, image)| DeployImage { app, image })
+                .collect(),
+            chart: None,
+            chart_ref: Some(chart_ref),
+            chart_version: Some(chart_version),
+            action: DeploymentAction::Install,
+            redeploy_of: None,
+        })
+    }
+
+    /// Propose the build workflow to the project's repository, as a pull
+    /// request: it builds `profile` and publishes under `environment`'s
+    /// registry prefix (ADR-0048 §5).
+    pub async fn propose_workflow(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        environment: Uuid,
+        profile: &str,
+    ) -> Result<WorkflowProposal> {
+        let org = self.organization_of_project(ctx, project).await?;
+        let env = self.environment(ctx, org, environment).await?;
+        if !env.admits(project) {
+            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
+        }
+        let files = self
+            .hub
+            .get::<dyn crate::product::port::ProjectFiles>()
+            .map_err(|_| {
+                Refusal::Unavailable(
+                    "the project's repository is not available in this deployment".into(),
+                )
+            })?;
+        let project_key = project.to_string();
+        let gdl = files
+            .read(ctx, &project_key, "product.gdl")
+            .await
+            .map_err(|e| Refusal::Invalid(format!("{e:#}")))?
+            .ok_or_else(|| {
+                Refusal::Precondition(
+                    "PRODUCT_NOT_SAVED",
+                    "the project's repository has no product.gdl yet: save the product first"
+                        .into(),
+                )
+            })?;
+        let product = workflow::product_id(&gdl)
+            .ok_or_else(|| Refusal::Invalid("product.gdl names no product id".into()))?;
+        let (engine_repo, engine_rev) = crate::product::sdk::engine_pin();
+        let params = workflow::Params {
+            product,
+            profile: profile.trim().to_owned(),
+            prefix: env.registry.clone(),
+            engine_repo,
+            engine_rev: engine_rev.unwrap_or_default(),
+        };
+        let text = workflow::render(&params)?;
+        let written = files
+            .write(
+                ctx,
+                &project_key,
+                "studio/build-workflow",
+                &[crate::product::port::DeclarationFile {
+                    path: workflow::PATH.to_owned(),
+                    content: text,
+                }],
+                &crate::product::port::PullRequestText {
+                    message: format!("ci: build {} for {}", params.profile, env.name),
+                    title: format!("Studio: build the product's {} profile for {}", params.profile, env.name),
+                    body: format!(
+                        "Proposed by Constructor Studio (ADR-0048). On every push to main it builds \
+                         the `{}` profile with the Gearbox engine Studio runs, pushes the images \
+                         and the chart under `{}`, and uploads `studio-build.json`, which Studio \
+                         records as the run's build. A deploy to `{}` can then name that build.\n\n\
+                         ghcr.io works with the run's own token; another registry needs the \
+                         repository secrets STUDIO_REGISTRY_USERNAME and STUDIO_REGISTRY_TOKEN.",
+                        params.profile, params.prefix, env.name
+                    ),
+                },
+                true,
+            )
+            .await
+            .map_err(|e| Refusal::Invalid(format!("the workflow could not be proposed: {e:#}")))?;
+        Ok(WorkflowProposal {
+            path: workflow::PATH.to_owned(),
+            branch: written.branch,
+            pr_url: written.pr_url,
+        })
+    }
+
+    /// A short-lived token that may push `repositories` (names under the
+    /// environment's registry prefix) and nothing else, for a member who
+    /// publishes a build from the desktop (ADR-0048 §1). The registry's own
+    /// token service issues it; the stored credential never leaves.
+    pub async fn push_token(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        environment: Uuid,
+        repositories: Vec<String>,
+    ) -> Result<PushToken> {
+        let org = self.organization_of_project(ctx, project).await?;
+        let env = self.environment(ctx, org, environment).await?;
+        if !env.admits(project) {
+            return Err(Refusal::Forbidden("ENVIRONMENT_NOT_FOR_THIS_PROJECT"));
+        }
+        let Some(connection) = env.registry_connection_id else {
+            return Err(Refusal::Precondition(
+                "ENVIRONMENT_HAS_NO_REGISTRY",
+                format!("environment '{}' has no registry login", env.name),
+            ));
+        };
+        let paths = model::push_paths(&env.registry, &repositories)?;
+        let svc = self.service(org)?;
+        let access = deploy::registry_access(&self.hub, &svc, org, connection)
+            .await
+            .map_err(|e| Refusal::Invalid(format!("{e:#}")))?;
+        let (token, expires_in) = access
+            .push_token(&self.http, &paths)
+            .await
+            .map_err(|e| Refusal::Unavailable(format!("{e:#}")))?;
+        Ok(PushToken {
+            registry: access.host.clone(),
+            prefix: env.registry.clone(),
+            token,
+            expires_in,
+        })
+    }
+
+    /// Refused when `env` takes releases from another environment and this
+    /// one has not succeeded there (ADR-0048 §5).
+    async fn check_promoted(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        env: &Environment,
+        d: &Deployment,
+    ) -> Result<()> {
+        let Some(from) = env.promote_from else {
+            return Ok(());
+        };
+        let from_name = self
+            .environment(ctx, org, from)
+            .await
+            .map(|e| e.name)
+            .unwrap_or_else(|_| from.to_string());
+        let history = self
+            .deployments(ctx, org, Some(d.project_id), Some(from))
+            .await?;
+        match model::promotion_gap(env, &from_name, d, &history) {
+            None => Ok(()),
+            Some(why) => Err(Refusal::Precondition("RELEASE_NOT_PROMOTED", why)),
+        }
+    }
+
+    /// Record `d` and queue its run, or hold it for an administrator when the
+    /// environment is protected.
+    async fn submit(
+        &self,
+        org: Uuid,
+        env: &Environment,
+        mut d: Deployment,
+        chart: Option<String>,
+        config: Config,
+    ) -> Result<Deployment> {
         if env.protected {
             d.state = DeploymentState::AwaitingApproval;
             // A published chart is named on the record; only an uploaded one
             // has to be kept until the decision.
-            d.pending_chart = chart.clone();
+            d.pending_chart = chart;
             self.record(org, d.clone()).await?;
         } else {
             // Recorded before it is queued, so the run never finishes before
             // the record of it exists.
             self.record(org, d.clone()).await?;
-            let payload = Self::payload(org, &env, &d, chart);
+            let payload = Self::payload(org, env, &d, chart, config);
             let run = self.queue_or_fail(org, &mut d, payload).await?;
             d.run_id = Some(run);
             self.record(org, d.clone()).await?;
@@ -691,15 +1177,29 @@ impl EnvironmentService {
         let chart = d.pending_chart.take();
         if approve {
             let env = self.environment(ctx, org, d.environment_id).await?;
-            if chart.is_none() && d.chart_ref.is_none() {
+            if d.action == DeploymentAction::Install && chart.is_none() && d.chart_ref.is_none() {
                 return Err(Refusal::Precondition(
                     "DEPLOYMENT_CHART_GONE",
                     "the deploy no longer carries its chart: ask again".into(),
                 ));
             }
+            // Read at the decision, so a value changed while the deploy waited
+            // is the one installed. As the service, which reads the project's
+            // row whoever the administrator is.
+            let svc = self.service(org)?;
+            let config = match self
+                .project_config(&svc, d.project_id, &env, &d.profile)
+                .await
+            {
+                Ok(c) => c,
+                Err(_) => {
+                    self.project_config(ctx, d.project_id, &env, &d.profile)
+                        .await?
+                }
+            };
             d.state = DeploymentState::Queued;
             self.record(org, d.clone()).await?;
-            let payload = Self::payload(org, &env, &d, chart);
+            let payload = Self::payload(org, &env, &d, chart, config);
             let run = self.queue_or_fail(org, &mut d, payload).await?;
             d.run_id = Some(run);
         } else {

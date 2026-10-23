@@ -17,7 +17,9 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::deploy::Rollout;
-use super::model::{Binding, DatabaseMode, DeployImage, Deployment, Environment, EnvironmentInput};
+use super::model::{
+    Binding, DatabaseMode, DeployImage, Deployment, DeploymentAction, Environment, EnvironmentInput,
+};
 use super::service::{DeployRequest, EnvironmentService, Refusal};
 use crate::org_scope::OrgCtx;
 
@@ -76,10 +78,16 @@ pub struct EnvironmentDto {
     #[schema(value_type = Option<String>)]
     pub registry_connection_id: Option<Uuid>,
     pub namespace_pattern: String,
-    /// `none` | `shared`.
+    /// `none` | `shared` | `namespace`.
     pub database: String,
+    /// The image of a `namespace` database; absent for the default.
+    pub database_image: Option<String>,
     /// Whether a deploy waits for an organization administrator's approval.
     pub protected: bool,
+    /// The environment a release must have succeeded in first; absent for
+    /// none (ADR-0048 §5).
+    #[schema(value_type = Option<String>)]
+    pub promote_from: Option<Uuid>,
     /// The projects that may deploy here; absent for all of them.
     #[schema(value_type = Option<Vec<String>>)]
     pub projects: Option<Vec<Uuid>>,
@@ -91,6 +99,7 @@ fn database_str(d: DatabaseMode) -> &'static str {
     match d {
         DatabaseMode::None => "none",
         DatabaseMode::Shared => "shared",
+        DatabaseMode::Namespace => "namespace",
     }
 }
 
@@ -104,7 +113,9 @@ fn env_dto(e: Environment) -> EnvironmentDto {
         registry_connection_id: e.registry_connection_id,
         namespace_pattern: e.namespace_pattern,
         database: database_str(e.database).to_owned(),
+        database_image: e.database_image,
         protected: e.protected,
+        promote_from: e.promote_from,
         projects: e.projects,
         updated_by: e.updated_by,
         updated_at: e.updated_at,
@@ -137,11 +148,20 @@ pub struct EnvironmentRequest {
     /// Default `{project}-{environment}`.
     #[serde(default)]
     pub namespace_pattern: Option<String>,
-    /// `none` (default) | `shared`.
+    /// `none` (default) | `shared` | `namespace`: a Postgres of the
+    /// product's own in the project's namespace (ADR-0048 §7).
     #[serde(default)]
     pub database: Option<String>,
+    /// The image of a `namespace` database; default `pgvector/pgvector:pg18`.
+    #[serde(default)]
+    pub database_image: Option<String>,
     #[serde(default)]
     pub protected: bool,
+    /// Another environment of the organization a release must have
+    /// succeeded in first.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub promote_from: Option<Uuid>,
     /// Absent: every project of the organization.
     #[schema(value_type = Option<Vec<String>>)]
     #[serde(default)]
@@ -152,9 +172,12 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
     let database = match r.database.as_deref().map(str::trim) {
         None | Some("" | "none") => DatabaseMode::None,
         Some("shared") => DatabaseMode::Shared,
+        Some("namespace") => DatabaseMode::Namespace,
         Some(other) => {
             return Err(StudioEnvironmentsError::invalid_argument()
-                .with_constraint(format!("database is none or shared, not '{other}'"))
+                .with_constraint(format!(
+                    "database is none, shared or namespace, not '{other}'"
+                ))
                 .create());
         }
     };
@@ -166,7 +189,9 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
         registry_connection_id: r.registry_connection_id,
         namespace_pattern: r.namespace_pattern,
         database,
+        database_image: r.database_image,
         protected: r.protected,
+        promote_from: r.promote_from,
         projects: r.projects,
     })
 }
@@ -184,6 +209,72 @@ pub struct BindingDto {
     pub profile: String,
     #[schema(value_type = String)]
     pub environment_id: Uuid,
+    /// Chart values the release gets in that environment (ADR-0048 §7).
+    #[schema(value_type = Option<Object>)]
+    pub values: Option<serde_json::Value>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConfigSecretDto {
+    #[schema(value_type = String)]
+    pub environment_id: Uuid,
+    /// The variable it is read as; the value never comes back.
+    pub key: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ConfigSecretRequest {
+    /// Kept in credstore; never returned.
+    pub value: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct BuildWorkflowRequest {
+    /// The environment whose registry the workflow publishes to.
+    #[schema(value_type = String)]
+    pub environment_id: Uuid,
+    /// The `kubernetes` profile it builds; default `prod`.
+    #[serde(default)]
+    pub profile: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct BuildWorkflowDto {
+    /// `.github/workflows/studio-product.yml`.
+    pub path: String,
+    pub branch: String,
+    pub pr_url: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PushTokenRequest {
+    /// Repositories under the environment's registry prefix: `gbx-api`,
+    /// `charts/shop`.
+    pub repositories: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PushTokenDto {
+    /// The registry host the token is for: `ghcr.io`.
+    pub registry: String,
+    /// Where under it the images go: `ghcr.io/acme`.
+    pub prefix: String,
+    /// A bearer token that may pull and push the named repositories only.
+    pub token: String,
+    /// Seconds, when the registry says.
+    pub expires_in: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfigSecretQuery {
+    pub project_id: Uuid,
+    pub environment_id: Uuid,
 }
 
 #[derive(Debug)]
@@ -199,6 +290,10 @@ pub struct BindingItem {
     pub profile: String,
     #[schema(value_type = String)]
     pub environment_id: Uuid,
+    /// Chart values for the release there, under what a deploy sets.
+    #[schema(value_type = Option<Object>)]
+    #[serde(default)]
+    pub values: Option<serde_json::Value>,
 }
 
 #[derive(Debug)]
@@ -225,6 +320,8 @@ pub struct ProjectTargetsDto {
     pub environments: Vec<TargetDto>,
     /// Its product's profiles bound to them.
     pub bindings: Vec<BindingDto>,
+    /// The secret keys of its configuration, per environment.
+    pub secrets: Vec<ConfigSecretDto>,
 }
 
 #[derive(Debug)]
@@ -247,6 +344,12 @@ pub struct DeploymentDto {
     pub environment_name: String,
     pub profile: String,
     pub product: String,
+    /// `install` | `uninstall`.
+    pub action: String,
+    /// The earlier deployment this one installs again (a rollback or a
+    /// promotion).
+    #[schema(value_type = Option<String>)]
+    pub redeploy_of: Option<Uuid>,
     pub commit: Option<String>,
     pub lock_hash: Option<String>,
     /// The build it came from (ADR-0045 §4), when the IDE deployed one.
@@ -282,6 +385,8 @@ fn deployment_dto(d: Deployment) -> DeploymentDto {
         environment_name: d.environment_name,
         profile: d.profile,
         product: d.product,
+        action: d.action.as_str().to_owned(),
+        redeploy_of: d.redeploy_of,
         commit: d.commit,
         lock_hash: d.lock_hash,
         build: d.build,
@@ -354,6 +459,16 @@ pub struct CreateDeploymentRequest {
     pub chart_ref: Option<String>,
     #[serde(default)]
     pub chart_version: Option<String>,
+    /// `install` (default) or `uninstall`: take the release (`product`) out
+    /// of the environment. An uninstall takes no chart and no images.
+    #[serde(default)]
+    pub action: Option<String>,
+    /// Install again what this earlier deployment of the project installed,
+    /// in place of the chart, images and build: a rollback, or the same
+    /// release promoted to the next environment.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub redeploy_of: Option<Uuid>,
 }
 
 #[derive(Debug)]
@@ -492,6 +607,7 @@ fn binding_dto(b: Binding) -> BindingDto {
     BindingDto {
         profile: b.profile,
         environment_id: b.environment_id,
+        values: b.values,
     }
 }
 
@@ -513,7 +629,88 @@ async fn get_project_targets(
             })
             .collect(),
         bindings: t.bindings.into_iter().map(binding_dto).collect(),
+        secrets: t
+            .secrets
+            .into_iter()
+            .map(|s| ConfigSecretDto {
+                environment_id: s.environment_id,
+                key: s.key,
+            })
+            .collect(),
     }))
+}
+
+async fn scaffold_build_workflow(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+    Json(body): Json<BuildWorkflowRequest>,
+) -> ApiResult<JsonBody<BuildWorkflowDto>> {
+    let profile = body.profile.unwrap_or_else(|| "prod".to_owned());
+    let w = envs
+        .0
+        .propose_workflow(&ctx, q.project_id, body.environment_id, &profile)
+        .await
+        .map_err(problem)?;
+    Ok(Json(BuildWorkflowDto {
+        path: w.path,
+        branch: w.branch,
+        pr_url: w.pr_url,
+    }))
+}
+
+async fn create_push_token(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Path(environment_id): Path<Uuid>,
+    Query(q): Query<ProjectQuery>,
+    Json(body): Json<PushTokenRequest>,
+) -> ApiResult<(StatusCode, JsonBody<PushTokenDto>)> {
+    let t = envs
+        .0
+        .push_token(&ctx, q.project_id, environment_id, body.repositories)
+        .await
+        .map_err(problem)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(PushTokenDto {
+            registry: t.registry,
+            prefix: t.prefix,
+            token: t.token,
+            expires_in: t.expires_in,
+        }),
+    ))
+}
+
+async fn put_config_secret(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Path(key): Path<String>,
+    Query(q): Query<ConfigSecretQuery>,
+    Json(body): Json<ConfigSecretRequest>,
+) -> ApiResult<JsonBody<ConfigSecretDto>> {
+    let s = envs
+        .0
+        .put_config_secret(&ctx, q.project_id, q.environment_id, &key, Some(body.value))
+        .await
+        .map_err(problem)?;
+    Ok(Json(ConfigSecretDto {
+        environment_id: s.environment_id,
+        key: s.key,
+    }))
+}
+
+async fn delete_config_secret(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Path(key): Path<String>,
+    Query(q): Query<ConfigSecretQuery>,
+) -> ApiResult<StatusCode> {
+    envs.0
+        .put_config_secret(&ctx, q.project_id, q.environment_id, &key, None)
+        .await
+        .map_err(problem)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn update_bindings(
@@ -528,6 +725,7 @@ async fn update_bindings(
         .map(|b| Binding {
             profile: b.profile.trim().to_owned(),
             environment_id: b.environment_id,
+            values: b.values,
         })
         .collect();
     let saved = envs
@@ -565,6 +763,16 @@ async fn create_deployment(
         chart: body.chart,
         chart_ref: body.chart_ref,
         chart_version: body.chart_version,
+        action: match body.action.as_deref().map(str::trim) {
+            None | Some("" | "install") => DeploymentAction::Install,
+            Some("uninstall") => DeploymentAction::Uninstall,
+            Some(other) => {
+                return Err(StudioEnvironmentsError::invalid_argument()
+                    .with_constraint(format!("action is install or uninstall, not '{other}'"))
+                    .create());
+            }
+        },
+        redeploy_of: body.redeploy_of,
     };
     let d = envs
         .0
@@ -799,6 +1007,97 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-environments/v1/build-workflows")
+        .operation_id("studio_environments.scaffold_build_workflow")
+        .summary("Propose the workflow that builds a project's product for an environment")
+        .description(
+            "For `?project_id=`: a pull request to the project's repository adding \
+             `.github/workflows/studio-product.yml` (ADR-0048 §5). It generates the profile with \
+             the Gearbox engine this Studio runs, pushes the images and the chart under the \
+             environment's registry prefix, and uploads `studio-build.json`, which the sync \
+             records as the run's build. Answers with the pull request.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("project_id", true, "The project", "string")
+        .json_request::<BuildWorkflowRequest>(openapi, "Which environment and profile")
+        .handler(scaffold_build_workflow)
+        .json_response_with_schema::<BuildWorkflowDto>(openapi, StatusCode::OK, "Proposed")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-environments/v1/environments/{environment_id}/push-tokens")
+        .operation_id("studio_environments.create_push_token")
+        .summary("Get a token that pushes a build's images and chart to an environment's registry")
+        .description(
+            "For `?project_id=`, a member of a project the environment takes. The registry's              own token service issues a short-lived bearer token scoped to pull and push the              named repositories under the environment's prefix (ADR-0048 §1); the stored              login never leaves the server. Refused for a registry without a token service.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("environment_id", "Environment id")
+        .query_param_typed("project_id", true, "The project", "string")
+        .json_request::<PushTokenRequest>(openapi, "What to push")
+        .handler(create_push_token)
+        .json_response_with_schema::<PushTokenDto>(openapi, StatusCode::CREATED, "Issued")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-environments/v1/config-secrets/{key}")
+        .operation_id("studio_environments.upsert_config_secret")
+        .summary("Set a secret of a project's configuration in an environment")
+        .description(
+            "For `?project_id=` and `?environment_id=`: the value of `key`, an environment              variable name, kept in credstore and never returned (ADR-0048 §7). Each deploy              there writes the project's secrets into the release's `<release>-config`              secret, which every application of the chart reads.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("key", "The variable name, SMTP_PASSWORD")
+        .query_param_typed("project_id", true, "The project", "string")
+        .query_param_typed("environment_id", true, "The environment", "string")
+        .json_request::<ConfigSecretRequest>(openapi, "The value")
+        .handler(put_config_secret)
+        .json_response_with_schema::<ConfigSecretDto>(openapi, StatusCode::OK, "Set")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::delete("/studio-environments/v1/config-secrets/{key}")
+        .operation_id("studio_environments.delete_config_secret")
+        .summary("Remove a secret of a project's configuration in an environment")
+        .description(
+            "For `?project_id=` and `?environment_id=`. The next deploy there writes the              release's configuration secret without it.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("key", "The variable name")
+        .query_param_typed("project_id", true, "The project", "string")
+        .query_param_typed("environment_id", true, "The environment", "string")
+        .handler(delete_config_secret)
+        .no_content_response(StatusCode::NO_CONTENT, "Removed")
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::post("/studio-environments/v1/deployments")

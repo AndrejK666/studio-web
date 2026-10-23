@@ -220,6 +220,75 @@ impl RegistryAccess {
     }
 }
 
+impl RegistryAccess {
+    /// A token from the registry's token service that may pull and push
+    /// `paths` (`acme/gbx-api`) and nothing else, and how long it lasts. A
+    /// registry with no token service cannot scope one, so it is refused:
+    /// handing out its login would hand out everything it reaches.
+    pub async fn push_token(
+        &self,
+        http: &reqwest::Client,
+        paths: &[String],
+    ) -> anyhow::Result<(String, Option<u64>)> {
+        let base = check_url(
+            &format!("https://{}", self.host),
+            "the registry address",
+            HostRule::AnyPublic,
+        )?;
+        let res = http
+            .get(base.join("/v2/")?)
+            .send()
+            .await
+            .map_err(|e| anyhow!("the registry did not answer: {e}"))?;
+        let challenge = res
+            .headers()
+            .get(reqwest::header::WWW_AUTHENTICATE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(bearer_challenge)
+            .ok_or_else(|| {
+                anyhow!(
+                    "{} has no token service, so Studio cannot give out a push-only token: \
+                     push with your own login",
+                    self.host
+                )
+            })?;
+        let mut url = check_url(
+            &challenge.realm,
+            "the registry's token service",
+            HostRule::AnyPublic,
+        )?;
+        {
+            let mut q = url.query_pairs_mut();
+            if let Some(service) = &challenge.service {
+                q.append_pair("service", service);
+            }
+            for p in paths {
+                q.append_pair("scope", &format!("repository:{p}:pull,push"));
+            }
+        }
+        let res = http
+            .get(url)
+            .basic_auth(&self.username, Some(&self.password))
+            .send()
+            .await
+            .map_err(|e| anyhow!("the registry's token service did not answer: {e}"))?;
+        if !res.status().is_success() {
+            bail!("the registry refused a push token ({})", res.status());
+        }
+        let body: serde_json::Value = res.json().await?;
+        let token = body
+            .get("token")
+            .or_else(|| body.get("access_token"))
+            .and_then(|t| t.as_str())
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| anyhow!("the registry's token service answered without a token"))?;
+        Ok((
+            token.to_owned(),
+            body.get("expires_in").and_then(|v| v.as_u64()),
+        ))
+    }
+}
+
 /// The access an image reference's host needs, checked to be `access`'s.
 pub fn same_registry(access: &RegistryAccess, reference: &str) -> anyhow::Result<()> {
     let bare = reference.strip_prefix("oci://").unwrap_or(reference);

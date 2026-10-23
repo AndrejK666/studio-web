@@ -24,6 +24,7 @@ Status: **proposed** · Date: 2026-10-23 · Completes `cpt-studio-adr-deployment
   - [5. CI builds the product from a workflow Studio proposes](#5-ci-builds-the-product-from-a-workflow-studio-proposes)
   - [6. A deploy names a build, from the portal or the desktop](#6-a-deploy-names-a-build-from-the-portal-or-the-desktop)
   - [7. Databases and configuration](#7-databases-and-configuration)
+  - [8. Environments in order, rollback and uninstall](#8-environments-in-order-rollback-and-uninstall)
 - [Consequences](#consequences)
 - [More Information](#more-information)
 - [Traceability](#traceability)
@@ -94,10 +95,12 @@ connection's is refused.
 
 Before installing, the deploy run writes the registry's credential into the
 namespace as a `kubernetes.io/dockerconfigjson` secret, `studio-registry`,
-and adds it to the namespace's `default` service account's
-`imagePullSecrets`. Every pod of the release then pulls with it, whatever the
-chart says, so no chart has to learn a value for it. The secret is written
-on every deploy, so a rotated token reaches the cluster with the next one.
+and names it in two places. A generated chart runs each application as a
+service account of its own, so the deploy passes the secret as
+`global.imagePullSecrets`, which that chart puts on every pod. A chart from
+anywhere else gets it on the namespace's `default` service account. The
+secret is written on every deploy, so a rotated token reaches the cluster
+with the next one.
 
 ### 3. The chart is published beside the images
 
@@ -148,13 +151,43 @@ lock hash and the digests.
 
 ### 7. Databases and configuration
 
-An environment whose database is `shared` names a Postgres connection. The
-deploy creates the product's databases and a role there, once, and writes the
-secret the profile's `database(existing_secret = …)` names into the
-namespace. A gear's required configuration and secrets become chart values
-through the schema the engine publishes with the chart (`values.schema.json`,
-constructorfabric/gearbox#8). An environment holds its values; secret ones
-are credstore references, written into the namespace by the deploy.
+A generated chart fixes what it needs of a database in the configuration it
+carries: the profile's host (`postgres` by default) and user, a database name
+per gear, and the password as `${NAME}`, read from the secret the profile's
+`database(existing_secret = …)` names under the key `NAME`. Two projects on
+one shared server would therefore collide on their names, so the
+environment's database mode is one of:
+
+- **`namespace`**: the product gets a Postgres of its own in the project's
+  namespace, under the host's name: a StatefulSet with a volume, a Service,
+  and its password in a secret kept there. Before each install the deploy
+  renders the chart (`helm template`, the same chart and values), reads the
+  servers, databases and secrets it needs, makes sure the server runs,
+  creates the databases that are missing with a Job, and writes the password
+  into each secret the chart reads. The server is reached from inside the
+  cluster, never from Studio.
+- **`shared`**: recorded, not used, until generated charts name their
+  databases per release.
+- **`none`**: the product brings its own.
+
+A release's configuration in an environment is the project's. Plain chart
+values are kept on the profile's binding and laid under what the deploy sets;
+the chart's own `values.schema.json`, which the engine writes, is what helm
+checks them against. Secret values are kept in credstore, under a reference
+Studio derives from the project, the environment and the key, so none can
+name another's. The deploy writes them into the release's `<release>-config`
+secret, which every application reads (`existingSecret` and `secretKeys`, the
+chart's own values).
+
+### 8. Environments in order, rollback and uninstall
+
+An environment may take releases from another: `prod` takes only what
+succeeded in `stage`, the same build or, without one, the same chart and
+images. A rollback installs an earlier deployment of the project again,
+which works for a published chart (an uploaded one is not kept). An
+uninstall takes the release out with `helm uninstall`; its database and
+secrets stay. Both go through the same request, the same approval of a
+protected environment and the same record as a deploy.
 
 ## Consequences
 
@@ -174,14 +207,27 @@ are credstore references, written into the namespace by the deploy.
 
 1. **Registry connection, pull secret, chart by reference.** The `registry`
    kind and its test, an environment's `registry_connection_id`, the pull
-   secret on every deploy, and a deploy that names an OCI chart.
+   secret on every deploy, and a deploy that names an OCI chart. *Built.*
 2. **CI builds and publishes.** The proposed workflow, `studio-build.json`,
-   images and chart on a build's record, the portal's Build.
-3. **Deploy a build, from either surface.** Deploy on a build in the portal;
-   the desktop pushes through a server-issued credential, reports its build
-   with what it published, and deploys it by reference.
-4. **Databases and configuration** (§7), with the engine's schema.
-5. **Order of environments, rollback and uninstall** (with ADR-0047 phase 5).
+   images and chart on a build's record. *Built: `POST /build-workflows`
+   proposes `.github/workflows/studio-product.yml` as a pull request; the sync
+   records a `ci-run-<id>` build from each run's `studio-build` artifact; a
+   build reported as `ci` by anyone else is refused. GitLab CI is not written
+   yet.*
+3. **Deploy a build, from either surface.** *Built: a deploy that names only
+   `build` takes its chart, images, commit and lock from the record (it must
+   have passed and published a chart); the portal's Deploys tab offers the
+   builds; the desktop's Publish gets a push-only token
+   (`POST /environments/{id}/push-tokens`, the registry's token service),
+   pushes the images and the chart with it, reports the build when Deploy is
+   pressed and deploys it by id. A registry without a token service is
+   refused for Publish.*
+4. **Databases and configuration** (§7). *Built: `namespace` mode, binding
+   values, configuration secrets.*
+5. **Order of environments, rollback and uninstall** (§8). *Built:
+   `promote_from`, `redeploy_of`, `action: uninstall`.*
+
+None of it has been run against a real cluster yet.
 
 ## Traceability
 

@@ -636,6 +636,23 @@ pub struct BuildReportRequest {
     /// The images it built.
     #[serde(default)]
     pub outputs: Vec<String>,
+    /// The images it published, by application (ADR-0048 §4).
+    #[serde(default)]
+    pub images: Vec<BuildImageItem>,
+    /// The chart it published, `oci://…`, and its version.
+    #[serde(default)]
+    pub chart_ref: Option<String>,
+    #[serde(default)]
+    pub chart_version: Option<String>,
+}
+
+/// One image a build published.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct BuildImageItem {
+    pub app: String,
+    /// With its registry and tag (and digest, when known).
+    pub image: String,
 }
 
 /// What Build asks CI for.
@@ -743,6 +760,14 @@ async fn upsert_build(
     let project_id = query.project()?;
     let svc = ingest.get()?;
     let (_, workspace) = reachable_project(&ingest, &ctx, project_id).await?;
+    // A pipeline's build is recorded from the manifest it uploaded, by the
+    // sync; nobody reports one in its name.
+    if req.r#where.trim() == "ci" {
+        return Err(build_problem(super::builds::BuildRefusal::Invalid(
+            "a CI build is recorded from its pipeline's studio-build.json; report desktop or session"
+                .into(),
+        )));
+    }
     let report = super::builds::BuildReport {
         build_id: req.build_id,
         r#where: req.r#where,
@@ -759,6 +784,9 @@ async fn upsert_build(
         failure: req.failure,
         failure_step: req.failure_step,
         outputs: req.outputs,
+        images: req.images.into_iter().map(|i| (i.app, i.image)).collect(),
+        chart_ref: req.chart_ref,
+        chart_version: req.chart_version,
     };
     let workspace = workspace.map(|w| w.to_string());
     let node = svc

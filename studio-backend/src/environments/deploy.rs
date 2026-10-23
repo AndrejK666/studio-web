@@ -24,7 +24,8 @@ use toolkit::client_hub::ClientHub;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use super::model::ChartRef;
+use super::database;
+use super::model::{ChartRef, DatabaseMode, DeploymentAction};
 use crate::connectors::sdk::{ClusterAccess, Connectors, RegistryAccess, same_registry};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
@@ -46,7 +47,7 @@ fn helm_binary() -> String {
 }
 
 /// The pull secret a deploy writes into the project's namespace (ADR-0048 §2).
-pub const PULL_SECRET: &str = "studio-registry";
+pub const PULL_SECRET: &str = super::model::PULL_SECRET_NAME;
 
 /// The field manager the deploy's own writes to the namespace are made as.
 const FIELD_MANAGER: &str = "constructor-studio";
@@ -64,6 +65,22 @@ pub struct DeployPayload {
     pub registry_connection_id: Option<Uuid>,
     pub namespace: String,
     pub release: String,
+    /// Install (payloads queued before uninstall existed) or uninstall.
+    #[serde(default)]
+    pub action: DeploymentAction,
+    /// The environment, which with the project names where the release's
+    /// configuration secrets are kept.
+    #[serde(default)]
+    pub environment_id: Uuid,
+    /// The keys of the release's configuration secrets; their values are
+    /// read from credstore by the run and written into the namespace.
+    #[serde(default)]
+    pub secret_keys: Vec<String>,
+    /// How the environment gives the product its database.
+    #[serde(default)]
+    pub database: DatabaseMode,
+    #[serde(default)]
+    pub database_image: Option<String>,
     /// The chart, a `.tgz`, base64; `None` when it is published and named by
     /// [`Self::chart_ref`].
     #[serde(default)]
@@ -81,6 +98,59 @@ pub struct DeployTask {
 impl DeployTask {
     pub fn new(hub: Arc<ClientHub>) -> Self {
         Self { hub }
+    }
+}
+
+impl DeployTask {
+    /// Read the release's configuration secrets from credstore, as the
+    /// service, and write them into the namespace as one secret the chart's
+    /// applications read (`existingSecret`).
+    async fn write_config_secrets(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        client: &kube::Client,
+        p: &DeployPayload,
+    ) -> anyhow::Result<()> {
+        let credstore = self
+            .hub
+            .get::<dyn credstore_sdk::CredStoreClientV1>()
+            .map_err(|_| anyhow!("credstore is not available in this deployment"))?;
+        let mut data = serde_json::Map::new();
+        for key in &p.secret_keys {
+            let reference = super::model::config_secret_ref(p.project_id, p.environment_id, key);
+            let sref = credstore_sdk::SecretRef::new(&reference)
+                .map_err(|e| anyhow!("bad secret reference {reference}: {e}"))?;
+            let value = credstore
+                .get(ctx, &sref)
+                .await
+                .map_err(|e| anyhow!("credstore: {e}"))?
+                .ok_or_else(|| anyhow!("configuration secret {key} has no value: set it again"))?;
+            let text = String::from_utf8(value.value.as_bytes().to_vec())
+                .map_err(|_| anyhow!("configuration secret {key} is not text"))?;
+            data.insert(key.clone(), text.into());
+        }
+        let name = super::model::config_secret_name(&p.release);
+        let secrets: kube::Api<Secret> = kube::Api::namespaced(client.clone(), &p.namespace);
+        let object = serde_json::json!({
+            "apiVersion": "v1", "kind": "Secret",
+            "metadata": { "name": name, "labels": { "app.kubernetes.io/managed-by": FIELD_MANAGER } },
+            "type": "Opaque",
+            "stringData": data,
+        });
+        secrets
+            .patch(
+                &name,
+                &PatchParams::apply(FIELD_MANAGER).force(),
+                &Patch::Apply(&object),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| {
+                anyhow!(
+                    "the configuration secret could not be written into {}: {e}",
+                    p.namespace
+                )
+            })
     }
 }
 
@@ -165,6 +235,20 @@ impl TaskHandler for DeployTask {
             Ok(a) => a,
             Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
         };
+        if payload.action == DeploymentAction::Uninstall {
+            ctx.progress(format!(
+                "helm uninstall {} from {}",
+                payload.release, payload.namespace
+            ))
+            .await;
+            return match helm_uninstall(&access, &payload, &ctx.cancel).await {
+                Ok(_) => TaskOutcome::done_with(
+                    format!("{} uninstalled from {}", payload.release, payload.namespace),
+                    serde_json::json!({}),
+                ),
+                Err(e) => TaskOutcome::Failed(format!("{e:#}")),
+            };
+        }
         let registry = match payload.registry_connection_id {
             Some(id) => {
                 match registry_access(&self.hub, &ctx.security, payload.organization_id, id).await {
@@ -190,12 +274,67 @@ impl TaskHandler for DeployTask {
                 return TaskOutcome::Failed(format!("{e:#}"));
             }
         }
+        if !payload.secret_keys.is_empty() {
+            ctx.progress("writing the release's configuration secrets")
+                .await;
+            if let Err(e) = self
+                .write_config_secrets(&ctx.security, &client, &payload)
+                .await
+            {
+                return TaskOutcome::Failed(format!("{e:#}"));
+            }
+        }
+        let scratch = match Scratch::new() {
+            Ok(s) => s,
+            Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+        };
+        let prepared = match prepare(&scratch, &access, registry.as_ref(), &payload) {
+            Ok(p) => p,
+            Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+        };
+        if payload.database == DatabaseMode::Namespace {
+            ctx.progress("reading what the chart needs of databases")
+                .await;
+            let rendered = match helm(
+                &scratch,
+                helm_template_args(&payload, &prepared),
+                &ctx.cancel,
+            )
+            .await
+            {
+                Ok(out) => out,
+                Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+            };
+            let needs = match database::needs(&rendered) {
+                Ok(n) => n,
+                Err(e) => {
+                    return TaskOutcome::Failed(format!(
+                        "the chart's database configuration: {e:#}"
+                    ));
+                }
+            };
+            let image = payload
+                .database_image
+                .clone()
+                .unwrap_or_else(|| database::DEFAULT_IMAGE.to_owned());
+            for need in &needs {
+                ctx.progress(format!(
+                    "preparing the product's Postgres ({}, {} databases)",
+                    need.host,
+                    need.databases.len()
+                ))
+                .await;
+                if let Err(e) = database::ensure(&client, &payload.namespace, need, &image).await {
+                    return TaskOutcome::Failed(format!("{e:#}"));
+                }
+            }
+        }
         ctx.progress(format!(
             "helm upgrade --install {} into {}",
             payload.release, payload.namespace
         ))
         .await;
-        match helm_install(&access, registry.as_ref(), &payload, &ctx.cancel).await {
+        match helm(&scratch, helm_args(&payload, &prepared), &ctx.cancel).await {
             Ok(out) => {
                 info!(
                     deployment = %payload.deployment_id,
@@ -413,52 +552,22 @@ impl Drop for Scratch {
     }
 }
 
-/// The arguments of the install, without the kubeconfig's path, so a test
-/// can say what runs. `chart` is a packaged chart's path or a published
-/// chart's reference; `registry_config` is the login a published one is
-/// pulled with.
-pub fn helm_args(
-    p: &DeployPayload,
-    chart: &str,
-    values: &Path,
-    kubeconfig: &Path,
-    registry_config: Option<&Path>,
-) -> Vec<String> {
-    let mut args: Vec<String> = vec![
-        "upgrade".into(),
-        "--install".into(),
-        p.release.clone(),
-        chart.to_owned(),
-        "--namespace".into(),
-        p.namespace.clone(),
-        "--values".into(),
-        values.display().to_string(),
-        "--kubeconfig".into(),
-        kubeconfig.display().to_string(),
-        "--wait".into(),
-        "--timeout".into(),
-        HELM_TIMEOUT.into(),
-        "--history-max".into(),
-        "10".into(),
-    ];
-    if let Some(r) = &p.chart_ref {
-        args.push("--version".into());
-        args.push(r.version.clone());
-    }
-    if let Some(config) = registry_config {
-        args.push("--registry-config".into());
-        args.push(config.display().to_string());
-    }
-    args
+/// What every helm call of a run reads, written into its scratch directory:
+/// the chart (a path, or a published chart's reference), the values, the
+/// kubeconfig and, for a published chart, the registry login.
+pub struct Prepared {
+    pub chart: String,
+    pub values: std::path::PathBuf,
+    pub kubeconfig: std::path::PathBuf,
+    pub registry_config: Option<std::path::PathBuf>,
 }
 
-async fn helm_install(
+fn prepare(
+    scratch: &Scratch,
     access: &ClusterAccess,
     registry: Option<&RegistryAccess>,
     p: &DeployPayload,
-    cancel: &tokio_util::sync::CancellationToken,
-) -> anyhow::Result<String> {
-    let scratch = Scratch::new()?;
+) -> anyhow::Result<Prepared> {
     let (chart, registry_config) = match (&p.chart_ref, &p.chart) {
         (Some(r), _) => {
             let registry = registry.ok_or_else(|| {
@@ -480,39 +589,126 @@ async fn helm_install(
         }
         (None, None) => return Err(anyhow!("the deploy names no chart")),
     };
-    let values_path = scratch.write("values.json", serde_json::to_string(&p.values)?.as_bytes())?;
-    let kubeconfig = scratch.write("kubeconfig", access.kubeconfig_yaml().as_bytes())?;
+    Ok(Prepared {
+        chart,
+        values: scratch.write("values.json", serde_json::to_string(&p.values)?.as_bytes())?,
+        kubeconfig: scratch.write("kubeconfig", access.kubeconfig_yaml().as_bytes())?,
+        registry_config,
+    })
+}
+
+/// The arguments of the install, so a test can say what runs.
+pub fn helm_args(p: &DeployPayload, c: &Prepared) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "upgrade".into(),
+        "--install".into(),
+        p.release.clone(),
+        c.chart.clone(),
+        "--namespace".into(),
+        p.namespace.clone(),
+        "--values".into(),
+        c.values.display().to_string(),
+        "--kubeconfig".into(),
+        c.kubeconfig.display().to_string(),
+        "--wait".into(),
+        "--timeout".into(),
+        HELM_TIMEOUT.into(),
+        "--history-max".into(),
+        "10".into(),
+    ];
+    chart_source_args(p, c, &mut args);
+    args
+}
+
+/// The arguments that render the chart as the install would, without the
+/// cluster: what the database step reads.
+pub fn helm_template_args(p: &DeployPayload, c: &Prepared) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "template".into(),
+        p.release.clone(),
+        c.chart.clone(),
+        "--namespace".into(),
+        p.namespace.clone(),
+        "--values".into(),
+        c.values.display().to_string(),
+    ];
+    chart_source_args(p, c, &mut args);
+    args
+}
+
+fn chart_source_args(p: &DeployPayload, c: &Prepared, args: &mut Vec<String>) {
+    if let Some(r) = &p.chart_ref {
+        args.push("--version".into());
+        args.push(r.version.clone());
+    }
+    if let Some(config) = &c.registry_config {
+        args.push("--registry-config".into());
+        args.push(config.display().to_string());
+    }
+}
+
+/// Run helm with `args`, its homes under the scratch directory: the
+/// server's home is not writable, and nothing should outlive the run.
+async fn helm(
+    scratch: &Scratch,
+    args: Vec<String>,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> anyhow::Result<String> {
+    let what = args.first().cloned().unwrap_or_default();
     let home = scratch.path().join("helm");
     let mut cmd = Command::new(helm_binary());
-    cmd.args(helm_args(
-        p,
-        &chart,
-        &values_path,
-        &kubeconfig,
-        registry_config.as_deref(),
-    ))
-    // Helm's cache, config and data under the scratch directory: the
-    // server's home is not writable, and nothing should outlive the run.
-    .env("HELM_CACHE_HOME", home.join("cache"))
-    .env("HELM_CONFIG_HOME", home.join("config"))
-    .env("HELM_DATA_HOME", home.join("data"))
-    .env_remove("KUBECONFIG")
-    .kill_on_drop(true);
-    let child = cmd.output();
+    cmd.args(&args)
+        .env("HELM_CACHE_HOME", home.join("cache"))
+        .env("HELM_CONFIG_HOME", home.join("config"))
+        .env("HELM_DATA_HOME", home.join("data"))
+        .env_remove("KUBECONFIG")
+        .kill_on_drop(true);
     let output = tokio::select! {
-        out = child => out.map_err(|e| anyhow!("helm could not be started -- is it installed on the server? ({e})"))?,
+        out = cmd.output() => out.map_err(|e| anyhow!("helm could not be started -- is it installed on the server? ({e})"))?,
         () = cancel.cancelled() => return Err(anyhow!("the deploy was cancelled")),
     };
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     if output.status.success() {
-        Ok(text)
+        // `template` answers with manifests on stdout only; the rest with both.
+        if what == "template" {
+            Ok(stdout)
+        } else {
+            Ok(format!(
+                "{stdout}{}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
     } else {
-        Err(anyhow!("helm upgrade failed: {}", tail(text.trim(), 2000)))
+        let text = format!("{stdout}{}", String::from_utf8_lossy(&output.stderr));
+        Err(anyhow!("helm {what} failed: {}", tail(text.trim(), 2000)))
     }
+}
+
+/// The arguments of an uninstall. A release that is not there is not an
+/// error: what was asked for is true.
+pub fn helm_uninstall_args(p: &DeployPayload, kubeconfig: &Path) -> Vec<String> {
+    vec![
+        "uninstall".into(),
+        p.release.clone(),
+        "--namespace".into(),
+        p.namespace.clone(),
+        "--kubeconfig".into(),
+        kubeconfig.display().to_string(),
+        "--wait".into(),
+        "--timeout".into(),
+        HELM_TIMEOUT.into(),
+        "--ignore-not-found".into(),
+    ]
+}
+
+async fn helm_uninstall(
+    access: &ClusterAccess,
+    p: &DeployPayload,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> anyhow::Result<String> {
+    let scratch = Scratch::new()?;
+    let kubeconfig = scratch.write("kubeconfig", access.kubeconfig_yaml().as_bytes())?;
+    helm(&scratch, helm_uninstall_args(p, &kubeconfig), cancel).await
 }
 
 /// One workload of a release as the cluster reports it.
@@ -602,22 +798,29 @@ mod tests {
             registry_connection_id: None,
             namespace: "studio-web-prod".into(),
             release: "studio-web".into(),
+            action: DeploymentAction::Install,
+            environment_id: Uuid::nil(),
+            secret_keys: Vec::new(),
+            database: DatabaseMode::None,
+            database_image: None,
             chart: Some(String::new()),
             chart_ref: None,
             values: serde_json::json!({}),
         }
     }
 
+    fn prepared(chart: &str, registry: bool) -> Prepared {
+        Prepared {
+            chart: chart.into(),
+            values: "/s/values.json".into(),
+            kubeconfig: "/s/kubeconfig".into(),
+            registry_config: registry.then(|| "/s/registry.json".into()),
+        }
+    }
+
     #[test]
     fn the_install_names_its_namespace_values_and_kubeconfig_and_waits() {
-        let args = helm_args(
-            &payload(),
-            "/s/chart.tgz",
-            Path::new("/s/values.json"),
-            Path::new("/s/kubeconfig"),
-            None,
-        );
-        let line = args.join(" ");
+        let line = helm_args(&payload(), &prepared("/s/chart.tgz", false)).join(" ");
         assert!(line.starts_with("upgrade --install studio-web /s/chart.tgz"));
         assert!(line.contains("--namespace studio-web-prod"));
         assert!(line.contains("--values /s/values.json"));
@@ -630,6 +833,30 @@ mod tests {
     }
 
     #[test]
+    fn the_chart_is_rendered_as_it_would_be_installed_without_the_cluster() {
+        let mut p = payload();
+        p.chart_ref = Some(ChartRef {
+            reference: "oci://ghcr.io/acme/charts/shop".into(),
+            version: "0.1.0".into(),
+        });
+        let line =
+            helm_template_args(&p, &prepared("oci://ghcr.io/acme/charts/shop", true)).join(" ");
+        assert!(line.starts_with("template studio-web oci://ghcr.io/acme/charts/shop"));
+        assert!(line.contains("--values /s/values.json") && line.contains("--version 0.1.0"));
+        assert!(line.contains("--registry-config /s/registry.json"));
+        assert!(!line.contains("--kubeconfig"), "rendering needs no cluster");
+    }
+
+    #[test]
+    fn an_uninstall_waits_and_is_content_with_nothing_there() {
+        let mut p = payload();
+        p.action = DeploymentAction::Uninstall;
+        let line = helm_uninstall_args(&p, Path::new("/s/kubeconfig")).join(" ");
+        assert!(line.starts_with("uninstall studio-web --namespace studio-web-prod"));
+        assert!(line.contains("--wait") && line.contains("--ignore-not-found"));
+    }
+
+    #[test]
     fn a_published_chart_is_installed_at_its_version_with_the_registry_login() {
         let mut p = payload();
         p.chart = None;
@@ -637,14 +864,7 @@ mod tests {
             reference: "oci://ghcr.io/acme/charts/shop".into(),
             version: "0.1.0".into(),
         });
-        let args = helm_args(
-            &p,
-            "oci://ghcr.io/acme/charts/shop",
-            Path::new("/s/values.json"),
-            Path::new("/s/kubeconfig"),
-            Some(Path::new("/s/registry.json")),
-        );
-        let line = args.join(" ");
+        let line = helm_args(&p, &prepared("oci://ghcr.io/acme/charts/shop", true)).join(" ");
         assert!(line.starts_with("upgrade --install studio-web oci://ghcr.io/acme/charts/shop"));
         assert!(line.contains("--version 0.1.0"));
         assert!(line.contains("--registry-config /s/registry.json"));
@@ -660,6 +880,8 @@ mod tests {
         let p: DeployPayload = serde_json::from_value(old).unwrap();
         assert_eq!(p.chart.as_deref(), Some("H4sI"));
         assert!(p.chart_ref.is_none() && p.registry_connection_id.is_none());
+        assert_eq!(p.action, DeploymentAction::Install);
+        assert_eq!(p.database, DatabaseMode::None);
     }
 
     #[test]

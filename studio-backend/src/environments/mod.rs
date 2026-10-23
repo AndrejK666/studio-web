@@ -26,11 +26,13 @@
 //! #9): an environment records its database mode, nothing hands it on. Images
 //! are built and pushed before a deploy, by CI or by the desktop.
 
+mod database;
 mod deploy;
 mod model;
 mod rest;
 mod service;
 mod store;
+mod workflow; // the build workflow proposed to a product's repository (ADR-0048)
 
 use std::sync::Arc;
 

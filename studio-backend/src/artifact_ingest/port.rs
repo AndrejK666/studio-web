@@ -459,3 +459,73 @@ mod text_of_tests {
         );
     }
 }
+
+/// One build as its record says (ADR-0045, ADR-0048 §4): what another gear
+/// deploys when it is told a build's id.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BuildRecord {
+    pub build_id: String,
+    /// `running` | `passed` | `failed` | `cancelled`.
+    pub status: String,
+    pub product: Option<String>,
+    pub profile: Option<String>,
+    pub commit: Option<String>,
+    pub lock_hash: Option<String>,
+    /// `(app, image)`: what it published, with registry and digest.
+    pub images: Vec<(String, String)>,
+    pub chart_ref: Option<String>,
+    pub chart_version: Option<String>,
+}
+
+impl BuildRecord {
+    /// A record's fields out of its node's payload.
+    pub fn of(value: &serde_json::Value) -> Self {
+        let text = |k: &str| value.get(k).and_then(|v| v.as_str()).map(str::to_owned);
+        BuildRecord {
+            build_id: text("build_id").unwrap_or_default(),
+            status: text("status").unwrap_or_default(),
+            product: text("product"),
+            profile: text("profile"),
+            commit: text("commit"),
+            lock_hash: text("lock_hash"),
+            images: value
+                .get("images")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|i| {
+                            Some((
+                                i.get("app")?.as_str()?.to_owned(),
+                                i.get("image")?.as_str()?.to_owned(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            chart_ref: value
+                .get("chart")
+                .and_then(|c| c.get("reference"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            chart_version: value
+                .get("chart")
+                .and_then(|c| c.get("version"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+        }
+    }
+}
+
+/// A project's builds, by id, for the gear that deploys them.
+#[async_trait]
+pub trait BuildRecords: Send + Sync + 'static {
+    /// The build `build_id` of `project_id` (its tenant id); `None` when the
+    /// project has none by that id.
+    async fn build(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        project_id: &str,
+        build_id: &str,
+    ) -> anyhow::Result<Option<BuildRecord>>;
+}

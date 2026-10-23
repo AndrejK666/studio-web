@@ -22,7 +22,10 @@ All under `/studio-environments/v1`. An organization is named with
 | `POST /environments/{environment_id}/test` | admin | ask the cluster for its version with the environment's connection |
 | `GET /targets?project_id=` | member | the environments the project may deploy to, its namespace in each, its bindings |
 | `PUT /bindings?project_id=` | member | bind the product's kubernetes profiles to environments |
-| `POST /deployments?project_id=` | member | ask for a deploy: the chart (`.tgz`, base64) or a published one (`chart_ref` `oci://<registry prefix>/…` and `chart_version`, ADR-0048 §3), the images, the commit, and the build it came from (`build`, the IDE's build id, ADR-0045 §4); 202 `queued` or `awaiting_approval` |
+| `POST /deployments?project_id=` | member | ask for a deploy: the chart (`.tgz`, base64), a published one (`chart_ref` `oci://<registry prefix>/…` and `chart_version`), or a build by id alone (`build`: its chart, images, commit and lock come from its record), or an earlier deployment again (`redeploy_of`), or `action: uninstall` of the release (`product`); refused into an environment with `promote_from` until the release succeeded there (ADR-0048); 202 `queued` or `awaiting_approval` |
+| `POST /build-workflows?project_id=` | member | propose `.github/workflows/studio-product.yml` to the project's repository as a pull request (ADR-0048 §5) |
+| `POST /environments/{environment_id}/push-tokens?project_id=` | member | a push-only token for named repositories under the environment's registry prefix, from the registry's token service (ADR-0048 §1); 201 |
+| `PUT`/`DELETE /config-secrets/{key}?project_id=&environment_id=` | member | set or remove a secret of the release's configuration there; the value goes to credstore and never comes back |
 | `GET /deployments` | member | the history, newest first; filter by `project_id`, `environment_id` |
 | `POST /deployments/{deployment_id}/decisions` | admin | `approve` or `decline` (with a reason) a deploy to a protected environment |
 | `GET /deployments/{deployment_id}/status` | member | the release's workloads and ingress hosts, read from the cluster now |
@@ -54,6 +57,21 @@ of studio-user through `OrgAuthority`.
   `--registry-config` in the run's scratch directory. The cluster connection
   needs to manage secrets and service accounts in the namespace; `admin` there
   does.
+- Database mode `namespace` (`database.rs`, ADR-0048 §7): before the install
+  the run renders the chart with `helm template`, reads from its ConfigMaps the
+  Postgres servers, user, `${NAME}` password and databases, and from its
+  workloads the secrets that password is read from; then applies a
+  `studio-postgres-<host>` Secret (the kept password), a Service named as the
+  host, a StatefulSet (default `pgvector/pgvector:pg18`, or the environment's
+  `database_image`, 10Gi volume), waits for it, creates the missing databases
+  with a Job running `psql` in the namespace, and writes the password into each
+  secret the chart reads. The cluster connection needs to manage StatefulSets,
+  Services, Jobs and Secrets there; `admin` does.
+- A project's configuration per environment: chart `values` on the profile's
+  binding, laid under the deploy's own (images, pull secret); secrets in
+  credstore under `studio-env-config-<project>-<environment>-<key>`, written by
+  the run into `<release>-config` and given to every application through
+  `existingSecret`/`secretKeys`.
 - `helm` must be on the server's PATH (or `STUDIO_HELM`); both backend images
   install a pinned one.
 
@@ -83,16 +101,17 @@ once the run ends.
   pattern, registry, the history's trimming, image values). No I/O.
 - `store.rs` — the metadata rows and the service identity.
 - `service.rs` — who may, in which order.
-- `deploy.rs` — the run: namespace, the pull secret, `helm upgrade --install
-  --wait` with a kubeconfig (and a registry login for a published chart) in a
-  scratch directory removed afterwards; the rollout read.
+- `deploy.rs` — the run: namespace, the pull secret, configuration secrets,
+  the database step, `helm upgrade --install --wait` (or `helm uninstall`) with
+  a kubeconfig (and a registry login for a published chart) in a scratch
+  directory removed afterwards; the rollout read.
+- `database.rs` — what a rendered chart needs of databases, and the
+  namespace's Postgres that gives it.
+- `workflow.rs` — the build workflow proposed to a product's repository.
 - `rest.rs` — the routes.
 
 ## Not yet
 
-Databases and required configuration from the environment (ADR-0043 phase 4,
-ADR-0048 §7) wait for the engine's chart to ask for them
-(constructorfabric/gearbox#8, #9). Pushing images and the chart is the
-desktop's (or CI's) job: the member's `docker push` still uses their own
-registry login until ADR-0048 phases 2–3 (a CI workflow, a server-issued push
-credential for the desktop).
+A `shared` database (one server for many projects) is recorded and not used:
+a generated chart fixes its database names. The build workflow is written for
+GitHub Actions only. Nothing here has run against a real cluster yet.
