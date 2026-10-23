@@ -62,6 +62,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0047](0047-a-change-is-the-unit-that-walks-the-delivery-stages.md) | A change is the unit that walks the delivery stages, and every object it rests on comes through a connection | proposed | 2026-10-22 |
 | [0048](0048-a-product-ships-as-images-and-a-chart-in-the-organizations-registry.md) | A product ships as images and a chart in the organization's registry, built by CI or the desktop and deployed from either | proposed | 2026-10-23 |
 | [0049](0049-constructor-research-runs-a-product-as-one-of-its-applications.md) | Constructor Research builds and runs a product as one of its applications, reached through a connection and an integration service | proposed | 2026-10-23 |
+| [0050](0050-a-products-frontend-is-composed-from-frontx-micro-frontends.md) | A product's frontend is composed from FrontX micro-frontends, the way its backend is composed from gears | proposed | 2026-10-23 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

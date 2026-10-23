@@ -939,6 +939,9 @@ export interface ProjectConfig {
   sources?: import("./project-sources").ProjectSource[];
   /** The CI workflow that builds the product (ADR-0045): Build starts it. */
   build?: { repo: string; workflow: string };
+  /** The product's frontend (ADR-0050): the micro-frontends its shell
+   *  mounts, by package name, until product.gdl has a frontend block. */
+  frontend?: { mfes?: string[] };
 }
 
 // Workspace settings live as AM tenant metadata (schema seeded by the backend config).

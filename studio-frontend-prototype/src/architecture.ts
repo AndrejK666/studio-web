@@ -648,6 +648,14 @@ export const SURFACES: Surface[] = [
     ],
   },
   {
+    id: "project-frontend",
+    area: "project",
+    title: "Frontend",
+    does: "Compose the product's UI from micro-frontends in a FrontX shell, and see whether the product has the gears each screen calls.",
+    components: ["FrontendConstructor"],
+    gears: ["account-management", "studio-components-catalog", "studio-product"],
+  },
+  {
     id: "project-builds",
     area: "project",
     title: "Builds",
