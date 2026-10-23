@@ -534,7 +534,9 @@ request	POST /studio-domain-model/v1/types/{}/fields	name	String	required
 request	POST /studio-domain-model/v1/types/{}/fields	required	bool	optional
 request	POST /studio-domain-model/v1/types/{}/fields	type	String	required
 request	POST /studio-environments/v1/deployments	build	String	optional
-request	POST /studio-environments/v1/deployments	chart	String	required
+request	POST /studio-environments/v1/deployments	chart	String	optional
+request	POST /studio-environments/v1/deployments	chart_ref	String	optional
+request	POST /studio-environments/v1/deployments	chart_version	String	optional
 request	POST /studio-environments/v1/deployments	commit	String	optional
 request	POST /studio-environments/v1/deployments	environment_id	Uuid	required
 request	POST /studio-environments/v1/deployments	images	Vec<{}>	optional
@@ -553,6 +555,7 @@ request	POST /studio-environments/v1/environments	namespace_pattern	String	optio
 request	POST /studio-environments/v1/environments	projects	Vec<Uuid>	optional
 request	POST /studio-environments/v1/environments	protected	bool	optional
 request	POST /studio-environments/v1/environments	registry	String	optional
+request	POST /studio-environments/v1/environments	registry_connection_id	Uuid	optional
 request	POST /studio-identity/v1/users/{}/assignment	role	String	required
 request	POST /studio-identity/v1/users/{}/assignment	tenant_id	Uuid	required
 request	POST /studio-insight/v1/components/metrics	bucket	String	optional
@@ -784,6 +787,7 @@ request	PUT /studio-environments/v1/environments/{}	namespace_pattern	String	opt
 request	PUT /studio-environments/v1/environments/{}	projects	Vec<Uuid>	optional
 request	PUT /studio-environments/v1/environments/{}	protected	bool	optional
 request	PUT /studio-environments/v1/environments/{}	registry	String	optional
+request	PUT /studio-environments/v1/environments/{}	registry_connection_id	Uuid	optional
 request	PUT /studio-organizations/v1/logo	content_type	String	required
 request	PUT /studio-organizations/v1/logo	data	String	required
 request	PUT /studio-product/v1/gear-explanations/{}	text	String	required
@@ -2379,7 +2383,9 @@ response	GET /studio-domain-model/v1/types/{}/conformance	violations.field	Strin
 response	GET /studio-domain-model/v1/types/{}/conformance	violations.kind	String	optional
 response	GET /studio-environments/v1/deployments	items	Vec<{}>	always
 response	GET /studio-environments/v1/deployments	items.build	String	optional
+response	GET /studio-environments/v1/deployments	items.chart_ref	String	optional
 response	GET /studio-environments/v1/deployments	items.chart_sha256	String	always
+response	GET /studio-environments/v1/deployments	items.chart_version	String	optional
 response	GET /studio-environments/v1/deployments	items.commit	String	optional
 response	GET /studio-environments/v1/deployments	items.decided_at	String	optional
 response	GET /studio-environments/v1/deployments	items.decided_by	String	optional
@@ -2406,7 +2412,9 @@ response	GET /studio-environments/v1/deployments	items.state	String	always
 response	GET /studio-environments/v1/deployments	total	u32	always
 response	GET /studio-environments/v1/deployments/{}/status	deployment	{}	always
 response	GET /studio-environments/v1/deployments/{}/status	deployment.build	String	optional
+response	GET /studio-environments/v1/deployments/{}/status	deployment.chart_ref	String	optional
 response	GET /studio-environments/v1/deployments/{}/status	deployment.chart_sha256	String	always
+response	GET /studio-environments/v1/deployments/{}/status	deployment.chart_version	String	optional
 response	GET /studio-environments/v1/deployments/{}/status	deployment.commit	String	optional
 response	GET /studio-environments/v1/deployments/{}/status	deployment.decided_at	String	optional
 response	GET /studio-environments/v1/deployments/{}/status	deployment.decided_by	String	optional
@@ -2446,6 +2454,7 @@ response	GET /studio-environments/v1/environments	items.namespace_pattern	String
 response	GET /studio-environments/v1/environments	items.projects	Vec<Uuid>	optional
 response	GET /studio-environments/v1/environments	items.protected	bool	always
 response	GET /studio-environments/v1/environments	items.registry	String	always
+response	GET /studio-environments/v1/environments	items.registry_connection_id	Uuid	optional
 response	GET /studio-environments/v1/environments	items.updated_at	String	always
 response	GET /studio-environments/v1/environments	items.updated_by	String	always
 response	GET /studio-environments/v1/environments	may_manage	bool	always
@@ -2464,6 +2473,7 @@ response	GET /studio-environments/v1/targets	environments.environment.namespace_
 response	GET /studio-environments/v1/targets	environments.environment.projects	Vec<Uuid>	optional
 response	GET /studio-environments/v1/targets	environments.environment.protected	bool	always
 response	GET /studio-environments/v1/targets	environments.environment.registry	String	always
+response	GET /studio-environments/v1/targets	environments.environment.registry_connection_id	Uuid	optional
 response	GET /studio-environments/v1/targets	environments.environment.updated_at	String	always
 response	GET /studio-environments/v1/targets	environments.environment.updated_by	String	always
 response	GET /studio-environments/v1/targets	environments.namespace	String	always
@@ -4297,7 +4307,9 @@ response	POST /studio-domain-model/v1/relations	verb	String	always
 response	POST /studio-domain-model/v1/types/{}/fields	entity	Value	always
 response	POST /studio-domain-model/v1/types/{}/fields	version	u64	always
 response	POST /studio-environments/v1/deployments	build	String	optional
+response	POST /studio-environments/v1/deployments	chart_ref	String	optional
 response	POST /studio-environments/v1/deployments	chart_sha256	String	always
+response	POST /studio-environments/v1/deployments	chart_version	String	optional
 response	POST /studio-environments/v1/deployments	commit	String	optional
 response	POST /studio-environments/v1/deployments	decided_at	String	optional
 response	POST /studio-environments/v1/deployments	decided_by	String	optional
@@ -4322,7 +4334,9 @@ response	POST /studio-environments/v1/deployments	requested_by_name	String	alway
 response	POST /studio-environments/v1/deployments	run_id	Uuid	optional
 response	POST /studio-environments/v1/deployments	state	String	always
 response	POST /studio-environments/v1/deployments/{}/decisions	build	String	optional
+response	POST /studio-environments/v1/deployments/{}/decisions	chart_ref	String	optional
 response	POST /studio-environments/v1/deployments/{}/decisions	chart_sha256	String	always
+response	POST /studio-environments/v1/deployments/{}/decisions	chart_version	String	optional
 response	POST /studio-environments/v1/deployments/{}/decisions	commit	String	optional
 response	POST /studio-environments/v1/deployments/{}/decisions	decided_at	String	optional
 response	POST /studio-environments/v1/deployments/{}/decisions	decided_by	String	optional
@@ -4355,6 +4369,7 @@ response	POST /studio-environments/v1/environments	namespace_pattern	String	alwa
 response	POST /studio-environments/v1/environments	projects	Vec<Uuid>	optional
 response	POST /studio-environments/v1/environments	protected	bool	always
 response	POST /studio-environments/v1/environments	registry	String	always
+response	POST /studio-environments/v1/environments	registry_connection_id	Uuid	optional
 response	POST /studio-environments/v1/environments	updated_at	String	always
 response	POST /studio-environments/v1/environments	updated_by	String	always
 response	POST /studio-environments/v1/environments/{}/test	message	String	always
@@ -4926,6 +4941,7 @@ response	PUT /studio-environments/v1/environments/{}	namespace_pattern	String	al
 response	PUT /studio-environments/v1/environments/{}	projects	Vec<Uuid>	optional
 response	PUT /studio-environments/v1/environments/{}	protected	bool	always
 response	PUT /studio-environments/v1/environments/{}	registry	String	always
+response	PUT /studio-environments/v1/environments/{}	registry_connection_id	Uuid	optional
 response	PUT /studio-environments/v1/environments/{}	updated_at	String	always
 response	PUT /studio-environments/v1/environments/{}	updated_by	String	always
 response	PUT /studio-organizations/v1/logo	content_type	String	always

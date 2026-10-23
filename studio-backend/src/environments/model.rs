@@ -47,6 +47,10 @@ pub struct Environment {
     /// (`ghcr.io/acme`). Empty: the images are used as generated.
     #[serde(default)]
     pub registry: String,
+    /// The `registry` connection images are pulled and the chart fetched
+    /// with (ADR-0048 §1); `None` for a public registry or none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_connection_id: Option<Uuid>,
     #[serde(default = "default_pattern")]
     pub namespace_pattern: String,
     #[serde(default)]
@@ -79,6 +83,7 @@ pub struct EnvironmentInput {
     pub description: String,
     pub connection_id: Uuid,
     pub registry: String,
+    pub registry_connection_id: Option<Uuid>,
     pub namespace_pattern: Option<String>,
     pub database: DatabaseMode,
     pub protected: bool,
@@ -216,12 +221,20 @@ pub fn checked(
     namespace_for(&pattern, "a-project", &name)?;
     let registry = input.registry.trim().trim_end_matches('/').to_owned();
     check_registry(&registry)?;
+    if input.registry_connection_id.is_some() && registry.is_empty() {
+        return Err(invalid(
+            "registry",
+            "an environment with a registry connection says where in it the images go, \
+             e.g. ghcr.io/acme",
+        ));
+    }
     Ok(Environment {
         id: id.unwrap_or_else(Uuid::new_v4),
         name,
         description: input.description.trim().to_owned(),
         connection_id: input.connection_id,
         registry,
+        registry_connection_id: input.registry_connection_id,
         namespace_pattern: pattern,
         database: input.database,
         protected: input.protected,
@@ -328,6 +341,81 @@ pub struct DeployImage {
     pub image: String,
 }
 
+/// A chart published to an environment's registry: `oci://…` and a version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChartRef {
+    pub reference: String,
+    pub version: String,
+}
+
+/// The chart reference a deploy request names, checked against the
+/// environment: only its own registry, which the server can log in to and
+/// which the organization connected. A reference elsewhere would have the
+/// server fetch from a host nobody chose.
+pub fn check_chart_ref(
+    env: &Environment,
+    reference: &str,
+    version: &str,
+) -> Result<ChartRef, Invalid> {
+    let reference = reference.trim();
+    let version = version.trim();
+    if env.registry_connection_id.is_none() || env.registry.is_empty() {
+        return Err(invalid(
+            "chart_ref",
+            format!(
+                "environment '{}' has no registry connection: give it one, or send the chart itself",
+                env.name
+            ),
+        ));
+    }
+    let Some(path) = reference.strip_prefix("oci://") else {
+        return Err(invalid(
+            "chart_ref",
+            "a chart reference is oci://<registry>/<path>",
+        ));
+    };
+    let on_registry = path
+        .strip_prefix(&env.registry)
+        .is_some_and(|rest| rest.len() > 1 && rest.starts_with('/'));
+    if !on_registry {
+        return Err(invalid(
+            "chart_ref",
+            format!(
+                "'{reference}' is not under the environment's registry {}",
+                env.registry
+            ),
+        ));
+    }
+    let path_ok = path.bytes().all(|b| {
+        b.is_ascii_lowercase()
+            || b.is_ascii_digit()
+            || matches!(b, b'.' | b'-' | b'_' | b'/' | b':')
+    }) && !path.contains("//")
+        && !path.contains("..")
+        && !path.ends_with('/');
+    if !path_ok {
+        return Err(invalid(
+            "chart_ref",
+            format!("'{reference}' is not a chart reference"),
+        ));
+    }
+    let version_ok = !version.is_empty()
+        && version.len() <= 128
+        && version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'+'));
+    if !version_ok {
+        return Err(invalid(
+            "chart_version",
+            "a published chart is deployed at a version (0.1.0, 0.1.0-sha.abc123)",
+        ));
+    }
+    Ok(ChartRef {
+        reference: reference.to_owned(),
+        version: version.to_owned(),
+    })
+}
+
 /// One deploy: asked for, decided, run. The record of "what runs where"
 /// (ADR-0043 §4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -355,8 +443,14 @@ pub struct Deployment {
     #[serde(default)]
     pub images: Vec<DeployImage>,
     pub namespace: String,
-    /// The chart's sha256, so a record says which chart it installed.
+    /// The chart's sha256, so a record says which chart it installed; empty
+    /// for a chart named by reference, which [`Self::chart_ref`] says.
+    #[serde(default)]
     pub chart_sha256: String,
+    /// The published chart it installs (ADR-0048 §3), when it named one
+    /// rather than carrying it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart_ref: Option<ChartRef>,
     pub state: DeploymentState,
     #[serde(default)]
     pub run_id: Option<Uuid>,
@@ -470,6 +564,7 @@ mod tests {
             description: String::new(),
             connection_id: Uuid::from_u128(7),
             registry: "ghcr.io/acme/".into(),
+            registry_connection_id: None,
             namespace_pattern: None,
             database: DatabaseMode::None,
             protected: false,
@@ -486,6 +581,53 @@ mod tests {
             "t".into(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_registry_connection_needs_a_prefix_to_push_under() {
+        let mut i = input("prod");
+        i.registry = String::new();
+        i.registry_connection_id = Some(Uuid::from_u128(9));
+        let e = checked(
+            &EnvironmentList::default(),
+            None,
+            i,
+            String::new(),
+            "t".into(),
+        )
+        .unwrap_err();
+        assert_eq!(e.field, "registry");
+    }
+
+    #[test]
+    fn a_chart_is_named_only_on_the_environments_registry() {
+        let mut e = env("prod");
+        assert_eq!(
+            check_chart_ref(&e, "oci://ghcr.io/acme/charts/shop", "0.1.0")
+                .unwrap_err()
+                .field,
+            "chart_ref",
+            "no registry connection: nothing to log in with"
+        );
+        e.registry_connection_id = Some(Uuid::from_u128(9));
+        let ok = check_chart_ref(&e, " oci://ghcr.io/acme/charts/shop ", "0.1.0-sha.abc").unwrap();
+        assert_eq!(ok.reference, "oci://ghcr.io/acme/charts/shop");
+        for bad in [
+            "https://ghcr.io/acme/charts/shop",
+            "oci://ghcr.io/other/shop",
+            "oci://ghcr.io/acmeevil/shop",
+            "oci://ghcr.io/acme/",
+            "oci://ghcr.io/acme/../x",
+            "oci://ghcr.io/acme/Shop",
+        ] {
+            assert!(check_chart_ref(&e, bad, "1.0.0").is_err(), "{bad}");
+        }
+        assert_eq!(
+            check_chart_ref(&e, "oci://ghcr.io/acme/shop", "")
+                .unwrap_err()
+                .field,
+            "chart_version"
+        );
     }
 
     #[test]
@@ -594,6 +736,7 @@ mod tests {
             images: vec![],
             namespace: "p-prod".into(),
             chart_sha256: String::new(),
+            chart_ref: None,
             state,
             run_id: None,
             requested_by: String::new(),

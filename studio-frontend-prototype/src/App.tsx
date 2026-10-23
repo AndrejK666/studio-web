@@ -7164,6 +7164,14 @@ const CATEGORIES: { key: string; title: string; blurb: string }[] = [
       "service-account token, or a kubeconfig with the cluster's CA. Only the server uses it -- " +
       "connect it for the organization, not personally.",
   },
+  {
+    key: "registry",
+    title: "Registries",
+    blurb:
+      "Container registries the organization's products are published to and its clusters pull " +
+      "from: the address and username:token. Only the server uses it -- connect it for the " +
+      "organization, not personally.",
+  },
 ];
 
 /** Where a connection is attached, and how widely its token is readable.
@@ -8250,7 +8258,7 @@ function AddConnector({
                       setPicked(p);
                       // An environment takes only a cluster the organization
                       // holds, so a cluster starts organization-wide.
-                      if (p.provider === "kubernetes") setReach("organization");
+                      if (p.provider === "kubernetes" || p.provider === "registry") setReach("organization");
                     }}
                   >
                     <span className="conn-logo-slot" aria-hidden>
@@ -8601,7 +8609,7 @@ function ConnectionList({
             id: "used",
             header: "Used by",
             cell: (c) =>
-              c.provider === "kubernetes" ? (
+              c.provider === "kubernetes" || c.provider === "registry" ? (
                 envUses.get(c.id)?.length ? (
                   <span className="sub">environments: {envUses.get(c.id)?.join(", ")}</span>
                 ) : (

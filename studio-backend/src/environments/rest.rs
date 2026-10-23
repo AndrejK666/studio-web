@@ -71,6 +71,10 @@ pub struct EnvironmentDto {
     pub connection_id: Uuid,
     /// Image registry prefix (`ghcr.io/acme`); empty for images as generated.
     pub registry: String,
+    /// The `registry` connection the cluster pulls with and a published
+    /// chart is fetched with (ADR-0048); absent for none.
+    #[schema(value_type = Option<String>)]
+    pub registry_connection_id: Option<Uuid>,
     pub namespace_pattern: String,
     /// `none` | `shared`.
     pub database: String,
@@ -97,6 +101,7 @@ fn env_dto(e: Environment) -> EnvironmentDto {
         description: e.description,
         connection_id: e.connection_id,
         registry: e.registry,
+        registry_connection_id: e.registry_connection_id,
         namespace_pattern: e.namespace_pattern,
         database: database_str(e.database).to_owned(),
         protected: e.protected,
@@ -125,6 +130,10 @@ pub struct EnvironmentRequest {
     pub connection_id: Uuid,
     #[serde(default)]
     pub registry: String,
+    /// A `registry` connection the organization holds, on the prefix's host.
+    #[schema(value_type = Option<String>)]
+    #[serde(default)]
+    pub registry_connection_id: Option<Uuid>,
     /// Default `{project}-{environment}`.
     #[serde(default)]
     pub namespace_pattern: Option<String>,
@@ -154,6 +163,7 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
         description: r.description,
         connection_id: r.connection_id,
         registry: r.registry,
+        registry_connection_id: r.registry_connection_id,
         namespace_pattern: r.namespace_pattern,
         database,
         protected: r.protected,
@@ -243,7 +253,11 @@ pub struct DeploymentDto {
     pub build: Option<String>,
     pub images: Vec<ImageDto>,
     pub namespace: String,
+    /// The uploaded chart's sha256; empty for a published one.
     pub chart_sha256: String,
+    /// The published chart it installs, `oci://…` (ADR-0048 §3).
+    pub chart_ref: Option<String>,
+    pub chart_version: Option<String>,
     /// `awaiting_approval` | `declined` | `queued` | `running` | `succeeded` |
     /// `failed` | `cancelled`.
     pub state: String,
@@ -281,6 +295,8 @@ fn deployment_dto(d: Deployment) -> DeploymentDto {
             .collect(),
         namespace: d.namespace,
         chart_sha256: d.chart_sha256,
+        chart_ref: d.chart_ref.as_ref().map(|r| r.reference.clone()),
+        chart_version: d.chart_ref.map(|r| r.version),
         state: d.state.as_str().to_owned(),
         run_id: d.run_id,
         requested_by: d.requested_by,
@@ -327,8 +343,17 @@ pub struct CreateDeploymentRequest {
     pub build: Option<String>,
     #[serde(default)]
     pub images: Vec<DeployImageItem>,
-    /// The generated chart, packaged (`.tgz`), base64; at most 512 KiB.
-    pub chart: String,
+    /// The generated chart, packaged (`.tgz`), base64; at most 512 KiB. Or
+    /// name a published one with `chart_ref`, never both.
+    #[serde(default)]
+    pub chart: Option<String>,
+    /// A chart published to the environment's registry:
+    /// `oci://<registry prefix>/…` (ADR-0048 §3). Needs `chart_version`, and
+    /// an environment with a registry connection.
+    #[serde(default)]
+    pub chart_ref: Option<String>,
+    #[serde(default)]
+    pub chart_version: Option<String>,
 }
 
 #[derive(Debug)]
@@ -538,6 +563,8 @@ async fn create_deployment(
             })
             .collect(),
         chart: body.chart,
+        chart_ref: body.chart_ref,
+        chart_version: body.chart_version,
     };
     let d = envs
         .0
@@ -778,8 +805,9 @@ pub fn register_routes(
         .operation_id("studio_environments.create_deployment")
         .summary("Ask to deploy a project's product into an environment")
         .description(
-            "For `?project_id=`, with the generated chart packaged and the images Generate \
-             built (pushed to the environment's registry beforehand). The server installs \
+            "For `?project_id=`, with the generated chart packaged, or a chart published to \
+             the environment's registry (`chart_ref`, `chart_version`), and the images \
+             (pushed to the environment's registry beforehand). The server installs \
              it as a background run with the environment's connection; a protected \
              environment holds it until an organization administrator approves. Answers \
              202 with the record: `queued` or `awaiting_approval`.",

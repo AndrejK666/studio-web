@@ -80,8 +80,12 @@ pub struct DeployRequest {
     /// The build it came from, when the IDE deploys one it built.
     pub build: Option<String>,
     pub images: Vec<DeployImage>,
-    /// The chart, a `.tgz`, base64.
-    pub chart: String,
+    /// The chart, a `.tgz`, base64; or
+    pub chart: Option<String>,
+    /// the chart published to the environment's registry (ADR-0048 §3), and
+    /// its version.
+    pub chart_ref: Option<String>,
+    pub chart_version: Option<String>,
 }
 
 pub struct EnvironmentService {
@@ -240,6 +244,52 @@ impl EnvironmentService {
             .map_err(|e| Refusal::Invalid(format!("{e}")))
     }
 
+    /// The registry an environment names must be a `registry` connection the
+    /// organization holds, shared with it, on the host its prefix names: the
+    /// deploy logs in to it as the service, and writes its credential into
+    /// the project's namespace.
+    async fn check_registry_connection(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        id: Uuid,
+        prefix: &str,
+    ) -> Result<()> {
+        let am = self.store.am().as_ref();
+        let (at, c) = connectors::connection_by_id(am, ctx, org, id)
+            .await
+            .ok_or_else(|| {
+                Refusal::Invalid(format!("there is no connection {id} in the organization"))
+            })?;
+        if c.provider != "registry" {
+            return Err(Refusal::Invalid(format!(
+                "connection '{}' is {}, not a container registry",
+                c.label, c.provider
+            )));
+        }
+        if c.scope == "personal" {
+            return Err(Refusal::Invalid(format!(
+                "connection '{}' is personal: an environment's registry is the organization's, \
+                 so connect it for the organization",
+                c.label
+            )));
+        }
+        // The host is all that is read here; the credential stays in credstore.
+        let access = connectors::RegistryAccess::parse(&c.base_url, "host-only")
+            .map_err(|e| Refusal::Invalid(format!("{e}")))?;
+        let prefix = prefix.trim().trim_end_matches('/');
+        if !access.holds(prefix) {
+            return Err(Refusal::Invalid(format!(
+                "the registry prefix '{prefix}' is not on {}, the registry connection '{}' logs in to",
+                access.host, c.label
+            )));
+        }
+        let holder = connectors::holder_of_row(&c, at);
+        connectors::check_owned(am, ctx, org, org, Some(holder))
+            .await
+            .map_err(|e| Refusal::Invalid(format!("{e}")))
+    }
+
     pub async fn put_environment(
         &self,
         ctx: &SecurityContext,
@@ -249,6 +299,10 @@ impl EnvironmentService {
     ) -> Result<Environment> {
         self.require_manage(ctx, org).await?;
         self.check_connection(ctx, org, input.connection_id).await?;
+        if let Some(registry) = input.registry_connection_id {
+            self.check_registry_connection(ctx, org, registry, &input.registry)
+                .await?;
+        }
         let by = self.person(ctx).await.id;
         let at = now();
         let svc = self.service(org)?;
@@ -458,15 +512,22 @@ impl EnvironmentService {
         }
     }
 
-    fn payload(org: Uuid, env: &Environment, d: &Deployment, chart: String) -> DeployPayload {
+    fn payload(
+        org: Uuid,
+        env: &Environment,
+        d: &Deployment,
+        chart: Option<String>,
+    ) -> DeployPayload {
         DeployPayload {
             deployment_id: d.id,
             organization_id: org,
             project_id: d.project_id,
             connection_id: env.connection_id,
+            registry_connection_id: env.registry_connection_id,
             namespace: d.namespace.clone(),
             release: d.product.clone(),
             chart,
+            chart_ref: d.chart_ref.clone(),
             values: model::image_values(env, &d.images),
         }
     }
@@ -480,6 +541,26 @@ impl EnvironmentService {
             })
             .await?
             .map(|_| ())
+    }
+
+    /// An uploaded chart, checked: base64 of a packaged `.tgz` within the
+    /// limit. Its sha256, which the record keeps.
+    fn checked_chart(chart: &str) -> Result<String> {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(chart.as_bytes())
+            .map_err(|_| Refusal::Invalid("the chart is not base64".into()))?;
+        if bytes.is_empty() || bytes.len() > model::MAX_CHART_BYTES {
+            return Err(Refusal::Invalid(format!(
+                "the chart is {} bytes; a packaged chart is between 1 and {}",
+                bytes.len(),
+                model::MAX_CHART_BYTES
+            )));
+        }
+        // gzip magic: the chart is a packaged `.tgz`.
+        if !bytes.starts_with(&[0x1f, 0x8b]) {
+            return Err(Refusal::Invalid("the chart is not a packaged .tgz".into()));
+        }
+        Ok(hex::encode(Sha256::digest(&bytes)))
     }
 
     pub async fn request_deploy(
@@ -501,20 +582,30 @@ impl EnvironmentService {
             )));
         }
         model::check_images(&req.images)?;
-        let chart = base64::engine::general_purpose::STANDARD
-            .decode(req.chart.trim().as_bytes())
-            .map_err(|_| Refusal::Invalid("the chart is not base64".into()))?;
-        if chart.is_empty() || chart.len() > model::MAX_CHART_BYTES {
-            return Err(Refusal::Invalid(format!(
-                "the chart is {} bytes; a packaged chart is between 1 and {}",
-                chart.len(),
-                model::MAX_CHART_BYTES
-            )));
-        }
-        // gzip magic: the chart is a packaged `.tgz`.
-        if !chart.starts_with(&[0x1f, 0x8b]) {
-            return Err(Refusal::Invalid("the chart is not a packaged .tgz".into()));
-        }
+        let chart = req
+            .chart
+            .map(|c| c.trim().to_owned())
+            .filter(|c| !c.is_empty());
+        let chart_ref = req
+            .chart_ref
+            .map(|c| c.trim().to_owned())
+            .filter(|c| !c.is_empty());
+        let (chart_sha256, chart_ref) = match (&chart, chart_ref) {
+            (Some(chart), None) => (Self::checked_chart(chart)?, None),
+            (None, Some(reference)) => {
+                let version = req.chart_version.unwrap_or_default();
+                (
+                    String::new(),
+                    Some(model::check_chart_ref(&env, &reference, &version)?),
+                )
+            }
+            _ => {
+                return Err(Refusal::Invalid(
+                    "a deploy carries the chart or names a published one (chart_ref), one of them"
+                        .into(),
+                ));
+            }
+        };
         let project_name = self.store.tenant_name(ctx, project).await;
         let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
         let person = self.person(ctx).await;
@@ -531,7 +622,8 @@ impl EnvironmentService {
             build: check_build(req.build)?,
             images: req.images,
             namespace,
-            chart_sha256: hex::encode(Sha256::digest(&chart)),
+            chart_sha256,
+            chart_ref,
             state: DeploymentState::Queued,
             run_id: None,
             requested_by: person.id,
@@ -544,10 +636,11 @@ impl EnvironmentService {
             outcome: None,
             pending_chart: None,
         };
-        let chart = req.chart.trim().to_owned();
         if env.protected {
             d.state = DeploymentState::AwaitingApproval;
-            d.pending_chart = Some(chart);
+            // A published chart is named on the record; only an uploaded one
+            // has to be kept until the decision.
+            d.pending_chart = chart.clone();
             self.record(org, d.clone()).await?;
         } else {
             // Recorded before it is queued, so the run never finishes before
@@ -598,12 +691,12 @@ impl EnvironmentService {
         let chart = d.pending_chart.take();
         if approve {
             let env = self.environment(ctx, org, d.environment_id).await?;
-            let chart = chart.ok_or_else(|| {
-                Refusal::Precondition(
+            if chart.is_none() && d.chart_ref.is_none() {
+                return Err(Refusal::Precondition(
                     "DEPLOYMENT_CHART_GONE",
                     "the deploy no longer carries its chart: ask again".into(),
-                )
-            })?;
+                ));
+            }
             d.state = DeploymentState::Queued;
             self.record(org, d.clone()).await?;
             let payload = Self::payload(org, &env, &d, chart);

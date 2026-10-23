@@ -1594,6 +1594,9 @@ export interface DeployEnvironment {
   connection_id: string;
   /** Image registry prefix (`ghcr.io/acme`); empty: images as generated. */
   registry: string;
+  /** The organization's `registry` connection: the cluster pulls with it and
+   *  a published chart is fetched with it (ADR-0048). */
+  registry_connection_id?: string | null;
   /** `{project}-{environment}` by default. */
   namespace_pattern: string;
   database: "none" | "shared";
@@ -1611,6 +1614,7 @@ export interface DeployEnvironmentInput {
   description: string;
   connection_id: string;
   registry: string;
+  registry_connection_id?: string | null;
   namespace_pattern?: string;
   database: "none" | "shared";
   protected: boolean;
