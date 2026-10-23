@@ -33,6 +33,10 @@ export interface DeployPanelProps {
   readonly onTarget: (target: DeployTarget) => void;
   /** A deploy request is on its way to the server. */
   readonly requesting?: boolean;
+  /** Publish is asking the server for a push token (ADR-0048). */
+  readonly publishing?: boolean;
+  /** A build was published to the chosen environment: Deploy names it. */
+  readonly published?: boolean;
   /** What the server said about the last deploy asked of it. */
   readonly note?: string;
   readonly onBuildImages: () => void;
@@ -120,8 +124,9 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
           </p>
           {environment !== undefined && (
             <p className="gbx-waiting" data-deploy-environment={environment.name}>
-              Build and push the images here, then Deploy asks the Studio server to install the chart into {environment.name} with
-              the organization&apos;s connection -- no cluster credentials are needed on this machine.
+              {environment.registryLogin === true
+                ? `Build the images here, then Publish pushes them and the chart to ${environment.registry} with a token the Studio server gets for them -- no registry login on this machine -- and Deploy asks the server to install that build into ${environment.name}.`
+                : `Build and push the images here, then Deploy asks the Studio server to install the chart into ${environment.name} with the organization's connection -- no cluster credentials are needed on this machine.`}
               {environment.protected ? " An organization administrator approves it first." : ""}
             </p>
           )}
@@ -142,16 +147,28 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
             <button type="button" className="gbx-start-primary" data-deploy-build disabled={!props.docker} onClick={props.onBuildImages}>
               Build images
             </button>
-            <button type="button" className="gbx-choice" data-deploy-push disabled={!props.docker || !props.registry} onClick={props.onPush}
-              title={props.registry ? `docker push to ${props.registry}` : "No image registry: set one on the environment or the profile to push"}>
-              Push
+            <button
+              type="button"
+              className="gbx-choice"
+              data-deploy-push
+              disabled={!props.docker || !props.registry || props.publishing === true}
+              onClick={props.onPush}
+              title={
+                environment?.registryLogin === true
+                  ? `Push the images and the chart to ${props.registry} with a token the Studio server gets for them`
+                  : props.registry
+                    ? `docker push to ${props.registry}`
+                    : "No image registry: set one on the environment or the profile to push"
+              }
+            >
+              {environment?.registryLogin === true ? (props.publishing === true ? "Getting a token…" : "Publish") : "Push"}
             </button>
             <button type="button" className="gbx-choice" data-deploy-template disabled={props.helm === undefined} onClick={props.onTemplate}>
               Preview manifests
             </button>
             <button type="button" className="gbx-start-primary" data-deploy-install disabled={!canDeploy} onClick={props.onDeploy}
               title={environment !== undefined ? "Ask the Studio server to deploy; asks first" : "helm upgrade --install into the chosen cluster; asks first"}>
-              {props.requesting === true ? "Asking the server…" : "Deploy"}
+              {props.requesting === true ? "Asking the server…" : props.published === true ? "Deploy the published build" : "Deploy"}
             </button>
           </div>
           {props.note !== undefined && (
