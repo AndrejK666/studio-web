@@ -87,7 +87,7 @@ export function Overview({
   studio: GroupedDomain[];
   platform: { title: string; gears: ManifestGear[] }[];
   data: ManifestData[] | undefined;
-  onTab: (tab: TabId) => void;
+  onTab: (tab: TabId, domain?: string) => void;
 }) {
   const studioCount = studio.reduce((n, d) => n + d.gears.length, 0);
   const platformCount = platform.reduce((n, g) => n + g.gears.length, 0);
@@ -115,7 +115,7 @@ export function Overview({
               title={d.domain.title}
               note={d.gears.length}
               detail={d.domain.blurb}
-              onOpen={() => onTab("uses")}
+              onOpen={() => onTab("uses", d.domain.id)}
             />
           ))}
         </Layer>

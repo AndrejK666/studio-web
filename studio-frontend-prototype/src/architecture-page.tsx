@@ -909,8 +909,12 @@ function ArchitecturePage() {
   const [error, setError] = useState<LoadError | null>(null);
   const [selection, setSelection] = useState<Selection>(selectionFromHash);
   const [tab, setTab] = useState<TabId>(() => tabFromHash(window.location.hash) ?? "flow");
-  const openTab = useCallback((next: TabId) => {
+  // The domain a box in the picture opened: the dependency view shows its
+  // gears alone until "Show all domains".
+  const [focusDomain, setFocusDomain] = useState<string | null>(null);
+  const openTab = useCallback((next: TabId, domain?: string) => {
     setTab(next);
+    setFocusDomain(domain ?? null);
     history.replaceState(null, "", `#${next}`);
     document.getElementById("views")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
@@ -1100,8 +1104,19 @@ function ArchitecturePage() {
                 the platform.
               </div>
             )}
+            {focusDomain && (
+              <div className="arch-focus-bar">
+                <span>
+                  Showing <strong>{studio.find((d) => d.domain.id === focusDomain)?.domain.title ?? focusDomain}</strong>{" "}
+                  only: its gears and the lines between them.
+                </span>
+                <button type="button" onClick={() => setFocusDomain(null)}>
+                  Show all domains
+                </button>
+              </div>
+            )}
             <DependencyBoard
-              studio={studio}
+              studio={focusDomain ? studio.filter((d) => d.domain.id === focusDomain) : studio}
               platform={platform}
               gears={gears}
               edges={edges}

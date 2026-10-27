@@ -759,3 +759,17 @@ button.arch-ov-box:focus-visible { outline: 2px solid var(--ring); outline-offse
   white-space: normal;
 }
 .arch-detail-guide { margin: 0.4rem 0 0; padding-left: 1.1rem; display: grid; gap: 4px; font-size: 12.5px; color: var(--muted-foreground); }
+
+.arch-focus-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid color-mix(in oklab, var(--primary) 35%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--primary) 6%, var(--card));
+  font-size: 13px;
+}
