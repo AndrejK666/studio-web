@@ -318,6 +318,7 @@ impl DomainObjects for Objects {
                         description: Some(need.description.clone()).filter(|d| !d.is_empty()),
                         bucket: need.bucket.clone(),
                         extends: need.extends.clone(),
+                        origin: Some("studio".to_string()),
                     },
                 )
                 .await?;

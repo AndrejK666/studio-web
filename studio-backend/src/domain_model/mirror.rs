@@ -97,6 +97,12 @@ struct OwnerRow {
 }
 
 #[derive(Debug, FromQueryResult)]
+struct TypeCountRow {
+    type_id: String,
+    n: i64,
+}
+
+#[derive(Debug, FromQueryResult)]
 struct GroupRow {
     key: Value,
     n: i64,
@@ -395,6 +401,26 @@ impl DomainMirror {
 
     /// Counts per distinct `key` (a `jsonb_build_array` of the grouped
     /// fields) over a query's root.
+    /// How many objects of each type the tenant holds, by stored type id.
+    pub async fn counts_by_type(&self, tenant: Uuid) -> anyhow::Result<Vec<(String, u64)>> {
+        let conn = self.db.conn()?;
+        let rows: Vec<TypeCountRow> = object::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(tenant))
+            .project_all(&conn, |s| {
+                s.select_only()
+                    .column(object::Column::TypeId)
+                    .column_as(Expr::cust("COUNT(*)"), "n")
+                    .group_by(object::Column::TypeId)
+                    .into_model::<TypeCountRow>()
+            })
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.type_id, u64::try_from(r.n).unwrap_or(0)))
+            .collect())
+    }
+
     pub async fn groups(
         &self,
         tenant: Uuid,

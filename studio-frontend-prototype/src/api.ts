@@ -5077,6 +5077,10 @@ export const api = {
       "/studio-domain-model/v1/types",
       token,
     ),
+  /** How many objects of each type the organization holds; `complete: false`
+   *  while the read model is still being filled. */
+  domainTypeCounts: (token: string) =>
+    request<{ counts: Record<string, number>; complete: boolean }>("/studio-domain-model/v1/type-counts", token),
   /** Add a type to the model (ADR-0051): it starts with no fields of its own. */
   createDomainType: (
     token: string,

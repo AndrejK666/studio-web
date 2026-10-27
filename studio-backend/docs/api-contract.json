@@ -1745,6 +1745,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-domain-model/v1/type-counts",
+      "operation_id": "studio_domain_model.get_type_counts",
+      "tag": "StudioDomainModel",
+      "summary": "How many objects of each type the organization holds",
+      "authenticated": true,
+      "responses": [
+        "TypeCountsResponse"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-domain-model/v1/types",
       "operation_id": "studio_domain_model.list_types",
       "tag": "StudioDomainModel",

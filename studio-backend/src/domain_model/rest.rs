@@ -112,6 +112,17 @@ pub struct TypesResponse {
     pub can_edit_model: bool,
 }
 
+/// How many objects of each type the organization holds.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct TypeCountsResponse {
+    /// Type id → live objects. A type with none is absent.
+    #[schema(value_type = Object)]
+    pub counts: Value,
+    /// False while the read model is still being filled: ask again shortly.
+    pub complete: bool,
+}
+
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct CreateObjectRequest {
@@ -644,8 +655,43 @@ async fn list_types(
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let can_edit_model = may_edit_model(&ctx, &handle).await;
     Ok(Json(TypesResponse {
-        ontology,
+        ontology: with_origins(ontology),
         can_edit_model,
+    }))
+}
+
+/// Mark Studio's own types `meta.origin = "studio"` in the document a
+/// screen reads, so it can tell them from what an upload, a gear or an
+/// administrator added (whose `meta.origin` / `meta.held_by` are stored).
+fn with_origins(mut ontology: Value) -> Value {
+    let studio = super::ontology::Ontology::studio_type_ids();
+    if let Some(entities) = ontology.get_mut("entities").and_then(Value::as_array_mut) {
+        for e in entities {
+            let id = e.get("id").and_then(Value::as_str).unwrap_or_default();
+            if !studio.iter().any(|s| s == id) {
+                continue;
+            }
+            if !e.get("meta").is_some_and(Value::is_object) {
+                e["meta"] = serde_json::json!({});
+            }
+            e["meta"]["origin"] = serde_json::json!("studio");
+        }
+    }
+    ontology
+}
+
+async fn type_counts(
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
+    Extension(handle): Extension<Handle>,
+) -> ApiResult<JsonBody<TypeCountsResponse>> {
+    let counts = handle
+        .0
+        .type_counts(&ctx)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    Ok(Json(TypeCountsResponse {
+        complete: counts.is_some(),
+        counts: serde_json::to_value(counts.unwrap_or_default()).unwrap_or(Value::Null),
     }))
 }
 
@@ -1021,6 +1067,7 @@ async fn create_type(
                 description: req.description,
                 bucket: req.bucket,
                 extends: req.extends,
+                origin: Some("organization".to_string()),
             },
         )
         .await
@@ -1510,6 +1557,28 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .handler(list_types)
         .json_response_with_schema::<TypesResponse>(openapi, StatusCode::OK, "The ontology")
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+    let router = OperationBuilder::get("/studio-domain-model/v1/type-counts")
+        .operation_id("studio_domain_model.get_type_counts")
+        .summary("How many objects of each type the organization holds")
+        .description(
+            "Counted in the read model, by type. The first ask of a tenant whose \
+             read model is not filled yet starts the fill and answers \
+             `complete: false`.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .require_license_features::<License>([])
+        .handler(type_counts)
+        .json_response_with_schema::<TypeCountsResponse>(openapi, StatusCode::OK, "Objects by type")
         .error_401(openapi)
         .error_500(openapi)
         .register(router, openapi);

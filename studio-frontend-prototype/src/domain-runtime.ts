@@ -40,8 +40,9 @@ export interface ModelEntity {
   extends?: string | null;
   abstract?: boolean;
   properties?: ModelProperty[];
-  /** `held_by`: the gear whose records this type's objects are. */
-  meta?: { held_by?: string } | null;
+  /** `held_by`: the gear whose records this type's objects are; `origin`
+   *  (`upload`, `organization`, `studio`) and `upload`: where it came from. */
+  meta?: { held_by?: string; origin?: string; upload?: string } | null;
 }
 
 /** A payload field of an entity, own or inherited, with what a screen needs to edit it. */
@@ -64,6 +65,8 @@ export interface DomainModel {
   buckets: { id: string; name: string }[];
   /** Whether the caller may change the model (`domain.model`, ADR-0035). */
   canEdit: boolean;
+  /** Studio's own types: what every organization starts with. */
+  studioTypes: Set<string>;
   /** Where it came from: the server, or the build's seed while that loads. */
   source: "server" | "seed";
 }
@@ -91,8 +94,14 @@ export function kindOf(expr: string | undefined): DomainFieldKind {
   return { kind: "unknown" };
 }
 
-function build(entities: ModelEntity[], buckets: { id: string; name: string }[], canEdit: boolean, source: DomainModel["source"]): DomainModel {
-  return { entities, byId: new Map(entities.map((e) => [e.id, e])), buckets, canEdit, source };
+function build(
+  entities: ModelEntity[],
+  buckets: { id: string; name: string }[],
+  canEdit: boolean,
+  source: DomainModel["source"],
+  studioTypes: string[] = [],
+): DomainModel {
+  return { entities, byId: new Map(entities.map((e) => [e.id, e])), buckets, canEdit, source, studioTypes: new Set(studioTypes) };
 }
 
 /** The entity and every base it extends, nearest first; stops on a cycle. */
@@ -216,6 +225,7 @@ export function reloadDomainModel(token: string): Promise<DomainModel> {
         (doc.buckets ?? []).map((b) => ({ id: b.id, name: b.name ?? b.id })),
         res.can_edit_model,
         "server",
+        (doc.entities ?? []).filter((e) => e.meta?.origin === "studio").map((e) => e.id),
       );
       for (const l of listeners) l(current);
       return current;

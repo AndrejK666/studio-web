@@ -2399,6 +2399,8 @@ response	GET /studio-domain-model/v1/relations	relations.type_id	String	always
 response	GET /studio-domain-model/v1/relations	unresolved	Vec<{}>	always
 response	GET /studio-domain-model/v1/relations	unresolved.source	String	always
 response	GET /studio-domain-model/v1/relations	unresolved.target	String	always
+response	GET /studio-domain-model/v1/type-counts	complete	bool	always
+response	GET /studio-domain-model/v1/type-counts	counts	Value	always
 response	GET /studio-domain-model/v1/types	can_edit_model	bool	always
 response	GET /studio-domain-model/v1/types	ontology	Value	always
 response	GET /studio-domain-model/v1/types/{}	ancestors	Vec<String>	always
@@ -5457,6 +5459,7 @@ route	GET /studio-domain-model/v1/objects
 route	GET /studio-domain-model/v1/objects/graph
 route	GET /studio-domain-model/v1/objects/legacy-scopes
 route	GET /studio-domain-model/v1/relations
+route	GET /studio-domain-model/v1/type-counts
 route	GET /studio-domain-model/v1/types
 route	GET /studio-domain-model/v1/types/{}
 route	GET /studio-domain-model/v1/types/{}/conformance

@@ -139,6 +139,37 @@ impl Ontology {
         }
     }
 
+    /// The ids of Studio's own types: what an organization starts with.
+    pub fn studio_type_ids() -> Vec<String> {
+        studio_types()
+            .iter()
+            .filter_map(|e| e.get("id").and_then(Value::as_str).map(str::to_owned))
+            .collect()
+    }
+
+    /// Mark every type that says nothing of where it came from as uploaded
+    /// with the model `source`: what an import brings. Studio's own types
+    /// are not marked; they are Studio's whichever model also carries them.
+    pub fn mark_uploaded(&mut self, source: &str) {
+        let studio = Self::studio_type_ids();
+        let Some(entities) = self.doc.get_mut("entities").and_then(Value::as_array_mut) else {
+            return;
+        };
+        for e in entities {
+            let id = e.get("id").and_then(Value::as_str).unwrap_or_default();
+            if studio.iter().any(|s| s == id) {
+                continue;
+            }
+            if !e.get("meta").is_some_and(Value::is_object) {
+                e["meta"] = json!({});
+            }
+            if e["meta"].get("origin").is_none() {
+                e["meta"]["origin"] = json!("upload");
+                e["meta"]["upload"] = json!(source);
+            }
+        }
+    }
+
     /// Add the Studio types this model lacks, each in its bucket where
     /// Studio's own model orders it, and give a Studio type the model holds
     /// without a base the one Studio's has. Answers the ids touched.
@@ -1005,7 +1036,7 @@ impl Ontology {
             "name": name,
             "kind": "entity",
             "description": spec.description.unwrap_or_default(),
-            "meta": {},
+            "meta": spec.origin.map_or_else(|| json!({}), |o| json!({ "origin": o })),
             "properties": [],
             "methods": [],
             "examples": [],
@@ -1393,6 +1424,9 @@ pub struct EntitySpec {
     pub bucket: Option<String>,
     /// The type it extends, whose fields and relations it inherits.
     pub extends: Option<String>,
+    /// Who added it, kept as `meta.origin`: `organization` for a type an
+    /// administrator made, `studio` for one a gear needed.
+    pub origin: Option<String>,
 }
 
 /// A field to add to a type (goal #2, "extend types by adding new fields").

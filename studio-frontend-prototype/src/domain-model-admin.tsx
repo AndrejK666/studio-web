@@ -7,11 +7,13 @@
 // field's edit is a numbered model version on the server, so it can be
 // reverted there.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api } from "./api";
 import { ancestorsOf, fieldsOfModel, reloadDomainModel, useDomainModel, type ModelField } from "./domain-runtime";
 import { errText } from "./format";
+import { linksOf, ORIGIN_ORDER, ORIGIN_TITLES, originOf, type Link, type OriginKey } from "./domain-origin";
+import { useDomainRevision } from "./domain-live";
 import { Modal } from "./modal";
 
 /** The type expressions most fields need, offered by name; anything else can be typed. */
@@ -42,6 +44,8 @@ export function DomainModelAdmin({ token, query = "" }: { token: string; query?:
   const [editing, setEditing] = useState<ModelField | null>(null);
   const [creating, setCreating] = useState(false);
   const [showInherited, setShowInherited] = useState(false);
+  const [originFilter, setOriginFilter] = useState<OriginKey | "all">("all");
+  const counts = useTypeCounts(token);
 
   const entity = model.byId.get(selected);
   // `id` is the store's key for every object, not a field to rename or drop.
@@ -55,17 +59,29 @@ export function DomainModelAdmin({ token, query = "" }: { token: string; query?:
   const grouped = useMemo(() => {
     const term = query.trim().toLowerCase();
     const names = new Map(model.buckets.map((b) => [b.id, b.name]));
-    const out = new Map<string, { id: string; name: string; abstract: boolean }[]>();
+    const out = new Map<string, { id: string; name: string; abstract: boolean; origin: OriginKey }[]>();
     for (const e of model.entities) {
       const name = e.name ?? e.id;
       if (term && !`${e.id} ${name}`.toLowerCase().includes(term)) continue;
+      const origin = originOf(model, e).key;
+      if (originFilter !== "all" && origin !== originFilter) continue;
       const bucket = names.get(e.bucket ?? "") ?? e.bucket ?? "Other";
       if (!out.has(bucket)) out.set(bucket, []);
-      out.get(bucket)!.push({ id: e.id, name, abstract: !!e.abstract });
+      out.get(bucket)!.push({ id: e.id, name, abstract: !!e.abstract, origin });
     }
     for (const list of out.values()) list.sort((a, b) => a.name.localeCompare(b.name));
     return [...out].sort(([a], [b]) => a.localeCompare(b));
-  }, [model, query]);
+  }, [model, query, originFilter]);
+
+  /** How many types came from each source. */
+  const byOrigin = useMemo(() => {
+    const n = new Map<OriginKey, number>();
+    for (const e of model.entities) {
+      const k = originOf(model, e).key;
+      n.set(k, (n.get(k) ?? 0) + 1);
+    }
+    return n;
+  }, [model]);
 
   /** Run a model edit, then reload the model so every screen showing it follows. */
   const run = async (what: () => Promise<unknown>): Promise<boolean> => {
@@ -96,6 +112,20 @@ export function DomainModelAdmin({ token, query = "" }: { token: string; query?:
             </button>
           )}
         </div>
+        <div className="dm-origins" role="group" aria-label="Where the types came from">
+          <button className={originFilter === "all" ? "primary" : undefined} onClick={() => setOriginFilter("all")}>
+            All {model.entities.length}
+          </button>
+          {ORIGIN_ORDER.filter((k) => byOrigin.get(k)).map((k) => (
+            <button
+              key={k}
+              className={originFilter === k ? "primary" : undefined}
+              onClick={() => setOriginFilter(k)}
+            >
+              <span className={`dm-dot origin-${k}`} aria-hidden="true" /> {ORIGIN_TITLES[k]} {byOrigin.get(k)}
+            </button>
+          ))}
+        </div>
         {grouped.map(([bucket, list]) => (
           <div key={bucket} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <div className="hint" style={{ textTransform: "uppercase", fontSize: 11, letterSpacing: ".06em" }}>
@@ -105,12 +135,20 @@ export function DomainModelAdmin({ token, query = "" }: { token: string; query?:
               <button
                 key={e.id}
                 className={e.id === selected ? "primary" : undefined}
-                style={{ textAlign: "left", justifyContent: "flex-start" }}
+                style={{ textAlign: "left", justifyContent: "flex-start", display: "flex", gap: 6, alignItems: "center" }}
                 onClick={() => setSelected(e.id)}
                 title={e.id}
               >
-                {e.name}
-                {e.abstract && <span className="hint"> · base</span>}
+                <span className={`dm-dot origin-${e.origin}`} title={ORIGIN_TITLES[e.origin]} aria-hidden="true" />
+                <span style={{ flex: 1 }}>
+                  {e.name}
+                  {e.abstract && <span className="hint"> · base</span>}
+                </span>
+                {counts.counts && (
+                  <span className="hint" title="Objects of this type in this organization">
+                    {counts.counts[e.id] ?? 0}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -125,11 +163,21 @@ export function DomainModelAdmin({ token, query = "" }: { token: string; query?:
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
               <h2 style={{ margin: 0 }}>{entity.name ?? entity.id}</h2>
               <code>{entity.id}</code>
-              {entity.meta?.held_by && (
-                <span className="hint" title="Its objects are this gear's records: the gear writes its own fields, people fill in the ones added beside them.">
-                  kept by {entity.meta.held_by}
-                </span>
-              )}
+              {(() => {
+                const o = originOf(model, entity);
+                return (
+                  <span className={`dm-origin origin-${o.key}`} title={o.hint}>
+                    {o.label}
+                  </span>
+                );
+              })()}
+              <span className="hint" title="Objects of this type in this organization">
+                {counts.counts
+                  ? `${counts.counts[entity.id] ?? 0} object${(counts.counts[entity.id] ?? 0) === 1 ? "" : "s"}`
+                  : counts.loading
+                    ? "counting objects…"
+                    : ""}
+              </span>
               {ancestorsOf(model, entity.id).length > 1 && (
                 <span className="hint">extends {ancestorsOf(model, entity.id).slice(1).join(" › ")}</span>
               )}
@@ -164,6 +212,15 @@ export function DomainModelAdmin({ token, query = "" }: { token: string; query?:
                 {showInherited && <FieldTable fields={inherited} empty="" />}
               </div>
             )}
+            <Relations
+              model={model}
+              id={entity.id}
+              counts={counts.counts}
+              onPick={(id) => {
+                setOriginFilter("all");
+                setSelected(id);
+              }}
+            />
           </>
         )}
       </div>
@@ -476,4 +533,162 @@ function slug(s: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+/** How many objects of each type the organization holds: asked again while
+ *  the read model fills, and after every change to the objects. */
+function useTypeCounts(token: string): { counts: Record<string, number> | null; loading: boolean } {
+  const [counts, setCounts] = useState<Record<string, number> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const revision = useDomainRevision(["*"], { onModel: true });
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = (left: number) => {
+      api.domainTypeCounts(token).then(
+        (r) => {
+          if (!live) return;
+          if (r.complete) {
+            setCounts(r.counts);
+            setLoading(false);
+          } else if (left > 0) {
+            timer = setTimeout(() => ask(left - 1), 2000);
+          } else {
+            setLoading(false);
+          }
+        },
+        () => live && setLoading(false),
+      );
+    };
+    ask(15);
+    return () => {
+      live = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [token, revision]);
+  return { counts, loading };
+}
+
+/** A type's relations: a small map of it among the types it is tied to, and
+ *  the same as two lists. Choosing a type opens it. */
+function Relations({
+  model,
+  id,
+  counts,
+  onPick,
+}: {
+  model: ReturnType<typeof useDomainModel>;
+  id: string;
+  counts: Record<string, number> | null;
+  onPick: (id: string) => void;
+}) {
+  const { out, in: into } = useMemo(() => linksOf(model, id), [model, id]);
+  if (out.length === 0 && into.length === 0) {
+    return (
+      <div className="dm-relations">
+        <h3>Relations</h3>
+        <p className="hint">No relation to or from another type in this model.</p>
+      </div>
+    );
+  }
+  // One node per neighbour, around the type: what it points at on the
+  // right half, what points at it on the left.
+  const right = [...new Map(out.map((l) => [l.other, l])).values()];
+  const left = [...new Map(into.filter((l) => !right.some((r) => r.other === l.other)).map((l) => [l.other, l])).values()];
+  const rows = Math.max(right.length, left.length, 1);
+  const H = Math.max(160, rows * 28 + 24);
+  const W = 720;
+  const cx = W / 2;
+  const cy = H / 2;
+  const y = (i: number, n: number) => (n === 1 ? cy : 20 + (i * (H - 40)) / (n - 1));
+  const name = (t: string) => model.byId.get(t)?.name ?? t;
+  const node = (t: string, x: number, yy: number, anchor: "start" | "end") => (
+    <g key={`${anchor}-${t}`} className="dm-node" onClick={() => onPick(t)} role="button" tabIndex={0}>
+      <title>{`${name(t)}${counts ? ` · ${counts[t] ?? 0} objects` : ""}`}</title>
+      <circle cx={x} cy={yy} r={5} className={`origin-${originOf(model, model.byId.get(t)!).key}`} />
+      <text x={anchor === "start" ? x + 9 : x - 9} y={yy + 4} textAnchor={anchor}>
+        {name(t)}
+      </text>
+    </g>
+  );
+  const edge = (l: Link, x: number, yy: number, outward: boolean) => (
+    <g key={`e-${outward}-${l.other}-${l.name}`}>
+      <path
+        d={`M${cx},${cy} C${(cx + x) / 2},${cy} ${(cx + x) / 2},${yy} ${x},${yy}`}
+        className={`dm-edge${outward ? "" : " is-in"}${l.inherited ? " is-inherited" : ""}`}
+        markerEnd={outward ? "url(#dm-arrow)" : undefined}
+        markerStart={outward ? undefined : "url(#dm-arrow-back)"}
+      />
+    </g>
+  );
+  return (
+    <div className="dm-relations">
+      <h3>Relations</h3>
+      <p className="hint">
+        Right: what {name(id)} points at. Left: what points at it. Choose a type to open it; a dashed line is a relation it
+        inherits from a base.
+      </p>
+      <div style={{ overflowX: "auto" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ maxWidth: "100%", height: "auto" }} role="img" aria-label={`Relations of ${name(id)}`}>
+          <defs>
+            <marker id="dm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" className="dm-arrowhead" />
+            </marker>
+            <marker id="dm-arrow-back" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M10,0 L0,5 L10,10 z" className="dm-arrowhead" />
+            </marker>
+          </defs>
+          {right.map((l, i) => edge(l, W - 200, y(i, right.length), true))}
+          {left.map((l, i) => edge(l, 200, y(i, left.length), false))}
+          {right.map((l, i) => node(l.other, W - 200, y(i, right.length), "start"))}
+          {left.map((l, i) => node(l.other, 200, y(i, left.length), "end"))}
+          <g className="dm-center">
+            <rect x={cx - 70} y={cy - 16} width={140} height={32} rx={8} />
+            <text x={cx} y={cy + 5} textAnchor="middle">
+              {name(id)}
+            </text>
+          </g>
+        </svg>
+      </div>
+      <div className="dm-link-lists">
+        <LinkList title={`${name(id)} points at`} links={out} model={model} onPick={onPick} />
+        <LinkList title={`Points at ${name(id)}`} links={into} model={model} onPick={onPick} />
+      </div>
+    </div>
+  );
+}
+
+function LinkList({
+  title,
+  links,
+  model,
+  onPick,
+}: {
+  title: string;
+  links: Link[];
+  model: ReturnType<typeof useDomainModel>;
+  onPick: (id: string) => void;
+}) {
+  return (
+    <div>
+      <div className="hint" style={{ fontWeight: 600 }}>
+        {title} ({links.length})
+      </div>
+      {links.length === 0 ? (
+        <p className="hint">—</p>
+      ) : (
+        <ul className="dm-links">
+          {links.map((l) => (
+            <li key={`${l.name}-${l.other}`}>
+              <code>{l.name}</code> <span className="hint">{l.label !== l.name ? l.label : ""}</span>{" "}
+              <button className="dm-link-button" onClick={() => onPick(l.other)}>
+                {model.byId.get(l.other)?.name ?? l.other}
+              </button>
+              {l.inherited && <span className="hint"> · inherited</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }

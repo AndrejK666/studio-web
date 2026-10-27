@@ -742,6 +742,34 @@ impl DomainModelService {
     /// the embedded default. Idempotent per type; new types are added.
     /// Add the types Studio's own screens need to a stored model that lacks
     /// them; a model on the seed has them already. Answers the ids added.
+    /// How many live objects of each type the organization holds, by type
+    /// id, from the read model. `None` while it is still being filled (the
+    /// first ask starts the fill).
+    pub async fn type_counts(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<Option<std::collections::BTreeMap<String, u64>>> {
+        let model = self.model(ctx).await?;
+        let Some(mirror) = self.store.read_model(ctx, &model).await else {
+            return Ok(None);
+        };
+        let by_node_type: HashMap<String, String> = model
+            .entities()
+            .iter()
+            .filter_map(|e| e.get("id").and_then(Value::as_str))
+            .map(|id| (gts::node_type_id(id), id.to_owned()))
+            .collect();
+        let mut out = std::collections::BTreeMap::new();
+        for (type_id, n) in mirror.counts_by_type(ctx.subject_tenant_id()).await? {
+            let id = by_node_type
+                .get(&type_id)
+                .cloned()
+                .unwrap_or_else(|| gts::type_leaf(&type_id).to_owned());
+            *out.entry(id).or_insert(0) += n;
+        }
+        Ok(Some(out))
+    }
+
     pub async fn prepare_model(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
         // A tenant on the seed is stored (seed = Studio's own model), a stored
         // one gains what it lacks, and either way its types are registered.
@@ -769,6 +797,14 @@ impl DomainModelService {
         doc: Value,
     ) -> anyhow::Result<ImportSummary> {
         let mut ontology = Ontology::from_value(doc).map_err(|e| anyhow::anyhow!("{e}"))?;
+        // What it brings is marked as uploaded, with the model it came in.
+        let source = ontology
+            .document()
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("uploaded model")
+            .to_owned();
+        ontology.mark_uploaded(&source);
         // An import replaces what people defined, never what gears keep, nor
         // the types Studio's own screens read.
         let current = self.model_current(ctx).await?;
