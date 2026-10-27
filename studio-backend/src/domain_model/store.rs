@@ -821,6 +821,8 @@ mod graph_backend {
                 .get_node(ctx, &instance_id.to_string(), Some(1))
                 .await
             {
+                // Only this tenant's, as in `list_objects`.
+                Ok(view) if view.envelope.tenant_id != ctx.subject_tenant_id() => Ok(None),
                 Ok(view) => Ok(Some(ObjectNode {
                     type_id: gts::our_type_from_graph(&view.type_id),
                     instance_id: view.node_key,
@@ -873,6 +875,14 @@ mod graph_backend {
                     .await
                     .map_err(|e| anyhow::anyhow!("graph-storage domain projection: {e}"))?;
                 for row in page.items {
+                    // The projection answers every tenant the caller reaches
+                    // (a platform administrator reaches them all, a member of
+                    // two organizations both), but a tenant's model and records
+                    // are its own: another tenant's node with the same key
+                    // would stand in for this one's.
+                    if row.envelope.tenant_id != ctx.subject_tenant_id() {
+                        continue;
+                    }
                     let Some((_, our_type)) = reverse.iter().find(|(g, _)| *g == row.type_id)
                     else {
                         continue;
