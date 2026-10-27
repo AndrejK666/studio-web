@@ -42,12 +42,10 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
 }
 
 export function DataSection({
-  number,
   data,
   commit,
   renderGear,
 }: {
-  number: number;
   data: ManifestData[] | undefined;
   commit?: string | null;
   renderGear: (name: string) => ReactNode;
@@ -55,7 +53,7 @@ export function DataSection({
   const counts = data ? dataSummary(data) : null;
   return (
     <section className="card arch-section" id="data" aria-labelledby="data-title">
-      <h2 id="data-title">{number} · Where Studio keeps its data</h2>
+      <h2 id="data-title">Where Studio keeps its data</h2>
       <p className="arch-muted arch-intro">
         Studio keeps a small <strong>core</strong> of its own: organizations, workspaces and projects in
         account-management with their own settings, the people and their roles, and secrets. Every other record a
