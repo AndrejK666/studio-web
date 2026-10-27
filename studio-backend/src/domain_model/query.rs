@@ -13,39 +13,53 @@
 //! type does not have, or a relation it does not declare, is a 400 naming what
 //! it does have, never an empty answer.
 //!
-//! What it cannot do yet, and why:
+//! Two executors answer the same plan (ADR-0051):
 //!
-//! * **Filtering and ordering run in the gear.** Domain types declare no
-//!   payload indexes — graph-storage fixes a type's indexes at its first
-//!   registration, and a domain type has to stay open to new fields — so a
-//!   type is read up to [`SCAN_LIMIT`] objects and filtered here. `complete`
-//!   says whether that read saw every object.
-//! * **A relation is followed from its source only.** The edge is stored on
-//!   the declaring side; following it backwards is a later step.
-//! * **The graph does not say which declared relation an edge is.** Two
-//!   relations of one verb between overlapping types share an edge type, so
-//!   asking for one returns the other's edges too. The plan reports that as a
-//!   warning instead of answering wrongly in silence.
+//! * **SQL over the read model** ([`super::mirror`]), once the tenant's mirror
+//!   is filled: `where`, `order_by`, `total`, `offset`, `limit` and
+//!   `aggregate` run in Postgres (see [`sql`]), and each relation is one
+//!   indexed read per level. No bound on the size of a type.
+//! * **The graph**, while the mirror fills or where there is none: a type is
+//!   read up to [`SCAN_LIMIT`] objects and filtered here, because domain types
+//!   declare no payload indexes in graph-storage. `complete` says whether that
+//!   read saw every object.
+//!
+//! A relation is followed from its source, or with `~name` from its target
+//! back to its source. Each edge carries the declared relation it is, so two
+//! relations of one verb do not answer for each other.
 
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
+use std::pin::Pin;
 use toolkit_security::SecurityContext;
 
 use super::access::Access;
 use super::gts;
+use super::mirror::{DomainMirror, Group};
 use super::ontology::Ontology;
-use super::store::{DomainStore, ObjectNode};
+use super::store::{DomainStore, Hop, Neighbourhood, ObjectNode};
 use crate::pagination::{DEFAULT_LIMIT, MAX_LIMIT};
 
-/// How many objects of the queried type are read before filtering. The same
-/// bound the conformance check reads under, for the same reason: past it the
-/// answer is honest about being partial rather than slow.
+mod sql;
+
+/// How many objects of the queried type the graph executor reads before
+/// filtering. The same bound the conformance check reads under, for the same
+/// reason: past it the answer is honest about being partial rather than slow.
 pub const SCAN_LIMIT: usize = 5_000;
+
+/// How many rows a gear's own read ([`run_bulk`]) returns at most.
+pub const BULK_LIMIT: usize = 100_000;
+
+/// How many fields one aggregate may group by.
+pub const MAX_GROUP_BY: usize = 3;
+
+/// The prefix that follows a relation backwards: `~delivers` on a project
+/// reads the teams that deliver it.
+pub const REVERSE: char = '~';
 
 /// How deep `include` may nest. Each level is one traversal per relation, so
 /// this bounds the round trips one request can cost.
@@ -67,7 +81,8 @@ pub struct Selection {
     #[serde(default)]
     pub fields: Option<Vec<String>>,
     /// Relations to follow, by the name the model declares them under
-    /// (`has_members`, or qualified, `team.has_members`).
+    /// (`has_members`, or qualified, `team.has_members`), or backwards from
+    /// their target with a leading `~` (`~has_members`).
     #[serde(default)]
     pub include: BTreeMap<String, Selection>,
     /// Rows to return, 1..=200, default 50. Under `include` this is per parent.
@@ -91,6 +106,46 @@ pub enum Direction {
     Desc,
 }
 
+impl Query {
+    /// A query from the body `POST /query` takes: `type`, `project_id`,
+    /// `offset`, `aggregate`, and the selection (`where`, `order_by`,
+    /// `fields`, `include`, `limit`). What a gear hands the port.
+    pub fn from_json(mut body: Value) -> Result<Self, String> {
+        let obj = body.as_object_mut().ok_or("a query is an object")?;
+        let type_ref = obj
+            .remove("type")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .ok_or("a query names its `type`")?;
+        let scope = obj
+            .remove("project_id")
+            .and_then(|v| v.as_str().map(str::to_string));
+        let offset = obj
+            .remove("offset")
+            .and_then(|v| v.as_u64())
+            .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+        let aggregate = match obj.remove("aggregate") {
+            None | Some(Value::Null) => None,
+            Some(a) => Some(serde_json::from_value(a).map_err(|e| format!("`aggregate`: {e}"))?),
+        };
+        let selection = serde_json::from_value(body).map_err(|e| e.to_string())?;
+        Ok(Self {
+            type_ref,
+            scope,
+            offset,
+            selection,
+            aggregate,
+        })
+    }
+}
+
+/// Counts over the root's matches, grouped by up to [`MAX_GROUP_BY`] fields.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Aggregate {
+    #[serde(default)]
+    pub group_by: Vec<String>,
+}
+
 /// One query: the type it starts from and what to read of it.
 #[derive(Debug, Clone, Default)]
 pub struct Query {
@@ -99,6 +154,8 @@ pub struct Query {
     pub scope: Option<String>,
     pub offset: Option<usize>,
     pub selection: Selection,
+    /// Groups and their counts beside the rows.
+    pub aggregate: Option<Aggregate>,
 }
 
 // ── The answer ────────────────────────────────────────────────────────────
@@ -124,8 +181,12 @@ pub struct RowSet {
 #[derive(Debug, Clone)]
 pub struct Outcome {
     pub rows: RowSet,
+    /// The aggregate's groups, largest first, when one was asked for.
+    pub groups: Option<Vec<Group>>,
     /// What the answer may get wrong, said rather than hidden.
     pub warnings: Vec<String>,
+    /// Which executor answered: `read_model` or `graph`.
+    pub source: &'static str,
 }
 
 impl Row {
@@ -384,8 +445,22 @@ struct Plan {
 struct IncludePlan {
     name: String,
     edge_type_id: String,
+    /// The declared relation's own name, which its edges carry.
+    relation: String,
+    reverse: bool,
     node_type_ids: Vec<String>,
     plan: Plan,
+}
+
+impl IncludePlan {
+    fn hop(&self) -> Hop<'_> {
+        Hop {
+            edge_type_id: &self.edge_type_id,
+            relation: Some(&self.relation),
+            node_type_ids: &self.node_type_ids,
+            reverse: self.reverse,
+        }
+    }
 }
 
 /// Every entity that is `target` or extends it — what may sit at the far end
@@ -404,7 +479,6 @@ fn plan(
     label: &str,
     sel: &Selection,
     depth: usize,
-    warnings: &mut Vec<String>,
 ) -> Result<Plan, QueryError> {
     // A field is admitted when any of the types the rows can be has it: a
     // relation pointing at a base returns objects of what extends it.
@@ -460,76 +534,85 @@ fn plan(
         )));
     }
 
-    let chains: HashSet<String> = entities
+    let chains: std::collections::HashSet<String> = entities
         .iter()
         .flat_map(|e| ontology.ancestors(e))
         .collect();
     let declared = ontology.declared_relations();
     let mut include = Vec::new();
     for (name, child) in &sel.include {
-        let (owner, bare) = match name.split_once('.') {
+        let (reverse, written) = match name.strip_prefix(REVERSE) {
+            Some(rest) => (true, rest),
+            None => (false, name.as_str()),
+        };
+        let (owner, bare) = match written.split_once('.') {
             Some((o, n)) => (ontology.resolve_entity_id(o), n),
-            None => (None, name.as_str()),
+            None => (None, written),
+        };
+        // Forwards, the rows are the relation's source; backwards, its target.
+        let near_end = |d: &super::ontology::DeclaredRelation| {
+            if reverse {
+                d.target_entity.as_ref().is_some_and(|t| chains.contains(t))
+            } else {
+                chains.contains(&d.source)
+            }
         };
         let hits: Vec<_> = declared
             .iter()
-            .filter(|d| d.name == bare && chains.contains(&d.source))
+            .filter(|d| d.name == bare && near_end(d))
             .filter(|d| owner.as_ref().is_none_or(|o| *o == d.source))
             .collect();
         let Some(d) = hits.first() else {
             let mut offered: Vec<String> = declared
                 .iter()
-                .filter(|d| chains.contains(&d.source) && d.target_entity.is_some())
-                .map(|d| d.name.clone())
+                .filter(|d| d.target_entity.is_some())
+                .filter_map(|d| {
+                    if chains.contains(&d.source) {
+                        Some(d.name.clone())
+                    } else if d.target_entity.as_ref().is_some_and(|t| chains.contains(t)) {
+                        Some(format!("{REVERSE}{}.{}", d.source, d.name))
+                    } else {
+                        None
+                    }
+                })
                 .collect();
             offered.sort();
             offered.dedup();
             return Err(invalid(format!(
-                "`{label}` declares no relation `{name}`; it declares: {}",
+                "`{label}` has no relation `{name}`; it has: {}",
                 offered.join(", ")
             )));
         };
-        if hits
-            .iter()
-            .any(|h| h.verb != d.verb || h.target_entity != d.target_entity)
-        {
+        let far = |h: &super::ontology::DeclaredRelation| {
+            if reverse {
+                Some(h.source.clone())
+            } else {
+                h.target_entity.clone()
+            }
+        };
+        if hits.iter().any(|h| h.verb != d.verb || far(h) != far(d)) {
             return Err(invalid(format!(
                 "`{name}` means different relations on the types `{label}` can be; qualify it: {}",
                 hits.iter()
-                    .map(|h| format!("{}.{}", h.source, h.name))
+                    .map(|h| format!("{}{}.{}", if reverse { "~" } else { "" }, h.source, h.name))
                     .collect::<Vec<_>>()
                     .join(", ")
             )));
         }
-        let Some(target) = d.target_entity.clone() else {
+        let Some(target) = far(d) else {
             return Err(invalid(format!(
                 "`{name}` points at `{}`, which is not in the loaded model",
                 d.target
             )));
         };
         let targets = extending(ontology, &target);
-        for other in &declared {
-            let same = other.source == d.source && other.name == d.name;
-            if same || other.verb != d.verb || !chains.contains(&other.source) {
-                continue;
-            }
-            let overlaps = other
-                .target_entity
-                .as_ref()
-                .is_some_and(|t| extending(ontology, t).iter().any(|x| targets.contains(x)));
-            if overlaps {
-                warnings.push(format!(
-                    "`{name}` and `{}.{}` are both stored as `{}` edges, and the graph does \
-                     not say which relation an edge is, so `{name}` also returns the other's",
-                    other.source, other.name, d.verb
-                ));
-            }
-        }
         include.push(IncludePlan {
             name: name.clone(),
             edge_type_id: gts::edge_type_id(&d.verb),
+            relation: d.name.clone(),
+            reverse,
             node_type_ids: targets.iter().map(|t| gts::node_type_id(t)).collect(),
-            plan: plan(ontology, &targets, &target, child, depth + 1, warnings)?,
+            plan: plan(ontology, &targets, &target, child, depth + 1)?,
         });
     }
 
@@ -603,11 +686,48 @@ fn row(ontology: &Ontology, node: ObjectNode, plan: &Plan) -> Row {
 
 type Step<'a> = Pin<Box<dyn Future<Output = Result<(), QueryError>> + Send + 'a>>;
 
-/// Follow each included relation for every row at once: one traversal per
+/// Where one hop of a query is read: the store (the graph) or the read model.
+#[async_trait]
+trait Hops: Send + Sync {
+    async fn hop(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+        hop: Hop<'_>,
+    ) -> anyhow::Result<Neighbourhood>;
+}
+
+struct ThroughStore<'a>(&'a dyn DomainStore);
+
+#[async_trait]
+impl Hops for ThroughStore<'_> {
+    async fn hop(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+        hop: Hop<'_>,
+    ) -> anyhow::Result<Neighbourhood> {
+        self.0.neighbours(ctx, seeds, hop).await
+    }
+}
+
+#[async_trait]
+impl Hops for DomainMirror {
+    async fn hop(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+        hop: Hop<'_>,
+    ) -> anyhow::Result<Neighbourhood> {
+        DomainMirror::hop(self, ctx.subject_tenant_id(), seeds, hop).await
+    }
+}
+
+/// Follow each included relation for every row at once: one read per
 /// relation and level, the way a federated engine batches a join, then the
 /// next level over all the children together.
 fn expand<'a>(
-    store: &'a dyn DomainStore,
+    hops: &'a dyn Hops,
     ctx: &'a SecurityContext,
     ontology: &'a Ontology,
     access: &'a Access,
@@ -619,15 +739,13 @@ fn expand<'a>(
             return Ok(());
         }
         for inc in includes {
-            let mut seen = HashSet::new();
+            let mut seen = std::collections::HashSet::new();
             let seeds: Vec<String> = rows
                 .iter()
                 .filter(|r| seen.insert(r.id.clone()))
                 .map(|r| r.id.clone())
                 .collect();
-            let hood = store
-                .neighbours(ctx, &seeds, &inc.edge_type_id, &inc.node_type_ids)
-                .await?;
+            let hood = hops.hop(ctx, &seeds, inc.hop()).await?;
             // Every level, not only the root: a relation must not carry a
             // caller into rows they may not read (ADR-0035 §5).
             let reachable = access.retain(ctx, hood.nodes).await;
@@ -663,7 +781,7 @@ fn expand<'a>(
                 spans.push((children.len() - before, total));
             }
             expand(
-                store,
+                hops,
                 ctx,
                 ontology,
                 access,
@@ -687,7 +805,101 @@ fn expand<'a>(
     })
 }
 
-/// Answer a query against `ontology`, reading through `store`.
+/// The aggregate's fields, checked against the type like any other field.
+fn group_paths(
+    ontology: &Ontology,
+    entity: &str,
+    aggregate: Option<&Aggregate>,
+) -> Result<Option<Vec<Vec<String>>>, QueryError> {
+    let Some(a) = aggregate else {
+        return Ok(None);
+    };
+    if a.group_by.len() > MAX_GROUP_BY {
+        return Err(invalid(format!(
+            "`aggregate.group_by` takes at most {MAX_GROUP_BY} fields"
+        )));
+    }
+    let known: Vec<String> = std::iter::once("id".to_string())
+        .chain(
+            ontology
+                .effective_properties(entity)
+                .into_iter()
+                .map(|p| p.name),
+        )
+        .collect();
+    let mut paths = Vec::new();
+    for f in &a.group_by {
+        let head = f.split('.').next().unwrap_or(f);
+        if !known.iter().any(|k| k == head) {
+            let mut known = known.clone();
+            known.sort();
+            return Err(invalid(format!(
+                "`{f}` in `aggregate.group_by` is not a field of `{entity}`; it has: {}",
+                known.join(", ")
+            )));
+        }
+        paths.push(f.split('.').map(str::to_string).collect());
+    }
+    Ok(Some(paths))
+}
+
+/// Largest group first, then by key, so both executors answer in one order.
+fn sorted(mut groups: Vec<Group>) -> Vec<Group> {
+    groups.sort_by(|a, b| {
+        b.count.cmp(&a.count).then_with(|| {
+            Value::Array(a.key.clone())
+                .to_string()
+                .cmp(&Value::Array(b.key.clone()).to_string())
+        })
+    });
+    groups
+}
+
+/// The groups of `matched`, counted here: the graph executor's aggregate.
+fn groups_of(matched: &[ObjectNode], paths: &[Vec<String>]) -> Vec<Group> {
+    let mut counts: Vec<(Vec<Value>, u64)> = Vec::new();
+    for n in matched {
+        let id = Value::String(n.instance_id.clone());
+        let key: Vec<Value> = paths
+            .iter()
+            .map(|p| lookup(n, p, &id).cloned().unwrap_or(Value::Null))
+            .collect();
+        match counts.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, c)) => *c += 1,
+            None => counts.push((key, 1)),
+        }
+    }
+    sorted(
+        counts
+            .into_iter()
+            .map(|(key, count)| Group { key, count })
+            .collect(),
+    )
+}
+
+/// A gear's read of its own objects: [`run`] with the page bound lifted to
+/// [`BULK_LIMIT`] for the root (relations keep theirs). On the graph the
+/// scan bound lifts with it, so the answer is complete either way.
+pub(super) async fn run_bulk(
+    store: &dyn DomainStore,
+    ontology: &Ontology,
+    ctx: &SecurityContext,
+    q: &Query,
+    access: &Access,
+) -> Result<Outcome, QueryError> {
+    run_with(
+        store,
+        ontology,
+        ctx,
+        q,
+        access,
+        Some(q.selection.limit.unwrap_or(BULK_LIMIT).clamp(1, BULK_LIMIT)),
+    )
+    .await
+}
+
+/// Answer a query against `ontology`, reading through `store`: from its read
+/// model when the tenant's is complete, from the graph otherwise.
 pub(super) async fn run(
     store: &dyn DomainStore,
     ontology: &Ontology,
@@ -695,51 +907,119 @@ pub(super) async fn run(
     q: &Query,
     access: &Access,
 ) -> Result<Outcome, QueryError> {
+    run_with(store, ontology, ctx, q, access, None).await
+}
+
+async fn run_with(
+    store: &dyn DomainStore,
+    ontology: &Ontology,
+    ctx: &SecurityContext,
+    q: &Query,
+    access: &Access,
+    bulk: Option<usize>,
+) -> Result<Outcome, QueryError> {
     let entity = ontology
         .resolve_entity_id(&q.type_ref)
         .ok_or_else(|| invalid(format!("unknown domain type: {}", q.type_ref)))?;
-    let mut warnings = Vec::new();
-    let plan = plan(
+    let warnings: Vec<String> = Vec::new();
+    let mut plan = plan(
         ontology,
         std::slice::from_ref(&entity),
         &entity,
         &q.selection,
         0,
-        &mut warnings,
     )?;
-
+    if let Some(limit) = bulk {
+        plan.limit = limit;
+    }
+    let scan_limit = bulk.map_or(SCAN_LIMIT, |b| b.max(SCAN_LIMIT));
+    let group_by = group_paths(ontology, &entity, q.aggregate.as_ref())?;
     let scope = q.scope.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let type_ids = vec![gts::node_type_id(&entity)];
+
+    if let Some(mirror) = store.read_model(ctx, ontology).await {
+        let tenant = ctx.subject_tenant_id();
+        // The PDP's answer as a predicate: asked once per owner that has
+        // objects of the type, before anything is counted (ADR-0035 §5).
+        let owners = if access.is_unconstrained() {
+            None
+        } else {
+            let mut admitted = Vec::new();
+            for owner in mirror.owners(tenant, &type_ids, scope).await? {
+                if access.admits_owner(ctx, owner).await {
+                    admitted.push(owner);
+                }
+            }
+            Some(admitted)
+        };
+        let root = super::mirror::RootSelect {
+            type_ids,
+            scope: scope.map(str::to_string),
+            filter: plan.filter.as_ref().map(sql::condition),
+            order: sql::order(&plan.order_by),
+            owners,
+        };
+        let offset = u64::try_from(q.offset.unwrap_or(0)).unwrap_or(u64::MAX);
+        let (nodes, total) = mirror
+            .root(tenant, &root, offset, plan.limit as u64)
+            .await?;
+        let groups = match &group_by {
+            Some(paths) => Some(sorted(
+                mirror.groups(tenant, &root, sql::group_key(paths)).await?,
+            )),
+            None => None,
+        };
+        let mut rows: Vec<Row> = nodes.into_iter().map(|n| row(ontology, n, &plan)).collect();
+        expand(&*mirror, ctx, ontology, access, &mut rows, &plan.include).await?;
+        return Ok(Outcome {
+            rows: RowSet {
+                items: rows,
+                total: usize::try_from(total).unwrap_or(usize::MAX),
+                complete: true,
+            },
+            groups,
+            warnings,
+            source: "read_model",
+        });
+    }
+
     // One over the bound: if it comes back, the read did not see everything.
     let mut found = store
-        .list_objects(
-            ctx,
-            &[gts::node_type_id(&entity)],
-            scope,
-            Some(SCAN_LIMIT + 1),
-        )
+        .list_objects(ctx, &type_ids, scope, Some(scan_limit + 1))
         .await?;
-    let complete = found.len() <= SCAN_LIMIT;
-    found.truncate(SCAN_LIMIT);
+    let complete = found.len() <= scan_limit;
+    found.truncate(scan_limit);
     // Before `where` and `total`: a count that included rows the caller cannot
     // see would say they exist (ADR-0035 §5).
     let found = access.retain(ctx, found).await;
 
     let matched = select(found, &plan);
     let total = matched.len();
+    let groups = group_by.as_deref().map(|paths| groups_of(&matched, paths));
     let mut rows: Vec<Row> = matched
         .into_iter()
         .skip(q.offset.unwrap_or(0))
         .take(plan.limit)
         .map(|n| row(ontology, n, &plan))
         .collect();
-    expand(store, ctx, ontology, access, &mut rows, &plan.include).await?;
+    expand(
+        &ThroughStore(store),
+        ctx,
+        ontology,
+        access,
+        &mut rows,
+        &plan.include,
+    )
+    .await?;
     Ok(Outcome {
         rows: RowSet {
             items: rows,
             total,
             complete,
         },
+        groups,
         warnings,
+        source: "graph",
     })
 }
 
@@ -991,7 +1271,9 @@ mod tests {
         assert!(m.contains("_contains"), "{m}");
         let m = refusal(&s, "team", json!({"include": {"members": {}}})).await;
         assert!(
-            m.contains("declares no relation `members`") && m.contains("delivers"),
+            m.contains("has no relation `members`")
+                && m.contains("delivers")
+                && m.contains("~project.includes_2"),
             "{m}"
         );
         let m = refusal(&s, "starship", json!({})).await;

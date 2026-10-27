@@ -41,6 +41,7 @@ import {
   usedBy,
   usesOf,
 } from "./architecture";
+import { DataSection } from "./architecture-data-view";
 import { FlowDiagram, FlowDoors } from "./architecture-flow-view";
 import type { Edge, EventKind, GroupedDomain, Manifest, ManifestGear, PrototypeMap, RestSurface, Surface, Via } from "./architecture";
 import "./styles.css";
@@ -1118,6 +1119,13 @@ function ArchitecturePage() {
             </p>
             <FlowDoors />
           </section>
+
+          <DataSection
+            number={hasUses ? 6 : 5}
+            data={manifest.data}
+            commit={backendCommit}
+            renderGear={(g) => <GearChip name={g} gear={byName.get(g)} onSelect={onGear} />}
+          />
 
           <footer className="arch-build">
             <span>

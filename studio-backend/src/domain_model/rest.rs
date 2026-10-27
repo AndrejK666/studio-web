@@ -26,7 +26,7 @@ use toolkit::api::{OpenApiRegistry, OperationBuilder};
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 
-use super::ontology::{FieldEdit, FieldSpec};
+use super::ontology::{EntitySpec, FieldEdit, FieldSpec};
 use super::service::{CONFORMANCE_LIMIT, DomainModelService, WriteOptions};
 use super::validate::ValidateMode;
 use crate::pagination::{PageQuery, page_of};
@@ -73,6 +73,9 @@ fn access_problem(e: &anyhow::Error) -> Option<CanonicalError> {
             .create(),
         super::access::AccessError::Unavailable(m) => CanonicalError::service_unavailable()
             .with_detail(m.clone())
+            .create(),
+        super::access::AccessError::Held(_) => StudioDomainModelError::permission_denied()
+            .with_reason("DOMAIN_OBJECT_HELD_BY_GEAR")
             .create(),
     })
 }
@@ -631,7 +634,7 @@ pub struct RevertResponse {
 // ── Handlers ──────────────────────────────────────────────────────────────
 
 async fn list_types(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
 ) -> ApiResult<JsonBody<TypesResponse>> {
     let ontology = handle
@@ -647,7 +650,7 @@ async fn list_types(
 }
 
 async fn get_type(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Path(id): Path<String>,
 ) -> ApiResult<JsonBody<EffectiveTypeResponse>> {
@@ -694,7 +697,7 @@ async fn get_type(
 }
 
 async fn create_object(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Json(req): Json<CreateObjectRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<CreateObjectResponse>)> {
@@ -759,7 +762,7 @@ async fn create_object(
 }
 
 async fn list_objects(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Query(q): Query<ObjectsQuery>,
 ) -> ApiResult<JsonBody<ObjectListResponse>> {
@@ -790,7 +793,7 @@ async fn list_objects(
 }
 
 async fn relation_catalog(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
 ) -> ApiResult<JsonBody<RelationCatalogResponse>> {
     let catalog = handle
@@ -831,7 +834,7 @@ async fn relation_catalog(
 }
 
 async fn create_relation(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Json(req): Json<CreateRelationRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<CreateRelationResponse>)> {
@@ -861,7 +864,7 @@ async fn create_relation(
 }
 
 async fn sync_model(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
 ) -> ApiResult<JsonBody<ModelSyncResponse>> {
     require_model_authority(&ctx, &handle).await?;
@@ -881,7 +884,7 @@ async fn sync_model(
 }
 
 async fn import_model(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Json(req): Json<ImportModelRequest>,
 ) -> ApiResult<JsonBody<ImportModelResponse>> {
@@ -904,7 +907,7 @@ async fn import_model(
 }
 
 async fn model_graph(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
 ) -> ApiResult<JsonBody<ModelGraphResponse>> {
     let (nodes, edges) = handle
@@ -939,7 +942,7 @@ async fn model_graph(
 }
 
 async fn objects_graph(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Query(q): Query<ObjectsGraphQuery>,
 ) -> ApiResult<JsonBody<ObjectsGraphResponse>> {
@@ -983,8 +986,57 @@ async fn objects_graph(
     }))
 }
 
+/// A new type for the model.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct CreateTypeRequest {
+    /// The type id: lower-case words joined by hyphens (`workspace`, `budget-line`).
+    pub id: String,
+    /// What people call it; the id when absent.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// The bucket it is drawn in; its base's when absent.
+    #[serde(default)]
+    pub bucket: Option<String>,
+    /// The type it extends (`managed-object`), whose fields and relations it inherits.
+    #[serde(default)]
+    pub extends: Option<String>,
+}
+
+async fn create_type(
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
+    Extension(handle): Extension<Handle>,
+    Json(req): Json<CreateTypeRequest>,
+) -> ApiResult<(StatusCode, JsonBody<AddFieldResponse>)> {
+    require_model_authority(&ctx, &handle).await?;
+    let (entity, version) = handle
+        .0
+        .add_type(
+            &ctx,
+            EntitySpec {
+                id: req.id,
+                name: req.name.unwrap_or_default(),
+                description: req.description,
+                bucket: req.bucket,
+                extends: req.extends,
+            },
+        )
+        .await
+        .map_err(|e| {
+            StudioDomainModelError::invalid_argument()
+                .with_constraint(format!("{e:#}"))
+                .create()
+        })?;
+    Ok((
+        StatusCode::CREATED,
+        Json(AddFieldResponse { entity, version }),
+    ))
+}
+
 async fn add_field(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Path(id): Path<String>,
     Json(req): Json<AddFieldRequest>,
@@ -1013,7 +1065,7 @@ async fn add_field(
 }
 
 async fn edit_field(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Path((id, name)): Path<(String, String)>,
     Json(req): Json<EditFieldRequest>,
@@ -1047,7 +1099,7 @@ async fn edit_field(
 }
 
 async fn remove_field(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Path((id, name)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
@@ -1068,7 +1120,7 @@ async fn remove_field(
 }
 
 async fn list_legacy_scopes(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Query(q): Query<LegacyScopesQuery>,
 ) -> ApiResult<JsonBody<LegacyScopesResponse>> {
@@ -1102,7 +1154,7 @@ async fn list_legacy_scopes(
 }
 
 async fn conformance(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Path(id): Path<String>,
     Query(q): Query<ConformanceQuery>,
@@ -1155,7 +1207,7 @@ async fn conformance(
 }
 
 async fn list_revisions(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
 ) -> ApiResult<JsonBody<RevisionsResponse>> {
     let revisions = handle
@@ -1183,7 +1235,7 @@ async fn list_revisions(
 }
 
 async fn revert_model(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Json(req): Json<RevertRequest>,
 ) -> ApiResult<JsonBody<RevertResponse>> {
@@ -1226,7 +1278,8 @@ pub struct QueryObjectsRequest {
     #[serde(default)]
     pub fields: Option<Vec<String>>,
     /// Relations to follow, by declared name (`has_members` or
-    /// `team.has_members`), each with its own `where`, `order_by`, `fields`,
+    /// `team.has_members`), or backwards from their target with a leading `~`
+    /// (`~has_members`), each with its own `where`, `order_by`, `fields`,
     /// `limit` (per parent) and `include`, at most three levels deep.
     #[serde(default)]
     #[schema(value_type = Option<Object>)]
@@ -1237,6 +1290,27 @@ pub struct QueryObjectsRequest {
     /// Rows to return, 1..=200, default 50.
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Counts of the matching objects grouped by up to three fields, answered
+    /// beside the page as `groups`.
+    #[serde(default)]
+    pub aggregate: Option<QueryAggregateDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct QueryAggregateDto {
+    /// The fields to group by; none counts every match as one group.
+    #[serde(default)]
+    pub group_by: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct QueryGroupDto {
+    /// The grouped fields' values, in `group_by` order; `null` where absent.
+    #[schema(value_type = Vec<Object>)]
+    pub key: Vec<Value>,
+    pub count: u64,
 }
 
 #[derive(Debug)]
@@ -1257,20 +1331,90 @@ pub struct QueryObjectsResponse {
     pub items: Vec<Value>,
     /// Rows matching `where` across every page.
     pub total: u32,
-    /// False when the type had more objects than one query reads (5 000), so
-    /// `total` and the page are over the first 5 000 only.
+    /// False when the graph answered and the type had more objects than one
+    /// such read takes (5 000), so `total` and the page are over the first
+    /// 5 000 only. The read model always sees every object.
     pub complete: bool,
-    /// Where the answer may be wrong, said rather than hidden — e.g. two
-    /// relations stored as one edge type.
+    /// Where the answer may be wrong, said rather than hidden.
     pub warnings: Vec<String>,
+    /// The aggregate's groups, largest first, when one was asked for.
+    #[serde(default)]
+    pub groups: Option<Vec<QueryGroupDto>>,
+    /// What answered: `read_model` (Postgres) or `graph` (while the read model
+    /// fills, or where there is none).
+    pub source: String,
+}
+
+/// A batch of changes to domain objects and their relations, applied in order.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct MutateObjectsRequest {
+    /// Each an object with `op`: `upsert` (`type`, `key`, `value`,
+    /// `project_id`, `if_absent`, `as`), `patch` (`id`, `set`, `unset`),
+    /// `delete` (`id`), `link` / `unlink` (`relation`, `from`, `to`). An id may
+    /// be `$name` for an object an earlier upsert named with `as`.
+    #[schema(value_type = Vec<Object>)]
+    pub operations: Vec<Value>,
+    /// How hard payloads are checked: `strict`, `warn` (the default) or `off`.
+    #[serde(default)]
+    pub validate: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct MutateObjectsResponse {
+    /// What each operation did, in order: its `op`, the object's `id`, and for
+    /// a write the type's `violations` it was let through with.
+    #[schema(value_type = Vec<Object>)]
+    pub results: Vec<Value>,
+}
+
+async fn mutate_objects(
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
+    Extension(handle): Extension<Handle>,
+    Json(req): Json<MutateObjectsRequest>,
+) -> ApiResult<JsonBody<MutateObjectsResponse>> {
+    use super::mutate::{MutateError, Operation};
+
+    let bad = |m: String| {
+        StudioDomainModelError::invalid_argument()
+            .with_constraint(m)
+            .create()
+    };
+    let validate = ValidateMode::parse(req.validate.as_deref().unwrap_or("")).map_err(bad)?;
+    let ops = req
+        .operations
+        .into_iter()
+        .enumerate()
+        .map(|(i, v)| {
+            serde_json::from_value::<Operation>(v).map_err(|e| bad(format!("operation {i}: {e}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let applied = super::mutate::run(&handle.0, &ctx, ops, validate)
+        .await
+        .map_err(|e| match e {
+            MutateError::Invalid(m) => bad(m),
+            MutateError::Failed {
+                index,
+                applied,
+                cause,
+            } => access_problem(&cause).unwrap_or_else(|| {
+                bad(format!(
+                    "operation {index} failed, {applied} before it were applied: {cause:#}"
+                ))
+            }),
+        })?;
+    Ok(Json(MutateObjectsResponse {
+        results: applied.results,
+    }))
 }
 
 async fn query_objects(
-    Extension(ctx): Extension<SecurityContext>,
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
     Json(req): Json<QueryObjectsRequest>,
 ) -> ApiResult<JsonBody<QueryObjectsResponse>> {
-    use super::query::{Direction, OrderBy, Query, QueryError, Selection};
+    use super::query::{Aggregate, Direction, OrderBy, Query, QueryError, Selection};
 
     let bad = |m: String| {
         StudioDomainModelError::invalid_argument()
@@ -1312,6 +1456,9 @@ async fn query_objects(
             include,
             limit: req.limit,
         },
+        aggregate: req.aggregate.map(|a| Aggregate {
+            group_by: a.group_by,
+        }),
     };
     let outcome = handle.0.query(&ctx, &query).await.map_err(|e| match e {
         QueryError::Invalid(m) => bad(m),
@@ -1323,6 +1470,15 @@ async fn query_objects(
         total: u32::try_from(outcome.rows.total).unwrap_or(u32::MAX),
         complete: outcome.rows.complete,
         warnings: outcome.warnings,
+        groups: outcome.groups.map(|gs| {
+            gs.into_iter()
+                .map(|g| QueryGroupDto {
+                    key: g.key,
+                    count: g.count,
+                })
+                .collect()
+        }),
+        source: outcome.source.to_string(),
     }))
 }
 
@@ -1333,6 +1489,7 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     service: Arc<DomainModelService>,
     authority: Option<Arc<dyn OrgAuthority>>,
+    access: Option<crate::org_scope::OrgAccess>,
 ) -> Router {
     let router = OperationBuilder::get("/studio-domain-model/v1/types")
         .operation_id("studio_domain_model.list_types")
@@ -1344,6 +1501,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .handler(list_types)
         .json_response_with_schema::<TypesResponse>(openapi, StatusCode::OK, "The ontology")
@@ -1363,6 +1526,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .path_param("id", "Domain type id (ontology id or node type id)")
         .handler(get_type)
@@ -1388,6 +1557,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .json_request::<CreateObjectRequest>(openapi, "Type, key and payload")
         .handler(create_object)
@@ -1414,6 +1589,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .query_param_typed(
             "offset",
@@ -1433,19 +1614,24 @@ pub fn register_routes(
         .operation_id("studio_domain_model.query_objects")
         .summary("Query domain objects (experimental)")
         .description(
-            "Experimental, beside `GET /objects` and `GET /objects/graph`, which keep \
-             working unchanged. One request reads a type's objects filtered (`where`, \
-             Hasura-style operators), ordered, projected to `fields`, and with declared \
-             relations followed through `include`, nested up to three levels. Every \
-             field and relation named is checked against the model and a wrong one is \
-             a 400 that lists what the type has. Filtering runs in the gear over at \
-             most 5 000 objects of the type; `complete` says whether that saw them all. \
-             A relation is followed from its declaring side only, and `warnings` names \
-             relations that share an edge type, since their edges come back together. \
-             A read: answers 200.",
+            "One request reads a type's objects filtered (`where`, Hasura-style \
+             operators), ordered, projected to `fields`, with declared relations \
+             followed through `include` (backwards with a leading `~`), nested up to \
+             three levels, and optionally counted by group (`aggregate`). Every field \
+             and relation named is checked against the model and a wrong one is a 400 \
+             that lists what the type has. Answered in Postgres from the read model once \
+             the tenant's is filled (`source: read_model`), with no bound on the type's \
+             size; until then from the graph, over at most 5 000 objects of the type, \
+             with `complete` saying whether that saw them all. A read: answers 200.",
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .json_request::<QueryObjectsRequest>(openapi, "Type, filter, order, fields and relations")
         .handler(query_objects)
@@ -1453,6 +1639,42 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "Matching objects with their relations",
+        )
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-domain-model/v1/mutate")
+        .operation_id("studio_domain_model.run_mutations")
+        .summary("Change domain objects and their relations in one batch")
+        .description(
+            "The write beside `POST /query`: up to 500 operations applied in order — \
+             `upsert`, `patch`, `delete`, `link`, `unlink` — each checked against the \
+             model and the caller's rights exactly as `POST /objects` and `POST \
+             /relations` check them. An upsert may name its object with `as`, and a \
+             later operation refer to it as `$name`. The batch is checked before \
+             anything is written; the graph has no transactions, so a failure part-way \
+             is a 400 naming the operation, with the ones before it applied. A delete \
+             marks the object, which leaves every read, and writing it again brings it \
+             back. Answers 200 with what each operation did.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .require_license_features::<License>([])
+        .json_request::<MutateObjectsRequest>(openapi, "The operations, in order")
+        .handler(mutate_objects)
+        .json_response_with_schema::<MutateObjectsResponse>(
+            openapi,
+            StatusCode::OK,
+            "What each operation did",
         )
         .error_400(openapi)
         .error_403(openapi)
@@ -1471,6 +1693,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .handler(relation_catalog)
         .json_response_with_schema::<RelationCatalogResponse>(
@@ -1492,6 +1720,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .json_request::<CreateRelationRequest>(openapi, "Relation kind and endpoints")
         .handler(create_relation)
@@ -1517,6 +1751,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .handler(sync_model)
         .json_response_with_schema::<ModelSyncResponse>(
@@ -1540,6 +1780,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .json_request::<ImportModelRequest>(openapi, "The domain model to load")
         .handler(import_model)
@@ -1565,6 +1811,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .handler(model_graph)
         .json_response_with_schema::<ModelGraphResponse>(openapi, StatusCode::OK, "The model graph")
@@ -1582,6 +1834,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .handler(objects_graph)
         .json_response_with_schema::<ObjectsGraphResponse>(
@@ -1589,6 +1847,34 @@ pub fn register_routes(
             StatusCode::OK,
             "The instance graph",
         )
+        .error_403(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-domain-model/v1/types")
+        .operation_id("studio_domain_model.create_type")
+        .summary("Add a type to the domain model")
+        .description(
+ "Adds an entity type: an id (lower-case words joined by hyphens), a name, a bucket, and the type it extends, whose fields and relations it inherits. It starts with no fields of its own; `POST /types/{id}/fields` adds them. A versioned model edit like a field edit, so `POST /model/revert` undoes it. Needs the authority to change the model (ADR-0035). Answers 201.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .require_license_features::<License>([])
+        .json_request::<CreateTypeRequest>(openapi, "The new type")
+        .handler(create_type)
+        .json_response_with_schema::<AddFieldResponse>(
+            openapi,
+            StatusCode::CREATED,
+            "The new type and the model version",
+        )
+        .error_400(openapi)
         .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)
@@ -1605,6 +1891,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .path_param("id", "Domain type id (ontology id or node type id)")
         .json_request::<AddFieldRequest>(openapi, "Field to add")
@@ -1635,6 +1927,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .path_param("id", "Domain type id (ontology id or node type id)")
         .path_param("name", "The field to change")
@@ -1665,6 +1963,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .path_param("id", "Domain type id (ontology id or node type id)")
         .path_param("name", "The field to remove")
@@ -1684,6 +1988,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .query_param_typed("offset", false, "Zero-based index of the first object", "integer")
         .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
@@ -1711,6 +2021,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .path_param("id", "Domain type id (ontology id or node type id)")
         .handler(conformance)
@@ -1736,6 +2052,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .handler(list_revisions)
         .json_response_with_schema::<RevisionsResponse>(
@@ -1759,6 +2081,12 @@ pub fn register_routes(
         )
         .tag("StudioDomainModel")
         .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .require_license_features::<License>([])
         .json_request::<RevertRequest>(openapi, "The version to restore")
         .handler(revert_model)
@@ -1773,5 +2101,12 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(Handle(service, authority)))
+    // `?organization_id=`: the model of the organization on screen — a
+    // platform administrator's home tenant is the root, and the records gears
+    // keep live in each organization's model.
+    let router = router.layer(Extension(Handle(service, authority)));
+    match access {
+        Some(access) => router.layer(Extension(access)),
+        None => router,
+    }
 }
