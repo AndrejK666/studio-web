@@ -227,19 +227,3 @@ input.repoSearch {
   margin: 0;
   font-size: var(--text-label-size);
 }
-
-/* The prototype's empty state, through the tokens the kit's Empty reads: a
-   primary icon on a rounder tile, a heavier title, a taller description. The
-   tile's size is a literal in the kit and stays 3rem. */
-.emptyMedia {
-  --foreground: var(--primary);
-  --radius-xl: var(--radius-2xl);
-}
-
-.emptyTitle {
-  --text-label-weight: var(--text-heading-2-weight);
-}
-
-.emptyDescription {
-  --text-body-line-height: var(--text-heading-2-line-height);
-}

@@ -838,8 +838,8 @@ The project's Sources rows show it in the design's shorter form
 `cpt-studiofrontend-dod-project-sources-row-sync`): a sync in flight, a cancel
 pending, a last attempt failed or cancelled with its reason, and one sync item
 that cancels or retries. The phase, the counts and the gear's summary stay in
-the store. Until the table lands (#688), the Artifacts section reports only the
-repositories that did not come through, as before.
+the store. The Artifacts section reports only the repositories that did not come
+through, as before.
 
 The system **MUST** show each repository's sync as its own line — queued,
 importing with its phase and counts, cancelling, succeeded with the gear's

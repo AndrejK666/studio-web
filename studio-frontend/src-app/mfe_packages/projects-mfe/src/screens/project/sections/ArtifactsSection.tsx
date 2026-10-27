@@ -24,6 +24,7 @@ import { useProjectText } from '../../../i18n';
 import { ARTIFACTS_PAGE_SIZE, useArtifacts } from '../../../shared/useArtifacts';
 import { useArtifactImport, useProjectImport } from '../../../shared/useArtifactImport';
 import { useThemedRoot } from '../../../shared/useThemedRoot';
+import { ReadFailed, SectionSkeleton } from '../../../components/SectionStates';
 import { requestOpenArtifact } from '../../../actions/artifactActions';
 import { clampOffset, type ArtifactRow } from '../../../model/artifact';
 import type { ArtifactKind } from '../../../api/artifactTypes';
@@ -161,25 +162,15 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
     [t, formatRelative, container, onOpen]
   );
 
-  if (loading) {
-    return (
-      <div className={styles.section}>
-        <Skeleton className={styles.stripSkeleton} />
-        <Skeleton className={styles.tableSkeleton} />
-      </div>
-    );
-  }
+  if (loading) return <SectionSkeleton />;
 
   if (failed) {
     return (
-      <div className={`${styles.section} ${styles.stateBlock}`}>
-        <p className={styles.error} role="alert">
-          {t('artifacts_read_failed')}
-        </p>
-        <Button variant="outline" size="sm" className={styles.retry} onClick={refetch}>
-          {t('artifacts_retry')}
-        </Button>
-      </div>
+      <ReadFailed
+        message={t('artifacts_read_failed')}
+        retryLabel={t('artifacts_retry')}
+        onRetry={refetch}
+      />
     );
   }
   if (projectTotal === 0) {

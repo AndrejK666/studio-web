@@ -2,7 +2,7 @@
 // @cpt-flow:cpt-studiofrontend-flow-project-specs-from-source:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu-sync:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu-specs:p1
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { eventBus, useAppDispatch, useMfeBridge } from '@gears-frontx/react';
 import { announceSection } from '../actions/projectsActions';
 import type { SourceRow } from '../model/sourceRows';
@@ -62,11 +62,9 @@ export function useSourceRowActions(
     [dispatch, bridge]
   );
 
-  return {
-    connectionsRead: !loading && !failed,
-    providerName,
-    syncNow,
-    cancelSync,
-    openSpecs,
-  };
+  const connectionsRead = !loading && !failed;
+  return useMemo(
+    () => ({ connectionsRead, providerName, syncNow, cancelSync, openSpecs }),
+    [connectionsRead, providerName, syncNow, cancelSync, openSpecs]
+  );
 }

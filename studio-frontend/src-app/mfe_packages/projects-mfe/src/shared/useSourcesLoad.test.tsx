@@ -6,21 +6,23 @@ import { ARTIFACT_NODE_TYPES } from '../api/artifactTypes';
 /** The Sources rows and the load the table calls (#685, DoD `...-sources-reads`). */
 
 type Query = { data?: unknown; isLoading: boolean; isError: boolean };
-type Key = 'nodes' | 'connections' | 'activity' | 'specs' | 'documents';
+type Key = 'config' | 'nodes' | 'connections' | 'activity' | 'specs' | 'documents';
 
-const { queries, config, lines, invalidate, triggerLoad } = vi.hoisted(() => ({
+const { queries, asked, config, lines, invalidate, triggerLoad } = vi.hoisted(() => ({
   queries: { current: {} as Record<string, Query> },
+  asked: [] as unknown[],
   config: { current: { config: null as unknown, loading: false, unset: false, failed: false } },
   lines: { current: [] as unknown[] },
   invalidate: vi.fn(),
   triggerLoad: vi.fn(),
 }));
 
-const descriptor = (key: Key) => () => ({ key });
+const descriptor = (key: Key) => (params?: unknown) => ({ key, params });
 
 vi.mock('@gears-frontx/react', () => ({
   apiRegistry: {
     getService: () => ({
+      getTenantMetadata: descriptor('config'),
       nodes: descriptor('nodes'),
       connections: descriptor('connections'),
       sourceActivity: descriptor('activity'),
@@ -28,14 +30,27 @@ vi.mock('@gears-frontx/react', () => ({
       projectDocuments: descriptor('documents'),
     }),
   },
-  useApiQuery: ({ key }: { key: Key }) => queries.current[key],
+  // A key that is not one of the services' is the hook's own read with nothing to ask.
+  useApiQuery: ({ key }: { key: Key | readonly unknown[] }) => {
+    asked.push(key);
+    return typeof key === 'string'
+      ? queries.current[key]
+      : { data: null, isLoading: false, isError: false };
+  },
   useQueryCache: () => ({ invalidate }),
 }));
 vi.mock('@gears-frontx/ui-kit', () => ({ useDataGrid: () => ({ triggerLoad }) }));
-vi.mock('@constructor-studio/mfe-shared', () => ({ ConnectorsApiService: class {} }));
+vi.mock('@constructor-studio/mfe-shared', () => ({
+  AccountsApiService: class {},
+  ConnectorsApiService: class {},
+  PROJECT_CONFIG_TYPE: 'project-config',
+}));
 vi.mock('../api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: class {} }));
 vi.mock('../api/DocumentsApiService', () => ({ DocumentsApiService: class {} }));
-vi.mock('./useProjectConfig', () => ({ useProjectConfig: () => config.current }));
+vi.mock('./useProjectConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./useProjectConfig')>()),
+  useProjectConfig: () => config.current,
+}));
 vi.mock('./useArtifactImport', () => ({ useProjectImport: () => ({ repos: lines.current }) }));
 vi.mock('./useArtifacts', () => ({
   repositoryNodesParams: (scope: string) => ({ scope, type: 'repo', limit: 200 }),
@@ -87,9 +102,9 @@ function answerAll() {
 }
 
 /** The hook, and its bridge rendered as the grid would. */
-function mount() {
+function mount(workspaceId: string | null = 'ws-1') {
   let projectId = 'p-1';
-  const hook = renderHook((props: { projectId: string }) => useSourcesLoad(props.projectId, 'ws-1', 'org-1'), {
+  const hook = renderHook((props: { projectId: string }) => useSourcesLoad(props.projectId, workspaceId, 'org-1'), {
     initialProps: { projectId },
   });
   const grid = render(hook.result.current.rowsBridge);
@@ -117,6 +132,7 @@ beforeEach(() => {
   answerAll();
   config.current = { config: { sources: SOURCES }, loading: false, unset: false, failed: false };
   lines.current = [];
+  asked.length = 0;
   invalidate.mockReset();
   triggerLoad.mockReset();
 });
@@ -149,7 +165,7 @@ describe('useSourcesLoad', () => {
     expect(view.footer.sources).toBe(3);
   });
 
-  it.each<Key | 'config'>(['config', 'nodes', 'connections', 'activity', 'specs', 'documents'])(
+  it.each<Key>(['config', 'nodes', 'connections', 'activity', 'specs', 'documents'])(
     'is not ready until the %s read has answered or failed',
     (read) => {
       if (read === 'config') config.current.loading = true;
@@ -251,5 +267,24 @@ describe('useSourcesLoad', () => {
     lines.current = [{ ...running, phase: 'storing', stored: 40 }];
     sources.rerender();
     expect(triggerLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it('with no workspace, asks for no documents and leaves the Studio count missing', () => {
+    const { view } = mount(null);
+
+    expect(view.ready).toBe(true);
+    expect(view.rows).toHaveLength(3);
+    expect(view.footer.createdInStudio).toBeNull();
+    expect(asked).not.toContain('documents');
+  });
+
+  it('reads the config and the repository nodes again on retry', () => {
+    const { view } = mount();
+
+    view.retry();
+    expect(invalidate.mock.calls.map(([query]) => [query.key, query.params])).toEqual([
+      ['config', { tenantId: 'p-1', metadataType: 'project-config' }],
+      ['nodes', { scope: 'p-1', type: 'repo', limit: 200 }],
+    ]);
   });
 });

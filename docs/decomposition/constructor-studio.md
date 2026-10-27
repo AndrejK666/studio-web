@@ -552,7 +552,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 - **Scope**:
   - `people-mfe`, `kits-mfe`, `search-mfe`, the Organization settings screen
-  - the project sections of `projects-mfe` that render `PlaceholderSection`: Overview, Sources (until its feature spec, #685), Activity, Timeline, Team, Project settings
+  - the project sections of `projects-mfe` that render `PlaceholderSection`: Overview, Activity, Timeline, Team, Project settings
 
 - **Out of scope**:
   - the content of those areas
@@ -1444,7 +1444,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 - [ ] `p1` - **ID**: `cpt-studio-feature-project-sources`
 
-- **Purpose**: A project's Sources section: the repositories the project works from, attaching more of them, and each one's sync. Started by #687 with Connect source, #685 with the rows and #686 with the row menu; the table and uploading documents follow in #688 and #693.
+- **Purpose**: A project's Sources section: the repositories the project works from, attaching more of them, and each one's sync. Started by #687 with Connect source, #685 with the rows and #686 with the row menu, #688 with the table; uploading documents follows in #693.
 
 - **Depends On**: `cpt-studio-feature-project-create`, `cpt-studio-feature-project-artifacts`, `cpt-studio-feature-project-specs`, `cpt-studio-feature-connection-create`, `cpt-studio-feature-documents`
 
