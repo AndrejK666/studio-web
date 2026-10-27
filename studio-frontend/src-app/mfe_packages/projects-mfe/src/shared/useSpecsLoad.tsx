@@ -18,7 +18,7 @@ import {
 } from '../model/specRows';
 import { TEXT_SEARCH_FILTER_KEY } from './dataGridFilters';
 
-/** Where the table's plugins put each filter in `DataGridLoadContext.filters` (#692). */
+/** Where the table's plugins put each filter in `DataGridLoadContext.filters` (#692, #878). */
 export const SPECS_FILTER_KEYS = {
   filter: 'specs',
   documentType: 'documentType',
@@ -63,7 +63,7 @@ const NO_SOURCES: SpecRowsSourcesDto = {
   counts: [],
 };
 
-// The values come from #692's own plugins, which keep them in memory.
+// The search comes from the kit's text search (#692); the filter and the document type will come from its filters (#878).
 function queryOf(filters: DataGridLoadContext['filters']): SpecsQuery {
   return {
     filter: filters?.[SPECS_FILTER_KEYS.filter]?.value ?? 'all',
@@ -129,7 +129,10 @@ export function useSpecsLoad(projectId: string, workspaceId: string): SpecsLoad 
           const settled = await pending;
           if (kept.current?.answer === pending) answer = settled;
         } catch (error) {
-          if (kept.current?.answer === pending) {
+          // Every load that waited on the failed read fails with it: one that read again could
+          // write a good snapshot over the failed one and leave the grid on its own error view.
+          // Only a load whose read reload() replaced with a newer one waits on that.
+          if (!kept.current || kept.current.answer === pending) {
             kept.current = null;
             setSnapshot({ rows: [], shown: [], sources: NO_SOURCES, types: [], failed: true });
             throw error;
