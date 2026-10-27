@@ -43,6 +43,7 @@ mod rehome;
 mod rest;
 mod service;
 mod store;
+mod tenant_objects;
 pub(crate) mod validate;
 
 use std::sync::Arc;
@@ -261,6 +262,10 @@ impl RestApiCapability for StudioDomainModelGear {
             .client_hub()
             .get::<dyn account_management_sdk::AccountManagementClient>()
         {
+            crate::model_sweep::register(Arc::new(tenant_objects::TenantObjects {
+                service: service.clone(),
+                am: Arc::clone(&am),
+            }));
             crate::model_sweep::start(
                 am,
                 // The platform root (`components_catalog::tiers::PLATFORM_TENANT`).

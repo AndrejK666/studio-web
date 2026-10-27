@@ -35,7 +35,15 @@ pub trait TenantMover: Send + Sync {
     fn early(&self) -> bool {
         false
     }
+    /// Runs again every [`PERIOD`] after the first sweep: what keeps up with
+    /// tenants made since the start rather than moving records once.
+    fn periodic(&self) -> bool {
+        false
+    }
 }
+
+/// How often the periodic movers run after the start-up sweep.
+const PERIOD: Duration = Duration::from_secs(300);
 
 fn movers() -> &'static Mutex<Vec<Arc<dyn TenantMover>>> {
     static MOVERS: OnceLock<Mutex<Vec<Arc<dyn TenantMover>>>> = OnceLock::new();
@@ -74,6 +82,12 @@ pub fn start(am: Arc<dyn AccountManagementClient>, root: Uuid, after: Duration) 
                 warn!(error = %e, "model sweep stopped; first requests will move what they touch")
             }
         }
+        loop {
+            tokio::time::sleep(PERIOD).await;
+            if let Err(e) = sweep_with(am.as_ref(), root, |m| m.periodic()).await {
+                warn!(error = %e, "periodic model sweep stopped; it runs again next period");
+            }
+        }
     });
 }
 
@@ -104,8 +118,19 @@ async fn children(
 /// Walk the tree: every organization under `root` (and the root itself, the
 /// platform's own tier), and every tenant inside each.
 pub async fn sweep(am: &dyn AccountManagementClient, root: Uuid) -> anyhow::Result<(usize, usize)> {
-    let mut movers: Vec<Arc<dyn TenantMover>> =
-        movers().lock().map(|m| m.clone()).unwrap_or_default();
+    sweep_with(am, root, |_| true).await
+}
+
+/// The sweep, with the movers `pick` keeps.
+async fn sweep_with(
+    am: &dyn AccountManagementClient,
+    root: Uuid,
+    pick: impl Fn(&dyn TenantMover) -> bool,
+) -> anyhow::Result<(usize, usize)> {
+    let mut movers: Vec<Arc<dyn TenantMover>> = movers()
+        .lock()
+        .map(|m| m.iter().filter(|m| pick(m.as_ref())).cloned().collect())
+        .unwrap_or_default();
     movers.sort_by_key(|m| !m.early());
     if movers.is_empty() {
         return Ok((0, 0));
