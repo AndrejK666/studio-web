@@ -114,6 +114,13 @@ pub trait DomainObjects: Send + Sync {
         anyhow::bail!("model changes are not offered here")
     }
 
+    /// Store Studio's own model for the caller's organization and register
+    /// its types: what a new organization gets before anything is written in
+    /// it. A model already stored only gains the Studio types it lacks.
+    async fn prepare_model(&self, _ctx: &SecurityContext) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Write a gear's objects of `entity` under the ids it chose, in batches
     /// (ADR-0051 §8a): the target scheme, where the gear keeps no store of
     /// its own.
@@ -291,6 +298,10 @@ impl DomainObjects for Objects {
 
     async fn delete(&self, ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()> {
         self.0.delete_object(ctx, instance_id).await
+    }
+
+    async fn prepare_model(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        self.0.prepare_model(ctx).await
     }
 
     async fn ensure_type(&self, ctx: &SecurityContext, need: &TypeNeed) -> anyhow::Result<()> {

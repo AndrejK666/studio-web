@@ -242,11 +242,14 @@ fn build_service(ctx: &GearCtx) -> Option<Arc<OrganizationService>> {
             crate::user_profile::IDENTITY_INSTANCE_ID,
         ))
         .ok()?;
-    Some(Arc::new(OrganizationService::new(
-        am,
-        memberships,
-        evictions,
-        authority,
-        PLATFORM_ROOT_TENANT_ID,
-    )))
+    Some(Arc::new(
+        OrganizationService::new(
+            am,
+            memberships,
+            evictions,
+            authority,
+            PLATFORM_ROOT_TENANT_ID,
+        )
+        .with_hub(ctx.client_hub()),
+    ))
 }

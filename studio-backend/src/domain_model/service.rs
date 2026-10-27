@@ -742,12 +742,19 @@ impl DomainModelService {
     /// the embedded default. Idempotent per type; new types are added.
     /// Add the types Studio's own screens need to a stored model that lacks
     /// them; a model on the seed has them already. Answers the ids added.
+    pub async fn prepare_model(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        // A tenant on the seed is stored (seed = Studio's own model), a stored
+        // one gains what it lacks, and either way its types are registered.
+        self.ensure_persisted(ctx).await?;
+        self.ensure_studio_types(ctx).await?;
+        self.ensure_types(ctx).await?;
+        Ok(())
+    }
+
     pub async fn ensure_studio_types(&self, ctx: &SecurityContext) -> anyhow::Result<usize> {
         let model = self.model_current(ctx).await?;
-        if Ontology::studio_type_ids()
-            .iter()
-            .all(|id| model.has_entity(id))
-        {
+        // Asked of a copy first: a model with nothing to add stays unwritten.
+        if (*model).clone().add_studio_types().is_empty() {
             return Ok(0);
         }
         self.edit_entities(ctx, "studio-types", "take in Studio's own types", |next| {
@@ -3325,6 +3332,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_new_organization_starts_on_studio_s_own_model_and_an_upload_extends_it() {
+        let store = Arc::new(TenantScopedStore::default());
+        let ctx = ctx_for(7);
+        let service = DomainModelService::new(store.clone());
+
+        // Created: Studio's own model is stored at once, version 0.
+        service.prepare_model(&ctx).await.unwrap();
+        let studio = Ontology::load();
+        let stored = DomainModelService::new(store.clone());
+        let first = stored.ontology_document(&ctx).await.unwrap();
+        assert_eq!(first["model"], "studio");
+        assert_eq!(
+            first["entities"].as_array().unwrap().len(),
+            studio.entities().len()
+        );
+        assert!(
+            !first["entities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["id"] == "requirement")
+        );
+
+        // The administrator uploads the product team's model: every type it
+        // brings is there, and so is every one of Studio's.
+        let product: Value =
+            serde_json::from_str(super::super::ontology::PRODUCT_MODEL_JSON).unwrap();
+        service.import_model(&ctx, product.clone()).await.unwrap();
+        let after = DomainModelService::new(store)
+            .ontology_document(&ctx)
+            .await
+            .unwrap();
+        let ids: std::collections::HashSet<&str> = after["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .collect();
+        for e in product["entities"].as_array().unwrap() {
+            assert!(ids.contains(e["id"].as_str().unwrap()), "{}", e["id"]);
+        }
+        for e in studio.entities() {
+            assert!(ids.contains(e["id"].as_str().unwrap()), "{}", e["id"]);
+        }
+    }
+
+    #[tokio::test]
     async fn an_import_that_shrinks_the_model_reloads_shrunk() {
         let store = Arc::new(TenantScopedStore::default());
         let ctx = ctx_for(1);
@@ -3354,14 +3408,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(doc["model"], "tiny");
-        // The imported type, and the one Studio's own screens need.
+        // The imported type first, then Studio's own model, which an import
+        // extends and never replaces.
         let ids: Vec<&str> = doc["entities"]
             .as_array()
             .unwrap()
             .iter()
             .filter_map(|e| e["id"].as_str())
             .collect();
-        assert_eq!(ids, ["widget", "workspace"]);
+        let studio = Ontology::load();
+        assert_eq!(ids[0], "widget");
+        assert_eq!(ids.len(), 1 + studio.entities().len());
+        assert!(ids.contains(&"workspace") && ids.contains(&"project"));
         assert!(doc.get("entity_ids").is_none());
         assert!(doc.get("version").is_none());
     }

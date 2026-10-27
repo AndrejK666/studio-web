@@ -15,16 +15,35 @@ use serde_json::{Value, json};
 
 use super::gts;
 
-/// The embedded ontology: the full core domain model (all buckets).
-const ONTOLOGY_JSON: &str = include_str!("ontology.core.json");
-/// Types Studio's own screens need that the product team's model does not
-/// define (the workspace attributes card reads `workspace`). Added to a model
-/// that lacks them; a model that has one keeps its own.
-const STUDIO_TYPES_JSON: &str = include_str!("ontology.studio.json");
+/// Studio's own model, every organization's to start with: the types its
+/// gears and screens read and write, with the bases they extend. An
+/// organization's administrator uploads a domain model on top of it, which
+/// extends it (see `Ontology::add_studio_types`).
+const STUDIO_MODEL_JSON: &str = include_str!("ontology.studio.json");
+
+/// The product team's model (studio-internal/domain-model-ui core + system):
+/// what an organization uploads, used by the tests as such an upload.
+#[cfg(test)]
+pub(crate) const PRODUCT_MODEL_JSON: &str = include_str!("ontology.core.json");
+
+fn studio_model() -> Value {
+    serde_json::from_str(STUDIO_MODEL_JSON).expect("Studio's own model is valid JSON")
+}
+
+/// The type before `id` in its bucket's order in Studio's own model.
+fn studio_predecessor(id: &str) -> Option<String> {
+    let model = studio_model();
+    model.get("buckets")?.as_array()?.iter().find_map(|b| {
+        let order = b.get("entity_order")?.as_array()?;
+        let at = order.iter().position(|v| v.as_str() == Some(id))?;
+        at.checked_sub(1)
+            .and_then(|i| order[i].as_str())
+            .map(str::to_owned)
+    })
+}
 
 fn studio_types() -> Vec<Value> {
-    serde_json::from_str::<Value>(STUDIO_TYPES_JSON)
-        .expect("Studio's own types are valid JSON")
+    studio_model()
         .get("entities")
         .and_then(Value::as_array)
         .cloned()
@@ -81,11 +100,9 @@ impl Ontology {
     /// Load the embedded ontology. Panics only on a malformed embedded file,
     /// which is a build-time error, not a runtime one.
     pub fn load() -> Self {
-        let doc: Value =
-            serde_json::from_str(ONTOLOGY_JSON).expect("embedded domain ontology is valid JSON");
-        let mut model = Self { doc };
-        model.add_studio_types();
-        model
+        Self {
+            doc: studio_model(),
+        }
     }
 
     /// Add the seed's bucket `id` when this model has none by that id, with
@@ -102,7 +119,7 @@ impl Ontology {
         if has {
             return;
         }
-        let seed: Value = serde_json::from_str(ONTOLOGY_JSON).unwrap_or_default();
+        let seed = studio_model();
         let Some(mut bucket) = seed
             .get("buckets")
             .and_then(Value::as_array)
@@ -122,29 +139,37 @@ impl Ontology {
         }
     }
 
-    /// The ids of the types Studio adds to every model.
-    pub fn studio_type_ids() -> Vec<String> {
-        studio_types()
-            .iter()
-            .filter_map(|e| e.get("id").and_then(Value::as_str).map(str::to_owned))
-            .collect()
-    }
-
-    /// Add the Studio types this model lacks, each in its bucket after the
-    /// type it names in `after`. Answers the ids added.
+    /// Add the Studio types this model lacks, each in its bucket where
+    /// Studio's own model orders it, and give a Studio type the model holds
+    /// without a base the one Studio's has. Answers the ids touched.
     pub fn add_studio_types(&mut self) -> Vec<String> {
         let mut added = Vec::new();
-        for mut entity in studio_types() {
+        for entity in studio_types() {
             let Some(id) = entity.get("id").and_then(Value::as_str).map(str::to_owned) else {
                 continue;
             };
             if self.has_entity(&id) {
+                // A type Studio added before it named its base gets the base
+                // now, and with it the fields every object carries
+                // (`tenant_id`, scope, ...). One the model defined itself with
+                // a base of its own keeps it.
+                let base = entity
+                    .get("extends")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                if let (Some(base), Ok(mine)) = (base, self.entity_mut(&id))
+                    && mine
+                        .get("extends")
+                        .and_then(Value::as_str)
+                        .is_none_or(str::is_empty)
+                {
+                    mine["extends"] = Value::String(base);
+                    added.push(id);
+                }
                 continue;
             }
-            let after = entity
-                .as_object_mut()
-                .and_then(|o| o.remove("after"))
-                .and_then(|v| v.as_str().map(str::to_owned));
+            // After the type that precedes it in Studio's own bucket order.
+            let after = studio_predecessor(&id);
             let bucket = entity
                 .get("bucket")
                 .and_then(Value::as_str)
@@ -1483,7 +1508,7 @@ mod tests {
             "the seed carries Studio's types"
         );
 
-        let core: Value = serde_json::from_str(ONTOLOGY_JSON).unwrap();
+        let core: Value = serde_json::from_str(PRODUCT_MODEL_JSON).unwrap();
         let mut imported = Ontology::from_value(core).unwrap();
         assert!(!imported.has_entity("workspace"));
         assert_eq!(imported.add_studio_types(), vec!["workspace".to_string()]);
@@ -1505,10 +1530,38 @@ mod tests {
     }
 
     #[test]
-    fn a_model_s_own_workspace_type_is_kept() {
-        let mut doc: Value = serde_json::from_str(ONTOLOGY_JSON).unwrap();
+    fn a_workspace_studio_added_without_a_base_gets_one_and_its_tenant_id() {
+        let mut doc: Value = serde_json::from_str(PRODUCT_MODEL_JSON).unwrap();
         doc["entities"].as_array_mut().unwrap().push(json!({
-            "id": "workspace", "bucket": "planning", "name": "Team space", "properties": []
+            "id": "workspace", "bucket": "planning", "name": "Workspace", "properties": []
+        }));
+        let mut model = Ontology::from_value(doc).unwrap();
+        assert!(
+            !model
+                .effective_properties("workspace")
+                .iter()
+                .any(|p| p.name == "tenant_id")
+        );
+        assert_eq!(model.add_studio_types(), vec!["workspace".to_string()]);
+        assert_eq!(
+            model.entity("workspace").unwrap()["extends"],
+            "managed-object"
+        );
+        assert!(
+            model
+                .effective_properties("workspace")
+                .iter()
+                .any(|p| p.name == "tenant_id")
+        );
+        assert!(model.add_studio_types().is_empty(), "repaired once");
+    }
+
+    #[test]
+    fn a_model_s_own_workspace_type_is_kept() {
+        let mut doc: Value = serde_json::from_str(PRODUCT_MODEL_JSON).unwrap();
+        doc["entities"].as_array_mut().unwrap().push(json!({
+            "id": "workspace", "bucket": "planning", "name": "Team space",
+            "extends": "node", "properties": []
         }));
         let mut model = Ontology::from_value(doc).unwrap();
         assert!(model.add_studio_types().is_empty());
