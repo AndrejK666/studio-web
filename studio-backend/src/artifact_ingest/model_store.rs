@@ -480,7 +480,7 @@ impl ModelGraphStore {
                 // What the graph kept is what the model keeps: file content
                 // as a bounded excerpt, the whole under the per-object
                 // ceiling graph-storage enforces (64 KiB).
-                payload: super::graph_backend::bounded_payload(&n.value),
+                payload: bounded_payload(&n.value),
             });
         }
         for (entity, objects) in by_entity {
@@ -701,7 +701,7 @@ impl GraphStore for ModelGraph {
     }
 
     fn stored_payload(&self, value: &Value) -> Value {
-        super::graph_backend::bounded_payload(value)
+        bounded_payload(value)
     }
 
     async fn list_in_scope(
@@ -950,4 +950,16 @@ impl crate::model_sweep::TenantMover for ArtifactMover {
         }
         Ok(())
     }
+}
+
+/// What the graph keeps of a node's payload (`graph_backend`); a build
+/// without graph-storage has no graph to bound it for.
+#[cfg(feature = "graph")]
+fn bounded_payload(value: &Value) -> Value {
+    super::graph_backend::bounded_payload(value)
+}
+
+#[cfg(not(feature = "graph"))]
+fn bounded_payload(value: &Value) -> Value {
+    value.clone()
 }
