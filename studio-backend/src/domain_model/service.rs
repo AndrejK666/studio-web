@@ -338,6 +338,11 @@ pub struct DomainModelService {
     /// When each tenant's cached model was last checked against the stored
     /// head: another replica's edit shows here within [`MODEL_RECHECK`].
     checked: Mutex<HashMap<Uuid, std::time::Instant>>,
+    /// The highest version each tenant has seen claimed. A claim whose model
+    /// write never landed (the process died between the two) leaves its
+    /// number taken while the stored head stays behind it; the next edit
+    /// numbers past it instead of asking for it forever.
+    claimed: Mutex<HashMap<Uuid, u64>>,
 }
 
 /// How long an object path trusts its cached model before asking the graph
@@ -352,6 +357,7 @@ impl DomainModelService {
             tenants: Mutex::new(HashMap::new()),
             notify: super::events::Notifier::default(),
             checked: Mutex::new(HashMap::new()),
+            claimed: Mutex::new(HashMap::new()),
         }
     }
 
@@ -555,6 +561,31 @@ impl DomainModelService {
     /// replicas, which an in-process lock would not, and it needs no read —
     /// graph-storage takes an expected version on write but reports none on
     /// read, so there is no read-then-write CAS to form.
+    /// The version the next edit claims: past the stored head, and past any
+    /// number already seen taken.
+    fn next_version(&self, ctx: &SecurityContext) -> anyhow::Result<u64> {
+        let tenant = ctx.subject_tenant_id();
+        let claimed = self
+            .claimed
+            .lock()
+            .map_err(|_| anyhow::anyhow!("claimed-version lock poisoned"))?
+            .get(&tenant)
+            .copied()
+            .unwrap_or(0);
+        Ok(self.cached_version(ctx)?.max(claimed) + 1)
+    }
+
+    /// Note the highest version claimed for this tenant, after a claim was
+    /// refused: another writer's, or one abandoned mid-edit.
+    async fn note_claimed(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        let top = self.revisions(ctx).await?.first().map_or(0, |r| r.version);
+        if let Ok(mut c) = self.claimed.lock() {
+            let e = c.entry(ctx.subject_tenant_id()).or_insert(0);
+            *e = (*e).max(top);
+        }
+        Ok(())
+    }
+
     async fn claim_version(&self, ctx: &SecurityContext, rev: &Revision) -> anyhow::Result<bool> {
         let node = NodeUpsert {
             type_id: gts::META_MODEL_VERSION.to_string(),
@@ -564,7 +595,10 @@ impl DomainModelService {
             expected_version: Some(0),
         };
         match self.store.upsert_nodes(ctx, &[node]).await {
-            Err(e) if crate::domain_model::store::is_version_taken(&e) => Ok(false),
+            Err(e) if crate::domain_model::store::is_version_taken(&e) => {
+                self.note_claimed(ctx).await?;
+                Ok(false)
+            }
             Err(e) => Err(e),
             Ok(_) => {
                 if rev.version > 0 {
@@ -826,7 +860,11 @@ impl DomainModelService {
             .is_some_and(|m| m.persisted);
         // An import replaces the whole document, which no useful patch
         // describes — so it records none, and nothing can be reverted past it.
-        let version = if stored { head + 1 } else { 0 };
+        let version = if stored {
+            self.next_version(ctx)?.max(head + 1)
+        } else {
+            0
+        };
         if stored {
             let rev = Revision::new(
                 version,
@@ -1882,7 +1920,7 @@ impl DomainModelService {
                     "value": current.entity(entity).cloned().unwrap_or(Value::Null),
                 }));
             }
-            let version = self.cached_version(ctx)? + 1;
+            let version = self.next_version(ctx)?;
             let rev = Revision::new(
                 version,
                 ctx,
@@ -2522,7 +2560,7 @@ impl DomainModelService {
             let props = entity["properties"].as_array().map(Vec::len).unwrap_or(0);
             let added = entity["properties"][props.saturating_sub(1)].clone();
 
-            let version = self.cached_version(ctx)? + 1;
+            let version = self.next_version(ctx)?;
             let rev = Revision::new(
                 version,
                 ctx,
@@ -2607,7 +2645,7 @@ impl DomainModelService {
                 .entity_index(&entity_id)
                 .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_id}"))?;
 
-            let version = self.cached_version(ctx)? + 1;
+            let version = self.next_version(ctx)?;
             let rev = Revision::new(
                 version,
                 ctx,
@@ -2784,7 +2822,7 @@ impl DomainModelService {
                 )
             };
 
-            let version = self.cached_version(ctx)? + 1;
+            let version = self.next_version(ctx)?;
             let rev = Revision::new(
                 version,
                 ctx,
@@ -3409,6 +3447,41 @@ mod tests {
         let doc = b.ontology_document(&ctx).await.unwrap();
         assert!(has_field(&doc, "team", "cost_center"));
         assert!(has_field(&doc, "risk", "mitigation_owner"));
+    }
+
+    #[tokio::test]
+    async fn an_edit_numbers_past_a_claim_whose_write_never_landed() {
+        let store = Arc::new(TenantScopedStore::default());
+        let ctx = ctx_for(9);
+        let service = DomainModelService::new(store.clone());
+        service.prepare_model(&ctx).await.unwrap();
+        let head = service.cached_version(&ctx).unwrap();
+        // A writer claimed the next version and died before writing the model.
+        assert!(
+            service
+                .claim_version(
+                    &ctx,
+                    &Revision::new(head + 1, &ctx, "add_field", "project", "died".to_string()),
+                )
+                .await
+                .unwrap()
+        );
+        // Another process (no memory of that claim) still edits the model.
+        let other = DomainModelService::new(store);
+        let (_, version) = other
+            .add_field(
+                &ctx,
+                "project",
+                FieldSpec {
+                    name: "cost_center".into(),
+                    type_name: "string".into(),
+                    description: None,
+                    required: false,
+                },
+            )
+            .await
+            .expect("not stuck on the abandoned number");
+        assert_eq!(version, head + 2);
     }
 
     #[tokio::test]
