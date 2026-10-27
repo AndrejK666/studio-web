@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 
 import { DATA_DESIGN_DOC, dataSummary, designDocUrl } from "./architecture";
+import { HowToRead } from "./architecture-overview";
 import type { ManifestData } from "./architecture";
 
 const STORE_WORDS: Record<string, string> = {
@@ -54,6 +55,7 @@ export function DataSection({
   return (
     <section className="card arch-section" id="data" aria-labelledby="data-title">
       <h2 id="data-title">Where Studio keeps its data</h2>
+      <HowToRead tab="data" />
       <p className="arch-muted arch-intro">
         Studio keeps a small <strong>core</strong> of its own: organizations, workspaces and projects in
         account-management with their own settings, the people and their roles, and secrets. Every other record a

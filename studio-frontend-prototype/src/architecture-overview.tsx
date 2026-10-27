@@ -215,6 +215,51 @@ export function Legend() {
   );
 }
 
+/** How to read one view: what it shows and what to choose, in order. */
+export const HOW_TO_READ: Record<TabId, string[]> = {
+  flow: [
+    "The left column is the path one application takes, from signing in to watching it run. Choose a step.",
+    "The boxes it passes light up; the numbers on a box are the steps that pass through it.",
+    "A yellow or red tag on a step says it works with a limit or is not built yet, and the step says what is missing.",
+  ],
+  map: [
+    "The left column lists every place in the portal, the IDE and the desktop app. Choose one.",
+    "The gears it calls light up on the right; the number on a gear is how many places call it.",
+    "Choose a gear to read what it does, what it uses and every place that relies on it, in the panel on the right.",
+  ],
+  uses: [
+    "Each card is one Studio gear: what it is for, which Studio gears it uses, and how many use it.",
+    "Choose a gear to draw a line to each partner: solid through its port (as intended), dashed through its top-level exports, dotted red into its private code.",
+    "The grey rows at the bottom are the platform's gears; a chosen gear outlines the ones it needs.",
+  ],
+  leaks: [
+    "Each entry is a gear whose private modules other gears import directly.",
+    "It names the modules and the gears that import them: those gears break when the module changes.",
+    "The fix is a port on the owner, and the callers moved onto it — the longest lists first.",
+  ],
+  data: [
+    "The steps say how one record travels: the gear writes it, everyone sees it, the organization extends it.",
+    "The table has one row per gear that keeps records: each kind of record, where it lives now, and the model types only that gear writes.",
+  ],
+  doors: [
+    "Each door is a way another platform reads Studio or is read by it, with whether it works today and its address.",
+    "The table below it is one worked example: what a research platform would read, and through which door.",
+  ],
+};
+
+export function HowToRead({ tab }: { tab: TabId }) {
+  return (
+    <div className="arch-howto" role="note">
+      <strong>How to read this</strong>
+      <ol>
+        {HOW_TO_READ[tab].map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 export function Tabs({
   active,
   onTab,

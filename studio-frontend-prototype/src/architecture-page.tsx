@@ -42,7 +42,7 @@ import {
   usesOf,
 } from "./architecture";
 import { DataSection } from "./architecture-data-view";
-import { Legend, Overview, Tabs, tabFromHash } from "./architecture-overview";
+import { HowToRead, Legend, Overview, Tabs, tabFromHash } from "./architecture-overview";
 import type { TabId } from "./architecture-overview";
 import { FlowDiagram, FlowDoors } from "./architecture-flow-view";
 import type { Edge, EventKind, GroupedDomain, Manifest, ManifestGear, PrototypeMap, RestSurface, Surface, Via } from "./architecture";
@@ -332,6 +332,19 @@ interface Line {
   via: Via;
 }
 
+/** A gear's purpose, cut to its first sentence. */
+function purposeLine(purpose?: string | null): string | null {
+  const text = purpose?.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const first = text.match(/^.*?[.!?](\s|$)/)?.[0].trim() ?? text;
+  return first.length > 160 ? `${first.slice(0, 157).trimEnd()}…` : first;
+}
+
+/** `studio-documents` → `documents`: inside a list of Studio gears the prefix says nothing. */
+function shortName(name: string): string {
+  return name.replace(/^studio-/, "");
+}
+
 function DependencyBoard({
   studio,
   platform,
@@ -408,6 +421,7 @@ function DependencyBoard({
           onClick={() => onGear(g.name)}
         >
           <span className="arch-row-name">{g.name}</span>
+          {!selected && purposeLine(g.purpose) && <span className="arch-row-purpose">{purposeLine(g.purpose)}</span>}
           {selected && !isSel && related ? (
             <span className="arch-row-rel">
               {o && (
@@ -423,8 +437,12 @@ function DependencyBoard({
             </span>
           ) : hasUses ? (
             <span className="arch-row-counts">
-              <span title="Studio gears that use it">used by {c.usedBy}</span>
-              <span title="Studio gears it uses">uses {c.uses}</span>
+              <span title="Studio gears it uses">
+                {c.uses === 0 ? "uses no other Studio gear" : <>uses {usesOf(edges, g.name).map((e) => shortName(e.to)).join(", ")}</>}
+              </span>
+              <span title="Studio gears that use it">
+                {c.usedBy === 0 ? "nothing uses it" : `used by ${c.usedBy} gear${c.usedBy === 1 ? "" : "s"}`}
+              </span>
               {c.reachedInto > 0 && (
                 <span className="arch-bad" title="Gears that reach into its private modules">
                   ⚠ {c.reachedInto} reach in
@@ -1008,6 +1026,7 @@ function ArchitecturePage() {
           {tab === "flow" && (
           <section className="card arch-section" id="flow" aria-labelledby="flow-title">
             <h2 id="flow-title">From specs to a running product</h2>
+            <HowToRead tab="flow" />
             <p className="arch-muted arch-intro">
               Where each part of Studio runs, and the path one application takes through them. Choose a step to light
               up the boxes it passes, in order; the numbers on a box are the steps that pass through it.
@@ -1037,6 +1056,7 @@ function ArchitecturePage() {
           {tab === "map" && (
           <section className="card arch-section" id="map" aria-labelledby="map-title">
             <h2 id="map-title">What people do in Studio, and the gears behind it</h2>
+            <HowToRead tab="map" />
             <p className="arch-muted arch-intro">
               Every place in the portal, the IDE and the desktop app, with the backend gears it calls. Choose a place to
               light up its gears; choose a gear to see every place that relies on it.
@@ -1051,6 +1071,7 @@ function ArchitecturePage() {
           {tab === "uses" && (
           <section className="card arch-section" id="uses" aria-labelledby="uses-title">
             <h2 id="uses-title">Who uses whom between Studio gears</h2>
+            <HowToRead tab="uses" />
             {hasUses ? (
               <>
                 <p className="arch-muted arch-intro">
@@ -1094,6 +1115,7 @@ function ArchitecturePage() {
           {hasUses && tab === "leaks" && (
             <section className="card arch-section" id="leaks" aria-labelledby="leaks-title">
               <h2 id="leaks-title">Where the boundaries leak</h2>
+              <HowToRead tab="leaks" />
               <p className="arch-intro">
                 {via.internal === 0 ? (
                   <>No gear reaches into another's private code: all {via.total} uses go through ports or top-level exports.</>
@@ -1128,6 +1150,7 @@ function ArchitecturePage() {
           {tab === "doors" && (
           <section className="card arch-section" id="doors" aria-labelledby="doors-title">
             <h2 id="doors-title">How another platform plugs in</h2>
+            <HowToRead tab="doors" />
             <p className="arch-muted arch-intro">
               The doors Studio has today, for a platform that wants to read it or be read by it.
             </p>
@@ -1200,9 +1223,13 @@ function ArchitecturePage() {
           ) : (
             <div className="arch-detail-empty">
               <p>
-                <strong>Choose a place or a gear</strong> to see what it is for, what it uses, what uses it and where
-                people meet it.
+                <strong>Details appear here.</strong>
               </p>
+              <ul className="arch-detail-guide">
+                <li>Choose a <strong>gear</strong>: what it is for, its API, the gears it uses and that use it, and the places in the portal that call it.</li>
+                <li>Choose a <strong>place</strong> in the portal: what people do there and the gears behind it.</li>
+                <li>Press Esc to close.</li>
+              </ul>
             </div>
           )}
         </aside>
