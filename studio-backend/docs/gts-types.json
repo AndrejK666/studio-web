@@ -1949,6 +1949,22 @@
       "on_refusal": "boot_fails",
       "registry": "graph-storage",
       "schema": {
+        "$id": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainrel.shows.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~"
+          }
+        ],
+        "type": "object"
+      },
+      "type_id": "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainrel.shows.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
         "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.action.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "allOf": [
@@ -3329,6 +3345,48 @@
         }
       },
       "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.org_unit.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "graph-storage",
+      "schema": {
+        "$id": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.organization.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "allOf": [
+          {
+            "$ref": "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~"
+          }
+        ],
+        "type": "object",
+        "x-gts-traits": {
+          "full_text_search": [
+            "/name",
+            "/payload"
+          ],
+          "vector_search": [
+            "/payload/abstract",
+            "/payload/body",
+            "/payload/content",
+            "/payload/description",
+            "/payload/display_name",
+            "/payload/full_name",
+            "/payload/goal",
+            "/payload/heading",
+            "/payload/headline",
+            "/payload/label",
+            "/payload/message",
+            "/payload/name",
+            "/payload/notes",
+            "/payload/purpose",
+            "/payload/rationale",
+            "/payload/statement",
+            "/payload/summary",
+            "/payload/title"
+          ]
+        }
+      },
+      "type_id": "gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.organization.v1~"
     },
     {
       "gear": "studio-domain-model",
@@ -5815,6 +5873,19 @@
       "on_refusal": "boot_fails",
       "registry": "types-registry",
       "schema": {
+        "$id": "gts://gts.cf.studio.domain.organization.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "An organization, kept in account-management: the model holds what people record about it and the tabs its screens show.",
+        "title": "Organization",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.domain.organization.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
         "$id": "gts://gts.cf.studio.domain.organization_entity.v1~",
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "The product base for tenant-owned organization objects represented in the Knowledge Graph.",
@@ -6329,6 +6400,19 @@
         "type": "object"
       },
       "type_id": "gts.cf.studio.domainrel.references.v1~"
+    },
+    {
+      "gear": "studio-domain-model",
+      "on_refusal": "boot_fails",
+      "registry": "types-registry",
+      "schema": {
+        "$id": "gts://gts.cf.studio.domainrel.shows.v1~",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "A relation between two domain objects.",
+        "title": "shows",
+        "type": "object"
+      },
+      "type_id": "gts.cf.studio.domainrel.shows.v1~"
     },
     {
       "gear": "studio-product",

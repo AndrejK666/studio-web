@@ -96,6 +96,7 @@
       "layer": "core",
       "entity_order": [
         "project",
+        "organization",
         "workspace",
         "milestone",
         "risk",
@@ -2060,6 +2061,159 @@
           "required": false,
           "cardinality": "1:N",
           "extends": "edge"
+        },
+        {
+          "name": "overview",
+          "type": "project",
+          "relation": "project",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Overview",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "issues",
+          "type": "finding",
+          "relation": "finding",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Issues",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "specs",
+          "type": "document",
+          "relation": "document",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Specs",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "model",
+          "type": "object-type",
+          "relation": "object-type",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Domain model",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "components",
+          "type": "project-product",
+          "relation": "project-product",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Product",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "frontend",
+          "type": "frontx-package",
+          "relation": "frontx-package",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Frontend",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "parts",
+          "type": "gear",
+          "relation": "gear",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Components",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "builds",
+          "type": "workflow",
+          "relation": "workflow",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Builds",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "tests",
+          "type": "check",
+          "relation": "check",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Tests",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "deploys",
+          "type": "deployment",
+          "relation": "deployment",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Deploys",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "kits",
+          "type": "kit",
+          "relation": "kit",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Kits",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "artifacts",
+          "type": "repository-file",
+          "relation": "repository-file",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Artifacts",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "sources",
+          "type": "repository",
+          "relation": "repository",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Sources",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "activity",
+          "type": "activity",
+          "relation": "activity",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Activity",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "timeline",
+          "type": "milestone",
+          "relation": "milestone",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Timeline",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "people",
+          "type": "person",
+          "relation": "person",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Team",
+          "description": "A tab of the project: what it shows."
+        },
+        {
+          "name": "automation",
+          "type": "workflow",
+          "relation": "workflow",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Automation",
+          "description": "A tab of the project: what it shows."
         }
       ],
       "methods": [
@@ -2164,6 +2318,133 @@
       "extends": "managed-object"
     },
     {
+      "id": "organization",
+      "bucket": "planning",
+      "name": "Organization",
+      "kind": "container",
+      "extends": "managed-object",
+      "description": "An organization, kept in account-management: the model holds what people record about it and the tabs its screens show.",
+      "meta": {
+        "relationship": "delivery-planning",
+        "priority": "P1",
+        "level": 1,
+        "badge": "",
+        "note": "Studio's own: the level the organization tabs and attributes read.",
+        "badge-style": "neutral",
+        "profiles": [
+          "CTO",
+          "PdM"
+        ]
+      },
+      "properties": [
+        {
+          "name": "name",
+          "type": "string",
+          "description": "As account-management names the organization.",
+          "relationLabel": ""
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "description": "",
+          "relationLabel": ""
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "description": "",
+          "relationLabel": ""
+        },
+        {
+          "name": "hidden_tabs",
+          "type": "string[]",
+          "description": "The tabs an administrator turned off for this level, by name; the relations that make them stay in the model.",
+          "relationLabel": ""
+        },
+        {
+          "name": "org",
+          "type": "organization",
+          "relation": "organization",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Overview",
+          "description": "A tab of the organization: what it shows."
+        },
+        {
+          "name": "projects",
+          "type": "workspace",
+          "relation": "workspace",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Workspaces",
+          "description": "A tab of the organization: what it shows."
+        },
+        {
+          "name": "people",
+          "type": "person",
+          "relation": "person",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "People",
+          "description": "A tab of the organization: what it shows."
+        },
+        {
+          "name": "connectors",
+          "type": "connector",
+          "relation": "connector",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Connections",
+          "description": "A tab of the organization: what it shows."
+        },
+        {
+          "name": "environments",
+          "type": "deployment-environment",
+          "relation": "deployment-environment",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Environments",
+          "description": "A tab of the organization: what it shows."
+        },
+        {
+          "name": "costs",
+          "type": "budget",
+          "relation": "budget",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Costs",
+          "description": "A tab of the organization: what it shows."
+        },
+        {
+          "name": "gears",
+          "type": "gear",
+          "relation": "gear",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Components",
+          "description": "A tab of the organization: what it shows."
+        },
+        {
+          "name": "reports",
+          "type": "report",
+          "relation": "report",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Reports",
+          "description": "A tab of the organization: what it shows."
+        },
+        {
+          "name": "tasks",
+          "type": "activity",
+          "relation": "activity",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Background work",
+          "description": "A tab of the organization: what it shows."
+        }
+      ]
+    },
+    {
       "id": "workspace",
       "bucket": "planning",
       "name": "Workspace",
@@ -2200,6 +2481,57 @@
           "type": "string",
           "description": "",
           "relationLabel": ""
+        },
+        {
+          "name": "hidden_tabs",
+          "type": "string[]",
+          "description": "The tabs an administrator turned off for this level, by name; the relations that make them stay in the model.",
+          "relationLabel": ""
+        },
+        {
+          "name": "projects",
+          "type": "project",
+          "relation": "project",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Projects",
+          "description": "A tab of the workspace: what it shows."
+        },
+        {
+          "name": "about",
+          "type": "workspace",
+          "relation": "workspace",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Attributes",
+          "description": "A tab of the workspace: what it shows."
+        },
+        {
+          "name": "ptypes",
+          "type": "project-type",
+          "relation": "project-type",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Project types",
+          "description": "A tab of the workspace: what it shows."
+        },
+        {
+          "name": "types",
+          "type": "template",
+          "relation": "template",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Document types",
+          "description": "A tab of the workspace: what it shows."
+        },
+        {
+          "name": "process",
+          "type": "lifecycle-stage",
+          "relation": "lifecycle-stage",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Process",
+          "description": "A tab of the workspace: what it shows."
         }
       ]
     },

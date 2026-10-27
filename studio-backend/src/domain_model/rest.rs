@@ -452,6 +452,17 @@ const OBJECTS_GRAPH_MAX_LIMIT: usize = 5000;
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
+pub struct AddTabRequest {
+    /// The tab's name: the relation's, lowercase (`risks`).
+    pub name: String,
+    /// What the tab says (`Risks`); the name when empty.
+    pub label: Option<String>,
+    /// The type whose objects it lists.
+    pub target: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
 pub struct AddFieldRequest {
     /// Field name.
     pub name: String,
@@ -1080,6 +1091,38 @@ async fn create_type(
         StatusCode::CREATED,
         Json(AddFieldResponse { entity, version }),
     ))
+}
+
+async fn add_tab(
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
+    Extension(handle): Extension<Handle>,
+    Path(id): Path<String>,
+    Json(req): Json<AddTabRequest>,
+) -> ApiResult<JsonBody<AddFieldResponse>> {
+    require_model_authority(&ctx, &handle).await?;
+    let (entity, version) = handle
+        .0
+        .add_tab(
+            &ctx,
+            &id,
+            &req.name,
+            req.label.as_deref().unwrap_or_default(),
+            &req.target,
+        )
+        .await
+        .map_err(|e| {
+            let why = format!("{e:#}");
+            if why.ends_with(&format!("unknown domain entity: {}", id.trim())) {
+                StudioDomainModelError::not_found(why)
+                    .with_resource(id.trim().to_string())
+                    .create()
+            } else {
+                StudioDomainModelError::invalid_argument()
+                    .with_constraint(why)
+                    .create()
+            }
+        })?;
+    Ok(Json(AddFieldResponse { entity, version }))
 }
 
 async fn add_field(
@@ -1976,6 +2019,38 @@ pub fn register_routes(
             "The updated type definition",
         )
         .error_400(openapi)
+        .error_403(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-domain-model/v1/types/{id}/tabs")
+        .operation_id("studio_domain_model.create_tab")
+        .summary("Give a level a tab")
+        .description(
+            "Adds a relation of kind `shows` from a level's type (organization, \
+             workspace, project) to another type: the portal draws it as a tab \
+             of that level listing the target's objects. Removed like any field.",
+        )
+        .tag("StudioDomainModel")
+        .authenticated()
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .require_license_features::<License>([])
+        .path_param("id", "The level's type id")
+        .json_request::<AddTabRequest>(openapi, "The tab to add")
+        .handler(add_tab)
+        .json_response_with_schema::<AddFieldResponse>(
+            openapi,
+            StatusCode::OK,
+            "The level's type with the tab",
+        )
+        .error_400(openapi)
+        .error_404(openapi)
         .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)

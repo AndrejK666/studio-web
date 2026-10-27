@@ -2645,6 +2645,11 @@ export function apiUrl(path: string): string {
 /** The organization on screen, as App resolves it. */
 let currentOrganization: string | undefined;
 
+/** The organization requests are scoped to now (see `orgScoped`). */
+export function currentRequestOrganization(): string | undefined {
+  return currentOrganization;
+}
+
 /** Called by App whenever the organization on screen changes. */
 export function setCurrentOrganization(id: string | undefined): void {
   currentOrganization = id;
@@ -5114,6 +5119,14 @@ export const api = {
       { method: "PATCH", body: JSON.stringify(edit) },
     ),
   /** Drop a field the type itself declares. Stored values stay in the objects. */
+  /** Give a level (organization, workspace, project) a tab: a `shows`
+   *  relation to the type it lists. Removed like a field. */
+  addDomainTab: (token: string, level: string, body: { name: string; label?: string; target: string }) =>
+    request<{ entity: unknown; version: number }>(
+      `/studio-domain-model/v1/types/${encodeURIComponent(level)}/tabs`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   removeDomainField: (token: string, type: string, name: string) =>
     request<unknown>(
       `/studio-domain-model/v1/types/${encodeURIComponent(type)}/fields/${encodeURIComponent(name)}`,

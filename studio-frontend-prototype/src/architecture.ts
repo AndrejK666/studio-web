@@ -835,7 +835,7 @@ export const SURFACES: Surface[] = [
     area: "organization",
     title: "Domain model, objects and views",
     does: "Edit the domain model (types and their fields), explore it, keep saved views, and record the attributes it gives projects and workspaces.",
-    components: ["DomainModelAdmin", "Relations", "LinkList", "ObjectAttributes", "ModelFields", "ProjectTimeline", "MilestoneDialog", "ObjectTypes", "ViewsScreen", "ViewGraph", "ViewTable", "DomainModelGraph"],
+    components: ["DomainModelAdmin", "Relations", "LinkList", "TypeObjectsTab", "LevelGenericTab", "TabsSettings", "ObjectAttributes", "ModelFields", "ProjectTimeline", "MilestoneDialog", "ObjectTypes", "ViewsScreen", "ViewGraph", "ViewTable", "DomainModelGraph"],
     gears: ["studio-components-catalog", "studio-domain-model", "types-registry"],
   },
   {

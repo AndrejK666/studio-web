@@ -175,7 +175,10 @@ import {
 import { ProjectTypesTab } from "./project-types-editor";
 import { FrontendConstructor } from "./frontend-constructor-view";
 import { BUILTIN_TYPES, landingTab, parseTypes, typeOfProject, visibleTabs, type ProjectType } from "./project-types";
+import { isGeneric } from "./level-tabs";
+import { LevelGenericTab, TabsSettings, useLevelTabs } from "./level-tabs-ui";
 import { startDomainLive } from "./domain-live";
+import { reloadDomainModel } from "./domain-runtime";
 
 // Portal (личный кабинет): sign in with a bearer token, then an app shell
 // with a sidebar — Projects / People / Integrations / Profile.
@@ -637,7 +640,9 @@ type View =
   | "reports"
   | "tasks"
   | "system"
-  | "profile";
+  | "profile"
+  /** A tab the domain model adds to the organization (level-tabs.ts). */
+  | `type:${string}`;
 
 /** Monochrome line icons (lucide-style): consistent stroke, currentColor —
  *  they inherit the nav's text/accent color instead of emoji potpourri. */
@@ -1709,7 +1714,12 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
   // open screen (`domain-live.ts`) — the organization on screen's, which for a
   // platform administrator is not their home tenant.
   const liveOrg = orgAsSpace?.id;
+  const orgLevel = useLevelTabs(token, "organization", LEVEL_NAV.organization, liveOrg ?? null);
   useEffect(() => startDomainLive(token, liveOrg), [token, liveOrg]);
+  // The model is the organization's: another organization, another model.
+  useEffect(() => {
+    if (liveOrg) void reloadDomainModel(token).catch(() => undefined);
+  }, [token, liveOrg]);
 
   // The organizations offered in the switcher: every one that holds projects
   // (derived from the loaded workspaces, which carry orgId/orgName) plus any
@@ -1763,7 +1773,14 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
       alive = false;
     };
   }, [crumb.nestedId, token]);
-  const projectTabs = visibleTabs(PROJECT_TABS, projectType);
+  const typeTabs = visibleTabs(PROJECT_TABS, projectType);
+  const projectLevel = useLevelTabs(token, "project", PROJECT_TABS, null);
+  // The project type turns built-in tabs off; the model's own tabs follow it.
+  const typeHidden = useMemo(
+    () => PROJECT_TABS.filter((t) => !typeTabs.some((v) => v.id === t.id)).map((t) => t.id as string),
+    [typeTabs],
+  );
+  const projectTabs = projectLevel.tabs.filter((t) => !typeHidden.includes(t.id));
   useEffect(() => {
     if (!projectType) return;
     const fresh = landOnType.current;
@@ -1776,6 +1793,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
    *  two are mutually exclusive, so exactly one band ever shows. */
   const workspaceOpen =
     !adminOpen && !activeSpace && view === "projects" && !!crumb.projectId && !crumb.nestedId;
+  const workspaceLevel = useLevelTabs(token, "workspace", WORKSPACE_TABS, workspaceOpen ? (crumb.projectId ?? null) : null);
   /** The level the path has open, which decides what the rail lists. */
   const level: Level = projectOpen
     ? "project"
@@ -2462,7 +2480,7 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
           a project's below. The rail is only what the person pinned. */}
       {!adminOpen && !activeSpace && (level === "platform" || level === "organization") && (
         <nav className="project-sections" aria-label={level === "platform" ? "Platform sections" : "Organization sections"}>
-          {LEVEL_NAV[level].map((n) => (
+          {(level === "organization" ? orgLevel.tabs : LEVEL_NAV[level]).map((n) => (
             <button
               key={n.id}
               className={`psection${view === n.id ? " on" : ""}`}
@@ -2478,6 +2496,17 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
               {n.label}
             </button>
           ))}
+          {level === "organization" && orgLevel.canEdit && (
+            <TabsSettings
+              token={token}
+              level={orgLevel.level}
+              builtInIds={orgLevel.builtInIds}
+              all={orgLevel.all}
+              hidden={orgLevel.hidden}
+              onSave={orgLevel.saveHidden}
+              levelName="organization"
+            />
+          )}
           {railPref !== "hidden" &&
             (() => {
               const pin: Pin = { kind: "view", id: view };
@@ -2555,11 +2584,22 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
         <nav className="project-sections" aria-label="Workspace sections">
           <OrderedSections
             prefKey={PREF_WORKSPACE_TAB_ORDER}
-            tabs={WORKSPACE_TABS}
+            tabs={workspaceLevel.tabs}
             active={workspaceTab}
             onOpen={setWorkspaceTab}
             icon={(name) => <NavIcon name={name} />}
           />
+          {workspaceLevel.canEdit && (
+            <TabsSettings
+              token={token}
+              level={workspaceLevel.level}
+              builtInIds={workspaceLevel.builtInIds}
+              all={workspaceLevel.all}
+              hidden={workspaceLevel.hidden}
+              onSave={workspaceLevel.saveHidden}
+              levelName="workspace"
+            />
+          )}
         </nav>
       )}
       {/* Spaces host: all session iframes stay mounted; only the active one
@@ -2814,6 +2854,9 @@ function Shell({ token, me, onLogout }: { token: string; me: Me; onLogout: () =>
             isPlatformAdmin={showPlatform}
             catalogueSettings={<PlatformSourcesPanel token={token} onSynced={() => undefined} />}
           />
+        )}
+        {isGeneric(view) && orgAsSpace && (
+          <LevelGenericTab key={view} token={token} level="organization" id={view} tenantId={null} />
         )}
         {view === "costs" && orgAsSpace && (
           <OrgCosts
@@ -3727,6 +3770,9 @@ function ProjectsView({
 
   // Level 3 — an open project (its own AM tenant): a self-contained screen.
   if (crumb.nestedId) {
+    if (isGeneric(projectTab)) {
+      return <LevelGenericTab key={projectTab} token={token} level="project" id={projectTab} tenantId={crumb.nestedId} />;
+    }
     return (
       <>
         <ProjectScreen
@@ -3757,6 +3803,11 @@ function ProjectsView({
           }}
           onChanged={onChanged}
         />
+      ) : isGeneric(workspaceTab) ? (
+        <>
+          <WorkspaceHeader workspace={root} />
+          <LevelGenericTab key={workspaceTab} token={token} level="workspace" id={workspaceTab} tenantId={root.id} />
+        </>
       ) : workspaceTab === "about" ? (
         <>
           <WorkspaceHeader workspace={root} />
@@ -3795,7 +3846,7 @@ function ProjectsView({
    had produced zero rows against one project-level document, which is what a
    section with no reader looks like. Authoring moved to the project's Documents
    section, where the writing actually happens. */
-type WorkspaceTab = "projects" | "about" | "ptypes" | "types" | "process";
+type WorkspaceTab = "projects" | "about" | "ptypes" | "types" | "process" | `type:${string}`;
 
 /** The workspace's page header, shown above EVERY one of its sections — the
  *  project screen does exactly this with its own name, and the level above

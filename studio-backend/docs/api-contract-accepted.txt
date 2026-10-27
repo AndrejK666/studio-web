@@ -563,6 +563,9 @@ request	POST /studio-domain-model/v1/types/{}/fields	description	String	optional
 request	POST /studio-domain-model/v1/types/{}/fields	name	String	required
 request	POST /studio-domain-model/v1/types/{}/fields	required	bool	optional
 request	POST /studio-domain-model/v1/types/{}/fields	type	String	required
+request	POST /studio-domain-model/v1/types/{}/tabs	label	String	optional
+request	POST /studio-domain-model/v1/types/{}/tabs	name	String	required
+request	POST /studio-domain-model/v1/types/{}/tabs	target	String	required
 request	POST /studio-environments/v1/build-workflows	environment_id	Uuid	required
 request	POST /studio-environments/v1/build-workflows	product_file	String	optional
 request	POST /studio-environments/v1/build-workflows	profile	String	optional
@@ -4399,6 +4402,8 @@ response	POST /studio-domain-model/v1/types	entity	Value	always
 response	POST /studio-domain-model/v1/types	version	u64	always
 response	POST /studio-domain-model/v1/types/{}/fields	entity	Value	always
 response	POST /studio-domain-model/v1/types/{}/fields	version	u64	always
+response	POST /studio-domain-model/v1/types/{}/tabs	entity	Value	always
+response	POST /studio-domain-model/v1/types/{}/tabs	version	u64	always
 response	POST /studio-environments/v1/build-workflows	branch	String	always
 response	POST /studio-environments/v1/build-workflows	path	String	always
 response	POST /studio-environments/v1/build-workflows	pr_url	String	optional
@@ -5622,6 +5627,7 @@ route	POST /studio-domain-model/v1/query
 route	POST /studio-domain-model/v1/relations
 route	POST /studio-domain-model/v1/types
 route	POST /studio-domain-model/v1/types/{}/fields
+route	POST /studio-domain-model/v1/types/{}/tabs
 route	POST /studio-environments/v1/build-workflows
 route	POST /studio-environments/v1/builds
 route	POST /studio-environments/v1/deployments

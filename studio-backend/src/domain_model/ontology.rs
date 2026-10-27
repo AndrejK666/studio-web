@@ -195,7 +195,36 @@ impl Ontology {
                         .is_none_or(str::is_empty)
                 {
                     mine["extends"] = Value::String(base);
-                    added.push(id);
+                    added.push(id.clone());
+                }
+                // And the fields and relations Studio's type has that this
+                // one lacks, by name (its tabs among them). What is there
+                // stays as it is.
+                let theirs: Vec<Value> = entity
+                    .get("properties")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if let Ok(mine) = self.entity_mut(&id) {
+                    if !mine.get("properties").is_some_and(Value::is_array) {
+                        mine["properties"] = json!([]);
+                    }
+                    if let Some(props) = mine["properties"].as_array_mut() {
+                        let mut grew = false;
+                        for p in theirs {
+                            let name = p.get("name").and_then(Value::as_str).unwrap_or_default();
+                            if !props
+                                .iter()
+                                .any(|q| q.get("name").and_then(Value::as_str) == Some(name))
+                            {
+                                props.push(p);
+                                grew = true;
+                            }
+                        }
+                        if grew && !added.contains(&id) {
+                            added.push(id);
+                        }
+                    }
                 }
                 continue;
             }
@@ -1052,6 +1081,36 @@ impl Ontology {
     /// Declare a relation on an entity: `name` from it to `target` (an
     /// entity id) as a `verb` edge. Only adds; an existing property of that
     /// name is left as it is.
+    /// Give `level` a tab: a relation of kind `shows` named `name`, to
+    /// `target`, labelled `label`. False when the name is taken.
+    pub fn add_tab(
+        &mut self,
+        level: &str,
+        name: &str,
+        label: &str,
+        target: &str,
+    ) -> Result<bool, OntologyError> {
+        if !self.has_entity(target) {
+            return Err(OntologyError::UnknownEntity(target.to_string()));
+        }
+        if !self.add_relation(level, name, target, "shows")? {
+            return Ok(false);
+        }
+        if let Some(p) = self
+            .entity_mut(level)?
+            .get_mut("properties")
+            .and_then(Value::as_array_mut)
+            .and_then(|ps| {
+                ps.iter_mut()
+                    .find(|p| p.get("name").and_then(Value::as_str) == Some(name))
+            })
+        {
+            p["relationLabel"] = Value::String(label.to_string());
+            p["description"] = Value::String(format!("A tab of the {level}: what it shows."));
+        }
+        Ok(true)
+    }
+
     pub fn add_relation(
         &mut self,
         entity_id: &str,
@@ -1545,7 +1604,9 @@ mod tests {
         let core: Value = serde_json::from_str(PRODUCT_MODEL_JSON).unwrap();
         let mut imported = Ontology::from_value(core).unwrap();
         assert!(!imported.has_entity("workspace"));
-        assert_eq!(imported.add_studio_types(), vec!["workspace".to_string()]);
+        let added = imported.add_studio_types();
+        assert!(added.contains(&"workspace".to_string()), "{added:?}");
+        assert!(added.contains(&"organization".to_string()), "{added:?}");
         assert!(imported.has_entity("workspace"));
         let order = imported.doc["buckets"]
             .as_array()
@@ -1555,10 +1616,12 @@ mod tests {
             .unwrap()["entity_order"]
             .clone();
         let at = |id: &str| order.as_array().unwrap().iter().position(|v| v == id);
+        // In Studio's order: project, organization, workspace.
+        assert_eq!(at("organization"), at("project").map(|p| p + 1), "{order}");
         assert_eq!(
             at("workspace"),
-            at("project").map(|p| p + 1),
-            "after project"
+            at("organization").map(|p| p + 1),
+            "{order}"
         );
         assert!(imported.add_studio_types().is_empty(), "added once");
     }
@@ -1576,7 +1639,7 @@ mod tests {
                 .iter()
                 .any(|p| p.name == "tenant_id")
         );
-        assert_eq!(model.add_studio_types(), vec!["workspace".to_string()]);
+        assert!(model.add_studio_types().contains(&"workspace".to_string()));
         assert_eq!(
             model.entity("workspace").unwrap()["extends"],
             "managed-object"
@@ -1598,8 +1661,38 @@ mod tests {
             "extends": "node", "properties": []
         }));
         let mut model = Ontology::from_value(doc).unwrap();
-        assert!(model.add_studio_types().is_empty());
-        assert_eq!(model.entity("workspace").unwrap()["name"], "Team space");
+        model.add_studio_types();
+        // Its own name and base stay; Studio's fields and tabs join it.
+        let ws = model.entity("workspace").unwrap();
+        assert_eq!(ws["name"], "Team space");
+        assert_eq!(ws["extends"], "node");
+        assert!(
+            ws["properties"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == "projects" && p["relationType"] == "shows")
+        );
+        assert!(model.add_studio_types().is_empty(), "once");
+    }
+
+    #[test]
+    fn every_level_shows_its_tabs_as_relations() {
+        let model = Ontology::load();
+        for (level, first) in [
+            ("organization", "org"),
+            ("workspace", "projects"),
+            ("project", "overview"),
+        ] {
+            let tabs: Vec<&str> = model.entity(level).unwrap()["properties"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|p| p["relationType"] == "shows")
+                .filter_map(|p| p["name"].as_str())
+                .collect();
+            assert_eq!(tabs.first(), Some(&first), "{level}: {tabs:?}");
+        }
     }
 
     #[test]

@@ -4412,6 +4412,25 @@
     },
     {
       "method": "POST",
+      "path": "/studio-domain-model/v1/types/{id}/tabs",
+      "operation_id": "studio_domain_model.create_tab",
+      "tag": "StudioDomainModel",
+      "summary": "Give a level a tab",
+      "authenticated": true,
+      "request": "AddTabRequest",
+      "responses": [
+        "AddFieldResponse"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-environments/v1/build-workflows",
       "operation_id": "studio_environments.scaffold_build_workflow",
       "tag": "",

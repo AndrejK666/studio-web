@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from "react";
 
-import { api } from "./api";
+import { api, currentRequestOrganization } from "./api";
 import { DOMAIN_ENTITIES, DOMAIN_FIELDS, DOMAIN_RELATION_TARGETS, type DomainFieldKind } from "./domain-model.gen";
 
 /** One property of an entity as the model document has it. */
@@ -200,6 +200,11 @@ function seed(): DomainModel {
 
 let current: DomainModel = seed();
 let loading: Promise<DomainModel> | null = null;
+/** The organization the load in flight is for: a model is an organization's,
+ *  and one asked for another must not stand in for it. */
+let loadingFor: string | undefined;
+/** The organization the model on hand is. */
+let loadedFor: string | undefined;
 const listeners = new Set<(m: DomainModel) => void>();
 
 /** The model as last loaded; the build's seed before the first load. */
@@ -209,16 +214,21 @@ export function currentModel(): DomainModel {
 
 /** Read the model from the server, once per call to [`reloadDomainModel`]. */
 export function loadDomainModel(token: string): Promise<DomainModel> {
-  if (current.source === "server") return Promise.resolve(current);
+  if (current.source === "server" && loadedFor === currentRequestOrganization()) return Promise.resolve(current);
   return reloadDomainModel(token);
 }
 
 /** Read the model again — after an edit — and tell every screen showing it. */
 export function reloadDomainModel(token: string): Promise<DomainModel> {
-  if (loading) return loading;
-  loading = api
+  const org = currentRequestOrganization();
+  if (loading && loadingFor === org) return loading;
+  loadingFor = org;
+  const mine = api
     .domainModelTypes(token)
     .then((res) => {
+      // A later load for another organization is the one that counts.
+      if (loadingFor !== org) return current;
+      loadedFor = org;
       const doc = res.ontology as { entities?: ModelEntity[]; buckets?: { id: string; name?: string }[] };
       current = build(
         doc.entities ?? [],
@@ -231,9 +241,10 @@ export function reloadDomainModel(token: string): Promise<DomainModel> {
       return current;
     })
     .finally(() => {
-      loading = null;
+      if (loading === mine) loading = null;
     });
-  return loading;
+  loading = mine;
+  return mine;
 }
 
 /** The live model for a component, re-rendered when an edit reloads it. */

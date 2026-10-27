@@ -2446,6 +2446,50 @@ impl DomainModelService {
     /// type can lose one, since both start from the same base document. The fix
     /// is a compare-and-set on the node's version, which is what the versioned
     /// model edits will carry.
+    /// Give a level's type a tab (a `shows` relation): see
+    /// [`Ontology::add_tab`]. Answers the level's type and the new version.
+    pub async fn add_tab(
+        &self,
+        ctx: &SecurityContext,
+        level: &str,
+        name: &str,
+        label: &str,
+        target: &str,
+    ) -> anyhow::Result<(Value, u64)> {
+        let (level, name, label, target) = (level.trim(), name.trim(), label.trim(), target.trim());
+        let well_formed = !name.is_empty()
+            && name.len() <= 64
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+        if !well_formed {
+            anyhow::bail!("a tab's name is lowercase letters, digits, - and _: {name:?}");
+        }
+        let label = if label.is_empty() { name } else { label };
+        let mut taken = false;
+        self.edit_entities(ctx, "tab", "add tab", |next| {
+            if next
+                .add_tab(level, name, label, target)
+                .map_err(|e| anyhow::anyhow!("{e}"))?
+            {
+                Ok(vec![level.to_string()])
+            } else {
+                taken = true;
+                Ok(Vec::new())
+            }
+        })
+        .await?;
+        if taken {
+            anyhow::bail!("{level} already has a field or tab named {name}");
+        }
+        let model = self.model(ctx).await?;
+        let entity = model
+            .entity(level)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {level}"))?;
+        Ok((entity, self.cached_version(ctx)?))
+    }
+
     pub async fn add_field(
         &self,
         ctx: &SecurityContext,
