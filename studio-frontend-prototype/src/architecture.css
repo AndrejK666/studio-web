@@ -605,3 +605,32 @@
   .arch-research th:nth-child(2),
   .arch-research td:nth-child(2) { display: none; }
 }
+
+/* ── The data section ───────────────────────────────────────────────────── */
+.arch-data-steps {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+.arch-data-step { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.arch-data-step p { margin: 2px 0 0; font-size: 12.5px; line-height: 1.45; }
+.arch-data-n {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  display: inline-grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 650;
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+.arch-data-stats { margin-bottom: 0.75rem; }
+.arch-table-wrap { overflow-x: auto; margin-bottom: 0.5rem; }
+.arch-data-table td { vertical-align: top; }
+.arch-data-kind { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
+.arch-data-type { font-size: 11.5px; padding: 0 5px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--foreground) 7%, transparent); }

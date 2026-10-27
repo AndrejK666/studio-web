@@ -18,7 +18,8 @@ use uuid::Uuid;
 use super::access::{self, AccessError, ObjectPolicy, TenantOnly};
 use super::gts;
 use super::ontology::{
-    DeclaredRelation, EffectiveProperty, FieldChange, FieldEdit, FieldSpec, ModelEdgeKind, Ontology,
+    DeclaredRelation, EffectiveProperty, EntitySpec, FieldChange, FieldEdit, FieldSpec,
+    ModelEdgeKind, Ontology,
 };
 use super::store::{DomainStore, EdgeUpsert, EdgeView, NodeUpsert, ObjectNode};
 use super::validate::{Report, ValidateMode};
@@ -74,6 +75,14 @@ pub struct Conformance {
 /// instance layer has no natural ceiling, and the answer is a count, not a
 /// listing — so this bounds the read rather than the response.
 pub const CONFORMANCE_LIMIT: usize = 5_000;
+/// Objects or edges per graph write in a gear's trusted batch: under the
+/// graph's safe batch size (ADR-0051 §6).
+const TRUSTED_BATCH: usize = 500;
+/// Objects per graph write when they are embedded: graph-storage embeds a
+/// batch in process, holding all of it, and a catalogue sync of thousands of
+/// versions in batches of hundreds took the backend down (the catalogue graph
+/// sink wrote 32 for that reason).
+const EMBEDDED_BATCH: usize = 32;
 /// Offending objects named in the sample.
 const CONFORMANCE_SAMPLE: usize = 5;
 
@@ -324,7 +333,16 @@ pub struct DomainModelService {
     /// so two tenants can run different models. A single process-wide ontology
     /// could not represent that.
     tenants: Mutex<HashMap<Uuid, TenantModel>>,
+    /// Tells open screens what changed (`events.rs`).
+    notify: super::events::Notifier,
+    /// When each tenant's cached model was last checked against the stored
+    /// head: another replica's edit shows here within [`MODEL_RECHECK`].
+    checked: Mutex<HashMap<Uuid, std::time::Instant>>,
 }
+
+/// How long an object path trusts its cached model before asking the graph
+/// for the head version again (one single-node read).
+const MODEL_RECHECK: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl DomainModelService {
     pub fn new(store: Arc<dyn DomainStore>) -> Self {
@@ -332,7 +350,14 @@ impl DomainModelService {
             store,
             policy: Arc::new(TenantOnly),
             tenants: Mutex::new(HashMap::new()),
+            notify: super::events::Notifier::default(),
+            checked: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Publish changes on studio-events, through `hub`.
+    pub fn attach_events(&self, hub: Arc<toolkit::client_hub::ClientHub>) {
+        self.notify.attach(hub);
     }
 
     /// The same service, asking `policy` who may touch which objects.
@@ -355,8 +380,32 @@ impl DomainModelService {
     /// lock across the await.
     async fn model(&self, ctx: &SecurityContext) -> anyhow::Result<Arc<Ontology>> {
         let tenant = ctx.subject_tenant_id();
-        if let Some(m) = self.tenants_lock()?.get(&tenant) {
-            return Ok(m.ontology.clone());
+        let cached = self
+            .tenants_lock()?
+            .get(&tenant)
+            .map(|m| (m.ontology.clone(), m.version, m.persisted));
+        if let Some((ontology, version, persisted)) = cached {
+            if !persisted || !self.due_for_recheck(tenant) {
+                return Ok(ontology);
+            }
+            // Another replica may have moved the model on: compare the head,
+            // and reload only when it did.
+            match self.stored_version(ctx).await {
+                Ok(head) if head != version => {
+                    if let Some((fresh, head)) = self.load_from_graph(ctx).await? {
+                        let fresh = Arc::new(fresh);
+                        if let Some(m) = self.tenants_lock()?.get_mut(&tenant) {
+                            m.ontology = fresh.clone();
+                            m.version = head;
+                            m.registered = false;
+                        }
+                        info!(%tenant, head, "studio-domain-model: the model moved on elsewhere; reloaded");
+                        return Ok(fresh);
+                    }
+                    return Ok(ontology);
+                }
+                _ => return Ok(ontology),
+            }
         }
         let (ontology, version, persisted) = match self.load_from_graph(ctx).await {
             Ok(Some((o, version))) => {
@@ -390,6 +439,22 @@ impl DomainModelService {
             version,
         });
         Ok(entry.ontology.clone())
+    }
+
+    /// Whether the cached model of `tenant` is due a check against the stored
+    /// head; marks it checked.
+    fn due_for_recheck(&self, tenant: Uuid) -> bool {
+        let Ok(mut checked) = self.checked.lock() else {
+            return false;
+        };
+        let now = std::time::Instant::now();
+        match checked.get(&tenant) {
+            Some(at) if now.duration_since(*at) < MODEL_RECHECK => false,
+            _ => {
+                checked.insert(tenant, now);
+                true
+            }
+        }
     }
 
     /// The tenant's ontology, checked against the graph first.
@@ -516,6 +581,7 @@ impl DomainModelService {
                         )
                         .await?;
                 }
+                self.notify.model_changed(ctx, rev.version, &rev.op);
                 Ok(true)
             }
         }
@@ -679,7 +745,10 @@ impl DomainModelService {
         ctx: &SecurityContext,
         doc: Value,
     ) -> anyhow::Result<ImportSummary> {
-        let ontology = Ontology::from_value(doc).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let mut ontology = Ontology::from_value(doc).map_err(|e| anyhow::anyhow!("{e}"))?;
+        // An import replaces what people defined, never what gears keep.
+        let current = self.model_current(ctx).await?;
+        ontology.keep_held_from(&current);
         let summary = ImportSummary {
             entities: ontology.entities().len() as u64,
             buckets: ontology.bucket_count() as u64,
@@ -851,6 +920,9 @@ impl DomainModelService {
         let entity_id = ontology
             .resolve_entity_id(type_ref)
             .ok_or_else(|| anyhow::anyhow!("unknown domain type: {type_ref}"))?;
+        if let Some(gear) = ontology.held_by(&entity_id) {
+            return Err(AccessError::Held(format!("{entity_id} is kept by {gear}")).into());
+        }
 
         // Against the whole type, bases included — most of what a type requires
         // is declared on one of them.
@@ -917,6 +989,12 @@ impl DomainModelService {
                     e
                 }
             })?;
+        self.notify.objects_changed(
+            ctx,
+            &entity_id,
+            std::slice::from_ref(&instance_id),
+            "upsert",
+        );
         Ok(CreatedObject {
             type_id,
             instance_id,
@@ -989,6 +1067,814 @@ impl DomainModelService {
         from: &str,
         to: &str,
     ) -> anyhow::Result<CreatedRelation> {
+        let declared = self.checked_relation(ctx, relation_ref, from, to).await?;
+        let edge_type_id = gts::edge_type_id(&declared.verb);
+        self.ensure_types(ctx).await?;
+        self.store
+            .create_relation(
+                ctx,
+                &edge_type_id,
+                from,
+                to,
+                // Which declared relation this is. Without it two relations of
+                // one verb between the same pair — `tenant owns team` and
+                // `tenant contains team` — would collapse into a single edge.
+                Some(&declared.name),
+                Some(json!({
+                    "name": declared.name,
+                    "verb": declared.verb,
+                    "label": declared.label,
+                    "cardinality": declared.cardinality,
+                    "source": declared.source,
+                    "target": declared.target_entity,
+                })),
+            )
+            .await?;
+        self.notify
+            .objects_changed(ctx, &declared.source, &[from.to_owned()], "relate");
+        Ok(CreatedRelation {
+            type_id: edge_type_id,
+            verb: declared.verb,
+            name: Some(declared.name),
+            label: Some(declared.label).filter(|l| !l.is_empty()),
+            cardinality: declared.cardinality,
+        })
+    }
+
+    /// Remove a relation between two objects, checked like
+    /// [`Self::create_relation`]: the same reference, the same endpoints, the
+    /// same rights. Answers whether there was one to remove.
+    pub async fn delete_relation(
+        &self,
+        ctx: &SecurityContext,
+        relation_ref: &str,
+        from: &str,
+        to: &str,
+    ) -> anyhow::Result<bool> {
+        let declared = self.checked_relation(ctx, relation_ref, from, to).await?;
+        let removed = self
+            .store
+            .delete_relation(
+                ctx,
+                &gts::edge_type_id(&declared.verb),
+                from,
+                to,
+                Some(&declared.name),
+            )
+            .await?;
+        if removed {
+            self.notify
+                .objects_changed(ctx, &declared.source, &[from.to_owned()], "unrelate");
+        }
+        Ok(removed)
+    }
+
+    /// Change some fields of an object and keep the rest: `set` replaces the
+    /// named fields, `unset` drops them. The object's key, scope and type stay
+    /// what they are, so a field starting with `_` is the store's, not the
+    /// caller's.
+    pub async fn patch_object(
+        &self,
+        ctx: &SecurityContext,
+        instance_id: &str,
+        set: serde_json::Map<String, Value>,
+        unset: &[String],
+        validate: ValidateMode,
+    ) -> anyhow::Result<CreatedObject> {
+        if let Some(reserved) = set.keys().chain(unset.iter()).find(|k| k.starts_with('_')) {
+            return Err(anyhow::anyhow!(
+                "`{reserved}` is kept by the store and cannot be changed"
+            ));
+        }
+        let ontology = self.model(ctx).await?;
+        let (entity_id, node) = self
+            .endpoint_entity(ctx, &ontology, instance_id, "id")
+            .await?;
+        // A gear's record takes a person's change only in the fields no gear
+        // writes: what an administrator added to the type beside the gear's.
+        if let Some(gear) = ontology.held_by(&entity_id) {
+            let open = ontology.open_own_fields(&entity_id);
+            if let Some(field) = set
+                .keys()
+                .chain(unset.iter())
+                .find(|k| !open.contains(k) || ontology.field_held_by(&entity_id, k).is_some())
+            {
+                return Err(
+                    AccessError::Held(format!("{entity_id}.{field} is kept by {gear}")).into(),
+                );
+            }
+        }
+        let write = self
+            .policy
+            .access(ctx, access::WRITE, Some(&entity_id))
+            .await?;
+        if !write.admits(ctx, &node).await {
+            return Err(AccessError::Denied.into());
+        }
+        let mut payload = match node.value {
+            Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        for k in unset {
+            payload.remove(k);
+        }
+        // A patch answers for what it touches: the fields it sets or unsets.
+        // What the object lacked before is the object's state, not this
+        // change's fault, and reporting it on every edit buries the one
+        // problem the edit made.
+        let touched: Vec<String> = set.keys().cloned().chain(unset.iter().cloned()).collect();
+        payload.extend(set);
+        let payload = Value::Object(payload);
+        let report = match validate {
+            ValidateMode::Off => Report::default(),
+            _ => {
+                let mut r =
+                    super::validate::check(&ontology.effective_properties(&entity_id), &payload);
+                r.violations.retain(|v| touched.contains(&v.field));
+                r.undeclared.retain(|f| touched.contains(f));
+                r
+            }
+        };
+        if validate == ValidateMode::Strict && !report.is_clean() {
+            return Err(anyhow::anyhow!(
+                "{entity_id} does not satisfy its type: {}",
+                report
+                    .violations
+                    .iter()
+                    .map(|v| format!("{} — {}", v.field, v.detail))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+        let name = payload
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        self.ensure_types(ctx).await?;
+        self.store
+            .upsert_nodes(
+                ctx,
+                &[NodeUpsert {
+                    type_id: node.type_id.clone(),
+                    node_key: node.instance_id.clone(),
+                    name,
+                    payload,
+                    expected_version: None,
+                }],
+            )
+            .await?;
+        self.notify.objects_changed(
+            ctx,
+            &entity_id,
+            std::slice::from_ref(&node.instance_id),
+            "patch",
+        );
+        Ok(CreatedObject {
+            type_id: node.type_id,
+            instance_id: node.instance_id,
+            report,
+        })
+    }
+
+    /// Delete an object. It is marked rather than removed from the graph,
+    /// which would forbid its key for good (see
+    /// [`super::store::DELETED_FIELD`]); every read leaves it out, and
+    /// writing the same type and key again brings it back as a new object.
+    pub async fn delete_object(
+        &self,
+        ctx: &SecurityContext,
+        instance_id: &str,
+    ) -> anyhow::Result<()> {
+        let ontology = self.model(ctx).await?;
+        let (entity_id, node) = self
+            .endpoint_entity(ctx, &ontology, instance_id, "id")
+            .await?;
+        if let Some(gear) = ontology.held_by(&entity_id) {
+            return Err(AccessError::Held(format!("{entity_id} is kept by {gear}")).into());
+        }
+        let write = self
+            .policy
+            .access(ctx, access::WRITE, Some(&entity_id))
+            .await?;
+        if !write.admits(ctx, &node).await {
+            return Err(AccessError::Denied.into());
+        }
+        let mut payload = match node.value {
+            Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        let changed = node.instance_id.clone();
+        payload.insert(super::store::DELETED_FIELD.to_string(), Value::Bool(true));
+        payload.insert(
+            "_deleted_at".to_string(),
+            Value::String(
+                OffsetDateTime::now_utc()
+                    .format(&Rfc3339)
+                    .unwrap_or_default(),
+            ),
+        );
+        self.store
+            .upsert_nodes_keeping_vectors(
+                ctx,
+                &[NodeUpsert {
+                    type_id: node.type_id,
+                    node_key: node.instance_id,
+                    name: None,
+                    payload: Value::Object(payload),
+                    expected_version: None,
+                }],
+            )
+            .await?;
+        self.notify
+            .objects_changed(ctx, &entity_id, std::slice::from_ref(&changed), "delete");
+        Ok(())
+    }
+
+    /// Create one object of a gear's type only if no object has its id yet:
+    /// `false` when one already does. What a gear serializes concurrent
+    /// writers with, on every replica — the model's own versions are claimed
+    /// the same way.
+    pub async fn claim_trusted(
+        &self,
+        ctx: &SecurityContext,
+        entity_ref: &str,
+        id: &str,
+        payload: Value,
+    ) -> anyhow::Result<bool> {
+        let ontology = self.model(ctx).await?;
+        let entity_id = ontology
+            .resolve_entity_id(entity_ref)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
+        let write = self
+            .policy
+            .access(ctx, access::WRITE, Some(&entity_id))
+            .await?;
+        if !write.admits_owner(ctx, write.owner_of_scope(None)).await {
+            return Err(AccessError::Denied.into());
+        }
+        self.ensure_types(ctx).await?;
+        let node = NodeUpsert {
+            type_id: gts::node_type_id(&entity_id),
+            node_key: id.to_owned(),
+            name: None,
+            payload,
+            expected_version: Some(0),
+        };
+        match self.store.upsert_nodes_keeping_vectors(ctx, &[node]).await {
+            Ok(_) => Ok(true),
+            Err(e) if super::store::is_version_taken(&e) => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Move the objects the root's model holds in `scope` into the model of
+    /// the organization `org_ctx` acts in, with the relations between them,
+    /// and mark them gone from the root.
+    ///
+    /// Before records lived in their organization's model, a platform
+    /// administrator's writes — attributes, milestones, views, a gear's
+    /// records — went to the root's, where nobody in the organization sees
+    /// them. Idempotent: what moved is gone from the root.
+    pub async fn rehome_scope(
+        &self,
+        root_ctx: &SecurityContext,
+        org_ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<usize> {
+        if root_ctx.subject_tenant_id() == org_ctx.subject_tenant_id() {
+            return Ok(0);
+        }
+        let root = self.model(root_ctx).await?;
+        let mut found: Vec<(String, String, Value)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for e in root.entities() {
+            let Some(id) = e.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if e.get("abstract").and_then(Value::as_bool) == Some(true)
+                || e.get("bucket").and_then(Value::as_str) == Some("system-primitives")
+            {
+                continue;
+            }
+            let q = super::query::Query::from_json(json!({"type": id, "project_id": scope}))
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let rows = match self.query_bulk(root_ctx, &q).await {
+                Ok(out) => out.rows.items,
+                Err(_) => continue,
+            };
+            for r in rows {
+                if seen.insert(r.id.clone()) {
+                    found.push((r.id, r.entity, r.value));
+                }
+            }
+        }
+        if found.is_empty() {
+            return Ok(0);
+        }
+        // The organization's model gets the types the objects need.
+        let entities: Vec<String> = {
+            let mut v: Vec<String> = found.iter().map(|(_, e, _)| e.clone()).collect();
+            v.sort();
+            v.dedup();
+            v
+        };
+        // The organization's model gets the types and the fields the objects
+        // need; nothing taken in writes no version.
+        self.edit_entities(org_ctx, "rehome", "take in from the root", |next| {
+            Ok(if next.adopt_from(&root, &entities).is_empty() {
+                Vec::new()
+            } else {
+                entities.clone()
+            })
+        })
+        .await?;
+        self.ensure_types(org_ctx).await?;
+        let nodes: Vec<NodeUpsert> = found
+            .iter()
+            .map(|(id, entity, value)| NodeUpsert {
+                type_id: gts::node_type_id(entity),
+                node_key: id.clone(),
+                name: value
+                    .get("name")
+                    .or_else(|| value.get("title"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                payload: value.clone(),
+                expected_version: None,
+            })
+            .collect();
+        for chunk in nodes.chunks(EMBEDDED_BATCH) {
+            self.store.upsert_nodes(org_ctx, chunk).await?;
+        }
+        let ids: Vec<String> = found.iter().map(|(id, ..)| id.clone()).collect();
+        let moved: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let edges: Vec<EdgeUpsert> = self
+            .store
+            .read_edges(root_ctx, &ids)
+            .await?
+            .into_iter()
+            .filter(|e| moved.contains(e.from.as_str()) && moved.contains(e.to.as_str()))
+            .map(|e| EdgeUpsert {
+                type_id: e.type_id,
+                from: e.from,
+                to: e.to,
+                payload: e.relation.as_ref().map(|r| json!({"name": r})),
+                discriminator: e.relation,
+            })
+            .collect();
+        for chunk in edges.chunks(TRUSTED_BATCH) {
+            self.store.upsert_edges(org_ctx, chunk).await?;
+        }
+        let gone: Vec<NodeUpsert> = found
+            .into_iter()
+            .map(|(id, entity, mut value)| {
+                if let Some(m) = value.as_object_mut() {
+                    m.insert(super::store::DELETED_FIELD.to_string(), Value::Bool(true));
+                }
+                NodeUpsert {
+                    type_id: gts::node_type_id(&entity),
+                    node_key: id,
+                    name: None,
+                    payload: value,
+                    expected_version: None,
+                }
+            })
+            .collect();
+        for chunk in gone.chunks(TRUSTED_BATCH) {
+            self.store
+                .upsert_nodes_keeping_vectors(root_ctx, chunk)
+                .await?;
+        }
+        info!(scope, objects = nodes.len(), relations = edges.len(), org = %org_ctx.subject_tenant_id(), "studio-domain-model: objects moved from the root's model into their organization's");
+        self.notify.objects_changed(org_ctx, "*", &ids, "rehome");
+        Ok(nodes.len())
+    }
+
+    /// For a gear's batch write: the values its objects already hold in the
+    /// fields no gear writes, by object id. Nothing is read when the type has
+    /// no such field, which is every type nobody extended.
+    async fn open_fields_of(
+        &self,
+        ctx: &SecurityContext,
+        ontology: &Ontology,
+        entity_id: &str,
+        items: &[(String, String, Value)],
+    ) -> anyhow::Result<HashMap<String, Value>> {
+        let open = ontology.open_own_fields(entity_id);
+        if open.is_empty() || ontology.held_by(entity_id).is_none() {
+            return Ok(HashMap::new());
+        }
+        let ids: Vec<Value> = items
+            .iter()
+            .map(|(id, ..)| Value::String(id.clone()))
+            .collect();
+        let mut fields: Vec<Value> = open.iter().cloned().map(Value::String).collect();
+        fields.push(Value::String("id".into()));
+        let q = super::query::Query::from_json(json!({
+            "type": entity_id,
+            "where": {"id": {"_in": ids}},
+            "fields": fields,
+        }))
+        .map_err(|e| anyhow::anyhow!(e))?;
+        let out = self.query_bulk(ctx, &q).await.map_err(|e| match e {
+            super::query::QueryError::Invalid(m) => anyhow::anyhow!(m),
+            super::query::QueryError::Failed(e) => e,
+        })?;
+        Ok(out
+            .rows
+            .items
+            .into_iter()
+            .map(|r| {
+                let mut v = r.value;
+                if let Some(m) = v.as_object_mut() {
+                    m.retain(|k, _| open.contains(k));
+                }
+                (r.id, v)
+            })
+            .collect())
+    }
+
+    /// Write a batch of objects of one type for a gear that owns their shape
+    /// and their ids (ADR-0051 §8a): unchecked against the type, a graph
+    /// write per few hundred objects, and the caller's right to write asked
+    /// once per scope rather than once per object. Each item is
+    /// `(id, scope, payload)`; `scope` empty is organization-wide.
+    pub async fn put_objects_trusted(
+        &self,
+        ctx: &SecurityContext,
+        entity_ref: &str,
+        items: Vec<(String, String, Value)>,
+    ) -> anyhow::Result<usize> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+        let ontology = self.model(ctx).await?;
+        let entity_id = ontology
+            .resolve_entity_id(entity_ref)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
+        let write = self
+            .policy
+            .access(ctx, access::WRITE, Some(&entity_id))
+            .await?;
+        let mut scopes: Vec<&str> = items.iter().map(|(_, s, _)| s.as_str()).collect();
+        scopes.sort_unstable();
+        scopes.dedup();
+        for scope in scopes {
+            let scope = Some(scope).filter(|s| !s.is_empty());
+            if !write.admits_owner(ctx, write.owner_of_scope(scope)).await {
+                return Err(AccessError::Denied.into());
+            }
+        }
+        let type_id = gts::node_type_id(&entity_id);
+        let kept = self
+            .open_fields_of(ctx, &ontology, &entity_id, &items)
+            .await?;
+        let nodes: Vec<NodeUpsert> = items
+            .into_iter()
+            .map(|(id, scope, mut payload)| {
+                if let Some(obj) = payload.as_object_mut() {
+                    if !scope.is_empty() {
+                        obj.insert("_scope".to_string(), Value::String(scope));
+                    }
+                    // A gear rewrites its record whole; what a person set in
+                    // a field the gear does not write stays.
+                    if let Some(Value::Object(old)) = kept.get(&id) {
+                        for (k, v) in old {
+                            obj.entry(k.clone()).or_insert_with(|| v.clone());
+                        }
+                    }
+                }
+                let name = payload
+                    .get("name")
+                    .or_else(|| payload.get("title"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                NodeUpsert {
+                    node_key: id,
+                    type_id: type_id.clone(),
+                    name,
+                    payload,
+                    expected_version: None,
+                }
+            })
+            .collect();
+        self.ensure_types(ctx).await?;
+        // A gear's records are embedded only where people search them by
+        // meaning; the rest keep no vector and go in larger batches.
+        if ontology.held_by(&entity_id).is_some() && !ontology.is_searchable(&entity_id) {
+            for chunk in nodes.chunks(TRUSTED_BATCH) {
+                self.store.upsert_nodes_keeping_vectors(ctx, chunk).await?;
+            }
+        } else {
+            for chunk in nodes.chunks(EMBEDDED_BATCH) {
+                self.store.upsert_nodes(ctx, chunk).await?;
+            }
+        }
+        let ids: Vec<String> = nodes.iter().map(|n| n.node_key.clone()).collect();
+        self.notify.objects_changed(ctx, &entity_id, &ids, "upsert");
+        Ok(nodes.len())
+    }
+
+    /// Mark a gear's objects deleted, by id, in one write per batch. What
+    /// they held is dropped: the mark is all that stays, and writing the
+    /// same id again brings the object back.
+    pub async fn remove_objects_trusted(
+        &self,
+        ctx: &SecurityContext,
+        entity_ref: &str,
+        ids: Vec<String>,
+    ) -> anyhow::Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let ontology = self.model(ctx).await?;
+        let entity_id = ontology
+            .resolve_entity_id(entity_ref)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
+        let write = self
+            .policy
+            .access(ctx, access::WRITE, Some(&entity_id))
+            .await?;
+        if !write.admits_owner(ctx, ctx.subject_tenant_id()).await {
+            return Err(AccessError::Denied.into());
+        }
+        let type_id = gts::node_type_id(&entity_id);
+        let nodes: Vec<NodeUpsert> = ids
+            .into_iter()
+            .map(|id| NodeUpsert {
+                node_key: id,
+                type_id: type_id.clone(),
+                name: None,
+                payload: json!({ super::store::DELETED_FIELD: true }),
+                expected_version: None,
+            })
+            .collect();
+        for chunk in nodes.chunks(TRUSTED_BATCH) {
+            self.store.upsert_nodes_keeping_vectors(ctx, chunk).await?;
+        }
+        let ids: Vec<String> = nodes.iter().map(|n| n.node_key.clone()).collect();
+        self.notify.objects_changed(ctx, &entity_id, &ids, "delete");
+        Ok(nodes.len())
+    }
+
+    /// Relate objects a gear wrote, by a relation the model declares on
+    /// `source` — `(source entity, relation name, from id, to id)` — in one
+    /// graph write per few hundred edges. The pair is not read back: the
+    /// gear wrote both ends. A batch the graph refuses (an end that is not
+    /// there) is retried edge by edge, and what still fails is skipped and
+    /// counted, not fatal.
+    pub async fn link_objects_trusted(
+        &self,
+        ctx: &SecurityContext,
+        links: Vec<(String, String, String, String)>,
+    ) -> anyhow::Result<(usize, usize)> {
+        if links.is_empty() {
+            return Ok((0, 0));
+        }
+        let ontology = self.model(ctx).await?;
+        let mut edges = Vec::with_capacity(links.len());
+        for (source, name, from, to) in links {
+            let declared = ontology.declared_relation(&source, &name).ok_or_else(|| {
+                anyhow::anyhow!("the model declares no relation `{source}.{name}`")
+            })?;
+            edges.push(EdgeUpsert {
+                type_id: gts::edge_type_id(&declared.verb),
+                from,
+                to,
+                discriminator: Some(declared.name.clone()),
+                payload: Some(json!({
+                    "name": declared.name,
+                    "verb": declared.verb,
+                    "source": declared.source,
+                    "target": declared.target_entity,
+                })),
+            });
+        }
+        self.ensure_types(ctx).await?;
+        let (mut written, mut skipped) = (0, 0);
+        for chunk in edges.chunks(TRUSTED_BATCH) {
+            if self.store.upsert_edges(ctx, chunk).await.is_ok() {
+                written += chunk.len();
+                continue;
+            }
+            for e in chunk {
+                match self.store.upsert_edges(ctx, std::slice::from_ref(e)).await {
+                    Ok(_) => written += 1,
+                    Err(_) => skipped += 1,
+                }
+            }
+        }
+        Ok((written, skipped))
+    }
+
+    /// A gear's read of its own objects: the query language without the
+    /// screen's page bound, up to [`super::query::BULK_LIMIT`] rows, answered
+    /// by the read model once the tenant's is filled.
+    pub async fn query_bulk(
+        &self,
+        ctx: &SecurityContext,
+        q: &super::query::Query,
+    ) -> Result<super::query::Outcome, super::query::QueryError> {
+        let ontology = self.model(ctx).await?;
+        self.ensure_types(ctx).await?;
+        let read = self
+            .policy
+            .access(ctx, access::READ, Some(&q.type_ref))
+            .await
+            .map_err(|e| super::query::QueryError::Failed(e.into()))?;
+        super::query::run_bulk(self.store.as_ref(), &ontology, ctx, q, &read).await
+    }
+
+    /// The relations of `names` between objects of the tenant, as
+    /// `(relation, from, to)`.
+    pub async fn relations_named(
+        &self,
+        ctx: &SecurityContext,
+        names: &[&str],
+    ) -> anyhow::Result<Vec<(String, String, String)>> {
+        let ontology = self.model(ctx).await?;
+        if let Some(mirror) = self.store.read_model(ctx, &ontology).await {
+            return mirror.edges_named(ctx.subject_tenant_id(), names).await;
+        }
+        let ids: Vec<String> = self
+            .store
+            .list_objects(
+                ctx,
+                &ontology
+                    .node_types()
+                    .into_iter()
+                    .map(|n| n.type_id)
+                    .collect::<Vec<_>>(),
+                None,
+                None,
+            )
+            .await?
+            .into_iter()
+            .map(|n| n.instance_id)
+            .collect();
+        Ok(self
+            .store
+            .read_edges(ctx, &ids)
+            .await?
+            .into_iter()
+            .filter_map(|e| {
+                let r = e.relation?;
+                names.contains(&r.as_str()).then_some((r, e.from, e.to))
+            })
+            .collect())
+    }
+
+    /// Objects of `entities` the text finds, best first (the graph's hybrid
+    /// search), that the caller may read.
+    pub async fn search_objects(
+        &self,
+        ctx: &SecurityContext,
+        text: &str,
+        entities: &[&str],
+        limit: u32,
+    ) -> anyhow::Result<Vec<ObjectNode>> {
+        let type_ids: Vec<String> = entities.iter().map(|e| gts::node_type_id(e)).collect();
+        let read = self.policy.access(ctx, access::READ, None).await?;
+        let found = self.store.search(ctx, text, &type_ids, limit).await?;
+        Ok(read.retain(ctx, found).await)
+    }
+
+    /// What a gear needs of one type, in one model version: the fields it
+    /// lacks, the relations it does not declare yet, and the gear's hold on
+    /// it and on its fields. Nothing missing writes nothing.
+    pub async fn take_in(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        fields: &[FieldSpec],
+        relations: &[(String, String, String)],
+        hold: Option<(String, Vec<String>, bool)>,
+    ) -> anyhow::Result<usize> {
+        self.edit_entities(ctx, "take_in", "take in", |next| {
+            let mut changed = false;
+            let have: Vec<String> = next
+                .effective_properties(entity)
+                .into_iter()
+                .map(|p| p.name)
+                .collect();
+            for f in fields {
+                if !have.contains(&f.name) {
+                    next.add_field(entity, f.clone())
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    changed = true;
+                }
+            }
+            for (name, target, verb) in relations {
+                changed |= next
+                    .add_relation(entity, name, target, verb)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+            if let Some((gear, names, searchable)) = &hold {
+                changed |= next
+                    .hold(entity, gear, names)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                changed |= next
+                    .set_searchable(entity, *searchable)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+            Ok(if changed {
+                vec![entity.to_owned()]
+            } else {
+                Vec::new()
+            })
+        })
+        .await
+    }
+
+    /// One versioned edit of some entities: `edit` changes a copy of the
+    /// model and names the entities it changed; nothing changed writes
+    /// nothing. Retried on a version taken concurrently.
+    async fn edit_entities(
+        &self,
+        ctx: &SecurityContext,
+        op: &str,
+        describe: &str,
+        mut edit: impl FnMut(&mut Ontology) -> anyhow::Result<Vec<String>>,
+    ) -> anyhow::Result<usize> {
+        self.ensure_persisted(ctx).await?;
+        for attempt in 0..EDIT_ATTEMPTS {
+            let current = self.model_current(ctx).await?;
+            let mut next = (*current).clone();
+            let touched = edit(&mut next)?;
+            if touched.is_empty() {
+                return Ok(0);
+            }
+            let mut patches = Vec::new();
+            let mut inverse = Vec::new();
+            for entity in &touched {
+                let index = next
+                    .entity_index(entity)
+                    .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity}"))?;
+                patches.push(json!({
+                    "op": "replace",
+                    "path": format!("/entities/{index}"),
+                    "value": next.entity(entity).cloned().unwrap_or(Value::Null),
+                }));
+                inverse.push(json!({
+                    "op": "replace",
+                    "path": format!("/entities/{index}"),
+                    "value": current.entity(entity).cloned().unwrap_or(Value::Null),
+                }));
+            }
+            let version = self.cached_version(ctx)? + 1;
+            let rev = Revision::new(
+                version,
+                ctx,
+                op,
+                &touched.join(","),
+                format!("{describe} {}", touched.join(", ")),
+            )
+            .with_patches(Value::Array(patches), Value::Array(inverse));
+            if !self.claim_version(ctx, &rev).await? {
+                warn!(
+                    attempt,
+                    version, "studio-domain-model: model version taken, retrying the edit"
+                );
+                self.reload(ctx).await?;
+                continue;
+            }
+            let mut nodes = Vec::new();
+            for entity in &touched {
+                let node = next
+                    .object_type_node(entity)
+                    .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity}"))?;
+                nodes.push(NodeUpsert {
+                    type_id: gts::META_OBJECT_TYPE.to_string(),
+                    node_key: gts::instance_id(gts::META_OBJECT_TYPE, entity),
+                    name: Some(node.name.clone()),
+                    payload: node.payload.clone(),
+                    expected_version: None,
+                });
+            }
+            nodes.push(self.model_node(&next, version));
+            self.store.upsert_nodes(ctx, &nodes).await?;
+            if let Some(m) = self.tenants_lock()?.get_mut(&ctx.subject_tenant_id()) {
+                m.ontology = Arc::new(next);
+                m.version = version;
+                m.registered = false;
+            }
+            return Ok(touched.len());
+        }
+        Err(anyhow::anyhow!(
+            "the model is being edited concurrently — no version could be claimed in {EDIT_ATTEMPTS} attempts"
+        ))
+    }
+
+    /// The declared relation `relation_ref` names between two existing
+    /// objects, once the caller is shown to write the source and read the
+    /// target.
+    async fn checked_relation(
+        &self,
+        ctx: &SecurityContext,
+        relation_ref: &str,
+        from: &str,
+        to: &str,
+    ) -> anyhow::Result<DeclaredRelation> {
         let ontology = self.model(ctx).await?;
         let relation_ref = relation_ref.trim();
 
@@ -997,6 +1883,11 @@ impl DomainModelService {
         // endpoint that is not there is a caller relating before creating.
         let (src, src_node) = self.endpoint_entity(ctx, &ontology, from, "from").await?;
         let (dst, dst_node) = self.endpoint_entity(ctx, &ontology, to, "to").await?;
+        // A gear's record is changed by its gear, its relations included; a
+        // member's own object may still point at one.
+        if let Some(gear) = ontology.held_by(&src) {
+            return Err(AccessError::Held(format!("{src} is kept by {gear}")).into());
+        }
         // Relating is writing the source; it also reveals the target, so the
         // caller must be able to read it. Otherwise relating a person to a
         // project you cannot see would test whether it exists (ADR-0035 §5).
@@ -1073,36 +1964,7 @@ impl DomainModelService {
                 }
             }
         };
-
-        let edge_type_id = gts::edge_type_id(&declared.verb);
-        self.ensure_types(ctx).await?;
-        self.store
-            .create_relation(
-                ctx,
-                &edge_type_id,
-                from,
-                to,
-                // Which declared relation this is. Without it two relations of
-                // one verb between the same pair — `tenant owns team` and
-                // `tenant contains team` — would collapse into a single edge.
-                Some(&declared.name),
-                Some(json!({
-                    "name": declared.name,
-                    "verb": declared.verb,
-                    "label": declared.label,
-                    "cardinality": declared.cardinality,
-                    "source": declared.source,
-                    "target": declared.target_entity,
-                })),
-            )
-            .await?;
-        Ok(CreatedRelation {
-            type_id: edge_type_id,
-            verb: declared.verb,
-            name: Some(declared.name),
-            label: Some(declared.label).filter(|l| !l.is_empty()),
-            cardinality: declared.cardinality,
-        })
+        Ok(declared)
     }
 
     /// The entity an endpoint object is of, or a message naming what is wrong.
@@ -1147,6 +2009,28 @@ impl DomainModelService {
         }
         names.truncate(8);
         format!(". It declares: {}", names.join("; "))
+    }
+
+    /// Does the caller's model have this type?
+    /// Every type of the tenant's model, and whether it is abstract.
+    pub async fn entity_kinds(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<(String, bool)>> {
+        Ok(self
+            .model(ctx)
+            .await?
+            .entities()
+            .iter()
+            .filter_map(|e| {
+                let id = e.get("id").and_then(Value::as_str)?.to_owned();
+                Some((
+                    id,
+                    e.get("abstract").and_then(Value::as_bool).unwrap_or(false),
+                ))
+            })
+            .collect())
+    }
+
+    pub async fn knows_type(&self, ctx: &SecurityContext, type_ref: &str) -> anyhow::Result<bool> {
+        Ok(self.model(ctx).await?.resolve_entity_id(type_ref).is_some())
     }
 
     /// List objects, optionally of one type and/or one scope. `None` type =
@@ -1597,6 +2481,79 @@ impl DomainModelService {
         ))
     }
 
+    /// Add a type to the model, versioned like a field edit: a numbered
+    /// revision with its inverse, the new `object_type` node and the model
+    /// head written in one batch. The type is registered with graph-storage
+    /// before the next object write, which is when it is first needed.
+    pub async fn add_type(
+        &self,
+        ctx: &SecurityContext,
+        spec: EntitySpec,
+    ) -> anyhow::Result<(Value, u64)> {
+        self.ensure_persisted(ctx).await?;
+        for attempt in 0..EDIT_ATTEMPTS {
+            let current = self.model_current(ctx).await?;
+            let mut next = (*current).clone();
+            let entity = next
+                .add_entity(spec.clone())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let entity_id = entity["id"].as_str().unwrap_or_default().to_string();
+            let index = next
+                .entity_index(&entity_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_id}"))?;
+
+            let version = self.cached_version(ctx)? + 1;
+            let rev = Revision::new(
+                version,
+                ctx,
+                "add_type",
+                &entity_id,
+                format!("add type {entity_id}"),
+            )
+            .with_patches(
+                json!([{ "op": "add", "path": "/entities/-", "value": entity }]),
+                json!([{ "op": "remove", "path": format!("/entities/{index}") }]),
+            );
+            if !self.claim_version(ctx, &rev).await? {
+                warn!(
+                    attempt,
+                    version, "studio-domain-model: model version taken, retrying the edit"
+                );
+                self.reload(ctx).await?;
+                continue;
+            }
+            let node = next
+                .object_type_node(&entity_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_id}"))?;
+            self.store
+                .upsert_nodes(
+                    ctx,
+                    &[
+                        NodeUpsert {
+                            type_id: gts::META_OBJECT_TYPE.to_string(),
+                            node_key: gts::instance_id(gts::META_OBJECT_TYPE, &entity_id),
+                            name: Some(node.name.clone()),
+                            payload: node.payload.clone(),
+                            expected_version: None,
+                        },
+                        self.model_node(&next, version),
+                    ],
+                )
+                .await?;
+            if let Some(m) = self.tenants_lock()?.get_mut(&ctx.subject_tenant_id()) {
+                m.ontology = Arc::new(next);
+                m.version = version;
+                // A new node type: graph-storage has to know it before an
+                // object of it can be written.
+                m.registered = false;
+            }
+            return Ok((entity, version));
+        }
+        Err(anyhow::anyhow!(
+            "the model is being edited concurrently — no version could be claimed in {EDIT_ATTEMPTS} attempts"
+        ))
+    }
+
     /// Change a field a type declares — rename, retype, require — and, for a
     /// rename, move the stored objects onto the new key.
     ///
@@ -1953,7 +2910,12 @@ impl DomainModelService {
                     anyhow::anyhow!("v{}: inverse patch does not apply: {e}", r.version)
                 })?;
             }
-            let next = Ontology::from_value(doc).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let mut next = Ontology::from_value(doc).map_err(|e| anyhow::anyhow!("{e}"))?;
+            // What gears keep stays, whatever the revert undoes.
+            let kept = next.keep_held_from(&current);
+            if !kept.is_empty() {
+                info!(kept = ?kept, "studio-domain-model: a revert kept what gears hold");
+            }
 
             let version = head + 1;
             let versions: Vec<u64> = undone.iter().map(|r| r.version).collect();

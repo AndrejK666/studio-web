@@ -489,6 +489,279 @@ impl Ontology {
     /// The `object_type` node for one entity — what the model-graph sync
     /// stores for it. Used to write a single changed type back to the graph
     /// without re-syncing the whole model.
+    /// The gear that keeps this type's objects (`meta.held_by`), when one does.
+    pub fn held_by(&self, entity_id: &str) -> Option<&str> {
+        self.entity(entity_id)?
+            .get("meta")?
+            .get("held_by")?
+            .as_str()
+            .filter(|g| !g.is_empty())
+    }
+
+    /// Mark a type as kept by `gear`; `false` when it already was.
+    pub fn hold(
+        &mut self,
+        entity_id: &str,
+        gear: &str,
+        fields: &[String],
+    ) -> Result<bool, OntologyError> {
+        let entity = self
+            .doc
+            .get_mut("entities")
+            .and_then(Value::as_array_mut)
+            .ok_or(OntologyError::Malformed)?
+            .iter_mut()
+            .find(|e| e.get("id").and_then(Value::as_str) == Some(entity_id))
+            .ok_or_else(|| OntologyError::UnknownEntity(entity_id.to_string()))?;
+        let mut changed = false;
+        // The fields the gear writes are its too: an administrator may add
+        // fields beside them, but not rename, retype or drop one of them.
+        if let Some(props) = entity.get_mut("properties").and_then(Value::as_array_mut) {
+            for p in props.iter_mut() {
+                let named = p
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|n| fields.iter().any(|f| f == n));
+                if named && p.get("held_by").and_then(Value::as_str) != Some(gear) {
+                    p["held_by"] = Value::String(gear.to_string());
+                    changed = true;
+                }
+            }
+        }
+        if entity.pointer("/meta/held_by").and_then(Value::as_str) != Some(gear) {
+            let obj = entity.as_object_mut().ok_or(OntologyError::Malformed)?;
+            let meta = obj.entry("meta").or_insert_with(|| json!({}));
+            if !meta.is_object() {
+                *meta = json!({});
+            }
+            meta["held_by"] = Value::String(gear.to_string());
+            changed = true;
+        }
+        Ok(changed)
+    }
+
+    /// Put back what gears keep that `current` has and this model lacks: a
+    /// held type whole, a held field of a type. A revert or an import changes
+    /// what people defined; it never takes a gear's records out from under it.
+    /// Answers what it put back.
+    pub fn keep_held_from(&mut self, current: &Ontology) -> Vec<String> {
+        let mut kept = Vec::new();
+        for held in current
+            .entities()
+            .iter()
+            .filter(|e| e.pointer("/meta/held_by").is_some())
+        {
+            let Some(id) = held.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(entities) = self.doc.get_mut("entities").and_then(Value::as_array_mut) else {
+                return kept;
+            };
+            match entities
+                .iter_mut()
+                .find(|e| e.get("id").and_then(Value::as_str) == Some(id))
+            {
+                None => {
+                    entities.push(held.clone());
+                    kept.push(id.to_string());
+                }
+                Some(mine) => {
+                    if mine.pointer("/meta/held_by").is_none() {
+                        let gear = held
+                            .pointer("/meta/held_by")
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        if let Some(obj) = mine.as_object_mut() {
+                            let meta = obj.entry("meta").or_insert_with(|| json!({}));
+                            if !meta.is_object() {
+                                *meta = json!({});
+                            }
+                            meta["held_by"] = gear;
+                        }
+                        kept.push(id.to_string());
+                    }
+                    let held_props: Vec<Value> = held
+                        .get("properties")
+                        .and_then(Value::as_array)
+                        .map(|ps| {
+                            ps.iter()
+                                .filter(|p| p.get("held_by").is_some())
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let Some(props) = mine.get_mut("properties").and_then(Value::as_array_mut)
+                    else {
+                        continue;
+                    };
+                    for p in held_props {
+                        let name = p
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        match props
+                            .iter_mut()
+                            .find(|q| q.get("name").and_then(Value::as_str) == Some(name.as_str()))
+                        {
+                            Some(q) => {
+                                if q != &p {
+                                    *q = p;
+                                    kept.push(format!("{id}.{name}"));
+                                }
+                            }
+                            None => {
+                                props.push(p);
+                                kept.push(format!("{id}.{name}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        kept
+    }
+
+    /// Whether a gear's type is embedded for search by meaning
+    /// (`meta.searchable`). A type no gear keeps always is.
+    pub fn is_searchable(&self, entity_id: &str) -> bool {
+        self.entity(entity_id)
+            .and_then(|e| e.pointer("/meta/searchable"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    }
+
+    /// Mark whether a gear's type is embedded for search; `false` when it
+    /// already was as asked.
+    pub fn set_searchable(
+        &mut self,
+        entity_id: &str,
+        searchable: bool,
+    ) -> Result<bool, OntologyError> {
+        let entity = self
+            .doc
+            .get_mut("entities")
+            .and_then(Value::as_array_mut)
+            .ok_or(OntologyError::Malformed)?
+            .iter_mut()
+            .find(|e| e.get("id").and_then(Value::as_str) == Some(entity_id))
+            .ok_or_else(|| OntologyError::UnknownEntity(entity_id.to_string()))?;
+        if entity.pointer("/meta/searchable").and_then(Value::as_bool) == Some(searchable) {
+            return Ok(false);
+        }
+        let obj = entity.as_object_mut().ok_or(OntologyError::Malformed)?;
+        let meta = obj.entry("meta").or_insert_with(|| json!({}));
+        if !meta.is_object() {
+            *meta = json!({});
+        }
+        meta["searchable"] = Value::Bool(searchable);
+        Ok(true)
+    }
+
+    /// Take in the types `other` defines that this model lacks, with the bases
+    /// they extend: what objects moving here from `other` need. Answers the
+    /// types taken in.
+    pub fn adopt_from(&mut self, other: &Ontology, ids: &[String]) -> Vec<String> {
+        let mut taken = Vec::new();
+        for id in ids {
+            for a in other.ancestors(id).into_iter().rev() {
+                if self.has_entity(&a) {
+                    // The type is here: the fields it was given there are too.
+                    let theirs: Vec<Value> = other
+                        .entity(&a)
+                        .and_then(|e| e.get("properties"))
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let mine = self
+                        .doc
+                        .get_mut("entities")
+                        .and_then(Value::as_array_mut)
+                        .and_then(|es| {
+                            es.iter_mut()
+                                .find(|e| e.get("id").and_then(Value::as_str) == Some(a.as_str()))
+                        })
+                        .and_then(|e| e.get_mut("properties"))
+                        .and_then(Value::as_array_mut);
+                    if let Some(props) = mine {
+                        for p in theirs {
+                            let name = p
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string();
+                            if !props.iter().any(|q| {
+                                q.get("name").and_then(Value::as_str) == Some(name.as_str())
+                            }) {
+                                props.push(p);
+                                taken.push(format!("{a}.{name}"));
+                            }
+                        }
+                    }
+                    continue;
+                }
+                let (Some(def), Some(entities)) = (
+                    other.entity(&a).cloned(),
+                    self.doc.get_mut("entities").and_then(Value::as_array_mut),
+                ) else {
+                    continue;
+                };
+                entities.push(def);
+                taken.push(a);
+            }
+        }
+        taken
+    }
+
+    /// The gear that writes this field of this type, when one does.
+    pub fn field_held_by(&self, entity_id: &str, name: &str) -> Option<&str> {
+        self.ancestors(entity_id).into_iter().find_map(|e| {
+            self.entity(&e)?
+                .get("properties")?
+                .as_array()?
+                .iter()
+                .find(|p| p.get("name").and_then(Value::as_str) == Some(name))?
+                .get("held_by")?
+                .as_str()
+        })
+    }
+
+    /// The fields declared on the type itself that no gear writes: what an
+    /// administrator added beside a gear's own.
+    pub fn open_own_fields(&self, entity_id: &str) -> Vec<String> {
+        self.entity(entity_id)
+            .and_then(|e| e.get("properties"))
+            .and_then(Value::as_array)
+            .map(|props| {
+                props
+                    .iter()
+                    .filter(|p| p.get("held_by").is_none())
+                    .filter(|p| {
+                        !matches!(
+                            p.get("extends").and_then(Value::as_str),
+                            Some("edge") | Some("link")
+                        )
+                    })
+                    .filter_map(|p| p.get("name").and_then(Value::as_str).map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn refuse_held_field(&self, entity_id: &str, name: &str) -> Result<(), OntologyError> {
+        match self
+            .own_property(entity_id, name)
+            .and_then(|p| p.get("held_by"))
+            .and_then(Value::as_str)
+        {
+            Some(gear) => Err(OntologyError::HeldField {
+                name: name.to_string(),
+                gear: gear.to_string(),
+            }),
+            None => Ok(()),
+        }
+    }
+
     pub fn object_type_node(&self, entity_id: &str) -> Option<ObjectTypeMeta> {
         self.entities()
             .iter()
@@ -543,6 +816,123 @@ impl Ontology {
                     || gts::type_leaf(&gts::node_type_id(eid)) == reference
             })
             .map(str::to_string)
+    }
+
+    /// Add an entity type to the model: a new kind of object, with no fields of
+    /// its own until fields are added, and everything its base declares.
+    ///
+    /// The id becomes the type's GTS leaf, so it is held to what a leaf can be:
+    /// lower-case words joined by hyphens, starting with a letter.
+    pub fn add_entity(&mut self, spec: EntitySpec) -> Result<Value, OntologyError> {
+        let id = spec.id.trim().to_string();
+        let well_formed = id.len() <= 64
+            && id.starts_with(|c: char| c.is_ascii_lowercase())
+            && id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            && !id.ends_with('-');
+        if !well_formed {
+            return Err(OntologyError::InvalidEntityId(id));
+        }
+        if self.has_entity(&id) {
+            return Err(OntologyError::DuplicateEntity(id));
+        }
+        let extends = match spec
+            .extends
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(base) => Some(
+                self.resolve_entity_id(base)
+                    .ok_or_else(|| OntologyError::UnknownEntity(base.to_string()))?,
+            ),
+            None => None,
+        };
+        // The bucket a new type is drawn in: the one asked for, else its base's.
+        let bucket = spec
+            .bucket
+            .filter(|b| !b.trim().is_empty())
+            .or_else(|| {
+                extends
+                    .as_deref()
+                    .and_then(|b| self.entity(b))
+                    .and_then(|e| e.get("bucket"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "planning".to_string());
+        let name = Some(spec.name.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| id.clone());
+        let entity = json!({
+            "id": id,
+            "layer": "product",
+            "extends": extends,
+            "abstract": false,
+            "bucket": bucket,
+            "name": name,
+            "kind": "entity",
+            "description": spec.description.unwrap_or_default(),
+            "meta": {},
+            "properties": [],
+            "methods": [],
+            "examples": [],
+        });
+        self.doc
+            .get_mut("entities")
+            .and_then(Value::as_array_mut)
+            .ok_or(OntologyError::Malformed)?
+            .push(entity.clone());
+        Ok(entity)
+    }
+
+    /// Declare a relation on an entity: `name` from it to `target` (an
+    /// entity id) as a `verb` edge. Only adds; an existing property of that
+    /// name is left as it is.
+    pub fn add_relation(
+        &mut self,
+        entity_id: &str,
+        name: &str,
+        target: &str,
+        verb: &str,
+    ) -> Result<bool, OntologyError> {
+        let target_name = self
+            .entity(target)
+            .and_then(|e| e.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or(target)
+            .to_string();
+        let entities = self
+            .doc
+            .get_mut("entities")
+            .and_then(Value::as_array_mut)
+            .ok_or(OntologyError::Malformed)?;
+        let entity = entities
+            .iter_mut()
+            .find(|e| e.get("id").and_then(Value::as_str) == Some(entity_id))
+            .ok_or_else(|| OntologyError::UnknownEntity(entity_id.to_string()))?;
+        let props = entity
+            .get_mut("properties")
+            .and_then(Value::as_array_mut)
+            .ok_or(OntologyError::Malformed)?;
+        if props
+            .iter()
+            .any(|p| p.get("name").and_then(Value::as_str) == Some(name))
+        {
+            return Ok(false);
+        }
+        props.push(json!({
+            "name": name,
+            "type": target_name,
+            "description": "",
+            "required": false,
+            "extends": "edge",
+            "relation": target,
+            "relationType": verb,
+            "relationLabel": name.replace('_', " "),
+        }));
+        Ok(true)
     }
 
     /// Append a field to an entity's `properties`, extending the type. Returns
@@ -600,6 +990,7 @@ impl Ontology {
         name: &str,
         edit: &FieldEdit,
     ) -> Result<FieldChange, OntologyError> {
+        self.refuse_held_field(entity_id, name)?;
         // A rename that has already landed: the old name is gone and the new
         // one is there. That is what a retried migration looks like, and it has
         // to be told apart from a mistyped field name, which is an error.
@@ -654,6 +1045,7 @@ impl Ontology {
         entity_id: &str,
         name: &str,
     ) -> Result<FieldChange, OntologyError> {
+        self.refuse_held_field(entity_id, name)?;
         let index = self.own_property_index(entity_id, name)?;
         let entity = self.entity_mut(entity_id)?;
         let before = entity["properties"]
@@ -860,6 +1252,18 @@ fn normalize(s: &str) -> String {
         .collect()
 }
 
+/// A type to add to the model.
+#[derive(Debug, Clone, Default)]
+pub struct EntitySpec {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    /// The bucket it is drawn in; its base's when absent.
+    pub bucket: Option<String>,
+    /// The type it extends, whose fields and relations it inherits.
+    pub extends: Option<String>,
+}
+
 /// A field to add to a type (goal #2, "extend types by adding new fields").
 #[derive(Debug, Clone)]
 pub struct FieldSpec {
@@ -906,6 +1310,8 @@ pub struct FieldChange {
 #[derive(Debug)]
 pub enum OntologyError {
     UnknownEntity(String),
+    DuplicateEntity(String),
+    InvalidEntityId(String),
     DuplicateField(String),
     UnknownField(String),
     /// The edit is already in the model — a retried rename, not a fault.
@@ -917,6 +1323,12 @@ pub enum OntologyError {
     },
     /// The field is a relation, which becomes an edge rather than payload.
     RelationProperty(String),
+    /// A gear writes the field: renaming, retyping or dropping it would break
+    /// the gear's records.
+    HeldField {
+        name: String,
+        gear: String,
+    },
     Malformed,
 }
 
@@ -924,6 +1336,11 @@ impl std::fmt::Display for OntologyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownEntity(id) => write!(f, "unknown domain entity: {id}"),
+            Self::DuplicateEntity(id) => write!(f, "the model already has a type `{id}`"),
+            Self::InvalidEntityId(id) => write!(
+                f,
+                "`{id}` is not a type id: lower-case words joined by hyphens, starting with a letter"
+            ),
             Self::DuplicateField(name) => write!(f, "field already exists: {name}"),
             Self::UnknownField(name) => write!(f, "no such field: {name}"),
             Self::AlreadyApplied => write!(f, "the edit is already in the model"),
@@ -936,6 +1353,10 @@ impl std::fmt::Display for OntologyError {
                 f,
                 "`{name}` is a relation, not a payload field: it is stored as a `declares` edge \
                  in the model graph, and removing that edge is not implemented here"
+            ),
+            Self::HeldField { name, gear } => write!(
+                f,
+                "`{name}` is written by {gear}: add a field beside it instead of changing it"
             ),
             Self::Malformed => write!(f, "ontology document is malformed"),
         }

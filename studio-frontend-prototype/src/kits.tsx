@@ -67,6 +67,7 @@ import {
   type NextAction,
   type NextStep,
 } from "./components-flow";
+import { useDomainRefresh } from "./domain-live";
 
 export function ProjectKits({
   token,
@@ -184,6 +185,7 @@ export function ProjectKits({
       // Keep what is on screen rather than blanking it over a refresh.
     }
   }, [projectId, token]);
+  useDomainRefresh(["kit-installation","catalog-kit"], reload);
 
   useEffect(() => {
     void reload();
@@ -594,6 +596,7 @@ function useCodeReport(token: string, projectId: string, workspaceId: string, on
       setBusy(false);
     }
   }, [token, projectId, workspaceId]);
+  useDomainRefresh(["kit-installation","catalog-kit"], load);
   useEffect(() => {
     if (on) void load();
   }, [on, load]);

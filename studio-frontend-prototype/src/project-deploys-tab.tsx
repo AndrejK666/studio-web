@@ -19,6 +19,7 @@ import { STATE_LABELS, shortCommit, stateTone } from "./environments";
 import { errText, relTime } from "./format";
 import { KUBERNETES_PROFILES } from "./kits";
 import { latestByEnvironment, profilesBoundTo } from "./project-deploys";
+import { useDomainRefresh } from "./domain-live";
 
 export function ProjectDeploys({
   token,
@@ -40,6 +41,7 @@ export function ProjectDeploys({
     setNotice(message);
     setRound((r) => r + 1);
   }, []);
+  useDomainRefresh(["deployment", "environment-binding", "product-build"], () => setRound((r) => r + 1));
 
   useEffect(() => {
     let live = true;
