@@ -1,0 +1,30 @@
+{
+  "note": "Types Studio's own screens need that the product team's model (ontology.core.json, a copy of studio-internal/domain-model-ui) does not define. Each is added to a model that lacks it and never replaces one the model already has.",
+  "entities": [
+    {
+      "id": "workspace",
+      "bucket": "planning",
+      "after": "project",
+      "name": "Workspace",
+      "kind": "container",
+      "description": "A group of an organization's projects, kept in account-management. The model holds the attributes people record about it; its name comes from account-management.",
+      "meta": {
+        "relationship": "delivery-planning",
+        "priority": "P1",
+        "level": 2,
+        "badge": "",
+        "note": "Studio's own: the workspace attributes card reads and writes it.",
+        "badge-style": "neutral",
+        "profiles": ["CTO", "PdM"]
+      },
+      "properties": [
+        { "name": "id", "type": "EntityId", "required": true, "description": "", "relationLabel": "", "override": true },
+        { "name": "name", "type": "string", "description": "As account-management names the workspace.", "relationLabel": "" },
+        { "name": "title", "type": "string", "description": "", "relationLabel": "" },
+        { "name": "description", "type": "string", "description": "", "relationLabel": "" },
+        { "name": "created_at", "type": "timestamp", "description": "", "relationLabel": "" },
+        { "name": "updated_at", "type": "timestamp", "description": "", "relationLabel": "" }
+      ]
+    }
+  ]
+}

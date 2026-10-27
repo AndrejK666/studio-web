@@ -255,6 +255,7 @@ impl RestApiCapability for StudioDomainModelGear {
         let _ = self.service.set(service.clone());
         service.attach_events(ctx.client_hub());
         crate::model_sweep::register(Arc::new(rehome::Rehome(service.clone())));
+        crate::model_sweep::register(Arc::new(rehome::StudioTypes(service.clone())));
         // Every tenant's records moved ahead of their first request.
         if let Ok(am) = ctx
             .client_hub()

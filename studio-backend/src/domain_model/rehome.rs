@@ -34,3 +34,25 @@ impl crate::model_sweep::TenantMover for Rehome {
         Ok(())
     }
 }
+
+/// The types Studio's own screens need, added to every organization's stored
+/// model at start (a model on the seed has them already).
+pub struct StudioTypes(pub Arc<DomainModelService>);
+
+#[async_trait]
+impl crate::model_sweep::TenantMover for StudioTypes {
+    fn name(&self) -> &str {
+        "studio-domain-model studio types"
+    }
+    fn early(&self) -> bool {
+        true
+    }
+    async fn prepare(&self, ctx: &SecurityContext, tenant: Uuid) -> anyhow::Result<()> {
+        // Once per model: the organization itself, not each of its tenants.
+        if ctx.subject_tenant_id() != tenant {
+            return Ok(());
+        }
+        self.0.ensure_studio_types(ctx).await?;
+        Ok(())
+    }
+}

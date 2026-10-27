@@ -17,6 +17,19 @@ use super::gts;
 
 /// The embedded ontology: the full core domain model (all buckets).
 const ONTOLOGY_JSON: &str = include_str!("ontology.core.json");
+/// Types Studio's own screens need that the product team's model does not
+/// define (the workspace attributes card reads `workspace`). Added to a model
+/// that lacks them; a model that has one keeps its own.
+const STUDIO_TYPES_JSON: &str = include_str!("ontology.studio.json");
+
+fn studio_types() -> Vec<Value> {
+    serde_json::from_str::<Value>(STUDIO_TYPES_JSON)
+        .expect("Studio's own types are valid JSON")
+        .get("entities")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
 
 /// One node type to register, with a human title and description. What the
 /// graph indexes for it is not here: those paths are the same for every domain
@@ -70,7 +83,100 @@ impl Ontology {
     pub fn load() -> Self {
         let doc: Value =
             serde_json::from_str(ONTOLOGY_JSON).expect("embedded domain ontology is valid JSON");
-        Self { doc }
+        let mut model = Self { doc };
+        model.add_studio_types();
+        model
+    }
+
+    /// Add the seed's bucket `id` when this model has none by that id, with
+    /// an empty order.
+    fn adopt_bucket(&mut self, id: &str) {
+        let has = self
+            .doc
+            .get("buckets")
+            .and_then(Value::as_array)
+            .is_some_and(|bs| {
+                bs.iter()
+                    .any(|b| b.get("id").and_then(Value::as_str) == Some(id))
+            });
+        if has {
+            return;
+        }
+        let seed: Value = serde_json::from_str(ONTOLOGY_JSON).unwrap_or_default();
+        let Some(mut bucket) = seed
+            .get("buckets")
+            .and_then(Value::as_array)
+            .and_then(|bs| {
+                bs.iter()
+                    .find(|b| b.get("id").and_then(Value::as_str) == Some(id))
+            })
+            .cloned()
+        else {
+            return;
+        };
+        bucket["entity_order"] = json!([]);
+        if let Some(bs) = self.doc.get_mut("buckets").and_then(Value::as_array_mut) {
+            bs.push(bucket);
+        } else if let Some(o) = self.doc.as_object_mut() {
+            o.insert("buckets".into(), json!([bucket]));
+        }
+    }
+
+    /// The ids of the types Studio adds to every model.
+    pub fn studio_type_ids() -> Vec<String> {
+        studio_types()
+            .iter()
+            .filter_map(|e| e.get("id").and_then(Value::as_str).map(str::to_owned))
+            .collect()
+    }
+
+    /// Add the Studio types this model lacks, each in its bucket after the
+    /// type it names in `after`. Answers the ids added.
+    pub fn add_studio_types(&mut self) -> Vec<String> {
+        let mut added = Vec::new();
+        for mut entity in studio_types() {
+            let Some(id) = entity.get("id").and_then(Value::as_str).map(str::to_owned) else {
+                continue;
+            };
+            if self.has_entity(&id) {
+                continue;
+            }
+            let after = entity
+                .as_object_mut()
+                .and_then(|o| o.remove("after"))
+                .and_then(|v| v.as_str().map(str::to_owned));
+            let bucket = entity
+                .get("bucket")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            // A model without the bucket gets it from the seed, or the type
+            // would sit in no group of the editor.
+            if let Some(id) = &bucket {
+                self.adopt_bucket(id);
+            }
+            let Some(entities) = self.doc.get_mut("entities").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            entities.push(entity);
+            if let Some(order) = self
+                .doc
+                .get_mut("buckets")
+                .and_then(Value::as_array_mut)
+                .and_then(|bs| {
+                    bs.iter_mut()
+                        .find(|b| b.get("id").and_then(Value::as_str) == bucket.as_deref())
+                })
+                .and_then(|b| b.get_mut("entity_order"))
+                .and_then(Value::as_array_mut)
+            {
+                let at = after
+                    .and_then(|a| order.iter().position(|v| v.as_str() == Some(a.as_str())))
+                    .map_or(order.len(), |i| i + 1);
+                order.insert(at, Value::String(id.clone()));
+            }
+            added.push(id);
+        }
+        added
     }
 
     /// Build an ontology from an uploaded document — the same domain-entity
@@ -1368,6 +1474,46 @@ impl std::error::Error for OntologyError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn studio_s_own_types_join_a_model_that_lacks_them_once() {
+        let seeded = Ontology::load();
+        assert!(
+            seeded.has_entity("workspace"),
+            "the seed carries Studio's types"
+        );
+
+        let core: Value = serde_json::from_str(ONTOLOGY_JSON).unwrap();
+        let mut imported = Ontology::from_value(core).unwrap();
+        assert!(!imported.has_entity("workspace"));
+        assert_eq!(imported.add_studio_types(), vec!["workspace".to_string()]);
+        assert!(imported.has_entity("workspace"));
+        let order = imported.doc["buckets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["id"] == "planning")
+            .unwrap()["entity_order"]
+            .clone();
+        let at = |id: &str| order.as_array().unwrap().iter().position(|v| v == id);
+        assert_eq!(
+            at("workspace"),
+            at("project").map(|p| p + 1),
+            "after project"
+        );
+        assert!(imported.add_studio_types().is_empty(), "added once");
+    }
+
+    #[test]
+    fn a_model_s_own_workspace_type_is_kept() {
+        let mut doc: Value = serde_json::from_str(ONTOLOGY_JSON).unwrap();
+        doc["entities"].as_array_mut().unwrap().push(json!({
+            "id": "workspace", "bucket": "planning", "name": "Team space", "properties": []
+        }));
+        let mut model = Ontology::from_value(doc).unwrap();
+        assert!(model.add_studio_types().is_empty());
+        assert_eq!(model.entity("workspace").unwrap()["name"], "Team space");
+    }
 
     #[test]
     fn the_slice_loads_with_its_entities() {

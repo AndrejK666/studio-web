@@ -421,8 +421,8 @@ mod tests {
         s.add_type(
             &ctx(),
             EntitySpec {
-                id: "workspace".to_string(),
-                name: "Workspace".to_string(),
+                id: "team-space".to_string(),
+                name: "Team space".to_string(),
                 extends: Some("managed-object".to_string()),
                 ..Default::default()
             },
@@ -431,7 +431,7 @@ mod tests {
         .unwrap();
         s.add_field(
             &ctx(),
-            "workspace",
+            "team-space",
             FieldSpec {
                 name: "cost_center".to_string(),
                 type_name: "string".to_string(),
@@ -444,19 +444,19 @@ mod tests {
         run(
             &s,
             &ctx(),
-            ops(json!([{"op": "upsert", "type": "workspace", "key": "w", "value": {"name": "Labs", "cost_center": "CC-7"}}])),
+            ops(json!([{"op": "upsert", "type": "team-space", "key": "w", "value": {"name": "Labs", "cost_center": "CC-7"}}])),
             ValidateMode::Warn,
         )
         .await
         .unwrap_or_else(|e| panic!("{e:?}"));
         let q = Query {
-            type_ref: "workspace".to_string(),
+            type_ref: "team-space".to_string(),
             selection: serde_json::from_value(json!({"where": {"cost_center": {"_eq": "CC-7"}}}))
                 .unwrap(),
             ..Default::default()
         };
         assert_eq!(s.query(&ctx(), &q).await.unwrap().rows.total, 1);
-        for bad in ["Workspace", "2nd", "work_space", "managed-object"] {
+        for bad in ["Team space", "2nd", "work_space", "managed-object"] {
             let e = s
                 .add_type(
                     &ctx(),

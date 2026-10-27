@@ -740,15 +740,33 @@ impl DomainModelService {
     /// the active ontology and registering its types. This is what the frontend
     /// upload posts — the model is loaded through the UI rather than only from
     /// the embedded default. Idempotent per type; new types are added.
+    /// Add the types Studio's own screens need to a stored model that lacks
+    /// them; a model on the seed has them already. Answers the ids added.
+    pub async fn ensure_studio_types(&self, ctx: &SecurityContext) -> anyhow::Result<usize> {
+        let model = self.model_current(ctx).await?;
+        if Ontology::studio_type_ids()
+            .iter()
+            .all(|id| model.has_entity(id))
+        {
+            return Ok(0);
+        }
+        self.edit_entities(ctx, "studio-types", "take in Studio's own types", |next| {
+            Ok(next.add_studio_types())
+        })
+        .await
+    }
+
     pub async fn import_model(
         &self,
         ctx: &SecurityContext,
         doc: Value,
     ) -> anyhow::Result<ImportSummary> {
         let mut ontology = Ontology::from_value(doc).map_err(|e| anyhow::anyhow!("{e}"))?;
-        // An import replaces what people defined, never what gears keep.
+        // An import replaces what people defined, never what gears keep, nor
+        // the types Studio's own screens read.
         let current = self.model_current(ctx).await?;
         ontology.keep_held_from(&current);
+        ontology.add_studio_types();
         let summary = ImportSummary {
             entities: ontology.entities().len() as u64,
             buckets: ontology.bucket_count() as u64,
@@ -3336,7 +3354,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(doc["model"], "tiny");
-        assert_eq!(doc["entities"].as_array().unwrap().len(), 1);
+        // The imported type, and the one Studio's own screens need.
+        let ids: Vec<&str> = doc["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .collect();
+        assert_eq!(ids, ["widget", "workspace"]);
         assert!(doc.get("entity_ids").is_none());
         assert!(doc.get("version").is_none());
     }
