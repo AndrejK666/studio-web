@@ -31,6 +31,9 @@ pub use super::driver::{
     RemoteFileList, RemoteIssue, RemotePullRequest, RemoteRelease, RemoteWorkflowJob,
     RemoteWorkflowRun,
 };
+/// What another gear's test needs to stand in for a provider.
+#[cfg(test)]
+pub use super::driver::{ConnectorCategory, DriverIdentity};
 pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
 pub use super::kubernetes::ClusterAccess;
 pub use super::references::{Mention, NumberRef, Relation, find as find_references};
