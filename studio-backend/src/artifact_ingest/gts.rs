@@ -529,6 +529,28 @@ pub fn repo_node(
     }
 }
 
+/// The repository node a sync writes as it starts: [`repo_node`], carrying
+/// over whatever `prior` — the node as the last sync left it — says beyond
+/// that. So `synced_at` and the counts of the last finished sync stay while a
+/// sync runs and after one that fails; only [`repo_synced_node`], written
+/// when a sync finishes, moves them on.
+pub fn repo_node_keeping(
+    scope_key: &str,
+    connector_id: &str,
+    provider: &str,
+    repo_full_path: &str,
+    prior: Option<&Value>,
+) -> GtsNode {
+    let mut node = repo_node(scope_key, connector_id, provider, repo_full_path);
+    if let (Some(obj), Some(prior)) = (node.value.as_object_mut(), prior.and_then(Value::as_object))
+    {
+        for (key, value) in prior {
+            obj.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+    }
+    node
+}
+
 /// What a completed sync pulled for one repository — recorded on the repo node
 /// so a reader can tell a never-synced source from a synced one without
 /// counting its children.
