@@ -22,6 +22,7 @@ import {
   graphQuery,
   labelField,
   pageQuery,
+  PageCursors,
   problems,
   relationLabel,
   relationsOf,
@@ -220,15 +221,18 @@ export function ViewTable({ token, spec }: { token: string; spec: ViewSpec }) {
   // The view's type and every type it includes: a change to any of them
   // re-reads the page, as does a change to the model its columns come from.
   const revision = useDomainRevision([spec.type, ...Object.values(rels)], { onModel: true });
+  const cursors = useMemo(() => new PageCursors(), []);
   const load = useCallback(
     async (req: PageRequest) => {
-      const res = await runQuery(token, pageQuery(spec, req));
+      const q = pageQuery(spec, req);
+      const res = await runQuery(token, cursors.place(q));
+      cursors.note(q, res.items.length, res.next_cursor);
       const said = [...res.warnings];
       if (!res.complete) said.push("The type has more objects than one query reads; this list covers the first 5,000.");
       setNotes(said);
       return { items: res.items, total: res.total };
     },
-    [token, spec],
+    [token, spec, cursors],
   );
 
   return (

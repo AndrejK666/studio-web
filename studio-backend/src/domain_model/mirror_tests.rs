@@ -297,6 +297,89 @@ async fn orders_and_pages_answer_the_same() {
     }
 }
 
+/// Every row once, in the order of the whole listing, page by page.
+async fn walk(
+    s: &DomainModelService,
+    ctx: &SecurityContext,
+    ty: &str,
+    body: &Value,
+) -> Vec<String> {
+    let mut q = query(ty, body.clone());
+    let mut ids = Vec::new();
+    loop {
+        let out = s.query(ctx, &q).await.unwrap_or_else(|e| panic!("{e:?}"));
+        ids.extend(out.rows.items.iter().map(|r| r.id.clone()));
+        match out.next_cursor {
+            Some(c) => q.cursor = Some(c),
+            None => return ids,
+        }
+    }
+}
+
+#[tokio::test]
+async fn cursors_walk_the_same_pages_from_postgres_as_from_the_graph() {
+    let p = seeded(0xd006).await;
+    let no_text_score = json!({"_not": {"score": {"_eq": "unknown"}}});
+    for (order, filter) in [
+        (json!([{"field": "title"}]), json!({})),
+        (json!([{"field": "title", "direction": "desc"}]), json!({})),
+        (
+            json!([{"field": "impact"}, {"field": "title", "direction": "desc"}]),
+            json!({}),
+        ),
+        // Absent and null scores sit last both ways; a page boundary on them
+        // has to find what follows.
+        (json!([{"field": "score"}]), no_text_score.clone()),
+        (
+            json!([{"field": "score", "direction": "desc"}]),
+            no_text_score.clone(),
+        ),
+        (
+            json!([{"field": "status", "direction": "desc"}, {"field": "score"}]),
+            no_text_score,
+        ),
+        (json!([]), json!({})),
+    ] {
+        let whole = json!({"where": filter, "order_by": order, "limit": 200});
+        let (g, s) = p.both("risk", whole.clone()).await;
+        let expected: Vec<String> = s.rows.items.iter().map(|r| r.id.clone()).collect();
+        assert_eq!(
+            expected,
+            g.rows
+                .items
+                .iter()
+                .map(|r| r.id.clone())
+                .collect::<Vec<_>>(),
+            "{whole}"
+        );
+        for limit in [1, 2, 3] {
+            let paged = json!({"where": filter, "order_by": order, "limit": limit});
+            assert_eq!(
+                walk(&p.graph, &p.ctx, "risk", &paged).await,
+                expected,
+                "graph {paged}"
+            );
+            assert_eq!(
+                walk(&p.sql, &p.ctx, "risk", &paged).await,
+                expected,
+                "sql {paged}"
+            );
+        }
+    }
+    // A cursor from one executor reads on in the other: the read model can
+    // fill between two pages.
+    let body = json!({"order_by": [{"field": "title"}], "limit": 3});
+    let first = p
+        .graph
+        .query(&p.ctx, &query("risk", body.clone()))
+        .await
+        .unwrap();
+    let mut q = query("risk", body);
+    q.cursor = first.next_cursor;
+    let rest = p.sql.query(&p.ctx, &q).await.unwrap();
+    assert_eq!(names(&shape(&rest))[0], "Late vendor");
+}
+
 #[tokio::test]
 async fn relations_both_ways_and_nested_answer_the_same() {
     let p = seeded(0xd003).await;

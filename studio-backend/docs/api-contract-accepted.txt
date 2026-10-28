@@ -541,6 +541,7 @@ request	POST /studio-domain-model/v1/objects	validate	String	optional
 request	POST /studio-domain-model/v1/objects	value	Value	required
 request	POST /studio-domain-model/v1/query	aggregate	{}	optional
 request	POST /studio-domain-model/v1/query	aggregate.group_by	Vec<String>	optional
+request	POST /studio-domain-model/v1/query	cursor	String	optional
 request	POST /studio-domain-model/v1/query	fields	Vec<String>	optional
 request	POST /studio-domain-model/v1/query	include	Value	optional
 request	POST /studio-domain-model/v1/query	limit	usize	optional
@@ -4389,6 +4390,7 @@ response	POST /studio-domain-model/v1/query	groups	Vec<{}>	optional
 response	POST /studio-domain-model/v1/query	groups.count	u64	optional
 response	POST /studio-domain-model/v1/query	groups.key	Vec<Value>	optional
 response	POST /studio-domain-model/v1/query	items	Vec<Value>	always
+response	POST /studio-domain-model/v1/query	next_cursor	String	optional
 response	POST /studio-domain-model/v1/query	source	String	always
 response	POST /studio-domain-model/v1/query	total	u32	always
 response	POST /studio-domain-model/v1/query	warnings	Vec<String>	always

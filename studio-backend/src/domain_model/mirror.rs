@@ -367,10 +367,12 @@ impl DomainMirror {
     }
 
     /// One page of a query's root, and how many match across every page.
+    /// `after` is the cursor's condition; it narrows the page, not the count.
     pub async fn root(
         &self,
         tenant: Uuid,
         q: &RootSelect,
+        after: Option<Expr>,
         offset: u64,
         limit: u64,
     ) -> anyhow::Result<(Vec<ObjectNode>, u64)> {
@@ -383,10 +385,14 @@ impl DomainMirror {
             .filter(cond.clone())
             .count(&conn)
             .await?;
+        let page = match after {
+            Some(a) => cond.add(a),
+            None => cond,
+        };
         let mut select = object::Entity::find()
             .secure()
             .scope_with(&scope)
-            .filter(cond);
+            .filter(page);
         for (expr, order) in &q.order {
             select = select.order_by(expr.clone(), order.clone());
         }

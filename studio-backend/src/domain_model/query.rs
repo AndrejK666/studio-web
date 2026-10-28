@@ -16,7 +16,7 @@
 //! Two executors answer the same plan (ADR-0051):
 //!
 //! * **SQL over the read model** ([`super::mirror`]), once the tenant's mirror
-//!   is filled: `where`, `order_by`, `total`, `offset`, `limit` and
+//!   is filled: `where`, `order_by`, `total`, the page and
 //!   `aggregate` run in Postgres (see [`sql`]), and each relation is one
 //!   indexed read per level. No bound on the size of a type.
 //! * **The graph**, while the mirror fills or where there is none: a type is
@@ -27,6 +27,12 @@
 //! A relation is followed from its source, or with `~name` from its target
 //! back to its source. Each edge carries the declared relation it is, so two
 //! relations of one verb do not answer for each other.
+//!
+//! Pages go by cursor: an answer with more rows after it carries
+//! `next_cursor`, the last row's sort values and id, and the next request
+//! sends it back as `cursor`. graph-storage pages only that way and will not
+//! add offsets, so a query that pages by cursor can move onto the graph when
+//! the read model goes. `offset` still works while screens move over.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -123,6 +129,9 @@ impl Query {
             .remove("offset")
             .and_then(|v| v.as_u64())
             .map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+        let cursor = obj
+            .remove("cursor")
+            .and_then(|v| v.as_str().map(str::to_string));
         let aggregate = match obj.remove("aggregate") {
             None | Some(Value::Null) => None,
             Some(a) => Some(serde_json::from_value(a).map_err(|e| format!("`aggregate`: {e}"))?),
@@ -132,6 +141,7 @@ impl Query {
             type_ref,
             scope,
             offset,
+            cursor,
             selection,
             aggregate,
         })
@@ -153,6 +163,8 @@ pub struct Query {
     /// The workspace/project scope objects were created in, as on `GET /objects`.
     pub scope: Option<String>,
     pub offset: Option<usize>,
+    /// Where the previous page ended: its `next_cursor`.
+    pub cursor: Option<String>,
     pub selection: Selection,
     /// Groups and their counts beside the rows.
     pub aggregate: Option<Aggregate>,
@@ -187,6 +199,9 @@ pub struct Outcome {
     pub warnings: Vec<String>,
     /// Which executor answered: `read_model` or `graph`.
     pub source: &'static str,
+    /// What to send as `cursor` for the rows after these; `None` on the last
+    /// page.
+    pub next_cursor: Option<String>,
 }
 
 impl Row {
@@ -627,6 +642,46 @@ fn plan(
 
 // ── Execution ─────────────────────────────────────────────────────────────
 
+/// The values an object sorts by, one per `order_by` key; `None` where absent.
+fn sort_values<'a>(
+    node: &'a ObjectNode,
+    order_by: &[(Vec<String>, Direction)],
+    id: &'a Value,
+) -> Vec<Option<&'a Value>> {
+    order_by
+        .iter()
+        .map(|(path, _)| lookup(node, path, id))
+        .collect()
+}
+
+/// Two rows in the order a query asks for: its keys in turn, absent last
+/// whichever way a key runs, then the id, so a page is stable.
+fn by_order(
+    order_by: &[(Vec<String>, Direction)],
+    (a, a_id): (&[Option<&Value>], &str),
+    (b, b_id): (&[Option<&Value>], &str),
+) -> Ordering {
+    for ((_, dir), (x, y)) in order_by.iter().zip(a.iter().zip(b)) {
+        let ord = match (x, y) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => return Ordering::Greater,
+            (Some(_), None) => return Ordering::Less,
+            (Some(x), Some(y)) => {
+                let o = compare(x, y).unwrap_or(Ordering::Equal);
+                if *dir == Direction::Desc {
+                    o.reverse()
+                } else {
+                    o
+                }
+            }
+        };
+        if ord.is_ne() {
+            return ord;
+        }
+    }
+    a_id.cmp(b_id)
+}
+
 /// Filter and order, ties broken by id so a page is stable.
 fn select(nodes: Vec<ObjectNode>, plan: &Plan) -> Vec<ObjectNode> {
     let mut keyed: Vec<(Value, ObjectNode)> = nodes
@@ -635,28 +690,103 @@ fn select(nodes: Vec<ObjectNode>, plan: &Plan) -> Vec<ObjectNode> {
         .filter(|(id, n)| plan.filter.as_ref().is_none_or(|e| eval(e, n, id)))
         .collect();
     keyed.sort_by(|(ia, a), (ib, b)| {
-        for (path, dir) in &plan.order_by {
-            let ord = match (lookup(a, path, ia), lookup(b, path, ib)) {
-                (None, None) => Ordering::Equal,
-                // Absent last, whichever way the column runs.
-                (None, Some(_)) => return Ordering::Greater,
-                (Some(_), None) => return Ordering::Less,
-                (Some(x), Some(y)) => {
-                    let o = compare(x, y).unwrap_or(Ordering::Equal);
-                    if *dir == Direction::Desc {
-                        o.reverse()
-                    } else {
-                        o
-                    }
-                }
-            };
-            if ord.is_ne() {
-                return ord;
-            }
-        }
-        a.instance_id.cmp(&b.instance_id)
+        by_order(
+            &plan.order_by,
+            (&sort_values(a, &plan.order_by, ia), &a.instance_id),
+            (&sort_values(b, &plan.order_by, ib), &b.instance_id),
+        )
     });
     keyed.into_iter().map(|(_, n)| n).collect()
+}
+
+// ── Cursors ───────────────────────────────────────────────────────────────
+
+/// Where a page ended: the last row's sort values and id. It travels with a
+/// digest of the query it came from, because sent with another `where` or
+/// `order_by` it would name a place that order does not have.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Cursor {
+    pub keys: Vec<Option<Value>>,
+    pub id: String,
+}
+
+/// What a cursor is bound to: the type, the scope, the filter and the order.
+/// Not the limit, so a client may change its page size between pages.
+fn binding(entity: &str, q: &Query, order_by: &[(Vec<String>, Direction)]) -> String {
+    use sha2::{Digest, Sha256};
+    let order: Vec<Value> = order_by
+        .iter()
+        .map(|(path, dir)| json!([path.join("."), *dir == Direction::Desc]))
+        .collect();
+    let of = json!({
+        "type": entity,
+        "scope": q.scope,
+        "where": q.selection.filter,
+        "order_by": order,
+    });
+    hex::encode(&Sha256::digest(of.to_string().as_bytes())[..8])
+}
+
+impl Cursor {
+    /// The place right after `node`.
+    fn at(node: &ObjectNode, order_by: &[(Vec<String>, Direction)]) -> Self {
+        let id = Value::String(node.instance_id.clone());
+        Self {
+            keys: sort_values(node, order_by, &id)
+                .into_iter()
+                .map(|v| v.cloned())
+                .collect(),
+            id: node.instance_id.clone(),
+        }
+    }
+
+    fn encode(&self, bound: &str) -> String {
+        use base64::Engine as _;
+        let body = json!({ "q": bound, "k": self.keys, "id": self.id });
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(body.to_string())
+    }
+
+    fn decode(token: &str, bound: &str, keys: usize) -> Result<Self, QueryError> {
+        use base64::Engine as _;
+        let refused = || {
+            invalid(
+                "`cursor` is not one this query gave out: send back the `next_cursor` \
+                 of a query with the same `type`, `project_id`, `where` and `order_by`",
+            )
+        };
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(token.trim())
+            .map_err(|_| refused())?;
+        let body: Value = serde_json::from_slice(&bytes).map_err(|_| refused())?;
+        if body.get("q").and_then(Value::as_str) != Some(bound) {
+            return Err(refused());
+        }
+        let values = body
+            .get("k")
+            .and_then(Value::as_array)
+            .filter(|k| k.len() == keys)
+            .ok_or_else(refused)?;
+        let id = body.get("id").and_then(Value::as_str).ok_or_else(refused)?;
+        Ok(Self {
+            keys: values
+                .iter()
+                .map(|v| (!v.is_null()).then(|| v.clone()))
+                .collect(),
+            id: id.to_string(),
+        })
+    }
+
+    /// True when `node` comes after this place in the query's order.
+    fn is_before(&self, node: &ObjectNode, order_by: &[(Vec<String>, Direction)]) -> bool {
+        let id = Value::String(node.instance_id.clone());
+        let here: Vec<Option<&Value>> = self.keys.iter().map(Option::as_ref).collect();
+        by_order(
+            order_by,
+            (&sort_values(node, order_by, &id), &node.instance_id),
+            (&here, &self.id),
+        )
+        .is_gt()
+    }
 }
 
 fn row(ontology: &Ontology, node: ObjectNode, plan: &Plan) -> Row {
@@ -936,6 +1066,27 @@ async fn run_with(
     let group_by = group_paths(ontology, &entity, q.aggregate.as_ref())?;
     let scope = q.scope.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let type_ids = vec![gts::node_type_id(&entity)];
+    if q.cursor.is_some() && q.offset.is_some_and(|o| o > 0) {
+        return Err(invalid(
+            "send `cursor` or `offset`, not both: they page differently",
+        ));
+    }
+    let bound = binding(&entity, q, &plan.order_by);
+    let after = q
+        .cursor
+        .as_deref()
+        .map(|c| Cursor::decode(c, &bound, plan.order_by.len()))
+        .transpose()?;
+    // A page reads one row past its limit: if it comes back, there is a next.
+    let next_of = |page: &mut Vec<ObjectNode>| {
+        (page.len() > plan.limit)
+            .then(|| {
+                page.truncate(plan.limit);
+                page.last()
+                    .map(|n| Cursor::at(n, &plan.order_by).encode(&bound))
+            })
+            .flatten()
+    };
 
     if let Some(mirror) = store.read_model(ctx, ontology).await {
         let tenant = ctx.subject_tenant_id();
@@ -960,9 +1111,13 @@ async fn run_with(
             owners,
         };
         let offset = u64::try_from(q.offset.unwrap_or(0)).unwrap_or(u64::MAX);
-        let (nodes, total) = mirror
-            .root(tenant, &root, offset, plan.limit as u64)
+        let past = after
+            .as_ref()
+            .map(|c| sql::after(&plan.order_by, &c.keys, &c.id));
+        let (mut nodes, total) = mirror
+            .root(tenant, &root, past, offset, plan.limit as u64 + 1)
             .await?;
+        let next_cursor = next_of(&mut nodes);
         let groups = match &group_by {
             Some(paths) => Some(sorted(
                 mirror.groups(tenant, &root, sql::group_key(paths)).await?,
@@ -980,6 +1135,7 @@ async fn run_with(
             groups,
             warnings,
             source: "read_model",
+            next_cursor,
         });
     }
 
@@ -996,12 +1152,20 @@ async fn run_with(
     let matched = select(found, &plan);
     let total = matched.len();
     let groups = group_by.as_deref().map(|paths| groups_of(&matched, paths));
-    let mut rows: Vec<Row> = matched
+    let start = match &after {
+        Some(c) => matched
+            .iter()
+            .position(|n| c.is_before(n, &plan.order_by))
+            .unwrap_or(total),
+        None => q.offset.unwrap_or(0),
+    };
+    let mut page: Vec<ObjectNode> = matched
         .into_iter()
-        .skip(q.offset.unwrap_or(0))
-        .take(plan.limit)
-        .map(|n| row(ontology, n, &plan))
+        .skip(start)
+        .take(plan.limit + 1)
         .collect();
+    let next_cursor = next_of(&mut page);
+    let mut rows: Vec<Row> = page.into_iter().map(|n| row(ontology, n, &plan)).collect();
     expand(
         &ThroughStore(store),
         ctx,
@@ -1020,6 +1184,7 @@ async fn run_with(
         groups,
         warnings,
         source: "graph",
+        next_cursor,
     })
 }
 
@@ -1212,6 +1377,63 @@ mod tests {
         assert_eq!(out.rows.items.len(), 1);
         assert_eq!(out.rows.items[0].value, json!({"name": "Gemini"}));
         assert_eq!(out.rows.items[0].entity, "project");
+    }
+
+    #[tokio::test]
+    async fn a_cursor_walks_every_page_once_and_ends() {
+        let s = fixture().await;
+        // `started_at` is absent on Mercury: it comes last both ways, and a
+        // cursor that stops on it still finds what follows.
+        for dir in ["asc", "desc"] {
+            let body = json!({"order_by": [{"field": "started_at", "direction": dir}], "limit": 1});
+            let whole = s
+                .query(
+                    &ctx(),
+                    &query("project", json!({"order_by": body["order_by"]})),
+                )
+                .await
+                .unwrap();
+            let mut seen = Vec::new();
+            let mut q = query("project", body.clone());
+            loop {
+                let out = s.query(&ctx(), &q).await.unwrap();
+                assert_eq!(out.rows.total, 3);
+                seen.extend(names(&out.rows));
+                match out.next_cursor {
+                    Some(c) => q.cursor = Some(c),
+                    None => break,
+                }
+            }
+            assert_eq!(seen, names(&whole.rows), "{dir}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cursor_belongs_to_its_query() {
+        let s = fixture().await;
+        let q = query(
+            "project",
+            json!({"order_by": [{"field": "name"}], "limit": 1}),
+        );
+        let cursor = s.query(&ctx(), &q).await.unwrap().next_cursor.unwrap();
+
+        let mut other = query(
+            "project",
+            json!({"where": {"status": {"_eq": "active"}}, "order_by": [{"field": "name"}], "limit": 1}),
+        );
+        other.cursor = Some(cursor.clone());
+        let e = s.query(&ctx(), &other).await.unwrap_err().to_string();
+        assert!(e.contains("not one this query gave out"), "{e}");
+
+        let mut both = q.clone();
+        both.cursor = Some(cursor);
+        both.offset = Some(1);
+        let e = s.query(&ctx(), &both).await.unwrap_err().to_string();
+        assert!(e.contains("not both"), "{e}");
+
+        let mut garbage = q;
+        garbage.cursor = Some("not-a-cursor".to_string());
+        assert!(s.query(&ctx(), &garbage).await.is_err());
     }
 
     #[tokio::test]

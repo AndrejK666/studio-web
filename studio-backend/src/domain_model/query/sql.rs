@@ -242,6 +242,93 @@ pub(super) fn order(keys: &[(Vec<String>, Direction)]) -> Vec<(SqlExpr, Order)> 
     out
 }
 
+/// The rows after a cursor, in the order [`order`] and the id tie-break give.
+///
+/// Each key sorts as four columns: whether it is absent (ascending), then its
+/// number, text and boolean reading in the key's direction, where Postgres puts
+/// a column's NULLs last ascending and first descending. A row is after the
+/// cursor when, at the first column where they differ, it is on the far side:
+/// the usual keyset expansion, `c1 > v1 OR (c1 = v1 AND c2 > v2) OR …`, with
+/// those NULL placements spelled out because `>` on a NULL is never true.
+pub(super) fn after(keys: &[(Vec<String>, Direction)], at: &[Option<Value>], id: &str) -> SqlExpr {
+    let mut sql = Sql::default();
+    // (column, its value at the cursor, descending)
+    let mut cols: Vec<(String, Option<SqlValue>, bool)> = Vec::new();
+    for ((path, dir), value) in keys.iter().zip(at) {
+        let v = sql.value_at(path);
+        let desc = *dir == Direction::Desc;
+        cols.push((
+            format!("(CASE WHEN jsonb_typeof({v}) IS NULL OR jsonb_typeof({v}) = 'null' THEN 1 ELSE 0 END)"),
+            Some(SqlValue::Int(Some(i32::from(value.is_none())))),
+            false,
+        ));
+        let (number, text, flag) = match value {
+            Some(Value::Number(n)) => (n.as_f64().map(|f| SqlValue::Double(Some(f))), None, None),
+            Some(Value::String(s)) => (None, Some(SqlValue::String(Some(s.clone()))), None),
+            Some(Value::Bool(b)) => (None, None, Some(SqlValue::Bool(Some(*b)))),
+            _ => (None, None, None),
+        };
+        cols.push((
+            format!("(CASE WHEN jsonb_typeof({v}) = 'number' THEN ({v} #>> '{{}}')::float8 END)"),
+            number,
+            desc,
+        ));
+        cols.push((
+            format!(
+                "(CASE WHEN jsonb_typeof({v}) = 'string' THEN ({v} #>> '{{}}') COLLATE \"C\" END)"
+            ),
+            text,
+            desc,
+        ));
+        cols.push((
+            format!("(CASE WHEN jsonb_typeof({v}) = 'boolean' THEN ({v} #>> '{{}}')::boolean END)"),
+            flag,
+            desc,
+        ));
+    }
+    cols.push((
+        "instance_id".to_string(),
+        Some(SqlValue::String(Some(id.to_string()))),
+        false,
+    ));
+
+    let mut either = Vec::new();
+    for (i, (col, value, desc)) in cols.iter().enumerate() {
+        let beyond = match (value, desc) {
+            // Ascending, NULLs come last: nothing is past a NULL.
+            (None, false) => continue,
+            // Descending, NULLs come first: every value is past a NULL.
+            (None, true) => format!("{col} IS NOT NULL"),
+            (Some(v), false) => {
+                let p = sql.param(v.clone());
+                format!("({col} > {p} OR {col} IS NULL)")
+            }
+            (Some(v), true) => {
+                let p = sql.param(v.clone());
+                format!("{col} < {p}")
+            }
+        };
+        let mut all: Vec<String> = cols[..i]
+            .iter()
+            .map(|(c, v, _)| match v {
+                Some(v) => {
+                    let p = sql.param(v.clone());
+                    format!("{c} = {p}")
+                }
+                None => format!("{c} IS NULL"),
+            })
+            .collect();
+        all.push(beyond);
+        either.push(format!("({})", all.join(" AND ")));
+    }
+    let text = if either.is_empty() {
+        "FALSE".to_string()
+    } else {
+        format!("({})", either.join(" OR "))
+    };
+    sql.done(text)
+}
+
 /// The grouping key of an aggregate: the grouped values as one JSON array,
 /// `null` where a field is absent.
 pub(super) fn group_key(paths: &[Vec<String>]) -> SqlExpr {

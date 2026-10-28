@@ -352,7 +352,7 @@ not among them (the platform pages by cursor), so `/query` moves to cursors.
 | Where a read is answered | The gear reads the graph and filters in memory | Postgres answers by index; the graph answers search and deep traversal |
 | Size | 5,000 objects of a type, then `complete: false` | No cap; `complete` always true |
 | Filter and order | In memory, over what was read | SQL with casts from the model |
-| Count, offset | Over the first 5,000 | `count(*)`, `OFFSET` |
+| Count, pages | Over the first 5,000 | `count(*)`; pages by cursor (`OFFSET` while screens move) |
 | Relations | Forwards only; one verb mixes relations (`warnings`) | Both directions; the relation name separates them |
 | Aggregates | None | `count` and `group_by` |
 | Access | PDP answer applied to rows in memory | PDP answer as a SQL predicate, at every level |
@@ -396,6 +396,12 @@ What is built (2026-10-26, branch `AndrejK666/domain-read-model`):
 - The catalogue, a project's product, environments and deployments, prices
   and budgets, kit installations, explanations, connections, project types
   and report sources follow (§8a), every type kept by its gear.
+- Cursors (§9, 2026-10-28): an answer with more rows carries `next_cursor`,
+  the last row's sort values and id bound to the query's type, scope, `where`
+  and `order_by`; `cursor` reads on from it in both executors, as a keyset
+  condition in SQL. A cursor from one executor reads on in the other.
+  `offset` stays while screens move; saved views ask the next page by cursor
+  and jump by offset only to a page not read yet (`PageCursors`).
 - Not built: phase 0's measurement, `if_version`; the version check of a
   tenant document is two steps, not one transaction.
 

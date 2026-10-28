@@ -79,7 +79,11 @@ export interface DomainQuery<T extends DomainEntity> extends DomainSelection<T> 
   /** The project (tenant id) the objects belong to. Root type only; included
    *  relations are narrowed by what the caller may read (ADR-0035). */
   project_id?: string;
+  /** Kept while screens move to `cursor`; not with it. */
   offset?: number;
+  /** The previous answer's `next_cursor`, under the same `type`, `project_id`,
+   *  `where` and `order_by`. */
+  cursor?: string;
   /** Counts of the matching objects by up to three fields, answered as `groups`. */
   aggregate?: { group_by: DomainField<T>[] };
 }
@@ -117,6 +121,8 @@ export interface DomainQueryResult<T extends DomainEntity> extends DomainRowSet<
   groups?: { key: unknown[]; count: number }[];
   /** `read_model` once the organization's read model is filled; `graph` before. */
   source: "read_model" | "graph";
+  /** Send as `cursor` for the rows after these; absent on the last page. */
+  next_cursor?: string;
 }
 
 // ── Writing: POST /studio-domain-model/v1/mutate ──────────────────────────

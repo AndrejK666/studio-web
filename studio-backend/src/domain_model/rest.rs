@@ -1380,9 +1380,14 @@ pub struct QueryObjectsRequest {
     #[serde(default)]
     #[schema(value_type = Option<Object>)]
     pub include: Option<Value>,
-    /// Zero-based index of the first row.
+    /// Zero-based index of the first row. Kept while screens move to
+    /// `cursor`; the platform pages by cursor only.
     #[serde(default)]
     pub offset: Option<usize>,
+    /// The previous answer's `next_cursor`: the rows after it, under the same
+    /// `type`, `project_id`, `where` and `order_by`. Not with `offset`.
+    #[serde(default)]
+    pub cursor: Option<String>,
     /// Rows to return, 1..=200, default 50.
     #[serde(default)]
     pub limit: Option<usize>,
@@ -1439,6 +1444,9 @@ pub struct QueryObjectsResponse {
     /// What answered: `read_model` (Postgres) or `graph` (while the read model
     /// fills, or where there is none).
     pub source: String,
+    /// Send as `cursor` for the rows after these; absent on the last page.
+    #[serde(default)]
+    pub next_cursor: Option<String>,
 }
 
 /// A batch of changes to domain objects and their relations, applied in order.
@@ -1545,6 +1553,7 @@ async fn query_objects(
         type_ref: req.type_ref,
         scope: req.project_id,
         offset: req.offset,
+        cursor: req.cursor,
         selection: Selection {
             filter: req.filter,
             order_by,
@@ -1575,6 +1584,7 @@ async fn query_objects(
                 .collect()
         }),
         source: outcome.source.to_string(),
+        next_cursor: outcome.next_cursor,
     }))
 }
 
@@ -1735,7 +1745,9 @@ pub fn register_routes(
             "One request reads a type's objects filtered (`where`, Hasura-style \
              operators), ordered, projected to `fields`, with declared relations \
              followed through `include` (backwards with a leading `~`), nested up to \
-             three levels, and optionally counted by group (`aggregate`). Every field \
+             three levels, and optionally counted by group (`aggregate`). Pages go by \
+             cursor: an answer with more rows carries `next_cursor`, sent back as \
+             `cursor` for the next page (`offset` still works meanwhile). Every field \
              and relation named is checked against the model and a wrong one is a 400 \
              that lists what the type has. Answered in Postgres from the read model once \
              the tenant's is filled (`source: read_model`), with no bound on the type's \
