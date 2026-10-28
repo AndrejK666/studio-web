@@ -1267,7 +1267,10 @@ impl Ontology {
         name: &str,
     ) -> Result<FieldChange, OntologyError> {
         self.refuse_held_field(entity_id, name)?;
-        let index = self.own_property_index(entity_id, name)?;
+        let index = match self.own_tab_index(entity_id, name)? {
+            Some(index) => index,
+            None => self.own_property_index(entity_id, name)?,
+        };
         let entity = self.entity_mut(entity_id)?;
         let before = entity["properties"]
             .as_array_mut()
@@ -1280,6 +1283,37 @@ impl Ontology {
             after: Value::Null,
             entity,
         })
+    }
+
+    /// Where a tab the level declares itself sits: a relation of kind `shows`,
+    /// which goes the way a field does. Its model edge is only drawn from the
+    /// document, never written alone, so the document is all there is to
+    /// change. Studio's own tabs are turned off, not removed: the start-up
+    /// sweep would bring them back.
+    fn own_tab_index(&self, level: &str, name: &str) -> Result<Option<usize>, OntologyError> {
+        let named = |p: &&Value| p.get("name").and_then(Value::as_str) == Some(name);
+        let Some(index) = self
+            .entity(level)
+            .and_then(|e| e.get("properties"))
+            .and_then(Value::as_array)
+            .and_then(|ps| {
+                ps.iter().position(|p| {
+                    named(&p) && p.get("relationType").and_then(Value::as_str) == Some("shows")
+                })
+            })
+        else {
+            return Ok(None);
+        };
+        let studio_s = studio_types().iter().any(|e| {
+            e.get("id").and_then(Value::as_str) == Some(level)
+                && e.get("properties")
+                    .and_then(Value::as_array)
+                    .is_some_and(|ps| ps.iter().any(|p| named(&p)))
+        });
+        if studio_s {
+            return Err(OntologyError::StudioTab(name.to_string()));
+        }
+        Ok(Some(index))
     }
 
     /// A property the entity declares itself, ignoring what it inherits.
@@ -1547,6 +1581,8 @@ pub enum OntologyError {
     },
     /// The field is a relation, which becomes an edge rather than payload.
     RelationProperty(String),
+    /// One of the tabs Studio gives every level: turned off, not removed.
+    StudioTab(String),
     /// A gear writes the field: renaming, retyping or dropping it would break
     /// the gear's records.
     HeldField {
@@ -1577,6 +1613,11 @@ impl std::fmt::Display for OntologyError {
                 f,
                 "`{name}` is a relation, not a payload field: it is stored as a `declares` edge \
                  in the model graph, and removing that edge is not implemented here"
+            ),
+            Self::StudioTab(name) => write!(
+                f,
+                "`{name}` is one of Studio's own tabs: turn it off in the level's tabs \
+                 instead, since Studio would add it back"
             ),
             Self::HeldField { name, gear } => write!(
                 f,
@@ -1693,6 +1734,56 @@ mod tests {
                 .collect();
             assert_eq!(tabs.first(), Some(&first), "{level}: {tabs:?}");
         }
+    }
+
+    #[test]
+    fn an_added_tab_is_removed_like_a_field_and_studio_s_are_not() {
+        let mut model = Ontology::load();
+        let tabs = |m: &Ontology| -> Vec<String> {
+            m.entity("organization").unwrap()["properties"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|p| p["relationType"] == "shows")
+                .filter_map(|p| p["name"].as_str().map(str::to_string))
+                .collect()
+        };
+        assert!(
+            model
+                .add_tab(
+                    "organization",
+                    "repository_file",
+                    "Files",
+                    "repository-file"
+                )
+                .unwrap()
+        );
+        assert!(tabs(&model).contains(&"repository_file".to_string()));
+
+        let change = model
+            .remove_field("organization", "repository_file")
+            .unwrap();
+        assert_eq!(change.before["relationType"], "shows");
+        assert!(!tabs(&model).contains(&"repository_file".to_string()));
+
+        let refused = model.remove_field("organization", "projects").unwrap_err();
+        assert!(matches!(refused, OntologyError::StudioTab(_)), "{refused}");
+        assert!(tabs(&model).contains(&"projects".to_string()));
+
+        // Any other relation is still not a field to drop.
+        let other = model.entity("project").unwrap()["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["extends"] == "edge" && p["relationType"] != "shows")
+            .and_then(|p| p["name"].as_str())
+            .unwrap()
+            .to_string();
+        let refused = model.remove_field("project", &other).unwrap_err();
+        assert!(
+            matches!(refused, OntologyError::RelationProperty(_)),
+            "{refused}"
+        );
     }
 
     #[test]

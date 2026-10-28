@@ -2048,7 +2048,9 @@ pub fn register_routes(
         .description(
             "Adds a relation of kind `shows` from a level's type (organization, \
              workspace, project) to another type: the portal draws it as a tab \
-             of that level listing the target's objects. Removed like any field.",
+             of that level listing the target's objects. Removed like any field \
+             (`DELETE /types/{id}/fields/{name}`); Studio's own tabs are turned off \
+             with `hidden_tabs` instead.",
         )
         .tag("StudioDomainModel")
         .authenticated()
