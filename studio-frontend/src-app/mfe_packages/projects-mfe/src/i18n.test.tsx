@@ -42,7 +42,7 @@ const Sections: React.FC = () => {
   return (
     <>
       <span data-testid="specs">{specs.isLoaded ? specsText('col_document') : ''}</span>
-      <span data-testid="sources">{sources.isLoaded ? sourcesText('placeholder') : ''}</span>
+      <span data-testid="sources">{sources.isLoaded ? sourcesText('connect_source') : ''}</span>
     </>
   );
 };
@@ -85,7 +85,7 @@ describe('screen translation split', () => {
     // Each dictionary is its own import and they settle in either order.
     await waitFor(() => {
       expect(screen.getByTestId('specs').textContent).toBe('Document');
-      expect(screen.getByTestId('sources').textContent).toBe('The sources list is being built.');
+      expect(screen.getByTestId('sources').textContent).toBe('Connect source');
     });
   });
 });

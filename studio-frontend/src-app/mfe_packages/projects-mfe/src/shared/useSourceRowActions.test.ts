@@ -18,12 +18,19 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useAppDispatch: () => dispatch,
   useMfeBridge: () => bridge,
 }));
+// One answer per state of the connections, as the hook's own memo gives.
+const views = new WeakMap<object, object>();
 vi.mock('./useConnections', () => ({
-  useSourceConnections: () => ({
-    ...connections.current,
-    byId: new Map(connections.current.connections.map((entry) => [entry.id, entry])),
-    providerName: (p: string) => `name:${p}`,
-  }),
+  useSourceConnections: () => {
+    if (!views.has(connections.current)) {
+      views.set(connections.current, {
+        ...connections.current,
+        byId: new Map(connections.current.connections.map((entry) => [entry.id, entry])),
+        providerName: (p: string) => `name:${p}`,
+      });
+    }
+    return views.get(connections.current);
+  },
 }));
 vi.mock('../actions/projectsActions', () => ({ announceSection }));
 
@@ -96,4 +103,12 @@ it('says whether the connections were read', () => {
   expect(render().connectionsRead).toBe(false);
   connections.current = { ...connections.current, failed: false, loading: true };
   expect(render().connectionsRead).toBe(false);
+});
+
+it('gives the same actions on every render while nothing they use changes', () => {
+  const hook = renderHook(() => useSourceRowActions('p-1', 'ws-1', 'org-1'));
+  const first = hook.result.current;
+
+  hook.rerender();
+  expect(hook.result.current).toBe(first);
 });

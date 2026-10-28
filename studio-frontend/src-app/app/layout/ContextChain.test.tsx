@@ -30,16 +30,13 @@ vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellTe
 vi.mock('./useScreenLevel', () => ({ useScreenLevel: () => level.value }));
 
 import { ContextChain } from './ContextChain';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 
 // cmdk scrolls the highlighted row into view and measures its list; jsdom has
 // no layout for either.
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
-  globalThis.ResizeObserver ??= class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  } as unknown as typeof ResizeObserver;
+  stubResizeObserver();
 });
 
 describe('ContextChain (the path in the top bar)', () => {

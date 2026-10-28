@@ -14,14 +14,17 @@ export interface ProjectConfigState {
   failed: boolean;
 }
 
+/** One key for every read and invalidation of the config. */
+export function projectConfigQuery(accounts: AccountsApiService, projectId: string) {
+  return accounts.getTenantMetadata<ProjectConfig>({
+    tenantId: projectId,
+    metadataType: PROJECT_CONFIG_TYPE,
+  });
+}
+
 export function useProjectConfig(tenantId: string): ProjectConfigState {
   const accounts = apiRegistry.getService(AccountsApiService);
-  const { data, isLoading, isError } = useApiQuery(
-    accounts.getTenantMetadata<ProjectConfig>({
-      tenantId,
-      metadataType: PROJECT_CONFIG_TYPE,
-    })
-  );
+  const { data, isLoading, isError } = useApiQuery(projectConfigQuery(accounts, tenantId));
 
   return {
     config: data?.value ?? null,

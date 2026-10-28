@@ -191,6 +191,16 @@ export function filterSourceRows(rows: readonly SourceRow[], search: string): So
   return needle ? rows.filter((row) => row.fullPath.toLowerCase().includes(needle)) : [...rows];
 }
 
+const MIN_ACTIVITY_SCALE = 3;
+
+/** The top of every row's sparkline: one scale for the table, whatever page shows. */
+export function activityScale(rows: readonly SourceRow[]): number {
+  return rows.reduce(
+    (top, row) => Math.max(top, ...(row.activity?.days ?? [])),
+    MIN_ACTIVITY_SCALE
+  );
+}
+
 export function sourcesFooter(
   rows: readonly SourceRow[],
   answers: Pick<SourcesAnswers, 'specs' | 'activity'>,

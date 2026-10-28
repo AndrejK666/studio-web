@@ -15,6 +15,7 @@ import {
 } from '@constructor-studio/mfe-shared';
 import { apiRegistry, invalidateQueryCacheForApp, type FrontXApp } from '@gears-frontx/react';
 import { sameRepository } from '../model/projectSources';
+import { projectConfigQuery } from '../shared/useProjectConfig';
 
 /**
  * Reads the project's config fresh, applies `change` to its sources and
@@ -32,10 +33,7 @@ export async function writeProjectSources(
   change: (sources: ProjectSource[]) => ProjectSource[]
 ): Promise<ProjectSource[]> {
   const accounts = apiRegistry.getService(AccountsApiService);
-  const read = accounts.getTenantMetadata<ProjectConfig>({
-    tenantId: projectId,
-    metadataType: PROJECT_CONFIG_TYPE,
-  });
+  const read = projectConfigQuery(accounts, projectId);
   // `null`: never written. What is written then is the sources alone.
   const config = (await read.fetch({ staleTime: 0 }))?.value ?? {};
   const sources = change([...(config.sources ?? [])]);

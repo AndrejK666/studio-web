@@ -7,12 +7,14 @@ import {
 } from '../api/artifactTypes';
 import type { SpecsPerSourceListDto } from '../api/documentTypes';
 import {
+  activityScale,
   buildSourceRows,
   filterSourceRows,
   sourcesFooter,
   type SourceImportLine,
   type SourcesAnswers,
 } from './sourceRows';
+import { sourceRow } from './sourceRows.fixture';
 
 const source = (
   full_path: string,
@@ -295,5 +297,23 @@ describe('the footer', () => {
       openPullRequests: null,
     });
     expect(sourcesFooter(rows, { ...input, specs: { ...SPECS, files_known: false } }, 0).specs).toBeNull();
+  });
+});
+
+describe('the activity scale', () => {
+  const week = (days: number[]) => ({ open: 0, merged: 0, commits: 0, days });
+
+  it("is the busiest day of every row, the rows of other pages included", () => {
+    const rows = [
+      sourceRow({ activity: week([0, 1, 0, 0, 0, 0, 2]) }),
+      sourceRow({ activity: null }),
+      sourceRow({ activity: week([0, 0, 7, 0, 0, 0, 0]) }),
+    ];
+    expect(activityScale(rows)).toBe(7);
+  });
+
+  it('is at least 3, so a single pull request does not fill the cell', () => {
+    expect(activityScale([sourceRow({ activity: week([0, 1, 0, 0, 0, 0, 0]) })])).toBe(3);
+    expect(activityScale([])).toBe(3);
   });
 });
