@@ -198,6 +198,12 @@ jobs:
     defaults:
       run:
         working-directory: studio-backend
+    # Full debuginfo is the bulk of what this job links and caches: it makes
+    # every link slower and the rust-cache entry (2.2 GB) large enough that
+    # branch entries push main's out of the repository's 10 GB. Line tables
+    # keep file:line in a failing test's backtrace, which is all CI reads.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       # Every gear comes from crates.io at the version Cargo.lock pins — no
       # second checkout, and no second place to keep a revision in sync.
@@ -227,11 +233,13 @@ jobs:
       # nor tested here, and its two tests had never run in CI. The feature only
       # adds a module, so this set is a superset of the default one -- one
       # command covers both, and it is also what the compose stack builds for
-      # `backend`.
+      # `backend`. Build and the smoke run take the same set too: on default
+      # features they compiled the crate once more than Test, which reuses
+      # this build's library for its doc tests.
       - name: Lint
         run: cargo clippy --locked --all-targets --features theia-bridge -- -D warnings
       - name: Build
-        run: cargo build --locked
+        run: cargo build --locked --features theia-bridge
       # `backend-bootstrap` is built `--no-default-features`, which nothing else
       # here compiles, so a change could be green above and still fail
       # `docker compose up`. `check` rather than `build`: this is about the code
@@ -244,9 +252,9 @@ jobs:
         run: cargo check --locked --no-default-features
       - name: Test
         run: cargo test --locked --features theia-bridge
-      - name: "Smoke: assembly resolves 13 gears"
+      - name: "Smoke: the assembly resolves its gears"
         run: |
-          cargo run --locked -- --config config/dev.yaml --list-gears | tee gears.txt
+          cargo run --locked --features theia-bridge -- --config config/dev.yaml --list-gears | tee gears.txt
           grep -q 'account-management' gears.txt
 
   # The FrontX-based studio-frontend/ (ADR-0006) is the deployed portal;
