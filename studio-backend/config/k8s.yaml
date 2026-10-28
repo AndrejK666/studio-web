@@ -613,6 +613,16 @@ gears:
       service_account:
         subject: "${STUDIO_SERVICE_SUBJECT:-00000000-0000-4000-8000-00000000057d}"
 
+  # How a person without an organization comes by one (ADR-0051 §2): `open`
+  # creates it at once, `request` asks a platform administrator, `off` leaves
+  # them to be joined or invited. Per environment, from the chart
+  # (`backend.organizations`). A value that does not parse closes creation.
+  # max_owned is unquoted so that unset reads as null, which is no limit.
+  studio-organizations:
+    config:
+      self_service: "${STUDIO_ORG_SELF_SERVICE:-open}"
+      max_owned: ${STUDIO_ORG_MAX_OWNED:-}
+
   studio-credstore-pg:
     database:
       server: "pg_main"
