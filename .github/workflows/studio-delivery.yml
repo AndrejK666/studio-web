@@ -226,6 +226,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: studio-backend
+          # Only main saves. Every branch and PR can restore main's cache, but
+          # their own (1-2 GB each) pushed the repository past its 10 GB limit
+          # and evicted main's, and a cold release build takes ~19 min, not ~6.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format
         run: cargo fmt --check
@@ -684,6 +688,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: studio-backend
+          # Only main saves. Every branch and PR can restore main's cache, but
+          # their own (1-2 GB each) pushed the repository past its 10 GB limit
+          # and evicted main's, and a cold release build takes ~19 min, not ~6.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build (release)
         working-directory: studio-backend
