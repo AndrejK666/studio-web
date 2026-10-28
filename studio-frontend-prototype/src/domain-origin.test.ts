@@ -11,6 +11,7 @@ function model(entities: ModelEntity[], studio: string[]): DomainModel {
     canEdit: true,
     source: "server",
     studioTypes: new Set(studio),
+    gts: { types: {}, relations: {} },
   };
 }
 

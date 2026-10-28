@@ -82,6 +82,8 @@ export interface Link {
   other: string;
   /** Declared on a base of this type rather than on it. */
   inherited: boolean;
+  /** The edge kind it is stored as (`owns`, `references`…). */
+  kind?: string;
 }
 
 /** The relations `id` declares (its own and its bases'), and the ones other
@@ -94,7 +96,7 @@ export function linksOf(model: DomainModel, id: string): { out: Link[]; in: Link
       if (!isRelation(p) || !p.name) continue;
       const other = targetId(model, p as { type?: string; relation?: string });
       if (!other) continue;
-      out.push({ name: p.name, label: p.relationLabel || p.name, other, inherited: owner !== id });
+      out.push({ name: p.name, label: p.relationLabel || p.name, other, inherited: owner !== id, kind: p.relationType });
     }
   }
   const into: Link[] = [];
@@ -104,7 +106,8 @@ export function linksOf(model: DomainModel, id: string): { out: Link[]; in: Link
     for (const p of e.properties ?? []) {
       if (!isRelation(p) || !p.name) continue;
       const other = targetId(model, p as { type?: string; relation?: string });
-      if (other && self.has(other)) into.push({ name: p.name, label: p.relationLabel || p.name, other: e.id, inherited: false });
+      if (other && self.has(other))
+        into.push({ name: p.name, label: p.relationLabel || p.name, other: e.id, inherited: false, kind: p.relationType });
     }
   }
   return { out, in: into };

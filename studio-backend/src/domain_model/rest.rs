@@ -110,6 +110,10 @@ pub struct TypesResponse {
     /// Whether the caller may change the model (`domain.model`, ADR-0035), so a
     /// portal can hide the controls it would be refused.
     pub can_edit_model: bool,
+    /// The GTS ids the types and relation kinds are registered under:
+    /// `{types: {id: {type, stored_as}}, relations: {kind: {type, stored_as}}}`.
+    #[schema(value_type = Object)]
+    pub gts: Value,
 }
 
 /// How many objects of each type the organization holds.
@@ -665,9 +669,11 @@ async fn list_types(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let can_edit_model = may_edit_model(&ctx, &handle).await;
+    let gts = super::gts::catalog_of(&ontology);
     Ok(Json(TypesResponse {
         ontology: with_origins(ontology),
         can_edit_model,
+        gts,
     }))
 }
 

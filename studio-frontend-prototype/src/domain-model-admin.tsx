@@ -188,6 +188,7 @@ export function DomainModelAdmin({ token, query = "" }: { token: string; query?:
               )}
             </div>
             {entity.description && <p className="hint" style={{ margin: 0 }}>{entity.description}</p>}
+            <GtsIds model={model} id={entity.id} />
             {!model.canEdit && (
               <p className="hint">You can read the model. Changing it needs the organization administrator role.</p>
             )}
@@ -658,6 +659,54 @@ function Relations({
   );
 }
 
+/** The GTS ids the type and the edge kinds of its relations are registered
+ *  under, as the server reports them: ours, and the one graph-storage keeps. */
+function GtsIds({ model, id }: { model: ReturnType<typeof useDomainModel>; id: string }) {
+  const type = model.gts.types[id];
+  const kinds = useMemo(() => {
+    const { out, in: into } = linksOf(model, id);
+    return [...new Set([...out, ...into].map((l) => l.kind).filter((k): k is string => !!k))].sort();
+  }, [model, id]);
+  if (!type) return null;
+  return (
+    <details className="dm-gts">
+      <summary>
+        GTS <code>{type.type}</code>
+      </summary>
+      <table className="table" style={{ width: "100%" }}>
+        <thead>
+          <tr>
+            <th>Registered as</th>
+            <th>GTS type</th>
+            <th>Stored in graph-storage as</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>node type</td>
+            <td>
+              <code>{type.type}</code>
+            </td>
+            <td>
+              <code className="hint">{type.stored_as}</code>
+            </td>
+          </tr>
+          {kinds.map((k) => {
+            const edge = model.gts.relations[k];
+            return (
+              <tr key={k}>
+                <td>edge type · {k}</td>
+                <td>{edge ? <code>{edge.type}</code> : "—"}</td>
+                <td>{edge ? <code className="hint">{edge.stored_as}</code> : ""}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </details>
+  );
+}
+
 function LinkList({
   title,
   links,
@@ -684,6 +733,12 @@ function LinkList({
               <button className="dm-link-button" onClick={() => onPick(l.other)}>
                 {model.byId.get(l.other)?.name ?? l.other}
               </button>
+              {l.kind && (
+                <span className="hint" title={model.gts.relations[l.kind]?.type}>
+                  {" "}
+                  · {l.kind}
+                </span>
+              )}
               {l.inherited && <span className="hint"> · inherited</span>}
             </li>
           ))}

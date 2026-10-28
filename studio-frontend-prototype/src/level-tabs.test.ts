@@ -20,6 +20,7 @@ function model(entities: ModelEntity[]): DomainModel {
     canEdit: true,
     source: "server",
     studioTypes: new Set(),
+    gts: { types: {}, relations: {} },
   };
 }
 

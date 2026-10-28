@@ -2405,6 +2405,7 @@ response	GET /studio-domain-model/v1/relations	unresolved.target	String	always
 response	GET /studio-domain-model/v1/type-counts	complete	bool	always
 response	GET /studio-domain-model/v1/type-counts	counts	Value	always
 response	GET /studio-domain-model/v1/types	can_edit_model	bool	always
+response	GET /studio-domain-model/v1/types	gts	Value	always
 response	GET /studio-domain-model/v1/types	ontology	Value	always
 response	GET /studio-domain-model/v1/types/{}	ancestors	Vec<String>	always
 response	GET /studio-domain-model/v1/types/{}	bucket	String	always

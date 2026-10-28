@@ -24,6 +24,7 @@ import { sectionBody, type MirrorSummary, type Plan, type PlanPeople, type PlanS
 import type { DomainEntity } from "./domain-model.gen";
 import type { DomainMutation, DomainMutationResult, DomainQuery, DomainQueryResult } from "./domain-query";
 import type { SpecModelBuildEstimate } from "./build-eta";
+import type { GtsCatalog } from "./domain-runtime";
 
 // Minimal typed client for the studio-backend REST API (/cf prefix).
 // The live OpenAPI contract is /cf/openapi.json, shown grouped by component
@@ -5078,6 +5079,8 @@ export const api = {
       ontology: { entities: unknown[]; buckets?: unknown[] };
       /** Whether this caller may change the model (`domain.model`, ADR-0035). */
       can_edit_model: boolean;
+      /** The GTS ids each type and relation kind is registered under. */
+      gts?: GtsCatalog;
     }>(
       "/studio-domain-model/v1/types",
       token,

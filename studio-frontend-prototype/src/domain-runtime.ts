@@ -69,6 +69,20 @@ export interface DomainModel {
   studioTypes: Set<string>;
   /** Where it came from: the server, or the build's seed while that loads. */
   source: "server" | "seed";
+  /** The GTS ids the server registers each type and relation kind under;
+   *  empty for the seed. */
+  gts: GtsCatalog;
+}
+
+/** One GTS id: ours, and the one graph-storage keeps with its family. */
+export interface GtsId {
+  type: string;
+  stored_as: string;
+}
+
+export interface GtsCatalog {
+  types: Record<string, GtsId>;
+  relations: Record<string, GtsId>;
 }
 
 const isRelation = (p: ModelProperty) => p.extends === "edge" || p.extends === "link";
@@ -100,8 +114,9 @@ function build(
   canEdit: boolean,
   source: DomainModel["source"],
   studioTypes: string[] = [],
+  gts: GtsCatalog = { types: {}, relations: {} },
 ): DomainModel {
-  return { entities, byId: new Map(entities.map((e) => [e.id, e])), buckets, canEdit, source, studioTypes: new Set(studioTypes) };
+  return { entities, byId: new Map(entities.map((e) => [e.id, e])), buckets, canEdit, source, studioTypes: new Set(studioTypes), gts };
 }
 
 /** The entity and every base it extends, nearest first; stops on a cycle. */
@@ -236,6 +251,7 @@ export function reloadDomainModel(token: string): Promise<DomainModel> {
         res.can_edit_model,
         "server",
         (doc.entities ?? []).filter((e) => e.meta?.origin === "studio").map((e) => e.id),
+        res.gts,
       );
       for (const l of listeners) l(current);
       return current;

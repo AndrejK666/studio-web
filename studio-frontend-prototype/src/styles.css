@@ -2856,6 +2856,9 @@ div.dm-block { padding-left: 0; }
 .dm-origin.origin-gear { border-color: color-mix(in oklab, var(--chart-category-teal) 55%, transparent); }
 .dm-origin.origin-upload { border-color: color-mix(in oklab, var(--chart-category-orange, #d97706) 55%, transparent); }
 .dm-origin.origin-organization { border-color: color-mix(in oklab, var(--chart-category-purple, #7c3aed) 55%, transparent); }
+.dm-gts summary { cursor: pointer; font-size: 13px; color: var(--muted-foreground); }
+.dm-gts code { font-size: 12px; word-break: break-all; }
+.dm-gts table { margin-top: 6px; }
 .dm-relations { display: grid; gap: 6px; border-top: 1px solid var(--border); padding-top: 10px; }
 .dm-relations h3 { margin: 0; font-size: 15px; }
 .dm-relations svg text { font-size: 12px; fill: var(--foreground); }
