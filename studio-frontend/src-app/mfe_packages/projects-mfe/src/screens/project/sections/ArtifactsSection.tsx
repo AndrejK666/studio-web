@@ -24,9 +24,11 @@ import { useProjectText } from '../../../i18n';
 import { ARTIFACTS_PAGE_SIZE, useArtifacts } from '../../../shared/useArtifacts';
 import { useArtifactImport, useProjectImport } from '../../../shared/useArtifactImport';
 import { useThemedRoot } from '../../../shared/useThemedRoot';
-import { requestOpenArtifact } from '../../../actions/artifactActions';
+import { ReadFailed, SectionSkeleton } from '../../../components/SectionStates';
+import { requestOpenArtifact, requestOpenDocument } from '../../../actions/artifactActions';
 import { clampOffset, type ArtifactRow } from '../../../model/artifact';
 import type { ArtifactKind } from '../../../api/artifactTypes';
+import { UploadPanel } from '../upload/UploadPanel';
 import { artifactColumns } from './artifactColumns';
 import { ArtifactsTable } from './ArtifactsTable';
 import { notComeThrough, repoImportLine } from './repoImportText';
@@ -79,9 +81,10 @@ SyncNow.displayName = 'SyncNow';
 
 interface ArtifactsSectionProps {
   projectId: string;
+  projectName: string;
 }
 
-export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId }) => {
+export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId, projectName }) => {
   const t = useProjectText();
   const { formatRelative } = useFormatters();
   const importState = useProjectImport(projectId);
@@ -117,7 +120,7 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
     refreshing,
     failed,
     refetch,
-  } = useArtifacts(projectId, { repo: repository, kind, search, offset });
+  } = useArtifacts(projectId, workspace?.id ?? null, { repo: repository, kind, search, offset });
 
   const clamped = clampOffset(offset, total, ARTIFACTS_PAGE_SIZE);
   if (clamped !== offset) setOffset(clamped);
@@ -129,7 +132,10 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
 
   // The shell opens it, not this screen — see `requestOpenArtifact`.
   const onOpen = React.useCallback(
-    (row: ArtifactRow) => requestOpenArtifact(bridge, projectId, row),
+    (row: ArtifactRow) =>
+      row.kind === 'document'
+        ? requestOpenDocument(bridge, projectId, { id: row.id, title: row.name })
+        : requestOpenArtifact(bridge, projectId, row),
     [bridge, projectId]
   );
 
@@ -161,25 +167,15 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
     [t, formatRelative, container, onOpen]
   );
 
-  if (loading) {
-    return (
-      <div className={styles.section}>
-        <Skeleton className={styles.stripSkeleton} />
-        <Skeleton className={styles.tableSkeleton} />
-      </div>
-    );
-  }
+  if (loading) return <SectionSkeleton />;
 
   if (failed) {
     return (
-      <div className={`${styles.section} ${styles.stateBlock}`}>
-        <p className={styles.error} role="alert">
-          {t('artifacts_read_failed')}
-        </p>
-        <Button variant="outline" size="sm" className={styles.retry} onClick={refetch}>
-          {t('artifacts_retry')}
-        </Button>
-      </div>
+      <ReadFailed
+        message={t('artifacts_read_failed')}
+        retryLabel={t('artifacts_retry')}
+        onRetry={refetch}
+      />
     );
   }
   if (projectTotal === 0) {
@@ -196,6 +192,7 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
     const notThrough = importState.repos.filter(notComeThrough);
     return (
       <div className={`${styles.section} ${styles.stateBlock}`}>
+        <UploadPanel projectId={projectId} projectName={projectName} className={styles.upload} />
         <Empty className={styles.empty}>
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -230,6 +227,7 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId })
 
   return (
     <div ref={findThemedRoot} className={styles.section}>
+      <UploadPanel projectId={projectId} projectName={projectName} className={styles.upload} />
       <header className={styles.strip}>
         <p className={styles.totals}>
           {chosen === null ? (

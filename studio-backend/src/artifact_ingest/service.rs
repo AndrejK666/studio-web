@@ -517,9 +517,31 @@ impl IngestService {
             }
         };
 
-        let repo = gts::repo_node(source_scope, connector_id, provider, repo_full_path);
-        let repo_id = repo.instance_id.clone();
-        nodes.push(repo);
+        // The node as the last sync left it: what it says about that sync
+        // stays until this one finishes (`repo_node_keeping`).
+        let repo_id =
+            gts::repo_node(source_scope, connector_id, provider, repo_full_path).instance_id;
+        let prior = match self.graph.list(ctx, Some(gts::REPO_TYPE)).await {
+            Ok(repos) => repos
+                .iter()
+                .find(|n| n.instance_id == repo_id)
+                .map(|n| n.value.clone()),
+            Err(e) => {
+                tracing::warn!(
+                    repo = repo_full_path,
+                    error = %e,
+                    "studio-artifact-ingest: could not read the repository's last sync; it shows as not synced until this one finishes"
+                );
+                None
+            }
+        };
+        nodes.push(gts::repo_node_keeping(
+            source_scope,
+            connector_id,
+            provider,
+            repo_full_path,
+            prior.as_ref(),
+        ));
 
         // How many nodes this sync has stored so far. `nodes` holds only the
         // ones not stored yet: every flush writes them and empties it, so a
@@ -2965,6 +2987,7 @@ impl super::port::BuildRecords for IngestService {
             finished_at: None,
             failure: o.failure.clone(),
             failure_step: o.failure_step.clone(),
+            step: o.step.clone(),
             outputs: o.images.iter().map(|(_, i)| i.clone()).collect(),
             images: o.images.clone(),
             chart_ref: o.chart_ref.clone(),
@@ -3592,6 +3615,102 @@ mod prune_tests {
         nodes.push(stamped(r, project));
         nodes.push(stamped(f, project));
         (repo_id, file_id)
+    }
+
+    /// A provider that lists nothing: the sync fails at its first page.
+    struct Unreachable;
+
+    #[async_trait]
+    impl ConnectorDriver for Unreachable {
+        fn provider(&self) -> &'static str {
+            "unreachable"
+        }
+        fn display_name(&self) -> &'static str {
+            "Unreachable"
+        }
+        fn default_base_url(&self) -> &'static str {
+            "https://unreachable.example.com"
+        }
+        fn category(&self) -> crate::connectors::sdk::ConnectorCategory {
+            crate::connectors::sdk::ConnectorCategory::SourceCode
+        }
+        async fn test(
+            &self,
+            _: &crate::connectors::sdk::ConnectionAuth,
+        ) -> anyhow::Result<crate::connectors::sdk::DriverIdentity> {
+            Err(anyhow!("unreachable"))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_sync_keeps_when_the_last_one_finished_and_what_it_pulled() {
+        let graph = Arc::new(InMemoryGraphStore::default());
+        let mut drivers: HashMap<String, Arc<dyn ConnectorDriver>> = HashMap::new();
+        drivers.insert("unreachable".into(), Arc::new(Unreachable));
+        let svc = IngestService::new(
+            Arc::new(NoSecrets),
+            drivers,
+            graph.clone(),
+            None,
+            None,
+            None,
+        );
+        let last = gts::repo_synced_node(
+            "p1",
+            "conn",
+            "unreachable",
+            "acme/app",
+            "2026-10-20T10:00:00Z",
+            gts::RepoSyncStats {
+                issues: 7,
+                files: 3,
+                ..Default::default()
+            },
+            &[],
+        );
+        let repo_id = last.instance_id.clone();
+        graph
+            .upsert_nodes(&ctx(), &[stamped(last, Some("p1"))])
+            .await
+            .expect("seed");
+
+        let sync = svc
+            .run_sync(
+                &ctx(),
+                "unreachable",
+                None,
+                "conn",
+                "acme/app",
+                None,
+                "token",
+                Some(WS),
+                Some("p1"),
+                None,
+                &SyncReporter::detached(),
+            )
+            .await;
+        assert!(sync.is_err(), "the provider lists nothing");
+
+        let repos = graph
+            .list(&ctx(), Some(gts::REPO_TYPE))
+            .await
+            .expect("list");
+        let repo = repos
+            .iter()
+            .find(|n| n.instance_id == repo_id)
+            .expect("the repository is still there");
+        assert_eq!(repo.value["synced_at"], "2026-10-20T10:00:00Z");
+        assert_eq!(repo.value["issues"], 7);
+        assert_eq!(repo.value["files"], 3);
+        assert_eq!(repo.value["full_path"], "acme/app");
+    }
+
+    #[test]
+    fn a_first_sync_starts_from_the_bare_repository() {
+        let node = gts::repo_node_keeping("p1", "conn", "github", "acme/app", None);
+        let bare = gts::repo_node("p1", "conn", "github", "acme/app");
+        assert_eq!(node.instance_id, bare.instance_id);
+        assert_eq!(node.value, bare.value);
     }
 
     fn service() -> (IngestService, Arc<InMemoryGraphStore>, Arc<Forgetful>) {

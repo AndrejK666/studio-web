@@ -1254,7 +1254,7 @@ The workspace and project level's screens.
 
 ##### Responsibility scope
 
-Screens Projects (`/projects`, workspace level) and the project level's sections: Artifacts (`/projects/artifacts`); Specs (`/projects/specs`) and Sources (`/projects/sources`), placeholders until their lists land (#643); and Overview (`/projects/overview`), Activity (`/projects/activity`), Timeline (`/projects/timeline`), Team (`/projects/team`) and Project settings (`/projects/settings`), which render `PlaceholderSection` until a source exists. Overlays New project (`/projects/new`) and New workspace (`/workspaces/new`).
+Screens Projects (`/projects`, workspace level) and the project level's sections: Artifacts (`/projects/artifacts`); Specs (`/projects/specs`), a placeholder until its list lands (#643); Sources (`/projects/sources`); and Overview (`/projects/overview`), Activity (`/projects/activity`), Timeline (`/projects/timeline`), Team (`/projects/team`) and Project settings (`/projects/settings`), which render `PlaceholderSection` until a source exists. Overlays New project (`/projects/new`) and New workspace (`/workspaces/new`).
 
 ##### Responsibility boundaries
 
