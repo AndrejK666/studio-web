@@ -1,17 +1,25 @@
-// A project's Builds tab (ADR-0045): the CI runs of its repositories, as the
-// artifact sync reads them (phase 1); the builds the IDE ran and reported,
-// in a member's desktop or a session (phase 2); and Build, which starts the
-// project's build workflow in CI, beside Open in the IDE (phase 3). The
-// portal does not build; this is what was built, where and how it went.
+// A project's Builds tab (ADR-0045, ADR-0048 §9): the second step of the
+// product's way out, after Product composed it and before Deploys installs it.
+// One line says where it stands; then Build the product, one scenario at a
+// time -- in Studio, as a Job in the organization's cluster; on my machine, in
+// the desktop IDE; or in CI, by the repository's workflow, whose runs show
+// only there -- then the product's builds, the newest open with how far it got
+// (prepare, images, publish) and, once it published its chart, Deploy.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, type ProjectConfig } from "./api";
+import { api, type Deployment, type DeployEnvironment, type ProjectConfig } from "./api";
 import {
+  BUILD_STAGES,
   type BuildRun,
+  type BuildScenario,
+  type BuildStage,
   type BuildWorkflow,
   type IdeBuild,
+  type StageState,
+  anyRunning,
   buildDuration,
+  buildStages,
   buildWorkflowOf,
   buildsHeadline,
   buildsOf,
@@ -19,41 +27,267 @@ import {
   ideBuildDuration,
   ideBuildsOf,
   isBuildWorkflow,
+  isLost,
+  openingScenario,
   repoPathsOf,
   statusTone,
   workflowsOf,
 } from "./builds";
+import {
+  BuildInStudio,
+  DeployBuildTo,
+  ProposeBuildWorkflow,
+  type SavedProduct,
+  buildableEnvironments,
+} from "./deploy-actions";
 import { errText } from "./format";
+import { buildsHint, type PipelineTab } from "./pipeline";
+import { PipelineLine } from "./pipeline-line";
 
 /** At most this many runs are read: the sync keeps the newest few hundred
  *  per repository. */
 const LIMIT = 200;
 
+/** How often the product's builds are read again while one runs. */
+const FOLLOW_MS = 10_000;
+
+/** CI runs shown before Show all: the newest of the chosen workflow. */
+const RUNS_SHOWN = 10;
+
+const SCENARIO_LABEL: Record<BuildScenario, string> = {
+  studio: "In Studio",
+  desktop: "On my machine",
+  ci: "In CI",
+};
+
+/** The scenario this member last chose for the project; storage may be
+ *  missing or refuse, which is only a convenience lost. */
+const scenarioKey = (projectId: string) => `studio.builds.scenario.${projectId}`;
+function storedScenario(projectId: string): string | null {
+  try {
+    return window.localStorage.getItem(scenarioKey(projectId));
+  } catch {
+    return null;
+  }
+}
+function storeScenario(projectId: string, s: BuildScenario) {
+  try {
+    window.localStorage.setItem(scenarioKey(projectId), s);
+  } catch {
+    // Not remembered; the tab still works.
+  }
+}
+
 export function ProjectBuilds({
   token,
   projectId,
   onOpenStudio,
+  onOpenTab,
 }: {
   token: string;
   projectId: string;
   /** Open the project in the IDE, where Build, Run and Deploy run. */
   onOpenStudio?: () => void;
+  /** Open another tab of the project: Deploys, once a build is published. */
+  onOpenTab?: (tab: PipelineTab) => void;
+}) {
+  const [ideBuilds, setIdeBuilds] = useState<IdeBuild[]>([]);
+  const [config, setConfig] = useState<ProjectConfig | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  // Where the product can be built and deployed: the organization's
+  // environments this project may use, its bindings, its deploys.
+  const [environments, setEnvironments] = useState<DeployEnvironment[]>([]);
+  const [profiles, setProfiles] = useState<string[]>([]);
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [saved, setSaved] = useState<SavedProduct | null>(null);
+  const [chosen, setChosen] = useState<BuildScenario | null>(null);
+  const [round, setRound] = useState(0);
+  const changed = useCallback((message: string) => {
+    setNote(message);
+    setRound((r) => r + 1);
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .projectConfig(token, projectId)
+      .then((c) => live && setConfig(c))
+      .catch(() => live && setConfig(null));
+    api
+      .projectTargets(token, projectId)
+      .then((t) => {
+        if (!live) return;
+        setEnvironments(t.environments.map((e) => e.environment));
+        setProfiles([...new Set(t.bindings.map((b) => b.profile))]);
+      })
+      .catch(() => live && setEnvironments([]));
+    // What to build is the Product step's answer: where it last committed
+    // product.gdl, on which branch, for which profile.
+    api
+      .projectProduct(token, projectId)
+      .then((p) => {
+        if (!live || !p?.written) return;
+        setSaved({
+          path: p.written.path ?? "product.gdl",
+          branch: p.written.branch || null,
+          prUrl: p.written.pr_url ?? null,
+          profile: p.profile ?? null,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
+
+  // The product's builds and the deploys of them, again after an action and,
+  // while a build runs, every FOLLOW_MS -- a Studio build reports its stages
+  // as it goes.
+  useEffect(() => {
+    let live = true;
+    api
+      .listArtifactNodes(token, "build", projectId, undefined, LIMIT, { sort: "updated" })
+      .then((page) => live && setIdeBuilds(ideBuildsOf(page.nodes ?? [])))
+      .catch(() => live && setIdeBuilds([]));
+    api
+      .deployments(token, { project: projectId })
+      .then((d) => live && setDeployments(d.items))
+      .catch(() => live && setDeployments([]));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId, round]);
+  const running = anyRunning(ideBuilds);
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setRound((r) => r + 1), FOLLOW_MS);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  const canBuildInStudio = buildableEnvironments(environments).length > 0;
+  const scenario = chosen ?? openingScenario(storedScenario(projectId), canBuildInStudio);
+  const pick = (s: BuildScenario) => {
+    setChosen(s);
+    storeScenario(projectId, s);
+  };
+
+  return (
+    <>
+      <h1>Builds</h1>
+      <PipelineLine hint={buildsHint(ideBuilds, canBuildInStudio)} onOpenTab={onOpenTab} />
+      {note && (
+        <div className="hint" data-builds-note>
+          {note}
+        </div>
+      )}
+      <section className="card" data-build-the-product>
+        <h2>Build the product</h2>
+        <div className="doc-views" role="tablist" aria-label="How to build" data-build-scenarios>
+          {(Object.keys(SCENARIO_LABEL) as BuildScenario[]).map((s) => (
+            <button
+              key={s}
+              type="button"
+              role="tab"
+              aria-selected={scenario === s}
+              className={`doc-view${scenario === s ? " on" : ""}`}
+              onClick={() => pick(s)}
+              data-build-scenario={s}
+            >
+              {SCENARIO_LABEL[s]}
+            </button>
+          ))}
+        </div>
+        {scenario === "studio" && (
+          <BuildInStudio
+            token={token}
+            projectId={projectId}
+            environments={environments}
+            profiles={profiles}
+            saved={saved}
+            onChanged={changed}
+          />
+        )}
+        {scenario === "desktop" && <OnMyMachine onOpenStudio={onOpenStudio} />}
+        {scenario === "ci" && (
+          <InCi
+            token={token}
+            projectId={projectId}
+            environments={environments}
+            profiles={profiles}
+            saved={saved}
+            config={config}
+            setConfig={setConfig}
+          />
+        )}
+      </section>
+      <ProductBuilds
+        token={token}
+        projectId={projectId}
+        builds={ideBuilds}
+        environments={environments}
+        deployments={deployments}
+        onChanged={changed}
+      />
+    </>
+  );
+}
+
+/** The desktop builds on the member's machine: Generate, Build, then Publish
+ *  with a push-only token Studio gives for the environment's registry. Each
+ *  build reports itself, so it shows below as `desktop`. */
+function OnMyMachine({ onOpenStudio }: { onOpenStudio?: () => void }) {
+  return (
+    <div data-build-on-my-machine>
+      <p>
+        The desktop IDE builds on your machine: open the project, <b>Generate</b> the product, <b>Build</b> its images,
+        then <b>Publish</b> them and the chart to an environment&apos;s registry with a push-only token Studio gives for
+        it. Each build reports itself and shows below, where it says <code>desktop</code>.
+      </p>
+      {onOpenStudio && (
+        <div className="row">
+          <button type="button" className="primary" onClick={onOpenStudio} data-builds-open-ide>
+            Open in the IDE
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The repository's CI builds the product: propose the workflow that does it,
+ *  and -- here only -- the CI runs of the project's repositories, the chosen
+ *  workflow's newest first, with Build in CI. */
+function InCi({
+  token,
+  projectId,
+  environments,
+  profiles,
+  saved,
+  config,
+  setConfig,
+}: {
+  token: string;
+  projectId: string;
+  environments: DeployEnvironment[];
+  profiles: string[];
+  saved: SavedProduct | null;
+  config: ProjectConfig | null;
+  setConfig: (c: ProjectConfig) => void;
 }) {
   const [runs, setRuns] = useState<BuildRun[] | null>(null);
-  const [ideBuilds, setIdeBuilds] = useState<IdeBuild[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [workflow, setWorkflow] = useState<string>("");
-  const [branch, setBranch] = useState<string>("");
   const [failures, setFailures] = useState<{ repo: string; error: string }[]>([]);
   const [repoPaths, setRepoPaths] = useState<Map<string, string>>(new Map());
-  const [config, setConfig] = useState<ProjectConfig | null>(null);
+  const [workflow, setWorkflow] = useState<string>("");
+  const [branch, setBranch] = useState<string>("");
+  const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // The repositories say whether their CI could be read at all: no runs and
   // "could not read the runs" are different answers. They also name the
-  // repository a run belongs to, which Build needs.
+  // repository a run belongs to, which Build in CI needs.
   useEffect(() => {
     let live = true;
     api
@@ -65,26 +299,9 @@ export function ProjectBuilds({
       })
       .catch(() => live && setFailures([]));
     api
-      .projectConfig(token, projectId)
-      .then((c) => live && setConfig(c))
-      .catch(() => live && setConfig(null));
-    return () => {
-      live = false;
-    };
-  }, [token, projectId]);
-
-  useEffect(() => {
-    let live = true;
-    setRuns(null);
-    setError(null);
-    api
       .listArtifactNodes(token, "workflow_run", projectId, undefined, LIMIT, { sort: "updated" })
       .then((page) => live && setRuns(buildsOf(page.nodes ?? [])))
       .catch((e: unknown) => live && setError(errText(e)));
-    api
-      .listArtifactNodes(token, "build", projectId, undefined, LIMIT, { sort: "updated" })
-      .then((page) => live && setIdeBuilds(ideBuildsOf(page.nodes ?? [])))
-      .catch(() => live && setIdeBuilds([]));
     return () => {
       live = false;
     };
@@ -106,7 +323,8 @@ export function ProjectBuilds({
     () => [...new Set((runs ?? []).filter((r) => r.workflow === chosen).map((r) => r.branch).filter(Boolean))] as string[],
     [runs, chosen],
   );
-  const shown = (runs ?? []).filter((r) => r.workflow === chosen && (!branch || r.branch === branch));
+  const matching = (runs ?? []).filter((r) => r.workflow === chosen && (!branch || r.branch === branch));
+  const shown = all ? matching : matching.slice(0, RUNS_SHOWN);
 
   const act = async (what: () => Promise<string>) => {
     setBusy(true);
@@ -141,50 +359,49 @@ export function ProjectBuilds({
     });
 
   return (
-    <>
-      <h1>Builds</h1>
-      <p className="subtitle">
-        What the project&apos;s product was built into, where, and how it went. Studio does not build: CI and the
-        IDE do. This reads the CI runs of the project&apos;s repositories on every sync, and the builds the IDE reports
-        as they start and end.
-      </p>
-      {error && <div className="error">{error}</div>}
+    <div data-build-in-ci>
+      <ProposeBuildWorkflow
+        token={token}
+        projectId={projectId}
+        environments={environments}
+        profiles={profiles}
+        saved={saved}
+      />
       {failures.map((f) => (
         <div key={f.repo} className="error" data-builds-ci-error>
           Studio could not read the CI runs of {f.repo}: {f.error}. The connection may lack read access to the
           repository&apos;s Actions.
         </div>
       ))}
+      {error && <div className="error">{error}</div>}
       {actionError && (
         <div className="error" data-builds-action-error>
           {actionError}
         </div>
       )}
       {note && (
-        <div className="hint" data-builds-note>
+        <div className="hint" data-builds-ci-note>
           {note}
         </div>
       )}
-      <IdeBuilds builds={ideBuilds} onOpenStudio={onOpenStudio} />
-      {!error && runs === null && <div className="empty">Loading…</div>}
+      {!error && runs === null && <div className="empty">Loading the CI runs…</div>}
       {runs && runs.length === 0 && (
         <div className="empty" data-builds-empty>
-          No CI runs yet. Next: push the composed product to a repository with a CI workflow, then sync it on
-          Sources; runs arrive if the connection can read the repository&apos;s Actions.
+          No CI runs yet: they arrive with the next sync of the project&apos;s sources, if the connection can read the
+          repository&apos;s Actions.
         </div>
       )}
       {runs && runs.length > 0 && (
-        <section className="card">
-          <div className="card-head" style={{ flexWrap: "wrap", gap: 8 }}>
+        <>
+          <div className="card-head" style={{ flexWrap: "wrap", gap: 8, marginTop: 12 }}>
             <div>
-              <h2 data-builds-headline>{buildsHeadline(runs, chosen || null, branch || null)}</h2>
+              <h3 data-builds-headline>{buildsHeadline(runs, chosen || null, branch || null)}</h3>
               <p className="subtitle">
-                Newest first. A run links to its page in CI.{" "}
                 {chosenIsTheBuild
-                  ? "This is the project's build workflow: Build starts it."
+                  ? "The project's build workflow; Build in CI starts it."
                   : setting
                     ? `The project's build workflow is ${setting.workflow} in ${setting.repo}.`
-                    : "Which workflow builds the product is not set yet, so this speaks of the one you pick."}
+                    : "Which workflow builds the product is not set yet; pick it and use it as the build workflow."}
               </p>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -230,11 +447,6 @@ export function ProjectBuilds({
               >
                 {busy ? "Starting…" : "Build in CI"}
               </button>
-              {onOpenStudio && (
-                <button type="button" onClick={onOpenStudio} data-builds-open-ide>
-                  Open in the IDE
-                </button>
-              )}
             </div>
           </div>
           <div style={{ overflowX: "auto" }}>
@@ -278,74 +490,232 @@ export function ProjectBuilds({
               </tbody>
             </table>
           </div>
-        </section>
+          {matching.length > RUNS_SHOWN && (
+            <button type="button" className="linklike" onClick={() => setAll((v) => !v)} data-builds-show-all>
+              {all ? `Show the newest ${RUNS_SHOWN}` : `Show all ${matching.length} runs`}
+            </button>
+          )}
+        </>
       )}
-    </>
+    </div>
   );
 }
 
-/** The builds the IDE ran, newest first: a failed one with its first error,
- *  so the next member does not rebuild to find it; a passed one is deployed
- *  from the IDE, where its chart is. */
-function IdeBuilds({ builds, onOpenStudio }: { builds: IdeBuild[]; onOpenStudio?: () => void }) {
-  if (builds.length === 0) return null;
+/** The product's builds, newest first -- run by Studio, the IDE or CI. The
+ *  newest is open: its stages, what failed or what it published, and Deploy;
+ *  an older one opens on a click. A Studio build whose Job's hour is long past
+ *  without word is lost, not running. */
+function ProductBuilds({
+  token,
+  projectId,
+  builds,
+  environments,
+  deployments,
+  onChanged,
+}: {
+  token: string;
+  projectId: string;
+  builds: IdeBuild[];
+  environments: DeployEnvironment[];
+  deployments: Deployment[];
+  onChanged: (message: string) => void;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  const product = builds.filter((b) => b.action !== "run");
+  if (product.length === 0) return null;
+  const [newest, ...older] = product;
   return (
-    <section className="card" data-ide-builds>
-      <div className="card-head">
-        <div>
-          <h2>In the IDE</h2>
-          <p className="subtitle">
-            Build and Run in a member&apos;s desktop or a session, as the IDE reported them. A passed build is
-            deployed from the IDE&apos;s Generate view, where its chart is made; the deploy names the build.
-          </p>
+    <section className="card" data-product-builds>
+      <h2>Builds</h2>
+      <BuildCard
+        build={newest}
+        token={token}
+        projectId={projectId}
+        environments={environments}
+        deployments={deployments}
+        onChanged={onChanged}
+      />
+      {older.length > 0 && (
+        <div style={{ overflowX: "auto", marginTop: 12 }}>
+          <table className="table" data-ide-builds-table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Stages</th>
+                <th>Where</th>
+                <th>Commit</th>
+                <th>When</th>
+                <th>Took</th>
+              </tr>
+            </thead>
+            <tbody>
+              {older.map((b) =>
+                open === b.id ? (
+                  <tr key={b.id} data-ide-build-status={b.status}>
+                    <td colSpan={6}>
+                      <BuildCard
+                        build={b}
+                        token={token}
+                        projectId={projectId}
+                        environments={environments}
+                        deployments={deployments}
+                        onChanged={onChanged}
+                        onClose={() => setOpen(null)}
+                      />
+                    </td>
+                  </tr>
+                ) : (
+                  <tr
+                    key={b.id}
+                    data-ide-build-status={b.status}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => setOpen(b.id)}
+                    title="Open this build"
+                  >
+                    <td>
+                      <StatusBadge build={b} />
+                    </td>
+                    <td>
+                      <StageLane build={b} />
+                    </td>
+                    <td>{b.where}</td>
+                    <td>{b.shortSha ? <code>{b.shortSha}</code> : (b.branch ?? "—")}</td>
+                    <td>{b.startedAt ? new Date(b.startedAt).toLocaleString() : "—"}</td>
+                    <td>{isLost(b) ? "—" : (ideBuildDuration(b) ?? "—")}</td>
+                  </tr>
+                ),
+              )}
+            </tbody>
+          </table>
         </div>
-        {onOpenStudio && (
-          <button type="button" onClick={onOpenStudio}>
-            Open in the IDE
+      )}
+    </section>
+  );
+}
+
+/** One build, open: what and where, its stages, what failed or what it
+ *  published, and Deploy once it published a chart. */
+function BuildCard({
+  build: b,
+  token,
+  projectId,
+  environments,
+  deployments,
+  onChanged,
+  onClose,
+}: {
+  build: IdeBuild;
+  token: string;
+  projectId: string;
+  environments: DeployEnvironment[];
+  deployments: Deployment[];
+  onChanged: (message: string) => void;
+  onClose?: () => void;
+}) {
+  const lost = isLost(b);
+  return (
+    <div data-build-card={b.buildId} data-build-card-status={lost ? "lost" : b.status}>
+      <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <StatusBadge build={b} />
+        <b>
+          {b.product ?? "The product"}
+          {b.profile ? <span className="sub"> · {b.profile}</span> : null}
+        </b>
+        <StageLane build={b} />
+        <span className="grow sub">
+          {b.where}
+          {b.branch ? <> · {b.branch}</> : null}
+          {b.shortSha ? (
+            <>
+              {" "}
+              · <code>{b.shortSha}</code>
+            </>
+          ) : null}
+          {b.startedAt ? <> · {new Date(b.startedAt).toLocaleString()}</> : null}
+          {!lost && ideBuildDuration(b) ? <> · {ideBuildDuration(b)}</> : null}
+        </span>
+        {onClose && (
+          <button type="button" className="linklike" onClick={onClose}>
+            Close
           </button>
         )}
       </div>
-      <div style={{ overflowX: "auto" }}>
-        <table className="table" data-ide-builds-table>
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>What</th>
-              <th>Commit</th>
-              <th>Where</th>
-              <th>When</th>
-              <th>Took</th>
-            </tr>
-          </thead>
-          <tbody>
-            {builds.map((b) => (
-              <tr key={b.id} data-ide-build-status={b.status}>
-                <td>
-                  <span className={`badge ${statusTone(b.status)}`}>{b.status}</span>
-                </td>
-                <td style={{ minWidth: 240 }}>
-                  {b.action === "run" ? "Run" : "Build"} {b.product ?? "the product"}
-                  {b.profile ? <span className="sub"> · {b.profile}</span> : null}
-                  {b.status === "failed" && b.failure ? (
-                    <div className="error" style={{ marginTop: 4 }} data-ide-build-failure>
-                      {b.failureStep ? `${b.failureStep}: ` : ""}
-                      {b.failure}
-                    </div>
-                  ) : null}
-                  {b.outputs.length > 0 ? <div className="sub">{b.outputs.join(", ")}</div> : null}
-                </td>
-                <td>
-                  {b.shortSha ? <code>{b.shortSha}</code> : "—"}
-                  {b.branch ? <span className="sub"> · {b.branch}</span> : null}
-                </td>
-                <td>{b.where}</td>
-                <td>{b.startedAt ? new Date(b.startedAt).toLocaleString() : "—"}</td>
-                <td>{ideBuildDuration(b) ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
+      {lost && (
+        <p className="hint" data-build-lost>
+          Lost: no word from its Job since {b.startedAt ? new Date(b.startedAt).toLocaleString() : "it started"}, past
+          the hour a build may take. How it ended is not known; build again.
+        </p>
+      )}
+      {b.status === "failed" && b.failure && (
+        <div className="error" style={{ marginTop: 8, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} data-ide-build-failure>
+          {b.failureStep ? `${b.failureStep}: ` : ""}
+          {b.failure}
+        </div>
+      )}
+      {b.images.length > 0 ? (
+        <ul className="sub" style={{ margin: "8px 0 0", paddingLeft: 16 }} data-build-images>
+          {b.images.map((i) => (
+            <li key={i.app}>
+              {i.app} → <code>{i.image}</code>
+            </li>
+          ))}
+        </ul>
+      ) : b.outputs.length > 0 ? (
+        <div className="sub">{b.outputs.join(", ")}</div>
+      ) : null}
+      {b.chartRef ? (
+        <div className="sub" data-build-chart>
+          chart <code>{b.chartRef}</code>
+          {b.chartVersion ? <>:{b.chartVersion}</> : null}
+        </div>
+      ) : null}
+      {b.status === "passed" && b.chartRef && b.chartVersion && (
+        <DeployBuildTo
+          token={token}
+          projectId={projectId}
+          build={b}
+          environments={environments}
+          deployments={deployments}
+          onChanged={onChanged}
+        />
+      )}
+    </div>
+  );
+}
+
+/** The build's status; a lost one says so, in a warning's tone. */
+function StatusBadge({ build: b }: { build: IdeBuild }) {
+  return isLost(b) ? (
+    <span className="badge warn" data-build-lost-badge>
+      lost
+    </span>
+  ) : (
+    <span className={`badge ${statusTone(b.status)}`}>{b.status}</span>
+  );
+}
+
+const STAGE_TONE: Record<StageState, string> = { done: "ok", running: "info", failed: "danger", waiting: "neutral" };
+const STAGE_MARK: Record<StageState, string> = { done: "✓", running: "…", failed: "✕", waiting: "" };
+
+/** prepare → images → publish, each as a badge in its state. A run of the
+ *  product has no stages; a lost build's are not known past what it said. */
+function StageLane({ build: b }: { build: IdeBuild }) {
+  if (b.action === "run") return <span className="sub">—</span>;
+  const stages: Record<BuildStage, StageState> = buildStages(b);
+  const lost = isLost(b);
+  return (
+    <span style={{ display: "inline-flex", gap: 4, alignItems: "center", whiteSpace: "nowrap" }} data-build-stages>
+      {BUILD_STAGES.map((stage, i) => {
+        const state: StageState = lost && stages[stage] === "running" ? "waiting" : stages[stage];
+        return (
+          <span key={stage} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+            {i > 0 && <span className="sub">→</span>}
+            <span className={`badge ${STAGE_TONE[state]}`} data-stage={stage} data-stage-state={state}>
+              {STAGE_MARK[state]} {stage}
+            </span>
+          </span>
+        );
+      })}
+    </span>
   );
 }

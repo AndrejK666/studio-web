@@ -20,6 +20,77 @@ import {
   valuesText,
 } from "./project-deploys";
 
+/** Ask the server for a deploy, and say what it answered: queued, or
+ *  waiting for an administrator. One for every place a deploy is asked. */
+function useDeployRequest(token: string, projectId: string, onChanged: (message: string) => void) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const ask = async (body: Parameters<typeof api.createDeployment>[2], what: string): Promise<boolean> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const d = await api.createDeployment(token, projectId, body);
+      onChanged(d.state === "awaiting_approval" ? `${what}: waiting for an administrator's approval.` : `${what}: queued.`);
+      return true;
+    } catch (e) {
+      setError(errText(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { busy, error, ask };
+}
+
+/** Deploy one published build to an environment the project may deploy to:
+ *  the Builds tab's action on a build, beside each environment's own. */
+export function DeployBuildTo({
+  token,
+  projectId,
+  build,
+  environments,
+  deployments,
+  onChanged,
+}: {
+  token: string;
+  projectId: string;
+  build: IdeBuild;
+  environments: DeployEnvironment[];
+  deployments: Deployment[];
+  onChanged: (message: string) => void;
+}) {
+  const [envId, setEnvId] = useState(environments[0]?.id ?? "");
+  const { busy, error, ask } = useDeployRequest(token, projectId, onChanged);
+  const envName = (id: string) => environments.find((e) => e.id === id)?.name ?? id;
+  const env = environments.find((e) => e.id === envId);
+  const gap = env ? promotionGap(env, build, deployments, envName) : null;
+  if (environments.length === 0) return null;
+  return (
+    <div className="row" style={{ gap: 6, marginTop: 6 }} data-deploy-build-to>
+      <select value={envId} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
+        {environments.map((e) => (
+          <option key={e.id} value={e.id}>
+            {e.name}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className="primary"
+        disabled={busy || !env || !!gap}
+        title={gap ?? undefined}
+        onClick={() =>
+          env && void ask({ environment_id: env.id, build: build.buildId }, `Deploy ${build.chartVersion} to ${env.name} -- it shows under Deploys`)
+        }
+      >
+        Deploy…
+      </button>
+      {gap && <span className="sub warn">{gap}</span>}
+      {error && <span className="error">{error}</span>}
+    </div>
+  );
+}
+
 /** Deploy a build, roll back, uninstall: one environment's actions. */
 export function EnvironmentActions({
   token,
@@ -41,22 +112,12 @@ export function EnvironmentActions({
   onChanged: (message: string) => void;
 }) {
   const [picking, setPicking] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const request = useDeployRequest(token, projectId, onChanged);
+  const { busy, error } = request;
   const candidates = deployableBuilds(builds);
   const back = rollbackTarget(deployments, env.id);
   const ask = async (body: Parameters<typeof api.createDeployment>[2], what: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const d = await api.createDeployment(token, projectId, body);
-      setPicking(false);
-      onChanged(d.state === "awaiting_approval" ? `${what}: waiting for an administrator's approval.` : `${what}: queued.`);
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
+    if (await request.ask(body, what)) setPicking(false);
   };
   return (
     <div className="deploy-actions" data-environment-actions={env.name}>
@@ -92,7 +153,7 @@ export function EnvironmentActions({
         <div className="deploy-pick" data-build-picker>
           {candidates.length === 0 ? (
             <p className="hint">
-              No build has published a chart yet. Propose the build workflow below, or publish from the IDE&apos;s Deploy.
+              No build has published a chart yet: build in the Builds tab, or publish from the IDE&apos;s Deploy.
             </p>
           ) : (
             <ul className="rows">
@@ -236,94 +297,207 @@ export function EnvironmentConfig({
   );
 }
 
-/** Build the product for an environment: in Studio, as a Job in the
- *  environment's cluster, or by proposing a CI workflow to the repository. */
-export function BuildWorkflowProposal({
+/** What the Product step last wrote: the description's path, its branch and
+ *  pull request, the profile picked. What a build builds unless told
+ *  otherwise. */
+export interface SavedProduct {
+  path: string;
+  branch: string | null;
+  prUrl: string | null;
+  profile: string | null;
+}
+
+/** The environments a Studio build can push from: a registry prefix and a
+ *  login to push with. */
+export function buildableEnvironments(environments: readonly DeployEnvironment[]): DeployEnvironment[] {
+  return environments.filter((e) => e.registry.includes("/") && !!e.registry_connection_id);
+}
+
+/** Build in Studio: a Job in the environment's cluster clones the repository,
+ *  generates the product, builds its images and pushes them and the chart to
+ *  the environment's registry. Said as one sentence -- what is built, from
+ *  where, to where -- with Change for the member who wants another branch,
+ *  file, profile or environment. */
+export function BuildInStudio({
   token,
   projectId,
   environments,
   profiles,
+  saved,
   onChanged,
 }: {
   token: string;
   projectId: string;
   environments: DeployEnvironment[];
   profiles: string[];
+  saved: SavedProduct | null;
   onChanged?: (message: string) => void;
 }) {
-  const withRegistry = environments.filter((e) => e.registry.includes("/"));
+  const choices = buildableEnvironments(environments);
+  const [envId, setEnvId] = useState("");
+  const [productFile, setProductFile] = useState<string | null>(null);
+  const [gitRef, setGitRef] = useState<string | null>(null);
+  const [profile, setProfile] = useState<string | null>(null);
+  const [changing, setChanging] = useState(false);
   const [building, setBuilding] = useState(false);
-  const [envId, setEnvId] = useState(withRegistry[0]?.id ?? "");
-  const [profile, setProfile] = useState(profiles[0] ?? "prod");
-  const [productFile, setProductFile] = useState("product.gdl");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ pr_url?: string | null; branch: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  if (withRegistry.length === 0) return null;
-  return (
-    <div className="card" data-build-workflow>
-      <h3>Build</h3>
-      <p className="hint">
-        <b>Build in Studio</b> runs the build as a Job in the environment&apos;s cluster, on the organization&apos;s nodes: it
-        clones the repository, generates the profile with the Gearbox engine this Studio runs, builds the images and pushes
-        them and the chart under the environment&apos;s registry. Or propose a workflow that does the same in the
-        repository&apos;s CI on every push to main. Either way the build appears under Deploy a build once it passes.
+  if (choices.length === 0) {
+    return (
+      <p className="hint" data-build-studio-unavailable>
+        No environment can take a Studio build yet: one needs a registry prefix and a registry connection to push with
+        (Organization › Environments). Until then, build on your machine or in CI.
       </p>
+    );
+  }
+  // The Product step's answer unless the member changed it.
+  const env = choices.find((e) => e.id === envId) ?? choices[0];
+  const file = productFile ?? saved?.path ?? "product.gdl";
+  const branch = gitRef ?? saved?.branch ?? "";
+  const options = profiles.length ? profiles : ["prod"];
+  const prof = profile ?? (saved?.profile && options.includes(saved.profile) ? saved.profile : options[0]);
+  return (
+    <div data-build-in-studio>
+      <p data-build-summary>
+        Builds <code>{file}</code> from {branch ? <code>{branch}</code> : "the repository's own branch"}
+        {saved?.prUrl && branch === saved.branch ? (
+          <>
+            {" "}
+            (
+            <a href={saved.prUrl} target="_blank" rel="noreferrer">
+              the Product step&apos;s pull request
+            </a>
+            )
+          </>
+        ) : null}{" "}
+        for profile <code>{prof}</code>, and pushes its images and chart to <code>{env.registry}</code> of{" "}
+        <b>{env.name}</b>.{" "}
+        <button type="button" className="linklike" onClick={() => setChanging((v) => !v)} data-build-change>
+          {changing ? "Done" : "Change"}
+        </button>
+      </p>
+      {changing && (
+        <div className="row" data-build-fields>
+          <select value={env.id} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
+            {choices.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name} — {e.registry}
+              </option>
+            ))}
+          </select>
+          <input
+            value={file}
+            onChange={(e) => setProductFile(e.target.value)}
+            aria-label="Product description"
+            title="The product's description in the repository: product.gdl, or products/<name>/product.gdl"
+            placeholder="product.gdl"
+          />
+          <input
+            value={branch}
+            onChange={(e) => setGitRef(e.target.value)}
+            aria-label="Branch or tag"
+            title="The branch or tag to build; the repository's own branch when empty. Push it first: the Job clones from the repository, not from anybody's machine."
+            placeholder="the repository's own branch"
+          />
+          <select value={prof} onChange={(e) => setProfile(e.target.value)} aria-label="Profile">
+            {options.map((p) => (
+              <option key={p}>{p}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="row">
-        <select value={envId} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
-          {withRegistry.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name} — {e.registry}
-            </option>
-          ))}
-        </select>
-        <input
-          value={productFile}
-          onChange={(e) => setProductFile(e.target.value)}
-          aria-label="Product description"
-          title="The product's description in the repository: product.gdl, or products/<name>/product.gdl"
-          placeholder="product.gdl"
-        />
-        <select value={profile} onChange={(e) => setProfile(e.target.value)} aria-label="Profile">
-          {(profiles.length ? profiles : ["prod"]).map((p) => (
-            <option key={p}>{p}</option>
-          ))}
-        </select>
         <button
           type="button"
           className="primary"
-          disabled={building || !envId}
+          disabled={building}
           onClick={async () => {
             setBuilding(true);
             setError(null);
             try {
               const b = await api.startBuild(token, projectId, {
-                environment_id: envId,
-                profile,
-                product_file: productFile.trim() || "product.gdl",
+                environment_id: env.id,
+                profile: prof,
+                product_file: file.trim() || "product.gdl",
+                ...(branch.trim() ? { ref: branch.trim() } : {}),
               });
-              onChanged?.(`Build ${b.build_id} started in ${b.namespace}: it shows under Builds, and under Deploy a build once it passes.`);
+              onChanged?.(`Build ${b.build_id} started in ${b.namespace}; it shows below as it goes.`);
             } catch (e) {
               setError(errText(e));
             } finally {
               setBuilding(false);
             }
           }}
+          data-build-start-studio
         >
           {building ? "Starting…" : "Build in Studio"}
         </button>
+      </div>
+      {error && <div className="error">{error}</div>}
+    </div>
+  );
+}
+
+/** Propose the workflow that builds the product in the repository's CI on
+ *  every push to main, as a pull request. What it proposed is said only right
+ *  after, in this visit: the pull request's own page says what became of it. */
+export function ProposeBuildWorkflow({
+  token,
+  projectId,
+  environments,
+  profiles,
+  saved,
+}: {
+  token: string;
+  projectId: string;
+  environments: DeployEnvironment[];
+  profiles: string[];
+  saved: SavedProduct | null;
+}) {
+  const choices = environments.filter((e) => e.registry.includes("/"));
+  const [envId, setEnvId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ pr_url?: string | null; branch: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  if (choices.length === 0) {
+    return (
+      <p className="hint">
+        A CI workflow publishes to an environment&apos;s registry, and no environment of this project names one yet
+        (Organization › Environments).
+      </p>
+    );
+  }
+  const env = choices.find((e) => e.id === envId) ?? choices[0];
+  const options = profiles.length ? profiles : ["prod"];
+  const profile = saved?.profile && options.includes(saved.profile) ? saved.profile : options[0];
+  const file = saved?.path ?? "product.gdl";
+  return (
+    <div data-propose-workflow>
+      <div className="row">
+        {choices.length > 1 && (
+          <select value={env.id} onChange={(e) => setEnvId(e.target.value)} aria-label="Environment">
+            {choices.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name} — {e.registry}
+              </option>
+            ))}
+          </select>
+        )}
+        <span className="grow hint">
+          A workflow that builds <code>{file}</code> for profile <code>{profile}</code> and publishes to{" "}
+          <code>{env.registry}</code>, proposed to the repository as a pull request.
+        </span>
         <button
           type="button"
-          disabled={busy || !envId}
+          disabled={busy}
           onClick={async () => {
             setBusy(true);
             setError(null);
             try {
               setResult(
                 await api.proposeBuildWorkflow(token, projectId, {
-                  environment_id: envId,
+                  environment_id: env.id,
                   profile,
-                  product_file: productFile.trim() || "product.gdl",
+                  product_file: file,
                 }),
               );
             } catch (e) {
@@ -332,12 +506,13 @@ export function BuildWorkflowProposal({
               setBusy(false);
             }
           }}
+          data-propose-workflow-start
         >
           {busy ? "Proposing…" : "Propose a CI workflow"}
         </button>
       </div>
       {result && (
-        <p className="hint">
+        <p className="hint" data-propose-workflow-result>
           Proposed on <code>{result.branch}</code>
           {result.pr_url && (
             <>
@@ -348,7 +523,7 @@ export function BuildWorkflowProposal({
               </a>
             </>
           )}
-          . Merge it to build.
+          . Once it is merged, every push to main builds the product.
         </p>
       )}
       {error && <div className="error">{error}</div>}

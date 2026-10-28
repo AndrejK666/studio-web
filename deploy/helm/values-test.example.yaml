@@ -12,9 +12,9 @@ backend:
     tag: "sha-REPLACE_ME"
   replicas: 1
   rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
-  # As on dev (values-dev.example.yaml says why): the chart's 1Gi was
-  # OOM-killed on the first start after the domain-model move (2026-10-27),
-  # while a new organization's model was seeded; idle it sits near 700Mi.
+  # As on dev (values-dev.example.yaml says why): with the chart's 1Gi the
+  # backend was OOM-killed on test (2026-10-27) while a new organization's
+  # domain model was seeded; idle it sits near 700Mi.
   resources:
     requests: { cpu: 200m, memory: 256Mi }
     limits: { cpu: "2", memory: 4Gi }

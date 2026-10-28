@@ -173,7 +173,7 @@ import {
   type RepoMode,
 } from "./project-form";
 import { ProjectTypesTab } from "./project-types-editor";
-import { ProductFrontend, ProductSectionsHead } from "./product-sections-view";
+import { ProductPage } from "./product-sections-view";
 import { BUILTIN_TYPES, landingTab, parseTypes, typeOfProject, visibleTabs, type ProjectType } from "./project-types";
 import { isGeneric } from "./level-tabs";
 import { LevelGenericTab, TabsSettings, useLevelTabs } from "./level-tabs-ui";
@@ -5818,27 +5818,32 @@ function ProjectScreen({
         {tab === "artifacts" && (
           <ArtifactsView token={token} workspace={proj} parentWorkspaceId={workspace.id} onOpenTab={setTab} />
         )}
-        {tab === "components" && <ProductSectionsHead token={token} projectId={proj.id} />}
         {tab === "components" && (
-          <ProjectKits
+          <ProductPage
             token={token}
             projectId={proj.id}
-            projectName={proj.name}
-            workspaceId={workspace.id}
+            backend={
+              <ProjectKits
+                token={token}
+                projectId={proj.id}
+                projectName={proj.name}
+                workspaceId={workspace.id}
+                onOpenTab={setTab}
+              />
+            }
           />
         )}
-        {tab === "components" && <ProductFrontend token={token} projectId={proj.id} />}
         {tab === "parts" && (
           <ProjectComponentsInventory token={token} projectId={proj.id} workspaceId={workspace.id} onOpenProduct={() => setTab("components")} />
         )}
         {tab === "builds" && (
-          <ProjectBuilds token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />
+          <ProjectBuilds token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} onOpenTab={setTab} />
         )}
         {tab === "tests" && (
           <ProjectTests token={token} projectId={proj.id} workspaceId={workspace.id} onOpenSpecs={() => setTab("specs")} />
         )}
         {tab === "deploys" && (
-          <ProjectDeploys token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} />
+          <ProjectDeploys token={token} projectId={proj.id} onOpenStudio={() => onOpenStudio(proj)} onOpenTab={setTab} />
         )}
         {tab === "kits" && (
           <ProjectKits

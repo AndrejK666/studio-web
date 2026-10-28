@@ -458,9 +458,9 @@ native modules compile: `windows-2022` for the Windows installer and zip,
 artifact of the run (`constructor-studio-windows-<version>`,
 `constructor-studio-macos-<version>`); a `desktop-v*` tag publishes both into
 one release. Intel Macs are not built: that would be a second Mac build and a
-`darwin-x64` CLI and engine. The workflow no longer builds the `gearbox`
-engine; `gearbox-engine.yml` does, once per revision and platform (*The gearbox
-engine* below). It runs
+`darwin-x64` CLI and engine. The workflow no longer ships the `gearbox`
+engine; `gearbox-engine.yml` packs it from the engine's release, once per
+revision and platform (*The gearbox engine* below). It runs
 for PRs changing `theia/electron-app/**` or the workflow, for matching pushes to
 `main`, for `desktop-v*` release tags, and on demand (**Actions → Desktop build → Run workflow**).
 New commits cancel older PR/main builds; release tags and manual builds are not
@@ -583,12 +583,14 @@ Both are shared with the portal session, which has the same modes.
 
 The `gearbox` executable behind the gear catalogue, products and `.gdl` is not
 in the installer either. It is the extension `constructorfabric.gearbox-engine`
-(`theia/gearbox-engine`): the executable at `extension/bin/gearbox.exe`, built
-from source at the repository, revision and Rust that `theia/Dockerfile`'s
-`gearbox` stage pins for the session image -- one pin for both.
+(`theia/gearbox-engine`): the executable at `extension/bin/gearbox.exe`, from
+the constructorfabric/gearbox release that `theia/Dockerfile`'s `gearbox` stage
+pins for the session image -- one pin for both. That stage also names the
+SHA-256 of the Windows and macOS archives (from the release's `SHA256SUMS`).
 
-- `.github/workflows/gearbox-engine.yml` builds it on `windows-2022`
-  (`win32-x64`) and `macos-15` (`darwin-arm64`), and publishes each version
+- `.github/workflows/gearbox-engine.yml` downloads the archive for `win32-x64`
+  and `darwin-arm64`, checks it against that SHA-256, packs it (nothing is
+  compiled), and publishes each version
   once, into a release `gearbox-engine-v<version>` holding a VSIX per
   platform; a platform added later goes into the release that exists. The
   version is `theia/gearbox-engine/package.json`'s (raised when the packaging
@@ -872,11 +874,20 @@ what is ported and how). What is particular to a member's machine:
 - **Products** are found under `<repository>/products/<name>/product.gdl`,
   where New Product suggests one, as well as in each checkout. **Add gear**
   with no product open opens New Product.
+- **The Product view** has four sections: **Composition** (the selected
+  gears, searchable, with the chosen one's settings beside them),
+  **Topology**, **Checks** and **Generate** -- Generate with its Build, Run
+  and Deploy. The **Product** menu holds the product's settings and profiles.
 - **Editing.** Gear settings, features, plugin options and profile fields go
   into a draft; the strip at the head of the Product view writes it
   (**Apply changes**) or drops it (**Discard**), beside **Resolve** and
-  **Close**. The **Gearbox** menu and the ribbon's Check group (Resolve,
-  Conflicts, Lock, Generate) act on the open product.
+  **Close**. Generate does not apply while a draft is pending. The
+  **Gearbox** menu and the ribbon's Check group (Resolve, Conflicts, Lock,
+  Generate) act on the open product.
+- **No Studio server, or gears of your own.** **Gearbox: Configure Sources**
+  chooses or clones a gears checkout (`gearbox.sourceRoots`); the catalogue
+  reads it beside the workspace's, and a product whose declared corpus path
+  is not on this machine reads it instead.
 - **Opening** a product waits for the engine to read the gears it declares,
   and says how far it has got ("12 of 44 gears"). A cold open on Windows took
   about 90 seconds in the measurements of #520; a warm one about 7. An open
@@ -886,6 +897,19 @@ what is ported and how). What is particular to a member's machine:
   of the Visual Studio Build Tools; the panel checks both and links to what is
   missing. **Start a local Postgres** needs docker. What they write is listed
   [above](#how-it-connects-and-what-it-never-holds).
+- **Build, publish, deploy** for a kubernetes profile, in Generate's Deploy
+  panel, the way the portal's Builds and Deploys tabs go: **Build in Studio**
+  (a Job in the environment's cluster) or build here and **Publish** with a
+  push token, then **Deploy this build**. The panel lists the project's
+  builds with their stages, failure and what they published to the registry
+  (images and chart), the recent deploys, and the next step; it binds an
+  unbound profile to an environment. A running build is followed every 5 s.
+  **Status** on a deploy that succeeded reads its workloads (pods ready of
+  desired) and the hosts its ingresses answer on, in the organization
+  `GET /targets` names. **Build in CI…** proposes
+  `.github/workflows/studio-build-<product>.yml` to the project's repository
+  as a pull request; **Secrets in <environment>** sets and removes the
+  release's configuration secrets there -- keys only come back.
 
 ## Agent development (Orca)
 

@@ -75,6 +75,7 @@ export function ProjectKits({
   projectName,
   workspaceId,
   section = "components",
+  onOpenTab,
 }: {
   token: string;
   projectId: string;
@@ -85,6 +86,8 @@ export function ProjectKits({
   /** Which tab this is: the specs-to-product journey, or the project's kits.
    *  One component, because both read the project's IDE repositories. */
   section?: "components" | "kits";
+  /** Open another tab of the project: Builds, once the product is written. */
+  onOpenTab?: (tab: "builds") => void;
 }) {
   /** Which part of the journey is shown. */
   const [pane, setPane] = useState<ProductPane>("needs");
@@ -311,6 +314,9 @@ export function ProjectKits({
         onAct={(action) => {
           if (action === "add-recommended") {
             product.setPicks((current) => [...current, ...flow.recommended.filter((n) => !current.includes(n))]);
+          } else if (action === "builds") {
+            if (onOpenTab) onOpenTab("builds");
+            else setPane("build");
           } else {
             setPane(action === "build" || action === "open" ? "build" : "product");
             setCommand({ kind: action, at: Date.now() });
@@ -613,6 +619,7 @@ function NextStepBar({ step, onAct }: { step: NextStep; onAct: (action: NextActi
     fix: "Show the fixes",
     build: "Build it in Studio-ide →",
     open: "Open in Studio-ide",
+    builds: "Builds →",
   };
   return (
     <div
