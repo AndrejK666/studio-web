@@ -977,6 +977,8 @@ export class ProductViewContribution
  */
 @injectable()
 export class ConflictsViewContribution extends ScopedViewContribution<ConflictsWidget> {
+  @inject(ProductStore) protected readonly products!: ProductStore;
+
   constructor() {
     super({
       widgetId: ConflictsWidget.ID,
@@ -995,6 +997,12 @@ export class ConflictsViewContribution extends ScopedViewContribution<ConflictsW
       execute: () => this.openView({ activate: true, reveal: true }),
       isEnabled: () => this.availableHere(),
       disabledReason: () => (this.availableHere() ? undefined : NO_PRODUCT),
+      // Constructor Studio: the number on the ribbon's Conflicts, in its
+      // Health group. `PRODUCT_CONFLICTS_KEY` tells the ribbon to ask again.
+      badge: () =>
+        this.products.current.open === undefined
+          ? undefined
+          : this.products.current.diagnostics.filter((d) => d.severity === "error").length,
     }));
   }
 

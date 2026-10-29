@@ -14,6 +14,12 @@ export const ENGINE_DOWN = "The Gearbox engine is not running";
 /** A command handler that can say why it is disabled. */
 export interface ExplainedHandler extends CommandHandler {
   disabledReason(...args: unknown[]): string | undefined;
+  /**
+   * How many things wait behind the command, for the number on its ribbon
+   * button (`ribbonBadgeCount` in theia/studio) -- read by name, like
+   * `disabledReason`. Conflicts carries the count of errors.
+   */
+  badge?(): number | undefined;
 }
 
 /** `handler`, typed so the extra method passes `registerCommand`'s check. */

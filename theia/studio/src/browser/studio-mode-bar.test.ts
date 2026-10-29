@@ -4,7 +4,7 @@ import { DOCUMENTS_PERSPECTIVE_ID, FULL_PERSPECTIVE_ID, ORCA_PERSPECTIVE_ID, WOR
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { ARCHITECT_PERSPECTIVE_ID, MODES, RibbonCommands, keepsMenu, offersModeSwitch, ribbonAction, roleOf } from './studio-mode-bar';
+import { ARCHITECT_PERSPECTIVE_ID, MODES, RibbonCommands, keepsMenu, offersModeSwitch, ribbonAction, ribbonBadgeCount, roleOf } from './studio-mode-bar';
 
 describe('Studio modes', () => {
     it('names the modes by the work, one perspective each', () => {
@@ -94,15 +94,41 @@ describe('the Gearbox menu and the Building ribbon', () => {
         expect(groupOf('full', 'CLI')).toEqual(['studio.cli.doctor', 'studio.cli.info', 'studio.cli.generate-agents']);
     });
 
-    it('puts Resolve and Lock in Building\'s Check group, beside Conflicts and Generate', () => {
+    it('groups Resolve, Conflicts and Lock as Building\'s Health, and gives Generate a group of its own, primary', () => {
         const building = MODES.find(m => m.role === 'building');
-        const check = building?.groups.find(g => g.label === 'Check');
-        expect(check?.actions.map(a => a.command)).toEqual([
+        const health = building?.groups.find(g => g.label === 'Health');
+        expect(health?.actions.map(a => a.command)).toEqual([
             'gearbox.product.resolve',
             'gearbox.conflicts.show',
             'gearbox.lock.show',
-            'gearbox.generate.show',
         ]);
+        const generate = building?.groups.find(g => g.label === 'Generate');
+        expect(generate?.actions.map(a => [a.command, a.primary])).toEqual([['gearbox.generate.show', true]]);
+        // Only the action a mode leads to is primary.
+        const primaries = MODES.reduce<string[]>((all, m) => all.concat(...m.groups.map(g => g.actions.filter(a => a.primary).map(a => a.command))), []);
+        expect(new Set(primaries)).toEqual(new Set(['gearbox.generate.show']));
+    });
+
+    it('captions every group in sentence case', () => {
+        for (const mode of MODES) {
+            for (const group of mode.groups) {
+                // A capital first letter and nothing shouted after it; CLI is an acronym.
+                expect(group.label.charAt(0)).toBe(group.label.charAt(0).toUpperCase());
+                expect(group.label === 'CLI' || group.label.slice(1) === group.label.slice(1).toLowerCase()).toBe(true);
+            }
+        }
+    });
+
+    it('reads the number on a button from the handler, when the handler gives one', () => {
+        const commands: RibbonCommands = {
+            getCommand: id => (id === 'gearbox.conflicts.show' ? { id } : undefined),
+            isEnabled: () => true,
+            getAllHandlers: () => [{ execute: () => undefined, badge: () => 3 }],
+        };
+        expect(ribbonBadgeCount(commands, 'gearbox.conflicts.show')).toBe(3);
+        expect(ribbonBadgeCount(commands, 'gearbox.lock.show')).toBeUndefined();
+        const none: RibbonCommands = { ...commands, getAllHandlers: () => [{ execute: () => undefined, badge: () => 0 }] };
+        expect(ribbonBadgeCount(none, 'gearbox.conflicts.show')).toBeUndefined();
     });
 
     it('draws Resolve and Lock disabled with the reason gearbox-studio gives, before a product is open', () => {

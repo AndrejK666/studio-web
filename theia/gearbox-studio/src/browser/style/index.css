@@ -1182,6 +1182,37 @@
 .gbx-figure-value { font-size: 1.5em; font-weight: 600; line-height: 1.1; }
 .gbx-figure-label { opacity: 0.75; font-size: 0.9em; }
 
+/* Constructor Studio: the summary band above Composition's two columns
+   (product-widget.tsx, `renderSummaryBand`) -- the figures, the health, the
+   last Generate, and the next step as a card at the end of the row. */
+.gbx-summary-band {
+  flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px;
+  padding: 12px 24px; border-bottom: 1px solid var(--theia-panel-border);
+}
+.gbx-summary-band .gbx-overview-figures { margin: 0; }
+.gbx-summary-band .gbx-figure { min-width: 9em; }
+.gbx-summary-band[data-summary-stale] .gbx-figure-value { opacity: 0.6; }
+.gbx-figure-static { cursor: default; }
+.gbx-figure-static:hover { border-color: var(--theia-editorGroup-border); }
+.gbx-figure-value-text {
+  font-size: 1.05em; line-height: 1.5; max-width: 18em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gbx-next-step {
+  margin-left: auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: center;
+  padding: 6px 12px; min-width: 16em; max-width: 30em; border-radius: 3px;
+  background: var(--theia-editorWidget-background);
+  border: 1px solid var(--theia-editorGroup-border);
+  border-left: 3px solid var(--theia-focusBorder);
+}
+.gbx-next-step-checks, .gbx-next-step-retry { border-left-color: var(--theia-editorError-foreground); }
+.gbx-next-step-reconnect, .gbx-next-step-apply { border-left-color: var(--theia-editorWarning-foreground); }
+.gbx-next-step > span { grid-column: 1; }
+.gbx-next-step-label { font-size: 11px; color: var(--theia-descriptionForeground); }
+.gbx-next-step-title { font-weight: 600; }
+.gbx-next-step-detail { font-size: 12px; color: var(--theia-descriptionForeground); }
+.gbx-next-step > button { grid-column: 2; grid-row: 1 / span 3; white-space: nowrap; }
+
 /* Opening a product: four steps, because three seconds is long enough that
    *which* three seconds matters. A step that has not run yet is an outline, not a
    tick -- a checklist that pre-ticks its steps is a progress bar wearing a

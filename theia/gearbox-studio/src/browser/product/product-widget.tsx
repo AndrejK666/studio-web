@@ -65,11 +65,12 @@ import { ProductEmptyState, emptyStateLists } from "./product-empty-state";
 import {
   ProductStatusStrip,
   draftStateOf,
+  healthLabel,
   plural,
   productStatusOf,
   type ProductStatusBadge,
 } from "./product-status-strip";
-import { profileLabel } from "./product-summary";
+import { nextStepOf, profileLabel } from "./product-summary";
 import { GearboxMenus } from "../menus";
 import type { OpeningStage } from "../shell/opening-outcome";
 import { RevealPathLink } from "../reveal-link";
@@ -957,6 +958,7 @@ export class ProductWidget extends ReactWidget {
     // profile field (Overview) and a provider option (Topology) queue into the
     // same draft as a gear's settings here.
     return <>
+      {this.renderSummaryBand()}
       <Composition state={state} loadingLabel={this.openingLabel()} descriptors={this.catalogue.current.rows.flatMap(row => row.kind === "projected" ? [row.gear] : [])}
         selection={selection} select={selected => { this.selection.select(selected); this.update(); }}
         add={(host, point) => void this.commands.executeCommand(ADD_GEAR.id, { host, point })}
@@ -969,6 +971,103 @@ export class ProductWidget extends ReactWidget {
           this.update();
         }} />
     </>;
+  }
+
+  /**
+   * The product at a glance, above both Composition columns: its gears and
+   * applications, its health, its last Generate, and the one step to take next.
+   *
+   * **Always there, not only with nothing selected.** These figures used to be
+   * the right-hand pane's empty state, so they vanished at the first click on a
+   * gear -- which is when a person starts changing the things they count.
+   *
+   * It degrades rather than disappears: with no resolution yet the gear count
+   * is the description's own and the rest says it is waiting; after the engine
+   * stopped the band is marked as from before; after a refused resolve the next
+   * step is the retry, beside the error `renderRecovery` draws above it.
+   */
+  protected renderSummaryBand(): React.ReactNode {
+    const state = this.store.current;
+    if (state.open === undefined) return undefined;
+    const product = state.resolution?.product ?? undefined;
+    const stale = state.stale !== undefined;
+    const status = this.statusBadge();
+    const step = nextStepOf({
+      status: state.status,
+      stale,
+      failed: state.error !== undefined,
+      conflicts: errorsIn(state.diagnostics),
+      pending: this.edits.draftEdits().length,
+      gears: state.intent?.selected_gears.length ?? 0,
+      canGenerate: this.catalogue.engineCapabilities?.generate !== false,
+    });
+    const act = (): void => {
+      switch (step.kind) {
+        case "reconnect":
+          void this.session.reconnect();
+          return;
+        case "retry":
+          void this.store.reload();
+          return;
+        case "checks":
+          this.showSection("checks");
+          return;
+        case "apply":
+          void this.edits.applyDraft();
+          return;
+        case "add-gear":
+          void this.commands.executeCommand(ADD_GEAR.id);
+          return;
+        case "generate":
+          this.showSection("generate");
+          return;
+        case "wait":
+          return;
+      }
+    };
+    return (
+      <section className="gbx-summary-band" data-product-summary-band aria-label="Product summary"
+        {...(stale ? { "data-summary-stale": true } : {})}>
+        {product !== undefined ? (
+          this.renderShape(product)
+        ) : (
+          // No resolution: the description still says what was asked for.
+          <div className="gbx-overview-figures" data-overview-figures>
+            <div className="gbx-figure gbx-figure-static" data-figure="gears">
+              <span className="gbx-figure-value">{state.intent?.selected_gears.length ?? "—"}</span>
+              <span className="gbx-figure-label">gears asked for — the rest once the product is checked</span>
+            </div>
+          </div>
+        )}
+        <div className="gbx-overview-figures">
+          <button type="button" className="gbx-figure" data-figure="health" onClick={() => this.showSection("checks")}>
+            <span className="gbx-figure-value gbx-figure-value-text" data-summary-health={status?.kind ?? "none"}>
+              {healthLabel(status)}
+            </span>
+            <span className="gbx-figure-label">{stale ? "from before the connection was lost" : "health"}</span>
+          </button>
+          <button type="button" className="gbx-figure" data-figure="generate" title={this.generationSummary()} onClick={() => this.showSection("generate")}
+            hidden={this.catalogue.engineCapabilities?.generate === false}>
+            <span className="gbx-figure-value gbx-figure-value-text" data-summary-generate={this.generate.current.status}>
+              {this.generationSummary()}
+            </span>
+            <span className="gbx-figure-label">last Generate</span>
+          </button>
+        </div>
+        <div className={`gbx-next-step gbx-next-step-${step.kind}`} data-next-step={step.kind}>
+          <span className="gbx-next-step-label">Next step</span>
+          <span className="gbx-next-step-title">{step.title}</span>
+          <span className="gbx-next-step-detail">{step.detail}</span>
+          {"action" in step && (
+            <button type="button" className={step.kind === "generate" || step.kind === "apply" ? "gbx-start-primary" : "gbx-choice"}
+              data-next-step-action onClick={act}
+              disabled={step.kind === "apply" && !this.engine.isConnected}>
+              {step.action}
+            </button>
+          )}
+        </div>
+      </section>
+    );
   }
 
   /**
@@ -1037,9 +1136,16 @@ export class ProductWidget extends ReactWidget {
       <section className="gbx-product-summary" data-composition-summary>
         <h2>{state.intent?.display_name ?? state.open?.label}</h2>
         <p>Select a gear to configure it. Add gears to extend your product.</p>
-        <p>{state.intent?.selected_gears.length ?? 0} selected gears · Profile <strong>{state.profile}</strong></p>
-        {state.resolution?.product && this.renderOverview(state.resolution.product)}
-        {state.diagnostics.length > 0 && <button type="button" className="gbx-choice" onClick={() => this.showSection("checks")}>Review checks</button>}
+        {/* The figures, the health and the next step are the summary band's
+            now, above both columns; this pane keeps what the band does not
+            say -- where the description lives and what it reads from. */}
+        <div className="gbx-kv">
+          <span>description file</span>
+          <span className="gbx-links">
+            <RevealPathLink reveals={this.reveals} path={state.open?.path ?? ""} label={state.open?.label ?? "—"} />
+          </span>
+        </div>
+        {this.renderSources()}
       </section>
     );
   }
@@ -1630,6 +1736,25 @@ export class ProductWidget extends ReactWidget {
   }
 
   /**
+   * The last Generate, in one phrase, as the Overview row and the summary band
+   * both say it. Read from the cache, like the row below -- never planned.
+   */
+  protected generationSummary(): string {
+    const generate = this.generate.current;
+    const plans = generate.plan?.plans ?? [];
+    const writes = plans.filter((plan) => plan.action !== "unchanged").length;
+    return generate.status === "planning"
+      ? "planning…"
+      : generate.status === "error"
+        ? (generate.error ?? "the last plan failed")
+        : generate.plan === undefined
+          ? "not planned for this resolution yet"
+          : writes === 0
+            ? `${plural(plans.length, "file", "files")}, all unchanged`
+            : `${writes} of ${plural(plans.length, "file", "files")} would change`;
+  }
+
+  /**
    * Whether a generated tree exists for this resolution.
    *
    * **Read from the cache, never planned from here.** `GenerateService.ensurePlan`
@@ -1640,18 +1765,7 @@ export class ProductWidget extends ReactWidget {
    */
   protected renderGenerationStatus(): React.ReactNode {
     const generate = this.generate.current;
-    const plans = generate.plan?.plans ?? [];
-    const writes = plans.filter((plan) => plan.action !== "unchanged").length;
-    const summary =
-      generate.status === "planning"
-        ? "planning…"
-        : generate.status === "error"
-          ? (generate.error ?? "the last plan failed")
-          : generate.plan === undefined
-            ? "not planned for this resolution yet"
-            : writes === 0
-              ? `${plans.length} files, all unchanged`
-              : `${writes} of ${plans.length} files would change`;
+    const summary = this.generationSummary();
     return (
       <div className="gbx-kv">
         <span>generated tree</span>

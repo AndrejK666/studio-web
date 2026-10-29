@@ -61,6 +61,16 @@ export const STUDIO_CONTEXT_KEY = "gearbox.context";
  */
 export const HAS_SELECTION_KEY = "gearbox.hasSelection";
 
+/**
+ * Constructor Studio: how many errors the open product has, as a context key.
+ *
+ * Studio's ribbon (theia/studio) draws the number on Conflicts, and re-asks its
+ * buttons when a context key changes -- it has no other way to hear that the
+ * diagnostics moved, since it does not depend on this package. The count itself
+ * is read from the Conflicts command's `badge`; the key is what says "ask again".
+ */
+export const PRODUCT_CONFLICTS_KEY = "gearbox.productConflicts";
+
 export const HOME_PERSPECTIVE = "gearbox.home";
 export const PRODUCT_PERSPECTIVE = "gearbox.product";
 export const GEAR_PERSPECTIVE = "gearbox.gear";
@@ -116,6 +126,9 @@ export class StudioContextService implements FrontendApplicationContribution {
   /** See [`HAS_SELECTION_KEY`]. Assigned beside `key`, and for the same reason. */
   protected selected!: ContextKey<boolean>;
 
+  /** See [`PRODUCT_CONFLICTS_KEY`]. Assigned beside `key`, and for the same reason. */
+  protected conflicts!: ContextKey<number>;
+
   get current(): StudioContext {
     return this.context;
   }
@@ -127,7 +140,12 @@ export class StudioContextService implements FrontendApplicationContribution {
       HAS_SELECTION_KEY,
       this.selection.current !== undefined,
     );
+    this.conflicts = this.contextKeys.createKey<number>(PRODUCT_CONFLICTS_KEY, 0);
     this.products.onChanged(() => this.recompute());
+    this.products.onChanged(() => {
+      const errors = this.products.current.diagnostics.filter((d) => d.severity === "error").length;
+      if (this.conflicts.get() !== errors) this.conflicts.set(errors);
+    });
     this.gears.onDidChange(() => this.recompute());
     this.selection.onDidChange((current) => this.selected.set(current !== undefined));
   }

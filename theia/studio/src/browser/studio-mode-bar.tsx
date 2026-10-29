@@ -44,6 +44,11 @@ interface ModeAction {
     title: string;
     /** Arguments the command is run with. */
     args?: unknown[];
+    /**
+     * The one action a mode leads to, drawn in the button colour. Building's
+     * Generate: composing and checking a product are on the way to it.
+     */
+    primary?: boolean;
 }
 
 /** The part of the command registry the ribbon reads. */
@@ -92,6 +97,30 @@ export function ribbonAction(commands: RibbonCommands, action: Pick<ModeAction, 
         }
     }
     return { enabled: false, title: `${action.title} — ${reason ?? 'not available right now'}` };
+}
+
+/**
+ * The number on an action's button that its command's handler gives, if any.
+ *
+ * A handler may carry `badge()`, read by duck typing for the same reason as
+ * `disabledReason`: the extension that registers it (gearbox-studio's
+ * Conflicts, with its count of errors) is not a dependency of this one.
+ * `RibbonBadges` covers a contribution that can depend on this package.
+ */
+export function ribbonBadgeCount(commands: RibbonCommands, command: string): number | undefined {
+    if (!commands.getCommand(command)) {
+        return undefined;
+    }
+    for (const handler of commands.getAllHandlers(command)) {
+        const badge = (handler as { badge?: unknown }).badge;
+        if (typeof badge === 'function') {
+            const said: unknown = badge.apply(handler);
+            if (typeof said === 'number' && said > 0) {
+                return said;
+            }
+        }
+    }
+    return undefined;
 }
 
 interface ModeGroup {
@@ -213,13 +242,22 @@ const BY_WORK: readonly Mode[] = [
                     { command: 'studio.components-reference:toggle', icon: 'book', label: 'Components', title: 'Every component: what it is, how alive it is, where it comes from' },
                     { command: 'studio.roadmap-report:toggle', icon: 'milestone', label: 'Roadmap', title: 'What the roadmap board plans, whether the plan holds, and who is waiting' }],
             },
+            // Resolve, Conflicts and Lock answer one question -- is the product
+            // sound? -- so they are one group, Health, and Conflicts carries
+            // the count of errors (`ribbonBadgeCount`). Generate is not a check:
+            // it is where the mode leads, so it stands alone and primary.
             {
-                label: 'Check',
+                label: 'Health',
                 actions: [
                     { command: 'gearbox.product.resolve', icon: 'sync', label: 'Resolve', title: 'Resolve the product again, for the profile shown' },
                     { command: 'gearbox.conflicts.show', icon: 'warning', label: 'Conflicts', title: 'What the engine says cannot resolve' },
                     { command: 'gearbox.lock.show', icon: 'lock', label: 'Lock', title: 'The resolution lock: what this resolution pins, and whether the copy on disk matches' },
-                    { command: 'gearbox.generate.show', icon: 'run-all', label: 'Generate', title: 'Generate the product\'s code from its description' },
+                ],
+            },
+            {
+                label: 'Generate',
+                actions: [
+                    { command: 'gearbox.generate.show', icon: 'run-all', label: 'Generate', title: 'Generate the product\'s code from its description', primary: true },
                 ],
             },
         ],
@@ -546,14 +584,21 @@ export class StudioModeBar extends ModeAware {
                     <div key={g.label} className="studio-ribbon-group" role="group" aria-label={g.label}>
                         <div className="studio-ribbon-actions">
                             {g.actions.map(({ action: a, state }) => {
-                                const badge = badgeText(this.badges?.get(a.command));
+                                const badge = badgeText(this.badges?.get(a.command) ?? ribbonBadgeCount(this.commands, a.command));
+                                const classes = ['studio-ribbon-action'];
+                                if (a.primary) {
+                                    classes.push('primary');
+                                }
+                                if (!state.enabled) {
+                                    classes.push('disabled');
+                                }
                                 return <button
                                     key={a.command}
                                     type="button"
                                     // `aria-disabled` rather than `disabled`: a disabled
                                     // button shows no tooltip in some engines, and the
                                     // tooltip is what says why.
-                                    className={state.enabled ? 'studio-ribbon-action' : 'studio-ribbon-action disabled'}
+                                    className={classes.join(' ')}
                                     aria-disabled={state.enabled ? undefined : true}
                                     title={state.title}
                                     onClick={() => this.run(a)}
@@ -682,9 +727,20 @@ const MODE_BAR_CSS = `
 .studio-ribbon-label { font-size: 11px; line-height: 13px; white-space: nowrap; }
 .studio-ribbon-action.disabled { opacity: .45; cursor: default; }
 .studio-ribbon-action:not(.disabled):hover { background: var(--theia-toolbar-hoverBackground, var(--theia-list-hoverBackground)); border-color: var(--theia-widget-border, var(--theia-editorGroup-border)); }
+/* The one action a mode leads to (Building's Generate), in the button colour. */
+.studio-ribbon-action.primary {
+    background: var(--theia-button-background); color: var(--theia-button-foreground);
+    border-color: var(--theia-button-background);
+}
+.studio-ribbon-action.primary:not(.disabled):hover {
+    background: var(--theia-button-hoverBackground, var(--theia-button-background));
+    border-color: var(--theia-button-hoverBackground, var(--theia-button-background));
+}
+/* Captions in sentence case at a size that can be read: 10px at .85 opacity
+   was a hint of a word under each group. */
 .studio-ribbon-caption {
-    font-size: 10px; line-height: 14px; text-align: center; white-space: nowrap;
-    color: var(--theia-descriptionForeground, var(--theia-foreground)); opacity: .85;
+    font-size: 11px; line-height: 14px; text-align: center; white-space: nowrap;
+    color: var(--theia-descriptionForeground, var(--theia-foreground));
 }
 `;
 
