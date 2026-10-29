@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Deployment } from "./api";
-import { anyRunning, buildStages, isLost, openingScenario, stageOf, type IdeBuild } from "./builds";
+import { anyRunning, buildStages, failureCause, isLost, openingScenario, stageOf, type IdeBuild } from "./builds";
 import { buildsHint, deploysHint } from "./pipeline";
 
 const build = (over: Partial<IdeBuild>): IdeBuild => ({
@@ -26,6 +26,7 @@ const build = (over: Partial<IdeBuild>): IdeBuild => ({
   chartVersion: "0.1.0-sha.1",
   images: [],
   step: null,
+  url: null,
   ...over,
 });
 
@@ -55,6 +56,7 @@ describe("a build's stages", () => {
     expect(stageOf("protoc")).toBe("images");
     expect(stageOf("publish")).toBe("publish");
     expect(stageOf(null)).toBeNull();
+    expect(stageOf("watch")).toBeNull();
   });
 
   it("has a passed build done with all three", () => {
@@ -93,12 +95,29 @@ describe("where the Builds tab stands", () => {
   it("says what failed, and that a rebuild comes next", () => {
     const hint = buildsHint([build({ status: "failed", failureStep: "prepare", failure: "error [GBX0511] no plugin\nmore" })], true);
     expect(hint.tone).toBe("failed");
-    expect(hint.text).toBe("The last build failed while preparing: error [GBX0511] no plugin. Fix it and build again.");
+    expect(hint.text).toBe("The last Studio build failed while preparing: error [GBX0511] no plugin. Fix it and build again.");
+  });
+
+  it("says a failing gear is the gear's to fix, and keeps gearbox's help for the card", () => {
+    const failure =
+      "gearbox generate failed: error [GBX0322] gear `tenant-resolver` carries `#[toolkit::consumes(contract = AuthZResolverApi)]` · help: add `consume(...)` · evidence: consumes.rs";
+    const hint = buildsHint([build({ status: "failed", failureStep: "prepare", failure })], true);
+    expect(hint.text).toBe(
+      "The last Studio build failed while preparing: gearbox generate failed: error [GBX0322] gear `tenant-resolver` carries `#[toolkit::consumes(contract = AuthZResolverApi)]`. " +
+        "Gear tenant-resolver fails, not the build around it: fix the gear where it lives (this repository if the project owns it, else its gear source) or take it out of the product, then build again.",
+    );
+  });
+
+  it("names a build that never reached the cluster, and a CI run's page", () => {
+    expect(failureCause(build({ status: "failed", failureStep: "start", failure: "the build Job could not be started" })).kind).toBe("cluster");
+    const ci = build({ where: "ci", status: "failed", chartRef: null, chartVersion: null });
+    expect(failureCause(ci).kind).toBe("ci");
+    expect(buildsHint([ci], true).text).toBe("The last CI build failed. Its run's page in CI says why; fix it and push again.");
   });
 
   it("follows a running build, and skips runs", () => {
     const hint = buildsHint([build({ action: "run", status: "failed" }), build({ status: "running", step: "build" })], true);
-    expect(hint.text).toBe("Build studio-1 is building the images; this page follows it.");
+    expect(hint.text).toBe("Studio build studio-1 is building the images; this page follows it.");
   });
 
   it("calls a Studio build lost once its Job's hour is long past, and says to build again", () => {
@@ -106,7 +125,19 @@ describe("where the Builds tab stands", () => {
     const stuck = build({ status: "running", step: "prepare", startedAt: "2026-10-28T14:00:00Z" });
     const hint = buildsHint([stuck], true, now);
     expect(hint.tone).toBe("failed");
-    expect(hint.text).toMatch(/^Build studio-1 is lost: no word from its Job since .+\. Build again\.$/);
+    expect(hint.text).toMatch(/^Studio build studio-1 is lost: no word from its Job since .+\. Build again\.$/);
+  });
+
+  it("says what the server said of a build it lost", () => {
+    const lost = build({
+      status: "failed",
+      failureStep: "watch",
+      failure: "Studio lost sight of the build: its Job is gone from the cluster. How it ended is not known; build again.",
+    });
+    expect(buildsHint([lost], true)).toEqual({
+      text: "Studio build studio-1 is lost: Studio lost sight of the build: its Job is gone from the cluster. How it ended is not known; build again.",
+      tone: "failed",
+    });
   });
 
   it("does not send a build without a chart to Deploys", () => {
@@ -150,10 +181,17 @@ describe("a lost build", () => {
     expect(isLost(build({ status: "running", startedAt: null }), now)).toBe(false);
   });
 
+  it("is a Studio build its watch recorded as lost", () => {
+    expect(isLost(build({ status: "failed", failureStep: "watch" }), now)).toBe(true);
+    expect(isLost(build({ status: "failed", failureStep: "prepare" }), now)).toBe(false);
+  });
+
   it("is not followed: only a build really running keeps the page refreshing", () => {
     const lost = build({ status: "running", startedAt: "2026-10-28T14:00:00Z" });
     expect(anyRunning([lost], now)).toBe(false);
     expect(anyRunning([lost, build({ status: "running", startedAt: "2026-10-28T15:55:00Z" })], now)).toBe(true);
+    // A CI run changes here only with a sync: reading again every few seconds says nothing new.
+    expect(anyRunning([build({ where: "ci", status: "running", startedAt: "2026-10-28T15:55:00Z" })], now)).toBe(false);
   });
 });
 

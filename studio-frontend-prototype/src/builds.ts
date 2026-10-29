@@ -30,6 +30,8 @@ export interface BuildRun {
   workflowPath: string | null;
   /** The repository node it belongs to. */
   repoNode: string | null;
+  /** The provider's run id: a pipeline's build is `ci-run-<it>`. */
+  externalId: string | null;
 }
 
 export type BuildStatus = "queued" | "running" | "passed" | "failed" | "cancelled" | "skipped" | "unknown";
@@ -81,6 +83,7 @@ export function buildsOf(nodes: readonly ArtifactNode[]): BuildRun[] {
       updatedAt: str(v.updated_at),
       workflowPath: str(v.workflow_path),
       repoNode: str(v.repo),
+      externalId: str(v.external_id),
     };
   });
   return runs.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
@@ -235,6 +238,8 @@ export interface IdeBuild {
   /** The step a Studio build is in while it runs: `prepare`, `build` or
    *  `publish`, the Job's containers. */
   step: string | null;
+  /** A pipeline's build: its run's page in CI. */
+  url: string | null;
 }
 
 /** The `build` nodes as builds, newest first. */
@@ -273,6 +278,7 @@ export function ideBuildsOf(nodes: readonly ArtifactNode[]): IdeBuild[] {
             })
           : [],
         step: str(v.step),
+        url: null,
       };
     })
     .sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));
@@ -284,9 +290,11 @@ export type BuildStage = (typeof BUILD_STAGES)[number];
 export type StageState = "done" | "running" | "failed" | "waiting";
 
 /** The stage a step names: the Job's `build` container makes the images; any
- *  step this does not know (an IDE's `protoc`, `compile`) is the images too. */
+ *  step this does not know (an IDE's `protoc`, `compile`) is the images too.
+ *  Studio's own `start` and `watch` name none: the build never began, or
+ *  how far it got is not known. */
 export function stageOf(step: string | null): BuildStage | null {
-  if (!step) return null;
+  if (!step || step === "start" || step === "watch") return null;
   if (step === "prepare" || step === "publish") return step;
   return "images";
 }
@@ -346,17 +354,123 @@ export function statusTone(s: BuildStatus): string {
  *  after it started has lost its watch, and nothing will say how it ended. */
 export const LOST_AFTER_MS = 65 * 60_000;
 
-/** A Studio build still `running` past its Job's deadline: lost, not running. */
-export function isLost(b: Pick<IdeBuild, "where" | "status" | "startedAt">, now = Date.now()): boolean {
-  if (b.where !== "studio" || b.status !== "running" || !b.startedAt) return false;
+/** A Studio build whose watch said it lost sight of it (it fails in `watch`),
+ *  or one still `running` past its Job's deadline, which a build recorded
+ *  before the watch said so can be: lost, not running. */
+export function isLost(b: Pick<IdeBuild, "where" | "status" | "startedAt" | "failureStep">, now = Date.now()): boolean {
+  if (b.where !== "studio") return false;
+  if (b.status === "failed") return b.failureStep === "watch";
+  if (b.status !== "running" || !b.startedAt) return false;
   const started = Date.parse(b.startedAt);
   return Number.isFinite(started) && now - started > LOST_AFTER_MS;
 }
 
-/** Whether any build is really running: a lost one is not, so the page stops
- *  following it. */
+/** Whether any build is really running and says so as it goes: a lost one
+ *  does not, and a CI run changes here only with the next sync of the
+ *  project's sources, so the page follows neither. */
 export function anyRunning(builds: readonly IdeBuild[], now = Date.now()): boolean {
-  return builds.some((b) => b.status === "running" && !isLost(b, now));
+  return builds.some((b) => b.status === "running" && b.where !== "ci" && !isLost(b, now));
+}
+
+/** The words for where a build ran. */
+export const WHERE_WORD: Record<string, string> = { studio: "Studio", desktop: "desktop", session: "session", ci: "CI" };
+
+/** What a failed build's failure points at, and so who fixes it. */
+export interface FailureCause {
+  /** `gear`: one gear of the product does not hold together, which is fixed
+   *  where that gear lives; `cluster`: the build never reached the cluster;
+   *  `lost`: how it ended is not known; `ci`: the run's own page says why;
+   *  `build`: anything else, the product's own. */
+  kind: "gear" | "cluster" | "lost" | "ci" | "build";
+  /** The gear, when one is named. */
+  gear: string | null;
+  /** What to do, in one sentence. */
+  next: string;
+}
+
+/** Why a failed build failed, as far as its failure says. gearbox names the
+ *  gear a diagnostic is about as ``gear `id` ``. */
+export function failureCause(b: IdeBuild, now = Date.now()): FailureCause {
+  if (isLost(b, now)) return { kind: "lost", gear: null, next: "How it ended is not known; build again." };
+  const gear = /\bgear `([^`]+)`/.exec(b.failure ?? "")?.[1] ?? null;
+  if (gear) {
+    return {
+      kind: "gear",
+      gear,
+      next: `Gear ${gear} fails, not the build around it: fix the gear where it lives (this repository if the project owns it, else its gear source) or take it out of the product, then build again.`,
+    };
+  }
+  if (b.failureStep === "start") {
+    return {
+      kind: "cluster",
+      gear: null,
+      next: "It never reached the cluster: check the environment's cluster and registry connections (Organization › Environments), then build again.",
+    };
+  }
+  if (b.where === "ci" && !b.failure) {
+    return { kind: "ci", gear: null, next: "Its run's page in CI says why; fix it and push again." };
+  }
+  return { kind: "build", gear: null, next: "Fix it and build again." };
+}
+
+/** A failure's first line as a sentence short enough for one line of a page:
+ *  the part before gearbox's ` · help:`, at most 240 characters, ending in
+ *  one full stop or an ellipsis. */
+export function failureLine(failure: string): string {
+  const line = failure.split("\n")[0].split(" · ")[0].trim().replace(/\.+$/, "");
+  return line.length > 240 ? `${line.slice(0, 240).trimEnd()}…` : `${line}.`;
+}
+
+/** The product's builds with the CI's: a pipeline's build links its run, and
+ *  a run of the project's build workflow that left no manifest -- it failed,
+ *  is still running, or published none -- is a build of its own, so the
+ *  product's builds say what CI did too. Newest first. */
+export function productBuildsOf(
+  builds: readonly IdeBuild[],
+  runs: readonly BuildRun[],
+  setting: BuildWorkflow | null | undefined,
+  repoPaths: ReadonlyMap<string, string>,
+): IdeBuild[] {
+  const runOf = new Map(runs.filter((r) => r.externalId).map((r) => [`ci-run-${r.externalId}`, r]));
+  const linked = builds.map((b) => {
+    const run = b.where === "ci" ? runOf.get(b.buildId) : undefined;
+    return run ? { ...b, url: run.url, branch: b.branch ?? run.branch, startedAt: b.startedAt ?? run.startedAt ?? run.createdAt } : b;
+  });
+  const known = new Set(builds.map((b) => b.buildId));
+  const fromRuns = runs.flatMap((r): IdeBuild[] => {
+    const id = r.externalId ? `ci-run-${r.externalId}` : null;
+    if (!id || known.has(id) || r.status === "skipped" || r.status === "unknown") return [];
+    const repo = repoPaths.get(r.repoNode ?? "");
+    const file = workflowFile(r.workflowPath);
+    if (!repo || !file || !isBuildWorkflow(setting, { repo, workflow: file })) return [];
+    return [
+      {
+        id: r.id,
+        buildId: id,
+        where: "ci",
+        action: "build",
+        status: r.status === "queued" ? "running" : r.status,
+        product: null,
+        profile: null,
+        commit: r.sha || null,
+        shortSha: r.shortSha || null,
+        branch: r.branch,
+        by: r.author,
+        startedAt: r.startedAt ?? r.createdAt,
+        finishedAt: r.status === "running" || r.status === "queued" ? null : r.updatedAt,
+        durationMs: null,
+        failure: null,
+        failureStep: null,
+        outputs: [],
+        chartRef: null,
+        chartVersion: null,
+        images: [],
+        step: null,
+        url: r.url,
+      },
+    ];
+  });
+  return [...linked, ...fromRuns].sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));
 }
 
 /** The ways to build the product, as the Builds tab offers them. */

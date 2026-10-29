@@ -3,8 +3,10 @@
 // One line says where it stands; then Build the product, one scenario at a
 // time -- in Studio, as a Job in the organization's cluster; on my machine, in
 // the desktop IDE; or in CI, by the repository's workflow, whose runs show
-// only there -- then the product's builds, the newest open with how far it got
-// (prepare, images, publish) and, once it published its chart, Deploy.
+// there -- then the product's builds, from any of the three, the newest open
+// with how far it got (prepare, images, publish), what failed and whose it is
+// to fix, and, once it published its chart, Deploy. A run of the project's
+// build workflow is one of them even when it left no manifest.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -24,11 +26,13 @@ import {
   buildsHeadline,
   buildsOf,
   ciReadFailures,
+  failureCause,
   ideBuildDuration,
   ideBuildsOf,
   isBuildWorkflow,
   isLost,
   openingScenario,
+  productBuildsOf,
   repoPathsOf,
   statusTone,
   stepToShow,
@@ -104,6 +108,13 @@ export function ProjectBuilds({
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [saved, setSaved] = useState<SavedProduct | null>(null);
   const [chosen, setChosen] = useState<BuildScenario | null>(null);
+  // The CI runs of the project's repositories, and what the repositories say
+  // about reading them: In CI lists them, and the build workflow's are among
+  // the product's builds.
+  const [runs, setRuns] = useState<BuildRun[] | null>(null);
+  const [runsError, setRunsError] = useState<string | null>(null);
+  const [ciFailures, setCiFailures] = useState<{ repo: string; error: string }[]>([]);
+  const [repoPaths, setRepoPaths] = useState<Map<string, string>>(new Map());
   const [round, setRound] = useState(0);
   const changed = useCallback((message: string) => {
     setNote(message);
@@ -156,11 +167,34 @@ export function ProjectBuilds({
       .deployments(token, { project: projectId })
       .then((d) => live && setDeployments(d.items))
       .catch(() => live && setDeployments([]));
+    // The repositories say whether their CI could be read at all: no runs and
+    // "could not read the runs" are different answers. They also name the
+    // repository a run belongs to, which Build in CI needs.
+    api
+      .listArtifactNodes(token, "repo", projectId, undefined, 200)
+      .then((page) => {
+        if (!live) return;
+        setCiFailures(ciReadFailures(page.nodes ?? []));
+        setRepoPaths(repoPathsOf(page.nodes ?? []));
+      })
+      .catch(() => live && setCiFailures([]));
+    api
+      .listArtifactNodes(token, "workflow_run", projectId, undefined, LIMIT, { sort: "updated" })
+      .then((page) => {
+        if (!live) return;
+        setRuns(buildsOf(page.nodes ?? []));
+        setRunsError(null);
+      })
+      .catch((e: unknown) => live && setRunsError(errText(e)));
     return () => {
       live = false;
     };
   }, [token, projectId, round]);
-  const running = anyRunning(ideBuilds);
+  const builds = useMemo(
+    () => productBuildsOf(ideBuilds, runs ?? [], config?.build, repoPaths),
+    [ideBuilds, runs, config, repoPaths],
+  );
+  const running = anyRunning(builds);
   useEffect(() => {
     if (!running) return;
     const timer = window.setInterval(() => setRound((r) => r + 1), FOLLOW_MS);
@@ -177,7 +211,7 @@ export function ProjectBuilds({
   return (
     <>
       <h1>Builds</h1>
-      <PipelineLine hint={buildsHint(ideBuilds, canBuildInStudio)} onOpenTab={onOpenTab} />
+      <PipelineLine hint={buildsHint(builds, canBuildInStudio)} onOpenTab={onOpenTab} />
       {note && (
         <div className="hint" data-builds-note>
           {note}
@@ -220,13 +254,18 @@ export function ProjectBuilds({
             saved={saved}
             config={config}
             setConfig={setConfig}
+            runs={runs}
+            error={runsError}
+            failures={ciFailures}
+            repoPaths={repoPaths}
+            builds={ideBuilds}
           />
         )}
       </section>
       <ProductBuilds
         token={token}
         projectId={projectId}
-        builds={ideBuilds}
+        builds={builds}
         environments={environments}
         deployments={deployments}
         onChanged={changed}
@@ -286,8 +325,8 @@ function OnMyMachine({
 }
 
 /** The repository's CI builds the product: propose the workflow that does it,
- *  and -- here only -- the CI runs of the project's repositories, the chosen
- *  workflow's newest first, with Build in CI. */
+ *  and the CI runs of the project's repositories, the chosen workflow's newest
+ *  first, with Build in CI; a run that published the product says what. */
 function InCi({
   token,
   projectId,
@@ -296,6 +335,11 @@ function InCi({
   saved,
   config,
   setConfig,
+  runs,
+  error,
+  failures,
+  repoPaths,
+  builds,
 }: {
   token: string;
   projectId: string;
@@ -304,11 +348,13 @@ function InCi({
   saved: SavedProduct | null;
   config: ProjectConfig | null;
   setConfig: (c: ProjectConfig) => void;
+  runs: BuildRun[] | null;
+  error: string | null;
+  failures: { repo: string; error: string }[];
+  repoPaths: Map<string, string>;
+  /** The product's builds as recorded: a pipeline's names its run. */
+  builds: IdeBuild[];
 }) {
-  const [runs, setRuns] = useState<BuildRun[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [failures, setFailures] = useState<{ repo: string; error: string }[]>([]);
-  const [repoPaths, setRepoPaths] = useState<Map<string, string>>(new Map());
   const [workflow, setWorkflow] = useState<string>("");
   const [branch, setBranch] = useState<string>("");
   const [all, setAll] = useState(false);
@@ -316,28 +362,10 @@ function InCi({
   const [note, setNote] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // The repositories say whether their CI could be read at all: no runs and
-  // "could not read the runs" are different answers. They also name the
-  // repository a run belongs to, which Build in CI needs.
-  useEffect(() => {
-    let live = true;
-    api
-      .listArtifactNodes(token, "repo", projectId, undefined, 200)
-      .then((page) => {
-        if (!live) return;
-        setFailures(ciReadFailures(page.nodes ?? []));
-        setRepoPaths(repoPathsOf(page.nodes ?? []));
-      })
-      .catch(() => live && setFailures([]));
-    api
-      .listArtifactNodes(token, "workflow_run", projectId, undefined, LIMIT, { sort: "updated" })
-      .then((page) => live && setRuns(buildsOf(page.nodes ?? [])))
-      .catch((e: unknown) => live && setError(errText(e)));
-    return () => {
-      live = false;
-    };
-  }, [token, projectId]);
-
+  const published = useMemo(
+    () => new Map(builds.filter((b) => b.where === "ci" && b.chartVersion).map((b) => [b.buildId, b.chartVersion])),
+    [builds],
+  );
   const workflows = useMemo(() => workflowsOf(runs ?? []), [runs]);
   const setting = config?.build ?? null;
   // The project's build workflow first; else the workflow that runs most,
@@ -497,6 +525,12 @@ function InCi({
                   <tr key={r.id} data-build-status={r.status}>
                     <td>
                       <span className={`badge ${statusTone(r.status)}`}>{r.status}</span>
+                      {r.externalId && published.get(`ci-run-${r.externalId}`) ? (
+                        <span className="sub" data-run-published>
+                          {" "}
+                          · published <code>{published.get(`ci-run-${r.externalId}`)}</code>
+                        </span>
+                      ) : null}
                     </td>
                     <td style={{ minWidth: 220 }}>
                       <code>{r.shortSha}</code>{" "}
@@ -638,6 +672,7 @@ function BuildDetails({
   onChanged: (message: string) => void;
 }) {
   const lost = isLost(b);
+  const cause = b.status === "failed" ? failureCause(b) : null;
   return (
     <div data-build-card={b.buildId} data-build-card-status={lost ? "lost" : b.status}>
       {b.branch && (
@@ -647,17 +682,30 @@ function BuildDetails({
       )}
       {lost && (
         <p className="hint" data-build-lost>
-          Lost: no word from its Job since {b.startedAt ? new Date(b.startedAt).toLocaleString() : "it started"}, past
-          the hour a build may take. How it ended is not known; build again.
+          {b.status === "failed" && b.failure
+            ? b.failure
+            : `Lost: no word from its Job since ${b.startedAt ? new Date(b.startedAt).toLocaleString() : "it started"}, past the hour a build may take. How it ended is not known; build again.`}
         </p>
       )}
       {b.where === "studio" && (
         <BuildLogPanel token={token} projectId={projectId} buildId={b.buildId} running={b.status === "running"} />
       )}
-      {b.status === "failed" && b.failure && (
+      {cause && !lost && (
+        <p className="hint" data-build-cause={cause.kind}>
+          {cause.next}
+        </p>
+      )}
+      {b.status === "failed" && !lost && b.failure && (
         <div className="error" style={{ marginTop: 8, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} data-ide-build-failure>
           {b.failureStep ? `${b.failureStep}: ` : ""}
           {b.failure}
+        </div>
+      )}
+      {b.url && (
+        <div className="sub" data-build-run>
+          <a href={b.url} target="_blank" rel="noreferrer">
+            Its run in CI
+          </a>
         </div>
       )}
       {b.images.length > 0 ? (
@@ -812,15 +860,18 @@ const STAGE_TONE: Record<StageState, string> = { done: "ok", running: "info", fa
 const STAGE_MARK: Record<StageState, string> = { done: "✓", running: "…", failed: "✕", waiting: "" };
 
 /** prepare → images → publish, each as a badge in its state. A run of the
- *  product has no stages; a lost build's are not known past what it said. */
+ *  product has no stages, nor has a CI run that left no manifest (its page
+ *  has its jobs); a lost build's are not known past what it said. */
 function StageLane({ build: b }: { build: IdeBuild }) {
-  if (b.action === "run") return <span className="sub">—</span>;
+  if (b.action === "run" || (b.where === "ci" && b.status !== "passed" && !b.failureStep && !b.step))
+    return <span className="sub">—</span>;
   const stages: Record<BuildStage, StageState> = buildStages(b);
   const lost = isLost(b);
   return (
     <span style={{ display: "inline-flex", gap: 4, alignItems: "center", whiteSpace: "nowrap" }} data-build-stages>
       {BUILD_STAGES.map((stage, i) => {
-        const state: StageState = lost && stages[stage] === "running" ? "waiting" : stages[stage];
+        const state: StageState =
+          lost && (stages[stage] === "running" || stages[stage] === "failed") ? "waiting" : stages[stage];
         return (
           <span key={stage} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
             {i > 0 && <span className="sub">→</span>}

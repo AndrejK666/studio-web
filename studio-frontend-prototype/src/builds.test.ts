@@ -9,11 +9,13 @@ import {
   buildsHeadline,
   buildsOf,
   ciReadFailures,
+  failureLine,
   ideBuildDuration,
   ideBuildsOf,
   isBuildWorkflow,
   latestFinished,
   mainBranch,
+  productBuildsOf,
   repoPathsOf,
   workflowFile,
   workflowsOf,
@@ -142,6 +144,32 @@ describe("builds", () => {
     expect(b).toMatchObject({ chartRef: "oci://ghcr.io/acme/charts/shop", chartVersion: "0.1.0-sha.1", where: "ci" });
     expect(b.images).toEqual([{ app: "api", image: "ghcr.io/acme/gbx-api:sha-1@sha256:ab" }]);
     expect(ideBuildsOf([node("2", { build_id: "b" })])[0].chartRef).toBeNull();
+  });
+
+  it("puts the build workflow's CI runs among the product's builds, and links a pipeline's build to its run", () => {
+    const ci = buildsOf([
+      node("r7", { workflow: "Build", workflow_path: ".github/workflows/build.yml", repo: "repo-1", external_id: "7", status: "completed", conclusion: "success", url: "https://ci/7", branch: "main", started_at: "2026-10-15T09:00:00Z" }),
+      node("r8", { workflow: "Build", workflow_path: ".github/workflows/build.yml", repo: "repo-1", external_id: "8", status: "completed", conclusion: "failure", url: "https://ci/8", sha: "8888888abc", started_at: "2026-10-15T10:00:00Z" }),
+      node("r9", { workflow: "Docs", workflow_path: ".github/workflows/docs.yml", repo: "repo-1", external_id: "9", status: "completed", conclusion: "failure", started_at: "2026-10-15T11:00:00Z" }),
+    ]);
+    const recorded = ideBuildsOf([
+      node("b7", { build_id: "ci-run-7", where: "ci", status: "passed", chart: { reference: "oci://r/charts/shop", version: "0.1.0" } }),
+    ]);
+    const paths = new Map([["repo-1", "acme/shop"]]);
+    const all = productBuildsOf(recorded, ci, { repo: "Acme/Shop", workflow: "build.yml" }, paths);
+    // The docs workflow is not the build; the passed run is its recorded build.
+    expect(all.map((b) => [b.buildId, b.status, b.url])).toEqual([
+      ["ci-run-8", "failed", "https://ci/8"],
+      ["ci-run-7", "passed", "https://ci/7"],
+    ]);
+    expect(all[0]).toMatchObject({ where: "ci", shortSha: "8888888", chartVersion: null });
+    // Without a build workflow set, only what CI recorded is a build.
+    expect(productBuildsOf(recorded, ci, null, paths).map((b) => b.buildId)).toEqual(["ci-run-7"]);
+  });
+
+  it("keeps a failure's first line short and without gearbox's help", () => {
+    expect(failureLine("error [GBX1] gear `a` is wrong · help: fix it\nmore")).toBe("error [GBX1] gear `a` is wrong.");
+    expect(failureLine("x".repeat(300))).toHaveLength(241);
   });
 });
 

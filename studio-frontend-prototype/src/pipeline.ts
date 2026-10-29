@@ -5,7 +5,7 @@
  * `nextStep` in components-flow.ts. Derived from what the tab already read. */
 
 import type { Deployment } from "./api";
-import { BUILD_STAGES, buildStages, isLost, type IdeBuild } from "./builds";
+import { BUILD_STAGES, WHERE_WORD, buildStages, failureCause, failureLine, isLost, type IdeBuild } from "./builds";
 import { STATE_LABELS } from "./environments";
 
 /** The project tabs a line can send a person to. */
@@ -39,20 +39,29 @@ export function buildsHint(builds: readonly IdeBuild[], canBuildInStudio: boolea
       tone: "todo",
     };
   }
+  const where = WHERE_WORD[latest.where] ?? latest.where;
   if (isLost(latest, now)) {
     return {
-      text: `Build ${latest.buildId} is lost: no word from its Job since ${new Date(latest.startedAt ?? 0).toLocaleString()}. Build again.`,
+      text:
+        latest.status === "failed" && latest.failure
+          ? `Studio build ${latest.buildId} is lost: ${failureLine(latest.failure)}`
+          : `Studio build ${latest.buildId} is lost: no word from its Job since ${new Date(latest.startedAt ?? 0).toLocaleString()}. Build again.`,
       tone: "failed",
     };
   }
   switch (latest.status) {
     case "running":
-      return { text: `Build ${latest.buildId} is ${stageWord(latest)}; this page follows it.`, tone: "todo" };
-    case "failed":
+      return latest.where === "ci"
+        ? { text: `A CI build is running; it shows here as it ends, with the next sync of the project's sources.`, tone: "todo" }
+        : { text: `${where} build ${latest.buildId} is ${stageWord(latest)}; this page follows it.`, tone: "todo" };
+    case "failed": {
+      const cause = failureCause(latest, now);
+      const stage = latest.where === "ci" && !latest.failureStep ? "" : ` while ${stageWord(latest)}`;
       return {
-        text: `The last build failed while ${stageWord(latest)}${latest.failure ? `: ${latest.failure.split("\n")[0]}` : ""}. Fix it and build again.`,
+        text: `The last ${where} build failed${stage}${latest.failure ? `: ${failureLine(latest.failure)}` : "."} ${cause.next}`,
         tone: "failed",
       };
+    }
     case "passed":
       return latest.chartRef && latest.chartVersion
         ? { text: `${latest.chartVersion} is published. Next: deploy it.`, tone: "done", go: "deploys" }

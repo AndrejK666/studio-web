@@ -57,6 +57,15 @@ const DEADLINE_SECS: i64 = 60 * 60;
 const WATCH_FOR: Duration = Duration::from_secs(10 * 60);
 const WATCH_EVERY: Duration = Duration::from_secs(20);
 
+/// The watch run past which a Job still running has outlived its deadline by
+/// two rounds: the cluster should have stopped it, so nothing it says now can
+/// be trusted, and the build is recorded as lost.
+const LAST_WATCH_ROUND: u32 = (DEADLINE_SECS as u64 / WATCH_FOR.as_secs()) as u32 + 2;
+
+/// How much of a failure a build keeps: a container's termination message is
+/// at most 4 KiB, and the start of it names what broke.
+const FAILURE_CHARS: usize = 3000;
+
 /// Where the product's repository is, as the server read it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoRef {
@@ -645,13 +654,28 @@ fn stuck(pod: &Pod) -> Option<(String, String)> {
         })
 }
 
-/// The last `n` characters of `s`: a failure's end says most.
+/// The last `n` characters of `s`: a log's end says most.
 fn tail(s: &str, n: usize) -> String {
     let chars: Vec<char> = s.trim().chars().collect();
     if chars.len() <= n {
         return chars.into_iter().collect();
     }
     format!("…{}", chars[chars.len() - n..].iter().collect::<String>())
+}
+
+/// The first `n` characters of `s`: an error list's start says most.
+fn head(s: &str, n: usize) -> String {
+    let s = s.trim();
+    match s.char_indices().nth(n) {
+        Some((at, _)) => format!("{}…", &s[..at]),
+        None => s.to_owned(),
+    }
+}
+
+/// What a build records when its watch can no longer follow it: how it ended
+/// is not known.
+fn lost(why: &str) -> String {
+    format!("Studio lost sight of the build: {why}. How it ended is not known; build again.")
 }
 
 #[async_trait]
@@ -675,6 +699,30 @@ impl TaskHandler for WatchTask {
         };
         match self.watch(ctx, &p).await {
             Ok(said) => TaskOutcome::done_with(said, serde_json::json!({ "job": p.job })),
+            // The last attempt: nobody watches after this one, so the build
+            // says it is lost rather than running for ever.
+            Err(e) if ctx.attempt >= self.max_attempts() => {
+                let why = format!("{e:#}");
+                let outcome = crate::artifact_ingest::port::BuildOutcome::failed(
+                    &p.build_id,
+                    &p.repository,
+                    &p.profile,
+                    &lost(&why),
+                    "watch",
+                );
+                if let Err(e) = record(
+                    &self.hub,
+                    &ctx.security,
+                    p.records_in,
+                    p.project_id,
+                    outcome,
+                )
+                .await
+                {
+                    warn!(build = %p.build_id, "studio-environments: a lost build could not be recorded ({e})");
+                }
+                TaskOutcome::Failed(why)
+            }
             Err(e) => TaskOutcome::Retry(format!("{e:#}")),
         }
     }
@@ -699,7 +747,7 @@ impl WatchTask {
                     ctx,
                     &client,
                     p,
-                    Err(("watch".into(), "the build Job is gone".into())),
+                    Err(("watch".into(), lost("its Job is gone from the cluster"))),
                 )
                 .await?;
                 return Ok("the build Job is gone".into());
@@ -739,6 +787,13 @@ impl WatchTask {
                             warn!(build = %p.build_id, "studio-environments: the build's step could not be recorded ({e})");
                         }
                         step = now;
+                    }
+                    if started.elapsed() >= WATCH_FOR && p.round + 1 >= LAST_WATCH_ROUND {
+                        let why = lost("its Job still runs past the hour a build may take");
+                        self.finish(ctx, &client, p, Err(("watch".into(), why.clone())))
+                            .await?;
+                        let _ = jobs.delete(&p.job, &DeleteParams::background()).await;
+                        return Ok(why);
                     }
                     if started.elapsed() >= WATCH_FOR {
                         let next = WatchPayload {
@@ -827,7 +882,7 @@ impl WatchTask {
                 &p.build_id,
                 &p.repository,
                 &p.profile,
-                &tail(&why, 480),
+                &tail(&why, FAILURE_CHARS),
                 &step,
             ),
         };
@@ -1080,7 +1135,7 @@ fn run(cmd: &mut Command, what: &str) -> anyhow::Result<String> {
         // The whole output to the container's log; the failure itself carries
         // what went wrong, which the run records as the build's reason.
         eprintln!("{text}");
-        bail!("{what} failed: {}", tail(&errors_first(&text), 1500));
+        bail!("{what} failed: {}", failure_text(&text));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -1138,6 +1193,31 @@ fn errors_first(text: &str) -> String {
     } else {
         kept.join("\n")
     }
+}
+
+/// What a failed tool said, for the build's record: its errors from the
+/// first, which name what broke (a gear, a file), or the end of all it said
+/// when it names none.
+fn failure_text(text: &str) -> String {
+    let kept = errors_first(text);
+    if kept == text {
+        tail(text, FAILURE_CHARS)
+    } else {
+        head(&kept, FAILURE_CHARS)
+    }
+}
+
+/// A step's failure as its container's termination message, which the watch
+/// records as the build's reason. Without it the kubelet falls back to the
+/// log's last 2 KiB, which the tool's own output fills, and the start of the
+/// error -- the gear it names -- falls out of it.
+pub fn say_failure(e: &anyhow::Error) {
+    let text = format!("{e:#}");
+    let mut end = text.len().min(4000);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let _ = std::fs::write("/dev/termination-log", &text[..end]);
 }
 
 fn gearbox() -> String {
@@ -1577,6 +1657,28 @@ mod tests {
              error: resolution reported errors"
         );
         assert_eq!(errors_first("fatal: no such ref"), "fatal: no such ref");
+    }
+
+    #[test]
+    fn a_failure_keeps_the_start_of_its_errors_and_the_end_of_a_log() {
+        let error = "error [GBX0322] gear `tenant-resolver` carries `#[toolkit::consumes(...)]`";
+        let notes = "info [GBX0517] note\n".repeat(40);
+        let text = format!("{notes}{error}\n    help: {}", "x".repeat(5000));
+        let kept = failure_text(&text);
+        assert!(kept.starts_with(error), "{kept}");
+        assert_eq!(kept.chars().count(), FAILURE_CHARS + 1);
+
+        let log = format!("{}fatal: no such ref", "y".repeat(5000));
+        let kept = failure_text(&log);
+        assert!(
+            kept.starts_with('…') && kept.ends_with("fatal: no such ref"),
+            "{kept}"
+        );
+    }
+
+    #[test]
+    fn the_last_watch_round_comes_after_the_deadline() {
+        assert!(u64::from(LAST_WATCH_ROUND) * WATCH_FOR.as_secs() > DEADLINE_SECS as u64);
     }
 
     #[test]

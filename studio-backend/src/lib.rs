@@ -208,7 +208,8 @@ pub async fn run_cli() -> Result<()> {
             git_ref.as_deref(),
             product_file,
             profile,
-        );
+        )
+        .inspect_err(environments::build::say_failure);
     }
     if let Some(Commands::BuildPublish {
         work,
@@ -216,7 +217,9 @@ pub async fn run_cli() -> Result<()> {
         registry_config,
     }) = &cli.command
     {
-        return environments::build::publish(work, prefix, registry_config).map(|_| ());
+        return environments::build::publish(work, prefix, registry_config)
+            .map(|_| ())
+            .inspect_err(environments::build::say_failure);
     }
     if matches!(cli.command, Some(Commands::GtsTypes)) {
         print!("{}", gts_inventory::to_pretty_json()?);
