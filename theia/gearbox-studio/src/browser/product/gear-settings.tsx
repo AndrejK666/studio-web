@@ -27,6 +27,7 @@ import type { GearSelection } from "../../common/generated/GearSelection";
 import { ConfigFields } from "../add-gear/config-fields";
 import { type ConfigSources, provenanceOf } from "../inspector/effective-config";
 import type { ProductEditService } from "../product-edit-service";
+import { humanizeFeature } from "./product-summary";
 
 export interface GearSettingsProps {
   readonly descriptor: GearDescriptor;
@@ -44,6 +45,12 @@ export interface GearSettingsProps {
    * shown a list it is silently missing from.
    */
   readonly profileKind?: string;
+  /**
+   * The profile the Product view is showing, for the Configuration note:
+   * config applies to every profile, and saying "not only this one" is what
+   * stops a person reading it as profile-specific.
+   */
+  readonly viewingProfile?: string;
 }
 
 /**
@@ -91,6 +98,7 @@ export function GearSettings({
   edits,
   sources,
   profileKind,
+  viewingProfile,
 }: GearSettingsProps): React.ReactElement {
   const [newConfigKey, setNewConfigKey] = React.useState("");
   const [newConfigValue, setNewConfigValue] = React.useState("");
@@ -140,39 +148,148 @@ export function GearSettings({
     queueFeatures([...features, feature]);
   };
 
+  const featuresOn = available.filter((feature) => chosenFeatures.has(feature)).length;
+
   return (
     // **No heading of its own.** It carried `in this product`, which is the
     // only three words the settings half showed above the fields -- a headline
     // that never named the object it was about. The surrounding pane names the
     // gear now, so a second heading here would be a subtitle to it.
+    //
+    // **Captioned blocks, the common case first.** Features and Configuration
+    // are what a person comes to change; the free keys and the free feature
+    // name are escape hatches, and sit folded at the bottom as one Advanced.
     <div className="gbx-product-edit" data-gear-config={gearId}>
-      {fields.length > 0 && (
-        <ConfigFields
-          fields={fields}
-          values={edits.draftConfigValues(gearId, savedConfig)}
-          onChange={(key, value) => queueConfig(key, value)}
-          provenanceOf={(key) => provenanceOf(sources, gearId, key, savedConfig)}
-          isDrafted={(key) => edits.isDraftedConfig(gearId, key)}
-          derivedFrom={(key) =>
-            (descriptor.serves ?? []).find((endpoint) => endpoint.config_key === key)?.name
-          }
-          // A reset is a `set_config` with no value, which is how the wire
-          // spells "remove this key" -- so it queues into the same draft and
-          // waits for the same Apply as typing does.
-          onReset={(key) => queueConfig(key, undefined)}
-        />
-      )}
-      {/* **The free keys, under Advanced.** The typed controls above are what
-          this gear exposes; this is the escape hatch for a curated `exposes`
-          that is narrower than the struct it came from. Open when it already
-          holds something, because a key somebody set is not advanced any more
-          -- it is part of this product's description. */}
+      <section className="gbx-block" data-gear-features>
+        <h3 className="gbx-block-caption">
+          Features{available.length > 0 && ` · ${featuresOn} of ${available.length} on`}
+        </h3>
+        {/* **Three answers, not one.** "No features yet" could not be told
+            from "this gear has none", and the box beside it took any string,
+            so a typo became a Cargo feature that does not exist and a build
+            failure two steps later. The projected table answered that, and
+            `cargo_features` is the curation on top of it. */}
+        {available.length === 0 && elsewhere.length === 0 && (
+          <p className="gbx-empty" data-features-none>
+            {curated ? "This gear offers no Cargo features." : "This crate declares no Cargo features."}
+          </p>
+        )}
+        {/* The crate's own `[features]` table, as switches. One renderer's
+            worth of duplication with the Add Gear dialog is deliberate for now:
+            the two carry different state (a draft here, a staged proposal
+            there), and a control that disagreed with itself between them would
+            be worse than two that agree by construction.
+
+            A switch is still a checkbox underneath (`role="switch"`), so the
+            keyboard, the tests and a screen reader all find what they did. No
+            description line: a `CargoFeature` carries a name and its kinds,
+            nothing that says what the feature does. */}
+        {available.length > 0 && (
+          <div className="gbx-feature-choices">
+            {available.map((feature) => (
+              <label
+                className="gbx-feature-choice"
+                key={feature}
+                data-feature-option={feature}
+                data-field-modified={edits.isDraftedFeatures(gearId) ? "true" : undefined}
+              >
+                <span className="gbx-feature-text">
+                  <span className="gbx-feature-label">{humanizeFeature(feature)}</span>
+                  <code className="gbx-feature-id">{feature}</code>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  className="gbx-switch"
+                  checked={chosenFeatures.has(feature)}
+                  aria-label={feature}
+                  onChange={(e) =>
+                    queueFeatures(
+                      e.target.checked ? [...features, feature] : features.filter((f) => f !== feature),
+                    )
+                  }
+                />
+              </label>
+            ))}
+          </div>
+        )}
+        {/* Named, not hidden. Someone looking for `k8s-auth` on a local
+            profile needs to be told it exists and why it is not here; a list
+            that silently omits it reads as a missing feature. */}
+        {elsewhere.length > 0 && (
+          <p className="gbx-add-gear-note" data-features-elsewhere>
+            Not for this deployment:{" "}
+            {elsewhere.map((feature, index) => (
+              <span key={feature.name} data-feature-elsewhere={feature.name}>
+                {index > 0 && ", "}
+                <code>{feature.name}</code> ({feature.kinds.join(", ")})
+              </span>
+            ))}
+          </p>
+        )}
+        {extraFeatures.length > 0 && (
+          <div className="gbx-feature-extras">
+            {extraFeatures.map((feature) => (
+              <span className="gbx-badge gbx-downgraded" key={feature} data-feature={feature}>
+                {feature}
+                <button
+                  type="button"
+                  className="gbx-feature-remove"
+                  aria-label={`Remove ${feature}`}
+                  onClick={() => queueFeatures(features.filter((f) => f !== feature))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="gbx-block" data-gear-configuration>
+        <h3 className="gbx-block-caption">Configuration</h3>
+        {/* Said once, as a note, rather than as the sentence that opened the
+            pane: a `use_gear` entry has one config for every profile, and the
+            profile being viewed is the head's, not this form's. */}
+        <p className="gbx-block-note" data-settings-scope>
+          <span className="codicon codicon-info" aria-hidden />
+          {viewingProfile === undefined
+            ? "Applies to all profiles."
+            : `Applies to all profiles, not only ${viewingProfile}.`}
+        </p>
+        {fields.length > 0 ? (
+          <ConfigFields
+            fields={fields}
+            values={edits.draftConfigValues(gearId, savedConfig)}
+            onChange={(key, value) => queueConfig(key, value)}
+            provenanceOf={(key) => provenanceOf(sources, gearId, key, savedConfig)}
+            isDrafted={(key) => edits.isDraftedConfig(gearId, key)}
+            derivedFrom={(key) =>
+              (descriptor.serves ?? []).find((endpoint) => endpoint.config_key === key)?.name
+            }
+            // A reset is a `set_config` with no value, which is how the wire
+            // spells "remove this key" -- so it queues into the same draft and
+            // waits for the same Apply as typing does.
+            onReset={(key) => queueConfig(key, undefined)}
+          />
+        ) : (
+          <p className="gbx-empty">This gear describes no settings. Any key can still be set under Advanced.</p>
+        )}
+      </section>
+
+      {/* **The escape hatches, under one Advanced.** The typed controls above
+          are what this gear exposes; the free keys are for a curated `exposes`
+          that is narrower than the struct it came from, and the free feature
+          name for a feature the table does not list. Open when a free key is
+          already set, because a key somebody set is not advanced any more --
+          it is part of this product's description. */}
       <details
-        className="gbx-advanced"
+        className="gbx-advanced gbx-block"
         open={Object.keys(untyped).length > 0}
         data-inspector-advanced
       >
-        <summary>Other keys</summary>
+        <summary>Advanced</summary>
+        <h4 className="gbx-advanced-caption">Other keys</h4>
         <span className="gbx-config-list">
           {Object.keys(untyped).length === 0 && (
             <span className="gbx-add-gear-note">
@@ -239,103 +356,26 @@ export function GearSettings({
             />
           </label>
         </span>
+        <h4 className="gbx-advanced-caption">A feature not in the table</h4>
+        <label className="gbx-config-row" data-feature-new>
+          <span className="gbx-sr-only">new feature</span>
+          <input
+            placeholder="feature"
+            aria-label="new feature"
+            value={newFeature}
+            onChange={(e) => setNewFeature(e.target.value)}
+          />
+          <button
+            type="button"
+            className="gbx-choice"
+            data-add-feature={gearId}
+            disabled={newFeature.trim() === ""}
+            onClick={queueNewFeature}
+          >
+            Add feature
+          </button>
+        </label>
       </details>
-      <div className="gbx-kv">
-        <span>features</span>
-        {/* The crate's own `[features]` table, as checkboxes. One renderer's
-            worth of duplication with the Add Gear dialog is deliberate for now:
-            the two carry different state (a draft here, a staged proposal
-            there), and a control that disagreed with itself between them would
-            be worse than two that agree by construction. */}
-        <span className="gbx-features-list">
-          {/* **Three answers, not one.** "No features yet" could not be told
-              from "this gear has none", and the box beside it took any string,
-              so a typo became a Cargo feature that does not exist and a build
-              failure two steps later. The projected table answered that, and
-              `cargo_features` is the curation on top of it. */}
-          {available.length === 0 && elsewhere.length === 0 && (
-            <span className="gbx-empty" data-features-none>
-              {curated
-                ? "This gear offers no Cargo features."
-                : "This crate declares no Cargo features."}
-            </span>
-          )}
-          {available.length > 0 && (
-            <span className="gbx-feature-choices">
-              {available.map((feature) => (
-                <label
-                  className="gbx-feature-choice"
-                  key={feature}
-                  data-feature-option={feature}
-                  data-field-modified={edits.isDraftedFeatures(gearId) ? "true" : undefined}
-                >
-                  <input
-                    type="checkbox"
-                    checked={chosenFeatures.has(feature)}
-                    aria-label={feature}
-                    onChange={(e) =>
-                      queueFeatures(
-                        e.target.checked
-                          ? [...features, feature]
-                          : features.filter((f) => f !== feature),
-                      )
-                    }
-                  />
-                  <code>{feature}</code>
-                </label>
-              ))}
-            </span>
-          )}
-          {/* Named, not hidden. Someone looking for `k8s-auth` on a local
-              profile needs to be told it exists and why it is not here; a list
-              that silently omits it reads as a missing feature. */}
-          {elsewhere.length > 0 && (
-            <span className="gbx-add-gear-note" data-features-elsewhere>
-              Not for this deployment:{" "}
-              {elsewhere.map((feature, index) => (
-                <span key={feature.name} data-feature-elsewhere={feature.name}>
-                  {index > 0 && ", "}
-                  <code>{feature.name}</code> ({feature.kinds.join(", ")})
-                </span>
-              ))}
-            </span>
-          )}
-          {extraFeatures.map((feature) => (
-            <span className="gbx-badge gbx-downgraded" key={feature} data-feature={feature}>
-              {feature}
-              <button
-                type="button"
-                className="gbx-feature-remove"
-                aria-label={`Remove ${feature}`}
-                onClick={() => queueFeatures(features.filter((f) => f !== feature))}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-          <details className="gbx-advanced">
-            <summary>Advanced: a feature name not in the table</summary>
-            <label className="gbx-config-row" data-feature-new>
-              <span className="gbx-sr-only">new feature</span>
-              <input
-                placeholder="feature"
-                aria-label="new feature"
-                value={newFeature}
-                onChange={(e) => setNewFeature(e.target.value)}
-              />
-              <button
-                type="button"
-                className="gbx-choice"
-                data-add-feature={gearId}
-                disabled={newFeature.trim() === ""}
-                onClick={queueNewFeature}
-              >
-                Add feature
-              </button>
-            </label>
-          </details>
-        </span>
-      </div>
     </div>
   );
 }

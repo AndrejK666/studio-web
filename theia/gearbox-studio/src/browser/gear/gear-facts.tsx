@@ -19,6 +19,7 @@ import type { GearDescriptor } from "../../common/generated/GearDescriptor";
 import type { InclusionReason } from "../../common/generated/InclusionReason";
 import type { Maturity } from "../../common/generated/Maturity";
 import { describeInclusion } from "../product/inclusion";
+import { inclusionChip } from "../product/product-summary";
 import { RevealLink } from "../reveal-link";
 import type { RevealService } from "../reveal-service";
 
@@ -132,9 +133,11 @@ export function GearDocs({
         label={label}
       />
     );
+  // One line of links behind a book icon, like the description above it
+  // without a label column.
   return (
-    <div className="gbx-kv">
-      <span>docs</span>
+    <div className="gbx-doc-links" data-gear-docs>
+      <span className="codicon codicon-book" aria-label="Docs" title="Docs" />
       <span className="gbx-links">
         {link("PRD", docs.prd)}
         {link("DESIGN", docs.design)}
@@ -159,27 +162,33 @@ export function InclusionReasons({
   readonly onSelectGear?: (id: string) => void;
 }): React.ReactElement | null {
   if (reasons.length === 0) return null;
+  // **Chips, with the sentence kept.** "Added by you" and "Required by X"
+  // answer at a glance; `describeInclusion`'s full sentence -- which a claim
+  // reads back for a co-located gear -- stays as each chip's tooltip and in
+  // `data-inclusion-sentence`.
   return (
-    <div className="gbx-kv">
-      <span>included because</span>
-      <span>
-        {reasons.map((reason, index) => (
-          <span className="gbx-leaf-why" key={index} data-inclusion={reason.reason}>
+    <div className="gbx-chips" aria-label="Why this gear is here">
+      {reasons.map((reason, index) => {
+        const sentence = describeInclusion(reason);
+        return (
+          <span className="gbx-info-chip gbx-leaf-why" key={index} data-inclusion={reason.reason}
+            data-inclusion-sentence={sentence} title={sentence}>
+            <span className="codicon codicon-info" aria-hidden />
             {reason.reason === "colocated_by" && onSelectGear !== undefined ? (
               <button
                 type="button"
-                className="gbx-choice"
+                className="gbx-link"
                 data-inclusion-gear={reason.gear}
                 onClick={() => onSelectGear(reason.gear)}
               >
-                {describeInclusion(reason)}
+                {inclusionChip(reason)}
               </button>
             ) : (
-              describeInclusion(reason)
+              inclusionChip(reason)
             )}
           </span>
-        ))}
-      </span>
+        );
+      })}
     </div>
   );
 }

@@ -12,8 +12,10 @@
 //
 // What is left out of the header, and why: the product's name and its profile
 // are already the first two lines of the same head (the title and the profile
-// switch), and Generate is the strip's `Generate →` tab. The gear context's half
-// has no Studio surface yet.
+// switch), and Generate is the head's primary button. Resolve and Close are in
+// the head's "⋯" menu now, so the Product view passes no `actions`; the strip
+// still draws them for a caller that does. The gear context's half has no
+// Studio surface yet.
 //
 // The deciding is in plain functions (`productStatusOf`, `draftStateOf`) so it
 // is tested without a widget; the component only draws what they say.
@@ -21,28 +23,66 @@
 import React from "@theia/core/shared/react";
 
 import type { ProductStatus } from "../product-store";
+import { plural } from "./product-summary";
+
+export { plural };
 
 /** What the strip says about the resolution, or nothing when there is nothing to say. */
 export type ProductStatusBadge =
   | { readonly kind: "working" }
   | { readonly kind: "conflicts"; readonly count: number }
+  | { readonly kind: "warnings"; readonly count: number }
   | { readonly kind: "resolved" }
+  | { readonly kind: "stale" }
   | undefined;
 
 /**
- * Resolving, the count of errors, or resolved -- the header's `renderStatus`.
+ * Resolving, the count of errors or of warnings, or resolved -- the header's
+ * `renderStatus`, drawn as the head's health pill.
  *
  * Errors are counted, not listed: the list is the Conflicts screen, and the
  * count opens it. `errors` is from the store's `diagnostics`, not the
  * resolution's: a refused load leaves the diagnostics and no resolution, and
  * counting through the resolution said nothing exactly when there was something
  * to say.
+ *
+ * **Stale before any count.** After the engine stopped, the counts are from
+ * before it did, and "Healthy" over them is the all-clear the Checks tab's dash
+ * exists to withhold.
  */
-export function productStatusOf(status: ProductStatus, errors: number, resolved: boolean): ProductStatusBadge {
+export function productStatusOf(
+  status: ProductStatus,
+  errors: number,
+  resolved: boolean,
+  warnings = 0,
+  stale = false,
+): ProductStatusBadge {
+  if (stale) return { kind: "stale" };
   if (status === "loading" || status === "resolving") return { kind: "working" };
   if (errors > 0) return { kind: "conflicts", count: errors };
+  if (warnings > 0) return { kind: "warnings", count: warnings };
   if (resolved) return { kind: "resolved" };
   return undefined;
+}
+
+/**
+ * The health pill's words. `undefined` -- nothing resolved and nothing wrong,
+ * which a failed resolve with no diagnostics also is -- claims nothing.
+ */
+export function healthLabel(status: ProductStatusBadge): string {
+  switch (status?.kind) {
+    case "working":
+      return "Checking…";
+    case "conflicts":
+      return plural(status.count, "conflict", "conflicts");
+    case "warnings":
+      return plural(status.count, "warning", "warnings");
+    case "resolved":
+      return "Healthy";
+    case "stale":
+    case undefined:
+      return "Not checked";
+  }
 }
 
 /** What the draft half of the strip offers. */
@@ -97,38 +137,55 @@ export interface ProductStatusStripProps {
   readonly onRun: (id: string) => void;
 }
 
-/** `1 conflict`, `2 conflicts`: a count and its noun, agreeing. */
-export function plural(count: number, one: string, many: string): string {
-  return `${count} ${count === 1 ? one : many}`;
-}
+/** The pill's icon for each state; the words carry the meaning, this the glance. */
+const HEALTH_ICON: Readonly<Record<NonNullable<ProductStatusBadge>["kind"] | "none", string>> = {
+  working: "codicon-loading codicon-modifier-spin",
+  conflicts: "codicon-error",
+  warnings: "codicon-warning",
+  resolved: "codicon-pass",
+  stale: "codicon-debug-disconnect",
+  none: "codicon-circle-large-outline",
+};
 
 export function ProductStatusStrip(props: ProductStatusStripProps): React.ReactElement {
   const { status, draft } = props;
+  const icon = <span className={`codicon ${HEALTH_ICON[status?.kind ?? "none"]}`} aria-hidden />;
   return (
     <div className="gbx-product-status" data-product-status-strip>
       <div className="gbx-product-status-state" aria-live="polite">
         {status?.kind === "working" && (
-          <span className="gbx-product-status-badge" data-status="working">
-            Checking…
+          <span className="gbx-health-pill gbx-product-status-badge" data-status="working">
+            {icon}
+            {healthLabel(status)}
           </span>
         )}
-        {status?.kind === "conflicts" && (
+        {(status?.kind === "conflicts" || status?.kind === "warnings") && (
           // A button, not a label: the count is useful only if it leads to where
           // each one can be read and acted on.
           <button
             type="button"
-            className="gbx-badge gbx-downgraded gbx-product-status-badge"
-            data-status="conflicts"
-            data-conflicts={status.count}
-            title="Show the conflicts"
+            className={`gbx-health-pill gbx-health-${status.kind} gbx-product-status-badge`}
+            data-status={status.kind}
+            {...(status.kind === "conflicts" ? { "data-conflicts": status.count } : { "data-warnings": status.count })}
+            title={status.kind === "conflicts" ? "Show the conflicts" : "Show the warnings"}
             onClick={props.onShowConflicts}
           >
-            {plural(status.count, "conflict", "conflicts")}
+            {icon}
+            {healthLabel(status)}
           </button>
         )}
         {status?.kind === "resolved" && (
-          <span className="gbx-badge gbx-product-status-badge" data-status="resolved">
-            Up to date
+          <span className="gbx-health-pill gbx-health-healthy gbx-product-status-badge" data-status="resolved"
+            title="The product resolves with nothing to report">
+            {icon}
+            {healthLabel(status)}
+          </span>
+        )}
+        {status?.kind === "stale" && (
+          <span className="gbx-health-pill gbx-product-status-badge" data-status="stale"
+            title="The engine stopped answering; what is shown is from before. Reconnect to check again.">
+            {icon}
+            {healthLabel(status)}
           </span>
         )}
 
@@ -175,21 +232,23 @@ export function ProductStatusStrip(props: ProductStatusStripProps): React.ReactE
           </button>
         )}
       </div>
-      <div className="gbx-product-status-actions">
-        {props.actions.map((action) => (
-          <button
-            key={action.id}
-            type="button"
-            className="gbx-choice"
-            data-command={action.id}
-            disabled={!action.enabled}
-            title={action.title}
-            onClick={() => props.onRun(action.id)}
-          >
-            {action.label}
-          </button>
-        ))}
-      </div>
+      {props.actions.length > 0 && (
+        <div className="gbx-product-status-actions">
+          {props.actions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              className="gbx-choice"
+              data-command={action.id}
+              disabled={!action.enabled}
+              title={action.title}
+              onClick={() => props.onRun(action.id)}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

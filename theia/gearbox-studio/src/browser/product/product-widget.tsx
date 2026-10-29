@@ -11,8 +11,9 @@
 // distinct locks -- and every difference visible without editing anything, which
 // is the property `profiles = [...]` as a data field exists to buy.
 
-import { codicon, ReactWidget } from "@theia/core/lib/browser";
+import { codicon, ContextMenuRenderer, ReactWidget } from "@theia/core/lib/browser";
 import { CommandRegistry } from "@theia/core/lib/common";
+import { QuickInputService, type QuickPickItem } from "@theia/core/lib/common/quick-pick-service";
 import { inject, injectable, postConstruct } from "@theia/core/shared/inversify";
 import { Widget, WidgetManager } from "@theia/core/lib/browser";
 import React from "@theia/core/shared/react";
@@ -53,7 +54,6 @@ import {
 } from "../shell/product-session-service";
 import {
   ADD_GEAR,
-  CLOSE_PRODUCT,
   NEW_GEAR,
   NEW_PRODUCT,
   OPEN_PRODUCT,
@@ -67,13 +67,18 @@ import {
   draftStateOf,
   plural,
   productStatusOf,
-  type StripAction,
+  type ProductStatusBadge,
 } from "./product-status-strip";
+import { profileLabel } from "./product-summary";
+import { GearboxMenus } from "../menus";
 import type { OpeningStage } from "../shell/opening-outcome";
 import { RevealPathLink } from "../reveal-link";
 import { RevealService } from "../reveal-service";
 import { SelectionService, type Selection } from "../shell/selection-service";
 import type { GearDescriptor } from "../../common/generated/GearDescriptor";
+import type { GearSelection } from "../../common/generated/GearSelection";
+import type { InclusionReason } from "../../common/generated/InclusionReason";
+import { pointKey, pointsOf } from "../../common/extension-points";
 import type { Message } from "@theia/core/shared/@lumino/messaging";
 
 /** One product workspace; old section names remain accepted by command adapters. */
@@ -118,6 +123,9 @@ export class ProductWidget extends ReactWidget {
   // Constructor Studio: Apply needs the engine, and the strip says so.
   @inject(EngineConnectionService) protected readonly engine!: EngineConnectionService;
   @inject(GearboxService) protected readonly gearbox!: GearboxService;
+  // Constructor Studio: the head's "⋯" menu and its profile switch.
+  @inject(ContextMenuRenderer) protected readonly contextMenu!: ContextMenuRenderer;
+  @inject(QuickInputService) protected readonly quickInput!: QuickInputService;
 
   /** Constructor Studio: the corpus copy Studio adopted, asked once per open product. */
   protected corpusCopy: CorpusCopy | undefined;
@@ -221,7 +229,7 @@ export class ProductWidget extends ReactWidget {
       }),
     );
     this.toDispose.push(this.edits.onDraftChanged(() => this.update()));
-    // Constructor Studio: the status strip's Apply and its Resolve / Close follow
+    // Constructor Studio: the status strip's Apply and the head's actions follow
     // the engine and the registry, and Theia re-asks neither on its own.
     this.toDispose.push(this.engine.onDidChange(() => this.update()));
     this.toDispose.push(this.commands.onCommandsChanged(() => this.update()));
@@ -378,49 +386,116 @@ export class ProductWidget extends ReactWidget {
   }
 
   /**
-   * Constructor Studio: Resolve and Close, as the registry describes them -- the
-   * header's rule that it cannot name a command that does not exist, nor drift
-   * from the menu. Ids rather than imports: `RESOLVE_PRODUCT` lives with the view
-   * contributions, which import this widget.
+   * Constructor Studio: the product's health, as the head's pill and the
+   * summary band both draw it -- one call, so the two cannot disagree.
    */
-  protected stripActions(): StripAction[] {
-    const actions: StripAction[] = [];
-    for (const id of ["gearbox.product.resolve", CLOSE_PRODUCT.id]) {
-      const command = this.commands.getCommand(id);
-      if (command === undefined) continue;
-      actions.push({
-        id,
-        label: command.shortTitle ?? command.label ?? id,
-        title: command.label ?? id,
-        enabled: this.commands.isEnabled(id),
-      });
-    }
-    return actions;
+  protected statusBadge(): ProductStatusBadge {
+    const state = this.store.current;
+    return productStatusOf(
+      state.status,
+      errorsIn(state.diagnostics),
+      state.resolution?.product?.product?.lock_hash !== undefined,
+      state.diagnostics.filter((d) => d.severity === "warning").length,
+      state.stale !== undefined,
+    );
   }
 
-  /** Constructor Studio: the product's state and the draft -- see `product-status-strip.tsx`. */
+  /**
+   * Constructor Studio: the product's health and the draft -- see
+   * `product-status-strip.tsx`. Resolve and Close used to sit beside them as
+   * buttons; they are in the "⋯" menu now (`openProductMenu`), so no actions.
+   */
   protected renderStatusStrip(): React.ReactNode {
     const state = this.store.current;
     return (
       <ProductStatusStrip
-        status={productStatusOf(
-          state.status,
-          errorsIn(state.diagnostics),
-          state.resolution?.product?.product?.lock_hash !== undefined,
-        )}
+        status={this.statusBadge()}
         draft={draftStateOf({
           count: this.edits.draftEdits().length,
           writeUnknown: state.stale?.writeUnknown === true,
           engineConnected: this.engine.isConnected,
           busy: state.status === "loading" || state.status === "resolving",
         })}
-        actions={this.stripActions()}
+        actions={[]}
         onApply={() => void this.edits.applyDraft()}
         onDiscard={() => this.edits.discardDraft()}
         onShowConflicts={() => this.showConflicts()}
         onRun={(id) => void this.commands.executeCommand(id)}
       />
     );
+  }
+
+  /**
+   * The "⋯" menu: a registered Theia menu (`GearboxMenus.PRODUCT_ACTIONS`),
+   * drawn by `ContextMenuRenderer` under the button.
+   *
+   * It replaces a `<details>` popup of plain buttons, which neither the
+   * keyboard nor a screen reader treated as a menu, and which stayed open
+   * after a click unless each button remembered to close it. Theia's renderer
+   * gives arrow keys, Escape, icons and separators, and on the desktop the
+   * native menu where Theia uses one.
+   */
+  protected openProductMenu(anchor: HTMLElement): void {
+    const rect = anchor.getBoundingClientRect();
+    this.contextMenu.render({
+      menuPath: GearboxMenus.PRODUCT_ACTIONS,
+      anchor: { x: rect.left, y: rect.bottom },
+      context: anchor,
+      includeAnchorArg: false,
+    });
+  }
+
+  /**
+   * The profile switch, as a quick pick rather than a native `<select>`.
+   *
+   * A pick is keyboard-first and wide enough to say what each profile *is* --
+   * `local · processes on one host`, the portal's words -- where the select had
+   * room for the id alone. It also ends with Add profile, which is where a
+   * person looking for a profile that is not there already is.
+   */
+  protected async pickProfile(): Promise<void> {
+    const intent = this.store.current.intent;
+    if (intent === undefined) return;
+    const current = this.store.current.profile;
+    type Item = QuickPickItem & { readonly profile?: string; readonly add?: true };
+    const profiles: Item[] = Object.entries(intent.profiles).map(([id, decl]) => ({
+      label: profileLabel(id, decl.profile),
+      description: [id === intent.default_profile ? "default" : "", id === current ? "current" : ""]
+        .filter((word) => word !== "")
+        .join(", "),
+      profile: id,
+    }));
+    const chosen = await this.quickInput.showQuickPick<Item>(
+      [...profiles, { type: "separator" }, { label: "Add profile…", add: true }],
+      {
+        placeholder: "Deployment profile",
+        activeItem: profiles.find((item) => item.profile === current),
+      },
+    );
+    if (chosen === undefined) return;
+    if (chosen.add) {
+      this.startAddProfile();
+      return;
+    }
+    if (chosen.profile !== undefined && chosen.profile !== current) {
+      await this.store.setProfile(chosen.profile);
+    }
+  }
+
+  /** Open the Add profile form, on the settings stage where profiles are edited. */
+  public startAddProfile(): void {
+    this.addingProfile = true;
+    this.newProfileId = "";
+    this.newProfileKind = "embedded";
+    this.newProfileHost = "";
+    this.newProfileDiscovery = "static";
+    this.showSection("settings");
+  }
+
+  /** The open product's description, in the editor. */
+  public openDescription(): void {
+    const path = this.store.current.open?.path;
+    if (path !== undefined) void this.reveals.revealPath(path);
   }
 
   /**
@@ -649,47 +724,57 @@ export class ProductWidget extends ReactWidget {
             neither: it pinned a strip in the middle of a header whose other
             halves still left. */}
         <div className="gbx-product-head">
-          <div className="gbx-product-context">
+          {/* **One card: who the product is on the left, what state it is in
+              and what to do about it on the right.** The head was four rows of
+              equal weight -- the name, a profile select, a sentence about the
+              branch, the status strip -- and none of them read as the title. */}
+          <div className="gbx-product-card gbx-product-context">
             {/* The id stays as the marker (`data-product-name`); the name opens
                 another product, the way Gearbox Studio's switches one. */}
             <div className="gbx-product-identity">
               <button type="button" className="gbx-product-name" data-product-name={intent?.id}
                 title="Open another product"
                 onClick={() => void this.commands.executeCommand(OPEN_PRODUCT.id)}>
-                {intent?.display_name ?? state.open.label}<span className="codicon codicon-chevron-down" />
+                {intent?.display_name ?? state.open.label}<span className="codicon codicon-chevron-down" aria-hidden />
               </button>
               {/* The meta line: which profile, which branch. Muted, under the
                   name, because both qualify the product rather than compete
                   with it. */}
               <div className="gbx-product-meta">
-                {intent && <label className="gbx-profile-selector">Profile
-                  <select aria-label="Deployment profile" data-product-profile value={state.profile ?? ""}
-                    onChange={e => void this.store.setProfile(e.currentTarget.value)}>
-                    {Object.keys(intent.profiles).map(id => <option key={id} value={id}>{id}{id === intent.default_profile ? " (default)" : ""}</option>)}
-                  </select>
-                </label>}
+                {intent && state.profile !== undefined && (
+                  <button type="button" className="gbx-meta-chip gbx-profile-pill" data-product-profile={state.profile}
+                    aria-label={`Deployment profile: ${state.profile}`} aria-haspopup="listbox"
+                    title="Switch the deployment profile"
+                    onClick={() => void this.pickProfile()}>
+                    <span className="codicon codicon-server-environment" aria-hidden />
+                    <span>{profileLabel(state.profile, intent.profiles[state.profile]?.profile)}</span>
+                    <span className="codicon codicon-chevron-down" aria-hidden />
+                  </button>
+                )}
                 {this.renderCheckout()}
               </div>
             </div>
-            <details className="gbx-product-menu">
-              <summary aria-label="Product menu">Product <span className="codicon codicon-chevron-down" /></summary>
-              <div className="gbx-menu-items">
-                <button type="button" onClick={e => { e.currentTarget.closest("details")?.removeAttribute("open"); this.showSection("settings"); }}>Product settings</button>
-                <button type="button" data-add-profile onClick={e => { e.currentTarget.closest("details")?.removeAttribute("open"); this.addingProfile = true; this.newProfileId = ""; this.newProfileKind = "embedded"; this.newProfileHost = ""; this.newProfileDiscovery = "static"; this.showSection("settings"); }}>Add profile…</button>
-                <button type="button" disabled={!this.commands.isEnabled("gearbox.product.resolve")} onClick={() => void this.commands.executeCommand("gearbox.product.resolve")}>Recheck product</button>
-                <button type="button" onClick={() => void this.commands.executeCommand(CLOSE_PRODUCT.id)}>Close product</button>
-                <button type="button" data-open-product-gdl onClick={() => void this.reveals.revealPath(state.open!.path)}>Open GDL</button>
-                <button type="button" onClick={() => void this.commands.executeCommand("fileNavigator:toggle")}>Explorer</button>
-                <button type="button" onClick={() => void this.commands.executeCommand("search-in-workspace.open")}>Search</button>
-                <button type="button" onClick={() => void this.commands.executeCommand("scmView:toggle")}>Source control</button>
-              </div>
-            </details>
+            <div className="gbx-product-card-actions">
+              {/* Constructor Studio: the product's health and its draft's Apply
+                  and Discard, on every section -- the strip Gearbox Studio's
+                  bottom draft bar answers too; one of the two, so there is one
+                  Apply. */}
+              {this.renderStatusStrip()}
+              {this.catalogue.engineCapabilities?.generate !== false && (
+                <button type="button" className="gbx-start-primary gbx-product-generate" data-product-generate
+                  title="Generate the product's code from its description"
+                  onClick={() => this.showSection("generate")}>
+                  <span className="codicon codicon-run-all" aria-hidden /> Generate
+                </button>
+              )}
+              <button type="button" className="gbx-icon-button" aria-label="Product menu" aria-haspopup="menu"
+                data-product-menu title="More actions"
+                onClick={(event) => this.openProductMenu(event.currentTarget)}>
+                <span className="codicon codicon-ellipsis" aria-hidden />
+              </button>
+            </div>
           </div>
           {this.renderStaleCorpus()}
-          {/* Constructor Studio: the product's state and its draft's Apply and
-              Discard, on every section -- the strip Gearbox Studio's bottom draft
-              bar answers too; one of the two, so there is one Apply. */}
-          {this.renderStatusStrip()}
           <div className="gbx-product-nav" role="tablist" aria-label="Product"
             onKeyDown={event => {
               const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
@@ -743,7 +828,18 @@ export class ProductWidget extends ReactWidget {
           : this.section === "checks" ? this.renderValidation()
           : this.section === "settings" ? <section className="gbx-product-settings">
               <button type="button" className="gbx-choice" onClick={() => this.showSection("composition")}>← Back to composition</button>
-              <h2>Product settings</h2>
+              <div className="gbx-settings-head">
+                <h2>Product settings</h2>
+                {/* The markers the old Product menu's buttons carried, on the
+                    controls that do the same here, where profiles are edited. */}
+                {intent && !this.addingProfile && <button type="button" className="gbx-choice" data-add-profile
+                  onClick={() => this.startAddProfile()}>
+                  <span className="codicon codicon-add" aria-hidden /> Add profile…
+                </button>}
+                <button type="button" className="gbx-choice" data-open-product-gdl onClick={() => this.openDescription()}>
+                  <span className="codicon codicon-go-to-file" aria-hidden /> Open GDL
+                </button>
+              </div>
               {intent && state.profile && this.renderProfileEdit(intent.profiles[state.profile], state.profile, intent.default_profile)}
               {product && this.renderOverview(product)}
             </section>
@@ -974,12 +1070,25 @@ export class ProductWidget extends ReactWidget {
       this.selection.select({ kind: "gear", id: gear });
       this.update();
     };
-    const heading = (
-      <>
-        <GearHeading id={id} descriptor={descriptor} />
+    const heading = <GearHeading id={id} descriptor={descriptor} />;
+    // **Overview first, as one captioned block**: what the gear is, where to
+    // read more, and why it is in this product -- the facts, before the
+    // controls. The blocks below follow the same caption style, so the pane
+    // reads as sections rather than as one long form.
+    const overview = (reasons: readonly InclusionReason[], openGdl: boolean): React.ReactNode => (
+      <section className="gbx-block" data-gear-overview>
+        <h3 className="gbx-block-caption">Overview</h3>
         <GearBlurb descriptor={descriptor} />
         <GearDocs descriptor={descriptor} reveals={this.reveals} />
-      </>
+        <div className="gbx-block-row">
+          <InclusionReasons reasons={reasons} onSelectGear={selectGear} />
+          {openGdl && (
+            <button type="button" className="gbx-link" data-open-gear-gdl onClick={() => this.openDescription()}>
+              <span className="codicon codicon-go-to-file" aria-hidden /> Open product GDL
+            </button>
+          )}
+        </div>
+      </section>
     );
 
     // Asked for by name: the one case with a `use_gear` entry to write into.
@@ -987,9 +1096,7 @@ export class ProductWidget extends ReactWidget {
       return (
         <div className="gbx-detail" data-settings-for={id}>
           {heading}
-          <p className="gbx-settings-scope">Viewing profile <strong>{state.profile}</strong>. Gear configuration applies to all profiles.</p>
-          <button type="button" className="gbx-choice" onClick={() => void this.reveals.revealPath(state.open!.path)}>Open product GDL</button>
-          <InclusionReasons reasons={resolved?.selected_by ?? []} onSelectGear={selectGear} />
+          {overview(resolved?.selected_by ?? [], true)}
           {descriptor === undefined ? (
             <div className="gbx-empty">
               No catalogue descriptor for <code>{id}</code> yet. It stays in your product;
@@ -1003,8 +1110,10 @@ export class ProductWidget extends ReactWidget {
               edits={this.edits}
               sources={{ edits: this.edits, products: this.store }}
               profileKind={state.resolution?.product?.product.profile_kind}
+              viewingProfile={state.profile}
             />
           )}
+          {this.renderGearPlugins(picked)}
         </div>
       );
     }
@@ -1022,7 +1131,7 @@ export class ProductWidget extends ReactWidget {
       return (
         <div className="gbx-detail" data-pulled-in-settings={id}>
           {heading}
-          <InclusionReasons reasons={resolved.selected_by} onSelectGear={selectGear} />
+          {overview(resolved.selected_by, false)}
           <div className="gbx-empty">
             It has no <code>use_gear</code> entry of its own, so what it is set to is the
             business of whatever requires it.
@@ -1067,6 +1176,66 @@ export class ProductWidget extends ReactWidget {
         {heading}
         <div className="gbx-empty">Open a product to configure this gear in one.</div>
       </div>
+    );
+  }
+
+  /**
+   * The Plugins block: what this gear carries, each one a way to its own
+   * settings. Nothing for a gear with no plugin and nowhere to put one -- an
+   * empty block about plugins on a gear that takes none says nothing.
+   */
+  protected renderGearPlugins(picked: GearSelection): React.ReactNode {
+    const state = this.store.current;
+    const plugins = picked.plugins ?? [];
+    const descriptor = this.catalogue.current.rows.find((row) => row.kind === "projected" && row.gear.id === picked.gear);
+    const points = descriptor?.kind === "projected" ? pointsOf(descriptor.gear) : [];
+    if (plugins.length === 0 && points.length === 0) return undefined;
+    const nameOf = (gear: string): string => {
+      const row = this.catalogue.current.rows.find((r) => r.kind === "projected" && r.gear.id === gear);
+      return row?.kind === "projected" ? row.gear.display_name || gear : gear;
+    };
+    return (
+      <section className="gbx-block" data-gear-plugins>
+        <h3 className="gbx-block-caption">Plugins{plugins.length > 0 && ` · ${plugins.length}`}</h3>
+        {plugins.length === 0 && <p className="gbx-empty">No plugins yet.</p>}
+        {plugins.map((plugin) => (
+          <button
+            type="button"
+            key={plugin.entry_index}
+            className="gbx-block-item"
+            data-gear-plugin={plugin.gear}
+            onClick={() => {
+              this.selection.select({
+                kind: "plugin",
+                host: picked.gear,
+                id: plugin.gear,
+                entryIndex: plugin.entry_index,
+                path: state.open?.path ?? "",
+              });
+              this.update();
+            }}
+          >
+            <span className="codicon codicon-extensions" aria-hidden />
+            <span>{nameOf(plugin.gear)}</span>
+            <span className="gbx-block-item-note">{plugin.profiles?.join(", ") || "All profiles"}</span>
+          </button>
+        ))}
+        {points.length > 0 && (
+          <button
+            type="button"
+            className="gbx-choice"
+            data-add-plugin-for={`${picked.gear}:${points.length === 1 ? pointKey(points[0]!) : ""}`}
+            onClick={() =>
+              void this.commands.executeCommand(ADD_GEAR.id, {
+                host: picked.gear,
+                point: points.length === 1 ? pointKey(points[0]!) : undefined,
+              })
+            }
+          >
+            Add compatible plugin
+          </button>
+        )}
+      </section>
     );
   }
 

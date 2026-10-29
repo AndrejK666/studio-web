@@ -27,7 +27,7 @@ import { GraphWidget } from "./graph/graph-widget";
 import { InspectorWidget } from "./inspector/inspector-widget";
 import { GenerateWidget } from "./generate/generate-widget";
 import { LockWidget } from "./lock/lock-widget";
-import { GearboxMenus, VIEW_CATALOGUE } from "./menus";
+import { GearboxMenus, VIEW_CATALOGUE, registerProductActions } from "./menus";
 import { ProductStore } from "./product-store";
 import { ProductWidget } from "./product/product-widget";
 import { GearAuthorWidget } from "./gear/gear-author-widget";
@@ -35,19 +35,23 @@ import { EngineConnectionService } from "./shell/engine-connection-service";
 import { ProductSessionService } from "./shell/product-session-service";
 import {
   ADD_GEAR,
+  ADD_PROFILE,
   BROWSE_CATALOGUE,
   GENERATE_AND_BUILD,
+  OPEN_PRODUCT_DESCRIPTION,
   SHOW_CONFLICTS,
   SHOW_CATALOGUE_DIAGNOSTICS,
   SHOW_GENERATE,
   SHOW_LOCK,
   SHOW_PRODUCT,
+  SHOW_PRODUCT_SETTINGS,
 } from "./shell/session-command-ids";
 import {
   ENGINE_DOWN,
   NO_PRODUCT,
   addGearEntrance,
   explained,
+  productCommandRefusal,
   resolveRefusal,
   type ProductCommandState,
 } from "./shell/command-availability";
@@ -908,6 +912,35 @@ export class ProductViewContribution
         engineConnected: this.engine.isConnected,
       }),
     }));
+    // Constructor Studio: the Product view's "⋯" menu (`PRODUCT_ACTION_ITEMS`),
+    // as commands so the menu is Theia's own. Each needs a product open, and
+    // asks the view, which holds the form and the stage they lead to.
+    const productOpen = () => this.store.current.open !== undefined;
+    const refusal = () =>
+      productCommandRefusal({
+        productOpen: productOpen(),
+        opening: this.session.opening !== undefined,
+        engineConnected: this.engine.isConnected,
+      });
+    const onTheView = (act: (widget: ProductWidget) => void) => async () => {
+      const widget = await this.openView({ activate: true, reveal: true });
+      if (productOpen()) act(widget);
+    };
+    commands.registerCommand(SHOW_PRODUCT_SETTINGS, explained({
+      execute: onTheView((widget) => widget.showSection("settings")),
+      isEnabled: productOpen,
+      disabledReason: refusal,
+    }));
+    commands.registerCommand(ADD_PROFILE, explained({
+      execute: onTheView((widget) => widget.startAddProfile()),
+      isEnabled: productOpen,
+      disabledReason: refusal,
+    }));
+    commands.registerCommand(OPEN_PRODUCT_DESCRIPTION, explained({
+      execute: onTheView((widget) => widget.openDescription()),
+      isEnabled: productOpen,
+      disabledReason: refusal,
+    }));
   }
 
   /**
@@ -930,6 +963,7 @@ export class ProductViewContribution
       // than only naming it.
       when: `${STUDIO_CONTEXT_KEY} == 'product'`,
     });
+    registerProductActions(menus);
   }
 }
 

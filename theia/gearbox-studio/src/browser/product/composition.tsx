@@ -3,6 +3,7 @@ import type { ProductState } from "../product-store";
 import type { GearDescriptor } from "../../common/generated/GearDescriptor";
 import { pointKey, pointsOf } from "../../common/extension-points";
 import { describeInclusion } from "./inclusion";
+import { gearHealth, inclusionChip, plural } from "./product-summary";
 import type { Selection } from "../shell/selection-service";
 import type { RevealService } from "../reveal-service";
 
@@ -21,6 +22,36 @@ export interface CompositionProps {
   reveals: RevealService;
 }
 
+/**
+ * One gear's row: its name, one muted line under it, and on the right its
+ * health and how many plugins it carries.
+ *
+ * The health is the worst diagnostic whose `subject` names this gear
+ * (`gearHealth`); a problem about a binding or a profile marks no row, and is
+ * on Checks. The "⋯" beside the row shows on hover and on focus (index.css).
+ */
+function GearRowText({ name, line, health, plugins }: {
+  readonly name: string;
+  readonly line: string | undefined;
+  readonly health: "error" | "warning" | undefined;
+  readonly plugins: number;
+}): React.ReactElement {
+  const healthWords = health === "error" ? "Has conflicts" : "Has warnings";
+  return <>
+    <span className="codicon codicon-package" aria-hidden />
+    <span className="gbx-gear-row-text">
+      <span className="gbx-gear-row-name">{name}</span>
+      {line && <span className="gbx-gear-row-line">{line}</span>}
+    </span>
+    {health !== undefined &&
+      <span className={`gbx-status-dot gbx-status-dot-${health}`} data-gear-health={health} role="img" aria-label={healthWords} title={healthWords} />}
+    {plugins > 0 &&
+      <span className="gbx-count-chip" title={plural(plugins, "plugin", "plugins")} aria-label={plural(plugins, "plugin", "plugins")}>
+        <span className="codicon codicon-extensions" aria-hidden />{plugins}
+      </span>}
+  </>;
+}
+
 /** Product-local selection and search never replace the shared catalogue selection. */
 export function Composition({ state, loadingLabel, descriptors, selection, select, add, create, remove, settings, expanded, toggleFold }: CompositionProps): React.ReactElement {
   const [search, setSearch] = React.useState("");
@@ -34,6 +65,7 @@ export function Composition({ state, loadingLabel, descriptors, selection, selec
   const automatic = Object.entries(state.resolution?.product?.gears ?? {}).filter(([id]) => !named.has(id) && !plugins.has(id));
   const visible = explicit.filter(g => matches(g.gear) || g.plugins?.some(p => matches(p.gear)));
   const automaticVisible = automatic.filter(([id]) => matches(id));
+  const health = gearHealth(state.diagnostics ?? []);
   return <div className="gbx-composition" data-composition>
     <nav className="gbx-composition-tree" aria-label="Product composition">
       <div className="gbx-composition-tools">
@@ -91,8 +123,8 @@ export function Composition({ state, loadingLabel, descriptors, selection, selec
               aria-expanded={!shut} aria-label={`${shut ? "Expand" : "Collapse"} ${host.gear}`} data-composition-expand={host.gear} onClick={() => toggleFold(host.gear)} />
               : <span className="gbx-twistie-space" />}
             <button type="button" data-composition-gear={host.gear} aria-pressed={chosen} className="gbx-composition-host-name" onClick={() => select({ kind: "gear", id: host.gear })}>
-              <span className="codicon codicon-package" /><span>{d?.display_name || host.gear}</span>
-              {connections.length > 0 && <small>{connections.length} plugins</small>}
+              <GearRowText name={d?.display_name || host.gear} line={d?.description ?? undefined}
+                health={health.get(host.gear)} plugins={connections.length} />
             </button>
             <details className="gbx-row-menu"><summary aria-label={`Actions for ${host.gear}`}>⋯</summary>
               <div className="gbx-menu-items"><button type="button" aria-label={`Remove ${host.gear} from product`}
@@ -110,18 +142,38 @@ export function Composition({ state, loadingLabel, descriptors, selection, selec
           </>}
         </div>;
       })}
-      {automatic.length > 0 && <details className="gbx-composition-automatic" open={query ? true : undefined}>
-        <summary>Automatically included ({automatic.length})</summary>
-        {automaticVisible.map(([id, gear]) => <div key={id} className="gbx-automatic-gear" data-pulled-in={id}>
-          <button type="button" className="gbx-choice" onClick={() => select({ kind: "gear", id })}>{descriptor(id)?.display_name || id}</button>
-          <details><summary>Why included</summary>{gear.selected_by.map((reason, i) => <p key={i} className="gbx-leaf-why">{reason.reason === "colocated_by"
-            ? <button type="button" className="gbx-choice" onClick={() => select({ kind: "gear", id: reason.gear })}>{describeInclusion(reason)}</button>
-            : describeInclusion(reason)}</p>)}</details>
-          {(() => { const d = descriptor(id); const points = d ? pointsOf(d) : []; return points.length > 0 &&
-            <button type="button" className="gbx-choice" data-add-plugin-for={`${id}:${points.length === 1 ? pointKey(points[0]!) : ""}`} title={`${id} becomes an explicitly selected gear`}
-              onClick={() => add(id, points.length === 1 ? pointKey(points[0]!) : undefined)}>Add compatible plugin</button>; })()}
-        </div>)}
-      </details>}
+      {/* **A second group, not a fold.** The gears the closure pulled in were
+          behind a `<details>` that started shut, so a product read as having
+          only what was asked for. They are part of what runs; they get the same
+          rows, under their own caption, with why each is here as its line. */}
+      {automatic.length > 0 && <section className="gbx-composition-group gbx-composition-automatic" aria-label="Automatically included gears">
+        <h3 className="gbx-group-caption">Automatically included ({automatic.length})</h3>
+        {automaticVisible.map(([id, gear]) => {
+          const d = descriptor(id);
+          const points = d ? pointsOf(d) : [];
+          const chosen = selection?.kind === "gear" && selection.id === id;
+          const why = gear.selected_by.find(reason => reason.reason !== "selected") ?? gear.selected_by[0];
+          const requiredBy = gear.selected_by.flatMap(reason => reason.reason === "colocated_by" ? [reason.gear] : []);
+          return <div key={id} className={`gbx-composition-host gbx-automatic-gear ${chosen ? "gbx-composition-host-selected" : ""}`} data-pulled-in={id}>
+            <div className="gbx-composition-host-row">
+              <span className="gbx-twistie-space" />
+              <button type="button" aria-pressed={chosen} className="gbx-composition-host-name"
+                title={[d?.description, ...gear.selected_by.map(describeInclusion)].filter(Boolean).join("\n")}
+                onClick={() => select({ kind: "gear", id })}>
+                <GearRowText name={d?.display_name || id} line={why ? inclusionChip(why) : undefined} health={health.get(id)} plugins={0} />
+              </button>
+              <details className="gbx-row-menu"><summary aria-label={`Actions for ${id}`}>⋯</summary>
+                <div className="gbx-menu-items">
+                  {requiredBy.map(gearId => <button type="button" key={gearId} onClick={() => select({ kind: "gear", id: gearId })}>Go to {gearId}</button>)}
+                  {points.length > 0 &&
+                    <button type="button" data-add-plugin-for={`${id}:${points.length === 1 ? pointKey(points[0]!) : ""}`} title={`${id} becomes an explicitly selected gear`}
+                      onClick={() => add(id, points.length === 1 ? pointKey(points[0]!) : undefined)}>Add compatible plugin</button>}
+                </div>
+              </details>
+            </div>
+          </div>;
+        })}
+      </section>}
     </nav>
     <section className="gbx-composition-settings" aria-label="Selected object settings" tabIndex={-1}>{settings}</section>
   </div>;

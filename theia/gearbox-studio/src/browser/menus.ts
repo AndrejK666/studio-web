@@ -27,6 +27,47 @@ export namespace GearboxMenus {
   export const GEARBOX_GENERATE: MenuPath = [...GEARBOX, "3_generate"];
   /** Restart the engine: things that act on the tool itself. */
   export const GEARBOX_ENGINE: MenuPath = [...GEARBOX, "9_engine"];
+
+  /**
+   * Constructor Studio: the Product view's "⋯" menu, opened by
+   * `ContextMenuRenderer` from the button in its header. A path of its own,
+   * outside the menu bar, as Theia's view title menus are.
+   */
+  export const PRODUCT_ACTIONS: MenuPath = ["gearbox-product-actions"];
+  /** The product itself: settings, profiles, checking it, its file. */
+  export const PRODUCT_ACTIONS_PRODUCT: MenuPath = [...PRODUCT_ACTIONS, "1_product"];
+  /** Closing it, after a separator: the one act that ends the session's subject. */
+  export const PRODUCT_ACTIONS_CLOSE: MenuPath = [...PRODUCT_ACTIONS, "9_close"];
+}
+
+/**
+ * The entries of the Product view's "⋯" menu, in order.
+ *
+ * **Not Explorer, Search or Source control**, which the hand-built menu this
+ * replaces also listed: the workbench has all three a click away in its rail,
+ * and a product menu that offers them reads as one more place to look for
+ * them. Ids rather than imports: Resolve is registered by a contribution that
+ * imports the Product view, and this file stays free of both.
+ */
+export const PRODUCT_ACTION_ITEMS: readonly {
+  readonly group: MenuPath;
+  readonly commandId: string;
+  readonly label: string;
+  readonly icon: string;
+  readonly order: string;
+}[] = [
+  { group: GearboxMenus.PRODUCT_ACTIONS_PRODUCT, commandId: "gearbox.product.settings", label: "Product settings", icon: "codicon codicon-settings-gear", order: "1" },
+  { group: GearboxMenus.PRODUCT_ACTIONS_PRODUCT, commandId: "gearbox.product.addProfile", label: "Add profile…", icon: "codicon codicon-add", order: "2" },
+  { group: GearboxMenus.PRODUCT_ACTIONS_PRODUCT, commandId: "gearbox.product.resolve", label: "Recheck product", icon: "codicon codicon-refresh", order: "3" },
+  { group: GearboxMenus.PRODUCT_ACTIONS_PRODUCT, commandId: "gearbox.product.openDescription", label: "Open GDL", icon: "codicon codicon-go-to-file", order: "4" },
+  { group: GearboxMenus.PRODUCT_ACTIONS_CLOSE, commandId: "gearbox.product.close", label: "Close product", icon: "codicon codicon-close", order: "1" },
+];
+
+/** Put `PRODUCT_ACTION_ITEMS` into the registry. */
+export function registerProductActions(registry: MenuModelRegistry): void {
+  for (const { group, commandId, label, icon, order } of PRODUCT_ACTION_ITEMS) {
+    registry.registerMenuAction(group, { commandId, label, icon, order });
+  }
 }
 
 /**

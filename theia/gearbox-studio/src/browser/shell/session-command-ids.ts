@@ -118,3 +118,24 @@ export const SHOW_LOCK = {
   label: "Gearbox: Show Resolution Lock",
   shortTitle: "Lock",
 };
+
+/**
+ * Constructor Studio: the Product view's own acts, as commands, so that its
+ * "⋯" menu is a registered Theia menu (`GearboxMenus.PRODUCT_ACTIONS`) rather
+ * than buttons in a hand-built popup. Each opens the Product view and asks it.
+ */
+export const SHOW_PRODUCT_SETTINGS = {
+  id: "gearbox.product.settings",
+  label: "Gearbox: Product Settings",
+};
+
+export const ADD_PROFILE = {
+  id: "gearbox.product.addProfile",
+  label: "Gearbox: Add Profile…",
+};
+
+/** The open product's description, in the editor. */
+export const OPEN_PRODUCT_DESCRIPTION = {
+  id: "gearbox.product.openDescription",
+  label: "Gearbox: Open Product GDL",
+};

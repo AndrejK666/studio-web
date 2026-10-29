@@ -31,6 +31,7 @@ import { ProductEditService } from "../product-edit-service";
 import {
   ProductStatusStrip,
   draftStateOf,
+  healthLabel,
   productStatusOf,
   type ProductStatusStripProps,
 } from "./product-status-strip";
@@ -53,6 +54,20 @@ describe("what the strip says about the resolution", () => {
     expect(productStatusOf("ready", 0, true)).toEqual({ kind: "resolved" });
     expect(productStatusOf("ready", 0, false)).toBeUndefined();
     expect(productStatusOf("idle", 0, false)).toBeUndefined();
+  });
+
+  it("counts warnings after errors, and claims nothing once the engine is gone", () => {
+    expect(productStatusOf("ready", 0, true, 2)).toEqual({ kind: "warnings", count: 2 });
+    expect(productStatusOf("ready", 1, true, 2)).toEqual({ kind: "conflicts", count: 1 });
+    expect(productStatusOf("ready", 3, true, 2, true)).toEqual({ kind: "stale" });
+  });
+
+  it("words the health pill", () => {
+    expect(healthLabel({ kind: "resolved" })).toBe("Healthy");
+    expect(healthLabel({ kind: "warnings", count: 1 })).toBe("1 warning");
+    expect(healthLabel({ kind: "conflicts", count: 3 })).toBe("3 conflicts");
+    expect(healthLabel({ kind: "working" })).toBe("Checking…");
+    expect(healthLabel(undefined)).toBe("Not checked");
   });
 });
 
@@ -149,6 +164,16 @@ describe("the strip, drawn", () => {
     expect(q("[data-status=conflicts]")?.textContent).toBe("1 conflict");
     await act(() => q("[data-status=conflicts]")?.click());
     expect(onShowConflicts).toHaveBeenCalled();
+  });
+
+  it("makes the warning count lead there too, and says Healthy when there is nothing", async () => {
+    const onShowConflicts = jest.fn();
+    await draw({ status: { kind: "warnings", count: 2 }, onShowConflicts });
+    expect(q("[data-status=warnings]")?.textContent).toBe("2 warnings");
+    await act(() => q("[data-status=warnings]")?.click());
+    expect(onShowConflicts).toHaveBeenCalled();
+    await draw({ status: { kind: "resolved" } });
+    expect(q("[data-status=resolved]")?.textContent).toBe("Healthy");
   });
 
   it("draws Resolve and Close from the registry's answer, disabled when it says so", async () => {
