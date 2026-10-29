@@ -68,7 +68,7 @@ as a hint: a `stable` gear that runs nowhere, and an `experimental` (or
 | Requirement | Design Response |
 |-------------|------------------|
 | `cpt-studio-fr-gear-scaffold` | A `project_gear_repo` node per project; repository creation and a generated skeleton written on a branch through the project's connection, optionally as a pull request. |
-| `cpt-studio-fr-gearbox-product` | A `project_product` node per project; a preview writes `product.gdl` and runs the Gearbox CLI over the backend's corpus checkout, optionally committing the file: a new product at `products/<id>/product.gdl`, the layout the IDE's Gearbox finds, and a written one where it already is. |
+| `cpt-studio-fr-gearbox-product` | A `project_product` node per project; a preview writes `product.gdl` and runs the Gearbox CLI over the backend's corpus checkout. A save keeps the file as a description revision in the gear's database (ADR-0053), which builds and the desktop take; publishing writes it to the repository: a new product at `products/<id>/product.gdl`, the layout the IDE's Gearbox finds, and a written one where it already is. |
 
 #### NFR Allocation
 
@@ -82,6 +82,7 @@ as a hint: a `stable` gear that runs nowhere, and an `experimental` (or
 |--------|------------------|
 | `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` | A laptop clones a private gear corpus through the backend, which attaches the token. |
 | `cpt-studio-adr-types-registry-catalogs-meaning-graph-storage-contracts-storage` | The product's node types are registered in the types-registry; the records live in graph-storage. |
+| `cpt-studio-adr-product-description-in-studio` | A product's description is kept by this gear by revision and built with the code of a chosen branch; publishing it to the repository is optional (ADR-0053). |
 
 ### 1.3 Architecture Layers
 
@@ -394,7 +395,13 @@ which calls this engine; moving it here is a follow-up.
 | `POST` | `/projects/{project_id}/scaffold` | Write a gear skeleton on a branch, optionally as a pull request: into the project's gear repository, else the organization's, else the project's sources; answers `repo` and `target` (`project`, `organization`, `sources`), on a dry run too | unstable |
 | `GET` | `/projects/{project_id}/product` | The product being composed | unstable |
 | `PUT` | `/projects/{project_id}/product` | Merge fields into it | unstable |
-| `POST` | `/projects/{project_id}/product/preview` | Compose `product.gdl`, resolve it, optionally commit it | unstable |
+| `POST` | `/projects/{project_id}/product/preview` | Compose `product.gdl` and resolve it; `write` saves it as the next description revision (409 with both texts against a stale `base_revision`), `publish` also writes it to the repository (ADR-0053) | unstable |
+| `GET` | `/product-description?project_id=` | The latest description revision Studio keeps (the first read of a project with none takes the text from where its record says it was last saved, as revision 1), its path, where it was published, and a change made to the published file in the repository since | unstable |
+| `POST` | `/product-description-revisions?project_id=` | A new revision against `base_revision`; 409 `DESCRIPTION_REVISION_STALE` with both texts when that is not the latest | unstable |
+| `GET` | `/product-description-revisions?project_id=` | The revisions, newest first, without their text | unstable |
+| `GET` | `/product-description-revisions/{revision}?project_id=` | One revision | unstable |
+| `POST` | `/product-description-publications?project_id=` | Publish the latest revision: onto `product/<id>`, recreated from the base branch, with one pull request, or onto the base branch | unstable |
+| `GET` | `/product-description-branches?project_id=` | The `product/*` branches from before, with their pull requests and whether Studio holds their description; deletes nothing | unstable |
 | `GET` | `/gearbox` | Engine version and the corpus previews resolve against | unstable |
 | `GET` | `/gearbox/catalogue` | The engine catalogue over the backend's corpus, for an IDE whose workspace has none | unstable |
 | `GET` | `/gearbox/extension-points` | The hosts a new plugin gear can fill | unstable |
@@ -474,16 +481,55 @@ Composing a product is `cpt-studio-seq-compose-product` in
 
 ### 3.7 Database schemas & tables
 
-This gear has no database: its records are nodes in the catalogue graph
-(§3.1), held in memory without the `graph` feature. With Gearbox configured,
-the workdir holds the corpus checkout and the engine's last catalogue, so a
-restart does not wait for a fetch.
+The two records are nodes in the catalogue graph (§3.1), held in memory
+without the `graph` feature. With Gearbox configured, the workdir holds the
+corpus checkout and the engine's last catalogue, so a restart does not wait
+for a fetch.
+
+A product's description is kept by revision in the gear's own PostgreSQL
+database (`studio_product`, ADR-0053 §1), one table:
+
+| Table | Key | Columns |
+|---|---|---|
+| `studio_product_descriptions` | `(tenant_id, project_id, revision)` | `text` (the whole `product.gdl`), `author` (a subject id, or `studio`), `created_at_ms`, `sha256`, `source` (`studio`, `repository`, `migrated`) |
+
+The tenant is the one the request acts in (`?organization_id=`), the scope the
+project's product record is read in. The primary key is the save's lock: a
+save names the revision it started from, and two saves from one revision both
+try the next number -- the second is answered 409 with both texts. The product
+record keeps `description` (the latest revision and its path) and `published`
+(the revision last published, its branch, commit, pull request and digest).
+
+How the description travels (ADR-0053):
+
+- **Builds** take it from here (§2): a Studio build's Job gets the latest
+  revision's text in `STUDIO_PRODUCT_DESCRIPTION` and lays it at the product's
+  path before `gearbox generate`; the build record carries
+  `description_revision` beside `commit`. The desktop reports the revision its
+  file is in step with. A project with no revision builds the checkout's file,
+  and of a `product/*` ref only the file, with the base branch's code (§4).
+- **The desktop** writes the latest revision into the checkout when it opens a
+  product from Studio, and saves every change of the file as the next revision
+  (a conflict shows both texts; the person keeps theirs or takes Studio's).
+- **Publishing** (§3) writes the latest revision onto `product/<id>`,
+  recreated from the base branch each time (`commit_replacing_branch`), and
+  opens or keeps one pull request -- or onto the base branch. A change merged
+  into the published file is offered back as a new revision on the next read.
+- **Migration** (§5): the first read of a project with no revision takes the
+  text at the commit (else the branch) its record says it was last saved at.
+  The old `product/*` branches are listed, never deleted.
+- **Not yet**: a Research deploy re-renders its chart from the checkout's file at
+  the build's commit, not from the revision the build used; the proposed CI
+  workflow does not fetch the revision yet (its manifest may name one).
+- **Without the database** (`dev.yaml`), the description routes answer 503 and a
+  preview's `write` commits onto a `product/<id>-<digest>` branch as before.
 
 ### 3.8 Deployment Topology
 
 In-process in the one `studio-backend` binary: gear `studio-product`,
-capabilities `[rest]`, deps `types_registry`, `account_management`. The gear
-reads no configuration section; it is configured by environment.
+capabilities `[db, rest]`, deps `types_registry`, `account_management`. Its
+`database:` section (`studio_product`, `pool.max_conns: 2`) is in every
+profile but `dev.yaml`; otherwise the gear is configured by environment.
 
 | Variable | Default | Meaning |
 |---|---|---|

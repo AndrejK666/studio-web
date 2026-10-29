@@ -12,8 +12,10 @@ This README is what you need to work in the directory.
 
 ## In the assembly
 
-- Gear `studio-product`, capabilities `[rest]`, deps `types_registry`,
-  `account_management`. No config section: the `STUDIO_GEARBOX_*` variables
+- Gear `studio-product`, capabilities `[db, rest]`, deps `types_registry`,
+  `account_management`. A `database:` section (`studio_product`) keeps a
+  product's description by revision (ADR-0053; `descriptions.rs`,
+  `description_service.rs`, `descriptions_rest.rs`); otherwise the `STUDIO_GEARBOX_*` variables
   are read in [`gearbox.rs`](gearbox.rs); Gearbox is off unless
   `STUDIO_GEARBOX_WORKDIR` is set (the chart's `backend.gearbox`).
 - Two records per project, `project_gear_repo` and `project_product`, kept in
