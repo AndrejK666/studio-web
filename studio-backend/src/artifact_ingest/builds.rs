@@ -77,6 +77,9 @@ pub struct BuildReport {
     /// The chart it published: `oci://…` and its version.
     pub chart_ref: Option<String>,
     pub chart_version: Option<String>,
+    /// The revision of the product description it was built with, which
+    /// Studio keeps (ADR-0053 §2), beside `commit`.
+    pub description_revision: Option<i64>,
 }
 
 /// The id of a pipeline's build: its run's.
@@ -95,6 +98,8 @@ struct Manifest {
     #[serde(default)]
     images: Vec<ManifestImage>,
     chart: Option<ManifestChart>,
+    /// The description revision a CI build fetched from Studio (ADR-0053 §2).
+    description_revision: Option<i64>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -140,6 +145,7 @@ pub fn manifest_report(
         images: m.images.into_iter().map(|i| (i.app, i.image)).collect(),
         chart_ref: m.chart.as_ref().map(|c| c.reference.clone()),
         chart_version: m.chart.map(|c| c.version),
+        description_revision: m.description_revision,
     })
 }
 
@@ -456,6 +462,16 @@ pub fn record(
         put("images", json!(images));
     }
     put("chart", json!(chart));
+    // The description beside the code (ADR-0053 §2): what the start named,
+    // unless the end names it again.
+    put(
+        "description_revision",
+        json!(report.description_revision.filter(|r| *r > 0).or_else(|| {
+            earlier
+                .and_then(|e| e.get("description_revision"))
+                .and_then(Value::as_i64)
+        })),
+    );
     // Who started it stays who started it: the end may come from the same
     // person on another connection, never from someone else's report.
     put(

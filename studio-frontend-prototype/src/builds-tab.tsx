@@ -140,12 +140,16 @@ export function ProjectBuilds({
     api
       .projectProduct(token, projectId)
       .then((p) => {
-        if (!live || !p?.written) return;
+        if (!live || !(p?.written || p?.description)) return;
+        // A description Studio keeps is built with the code of the
+        // repository's own branch (ADR-0053 §2); a branch is named only for
+        // one that was never kept.
         setSaved({
-          path: p.written.path ?? "product.gdl",
-          branch: p.written.branch || null,
-          prUrl: p.written.pr_url ?? null,
+          path: p.description?.path ?? p.written?.path ?? "product.gdl",
+          branch: p.description ? null : p.written?.branch || null,
+          prUrl: p.published?.pr_url ?? p.written?.pr_url ?? null,
           profile: p.profile ?? null,
+          revision: p.description?.revision ?? null,
         });
       })
       .catch(() => {});
@@ -639,7 +643,12 @@ function ProductBuilds({
           {
             id: "commit",
             header: "Commit",
-            cell: (b) => (b.shortSha ? <code>{b.shortSha}</code> : (b.branch ?? "—")),
+            cell: (b) => (
+              <>
+                {b.shortSha ? <code>{b.shortSha}</code> : (b.branch ?? "—")}
+                {b.descriptionRevision !== null ? <span className="sub" title="The revision of the product description it was built with"> · rev {b.descriptionRevision}</span> : null}
+              </>
+            ),
           },
           {
             id: "when",

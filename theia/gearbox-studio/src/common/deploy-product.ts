@@ -394,6 +394,8 @@ export interface ProductBuild {
   readonly product: string | undefined;
   readonly profile: string | undefined;
   readonly shortSha: string | undefined;
+  /** The product description revision it was built with (ADR-0053 §2). */
+  readonly descriptionRevision?: number;
   readonly branch: string | undefined;
   readonly startedAt: string | undefined;
   readonly failure: string | undefined;

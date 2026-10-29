@@ -147,6 +147,10 @@ enum Commands {
         /// the code is `--ref`'s (ADR-0053 §4).
         #[arg(long)]
         description_ref: Option<String>,
+        /// The Studio revision whose text is in `STUDIO_PRODUCT_DESCRIPTION`
+        /// (ADR-0053 §2); for the log.
+        #[arg(long)]
+        description_revision: Option<i64>,
         #[arg(long)]
         product_file: String,
         #[arg(long)]
@@ -203,13 +207,23 @@ pub async fn run_cli() -> Result<()> {
         repo_url,
         git_ref,
         description_ref,
+        description_revision,
         product_file,
         profile,
     }) = &cli.command
     {
-        let description = match description_ref.as_deref() {
-            Some(r) => environments::build::DescriptionFrom::Ref(r),
-            None => environments::build::DescriptionFrom::Checkout,
+        // Studio's revision when the Job carries one (ADR-0053 §2), else only
+        // the file of a product branch (§4), else the checkout's own.
+        let studio_text = std::env::var(environments::build::DESCRIPTION_ENV)
+            .ok()
+            .filter(|t| !t.trim().is_empty());
+        let description = match (studio_text.as_deref(), description_ref.as_deref()) {
+            (Some(text), _) => environments::build::DescriptionFrom::Text {
+                revision: *description_revision,
+                text,
+            },
+            (None, Some(r)) => environments::build::DescriptionFrom::Ref(r),
+            (None, None) => environments::build::DescriptionFrom::Checkout,
         };
         return environments::build::prepare(
             work,

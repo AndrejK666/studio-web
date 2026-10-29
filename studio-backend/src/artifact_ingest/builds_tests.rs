@@ -241,3 +241,25 @@ fn a_running_build_says_its_step_and_an_ended_one_does_not() {
     let v = record(&end, "p1", None, "studio", now, Some(&v)).expect("passed");
     assert!(v["step"].is_null());
 }
+
+/// ADR-0053 §2: a build records the description revision beside its commit,
+/// and the end keeps what the start named.
+#[test]
+fn a_build_records_its_description_revision_beside_its_commit() {
+    let now = at("2026-10-15T10:00:00Z");
+    let running = BuildReport {
+        description_revision: Some(7),
+        ..start()
+    };
+    let v = record(&running, "p1", None, "alice", now, None).expect("running");
+    assert_eq!(v["description_revision"], 7);
+    assert_eq!(v["commit"], "abcdef1234567");
+    let end = BuildReport {
+        status: "passed".into(),
+        ..start()
+    };
+    let v = record(&end, "p1", None, "alice", now, Some(&v)).expect("passed");
+    assert_eq!(v["description_revision"], 7);
+    let none = record(&start(), "p2", None, "alice", now, None).expect("running");
+    assert!(none.get("description_revision").is_none());
+}

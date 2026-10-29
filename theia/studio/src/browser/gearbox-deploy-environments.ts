@@ -47,6 +47,8 @@ export interface ProductBuild {
     readonly product: string | undefined;
     readonly profile: string | undefined;
     readonly shortSha: string | undefined;
+    /** The product description revision it was built with (ADR-0053 §2). */
+    readonly descriptionRevision?: number;
     readonly branch: string | undefined;
     readonly startedAt: string | undefined;
     readonly failure: string | undefined;
@@ -100,6 +102,7 @@ export function buildsOf(nodes: readonly { instance_id: string; value?: Record<s
                 product: text(v.product),
                 profile: text(v.profile),
                 shortSha: text(v.short_sha) ?? commit?.slice(0, 7),
+                ...(typeof v.description_revision === 'number' ? { descriptionRevision: v.description_revision } : {}),
                 branch: text(v.branch),
                 startedAt: text(v.started_at),
                 failure: text(v.failure),

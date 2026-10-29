@@ -324,6 +324,7 @@ function FlowSection(props: DeployPanelProps & { readonly flow: DeployFlow; read
                 <div>
                   <code>{build.buildId}</code> · {build.status} · {build.where}
                   {build.shortSha !== undefined ? ` · ${build.shortSha}` : ""}
+                  {build.descriptionRevision !== undefined ? ` · description rev ${build.descriptionRevision}` : ""}
                   {build.branch !== undefined ? ` on ${build.branch}` : ""}
                 </div>
                 <div className="gbx-deploy-stages" aria-label="Stages">

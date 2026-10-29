@@ -2346,6 +2346,71 @@
     },
     {
       "method": "GET",
+      "path": "/studio-product/v1/product-description",
+      "operation_id": "studio_product.get_product_description",
+      "tag": "StudioProduct",
+      "summary": "The product's description as Studio keeps it",
+      "authenticated": true,
+      "responses": [
+        "ProductDescriptionDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/product-description-branches",
+      "operation_id": "studio_product.list_product_description_branches",
+      "tag": "StudioProduct",
+      "summary": "The product branches the project may delete",
+      "authenticated": true,
+      "responses": [
+        "ProductDescriptionOldBranchListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/product-description-revisions",
+      "operation_id": "studio_product.list_product_description_revisions",
+      "tag": "StudioProduct",
+      "summary": "The revisions of the product's description",
+      "authenticated": true,
+      "responses": [
+        "ProductDescriptionRevisionListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/product-description-revisions/{revision}",
+      "operation_id": "studio_product.get_product_description_revision",
+      "tag": "StudioProduct",
+      "summary": "One revision of the product's description",
+      "authenticated": true,
+      "responses": [
+        "ProductDescriptionRevisionDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-product/v1/projects/{project_id}/gear-repo",
       "operation_id": "studio_product.get_project_repo",
       "tag": "StudioProduct",
@@ -5020,6 +5085,42 @@
       "summary": "Git smart-HTTP upload-pack for one of an organization's gear repositories",
       "authenticated": false,
       "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/product-description-publications",
+      "operation_id": "studio_product.create_product_description_publication",
+      "tag": "StudioProduct",
+      "summary": "Publish the product's description to the repository",
+      "authenticated": true,
+      "request": "PublishProductDescriptionRequest",
+      "responses": [
+        "ProductDescriptionPublishedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/product-description-revisions",
+      "operation_id": "studio_product.create_product_description_revision",
+      "tag": "StudioProduct",
+      "summary": "Save a new revision of the product's description",
+      "authenticated": true,
+      "request": "SaveProductDescriptionRequest",
+      "responses": [
+        "ProductDescriptionSavedDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "404",
         "500"

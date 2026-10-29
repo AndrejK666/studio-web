@@ -60,6 +60,7 @@ const build = (over: Partial<IdeBuild>): IdeBuild => ({
   profile: "prod",
   commit: null,
   shortSha: null,
+  descriptionRevision: null,
   branch: null,
   by: null,
   startedAt: null,

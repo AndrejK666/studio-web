@@ -222,6 +222,8 @@ export interface IdeBuild {
   profile: string | null;
   commit: string | null;
   shortSha: string | null;
+  /** The revision of the product description it was built with (ADR-0053 §2). */
+  descriptionRevision: number | null;
   branch: string | null;
   by: string | null;
   startedAt: string | null;
@@ -259,6 +261,7 @@ export function ideBuildsOf(nodes: readonly ArtifactNode[]): IdeBuild[] {
         profile: str(v.profile),
         commit: str(v.commit),
         shortSha: str(v.short_sha),
+        descriptionRevision: num(v.description_revision),
         branch: str(v.branch),
         by: str(v.reported_by),
         startedAt: str(v.started_at),
@@ -454,6 +457,7 @@ export function productBuildsOf(
         profile: null,
         commit: r.sha || null,
         shortSha: r.shortSha || null,
+        descriptionRevision: null,
         branch: r.branch,
         by: r.author,
         startedAt: r.startedAt ?? r.createdAt,

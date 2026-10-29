@@ -1112,25 +1112,41 @@ impl EnvironmentService {
         product_file: Option<&str>,
         git_ref: Option<String>,
     ) -> Result<BuildStarted> {
-        // Naming neither builds what the Product step last wrote, where it
-        // wrote it: the description's path and its branch.
-        let saved = if product_file.is_none() && git_ref.is_none() {
-            match self.hub.get::<dyn crate::product::port::ProjectProducts>() {
-                Ok(products) => products
-                    .saved_description(ctx, &project.to_string())
-                    .await
-                    .ok()
-                    .flatten(),
-                Err(_) => None,
-            }
-        } else {
-            None
+        // A build is the code at a ref and a description revision (ADR-0053
+        // §2): the latest revision Studio keeps, laid at its path. Without
+        // one, naming neither builds what the Product step last wrote, where
+        // it wrote it -- of a `product/…` branch only the file (§4).
+        let products = self
+            .hub
+            .get::<dyn crate::product::port::ProjectProducts>()
+            .ok();
+        let description = match &products {
+            Some(products) => products
+                .latest_description(ctx, project)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(%project, error = %format!("{e:#}"), "studio-environments: the description revision could not be read; the build reads the checkout's");
+                    None
+                }),
+            None => None,
+        };
+        let saved = match (&products, product_file.is_none() && git_ref.is_none()) {
+            (Some(products), true) => products
+                .saved_description(ctx, &project.to_string())
+                .await
+                .ok()
+                .flatten(),
+            _ => None,
         };
         let product_file = product_file
             .map(str::to_owned)
+            .or_else(|| description.as_ref().and_then(|d| d.path.clone()))
             .or_else(|| saved.as_ref().map(|s| s.path.clone()))
             .unwrap_or_else(|| "product.gdl".to_owned());
-        let git_ref = git_ref.or_else(|| saved.and_then(|s| s.branch));
+        let git_ref = match &description {
+            Some(_) => git_ref,
+            None => git_ref.or_else(|| saved.and_then(|s| s.branch)),
+        };
         let org = self.organization_of_project(ctx, project).await?;
         let env = self.environment(ctx, org, environment).await?;
         if !env.admits(project) {
@@ -1227,6 +1243,7 @@ impl EnvironmentService {
                     },
                     git_ref,
                     namespace,
+                    description,
                 )
                 .await;
         }
@@ -1251,21 +1268,21 @@ impl EnvironmentService {
             builder_image,
             buildkit_image: build::buildkit_image(),
             records_in: Some(ctx.subject_tenant_id()),
+            description_revision: description.as_ref().map(|d| d.revision),
+            description_text: description.map(|d| d.text),
         };
         if let Ok(builds) = self
             .hub
             .get::<dyn crate::artifact_ingest::port::BuildRecords>()
         {
+            let mut running = crate::artifact_ingest::port::BuildOutcome::running(
+                &build_id,
+                &target.repo,
+                &profile,
+            );
+            running.description_revision = payload.description_revision;
             builds
-                .record(
-                    ctx,
-                    &project.to_string(),
-                    &crate::artifact_ingest::port::BuildOutcome::running(
-                        &build_id,
-                        &target.repo,
-                        &profile,
-                    ),
-                )
+                .record(ctx, &project.to_string(), &running)
                 .await
                 .map_err(|e| Refusal::Internal(format!("{e:#}")))?;
         }
@@ -1350,6 +1367,7 @@ impl EnvironmentService {
         repo: build::RepoRef,
         git_ref: Option<String>,
         application: String,
+        description: Option<crate::product::port::DescriptionRevision>,
     ) -> Result<BuildStarted> {
         let target = env.research.as_ref().ok_or_else(|| {
             Refusal::Precondition(
@@ -1369,6 +1387,8 @@ impl EnvironmentService {
             repo: repo.clone(),
             git_ref,
             records_in: Some(ctx.subject_tenant_id()),
+            description_revision: description.as_ref().map(|d| d.revision),
+            description_text: description.map(|d| d.text),
         };
         if let Ok(builds) = self
             .hub
@@ -1378,6 +1398,7 @@ impl EnvironmentService {
                 &build_id, &repo.repo, &profile,
             );
             running.r#where = Some("research".into());
+            running.description_revision = payload.description_revision;
             builds
                 .record(ctx, &project.to_string(), &running)
                 .await

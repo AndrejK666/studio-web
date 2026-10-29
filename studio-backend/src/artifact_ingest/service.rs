@@ -2992,6 +2992,7 @@ impl super::port::BuildRecords for IngestService {
             images: o.images.clone(),
             chart_ref: o.chart_ref.clone(),
             chart_version: o.chart_version.clone(),
+            description_revision: o.description_revision,
         };
         self.record_build(ctx, project_id, None, &report)
             .await

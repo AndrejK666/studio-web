@@ -107,7 +107,19 @@ pub struct BuildPayload {
     /// own tenant.
     #[serde(default)]
     pub records_in: Option<Uuid>,
+    /// The description revision Studio keeps that the build lays at
+    /// `product_file` before it generates (ADR-0053 §2), and its text, which
+    /// the Job's `prepare` gets in its environment. Absent when the project
+    /// has none: `prepare` reads the file in the checkout (or, for a
+    /// `product/…` ref, from that branch -- §4).
+    #[serde(default)]
+    pub description_revision: Option<i64>,
+    #[serde(default)]
+    pub description_text: Option<String>,
 }
+
+/// The environment variable the Job's `prepare` reads the description from.
+pub const DESCRIPTION_ENV: &str = "STUDIO_PRODUCT_DESCRIPTION";
 
 fn default_buildkit_image() -> String {
     BUILDKIT_IMAGE.to_owned()
@@ -133,6 +145,9 @@ pub struct WatchPayload {
     /// See [`BuildPayload::records_in`].
     #[serde(default)]
     pub records_in: Option<Uuid>,
+    /// See [`BuildPayload::description_revision`]: recorded beside `commit`.
+    #[serde(default)]
+    pub description_revision: Option<i64>,
 }
 
 /// The Job's name for a build: a DNS label.
@@ -226,7 +241,7 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
         "app.kubernetes.io/name": "studio-build",
         "studio.constructor.tech/build": p.build_id,
     });
-    let git_env = if git_secret {
+    let mut git_env = if git_secret {
         serde_json::json!([
             { "name": "GIT_USERNAME", "valueFrom": { "secretKeyRef": { "name": git_secret_name(&p.build_id), "key": "username" } } },
             { "name": "GIT_PASSWORD", "valueFrom": { "secretKeyRef": { "name": git_secret_name(&p.build_id), "key": "password" } } },
@@ -235,6 +250,13 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
     } else {
         serde_json::json!([{ "name": "HOME", "value": "/work/home" }])
     };
+    // The description revision's text (ADR-0053 §2): kilobytes, in the Job's
+    // own spec rather than a Secret -- it is no secret, and it goes with the
+    // Job.
+    let description = p.description_text.as_ref().filter(|t| !t.trim().is_empty());
+    if let (Some(text), Some(env)) = (description, git_env.as_array_mut()) {
+        env.push(serde_json::json!({ "name": DESCRIPTION_ENV, "value": text }));
+    }
     let mut prepare_args = vec![
         "build-prepare".to_owned(),
         "--work".to_owned(),
@@ -250,9 +272,17 @@ pub fn job_manifest(p: &BuildPayload, git_secret: bool) -> serde_json::Value {
         code_and_description_refs(p.git_ref.as_deref(), &p.repo.branch);
     prepare_args.push("--ref".to_owned());
     prepare_args.push(code_ref);
-    if let Some(r) = description_ref {
-        prepare_args.push("--description-ref".to_owned());
-        prepare_args.push(r);
+    match (description, p.description_revision) {
+        (Some(_), Some(revision)) => {
+            prepare_args.push("--description-revision".to_owned());
+            prepare_args.push(revision.to_string());
+        }
+        _ => {
+            if let Some(r) = description_ref {
+                prepare_args.push("--description-ref".to_owned());
+                prepare_args.push(r);
+            }
+        }
     }
     let restricted = serde_json::json!({
         "runAsNonRoot": true, "runAsUser": 1000, "runAsGroup": 1000,
@@ -559,6 +589,7 @@ impl BuildTask {
             round: 0,
             step: None,
             records_in: p.records_in,
+            description_revision: p.description_revision,
         };
         enqueue(
             &self.hub,
@@ -888,7 +919,7 @@ impl WatchTask {
         outcome: Result<String, (String, String)>,
     ) -> anyhow::Result<()> {
         use crate::artifact_ingest::port::BuildOutcome;
-        let record_of = match outcome {
+        let mut record_of = match outcome {
             Ok(manifest) => match serde_json::from_str::<Manifest>(manifest.trim()) {
                 Ok(m) => BuildOutcome {
                     build_id: p.build_id.clone(),
@@ -919,6 +950,7 @@ impl WatchTask {
                 &step,
             ),
         };
+        record_of.description_revision = p.description_revision;
         record(
             &self.hub,
             &ctx.security,
@@ -1291,6 +1323,12 @@ pub enum DescriptionFrom<'a> {
     /// Only the file, from another ref of the repository: a `product/…`
     /// branch, whose code is not built (ADR-0053 §4).
     Ref(&'a str),
+    /// A revision Studio keeps, laid at the product's path over whatever the
+    /// checkout holds there (ADR-0053 §2).
+    Text {
+        revision: Option<i64>,
+        text: &'a str,
+    },
 }
 
 /// Lay the description `from` names at `product_file` in the checkout `repo`.
@@ -1316,6 +1354,15 @@ fn lay_description(
                 "the description is {product_file} of {r} at {commit}; the code is the checkout's"
             );
             text
+        }
+        DescriptionFrom::Text { revision, text } => {
+            match revision {
+                Some(r) => println!(
+                    "the description is revision {r} from Studio; the code is the checkout's"
+                ),
+                None => println!("the description is Studio's; the code is the checkout's"),
+            }
+            (*text).to_owned()
         }
     };
     let at = inside(repo, Path::new(product_file))
@@ -1620,6 +1667,8 @@ mod tests {
             builder_image: "ghcr.io/acme/studio-backend:sha-1".into(),
             buildkit_image: BUILDKIT_IMAGE.into(),
             records_in: None,
+            description_revision: None,
+            description_text: None,
         }
     }
 
@@ -1914,6 +1963,40 @@ mod tests {
                 .iter()
                 .any(|a| a == "--description-ref")
         );
+    }
+
+    #[test]
+    fn the_job_takes_the_description_from_studio_and_the_code_from_the_base_branch() {
+        let mut p = payload();
+        p.git_ref = Some("product/shop-1a2b3c4d".into());
+        p.description_revision = Some(4);
+        p.description_text = Some("product shop {}".into());
+        let job = job_manifest(&p, false);
+        let prepare = &job["spec"]["template"]["spec"]["initContainers"][0];
+        let args: Vec<String> = serde_json::from_value(prepare["args"].clone()).unwrap();
+        let after = |flag: &str| {
+            args.iter()
+                .position(|a| a == flag)
+                .map(|i| args[i + 1].clone())
+        };
+        assert_eq!(after("--ref").as_deref(), Some("main"));
+        assert_eq!(after("--description-revision").as_deref(), Some("4"));
+        assert_eq!(after("--description-ref"), None);
+        assert!(
+            prepare["env"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["name"] == DESCRIPTION_ENV && e["value"] == "product shop {}")
+        );
+        // A watch queued before the revision was carried still reads.
+        let w: WatchPayload = serde_json::from_value(serde_json::json!({
+            "build_id": "b", "organization_id": Uuid::nil(), "project_id": Uuid::nil(),
+            "connection_id": Uuid::nil(), "namespace": "n", "job": "j",
+            "repository": "acme/shop", "profile": "prod",
+        }))
+        .unwrap();
+        assert_eq!(w.description_revision, None);
     }
 
     #[test]

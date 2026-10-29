@@ -132,6 +132,7 @@ request	POST /studio-artifact-ingest/v1/builds	build_id	String	required
 request	POST /studio-artifact-ingest/v1/builds	chart_ref	String	optional
 request	POST /studio-artifact-ingest/v1/builds	chart_version	String	optional
 request	POST /studio-artifact-ingest/v1/builds	commit	String	optional
+request	POST /studio-artifact-ingest/v1/builds	description_revision	i64	optional
 request	POST /studio-artifact-ingest/v1/builds	failure	String	optional
 request	POST /studio-artifact-ingest/v1/builds	failure_step	String	optional
 request	POST /studio-artifact-ingest/v1/builds	finished_at	String	optional
@@ -649,6 +650,10 @@ request	POST /studio-product/v1/gearbox/brings	gears	Vec<String>	required
 request	POST /studio-product/v1/gearbox/complete	config	Value	optional
 request	POST /studio-product/v1/gearbox/complete	gears	Vec<String>	required
 request	POST /studio-product/v1/gearbox/config-schema	gears	Vec<String>	required
+request	POST /studio-product/v1/product-description-publications	onto_base	bool	optional
+request	POST /studio-product/v1/product-description-revisions	base_revision	i64	optional
+request	POST /studio-product/v1/product-description-revisions	from_repository	bool	optional
+request	POST /studio-product/v1/product-description-revisions	text	String	required
 request	POST /studio-product/v1/projects/{}/create-repo	connection_id	Uuid	optional
 request	POST /studio-product/v1/projects/{}/create-repo	is_org	bool	optional
 request	POST /studio-product/v1/projects/{}/create-repo	name	String	required
@@ -659,6 +664,7 @@ request	POST /studio-product/v1/projects/{}/gear-repo	branch	String	optional
 request	POST /studio-product/v1/projects/{}/gear-repo	connection_id	Uuid	optional
 request	POST /studio-product/v1/projects/{}/gear-repo	repo	String	required
 request	POST /studio-product/v1/projects/{}/gear-repo	tenant	Uuid	required
+request	POST /studio-product/v1/projects/{}/product/preview	base_revision	i64	optional
 request	POST /studio-product/v1/projects/{}/product/preview	config	Value	optional
 request	POST /studio-product/v1/projects/{}/product/preview	gears	Vec<String>	required
 request	POST /studio-product/v1/projects/{}/product/preview	name	String	optional
@@ -666,6 +672,7 @@ request	POST /studio-product/v1/projects/{}/product/preview	onto_base	bool	optio
 request	POST /studio-product/v1/projects/{}/product/preview	open_pr	bool	optional
 request	POST /studio-product/v1/projects/{}/product/preview	product_id	String	required
 request	POST /studio-product/v1/projects/{}/product/preview	profile	String	optional
+request	POST /studio-product/v1/projects/{}/product/preview	publish	bool	optional
 request	POST /studio-product/v1/projects/{}/product/preview	write	bool	optional
 request	POST /studio-product/v1/projects/{}/scaffold	app_title	String	optional
 request	POST /studio-product/v1/projects/{}/scaffold	capabilities	Vec<String>	optional
@@ -2854,6 +2861,45 @@ response	GET /studio-product/v1/gearbox/extension-points	items.sdk	String	always
 response	GET /studio-product/v1/gearbox/extension-points	items.spec	String	always
 response	GET /studio-product/v1/gearbox/extension-points	items.trait_ident	String	always
 response	GET /studio-product/v1/gearbox/extension-points	total	u32	always
+response	GET /studio-product/v1/product-description	latest	{}	optional
+response	GET /studio-product/v1/product-description	latest.author	String	optional
+response	GET /studio-product/v1/product-description	latest.created_at	String	optional
+response	GET /studio-product/v1/product-description	latest.revision	i64	optional
+response	GET /studio-product/v1/product-description	latest.sha256	String	optional
+response	GET /studio-product/v1/product-description	latest.source	String	optional
+response	GET /studio-product/v1/product-description	latest.text	String	optional
+response	GET /studio-product/v1/product-description	path	String	optional
+response	GET /studio-product/v1/product-description	published	{}	optional
+response	GET /studio-product/v1/product-description	published.at	String	optional
+response	GET /studio-product/v1/product-description	published.branch	String	optional
+response	GET /studio-product/v1/product-description	published.commit_sha	String	optional
+response	GET /studio-product/v1/product-description	published.path	String	optional
+response	GET /studio-product/v1/product-description	published.pr_url	String	optional
+response	GET /studio-product/v1/product-description	published.revision	i64	optional
+response	GET /studio-product/v1/product-description	repository_change	{}	optional
+response	GET /studio-product/v1/product-description	repository_change.branch	String	optional
+response	GET /studio-product/v1/product-description	repository_change.path	String	optional
+response	GET /studio-product/v1/product-description	repository_change.sha256	String	optional
+response	GET /studio-product/v1/product-description	repository_change.text	String	optional
+response	GET /studio-product/v1/product-description-branches	items	Vec<{}>	always
+response	GET /studio-product/v1/product-description-branches	items.branch	String	always
+response	GET /studio-product/v1/product-description-branches	items.commit_sha	String	always
+response	GET /studio-product/v1/product-description-branches	items.held	bool	always
+response	GET /studio-product/v1/product-description-branches	items.pr_url	String	optional
+response	GET /studio-product/v1/product-description-branches	total	u32	always
+response	GET /studio-product/v1/product-description-revisions	items	Vec<{}>	always
+response	GET /studio-product/v1/product-description-revisions	items.author	String	always
+response	GET /studio-product/v1/product-description-revisions	items.created_at	String	always
+response	GET /studio-product/v1/product-description-revisions	items.revision	i64	always
+response	GET /studio-product/v1/product-description-revisions	items.sha256	String	always
+response	GET /studio-product/v1/product-description-revisions	items.source	String	always
+response	GET /studio-product/v1/product-description-revisions	total	u32	always
+response	GET /studio-product/v1/product-description-revisions/{}	author	String	always
+response	GET /studio-product/v1/product-description-revisions/{}	created_at	String	always
+response	GET /studio-product/v1/product-description-revisions/{}	revision	i64	always
+response	GET /studio-product/v1/product-description-revisions/{}	sha256	String	always
+response	GET /studio-product/v1/product-description-revisions/{}	source	String	always
+response	GET /studio-product/v1/product-description-revisions/{}	text	String	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes	Vec<{}>	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes.instance_id	String	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes.type_id	String	always
@@ -4697,6 +4743,20 @@ response	POST /studio-product/v1/gearbox/config-schema	items.fields.required	boo
 response	POST /studio-product/v1/gearbox/config-schema	items.gear	String	always
 response	POST /studio-product/v1/gearbox/config-schema	items.id	String	optional
 response	POST /studio-product/v1/gearbox/config-schema	total	u32	always
+response	POST /studio-product/v1/product-description-publications	at	String	optional
+response	POST /studio-product/v1/product-description-publications	branch	String	always
+response	POST /studio-product/v1/product-description-publications	commit_sha	String	always
+response	POST /studio-product/v1/product-description-publications	path	String	always
+response	POST /studio-product/v1/product-description-publications	pr_url	String	optional
+response	POST /studio-product/v1/product-description-publications	revision	i64	always
+response	POST /studio-product/v1/product-description-revisions	created	bool	always
+response	POST /studio-product/v1/product-description-revisions	revision	{}	always
+response	POST /studio-product/v1/product-description-revisions	revision.author	String	always
+response	POST /studio-product/v1/product-description-revisions	revision.created_at	String	always
+response	POST /studio-product/v1/product-description-revisions	revision.revision	i64	always
+response	POST /studio-product/v1/product-description-revisions	revision.sha256	String	always
+response	POST /studio-product/v1/product-description-revisions	revision.source	String	always
+response	POST /studio-product/v1/product-description-revisions	revision.text	String	always
 response	POST /studio-product/v1/projects/{}/create-repo	default_branch	String	always
 response	POST /studio-product/v1/projects/{}/create-repo	full_name	String	always
 response	POST /studio-product/v1/projects/{}/create-repo	html_url	String	always
@@ -4717,6 +4777,10 @@ response	POST /studio-product/v1/projects/{}/product/preview	applications.listen
 response	POST /studio-product/v1/projects/{}/product/preview	applications.name	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	applications.replicas	u32	always
 response	POST /studio-product/v1/projects/{}/product/preview	corpus_commit	String	optional
+response	POST /studio-product/v1/projects/{}/product/preview	description_revision	{}	optional
+response	POST /studio-product/v1/projects/{}/product/preview	description_revision.created	bool	optional
+response	POST /studio-product/v1/projects/{}/product/preview	description_revision.revision	i64	optional
+response	POST /studio-product/v1/projects/{}/product/preview	description_revision.sha256	String	optional
 response	POST /studio-product/v1/projects/{}/product/preview	diagnostics	Vec<{}>	always
 response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.code	String	always
 response	POST /studio-product/v1/projects/{}/product/preview	diagnostics.file	String	optional
@@ -5546,6 +5610,10 @@ route	GET /studio-product/v1/gearbox/corpus/info/refs
 route	GET /studio-product/v1/gearbox/corpus/{}/info/refs
 route	GET /studio-product/v1/gearbox/extension-points
 route	GET /studio-product/v1/organizations/{}/gearbox/corpus/{}/info/refs
+route	GET /studio-product/v1/product-description
+route	GET /studio-product/v1/product-description-branches
+route	GET /studio-product/v1/product-description-revisions
+route	GET /studio-product/v1/product-description-revisions/{}
 route	GET /studio-product/v1/projects/{}/gear-repo
 route	GET /studio-product/v1/projects/{}/product
 route	GET /studio-reports/v1/reports
@@ -5707,6 +5775,8 @@ route	POST /studio-product/v1/gearbox/config-schema
 route	POST /studio-product/v1/gearbox/corpus/git-upload-pack
 route	POST /studio-product/v1/gearbox/corpus/{}/git-upload-pack
 route	POST /studio-product/v1/organizations/{}/gearbox/corpus/{}/git-upload-pack
+route	POST /studio-product/v1/product-description-publications
+route	POST /studio-product/v1/product-description-revisions
 route	POST /studio-product/v1/projects/{}/create-repo
 route	POST /studio-product/v1/projects/{}/gear-repo
 route	POST /studio-product/v1/projects/{}/product/preview

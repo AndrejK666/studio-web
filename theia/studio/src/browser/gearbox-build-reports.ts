@@ -25,6 +25,7 @@ export interface IdeBuildReport {
     readonly images?: readonly { readonly app: string; readonly image: string }[];
     readonly chart_ref?: string;
     readonly chart_version?: string;
+    readonly description_revision?: number;
 }
 
 type Fetch = (path: string, init?: RequestInit) => Promise<Response>;

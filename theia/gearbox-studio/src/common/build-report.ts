@@ -126,6 +126,8 @@ export interface BuildReport {
   readonly images?: readonly { readonly app: string; readonly image: string }[];
   readonly chart_ref?: string;
   readonly chart_version?: string;
+  /** The product description revision Studio keeps that the build used (ADR-0053 §2). */
+  readonly description_revision?: number;
 }
 
 /** A build id: unique enough per machine, and what the server takes (8-64 of `[A-Za-z0-9-]`). */

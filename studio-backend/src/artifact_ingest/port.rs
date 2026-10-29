@@ -543,6 +543,9 @@ pub struct BuildOutcome {
     pub images: Vec<(String, String)>,
     pub chart_ref: Option<String>,
     pub chart_version: Option<String>,
+    /// The revision of the product description it was built with (ADR-0053
+    /// §2); `None` when it read the file in the checkout.
+    pub description_revision: Option<i64>,
 }
 
 impl BuildOutcome {
