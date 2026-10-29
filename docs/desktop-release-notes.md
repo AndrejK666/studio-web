@@ -11,7 +11,8 @@ Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
 ## 0.3.0-beta.11
 
-Gearbox's Product tab reads as the product it describes. Everything merged
+Gearbox's Product tab reads as the product it describes, and a build from
+the desktop compiles with the product's own crate versions. Everything merged
 since `desktop-v0.3.0-beta.10`.
 
 ### Building
@@ -34,8 +35,19 @@ since `desktop-v0.3.0-beta.10`.
 - **The Building ribbon** groups Resolve, Conflicts and Lock as *Health*,
   with the number of errors on Conflicts, and sets Generate apart. (#932)
 
+### Running and deploying
+
+- **Build, Run and Build images lock the generated tree to the product's own
+  crate versions.** gearbox writes no `Cargo.lock`, so cargo took the newest
+  release of every crate and a build of studio-web's images failed compiling
+  `cf-gears-toolkit` with two releases of `cf-gears-toolkit-security`. The
+  tree now gets the lock of the product's own code (else a fetched source's)
+  when it has none; a lock already there stays. (#934)
+
 ### Known not to work
 
+- **A build of images with the new lock is not run end to end on the
+  desktop yet**; the same lock builds studio-web's api-gateway in Studio.
 - **Not looked at in a running app yet**: the dark theme of the new header,
   switches and summary; the ⋯ menu and the profile list on the desktop,
   where the menu may be drawn natively and without icons. Features show no
