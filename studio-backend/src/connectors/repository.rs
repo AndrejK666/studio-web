@@ -152,6 +152,38 @@ impl Repository {
             .await
     }
 
+    /// One commit of `files` on top of `base_branch`, with `branch` created or
+    /// moved onto it ([`ConnectorDriver::commit_replacing_branch`]).
+    pub async fn commit_replacing_branch(
+        &self,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        message: &str,
+    ) -> Result<String> {
+        self.driver
+            .commit_replacing_branch(&self.auth, &self.repo, base_branch, branch, files, message)
+            .await
+    }
+
+    /// The branches named `prefix…`, each with its commit.
+    pub async fn branches_with_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        self.driver
+            .branches_with_prefix(&self.auth, &self.repo, prefix)
+            .await
+    }
+
+    /// The pull request open from `head` into `base`, if one is.
+    pub async fn open_pull_request_from(
+        &self,
+        head: &str,
+        base: &str,
+    ) -> Result<Option<OpenedPullRequest>> {
+        self.driver
+            .find_open_pull_request(&self.auth, &self.repo, head, base)
+            .await
+    }
+
     /// The commit `branch` points at; `None` when there is no such branch.
     pub async fn head_of(&self, branch: &str) -> Result<Option<String>> {
         self.driver

@@ -449,6 +449,18 @@ gears:
         max_lifetime: "30m"
     config: {}
 
+  # ── studio-product (a product's description by revision, ADR-0053) ──
+  studio-product:
+    database:
+      server: "pg_main"
+      dbname: "studio_product"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+
   # ── studio-artifact-ingest (the artifact index) ──
   # A mirror of the artifact graph's listing fields — scope, repo, type,
   # updated_at — as indexed columns, so a project's artifacts, specs and

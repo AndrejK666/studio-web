@@ -631,6 +631,7 @@ export const SURFACES: Surface[] = [
       "BringsWithIt",
       "BeyondGears",
       "ProductCard",
+      "DescriptionInRepository",
       "GearConfigForm",
       "ProjectCandidate",
       "ProductConfigurator",

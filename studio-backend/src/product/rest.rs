@@ -29,6 +29,9 @@ use crate::org_scope::OrgCtx;
 #[path = "explanations_rest.rs"]
 mod explanations_rest;
 
+#[path = "descriptions_rest.rs"]
+mod descriptions_rest;
+
 /// Errors attributable to a product resource.
 #[resource_error(gts_id!("cf.studio._.product.v1~"))]
 pub struct StudioProductError;
@@ -488,17 +491,23 @@ pub struct ProductPreviewRequest {
     pub gears: Vec<String>,
     /// `dev` (embedded), `local` (self-hosted) or `prod` (kubernetes). Default `dev`.
     pub profile: Option<String>,
-    /// Also commit `product.gdl` to the project's repository. Where, when
-    /// neither `open_pr` nor `onto_base` says: as the project shares into
-    /// that repository (its source's `share_mode`) -- onto the base branch
-    /// for `branch`, onto a `product/…` branch with a pull request for
-    /// `pull_request`, and onto a `product/…` branch for a repository no
-    /// source names.
+    /// Save the composed `product.gdl` as the project's next description
+    /// revision, which Studio keeps (ADR-0053 §1). Nothing goes to the
+    /// repository unless `publish`, `open_pr` or `onto_base` asks.
     pub write: Option<bool>,
-    /// With `write`, onto a `product/…` branch with a pull request.
+    /// With `write`, the revision the composition started from: a save
+    /// against one that is no longer the latest is a 409 with both texts.
+    /// Absent, the save follows the latest.
+    pub base_revision: Option<i64>,
+    /// With `write`, also publish the revision to the repository (ADR-0053
+    /// §3): onto `product/<id>` with one pull request, or -- as the
+    /// repository's source shares, or with `onto_base` -- onto the base
+    /// branch.
+    pub publish: Option<bool>,
+    /// With `write`, publish onto `product/<id>` with a pull request.
     pub open_pr: Option<bool>,
-    /// With `write` and no `open_pr`, commit straight onto the repo's base
-    /// branch instead of a `product/…` branch.
+    /// With `write` and no `open_pr`, publish straight onto the repo's base
+    /// branch.
     pub onto_base: Option<bool>,
     /// How the product configures its gears: gear crate name -> {field: value}.
     /// Written into `product.gdl` and kept with the project's product.
@@ -574,6 +583,16 @@ pub struct ProductWriteDto {
     pub pr_url: Option<String>,
 }
 
+/// The description revision a preview's `write` saved.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProductPreviewRevisionDto {
+    pub revision: i64,
+    /// False when the text already was the latest revision's.
+    pub created: bool,
+    pub sha256: String,
+}
+
 /// What the engine made of the picked gears.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -593,8 +612,10 @@ pub struct ProductPreviewDto {
     /// Hosts picked without the plugin their extension point needs.
     pub plugin_options: Vec<GearboxPluginOptionDto>,
     pub corpus_commit: Option<String>,
-    /// Set when `write` was asked for.
+    /// Set when `write` published the description to the repository.
     pub written: Option<ProductWriteDto>,
+    /// Set when `write` saved it as a revision Studio keeps (ADR-0053).
+    pub description_revision: Option<ProductPreviewRevisionDto>,
 }
 
 /// Where the scaffold landed, and what it wrote.
@@ -1649,7 +1670,7 @@ async fn preview_product(
     Extension(product): Extension<Product>,
     Path(project_id): Path<Uuid>,
     Json(body): Json<ProductPreviewRequest>,
-) -> ApiResult<JsonBody<ProductPreviewDto>> {
+) -> ApiResult<Response> {
     let gearbox = product.gearbox()?;
     let invalid = |e: anyhow::Error| {
         StudioProductError::invalid_argument()
@@ -1705,7 +1726,78 @@ async fn preview_product(
         .await
         .map_err(invalid)?;
 
-    let written = if body.write.unwrap_or(false) {
+    // ADR-0053 §1: a save is a revision Studio keeps; the repository is
+    // written only when the person publishes (§3). A deployment whose gear
+    // has no database keeps writing branches, as before.
+    let mut description_revision = None;
+    let kept = product.service.descriptions().is_some();
+    let write = body.write.unwrap_or(false);
+    if write && kept {
+        let base = match body.base_revision {
+            Some(b) => Some(b),
+            None => product
+                .service
+                .latest_description(&ctx, project_id)
+                .await
+                .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+                .map(|l| l.revision),
+        };
+        let saved = product
+            .service
+            .save_description(
+                &ctx,
+                project_id,
+                base,
+                &preview.product_gdl,
+                super::descriptions::SOURCE_STUDIO,
+                Some(&product_path),
+            )
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        description_revision = Some(match saved {
+            super::descriptions::Saved::Created(r) => ProductPreviewRevisionDto {
+                revision: r.revision,
+                created: true,
+                sha256: r.sha256,
+            },
+            super::descriptions::Saved::Unchanged(r) => ProductPreviewRevisionDto {
+                revision: r.revision,
+                created: false,
+                sha256: r.sha256,
+            },
+            super::descriptions::Saved::Stale(latest) => {
+                return Ok(descriptions_rest::conflict_response(
+                    body.base_revision,
+                    latest,
+                    preview.product_gdl,
+                ));
+            }
+        });
+    }
+    let publish = body.publish.unwrap_or(false)
+        || body.open_pr.unwrap_or(false)
+        || body.onto_base.unwrap_or(false);
+    let written = if write && kept && publish {
+        let share = if body.open_pr.is_none() && body.onto_base.is_none() {
+            product
+                .service
+                .write_share_mode(&ctx, &project_id.to_string())
+                .await
+        } else {
+            None
+        };
+        let (_, onto_base) = save_mode(body.open_pr, body.onto_base, share);
+        let p = product
+            .service
+            .publish_description(&ctx, project_id, onto_base)
+            .await
+            .map_err(|e| write_problem("publishing product.gdl failed", &e))?;
+        Some(ProductWriteDto {
+            branch: p.branch,
+            commit_sha: p.commit_sha,
+            pr_url: p.pr_url,
+        })
+    } else if write && !kept {
         // A `product/…` branch named after the content by default, so the
         // same description saved twice lands on the branch it already has
         // (`write_scaffold` returns it rather than refusing), and a
@@ -1805,70 +1897,73 @@ async fn preview_product(
         tracing::warn!(error = %format!("{e:#}"), "gearbox: could not record the project's product");
     }
 
-    Ok(Json(ProductPreviewDto {
-        ok: !r.diagnostics.iter().any(|d| d.is_error()),
-        product_gdl: preview.product_gdl,
-        profile,
-        diagnostics: r
-            .diagnostics
-            .into_iter()
-            .map(|d| GearboxDiagnosticDto {
-                code: d.code,
-                severity: d.severity,
-                message: d.message,
-                help: d.help,
-                file: d.file,
-                line: d.line,
-            })
-            .collect(),
-        applications: r
-            .applications
-            .into_iter()
-            .map(|a| GearboxApplicationDto {
-                name: a.name,
-                kind: a.kind,
-                anchor: a.anchor,
-                gears: a.gears,
-                replicas: a.replicas,
-                listens: a
-                    .listens
-                    .into_iter()
-                    .map(|l| GearboxListenDto {
-                        name: l.name,
-                        gear: l.gear,
-                        address: l.address,
-                    })
-                    .collect(),
-            })
-            .collect(),
-        gears: r
-            .gears
-            .into_iter()
-            .map(|g| GearboxGearDto {
-                id: g.id,
-                crate_name: g.crate_name,
-                reasons: g.reasons,
-            })
-            .collect(),
-        added: preview
-            .composition
-            .added_hosts
-            .into_iter()
-            .map(|(host, plugin)| GearboxAddedDto {
-                reason: format!("host of {plugin}"),
-                id: host,
-            })
-            .collect(),
-        plugin_options: preview
-            .composition
-            .plugin_options
-            .into_iter()
-            .map(|(host, available)| GearboxPluginOptionDto { host, available })
-            .collect(),
-        not_described: preview.composition.not_described,
-        corpus_commit: preview.corpus_commit,
-        written,
-    }))
+    Ok(axum::response::IntoResponse::into_response(axum::Json(
+        ProductPreviewDto {
+            ok: !r.diagnostics.iter().any(|d| d.is_error()),
+            product_gdl: preview.product_gdl,
+            profile,
+            diagnostics: r
+                .diagnostics
+                .into_iter()
+                .map(|d| GearboxDiagnosticDto {
+                    code: d.code,
+                    severity: d.severity,
+                    message: d.message,
+                    help: d.help,
+                    file: d.file,
+                    line: d.line,
+                })
+                .collect(),
+            applications: r
+                .applications
+                .into_iter()
+                .map(|a| GearboxApplicationDto {
+                    name: a.name,
+                    kind: a.kind,
+                    anchor: a.anchor,
+                    gears: a.gears,
+                    replicas: a.replicas,
+                    listens: a
+                        .listens
+                        .into_iter()
+                        .map(|l| GearboxListenDto {
+                            name: l.name,
+                            gear: l.gear,
+                            address: l.address,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            gears: r
+                .gears
+                .into_iter()
+                .map(|g| GearboxGearDto {
+                    id: g.id,
+                    crate_name: g.crate_name,
+                    reasons: g.reasons,
+                })
+                .collect(),
+            added: preview
+                .composition
+                .added_hosts
+                .into_iter()
+                .map(|(host, plugin)| GearboxAddedDto {
+                    reason: format!("host of {plugin}"),
+                    id: host,
+                })
+                .collect(),
+            plugin_options: preview
+                .composition
+                .plugin_options
+                .into_iter()
+                .map(|(host, available)| GearboxPluginOptionDto { host, available })
+                .collect(),
+            not_described: preview.composition.not_described,
+            corpus_commit: preview.corpus_commit,
+            written,
+            description_revision,
+        },
+    )))
 }
 
 async fn create_repo(
@@ -2356,11 +2451,16 @@ pub fn register_routes(
          whose extension point it fills), then asks the Gearbox engine to \
          validate and resolve it for one deployment profile. Returns the \
          description, the engine's diagnostics, and the applications and gears \
-         the resolution arrived at. With `write`, also commits product.gdl to \
-         the project's gear repo on a new branch. `write` with no gears commits \
-         the description a new product project starts from, without resolving it. \
-         A write through a connection the organization does not own is a 400 \
-         `CONNECTION_NOT_OWNED`.",
+         the resolution arrived at. With `write`, also saves product.gdl as the \
+         project's next description revision, which Studio keeps (ADR-0053): \
+         made against `base_revision`, a 409 with both texts when that is not \
+         the latest. With `publish` (or `open_pr` / `onto_base`) it is also \
+         published to the repository, onto `product/<id>` with one pull request \
+         or onto the base branch. A deployment whose product gear has no \
+         database commits it onto a branch instead, as before. `write` with no \
+         gears saves the description a new product project starts from, without \
+         resolving it. A write through a connection the organization does not \
+         own is a 400 `CONNECTION_NOT_OWNED`.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -2370,6 +2470,11 @@ pub fn register_routes(
         .handler(preview_product)
         .json_request::<ProductPreviewRequest>(openapi, "Picked gears")
         .json_response_with_schema::<ProductPreviewDto>(openapi, StatusCode::OK, "Preview")
+        .json_response_with_schema::<descriptions_rest::ProductDescriptionConflictDto>(
+            openapi,
+            StatusCode::CONFLICT,
+            "Saved against a revision that is no longer the latest: both texts",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -2377,6 +2482,7 @@ pub fn register_routes(
         .register(router, openapi);
 
     let router = explanations_rest::register(router, openapi);
+    let router = descriptions_rest::register(router, openapi);
     let router = register_legacy_routes(router, openapi);
     router.layer(Extension(Product::new(service, hub, gearbox)))
 }

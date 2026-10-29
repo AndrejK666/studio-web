@@ -15,16 +15,17 @@ other files spend against, and an implicit ceiling is one nobody can check:
 | studio-backend, 13 gear pools | 52 | `pool.max_conns: 4` on `pg_main`, `studio-backend/config/k8s.yaml` |
 | studio-backend, graph-storage | 8 | that gear's own `pool` override |
 | studio-backend, studio-events | 2 | that gear's own `pool` override |
+| studio-backend, studio-product | 2 | that gear's own `pool` override (ADR-0053) |
 | studio-backend, postgres-usage-collector-plugin | 3 | 1 on its toolkit `pool`, 2 on its own sqlx pool (`pool_size_max`) |
 | Keycloak | 10 | `keycloak.dbPoolMaxSize`, `deploy/helm/studio-web/values.yaml` |
 | backend-bootstrap Job | ~2 | transient, one pass per upgrade |
 | CloudNativePG + exporter | ~5 | the operator |
 | `superuser_reserved_connections` | 3 | PostgreSQL default |
-| **Total** | **~85** | |
+| **Total** | **~87** | |
 
 The thing to know before changing any of it: toolkit-db caches one pool **per
 gear**, not per server, so the `max_conns` on `pg_main` is multiplied by the
-number of gear databases — fourteen. Raising it by one raises the ceiling by
+number of gear databases on it — fourteen. Raising it by one raises the ceiling by
 fourteen. Give a single gear its own `pool` block instead, the way
 `graph-storage` has one.
 
@@ -39,12 +40,12 @@ arithmetic, which is the whole reason for the number:
 
 | shared `max_conns` | per replica | two replicas | with everyone else | under 100? |
 |---|---|---|---|---|
-| 4 (today) | 67 | 134 | 154 | no |
-| 3 | 54 | 108 | 128 | no |
-| 2 | 41 | 82 | 102 | no |
+| 4 (today) | 69 | 138 | 158 | no |
+| 3 | 56 | 112 | 132 | no |
+| 2 | 43 | 86 | 106 | no |
 
 (Per replica: thirteen gears on the shared pool, plus graph-storage's own 8,
-studio-events' 2, studio-artifact-ingest's 2 and the usage plugin's 3.)
+studio-events' 2, studio-artifact-ingest's 2, studio-product's 2 and the usage plugin's 3.)
 
 It was 150 until the usage plugin (issue #781) added three connections per
 replica and two replicas came to 154; 160 keeps them fitting with a little

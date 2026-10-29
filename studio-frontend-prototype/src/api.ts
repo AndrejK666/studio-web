@@ -3154,6 +3154,46 @@ export interface ProjectProduct {
   };
   /** Where `product.gdl` was last committed; `path` is relative to the repository root. */
   written?: { branch: string; commit_sha: string; pr_url?: string | null; path?: string };
+  /** The description revision Studio keeps (ADR-0053), and its path in the repository. */
+  description?: { revision: number; sha256?: string; path?: string | null };
+  /** Where and which revision was last published to the repository (ADR-0053 §3). */
+  published?: { revision: number; branch: string; commit_sha: string; pr_url?: string | null; path?: string; at?: string };
+}
+
+/** One revision of a product's description, which Studio keeps (ADR-0053). */
+export interface ProductDescriptionRevision {
+  revision: number;
+  text: string;
+  author: string;
+  created_at: string;
+  sha256: string;
+  /** `studio`, `repository` (read back from the base branch) or `migrated`. */
+  source: string;
+}
+
+/** A project's product description as Studio keeps it. */
+export interface ProductDescription {
+  latest?: ProductDescriptionRevision | null;
+  path?: string | null;
+  published?: { revision: number; branch: string; commit_sha: string; pr_url?: string | null; path: string; at?: string | null } | null;
+  /** The published file, changed in the repository since: offered as a new revision. */
+  repository_change?: { path: string; branch: string; text: string; sha256: string } | null;
+}
+
+/** The 409 a save against an older revision answers: both texts. */
+export interface ProductDescriptionConflict {
+  reason: string;
+  message: string;
+  base_revision?: number | null;
+  latest: ProductDescriptionRevision;
+  yours: string;
+}
+
+/** The conflict in an ApiError, when the error is one. */
+export function descriptionConflictOf(e: unknown): ProductDescriptionConflict | null {
+  if (!(e instanceof ApiError) || e.status !== 409) return null;
+  const body = e.body as Partial<ProductDescriptionConflict> | undefined;
+  return body?.reason === "DESCRIPTION_REVISION_STALE" && body.latest ? (body as ProductDescriptionConflict) : null;
 }
 
 /** What the Gearbox engine made of a set of picked gears. */
@@ -3170,7 +3210,10 @@ export interface ProductPreview {
    *  engine ids that could fill it. */
   plugin_options: { host: string; available: string[] }[];
   corpus_commit?: string | null;
+  /** Set when `write` published it to the repository. */
   written?: { branch: string; commit_sha: string; pr_url?: string | null } | null;
+  /** Set when `write` saved it as a revision Studio keeps (ADR-0053). */
+  description_revision?: { revision: number; created: boolean; sha256: string } | null;
 }
 
 /** What `importDomainModel` loaded. */
@@ -5824,6 +5867,33 @@ export const api = {
     );
     return r.nodes?.[0]?.value ?? null;
   },
+  /** The project's product description as Studio keeps it (ADR-0053). */
+  productDescription: (token: string, projectId: string) =>
+    request<ProductDescription>(`/studio-product/v1/product-description?project_id=${encodeURIComponent(projectId)}`, token),
+  /** Save a new revision against `base_revision`; a 409 (`descriptionConflictOf`) when it is not the latest. */
+  saveProductDescription: (
+    token: string,
+    projectId: string,
+    body: { base_revision?: number | null; text: string; from_repository?: boolean },
+  ) =>
+    request<{ revision: ProductDescriptionRevision; created: boolean }>(
+      `/studio-product/v1/product-description-revisions?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** Publish the latest revision to the repository (ADR-0053 §3). */
+  publishProductDescription: (token: string, projectId: string, body: { onto_base?: boolean } = {}) =>
+    request<{ revision: number; branch: string; commit_sha: string; pr_url?: string | null; path: string }>(
+      `/studio-product/v1/product-description-publications?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** The `product/*` branches from before Studio kept the description, which the project may delete. */
+  oldProductBranches: (token: string, projectId: string) =>
+    request<{ items: { branch: string; commit_sha: string; pr_url?: string | null; held: boolean }[]; total: number }>(
+      `/studio-product/v1/product-description-branches?project_id=${encodeURIComponent(projectId)}`,
+      token,
+    ),
   /** Merge fields into the project's product; omitted fields keep their value. */
   saveProjectProduct: (
     token: string,
@@ -5911,9 +5981,12 @@ export const api = {
     return request<GearboxStatus>(`/studio-product/v1/gearbox${q.length ? `?${q.join("&")}` : ""}`, token);
   },
   /** Compose a product.gdl from picked gears and resolve it with the Gearbox
-   *  engine. `write` also commits it to the project's repository -- where its
-   *  source's share mode says (onto the base branch, or a `product/…` branch
-   *  with a pull request) unless `open_pr` / `onto_base` say otherwise. */
+   *  engine. `write` also saves it as the project's next description revision,
+   *  which Studio keeps (ADR-0053); a 409 (`descriptionConflictOf`) when
+   *  `base_revision` is no longer the latest. `publish` also writes it to the
+   *  repository -- onto `product/<id>` with one pull request, or onto the base
+   *  branch as its source's share mode says -- unless `open_pr` / `onto_base`
+   *  say otherwise. */
   previewProduct: (
     token: string,
     projectId: string,
@@ -5923,6 +5996,8 @@ export const api = {
       gears: string[];
       profile?: string;
       write?: boolean;
+      base_revision?: number;
+      publish?: boolean;
       open_pr?: boolean;
       /** The product's configuration of its gears (see GearConfig). */
       config?: GearConfig;

@@ -113,13 +113,15 @@ export interface ProductSummary {
   profile: string | null;
   gears: number;
   saved: { branch: string | null; prUrl: string | null } | null;
+  /** The description revision Studio keeps (ADR-0053), when it keeps one. */
+  revision: number | null;
   /** `ok`, `N errors`, or null before the first preview. */
   preview: { ok: boolean; errors: number; warnings: number } | null;
   frontend: boolean;
 }
 
 export function productSummary(
-  product: Pick<ProjectProduct, "product_id" | "profile" | "gears" | "written" | "last_preview"> | null,
+  product: Pick<ProjectProduct, "product_id" | "profile" | "gears" | "written" | "description" | "last_preview"> | null,
   cfg: ProjectConfig | null | undefined,
 ): ProductSummary {
   const profile = product?.profile ?? null;
@@ -128,6 +130,7 @@ export function productSummary(
     profile: profile ? (PRODUCT_PROFILES.find((p) => p.id === profile)?.label ?? profile) : null,
     gears: product?.gears?.length ?? 0,
     saved: product?.written ? { branch: product.written.branch || null, prUrl: product.written.pr_url ?? null } : null,
+    revision: product?.description?.revision ?? null,
     preview: product?.last_preview
       ? { ok: product.last_preview.ok, errors: product.last_preview.errors, warnings: product.last_preview.warnings }
       : null,

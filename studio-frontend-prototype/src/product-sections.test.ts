@@ -95,6 +95,7 @@ describe("the Product page's header", () => {
       profile: "prod · Kubernetes",
       gears: 3,
       saved: { branch: "product/studio-web-50fdd46f", prUrl: "https://x/pull/894" },
+      revision: null,
       preview: { ok: false, errors: 2, warnings: 5 },
       frontend: true,
     });
@@ -106,6 +107,7 @@ describe("the Product page's header", () => {
       profile: null,
       gears: 0,
       saved: null,
+      revision: null,
       preview: null,
       frontend: false,
     });

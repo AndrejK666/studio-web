@@ -37,10 +37,10 @@ database:
         # toolkit-db caches one `Db` PER GEAR (manager.rs, `cache: DashMap<String, Db>`),
         # and a gear inherits this block unless it declares its own. This is
         # therefore not "four connections to pg_main" — it is four PER GEAR, and
-        # this assembly configures fourteen gear databases: 13 x 4 = 52, plus
+        # this assembly configures fifteen gear databases: 13 x 4 = 52, plus
         # the gears with their own override below, Keycloak, the bootstrap Job,
-        # the CloudNativePG manager and the reserved slots, 87 in all. A second
-        # replica needs 154, which is why `max_connections` is 160;
+        # the CloudNativePG manager and the reserved slots, 89 in all. A second
+        # replica needs 158, which is why `max_connections` is 160;
         # deploy/k8s/cloudnative-pg/README.md carries the table and the memory
         # that pays for it. Lowering this is not the way to make room (at 3 two
         # replicas still need 128); raising it by one raises the ceiling by
@@ -683,6 +683,20 @@ gears:
         idle_timeout: "5m"
         max_lifetime: "30m"
     config: {}
+
+  # ── studio-product (a product's description by revision, ADR-0053) ──
+  # Small text per revision, read on every build and every open. `pool` is
+  # small on purpose and counted against the budget on `pg_main` above.
+  studio-product:
+    database:
+      server: "pg_main"
+      dbname: "studio_product"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
 
   # ── usage-collector (the platform's metering store, issue #781) ──
   # What model calls and IDE sessions use is recorded here by studio-llm-proxy

@@ -1226,6 +1226,42 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         ))
     }
 
+    /// One commit of `files` on top of `base_branch`, and `branch` pointed at
+    /// it: created, or moved there by force when it exists. What publishing a
+    /// product's description writes (ADR-0053 §3) -- one branch per product,
+    /// recreated from the base each time, so a pull request open from it stays
+    /// the same request. Returns the commit.
+    async fn commit_replacing_branch(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        message: &str,
+    ) -> anyhow::Result<String> {
+        let _ = (auth, repo_full_path, base_branch, branch, files, message);
+        Err(anyhow::anyhow!(
+            "{} cannot recreate branches through this connection",
+            self.display_name()
+        ))
+    }
+
+    /// The branches whose names start with `prefix` (`product/`), each with
+    /// the commit it points at.
+    async fn branches_with_prefix(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        prefix: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let _ = (auth, repo_full_path, prefix);
+        Err(anyhow::anyhow!(
+            "{} cannot list branches through this connection",
+            self.display_name()
+        ))
+    }
+
     /// Tag `sha` as `tag` (a lightweight tag). A tag already at `sha` is not
     /// an error; one at another commit is.
     async fn create_tag(

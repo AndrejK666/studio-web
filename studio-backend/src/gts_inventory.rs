@@ -531,7 +531,14 @@ mod tests {
     /// is how the fourth entry left: `studio-user` was recorded here as an open
     /// question, the question was answered, and the test demanded the entry go
     /// with it.
-    const DATABASE_OMISSIONS: [(&str, &str, &str); 8] = [
+    const DATABASE_OMISSIONS: [(&str, &str, &str); 9] = [
+        (
+            "dev.yaml",
+            "studio-product",
+            "its description table is PostgreSQL only; without a database the \
+             product gear keeps writing a saved description onto a branch, as it \
+             did before ADR-0053, and the description routes say so with a 503",
+        ),
         (
             "dev.yaml",
             "studio-credstore-pg",

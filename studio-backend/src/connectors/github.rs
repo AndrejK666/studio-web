@@ -1495,6 +1495,36 @@ impl ConnectorDriver for GitHubDriver {
         .await
     }
 
+    async fn commit_replacing_branch(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        message: &str,
+    ) -> anyhow::Result<String> {
+        super::github_write::commit_replacing_branch(
+            self,
+            auth,
+            repo_full_path,
+            base_branch,
+            branch,
+            files,
+            message,
+        )
+        .await
+    }
+
+    async fn branches_with_prefix(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        prefix: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        super::github_write::branches_with_prefix(self, auth, repo_full_path, prefix).await
+    }
+
     async fn commit_changes(
         &self,
         auth: &ConnectionAuth,

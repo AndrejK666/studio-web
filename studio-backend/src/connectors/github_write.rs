@@ -159,6 +159,111 @@ pub(super) async fn commit_changes(
     }
 }
 
+/// See [`super::driver::ConnectorDriver::commit_replacing_branch`]: one commit
+/// of `files` on top of `base_branch`, and `branch` pointed at it -- created,
+/// or moved there by force when it exists, so it is never behind its base and
+/// a pull request open from it stays the same request.
+pub(super) async fn commit_replacing_branch(
+    gh: &GitHubDriver,
+    auth: &ConnectionAuth,
+    repo: &str,
+    base_branch: &str,
+    branch: &str,
+    files: &[FileToWrite],
+    message: &str,
+) -> Result<String> {
+    if branch == base_branch {
+        return Err(anyhow!(
+            "'{branch}' is the base branch; it is never recreated"
+        ));
+    }
+    let base_ref: RefObj = get_json(
+        gh,
+        auth,
+        &format!("/repos/{repo}/git/ref/heads/{base_branch}"),
+    )
+    .await
+    .map_err(|e| anyhow!("read base branch '{base_branch}': {e}"))?;
+    let base_sha = base_ref.object.sha;
+    let base_commit: CommitObj =
+        get_json(gh, auth, &format!("/repos/{repo}/git/commits/{base_sha}")).await?;
+    let tree_items: Vec<_> = files
+        .iter()
+        .map(|f| json!({ "path": f.path, "mode": "100644", "type": "blob", "content": f.content }))
+        .collect();
+    let new_tree: NewSha = send_json(
+        gh,
+        auth,
+        reqwest::Method::POST,
+        &format!("/repos/{repo}/git/trees"),
+        json!({ "base_tree": base_commit.tree.sha, "tree": tree_items }),
+    )
+    .await?;
+    let new_commit: NewSha = send_json(
+        gh,
+        auth,
+        reqwest::Method::POST,
+        &format!("/repos/{repo}/git/commits"),
+        json!({ "message": message, "tree": new_tree.sha, "parents": [base_sha] }),
+    )
+    .await?;
+    let created: Result<serde_json::Value> = send_json(
+        gh,
+        auth,
+        reqwest::Method::POST,
+        &format!("/repos/{repo}/git/refs"),
+        json!({ "ref": format!("refs/heads/{branch}"), "sha": new_commit.sha }),
+    )
+    .await;
+    match created {
+        Ok(_) => Ok(new_commit.sha),
+        Err(e) if e.to_string().contains("Reference already exists") => {
+            let _: serde_json::Value = send_json(
+                gh,
+                auth,
+                reqwest::Method::PATCH,
+                &format!("/repos/{repo}/git/refs/heads/{branch}"),
+                json!({ "sha": new_commit.sha, "force": true }),
+            )
+            .await
+            .map_err(|e| anyhow!("recreate branch '{branch}': {e}"))?;
+            Ok(new_commit.sha)
+        }
+        Err(e) => Err(anyhow!("create branch '{branch}': {e}")),
+    }
+}
+
+#[derive(Deserialize)]
+struct MatchingRef {
+    #[serde(rename = "ref")]
+    name: String,
+    object: ShaObj,
+}
+
+/// See [`super::driver::ConnectorDriver::branches_with_prefix`]: the
+/// git-data API's `matching-refs`, which answers every match in one page.
+pub(super) async fn branches_with_prefix(
+    gh: &GitHubDriver,
+    auth: &ConnectionAuth,
+    repo: &str,
+    prefix: &str,
+) -> Result<Vec<(String, String)>> {
+    let refs: Vec<MatchingRef> = get_json(
+        gh,
+        auth,
+        &format!("/repos/{repo}/git/matching-refs/heads/{prefix}"),
+    )
+    .await?;
+    Ok(refs
+        .into_iter()
+        .filter_map(|r| {
+            r.name
+                .strip_prefix("refs/heads/")
+                .map(|b| (b.to_owned(), r.object.sha))
+        })
+        .collect())
+}
+
 /// See [`super::driver::ConnectorDriver::create_tag`].
 pub(super) async fn create_tag(
     gh: &GitHubDriver,

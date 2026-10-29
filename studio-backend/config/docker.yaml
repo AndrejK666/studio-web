@@ -661,6 +661,18 @@ gears:
         max_lifetime: "30m"
     config: {}
 
+  # ── studio-product (a product's description by revision, ADR-0053) ──
+  studio-product:
+    database:
+      server: "pg_main"
+      dbname: "studio_product"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+
   # ── usage-collector (the platform's metering store, issue #781) ──
   # What model calls and IDE sessions use is recorded here by studio-llm-proxy
   # and studio-session; the records live with the storage plugin below.

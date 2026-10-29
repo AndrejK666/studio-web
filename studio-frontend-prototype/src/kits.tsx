@@ -3,7 +3,10 @@ import { BringsWithIt } from "./gear-brings-view";
 import { BeyondGears } from "./project-checks-view";
 import {
   api,
+  descriptionConflictOf,
   matchReason,
+  type ProductDescription,
+  type ProductDescriptionConflict,
   type Candidate,
   type DeclaredCapability,
   type GearConfig,
@@ -294,7 +297,7 @@ export function ProjectKits({
     inCode: code.report ? codeGears(code.report).length : null,
     resolves: verdict.resolves,
     fixes: verdict.fixes,
-    written: !!product.record?.written && verdict.resolves !== null,
+    written: !!(product.record?.written || product.record?.description) && verdict.resolves !== null,
     composing: product.composing,
   };
   const steps = productSteps(flowState);
@@ -374,18 +377,20 @@ export function ProjectKits({
           ) : (
             <div className="dm-actions">
               <button type="button" className="primary" onClick={() => setCommand({ kind: "build", at: Date.now() })}>
-                {product.record?.written ? "Build it again →" : "Build it in Studio-ide →"}
+                {product.record?.description || product.record?.written ? "Build it again →" : "Build it in Studio-ide →"}
               </button>
-              {product.record?.written && (
+              {(product.record?.description || product.record?.written) && (
                 <button type="button" className="ghost" onClick={() => setCommand({ kind: "open", at: Date.now() })}>
                   Open in Studio-ide
                 </button>
               )}
-              {product.record?.written && (
+              {product.record?.description ? (
+                <span className="hint">Saved in Studio as revision {product.record.description.revision}.</span>
+              ) : product.record?.written ? (
                 <span className="hint">
                   Built on <code>{product.record.written.branch}</code>.
                 </span>
-              )}
+              ) : null}
             </div>
           )}
         </section>
@@ -1471,24 +1476,37 @@ function ProductCard({
   // The crate behind an engine id, for linking a resolved gear to its page.
   const crateOf = (id: string) => preview?.gears.find((g) => g.id === id)?.crate_name ?? `cf-gears-${id}`;
 
-  const run = async (write: boolean): Promise<ProductPreview | null> => {
+  /** A save refused because the description changed since this tab read it
+   *  (ADR-0053 §1): both texts, for the person to choose. */
+  const [conflict, setConflict] = useState<ProductDescriptionConflict | null>(null);
+
+  /** `write` saves the composed description as the project's next revision,
+   *  which Studio keeps (ADR-0053); `publish` also writes it to the
+   *  repository. `base` overrides the revision the save is made against --
+   *  "keep mine" after a conflict. */
+  const run = async (write: boolean, publish = false, base?: number): Promise<ProductPreview | null> => {
     setBusy(write ? "save" : "preview");
     setError(null);
     try {
+      const baseRevision = base ?? record?.description?.revision;
       const result = await api.previewProduct(token, projectId, {
         product_id: productId,
         name: projectName,
         gears: picks,
         profile,
         config: product.config,
-        ...(write ? { write: true } : {}),
+        ...(write ? { write: true, ...(baseRevision !== undefined ? { base_revision: baseRevision } : {}) } : {}),
+        ...(write && publish ? { publish: true } : {}),
       });
       setPreview(result);
       setAsked(question);
+      setConflict(null);
       await product.refresh();
       return result;
     } catch (cause) {
-      setError(errText(cause));
+      const stale = descriptionConflictOf(cause);
+      if (stale) setConflict(stale);
+      else setError(errText(cause));
       return null;
     } finally {
       setBusy(null);
@@ -1496,24 +1514,21 @@ function ProductCard({
   };
 
   /** The last step of the page, and the first of the desktop's: the product's
-   *  description saved to the project's repository, then the desktop Studio
-   *  opened on the project -- it clones the sources and opens product.gdl in
-   *  the Gearbox perspective, bringing in the branch it was saved on. A web
-   *  session cannot take this on: Gearbox is the desktop's. A product already
-   *  saved and unchanged is opened as it is. */
+   *  description saved in Studio, then the desktop Studio opened on the
+   *  project -- it clones the sources, writes the latest revision into the
+   *  checkout and opens product.gdl in the Gearbox perspective (ADR-0053 §2).
+   *  A web session cannot take this on: Gearbox is the desktop's. A product
+   *  already saved and unchanged is opened as it is. */
   const desktop = useDesktopLauncher();
-  const openOnDesktop = (branch: string | undefined) =>
-    desktop.launch(
-      desktopLink({ id: projectId, name: projectName, product: record?.written?.path ?? "product.gdl", branch }),
-    );
+  const savedPath = record?.description?.path ?? record?.written?.path ?? "product.gdl";
+  const isSaved = !!(record?.description || record?.written);
+  const openOnDesktop = () => desktop.launch(desktopLink({ id: projectId, name: projectName, product: savedPath }));
   const buildInTheia = async () => {
-    let branch = record?.written?.branch;
-    if (!branch || stale || !preview) {
+    if (!isSaved || stale || !preview) {
       const saved = await run(true);
-      if (!saved?.written) return;
-      branch = saved.written.branch;
+      if (!saved?.description_revision && !saved?.written) return;
     }
-    openOnDesktop(branch);
+    openOnDesktop();
   };
 
   // Completion replaced the picks: show at once what the engine makes of them.
@@ -1577,7 +1592,7 @@ function ProductCard({
     if (command.kind === "preview") void run(false);
     if (command.kind === "fix" && fixes && fixes.length > 0) document.getElementById("product-fixes")?.focus();
     if (command.kind === "build") void buildInTheia();
-    if (command.kind === "open") openOnDesktop(record?.written?.branch);
+    if (command.kind === "open") openOnDesktop();
     if (command.kind === "take-from-code") setFromCode(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [command?.at]);
@@ -2006,27 +2021,99 @@ function ProductCard({
         </div>
       )}
 
-      {(preview || record?.written) && (
+      {(preview || isSaved) && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
           {preview && (
             <>
-              <button className="ghost" disabled={busy !== null || stale} onClick={() => void run(true)}>
-                {busy === "save" ? "Saving…" : "Save product.gdl to the repository"}
+              <button
+                className="ghost"
+                disabled={busy !== null || stale}
+                title="Keep this product.gdl in Studio as the project's next revision: builds and the desktop take it from there. Nothing is written to the repository."
+                onClick={() => void run(true)}
+              >
+                {busy === "save" ? "Saving…" : "Save product.gdl"}
+              </button>
+              <button
+                className="ghost"
+                disabled={busy !== null || stale}
+                title="Save it, and write it to the repository too: onto one branch per product with one pull request, or onto the base branch when the repository takes changes that way (Sources tab)"
+                onClick={() => void run(true, true)}
+              >
+                Publish to the repository
               </button>
             </>
           )}
-          {record?.written && (
+          {isSaved && (
             <button
               className="ghost"
               title="Opens the desktop Studio on this project with the product in the Gearbox perspective: resolution, graph, lock and conflicts, and the GDL language checking the file as you edit"
-              onClick={() => openOnDesktop(record.written?.branch)}
+              onClick={() => openOnDesktop()}
             >
               Open in Studio-ide
             </button>
           )}
         </div>
       )}
-      {record?.written && (
+      {conflict && (
+        <div className="error" data-description-conflict style={{ fontSize: 12 }}>
+          <p style={{ margin: "0 0 6px" }}>
+            The product&apos;s description changed since this page read it: revision {conflict.latest.revision} is the
+            latest ({conflict.latest.source === "studio" ? "saved" : conflict.latest.source}{" "}
+            <When iso={conflict.latest.created_at} />
+            ). Keep yours, or take it.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div>
+              <b>Yours</b>
+              <pre style={{ fontSize: 11, maxHeight: 240, overflow: "auto" }}>{conflict.yours}</pre>
+            </div>
+            <div>
+              <b>Revision {conflict.latest.revision}</b>
+              <pre style={{ fontSize: 11, maxHeight: 240, overflow: "auto" }}>{conflict.latest.text}</pre>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="ghost" disabled={busy !== null} onClick={() => void run(true, false, conflict.latest.revision)}>
+              Keep mine
+            </button>
+            <button
+              className="ghost"
+              disabled={busy !== null}
+              onClick={() => {
+                setConflict(null);
+                void product.refresh();
+              }}
+            >
+              Take revision {conflict.latest.revision}
+            </button>
+          </div>
+        </div>
+      )}
+      {record?.description && (
+        <p className="hint" style={{ fontSize: 12 }} data-description-revision>
+          Studio keeps product.gdl as revision {record.description.revision}; builds and the desktop take it from
+          there, with the code of the branch they build.
+          {record.published ? (
+            <>
+              {" "}
+              Revision {record.published.revision} is published on <code>{record.published.branch}</code>
+              {record.published.pr_url ? (
+                <>
+                  {" "}
+                  in{" "}
+                  <a href={record.published.pr_url} target="_blank" rel="noreferrer">
+                    its pull request
+                  </a>
+                </>
+              ) : null}
+              .
+            </>
+          ) : (
+            " It is not in the repository until you publish it."
+          )}
+        </p>
+      )}
+      {!record?.description && record?.written && (
         <p className="hint" style={{ fontSize: 12 }}>
           {record.written.pr_url ? (
             <>
@@ -2040,14 +2127,125 @@ function ProductCard({
               product.gdl is committed on <code>{record.written.branch}</code> as{" "}
               <code>{record.written.commit_sha.slice(0, 7)}</code>.
             </>
-          )}{" "}
-          {record.written.branch.startsWith("product/")
-            ? "The repository takes changes as pull requests (Sources tab), so the description is on its own branch; the desktop Studio switches to it when it opens the product."
-            : "The desktop Studio opens it on the branch it checks out."}
+          )}
         </p>
       )}
+      <DescriptionInRepository token={token} projectId={projectId} onTaken={() => void product.refresh()} />
       <p className="hint" data-deploys-moved>Where the product runs and its deploys: the project's Deploys tab.</p>
     </section>
+  );
+}
+
+/** The description in the repository (ADR-0053 §3, §5): a change merged into
+ *  the published file, offered as a new revision, and the `product/*`
+ *  branches from before Studio kept the description, which the project may
+ *  delete -- Studio deletes none. */
+function DescriptionInRepository({ token, projectId, onTaken }: { token: string; projectId: string; onTaken: () => void }) {
+  const [described, setDescribed] = useState<ProductDescription | null>(null);
+  const [branches, setBranches] = useState<{ branch: string; pr_url?: string | null; held: boolean }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .productDescription(token, projectId)
+      .then((d) => live && setDescribed(d))
+      .catch(() => live && setDescribed(null));
+    return () => {
+      live = false;
+    };
+  }, [token, projectId]);
+  const change = described?.repository_change;
+  const take = async () => {
+    if (!change) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.saveProductDescription(token, projectId, {
+        base_revision: described?.latest?.revision ?? null,
+        text: change.text,
+        from_repository: true,
+      });
+      setDescribed(await api.productDescription(token, projectId));
+      onTaken();
+    } catch (cause) {
+      const stale = descriptionConflictOf(cause);
+      setError(stale ? `${stale.message}. Reload the page to compare again.` : errText(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const list = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setBranches((await api.oldProductBranches(token, projectId)).items);
+    } catch (cause) {
+      setError(errText(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!described) return null;
+  return (
+    <div data-description-repository style={{ fontSize: 12 }}>
+      {change && (
+        <div className="hint" data-description-repository-change>
+          <p style={{ margin: "4px 0" }}>
+            <code>{change.path}</code> on <code>{change.branch}</code> was changed in the repository since Studio
+            published it.
+          </p>
+          <details>
+            <summary style={{ cursor: "pointer" }}>Compare</summary>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div>
+                <b>In the repository</b>
+                <pre style={{ fontSize: 11, maxHeight: 240, overflow: "auto" }}>{change.text}</pre>
+              </div>
+              <div>
+                <b>Revision {described.latest?.revision ?? "—"} in Studio</b>
+                <pre style={{ fontSize: 11, maxHeight: 240, overflow: "auto" }}>{described.latest?.text ?? ""}</pre>
+              </div>
+            </div>
+          </details>
+          <button className="ghost" disabled={busy} onClick={() => void take()}>
+            Take the repository&apos;s as revision {(described.latest?.revision ?? 0) + 1}
+          </button>
+        </div>
+      )}
+      {described.latest && (
+        <p className="hint" style={{ margin: "4px 0" }}>
+          {branches === null ? (
+            <button className="link" disabled={busy} onClick={() => void list()}>
+              Old product branches
+            </button>
+          ) : branches.length === 0 ? (
+            "No old product/* branches in the repository."
+          ) : (
+            <>
+              Branches from before Studio kept the description; delete them in the repository when you no longer
+              need them -- Studio deletes none:{" "}
+              {branches.map((b, i) => (
+                <span key={b.branch}>
+                  {i > 0 ? ", " : ""}
+                  <code>{b.branch}</code>
+                  {b.held ? " (Studio holds its description)" : ""}
+                  {b.pr_url ? (
+                    <>
+                      {" "}
+                      <a href={b.pr_url} target="_blank" rel="noreferrer">
+                        PR
+                      </a>
+                    </>
+                  ) : null}
+                </span>
+              ))}
+            </>
+          )}
+        </p>
+      )}
+      {error && <div className="error">{error}</div>}
+    </div>
   );
 }
 

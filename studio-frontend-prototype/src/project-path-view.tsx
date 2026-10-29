@@ -52,7 +52,7 @@ async function gather(token: string, projectId: string, repositories: number | n
           gears: product.value?.gears?.length ?? 0,
           resolves: product.value?.last_preview ? product.value.last_preview.ok : null,
           errors: product.value?.last_preview?.errors ?? 0,
-          written: !!product.value?.written,
+          written: !!(product.value?.written || product.value?.description),
         }
       : null,
     build: built === null ? null : last ? { status: last.status, sha: last.shortSha } : "none",

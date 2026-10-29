@@ -14,9 +14,11 @@
 //! `gear.gdl` says) and a project's gear repository, both through
 //! [`port`].
 
+mod descriptions;
 mod explanations;
 mod gear_roots;
 mod gearbox;
+mod migrations;
 mod new_gear;
 pub mod port;
 mod project_roots;
@@ -26,14 +28,14 @@ pub mod sdk;
 mod service;
 mod skeleton;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use axum::Router;
 use toolkit::api::OpenApiRegistry;
-use toolkit::contracts::RestApiCapability;
+use toolkit::contracts::{DatabaseCapability, RestApiCapability};
 use toolkit::{Gear, GearCtx};
-use tracing::info;
+use tracing::{info, warn};
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
 use service::ProductService;
@@ -45,14 +47,39 @@ pub use explanations::EXPLANATIONS_METADATA_TYPE;
 #[toolkit::gear(
     name = "studio-product",
     deps = [types_registry, account_management],
-    capabilities = [rest]
+    capabilities = [db, rest]
 )]
 #[derive(Default)]
-pub struct StudioProductGear;
+pub struct StudioProductGear {
+    /// A product's description by revision (ADR-0053 §1); `None` when no
+    /// database is configured, and the description routes answer 503.
+    descriptions: OnceLock<Option<Arc<descriptions::DescriptionStore>>>,
+}
+
+impl DatabaseCapability for StudioProductGear {
+    fn migrations(&self) -> Vec<Box<dyn toolkit_db::sea_orm_migration::MigrationTrait>> {
+        use toolkit_db::sea_orm_migration::MigratorTrait;
+        migrations::Migrator::migrations()
+    }
+}
 
 #[async_trait]
 impl Gear for StudioProductGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // The descriptions stand down without a database, rather than the
+        // whole gear: previews, writes and the corpus need none.
+        let store = match ctx.db_required() {
+            Ok(db) => Some(Arc::new(descriptions::DescriptionStore::new(db.db()))),
+            Err(e) => {
+                warn!(
+                    "studio-product: no database configured — product descriptions are not \
+                     kept by revision (their routes answer 503) until a `database:` section \
+                     is added: {e}"
+                );
+                None
+            }
+        };
+        let _ = self.descriptions.set(store);
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
         let results = registry
             .register(crate::catalog_graph::gts::product_type_schemas())
@@ -97,6 +124,9 @@ impl RestApiCapability for StudioProductGear {
         let sink = crate::catalog_graph::build_sink(&ctx.client_hub(), "studio-product");
         let connectors = crate::connectors::sdk::Connectors::new(ctx.client_hub());
         let service = Arc::new(ProductService::new(sink, connectors));
+        if let Some(store) = self.descriptions.get().cloned().flatten() {
+            service.set_descriptions(store);
+        }
 
         // A project without a gear repository writes into its own sources,
         // which only its config names. The same client answers whether a

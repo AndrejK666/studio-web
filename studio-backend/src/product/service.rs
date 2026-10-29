@@ -90,7 +90,13 @@ pub struct ProductService {
     /// preview records the project's product, and registering again on each
     /// write was a round trip to graph-storage that never changed anything.
     registered: std::sync::Mutex<std::collections::HashSet<Uuid>>,
+    /// The product's description by revision (ADR-0053), when the gear has a
+    /// database ([`description_service`]).
+    descriptions: std::sync::OnceLock<Arc<super::descriptions::DescriptionStore>>,
 }
+
+#[path = "description_service.rs"]
+pub mod description_service;
 
 impl ProductService {
     pub fn new(sink: Arc<dyn CatalogSink>, connectors: Connectors) -> Self {
@@ -100,6 +106,7 @@ impl ProductService {
             account_management: std::sync::OnceLock::new(),
             ownership: std::sync::OnceLock::new(),
             registered: std::sync::Mutex::new(std::collections::HashSet::new()),
+            descriptions: std::sync::OnceLock::new(),
         }
     }
 

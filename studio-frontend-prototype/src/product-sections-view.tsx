@@ -141,7 +141,9 @@ function SummaryLine({ summary: s }: { summary: ProductSummary | null }) {
       )}
       <span className="muted">
         ·{" "}
-        {s.saved ? (
+        {s.revision !== null ? (
+          <>kept in Studio as revision {s.revision}</>
+        ) : s.saved ? (
           <>
             saved on <code>{s.saved.branch ?? "the repository's branch"}</code>
             {s.saved.prUrl && (
