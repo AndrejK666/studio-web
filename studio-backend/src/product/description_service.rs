@@ -22,6 +22,19 @@ use crate::product::descriptions::{
 /// Who a revision Studio took itself is by.
 pub const STUDIO_AUTHOR: &str = "studio";
 
+/// The caller does not reach the project (or it hangs under no
+/// organization): "not yours" and "not there" are one answer, a 404.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectNotReachable(pub Uuid);
+
+impl std::fmt::Display for ProjectNotReachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "project {} is not found", self.0)
+    }
+}
+
+impl std::error::Error for ProjectNotReachable {}
+
 /// What publishing wrote.
 #[derive(Debug, Clone)]
 pub struct Publication {
@@ -108,6 +121,22 @@ impl ProductService {
         self.descriptions.get().cloned()
     }
 
+    /// The tenant a project's description is kept under: the organization the
+    /// project hangs under, read as the caller -- never the tenant the request
+    /// happens to act in. One project has one description whoever asks: the
+    /// portal acting in `?organization_id=` and the desktop acting in the
+    /// member's home tenant reach the same revisions. A caller who cannot
+    /// read the project is refused ([`ProjectNotReachable`], a 404).
+    pub async fn description_tenant(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> anyhow::Result<Uuid> {
+        self.organization_of_project(ctx, project)
+            .await
+            .ok_or_else(|| ProjectNotReachable(project).into())
+    }
+
     fn store(&self) -> anyhow::Result<Arc<DescriptionStore>> {
         self.descriptions()
             .ok_or_else(|| anyhow!("product descriptions are not kept in this deployment"))
@@ -122,7 +151,7 @@ impl ProductService {
         project: Uuid,
     ) -> anyhow::Result<Option<Revision>> {
         let store = self.store()?;
-        let tenant = ctx.subject_tenant_id();
+        let tenant = self.description_tenant(ctx, project).await?;
         if let Some(latest) = store.latest(tenant, project).await? {
             return Ok(Some(latest));
         }
@@ -174,7 +203,11 @@ impl ProductService {
         revision: i64,
     ) -> anyhow::Result<Option<Revision>> {
         self.store()?
-            .get(ctx.subject_tenant_id(), project, revision)
+            .get(
+                self.description_tenant(ctx, project).await?,
+                project,
+                revision,
+            )
             .await
     }
 
@@ -186,7 +219,7 @@ impl ProductService {
         limit: u64,
     ) -> anyhow::Result<Vec<Revision>> {
         self.store()?
-            .list(ctx.subject_tenant_id(), project, limit)
+            .list(self.description_tenant(ctx, project).await?, project, limit)
             .await
     }
 
@@ -206,7 +239,7 @@ impl ProductService {
         let saved = self
             .store()?
             .save(
-                ctx.subject_tenant_id(),
+                self.description_tenant(ctx, project).await?,
                 project,
                 &NewRevision {
                     base_revision: base,

@@ -1739,7 +1739,7 @@ async fn preview_product(
                 .service
                 .latest_description(&ctx, project_id)
                 .await
-                .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+                .map_err(|e| descriptions_rest::internal(&e))?
                 .map(|l| l.revision),
         };
         let saved = product
@@ -1753,7 +1753,7 @@ async fn preview_product(
                 Some(&product_path),
             )
             .await
-            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+            .map_err(|e| descriptions_rest::internal(&e))?;
         description_revision = Some(match saved {
             super::descriptions::Saved::Created(r) => ProductPreviewRevisionDto {
                 revision: r.revision,
@@ -1791,7 +1791,10 @@ async fn preview_product(
             .service
             .publish_description(&ctx, project_id, onto_base)
             .await
-            .map_err(|e| write_problem("publishing product.gdl failed", &e))?;
+            .map_err(|e| {
+                descriptions_rest::not_reachable(&e)
+                    .unwrap_or_else(|| write_problem("publishing product.gdl failed", &e))
+            })?;
         Some(ProductWriteDto {
             branch: p.branch,
             commit_sha: p.commit_sha,

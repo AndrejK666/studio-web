@@ -93,6 +93,10 @@ pub struct ProductService {
     /// The product's description by revision (ADR-0053), when the gear has a
     /// database ([`description_service`]).
     descriptions: std::sync::OnceLock<Arc<super::descriptions::DescriptionStore>>,
+    /// Which organization a project hangs under, when a test says so instead
+    /// of account-management.
+    #[cfg(test)]
+    project_organizations: std::sync::Mutex<std::collections::HashMap<Uuid, Uuid>>,
 }
 
 #[path = "description_service.rs"]
@@ -107,6 +111,8 @@ impl ProductService {
             ownership: std::sync::OnceLock::new(),
             registered: std::sync::Mutex::new(std::collections::HashSet::new()),
             descriptions: std::sync::OnceLock::new(),
+            #[cfg(test)]
+            project_organizations: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -619,8 +625,27 @@ impl ProductService {
         ctx: &SecurityContext,
         project_id: Uuid,
     ) -> Option<Uuid> {
+        #[cfg(test)]
+        if let Some(org) = self
+            .project_organizations
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&project_id)
+        {
+            return Some(*org);
+        }
         let am = self.account_management.get()?;
         crate::organizations::sdk::organization_of(am.as_ref(), ctx, project_id).await
+    }
+
+    /// Say that `project` hangs under `organization`, instead of asking
+    /// account-management.
+    #[cfg(test)]
+    pub(super) fn set_project_organization(&self, project: Uuid, organization: Uuid) {
+        self.project_organizations
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(project, organization);
     }
 
     /// Commit a new gear's `files` onto `scaffold/<slug>` off `target`'s base

@@ -13,15 +13,18 @@
 //! - `GET  product-description-branches` -- the `product/*` branches from
 //!   before, which the project may delete; nothing is deleted here (§5).
 //!
-//! Authorized like every product route: the caller acts in `?organization_id=`
-//! ([`OrgCtx`]) and the revisions are kept in that tenant, beside the
-//! project's product record.
+//! The revisions are kept under the organization the project hangs under,
+//! resolved from the project as the caller reads the tenant tree -- whichever
+//! tenant the request acts in ([`OrgCtx`]), one project has one description.
+//! A caller who cannot read the project gets 404.
 
 use axum::response::IntoResponse;
 
 use super::*;
 use crate::product::descriptions::{self, Revision, SOURCE_REPOSITORY, SOURCE_STUDIO, Saved};
-use crate::product::service::description_service::{OldBranch, Publication, RepositoryChange};
+use crate::product::service::description_service::{
+    OldBranch, ProjectNotReachable, Publication, RepositoryChange,
+};
 
 /// `?project_id=`: the project a description belongs to. In the query, not
 /// the path (docs/api-conventions.md, `scope-in-path`).
@@ -238,8 +241,18 @@ fn unavailable() -> CanonicalError {
         .create()
 }
 
-fn internal(e: &anyhow::Error) -> CanonicalError {
-    CanonicalError::internal(format!("{e:#}")).create()
+/// A project the caller does not reach is a 404; anything else a 500.
+pub fn internal(e: &anyhow::Error) -> CanonicalError {
+    not_reachable(e).unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create())
+}
+
+/// The 404 for a project the caller does not reach, when `e` is that.
+pub fn not_reachable(e: &anyhow::Error) -> Option<CanonicalError> {
+    e.downcast_ref::<ProjectNotReachable>().map(|p| {
+        StudioProductError::not_found(p.to_string())
+            .with_resource(p.0.to_string())
+            .create()
+    })
 }
 
 impl Product {
@@ -414,7 +427,10 @@ async fn publish_product_description(
         .service
         .publish_description(&ctx, project_id, onto_base)
         .await
-        .map_err(|e| write_problem("publishing the description failed", &e))?;
+        .map_err(|e| {
+            not_reachable(&e)
+                .unwrap_or_else(|| write_problem("publishing the description failed", &e))
+        })?;
     Ok(Json(published_dto(published)))
 }
 
@@ -428,7 +444,10 @@ async fn list_old_product_branches(
         .service
         .old_product_branches(&ctx, project_id)
         .await
-        .map_err(|e| write_problem("listing the product branches failed", &e))?
+        .map_err(|e| {
+            not_reachable(&e)
+                .unwrap_or_else(|| write_problem("listing the product branches failed", &e))
+        })?
         .into_iter()
         .map(old_branch_dto)
         .collect();

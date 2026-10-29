@@ -493,8 +493,11 @@ database (`studio_product`, ADR-0053 §1), one table:
 |---|---|---|
 | `studio_product_descriptions` | `(tenant_id, project_id, revision)` | `text` (the whole `product.gdl`), `author` (a subject id, or `studio`), `created_at_ms`, `sha256`, `source` (`studio`, `repository`, `migrated`) |
 
-The tenant is the one the request acts in (`?organization_id=`), the scope the
-project's product record is read in. The primary key is the save's lock: a
+The tenant is the organization the project hangs under, resolved from the
+project as the caller reads the tenant tree -- never the tenant a request acts
+in, so the portal (`?organization_id=`) and the desktop (the member's home
+tenant) reach one description; a caller who cannot read the project gets 404.
+The primary key is the save's lock: a
 save names the revision it started from, and two saves from one revision both
 try the next number -- the second is answered 409 with both texts. The product
 record keeps `description` (the latest revision and its path) and `published`

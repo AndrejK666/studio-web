@@ -3,10 +3,12 @@
 //! The text is the project's `product.gdl`, exactly what the engine reads.
 //! Each save is a new revision -- its number, the text, who saved it, when,
 //! and the text's SHA-256 -- in `studio_product_descriptions`, keyed by the
-//! tenant the request acts in and the project. The tenant is the same scope
-//! the project's product record lives in (the catalogue graph is read in the
-//! request's tenant), so a caller who cannot read the record cannot read its
-//! description either.
+//! organization the project hangs under and the project. The organization is
+//! resolved from the project, as the caller reads the tenant tree
+//! (`ProductService::description_tenant`), never taken from the tenant a
+//! request acts in: the portal (acting in `?organization_id=`) and the desktop
+//! (acting in the member's home tenant) reach one description, and a caller
+//! who cannot read the project is refused.
 //!
 //! A save is made against the revision the editor started from. When that is
 //! no longer the latest, nothing is written and the caller gets the latest
