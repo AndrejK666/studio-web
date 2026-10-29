@@ -26,6 +26,7 @@ import { GearAuthorViewContribution } from "../view-contributions";
 import { GearLocator } from "./gear-locator";
 import { GearSessionService } from "./gear-session-service";
 import { ProductSessionService } from "./product-session-service";
+import { ProductDescriptionSync } from "./product-description-sync";
 import { GearboxService } from "../../common/protocol";
 import { PRODUCT_PERSPECTIVE } from "./studio-context-service";
 
@@ -63,6 +64,7 @@ export class StudioGearboxPerspective implements PerspectiveContribution, Comman
   @inject(GearLocator) protected readonly locator!: GearLocator;
   @inject(GearAuthorViewContribution) protected readonly gearView!: GearAuthorViewContribution;
   @inject(QuickInputService) protected readonly quickInput!: QuickInputService;
+  @inject(ProductDescriptionSync) protected readonly descriptions!: ProductDescriptionSync;
 
   registerPerspectives(service: PerspectiveService): void {
     service.registerPerspective({
@@ -152,6 +154,9 @@ export class StudioGearboxPerspective implements PerspectiveContribution, Comman
       );
       return false;
     }
+    // Opened from Studio: the description Studio keeps goes into the file,
+    // and every change of it back to Studio (ADR-0053 §1, §2).
+    await this.descriptions.open(file).catch((error) => console.warn("[gearbox] the description was not taken from Studio", error));
     const roots = this.workspace.tryGetRoots().map((r) => r.resource);
     const root = roots.find((r) => r.isEqualOrParent(file));
     const label = root ? root.relative(file)?.toString() ?? file.path.base : file.path.base;

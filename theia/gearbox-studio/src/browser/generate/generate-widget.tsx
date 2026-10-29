@@ -46,6 +46,7 @@ import {
 import { ProductTerminals } from "./product-terminals";
 import { RunPanel, type PostgresState } from "./run-panel";
 import { DeployPanel, type DeployStatusView } from "./deploy-panel";
+import { ProductDescriptionSync } from "../shell/product-description-sync";
 import {
   defaultTarget,
   deployAnswer,
@@ -161,6 +162,7 @@ export class GenerateWidget extends ReactWidget {
   // Constructor Studio: where a build's start and end are reported (ADR-0045);
   // absent in Gearbox Studio proper.
   @inject(BuildReports) @optional() protected readonly buildReports?: BuildReports;
+  @inject(ProductDescriptionSync) @optional() protected readonly descriptionSync?: ProductDescriptionSync;
   /** The build being read off each product's Build and Run terminals. */
   protected readonly tracking = new Map<string, (cancelled: boolean) => void>();
   /** The newest build of each product that passed: Deploy names it. */
@@ -416,6 +418,8 @@ export class GenerateWidget extends ReactWidget {
       ...(profile ? { profile } : {}),
       ...(commit !== undefined ? { commit } : {}),
       started_at: new Date().toISOString(),
+      // The description revision the file is in step with (ADR-0053 §2).
+      ...(this.descriptionSync?.revisionOf(file) !== undefined ? { description_revision: this.descriptionSync.revisionOf(file) } : {}),
     };
     const send = (report: BuildReport): void => {
       sink.report(file, report).catch((error) => console.warn("Studio: a build report was not taken", error));

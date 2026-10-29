@@ -80,6 +80,7 @@ import { GdlLanguageContribution } from "./gdl/gdl-language-contribution";
 import { ProductFileChecks } from "./gdl/product-file-checks";
 import { GearSessionService } from "./shell/gear-session-service";
 import { ProductSessionService } from "./shell/product-session-service";
+import { ProductDescriptionSync } from "./shell/product-description-sync";
 import { EngineConnectionService } from "./shell/engine-connection-service";
 import { SelectionService } from "./shell/selection-service";
 import { SessionCommands } from "./shell/session-commands";
@@ -147,6 +148,8 @@ export default new ContainerModule((bind, _unbind, _isBound, rebind) => {
   bind(FrontendApplicationContribution).toService(ProductFileChecks);
 
   bind(ProductSessionService).toSelf().inSingletonScope();
+  // The description read from and saved to Studio (ADR-0053); inert without the Studio extension.
+  bind(ProductDescriptionSync).toSelf().inSingletonScope();
   bind(GearSessionService).toSelf().inSingletonScope();
 
   // The Gearbox top-level menu's label -- see `GearboxMenuContribution`.
