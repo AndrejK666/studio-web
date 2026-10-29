@@ -65,6 +65,7 @@ import { ProductEmptyState, emptyStateLists } from "./product-empty-state";
 import {
   ProductStatusStrip,
   draftStateOf,
+  plural,
   productStatusOf,
   type StripAction,
 } from "./product-status-strip";
@@ -324,9 +325,9 @@ export class ProductWidget extends ReactWidget {
     const warnings = diagnostics.filter(d => d.severity === "warning").length;
     return <span className="gbx-check-counts" data-validation-count={diagnostics.length}
       data-validation-worst={worstOf(diagnostics) ?? "info"}>
-      {errors > 0 && <span className="gbx-stage-count gbx-stage-count-error" aria-label={`${errors} errors`}>{errors} errors</span>}
-      {warnings > 0 && <span className="gbx-stage-count gbx-stage-count-warning" aria-label={`${warnings} warnings`}>{warnings} warnings</span>}
-      {errors === 0 && warnings === 0 && <span className="gbx-stage-count gbx-stage-count-info">{diagnostics.length} notes</span>}
+      {errors > 0 && <span className="gbx-stage-count gbx-stage-count-error" aria-label={plural(errors, "error", "errors")}>{plural(errors, "error", "errors")}</span>}
+      {warnings > 0 && <span className="gbx-stage-count gbx-stage-count-warning" aria-label={plural(warnings, "warning", "warnings")}>{plural(warnings, "warning", "warnings")}</span>}
+      {errors === 0 && warnings === 0 && <span className="gbx-stage-count gbx-stage-count-info">{plural(diagnostics.length, "note", "notes")}</span>}
     </span>;
   }
 
@@ -480,22 +481,33 @@ export class ProductWidget extends ReactWidget {
    * portal saved on its own branch is brought into a worktree beside a
    * checkout that has uncommitted work, and then the two differ -- the bar
    * said `main*` while the product came from `product/…`.
+   *
+   * **A chip, and the worktree's story in its tooltip.** The sentence that used
+   * to follow the branch -- which worktree, beside which checkout, and why the
+   * status bar disagrees -- is true and rarely wanted, and it read as a
+   * paragraph in the product's title line. The chip says where; hovering it
+   * says why.
    */
   protected renderCheckout(): React.ReactNode {
     const checkout = this.checkout;
     if (checkout === undefined) return null;
     const base = (p: string) => p.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? p;
+    const worktreeOf = checkout.worktreeOf;
+    const title =
+      worktreeOf === undefined
+        ? `On branch ${checkout.branch}`
+        : `On branch ${checkout.branch}, in the worktree ${base(checkout.root)} beside ${base(worktreeOf)}. ` +
+          `The status bar shows ${base(worktreeOf)}'s own branch.`;
     return (
-      <div className="gbx-product-checkout" data-product-branch={checkout.branch}>
-        on branch <code>{checkout.branch}</code>
-        {checkout.worktreeOf !== undefined && (
-          <>
-            {" "}
-            in <code data-product-worktree>{base(checkout.root)}</code>, a worktree beside{" "}
-            <code>{base(checkout.worktreeOf)}</code> -- the status bar shows {base(checkout.worktreeOf)}&apos;s own branch
-          </>
+      <span className="gbx-product-checkout gbx-meta-chip" data-product-branch={checkout.branch} title={title}>
+        <span className="codicon codicon-git-branch" aria-hidden />
+        <span>{checkout.branch}</span>
+        {worktreeOf !== undefined && (
+          <span className="gbx-product-worktree" data-product-worktree={base(checkout.root)}>
+            · worktree
+          </span>
         )}
-      </div>
+      </span>
     );
   }
 
@@ -640,17 +652,25 @@ export class ProductWidget extends ReactWidget {
           <div className="gbx-product-context">
             {/* The id stays as the marker (`data-product-name`); the name opens
                 another product, the way Gearbox Studio's switches one. */}
-            <button type="button" className="gbx-product-name" data-product-name={intent?.id}
-              title="Open another product"
-              onClick={() => void this.commands.executeCommand(OPEN_PRODUCT.id)}>
-              {intent?.display_name ?? state.open.label}<span className="codicon codicon-chevron-down" />
-            </button>
-            {intent && <label className="gbx-profile-selector">Profile
-              <select aria-label="Deployment profile" data-product-profile value={state.profile ?? ""}
-                onChange={e => void this.store.setProfile(e.currentTarget.value)}>
-                {Object.keys(intent.profiles).map(id => <option key={id} value={id}>{id}{id === intent.default_profile ? " (default)" : ""}</option>)}
-              </select>
-            </label>}
+            <div className="gbx-product-identity">
+              <button type="button" className="gbx-product-name" data-product-name={intent?.id}
+                title="Open another product"
+                onClick={() => void this.commands.executeCommand(OPEN_PRODUCT.id)}>
+                {intent?.display_name ?? state.open.label}<span className="codicon codicon-chevron-down" />
+              </button>
+              {/* The meta line: which profile, which branch. Muted, under the
+                  name, because both qualify the product rather than compete
+                  with it. */}
+              <div className="gbx-product-meta">
+                {intent && <label className="gbx-profile-selector">Profile
+                  <select aria-label="Deployment profile" data-product-profile value={state.profile ?? ""}
+                    onChange={e => void this.store.setProfile(e.currentTarget.value)}>
+                    {Object.keys(intent.profiles).map(id => <option key={id} value={id}>{id}{id === intent.default_profile ? " (default)" : ""}</option>)}
+                  </select>
+                </label>}
+                {this.renderCheckout()}
+              </div>
+            </div>
             <details className="gbx-product-menu">
               <summary aria-label="Product menu">Product <span className="codicon codicon-chevron-down" /></summary>
               <div className="gbx-menu-items">
@@ -665,7 +685,6 @@ export class ProductWidget extends ReactWidget {
               </div>
             </details>
           </div>
-          {this.renderCheckout()}
           {this.renderStaleCorpus()}
           {/* Constructor Studio: the product's state and its draft's Apply and
               Discard, on every section -- the strip Gearbox Studio's bottom draft
@@ -704,7 +723,7 @@ export class ProductWidget extends ReactWidget {
             RPC seam holds the answer to `resolve` so the moment lasts. */}
         {state.status === "resolving" && (
           <div className="gbx-progress" data-product-resolving>
-            resolving…
+            Checking the product…
           </div>
         )}
 
@@ -1320,7 +1339,7 @@ export class ProductWidget extends ReactWidget {
               What the panel knows, in the order it knows it: the connection is
               gone, so these results are stale, and the last one that *did* answer
               was for this profile. */}
-          <span>{stale === undefined ? "resolved" : "connection lost"}</span>
+          <span>{stale === undefined ? "up to date" : "connection lost"}</span>
           {/* The profile is taken from the *resolved header*, not from the switch
               above. They should agree, and stating both is what makes a
               disagreement visible instead of leaving the panel labelled one way

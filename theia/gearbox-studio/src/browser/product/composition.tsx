@@ -38,7 +38,7 @@ export function Composition({ state, loadingLabel, descriptors, selection, selec
     <nav className="gbx-composition-tree" aria-label="Product composition">
       <div className="gbx-composition-tools">
         <div className="gbx-composition-tools-heading"><h3>Selected gears{pending ? "" : ` (${explicit.length})`}</h3>
-          <button type="button" className="gbx-start-primary" data-add-gear onClick={() => add()}>Add Gear</button>
+          <button type="button" className="gbx-start-primary" data-add-gear onClick={() => add()}>Add gear</button>
           <details className="gbx-row-menu"><summary aria-label="More add actions">⋯</summary>
             <div className="gbx-menu-items"><button type="button" data-create-gear onClick={create}>Create Gear…</button></div>
           </details>
@@ -46,7 +46,7 @@ export function Composition({ state, loadingLabel, descriptors, selection, selec
         <input type="search" className="theia-input" aria-label="Search product gears" placeholder="Search gears and plugins" value={search} onChange={e => setSearch(e.currentTarget.value)} />
       </div>
       {explicit.length === 0 && (state.status === "loading" || state.status === "resolving") &&
-        <div className="gbx-empty" role="status" data-composition-loading={state.status}>{state.status === "loading" ? loadingLabel ?? "Loading the product…" : "Resolving…"}</div>}
+        <div className="gbx-empty" role="status" data-composition-loading={state.status}>{state.status === "loading" ? loadingLabel ?? "Loading the product…" : "Checking…"}</div>}
       {explicit.length === 0 && state.status !== "loading" && state.status !== "resolving" && <p className="gbx-empty">Add your first gear, then configure it here.</p>}
       {query && visible.length === 0 && automaticVisible.length === 0 && <p role="status">No matching gears or plugins.</p>}
       {visible.map(host => {

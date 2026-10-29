@@ -72,6 +72,20 @@
 
 .gbx-detail { padding: 4px 2px; }
 .gbx-detail-title { font-weight: 600; margin-bottom: 8px; display: flex; gap: 8px; align-items: baseline; }
+/* The name, then the id under it as a chip (gear-facts.tsx, `GearHeading`). */
+.gbx-detail-title-stacked { flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 12px; }
+.gbx-detail-name { font-size: 16px; }
+.gbx-id-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 6px; border-radius: 4px; cursor: pointer; font-weight: 400;
+  border: 1px solid transparent;
+  background: var(--theia-textCodeBlock-background, var(--theia-editorWidget-background));
+}
+.gbx-id-chip .codicon { font-size: 11px; opacity: 0; }
+.gbx-id-chip:hover, .gbx-id-chip:focus-visible { border-color: var(--theia-widget-border, var(--theia-editorGroup-border)); }
+.gbx-id-chip:hover .codicon, .gbx-id-chip:focus-visible .codicon { opacity: 1; }
+/* A gear's description, read first and as prose. */
+.gbx-lead { margin: 0 0 12px; line-height: 1.55; max-width: 70ch; }
 .gbx-kv { display: flex; gap: 10px; padding: 3px 0; align-items: baseline; }
 .gbx-kv > span:first-child { flex: 0 0 150px; opacity: 0.6; font-size: 0.9em; text-align: right; }
 .gbx-kv > span:last-child {
@@ -1298,7 +1312,8 @@
 .gbx-composition-slot h4 { margin: 6px 0; overflow-wrap: anywhere; }
 .gbx-composition-connection { display: flex; flex-direction: column; align-items: flex-start; margin: 8px 0; }
 /* One plugin's own Remove, small: the host's Remove takes every plugin with it. */
-.gbx-product-checkout { font-size: 12px; opacity: 0.85; margin: 2px 0 6px; }
+/* The branch the description is on: a chip in the meta line, at full strength. */
+.gbx-product-checkout { white-space: nowrap; }
 .gbx-stale-corpus { border-left: 3px solid var(--theia-editorWarning-foreground, #b58900); padding: 4px 8px; margin: 6px 0; }
 .gbx-stale-corpus p { margin: 0 0 4px; }
 .gbx-composition-remove-plugin { font-size: 11px; padding: 0 6px; margin-top: 2px; }
@@ -1404,9 +1419,34 @@
    one subject, local actions, details on demand. Constructor Studio keeps its
    status strip under the context row instead of a bottom draft bar. */
 .gbx-product { padding: 0; }
+/* Identifiers in the product tab: a muted chip in the text colour.
+   @theia/core's index.css colours bare `code` with
+   `--theia-textPreformat-foreground`, which this application never defines, so
+   every id in this tab inherited VS Code's dark-red default and read as an
+   error. The documents had the same fault (product-ext's editor-css.js). */
+.gbx-product code, .gbx-add-dialog code {
+  color: var(--theia-foreground);
+  background: var(--theia-textCodeBlock-background, var(--theia-editorWidget-background));
+  font-family: var(--theia-code-font-family); font-size: 0.9em;
+  padding: 0 4px; border-radius: 3px;
+}
 .gbx-product-head { padding: 16px 24px 0; border-bottom: 1px solid var(--theia-panel-border); }
 .gbx-product-context { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; min-width: 0; }
-.gbx-product-name { display: inline-flex; align-items: center; gap: 10px; font: inherit; font-size: 18px; font-weight: 600; color: inherit; background: transparent; border: 0; padding: 4px 0; cursor: pointer; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.gbx-product-identity { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gbx-product-name { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-size: 19px; font-weight: 600; line-height: 1.25; color: inherit; background: transparent; border: 0; padding: 0; cursor: pointer; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.gbx-product-name .codicon { font-size: 14px; color: var(--theia-descriptionForeground); }
+/* Profile and branch: one muted line under the name. */
+.gbx-product-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; color: var(--theia-descriptionForeground); }
+.gbx-meta-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  padding: 1px 8px; border-radius: 10px; font-size: 12px; line-height: 18px;
+  color: var(--theia-foreground);
+  background: var(--theia-textCodeBlock-background, var(--theia-editorWidget-background));
+  border: 1px solid var(--theia-widget-border, var(--theia-editorGroup-border));
+  overflow-wrap: anywhere;
+}
+.gbx-meta-chip .codicon { font-size: 13px; color: var(--theia-descriptionForeground); }
+.gbx-product-worktree { color: var(--theia-descriptionForeground); }
 .gbx-profile-selector { display: inline-flex; align-items: center; gap: 8px; color: var(--theia-descriptionForeground); }
 .gbx-profile-selector select { color: var(--theia-input-foreground); background: var(--theia-input-background); border: 1px solid var(--theia-input-border, var(--theia-panel-border)); padding: 6px 10px; font: inherit; min-width: 120px; }
 .gbx-product-menu { margin-left: auto; }
@@ -1417,8 +1457,9 @@
 .gbx-menu-items button { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .gbx-menu-items button:hover, .gbx-menu-items button:focus-visible { background: var(--theia-list-hoverBackground); }
 .gbx-product-nav { margin-top: 14px; gap: 8px; border: 0; padding: 0; align-items: stretch; }
-.gbx-product-nav .gbx-view-tab { background: transparent; color: var(--theia-descriptionForeground); padding: 10px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-size: 13px; }
-.gbx-product-nav .gbx-view-tab-on { color: var(--theia-foreground); border-bottom-color: var(--theia-focusBorder); font-weight: 600; }
+.gbx-product-nav .gbx-view-tab { background: transparent; color: var(--theia-descriptionForeground); padding: 10px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-size: 13px; opacity: 1; }
+.gbx-product-nav .gbx-view-tab-on { color: var(--theia-foreground); border-bottom-color: var(--theia-panelTitle-activeBorder, var(--theia-focusBorder)); font-weight: 600; opacity: 1; }
+.gbx-product-nav .gbx-view-tab:hover { color: var(--theia-foreground); background: transparent; }
 .gbx-product-body { padding: 20px 24px; }
 .gbx-product-body-fill { padding: 0; }
 .gbx-product-body-fill > .gbx-composition { grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 0; }

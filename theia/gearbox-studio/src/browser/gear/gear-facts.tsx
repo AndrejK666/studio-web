@@ -50,10 +50,12 @@ export function MaturityBadge({ maturity }: { readonly maturity: Maturity }): Re
 }
 
 /**
- * The display name with the id beside it.
+ * The display name, with the id under it as a quiet chip that copies itself.
  *
- * The markup the Inspector's detail block has always emitted, so that a claim
- * reading `.gbx-detail-title` keeps matching wherever a gear is named.
+ * Still one `.gbx-detail-title` holding both, so that a claim reading it keeps
+ * matching wherever a gear is named. The id moved under the name rather than
+ * beside it: side by side the two read as one long title, and the id is the
+ * part a person copies, not the part they read.
  */
 export function GearHeading({
   id,
@@ -63,23 +65,42 @@ export function GearHeading({
   readonly descriptor?: GearDescriptor;
 }): React.ReactElement {
   return (
-    <div className="gbx-detail-title">
-      {descriptor?.display_name || id} <span className="gbx-id">{id}</span>
+    <div className="gbx-detail-title gbx-detail-title-stacked">
+      <span className="gbx-detail-name">{descriptor?.display_name || id}</span>
+      <button
+        type="button"
+        className="gbx-id gbx-id-chip"
+        data-gear-id-copy={id}
+        title="Copy the gear's id"
+        aria-label={`Copy the id ${id}`}
+        onClick={() => void navigator.clipboard?.writeText(id)}
+      >
+        {id}
+        <span className="codicon codicon-copy" aria-hidden />
+      </button>
     </div>
   );
 }
 
-/** What the gear is for, in the author's own words. */
+/**
+ * What the gear is for, in the author's own words: the lead paragraph.
+ *
+ * **No label column.** It was a `gbx-kv` row, so the first thing under a gear's
+ * name was the word "description" in a 150px right-aligned column, with the
+ * sentence squeezed beside it. Nothing at all when the author wrote none: a
+ * dash as a lead paragraph says less than the absence does.
+ */
 export function GearBlurb({
   descriptor,
 }: {
   readonly descriptor?: GearDescriptor;
-}): React.ReactElement {
+}): React.ReactElement | null {
+  const description = descriptor?.description;
+  if (!description) return null;
   return (
-    <div className="gbx-kv">
-      <span>description</span>
-      <span>{descriptor?.description ?? "—"}</span>
-    </div>
+    <p className="gbx-lead" data-gear-description>
+      {description}
+    </p>
   );
 }
 

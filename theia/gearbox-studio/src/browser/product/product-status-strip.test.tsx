@@ -59,7 +59,7 @@ describe("what the strip says about the resolution", () => {
 describe("what the strip offers for the draft", () => {
   const base = { count: 0, writeUnknown: false, engineConnected: true, busy: false };
 
-  it("says Saved with nothing queued", () => {
+  it("says the changes are saved with nothing queued", () => {
     expect(draftStateOf(base)).toEqual({ kind: "saved" });
   });
 
@@ -113,7 +113,7 @@ describe("the strip, drawn", () => {
 
   it("shows no Apply or Discard with nothing to apply", async () => {
     await draw({});
-    expect(q("[data-draft-state]")?.textContent).toBe("Saved");
+    expect(q("[data-draft-state]")?.textContent).toBe("All changes saved");
     expect(q("[data-draft-apply]")).toBeNull();
     expect(q("[data-draft-discard]")).toBeNull();
   });
@@ -272,7 +272,7 @@ describe("Apply and Discard, through the strip, against a fake engine", () => {
     expect(edits.confirmed).toBe(1);
     expect(reloads()).toBe(1);
     expect(edits.hasDraft()).toBe(false);
-    expect(host.querySelector("[data-draft-state]")?.textContent).toBe("Saved");
+    expect(host.querySelector("[data-draft-state]")?.textContent).toBe("All changes saved");
   });
 
   it("discards without asking the engine, and remounts the controls", async () => {
@@ -287,7 +287,7 @@ describe("Apply and Discard, through the strip, against a fake engine", () => {
     expect(engine.calls).toEqual([]);
     expect(edits.hasDraft()).toBe(false);
     expect(edits.epoch).toBe(epoch + 1);
-    expect(host.querySelector("[data-draft-state]")?.textContent).toBe("Saved");
+    expect(host.querySelector("[data-draft-state]")?.textContent).toBe("All changes saved");
   });
 
   it("keeps the draft when the engine refuses the dry run, and says why", async () => {

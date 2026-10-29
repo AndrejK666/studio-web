@@ -97,7 +97,8 @@ export interface ProductStatusStripProps {
   readonly onRun: (id: string) => void;
 }
 
-function plural(count: number, one: string, many: string): string {
+/** `1 conflict`, `2 conflicts`: a count and its noun, agreeing. */
+export function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
@@ -108,7 +109,7 @@ export function ProductStatusStrip(props: ProductStatusStripProps): React.ReactE
       <div className="gbx-product-status-state" aria-live="polite">
         {status?.kind === "working" && (
           <span className="gbx-product-status-badge" data-status="working">
-            resolving…
+            Checking…
           </span>
         )}
         {status?.kind === "conflicts" && (
@@ -127,13 +128,13 @@ export function ProductStatusStrip(props: ProductStatusStripProps): React.ReactE
         )}
         {status?.kind === "resolved" && (
           <span className="gbx-badge gbx-product-status-badge" data-status="resolved">
-            resolved
+            Up to date
           </span>
         )}
 
         {draft.kind === "saved" && (
           <span className="gbx-product-status-draft" data-draft-state="saved">
-            Saved
+            All changes saved
           </span>
         )}
         {draft.kind === "unverified" && (
