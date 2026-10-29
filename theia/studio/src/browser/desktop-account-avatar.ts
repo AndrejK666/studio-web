@@ -1,10 +1,13 @@
-// The desktop's Accounts button shows the signed-in member's photo from their
-// Studio profile, instead of the generic person glyph.
+// The desktop's account tab -- the Constructor Studio view on the left rail,
+// whose icon is the person glyph -- shows the signed-in member's photo from
+// their Studio profile instead.
 //
-// A style rather than a menu of its own: Theia adds the Accounts menu again
-// each time an authentication provider registers, with its own icon class,
-// and a stylesheet keyed on that class survives every re-add. Desktop only:
-// a session in the portal sits under the portal's own header, photo and all.
+// Not Theia's Accounts button: product-ext hides the whole sidebar menu it
+// lives in (`.theia-sidebar-menu { display: none }`), and the person glyph a
+// member sees is this view's tab. A stylesheet rather than a changed icon
+// class, because the tab is re-rendered from the title on every layout
+// change. Desktop only: a session in the portal sits under the portal's own
+// header, photo and all.
 
 import { FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { injectable } from '@theia/core/shared/inversify';
@@ -27,16 +30,19 @@ export function avatarSource(avatarUrl: string | null | undefined, studioUrl: st
     return url.startsWith('/') && studioUrl ? `${studioUrl.replace(/\/+$/, '')}${url}` : undefined;
 }
 
-/** The Accounts button, drawn as the photo in a circle the size of the glyph. */
+/** The Constructor Studio view's tab (`DESKTOP_STUDIO_WIDGET_ID`), as Theia renders it on the rail. */
+export const ACCOUNT_TAB_ICON = '[id="shell-tab-studio.desktop"] .lm-TabBar-tabIcon';
+
+/** The account tab, drawn as the photo in a circle the size of a rail icon. */
 export function avatarCss(src: string): string {
     const quoted = JSON.stringify(src);
-    return `.theia-sidebar-menu-item > i.codicon-account {
+    return `${ACCOUNT_TAB_ICON} {
     background: center / cover no-repeat url(${quoted});
     border-radius: 50%;
     width: 24px;
     height: 24px;
 }
-.theia-sidebar-menu-item > i.codicon-account::before { content: ''; }`;
+${ACCOUNT_TAB_ICON}::before { content: ''; }`;
 }
 
 /** How often the sign-in is looked at again: a local call, and a sign-in can finish without any view announcing it. */

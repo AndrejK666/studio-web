@@ -15,6 +15,13 @@ describe('the desktop account photo', () => {
         expect(avatarSource('javascript:alert(1)', 'https://s')).toBeUndefined();
     });
 
+    it('draws the photo on the Constructor Studio tab, the person glyph a member sees', () => {
+        const css = avatarCss('https://s/a.png');
+        expect(css).toContain('[id="shell-tab-studio.desktop"] .lm-TabBar-tabIcon {');
+        expect(css).toContain('url("https://s/a.png")');
+        expect(css).not.toContain('theia-sidebar-menu');
+    });
+
     it('quotes the address, so it cannot close the rule', () => {
         expect(avatarCss('https://s/a") ; } body { x: y')).toContain('url("https://s/a\\") ; } body { x: y")');
     });
