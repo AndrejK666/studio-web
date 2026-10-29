@@ -137,9 +137,10 @@ export class StudioGearboxPerspective implements PerspectiveContribution, Comman
       await this.perspectives.switchPerspective(PRODUCT_PERSPECTIVE).catch(() => undefined);
     }
     if (!path) return false;
-    // The portal saves a product onto its own branch when the repository is
-    // shared; the session is on the base branch. The branch is then brought
-    // in beside the checkout (`fileOnBranch`), and the copy there is opened.
+    // The portal saved a product onto its own branch when the repository was
+    // shared; the session is on the base branch. A `product/…` branch lends
+    // only the file, written into the checkout, which keeps its current code
+    // (ADR-0053 §4); any other branch is brought in beside the checkout.
     const onBranch =
       branch === undefined ? undefined : await this.gearbox.fileOnBranch(branch, path).catch(() => undefined);
     const file = onBranch !== undefined ? URI.fromFilePath(onBranch) : await this.resolve(path);

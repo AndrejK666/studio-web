@@ -251,7 +251,9 @@ export interface GearboxService {
    * as it is on `branch`, bringing the branch in beside its checkout as a git
    * worktree when no checkout has it. `undefined` when no checkout's origin
    * has the branch, or the file is not on it. For a product the portal saved
-   * onto its own branch of a shared repository.
+   * onto its own branch of a shared repository. A `product/…` branch lends
+   * only the file: it is written into the checkout, which stays on its own
+   * branch and code (ADR-0053 §4).
    */
   fileOnBranch(branch: string, file: string): Promise<string | undefined>;
 

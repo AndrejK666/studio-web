@@ -101,7 +101,10 @@ async fn prepare(
     let url = driver.clone_url(&auth.base_url, &repo.repo)?;
     let (username, password) = driver.clone_credentials(&auth.token);
     let (username, password) = (username.to_owned(), password.to_owned());
-    let git_ref = git_ref.unwrap_or_else(|| repo.branch.clone());
+    // A product branch lends only its description; the code is the base
+    // branch's (ADR-0053 §4).
+    let (git_ref, description_ref) =
+        build::code_and_description_refs(git_ref.as_deref(), &repo.branch);
     let (product_file, profile) = (product_file.to_owned(), profile.to_owned());
     let work = std::env::temp_dir().join(format!("studio-research-{}", Uuid::new_v4().simple()));
     let at = work.clone();
@@ -112,6 +115,10 @@ async fn prepare(
             &url,
             (&username, &password),
             Some(&git_ref),
+            &match description_ref.as_deref() {
+                Some(r) => build::DescriptionFrom::Ref(r),
+                None => build::DescriptionFrom::Checkout,
+            },
             &product_file,
             &profile,
         )?;

@@ -143,6 +143,10 @@ enum Commands {
         repo_url: String,
         #[arg(long = "ref")]
         git_ref: Option<String>,
+        /// Take only the product file from this ref (a `product/…` branch);
+        /// the code is `--ref`'s (ADR-0053 §4).
+        #[arg(long)]
+        description_ref: Option<String>,
         #[arg(long)]
         product_file: String,
         #[arg(long)]
@@ -198,14 +202,20 @@ pub async fn run_cli() -> Result<()> {
         work,
         repo_url,
         git_ref,
+        description_ref,
         product_file,
         profile,
     }) = &cli.command
     {
+        let description = match description_ref.as_deref() {
+            Some(r) => environments::build::DescriptionFrom::Ref(r),
+            None => environments::build::DescriptionFrom::Checkout,
+        };
         return environments::build::prepare(
             work,
             repo_url,
             git_ref.as_deref(),
+            &description,
             product_file,
             profile,
         )

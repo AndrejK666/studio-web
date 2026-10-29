@@ -395,6 +395,47 @@ pub fn update_shared_checkout(
     })
 }
 
+/// One file as it is at `git_ref` of `origin`, fetched into a checkout that
+/// is on another branch, and the commit it was read at. The checkout's tree is
+/// not touched: a build takes its code from the branch it cloned and only the
+/// product's description from a product branch (ADR-0053 §4). `None` when the
+/// ref has no such file. Blocking -- call under `spawn_blocking`.
+pub fn file_at_ref(
+    dir: &Path,
+    username: &str,
+    token: &str,
+    git_ref: &str,
+    path: &str,
+) -> anyhow::Result<Option<(String, String)>> {
+    let mut fetch = git(username, token);
+    fetch
+        .arg("-C")
+        .arg(dir)
+        .args(["fetch", "--depth", "1", "origin"])
+        .arg(git_ref);
+    run(fetch, "fetch of the description's ref")?;
+    let commit = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "FETCH_HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let shown = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .arg("show")
+        .arg(format!("FETCH_HEAD:{}", path.trim_start_matches("./")))
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run git (show): {e}"))?;
+    if !shown.status.success() {
+        return Ok(None);
+    }
+    Ok(Some((utf8(shown.stdout), commit)))
+}
+
 /// The HEAD commit of a checkout already on disk (no credentials needed —
 /// a local `rev-parse`). `None` if git is unavailable or the dir is not a repo.
 pub fn head_commit(dir: &Path) -> Option<String> {
@@ -619,6 +660,46 @@ mod tests {
             CheckoutUpdate::Advanced { .. }
         ));
         assert!(ide.join("docs/prd/p.md").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A build of a product branch reads only the description from it: the
+    /// checkout stays on the branch it cloned (ADR-0053 §4).
+    #[test]
+    fn a_file_is_read_from_another_ref_without_moving_the_checkout() {
+        let root = std::env::temp_dir().join(format!("fileref-{}", uuid::Uuid::new_v4()));
+        let (seed, ide) = init_pair(&root);
+        sh(&seed, &["switch", "--quiet", "-c", "product/shop-1a2b"]);
+        std::fs::create_dir_all(seed.join("products/shop")).expect("dir");
+        std::fs::write(seed.join("products/shop/product.gdl"), "product shop {}\n").expect("w");
+        std::fs::write(seed.join("README.md"), "stale code\n").expect("write");
+        sh(&seed, &["add", "."]);
+        sh(&seed, &["commit", "--quiet", "-m", "product"]);
+        sh(
+            &seed,
+            &["push", "--quiet", "origin", "HEAD:product/shop-1a2b"],
+        );
+
+        let (text, commit) = file_at_ref(
+            &ide,
+            "",
+            "",
+            "product/shop-1a2b",
+            "products/shop/product.gdl",
+        )
+        .expect("fetch")
+        .expect("the file is on the branch");
+        assert_eq!(text, "product shop {}\n");
+        assert_eq!(commit.len(), 40);
+        assert_eq!(
+            std::fs::read_to_string(ide.join("README.md")).expect("read"),
+            "one\n"
+        );
+        assert!(!ide.join("products/shop/product.gdl").exists());
+        assert_eq!(
+            file_at_ref(&ide, "", "", "product/shop-1a2b", "nowhere.gdl").expect("fetch"),
+            None
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

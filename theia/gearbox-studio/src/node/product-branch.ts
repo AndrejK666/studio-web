@@ -15,6 +15,11 @@
 // beside it holds the branch, so git then refuses to switch the checkout to
 // it -- the person could not move onto the branch the product is on. There
 // the checkout itself is switched, when nothing in it is left uncommitted.
+//
+// ADR-0053 §4 narrowed this: a `product/…` branch lends only its description
+// (`descriptionFromBranch`), because its code is as old as the save and a
+// build of it compiled yesterday's code. The whole branch is brought in only
+// for any other branch a person explicitly asks for.
 
 import { execFile } from "child_process";
 import * as fs from "fs";
@@ -150,6 +155,64 @@ export async function fileOnBranch(
     if (!(await fetchBranch(checkout, branch))) continue;
     await run(["-C", checkout, "worktree", "add", "--quiet", "--track", "-B", branch, target, `origin/${branch}`]);
     if (fs.existsSync(path.join(target, file))) return path.join(target, file);
+  }
+  return undefined;
+}
+
+/** A branch Studio saved a product's description on: `product/<id>` or `product/<id>-<digest>`. */
+export function isProductBranch(branch: string): boolean {
+  return /^product\/[^/].*$/.test(branch);
+}
+
+/** The text of `file` at `ref` of `checkout`, as it is (not trimmed); `undefined` when the ref has no such file. */
+async function showFile(checkout: string, ref: string, file: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await git("git", [...LONG_PATHS, "-C", checkout, "show", `${ref}:${file.replace(/\\/g, "/")}`], {
+      timeout: 60_000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The file differs from what the checkout's HEAD has, and git knows it:
+ * somebody edited or staged it here. An untracked copy is one an earlier open
+ * wrote, and is brought up to date.
+ */
+async function editedHere(checkout: string, file: string): Promise<boolean> {
+  const status = await run(["-C", checkout, "status", "--porcelain", "--", file]).catch(() => "?");
+  return status !== "" && !status.startsWith("??");
+}
+
+/**
+ * ADR-0053 §4: a product branch lends only its description. The checkout
+ * stays on the branch it is on -- its code is current, and a `product/…`
+ * branch is a snapshot of the whole repository from the day the description
+ * was saved -- and only `file` is brought in from `branch`, written over the
+ * checkout's copy. A copy edited here and not committed is left alone: it is
+ * the person's, and they are told so by what opens. The absolute path of the
+ * file in the checkout, or `undefined` when no checkout's `origin` has the
+ * branch with that file.
+ */
+export async function descriptionFromBranch(workspace: string, branch: string, file: string): Promise<string | undefined> {
+  if (!isSafeBranch(branch) || !isSafeRelative(file)) return undefined;
+  for (const checkout of checkoutsOf(workspace)) {
+    const target = path.join(checkout, file);
+    const current = await run(["-C", checkout, "branch", "--show-current"]).catch(() => "");
+    if (current === branch && fs.existsSync(target)) return target;
+    if (!(await fetchBranch(checkout, branch))) continue;
+    const text = await showFile(checkout, `refs/remotes/origin/${branch}`, file);
+    if (text === undefined) continue;
+    if (fs.existsSync(target)) {
+      if (fs.readFileSync(target, "utf8") === text) return target;
+      if (await editedHere(checkout, file)) return target;
+    }
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, text);
+    return target;
   }
   return undefined;
 }

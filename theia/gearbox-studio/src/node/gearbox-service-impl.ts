@@ -51,7 +51,7 @@ import type { ResolveResult } from "../common/generated/ResolveResult";
 import type { ValidateResult } from "../common/generated/ValidateResult";
 import type { ProgressParams } from "../common/generated/ProgressParams";
 import { GearboxClient, GearboxService, ProductRef, method } from "../common/protocol";
-import { checkoutOfFile, fileOnBranch } from "./product-branch";
+import { checkoutOfFile, descriptionFromBranch, fileOnBranch, isProductBranch } from "./product-branch";
 import { cachedCorpora, corpusCacheRoot, corpusRelay, materializeGitSource, materializeSharedCorpus } from "./git-sources";
 import {
   enginePath,
@@ -632,6 +632,9 @@ export class GearboxServiceImpl implements GearboxService {
 
   async fileOnBranch(branch: string, file: string): Promise<string | undefined> {
     try {
+      // A product branch lends only its description: the checkout keeps its
+      // own (current) code, and the file is brought in (ADR-0053 §4).
+      if (isProductBranch(branch)) return await descriptionFromBranch(this.defaultWorkspace(), branch, file);
       // A desktop's checkout is one person's: switch it, rather than hold the
       // branch in a worktree beside it that keeps them from switching to it.
       const desktop = !!(process.env.STUDIO_DESKTOP_ENVIRONMENTS?.trim() || process.env.STUDIO_DESKTOP_URL?.trim());
