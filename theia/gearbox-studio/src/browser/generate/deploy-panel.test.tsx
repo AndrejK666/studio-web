@@ -279,5 +279,8 @@ describe("the Deploy panel's history", () => {
     expect(failureLine(failure)).toBe("gearbox generate failed: error [GBX0322] gear `tenant-resolver` carries consumes");
     expect(failureLine("x".repeat(300))).toHaveLength(241);
     expect(failureLine("\n\nsecond line")).toBe("second line");
+    expect(failureLine('helm upgrade failed: Release "shop" does not exist. Installing it now.\nError: context deadline exceeded')).toBe(
+      "Error: context deadline exceeded",
+    );
   });
 });

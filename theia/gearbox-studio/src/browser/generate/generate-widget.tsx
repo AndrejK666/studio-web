@@ -1091,6 +1091,7 @@ export class GenerateWidget extends ReactWidget {
     const deploy = this.deploy;
     return (
       <DeployPanel
+        onShowGenerate={() => void this.commands.executeCommand(SHOW_PRODUCT.id, "generate")}
         generated={generated}
         ready={deploy === undefined ? undefined : true}
         images={deploy?.script?.images ?? []}
