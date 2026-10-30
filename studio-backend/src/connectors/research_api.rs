@@ -36,6 +36,11 @@ pub type Progress<'a> = &'a (dyn Fn(String) -> BoxFuture<'a, ()> + Send + Sync);
 /// Whether the person stopped the run.
 pub type Cancelled<'a> = &'a (dyn Fn() -> bool + Send + Sync);
 
+/// What a member's Research access key starts with, and the header it is
+/// sent in (`X-Research-AccessKey: Bearer rk-…`).
+pub const ACCESS_KEY_PREFIX: &str = "rk-";
+const ACCESS_KEY_HEADER: &str = "X-Research-AccessKey";
+
 pub const SIGN_IN_AGAIN: &str =
     "Constructor Research did not accept the sign-in: sign in to it again";
 
@@ -102,6 +107,21 @@ pub fn smallest(hardware: &[Hardware]) -> Option<&Hardware> {
             .cmp(&(b.gpu, b.ram_gb))
             .then(a.cpu_count.total_cmp(&b.cpu_count))
     })
+}
+
+/// `POST /access-keys`: a member's key and its id.
+#[derive(Clone, Deserialize)]
+pub struct AccessKey {
+    pub id: String,
+    pub key: String,
+}
+
+impl std::fmt::Debug for AccessKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccessKey")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 /// `GET /auth/session`: the member the token is.
@@ -409,6 +429,18 @@ impl ResearchApi {
         self.token.lock().map(|t| t.clone()).unwrap_or_default()
     }
 
+    /// `req` made as the member: an `rk-` access key goes in Research's own
+    /// header, any other token (a connection signed in before the keys, or
+    /// the sign-in's own IDP token) as a bearer.
+    fn authorized(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let token = self.token();
+        if token.starts_with(ACCESS_KEY_PREFIX) {
+            req.header(ACCESS_KEY_HEADER, format!("Bearer {token}"))
+        } else {
+            req.bearer_auth(token)
+        }
+    }
+
     /// The answer, once more with a renewed token if the first was refused.
     async fn send(
         &self,
@@ -419,10 +451,7 @@ impl ResearchApi {
     ) -> anyhow::Result<reqwest::Response> {
         let mut renewed = false;
         loop {
-            let mut req = self
-                .http
-                .request(method.clone(), url)
-                .bearer_auth(self.token());
+            let mut req = self.authorized(self.http.request(method.clone(), url));
             req = match &body {
                 Body::Empty => req,
                 Body::Json(v) => req.json(v),
@@ -498,13 +527,56 @@ impl ResearchApi {
     /* ── who, where, on what ── */
 
     pub async fn me(&self) -> anyhow::Result<Me> {
-        self.call(
-            reqwest::Method::GET,
-            "/auth/session",
-            Body::Empty,
-            "who is signed in",
-        )
-        .await
+        /// The session carries the member under `user`; the bare shape is
+        /// accepted too.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Session {
+            Of { user: Me },
+            Bare(Me),
+        }
+        let session: Session = self
+            .call(
+                reqwest::Method::GET,
+                "/auth/session",
+                Body::Empty,
+                "who is signed in",
+            )
+            .await?;
+        Ok(match session {
+            Session::Of { user } | Session::Bare(user) => user,
+        })
+    }
+
+    /// A new access key of the member's, made with the IDP token of a
+    /// sign-in (a key cannot make keys). Research shows the key only in this
+    /// answer.
+    pub async fn create_access_key(
+        &self,
+        name: &str,
+        expires_at: &str,
+    ) -> anyhow::Result<AccessKey> {
+        let url = format!("{}/access-keys", self.keys_root());
+        let body = serde_json::json!({ "name": name, "expires_at": expires_at });
+        let what = "making an access key";
+        let res = self
+            .send(reqwest::Method::POST, &url, Body::Json(&body), what)
+            .await?;
+        if !res.status().is_success() {
+            return Err(Self::refused(res, what).await);
+        }
+        let key: AccessKey = res.json().await.map_err(|e| {
+            anyhow!("Constructor Research's answer to {what} is not what Studio expects: {e}")
+        })?;
+        if !key.key.starts_with(ACCESS_KEY_PREFIX) {
+            bail!("Constructor Research made no access key");
+        }
+        Ok(key)
+    }
+
+    /// `/access-keys` sits on the account API's root, not under `/v1`.
+    fn keys_root(&self) -> &str {
+        self.account.strip_suffix("/v1").unwrap_or(&self.account)
     }
 
     pub async fn projects(&self) -> anyhow::Result<Vec<Project>> {
@@ -703,9 +775,7 @@ impl ResearchApi {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let res = tokio::time::timeout_at(
             deadline,
-            self.http
-                .get(url)
-                .bearer_auth(self.token())
+            self.authorized(self.http.get(url))
                 .header("accept", "text/event-stream")
                 .send(),
         )

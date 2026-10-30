@@ -34,8 +34,8 @@ pub struct Config {
     #[serde(default)]
     pub client_secret: String,
     /// What the client asks for: `user platform` are the scopes Research's
-    /// API is called with; `offline_access` is what makes the sign-in last
-    /// past one access token (an hour).
+    /// API is called with. No `offline_access`: the sign-in is used once, to
+    /// make the member's access key.
     #[serde(default = "default_scope")]
     pub scope: String,
     /// The portal's callback page. The identity provider sends the person
@@ -71,7 +71,7 @@ fn default_priority() -> i16 {
     100
 }
 fn default_scope() -> String {
-    "openid profile user platform offline_access".into()
+    "openid profile user platform".into()
 }
 
 impl Config {
@@ -150,7 +150,7 @@ mod tests {
             "https://idp.example.com/idp/connect/authorize"
         );
         assert_eq!(c.token_url, "https://idp.example.com/idp/connect/token");
-        assert!(c.scope.split(' ').any(|s| s == "offline_access"));
+        assert_eq!(c.scope, "openid profile user platform");
     }
 
     #[test]

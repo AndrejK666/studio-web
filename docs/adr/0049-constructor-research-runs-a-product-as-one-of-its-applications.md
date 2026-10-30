@@ -108,11 +108,15 @@ pasting a credential. **Connect Constructor Research** sends the person to the
 identity provider with authorization code and PKCE, as a confidential client
 `constructor-studio` registered there (authenticated with a client secret;
 the identity provider's client configuration has no `private_key_jwt`),
-asking for `openid profile user platform offline_access`. The callback
-stores the refresh token in credstore; the connection keeps only its
-reference (`cpt-studio-principle-credentials-by-reference`). Every call
-trades it for an access token, and a call Research refuses with 401 is made
-once more with a fresh one: a build outlasts an access token.
+asking for `openid profile user platform`. The sign-in is used once: with
+the identity provider's token, the callback makes the member an `rk-` access
+key (`POST /access-keys`, named `studio`, with an `expires_at` 90 days out)
+and stores the key and its id in credstore; the connection keeps only its
+reference (`cpt-studio-principle-credentials-by-reference`). Every call sends
+the key as `X-Research-AccessKey: Bearer rk-…`, and Research limits a key to
+the routes §6 lists. When the key runs out, Research answers 401 and the
+member is asked to sign in again. A connection made before the keys stored a
+refresh token and still trades it for an access token on each use.
 
 Its test calls Research's `GET /auth/session`. The connection's `account` is
 the Research user's id and its tenant. A `personal` connection that passed the
@@ -123,16 +127,19 @@ The connector gains a second way to create a connection, `oauth_start` and
 `oauth_callback`, beside the pasted credential. Research is the first provider
 to use it; a GitHub App or a GitLab OAuth application could use it later.
 
-Research does not check a token's audience or scope today, so a token
-issued to Studio could call any route the member can. Studio keeps to the
-routes §6 lists, which are the ones an access key is allowed.
+Research does not check an identity provider token's audience or scope, so
+such a token issued to Studio could call any route the member can; a key
+cannot. That, and Research's own guidance for the connector (2026-10-29), is
+why the key is kept, not a refresh token.
 
-*Considered, not chosen:* right after the sign-in, Studio could create an
-`rk-` access key for the member (`POST /access-keys`) and keep it instead of
-the refresh token. It never expires and Research limits it to the allowed
-routes, but it is one more long-lived secret per member, revocable only in
-Research, and the OAuth connection (refreshed, revocable from Studio) already
-works.
+Disconnecting does not delete the key: `DELETE /access-keys/{id}` takes an
+identity provider token, not a key, and Research has no screen for keys yet.
+The key stays usable until its `expires_at`.
+
+*Considered, first chosen, then replaced:* keep the refresh token
+(`offline_access`) and trade it for an access token on every call. Research
+does not need refresh tokens from this client, and a token from it is not
+limited to the allowed routes.
 
 ### 2. A Research environment is a Research project
 
@@ -224,8 +231,7 @@ its owner. Studio says so instead of hiding it:
 
 - **Phase one: a member's own Research.** A Research environment is held by a
   member through their personal connection, as ADR-0043 §5 allows a member's
-  own cluster. The deploy runs with the member's token, refreshed from the
-  stored refresh token. Its record says "in X's Research". When the member
+  own cluster. The deploy runs with the member's access key. Its record says "in X's Research". When the member
   revokes the connection or leaves, the application stops being Studio's to
   change; Research keeps or ends it by its own rules.
 - **Phase two: an organization's Research.** An environment held by the
@@ -237,10 +243,10 @@ its owner. Studio says so instead of hiding it:
 
 ### 6. What Studio calls in Research
 
-Research's own public API, with the member's bearer token. The connection's
+Research's own public API, with the member's access key. The connection's
 address is the account API, `https://<stand>/api/platform-account/v1`; the
 desk's files (`/api/platform-storage`) and the logs (`/api/platform-keeper`)
-are on the same origin and take the same token. Answers are JSON; a refusal
+are on the same origin and take the same key. Answers are JSON; a refusal
 is `{"detail": {"msg", "error_code"}}`, and its `msg` is what the person
 sees. Nothing answers with an event: Studio polls.
 
@@ -274,8 +280,10 @@ image outside Research's registry with a pull credential; an application
 owned by a tenant, with a credential of the tenant's own; secret variables.
 
 From the identity provider: a client `constructor-studio` with Studio's
-redirect URIs, a client secret, `offline_access` and the scopes `openid
-profile user platform`.
+redirect URIs, a client secret and the scopes `openid profile user platform`.
+From Research: `POST /access-keys` on the account API's root
+(`/api/platform-account/access-keys`), which takes the identity provider's
+token.
 
 ## Consequences
 
@@ -295,7 +303,9 @@ profile user platform`.
 - Bad: phase one's environments belong to a person, against ADR-0043's rule
   for shared environments; it is labelled, and lifted by phase two.
 - Bad: the connector gets an OAuth flow, with a callback, state and PKCE kept
-  between two requests, and refresh-token renewal.
+  between two requests.
+- Bad: a key outlives a disconnect until its `expires_at`, and a member signs
+  in again every 90 days.
 - Bad: a build to Research generates on the Studio server and writes the
   tree into a desk file by file; a large product's context is a large upload,
   and the build starts (and stops) a desk.

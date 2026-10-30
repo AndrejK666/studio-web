@@ -80,18 +80,39 @@ async fn handle(
     body: Bytes,
 ) -> Response {
     let mut f = s.lock().unwrap();
-    let auth = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+    };
+    // An access key comes in Research's own header, anything else as a bearer.
+    let (auth, seen) = match header("x-research-accesskey") {
+        Some(key) => (key.clone(), format!("X-Research-AccessKey: {key}")),
+        None => {
+            let bearer = header("authorization").unwrap_or_default();
+            (bearer.clone(), bearer)
+        }
+    };
     let path = uri.path().to_owned();
-    f.auth.push(auth.clone());
+    f.auth.push(seen);
     f.calls.push(format!("{method} {path}"));
     if auth != format!("Bearer {}", f.token) {
         return (StatusCode::UNAUTHORIZED, "").into_response();
     }
     let json_body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+
+    // A key is made with the sign-in's token; from then on the key is what
+    // Research accepts.
+    if method == Method::POST && path == "/api/platform-account/access-keys" {
+        f.bodies.push((path, json_body.clone()));
+        f.token = "rk-made".into();
+        return Json(
+            json!({ "id": "k1", "name": json_body["name"], "key": "rk-made",
+                            "expires_at": json_body["expires_at"] }),
+        )
+        .into_response();
+    }
 
     if let Some(rel) = path.strip_prefix(DAV) {
         let rel = rel.trim_end_matches('/').to_owned();
@@ -129,7 +150,8 @@ async fn handle(
     let parts: Vec<&str> = route.trim_start_matches('/').split('/').collect();
     match (method.as_str(), parts.as_slice()) {
         ("GET", ["auth", "session"]) => Json(json!({
-            "id": "u-1", "email": "ann@example.com", "first_name": "Ann", "last_name": "Lee", "status": "active"
+            "user": { "id": "u-1", "email": "ann@example.com", "first_name": "Ann", "last_name": "Lee", "status": "active" },
+            "refresh_interval": 300, "config": {}, "state": "active"
         }))
         .into_response(),
         ("GET", ["projects"]) => Json(json!({ "total": 1, "results": [{
@@ -354,6 +376,31 @@ async fn who_projects_and_hardware_are_read_with_the_members_token() {
     assert_eq!(
         e,
         "Constructor Research refused the hardware: Project not found"
+    );
+}
+
+#[tokio::test]
+async fn a_sign_in_makes_an_access_key_and_calls_go_with_it_in_researchs_header() {
+    let (url, seen) = serve(Fake::default()).await;
+    let made = api(&url)
+        .create_access_key("studio", "2027-01-31T00:00:00Z")
+        .await
+        .unwrap();
+    assert_eq!((made.id.as_str(), made.key.as_str()), ("k1", "rk-made"));
+    assert_eq!(
+        seen.lock().unwrap().bodies[0],
+        (
+            "/api/platform-account/access-keys".to_owned(),
+            json!({ "name": "studio", "expires_at": "2027-01-31T00:00:00Z" })
+        ),
+        "keys are made on the account API's root, not under /v1"
+    );
+
+    let keyed = ResearchApi::new(reqwest::Client::new(), &url, made.key);
+    assert_eq!(keyed.me().await.unwrap().id, "u-1");
+    assert_eq!(
+        seen.lock().unwrap().auth.last().map(String::as_str),
+        Some("X-Research-AccessKey: Bearer rk-made")
     );
 }
 
