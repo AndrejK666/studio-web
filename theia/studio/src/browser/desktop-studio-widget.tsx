@@ -36,6 +36,10 @@ import {
 } from './desktop-studio-client';
 import { StudioPicker } from './desktop-studio-picker';
 import { memberPhoto, organizationLogo, photoKey } from './desktop-account-avatar';
+import { lastDeployLine, repoLine, type DeployRecord, type RepoLine } from './desktop-open-card';
+import { ScmService } from '@theia/scm/lib/browser/scm-service';
+import { DisposableCollection } from '@theia/core/lib/common/disposable';
+import { StudioApi } from './studio-api';
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
@@ -85,6 +89,13 @@ export class DesktopStudioWidget extends ReactWidget {
     @inject(WindowService)
     protected readonly windowService: WindowService;
 
+    /** The checkouts' branches and changes, for the open project's card. */
+    @inject(ScmService)
+    protected readonly scm: ScmService;
+    protected readonly scmWatch = new DisposableCollection();
+    /** The open project's last deploy, read from Studio: per project, with when it was read. */
+    protected lastDeploy: { project: string; at: number; line?: { text: string; failed: boolean } } | undefined;
+
     protected status: DesktopStatus | undefined;
     /** The workspace being cloned and opened. */
     protected opening: string | undefined;
@@ -129,6 +140,10 @@ export class DesktopStudioWidget extends ReactWidget {
     protected onAfterAttach(msg: Message): void {
         super.onAfterAttach(msg);
         this.toDisposeOnDetach.push(onDesktopChange(change => this.onOtherViewChanged(change)));
+        this.watchScm();
+        this.toDisposeOnDetach.push(this.scm.onDidAddRepository(() => this.watchScm()));
+        this.toDisposeOnDetach.push(this.scm.onDidRemoveRepository(() => this.watchScm()));
+        this.toDisposeOnDetach.push(this.scmWatch);
         void this.refresh();
     }
 
@@ -466,21 +481,28 @@ export class DesktopStudioWidget extends ReactWidget {
         </div>;
     }
 
-    /** One compact block: which Studio, who, and the two ways out. */
+    /** One compact block: who (photo, name, address), the way out, and which Studio. */
     protected renderAccount(status: DesktopStatus, studio: React.ReactNode): React.ReactNode {
         const who = status.user?.name ?? status.user?.email ?? status.user?.sub;
+        const email = status.user?.email && status.user.email !== who ? status.user.email : undefined;
         const photo = this.photoOf(status);
         return <header className='studio-desktop__account'>
-            {studio}
             <div className='studio-desktop__who'>
-                {photo ? <img className='studio-desktop__avatar' src={photo} alt='' data-member-photo /> : <span className='codicon codicon-account' />}
-                <span className='studio-desktop__name' title={status.user?.email ? `${who} <${status.user.email}>` : who}>{who}</span>
+                {photo ? <img className='studio-desktop__avatar' src={photo} alt='' data-member-photo />
+                    : <span className='studio-desktop__avatar studio-desktop__avatar--none codicon codicon-account' />}
+                <div className='studio-desktop__who-text'>
+                    <span className='studio-desktop__name' title={email ? `${who} <${email}>` : who}>{who}</span>
+                    {email && <span className='studio-desktop__email'>{email}</span>}
+                </div>
             </div>
-            <div className='studio-desktop__links'>
-                {status.switchable && <button className='studio-desktop__link' onClick={() => { this.choosing = !this.choosing; this.update(); }}>
-                    {this.choosing ? 'Keep this Studio' : 'Switch Studio'}
-                </button>}
-                <button className='studio-desktop__link' onClick={() => void this.signOut()}>Sign out</button>
+            <div className='studio-desktop__studio-row'>
+                {studio}
+                <span className='studio-desktop__links'>
+                    {status.switchable && <button className='studio-desktop__link' onClick={() => { this.choosing = !this.choosing; this.update(); }}>
+                        {this.choosing ? 'Keep this Studio' : 'Switch Studio'}
+                    </button>}
+                    <button className='studio-desktop__link' onClick={() => void this.signOut()}>Sign out</button>
+                </span>
             </div>
             {this.choosing && this.renderPicker(status)}
             {this.renderAccountError()}
@@ -519,30 +541,49 @@ export class DesktopStudioWidget extends ReactWidget {
         const project = where.project ?? where.workspace;
         const sources = this.sources.get(project.id);
         const link = this.portalLinkOf(project.id);
+        const logo = this.logoOf(where.organization.id);
+        const repos = this.repoLines();
+        const deploy = this.lastDeployOf(project.id);
         return <section className='studio-desktop__card' aria-label={`${project.name} is open in this window`}>
             <div className='studio-desktop__eyebrow'>Open in this window</div>
             <div className='studio-desktop__card-title'>
                 <span className={`codicon ${where.project ? ICONS.project : ICONS.workspace}`} /> {project.name}
             </div>
-            <div className='studio-desktop__card-path'>{this.pathOf(where)}</div>
-            {sources?.state === 'ready' && <div className='studio-desktop__card-meta'>
+            <div className='studio-desktop__card-path'>
+                {logo ? <img className='studio-desktop__logo' src={logo} alt='' /> : undefined}
+                {this.pathOf(where, true)}
+            </div>
+            {repos.length > 0 ? <ul className='studio-desktop__repos' aria-label='Checkouts'>
+                {repos.map(r => <li key={r.name} className='studio-desktop__repo' data-repo={r.name}>
+                    <span className='codicon codicon-repo' />
+                    <span className='studio-desktop__repo-name'>{r.name}</span>
+                    {r.branch && <span className='studio-desktop__chip' title='Branch'><span className='codicon codicon-git-branch' />{r.branch}</span>}
+                    {r.changes > 0 && <span className='studio-desktop__chip studio-desktop__chip--warn' title='Files changed and not committed'>
+                        {plural(r.changes, 'change', 'changes')}</span>}
+                    {(r.behind ?? 0) > 0 && <span className='studio-desktop__chip' title='Commits to pull'>{r.behind}↓</span>}
+                    {(r.ahead ?? 0) > 0 && <span className='studio-desktop__chip' title='Commits to push'>{r.ahead}↑</span>}
+                </li>)}
+            </ul> : sources?.state === 'ready' && <div className='studio-desktop__card-meta'>
                 <span className='codicon codicon-repo' /> {plural(sources.repositories, 'repository', 'repositories')}
             </div>}
+            {deploy && <div className={`studio-desktop__card-meta${deploy.failed ? ' studio-desktop__card-meta--bad' : ''}`} data-last-deploy>
+                <span className={`codicon ${deploy.failed ? 'codicon-error' : 'codicon-rocket'}`} /> {deploy.text}
+            </div>}
             {link && <div className='studio-desktop__card-actions'>
-                <button className='theia-button secondary studio-desktop__small-button' onClick={() => this.openPortal(link)}
+                <button className='studio-desktop__link' onClick={() => this.openPortal(link)}
                     title={`Open ${project.name} in the portal, in your browser`}>
-                    <span className='codicon codicon-link-external' /> Open in portal
+                    Open in portal <span className='codicon codicon-link-external' />
                 </button>
             </div>}
         </section>;
     }
 
     /** "Organization › Workspace", the organization only when the member has several. */
-    protected pathOf(where: NonNullable<ReturnType<typeof locate>>): React.ReactNode {
+    protected pathOf(where: NonNullable<ReturnType<typeof locate>>, withOrganization = false): React.ReactNode {
         const orgs = this.organizations ?? [];
         const hint = organizationHints(orgs).get(where.organization.id);
         const parts: React.ReactNode[] = [];
-        if (orgs.length > 1) {
+        if (orgs.length > 1 || withOrganization) {
             parts.push(<span key='org'>{where.organization.name}{hint && <span className='studio-desktop__hint'> {hint}</span>}</span>);
         }
         if (where.project) {
@@ -735,5 +776,41 @@ export class DesktopStudioWidget extends ReactWidget {
             });
         }
         return this.logos.get(organizationId) ?? undefined;
+    }
+    /** Follow every checkout's SCM: its branch, changes and sync change the card. */
+    protected watchScm(): void {
+        this.scmWatch.dispose();
+        for (const repo of this.scm.repositories) {
+            const provider = repo.provider;
+            this.scmWatch.push(provider.onDidChange(() => this.update()));
+            if (provider.onDidChangeStatusBarCommands) {
+                this.scmWatch.push(provider.onDidChangeStatusBarCommands(() => this.update()));
+            }
+        }
+        this.update();
+    }
+
+    /** The open project's checkouts, as the SCM view knows them. */
+    protected repoLines(): RepoLine[] {
+        return this.scm.repositories.map(r => repoLine(r.provider)).sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /** The project's last deploy, read from Studio once a minute at most; `undefined` for none or until read. */
+    protected lastDeployOf(project: string): { text: string; failed: boolean } | undefined {
+        const fresh = this.lastDeploy?.project === project && Date.now() - this.lastDeploy.at < 60_000;
+        if (!fresh) {
+            const keep = this.lastDeploy?.project === project ? this.lastDeploy.line : undefined;
+            this.lastDeploy = { project, at: Date.now(), line: keep };
+            void StudioApi.fetch(`/studio-environments/v1/deployments?project_id=${encodeURIComponent(project)}`)
+                .then(async res => res.ok ? (await res.json() as { items?: DeployRecord[] }).items ?? [] : undefined)
+                .catch(() => undefined)
+                .then(items => {
+                    if (items !== undefined && this.lastDeploy?.project === project) {
+                        this.lastDeploy = { project, at: this.lastDeploy.at, line: lastDeployLine(items) };
+                        this.update();
+                    }
+                });
+        }
+        return this.lastDeploy?.line;
     }
 }
