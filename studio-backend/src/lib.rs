@@ -155,6 +155,10 @@ enum Commands {
         product_file: String,
         #[arg(long)]
         profile: String,
+        /// A build of the repository's own Dockerfiles and chart, as JSON
+        /// (ADR-0054 §7); without it the product description is built.
+        #[arg(long)]
+        own: Option<String>,
     },
     /// The last step of a build in an organization's cluster: push the chart
     /// beside the images and leave the manifest as the termination message.
@@ -210,6 +214,7 @@ pub async fn run_cli() -> Result<()> {
         description_revision,
         product_file,
         profile,
+        own,
     }) = &cli.command
     {
         // Studio's revision when the Job carries one (ADR-0053 §2), else only
@@ -232,6 +237,7 @@ pub async fn run_cli() -> Result<()> {
             &description,
             product_file,
             profile,
+            own.as_deref(),
         )
         .inspect_err(environments::build::say_failure);
     }
