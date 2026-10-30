@@ -10,7 +10,8 @@ import { inject, injectable } from "@theia/core/shared/inversify";
 import type { TerminalWidget } from "@theia/terminal/lib/browser/base/terminal-widget";
 import { TerminalService } from "@theia/terminal/lib/browser/base/terminal-service";
 
-export type ProductTerminalKind = "build" | "run" | "deploy";
+/** `publish` has a terminal of its own: typed into the Deploy terminal while a build ran there, it was lost. */
+export type ProductTerminalKind = "build" | "run" | "deploy" | "publish";
 
 /** Whether the terminal's shell still runs: the backend answers for its process. */
 async function alive(terminal: TerminalWidget): Promise<boolean> {
@@ -70,7 +71,7 @@ export class ProductTerminals {
     if (terminal === undefined || terminal.isDisposed) {
       terminal = await this.terminals.newTerminal({
         id,
-        title: `${kind === "build" ? "Build" : kind === "run" ? "Run" : "Deploy"} ${product}`,
+        title: `${kind === "build" ? "Build" : kind === "run" ? "Run" : kind === "publish" ? "Publish" : "Deploy"} ${product}`,
         cwd: FileUri.create(cwd),
         env,
         destroyTermOnClose: true,

@@ -30,6 +30,14 @@ describe("how a Publish ended", () => {
     await expect(ended).resolves.toEqual({ ok: true });
   });
 
+  it("is ok on Windows' console, which wraps the command and moves the cursor instead of ending lines", async () => {
+    const t = fakeTerminal();
+    const ended = publishOutcome(t as never, marker, 60_000);
+    t.write(`\x1b[?25l\x1b[1;1Hc:\\ws> helm push x.tgz && echo ${marker}-ok || echo stu\x1b[2;1Hdio-publish-abc-failed\x1b[K`);
+    t.write(`\x1b[5;1HPushed: ghcr.io/acme/charts/shop:0.1.0\x1b[K\x1b[6;1H${marker}-ok\x1b[K\x1b[?25h`);
+    await expect(ended).resolves.toEqual({ ok: true });
+  });
+
   it("failed, with the registry's refusal as why", async () => {
     const t = fakeTerminal();
     const ended = publishOutcome(t as never, marker, 60_000);

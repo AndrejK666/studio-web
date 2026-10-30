@@ -690,13 +690,13 @@ export class GenerateWidget extends ReactWidget {
       // every Deploy after it to "not found".
       const marker = `studio-publish-${newBuildId()}`;
       const terminal = await this.terminals.send(
-        "deploy",
+        "publish",
         context.product,
         context.cwd,
         `${plan.commands.join(" && ")} && echo ${marker}-ok || echo ${marker}-failed`,
         { DOCKER_BUILDKIT: "1" },
       );
-      this.deployNote = `Publishing ${plan.chartVersion} to ${environment.registry} in the Deploy terminal…`;
+      this.deployNote = `Publishing ${plan.chartVersion} to ${environment.registry} in the Publish terminal…`;
       this.update();
       const ended = await publishOutcome(terminal, marker, PUBLISH_WAIT_MS);
       if (ended.ok) {
@@ -711,7 +711,7 @@ export class GenerateWidget extends ReactWidget {
         };
         this.deployNote = `Published ${plan.chartVersion} to ${environment.registry}. Deploy asks the Studio server to install it into ${environment.name}.`;
       } else {
-        this.deployNote = `Publish failed${ended.why ? `: ${ended.why}` : ""}. Nothing was recorded as published; see the Deploy terminal.`;
+        this.deployNote = `Publish failed${ended.why ? `: ${ended.why}` : ""}. Nothing was recorded as published; see the Publish terminal.`;
         this.messages.error(`Publish to ${environment.registry} failed${ended.why ? `: ${ended.why}` : ""}`);
       }
     } catch (error) {
