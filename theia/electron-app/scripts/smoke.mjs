@@ -71,15 +71,22 @@ async function main() {
     const timeoutIndex = process.argv.indexOf('--timeout');
     const timeoutMs = (timeoutIndex > 0 ? Number(process.argv[timeoutIndex + 1]) : 240) * 1000;
     const here = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-smoke-'));
+    // The data folder must be outside the workspace: the backend refuses otherwise.
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-smoke-'));
+    const workspace = path.join(scratch, 'workspace');
+    fs.mkdirSync(workspace);
     const port = 9300 + Math.floor(Math.random() * 500);
     const env = {
         ...process.env,
         STUDIO_DESKTOP_ENVIRONMENTS: JSON.stringify([{ id: 'smoke', label: 'Smoke', studioUrl: 'http://127.0.0.1:9', issuer: 'http://127.0.0.1:9/realms/studio' }]),
         STUDIO_DESKTOP_DEFAULT: 'smoke',
-        STUDIO_DESKTOP_SETTINGS: path.join(workspace, 'settings.json'),
+        STUDIO_DESKTOP_SETTINGS: path.join(scratch, 'settings.json'),
+        // What desktop-main.js gives the packaged app: `theia start` skips it.
+        STUDIO_ACTOR_ID: 'desktop',
+        STUDIO_WORKSPACE_ID: 'desktop',
         STUDIO_WORKSPACE_ROOT: workspace,
-        STUDIO_DATA_DIR: path.join(workspace, 'data'),
+        STUDIO_REPOSITORY_ROOT: workspace,
+        STUDIO_DATA_DIR: path.join(scratch, 'data'),
     };
     const app = spawn('npx', ['theia', 'start', workspace, '--plugins=local-dir:../plugins', `--remote-debugging-port=${port}`], {
         cwd: here, env, shell: process.platform === 'win32', detached: process.platform !== 'win32',
@@ -107,9 +114,12 @@ async function main() {
         }
         throw new Error(`the app was not up in ${timeoutMs / 1000} s: ${last.why}`);
     } catch (error) {
+        const pages = await fetch(`http://127.0.0.1:${port}/json/list`).then(r => r.json()).catch(() => []);
+        console.error(`smoke: windows ${JSON.stringify(pages.map(t => [t.type, t.url]))}`);
         console.error(`smoke: ${error.message}\n--- the app's log, last 80 lines ---\n${log.split(/\r?\n/).slice(-80).join('\n')}`);
         process.exitCode = 1;
     } finally {
+        if (process.env.SMOKE_LOG) fs.writeFileSync(process.env.SMOKE_LOG, log);
         stop();
     }
 }
