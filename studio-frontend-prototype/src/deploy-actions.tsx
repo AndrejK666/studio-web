@@ -15,13 +15,16 @@ import {
   type ProjectBuildSetting,
 } from "./api";
 import type { IdeBuild } from "./builds";
-import { shortCommit } from "./environments";
+import { STATE_LABELS, shortCommit, stateTone } from "./environments";
 import { ownBuildSummary } from "./project-build";
 import { errText, relTime } from "./format";
 import {
   deployableBuilds,
+  expiresIn,
   isSecretKey,
+  livePreviews,
   parseValues,
+  previewNameFor,
   promotionGap,
   rollbackTarget,
   runsNow,
@@ -124,6 +127,7 @@ export function EnvironmentActions({
   const { busy, error } = request;
   const candidates = deployableBuilds(builds, env);
   const back = rollbackTarget(deployments, env.id);
+  const previews = env.kind !== "research" && !!env.previews;
   const ask = async (body: Parameters<typeof api.createDeployment>[2], what: string) => {
     if (await request.ask(body, what)) setPicking(false);
   };
@@ -186,12 +190,116 @@ export function EnvironmentActions({
                     >
                       Deploy
                     </button>
+                    {previews && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        data-preview-build={b.buildId}
+                        title={`Install it in a namespace of its own beside ${env.name}, removed after ${env.previews?.ttl_hours ?? 72} h`}
+                        onClick={() => {
+                          const name = window.prompt(
+                            "The preview's name: lowercase letters, digits and -, at most 20.",
+                            previewNameFor(b),
+                          );
+                          if (name === null) return;
+                          void ask(
+                            { environment_id: env.id, build: b.buildId, preview: { name: name.trim() || undefined } },
+                            `Preview ${b.chartVersion ?? b.buildId} in ${env.name}`,
+                          );
+                        }}
+                      >
+                        Preview
+                      </button>
+                    )}
                   </li>
                 );
               })}
             </ul>
           )}
         </div>
+      )}
+      {error && <div className="error">{error}</div>}
+    </div>
+  );
+}
+
+/** The project's previews in one environment (ADR-0055): each in a namespace
+ *  of its own, with its address, until it expires or is removed here. */
+export function EnvironmentPreviews({
+  token,
+  projectId,
+  env,
+  deployments,
+  onChanged,
+}: {
+  token: string;
+  projectId: string;
+  env: DeployEnvironment;
+  deployments: Deployment[];
+  onChanged: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  if (env.kind === "research" || !env.previews) return null;
+  const live = livePreviews(deployments, env.id);
+  const remove = async (d: Deployment) => {
+    if (!window.confirm(`Remove preview ${d.preview?.name}? Its namespace ${d.namespace} goes, with everything in it.`)) return;
+    setBusy(d.id);
+    setError(null);
+    try {
+      await api.removePreview(token, projectId, d.id);
+      onChanged(`Preview ${d.preview?.name} is being removed.`);
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="deploy-previews" data-environment-previews={env.name}>
+      <div className="sub">
+        Previews · {live.length} of {env.previews.max_live ?? 3}
+        {env.previews.domain ? (
+          <>
+            {" "}
+            · at <code>&lt;namespace&gt;.{env.previews.domain}</code>
+          </>
+        ) : (
+          " · no preview domain: reach them by port-forward"
+        )}
+      </div>
+      {live.length === 0 ? (
+        <p className="hint">No preview here. Deploy a build… › Preview installs one beside {env.name}, in a namespace of its own.</p>
+      ) : (
+        <ul className="rows">
+          {live.map((d) => {
+            const p = d.preview!;
+            return (
+              <li key={d.id} data-preview={p.name}>
+                <div className="grow">
+                  <b>{p.name}</b>{" "}
+                  <span className={`badge deploy-${stateTone(d.state)}`}>{STATE_LABELS[d.state] ?? d.state}</span>{" "}
+                  {d.chart_version && <code>{d.chart_version}</code>}{" "}
+                  <span className="sub">
+                    <code>{d.namespace}</code> · {expiresIn(p.expires_at)}
+                  </span>
+                  {p.host && d.state === "succeeded" && (
+                    <div>
+                      <a href={`https://${p.host}`} target="_blank" rel="noreferrer" data-preview-url>
+                        {p.host} ↗
+                      </a>
+                    </div>
+                  )}
+                  {d.state === "failed" && d.outcome && <div className="sub warn">{d.outcome}</div>}
+                  {p.removal_error && <div className="sub warn">Not removed yet: {p.removal_error}</div>}
+                </div>
+                <button type="button" disabled={busy !== null} onClick={() => void remove(d)}>
+                  {busy === d.id ? "Removing…" : "Remove"}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
       {error && <div className="error">{error}</div>}
     </div>

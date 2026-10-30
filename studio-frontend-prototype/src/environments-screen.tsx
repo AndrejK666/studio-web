@@ -586,6 +586,62 @@ export function EnvironmentForm({
             ))}
         </select>
       </label>
+      {!research && (
+        <div className="field" data-environment-previews-settings>
+          <label className="env-check">
+            <input
+              type="checkbox"
+              checked={!!input.previews}
+              onChange={(e) => set("previews", e.target.checked ? { domain: "", ingress_class: null, ttl_hours: 72, max_live: 3 } : null)}
+            />{" "}
+            Previews: a project may try a build here in a namespace of its own, removed when it expires
+          </label>
+          {input.previews && (
+            <div
+              className="env-previews"
+              style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}
+            >
+              <label className="field">
+                Preview domain
+                <input
+                  value={input.previews.domain}
+                  onChange={(e) => input.previews && set("previews", { ...input.previews, domain: e.target.value })}
+                  placeholder="preview.example.com — a wildcard DNS record to the cluster's ingress; empty: no address"
+                />
+              </label>
+              <label className="field">
+                Ingress class
+                <input
+                  value={input.previews.ingress_class ?? ""}
+                  onChange={(e) => input.previews && set("previews", { ...input.previews, ingress_class: e.target.value || null })}
+                  placeholder="the cluster's default"
+                />
+              </label>
+              <label className="field">
+                Lives for, hours
+                <input
+                  type="number"
+                  min={1}
+                  max={336}
+                  value={input.previews.ttl_hours ?? 72}
+                  onChange={(e) => input.previews && set("previews", { ...input.previews, ttl_hours: Number(e.target.value) })}
+                />
+              </label>
+              <label className="field">
+                At once, per project
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={input.previews.max_live ?? 3}
+                  onChange={(e) => input.previews && set("previews", { ...input.previews, max_live: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+          )}
+          {shown("previews") && <span className="env-field-error">{shown("previews")}</span>}
+        </div>
+      )}
       {ownedBy ? (
         <p className="sub" data-own-environment-note>
           Only {ownedBy.projectName} sees and deploys to it. An environment whose deploys need approval is the

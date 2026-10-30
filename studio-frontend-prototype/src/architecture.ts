@@ -683,6 +683,7 @@ export const SURFACES: Surface[] = [
       "StatusButton",
       "EnvironmentActions",
       "EnvironmentConfig",
+      "EnvironmentPreviews",
     ],
     gears: ["studio-artifact-ingest", "studio-connector", "studio-environments"],
   },

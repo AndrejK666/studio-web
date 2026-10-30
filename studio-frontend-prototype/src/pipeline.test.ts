@@ -168,6 +168,24 @@ describe("where the Deploys tab stands", () => {
     );
     expect(deploysHint({ ...ready, deployments: [deployment({ state: "running" })] }).text).toBe("Deploying: dev (shop-dev).");
   });
+
+  it("says where a preview answers, or that it is gone", () => {
+    const preview = (over: Partial<NonNullable<Parameters<typeof deployment>[0]["preview"]>>) =>
+      deployment({
+        namespace: "shop-dev-pv-pr-1",
+        preview: { name: "pr-1", expires_at: "2026-10-31T10:00:00Z", host: "shop-dev-pv-pr-1.preview.example.com", ...over },
+      });
+    expect(deploysHint({ ...ready, deployments: [preview({})] })).toEqual({
+      text: "Preview pr-1 in dev runs at shop-dev-pv-pr-1.preview.example.com.",
+      tone: "done",
+    });
+    expect(deploysHint({ ...ready, deployments: [preview({ host: null })] }).text).toBe(
+      "Preview pr-1 in dev runs in shop-dev-pv-pr-1.",
+    );
+    expect(deploysHint({ ...ready, deployments: [preview({ removed_at: "2026-10-31T10:05:00Z" })] }).text).toBe(
+      "Preview pr-1 in dev is removed.",
+    );
+  });
 });
 
 describe("a lost build", () => {

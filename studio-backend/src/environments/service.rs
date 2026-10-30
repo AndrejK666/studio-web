@@ -13,8 +13,9 @@ use super::deploy::{self, DeployPayload, Rollout};
 use super::model::{
     self, Binding, BindingList, ConfigSecret, DeployImage, Deployment, DeploymentAction,
     DeploymentList, DeploymentState, Environment, EnvironmentInput, EnvironmentKind,
-    EnvironmentList, Invalid,
+    EnvironmentList, Invalid, Preview,
 };
+use super::preview::{self, PreviewRoute, SweepPayload};
 use super::research;
 use super::store::{Store, service_context};
 use super::workflow;
@@ -97,6 +98,18 @@ pub struct DeployRequest {
     /// rollback, or a promotion to the next environment. Takes the place of
     /// the chart, the images and the build.
     pub redeploy_of: Option<Uuid>,
+    /// Install it as a preview (ADR-0055): into a namespace of its own, for
+    /// a while.
+    pub preview: Option<PreviewAsk>,
+}
+
+/// What a person asks of a preview.
+#[derive(Debug, Clone, Default)]
+pub struct PreviewAsk {
+    /// Default: made of the deployment's id.
+    pub name: Option<String>,
+    /// Default, and at most: the environment's.
+    pub ttl_hours: Option<u32>,
 }
 
 /// A build Studio was asked to run.
@@ -1080,6 +1093,11 @@ impl EnvironmentService {
                 &d.product,
             ),
             research: d.research.clone(),
+            preview: d.preview.as_ref().map(|p| PreviewRoute {
+                expires_at: p.expires_at.clone(),
+                host: p.host.clone(),
+                ingress_class: env.previews.as_ref().and_then(|s| s.ingress_class.clone()),
+            }),
         }
     }
 
@@ -1136,6 +1154,16 @@ impl EnvironmentService {
             .project_environment(ctx, org, project, req.environment_id)
             .await?;
         if env.kind == EnvironmentKind::Research {
+            if req.preview.is_some() {
+                return Err(Refusal::Precondition(
+                    "ENVIRONMENT_TAKES_NO_PREVIEWS",
+                    format!(
+                        "'{}' is a Constructor Research environment: a preview is a namespace of \
+                         its own on a cluster",
+                        env.name
+                    ),
+                ));
+            }
             return self
                 .request_research_deploy(ctx, org, project, &env, req)
                 .await;
@@ -1167,10 +1195,27 @@ impl EnvironmentService {
         }
         let product = Self::release_name(&req.product)?;
         let project_name = self.store.tenant_name(ctx, project).await;
-        let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
+        let mut namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
+        let id = Uuid::new_v4();
+        let preview = match req.preview.take() {
+            None => None,
+            Some(ask) => {
+                let p = self
+                    .preview_for(ctx, org, project, &env, &req, &namespace, id, ask)
+                    .await?;
+                namespace = model::preview_namespace(&namespace, &p.name)?;
+                Some(Preview {
+                    host: env
+                        .previews
+                        .as_ref()
+                        .and_then(|s| model::preview_host(s, &namespace)),
+                    ..p
+                })
+            }
+        };
         let person = self.person(ctx).await;
         let mut d = Deployment {
-            id: Uuid::new_v4(),
+            id,
             project_id: project,
             project_name,
             environment_id: env.id,
@@ -1198,6 +1243,7 @@ impl EnvironmentService {
             outcome: None,
             pending_chart: None,
             research: None,
+            preview: None,
         };
         let mut chart = None;
         if req.action == DeploymentAction::Install {
@@ -1227,10 +1273,167 @@ impl EnvironmentService {
             d.lock_hash = check_hash("lock_hash", req.lock_hash)?;
             d.build = check_build(req.build)?;
             d.images = req.images;
-            self.check_promoted(ctx, org, &env, &d).await?;
+            // A preview is how a release is tried before it is promoted.
+            if preview.is_none() {
+                self.check_promoted(ctx, org, &env, &d).await?;
+            }
         }
+        d.preview = preview;
         let config = self.project_config(ctx, project, &env, &d.profile).await?;
-        self.submit(org, &env, d, chart, config).await
+        let previewing = d.preview.is_some();
+        let d = self.submit(org, &env, d, chart, config).await?;
+        if previewing {
+            self.keep_sweeping(org).await;
+        }
+        Ok(d)
+    }
+
+    /// The preview `ask` describes, checked against the environment and the
+    /// project's live previews there; its host is the caller's to add once
+    /// the namespace is known.
+    #[allow(clippy::too_many_arguments)]
+    async fn preview_for(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        req: &DeployRequest,
+        base: &str,
+        id: Uuid,
+        ask: PreviewAsk,
+    ) -> Result<Preview> {
+        let Some(settings) = &env.previews else {
+            return Err(Refusal::Precondition(
+                "ENVIRONMENT_TAKES_NO_PREVIEWS",
+                format!(
+                    "environment '{}' takes no previews: an administrator turns them on in its \
+                     settings",
+                    env.name
+                ),
+            ));
+        };
+        if req.action != DeploymentAction::Install {
+            return Err(Refusal::Invalid(
+                "a preview installs a release: remove a preview rather than uninstall it".into(),
+            ));
+        }
+        let name = model::preview_name(ask.name.as_deref(), id)?;
+        model::preview_namespace(base, &name)?;
+        let ttl = ask.ttl_hours.unwrap_or(settings.ttl_hours);
+        if ttl == 0 || ttl > settings.ttl_hours {
+            return Err(Refusal::Invalid(format!(
+                "a preview in '{}' lives from 1 to {} hours",
+                env.name, settings.ttl_hours
+            )));
+        }
+        let history = self
+            .deployments(ctx, org, Some(project), Some(env.id))
+            .await?;
+        if let Some(why) = model::preview_refusal(settings, &history, project, env.id, &name) {
+            return Err(Refusal::Precondition("PREVIEW_REFUSED", why));
+        }
+        let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(i64::from(ttl)))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
+        Ok(Preview {
+            name,
+            expires_at,
+            host: None,
+            connection_id: env.connection_id,
+            connections_from: env.project_id,
+            removed_at: None,
+            removal_error: None,
+        })
+    }
+
+    /// Make sure the organization's previews are swept: one schedule each,
+    /// in the platform tenant, naming it. Best effort: a preview whose sweep
+    /// is not scheduled can still be removed by hand, and the next preview
+    /// asks again.
+    async fn keep_sweeping(&self, org: Uuid) {
+        let Ok(schedules) = self.hub.get::<dyn crate::scheduler::port::Schedules>() else {
+            tracing::warn!("studio-environments: no scheduler here; previews expire only by hand");
+            return;
+        };
+        let ensured = match self.service(org) {
+            Ok(svc) => {
+                schedules
+                    .ensure(
+                        &svc,
+                        crate::scheduler::port::ScheduleSpec {
+                            // Names are unique, and every schedule lives in
+                            // the platform's tenant: the organization makes
+                            // it one.
+                            name: format!("Remove the expired previews of {org}"),
+                            task_type: preview::SWEEP_TASK_TYPE,
+                            payload: serde_json::json!({ "organization_id": org }),
+                            cron: preview::SWEEP_CRON.to_owned(),
+                            enabled: true,
+                        },
+                    )
+                    .await
+            }
+            Err(e) => Err(anyhow::anyhow!("{e:?}")),
+        };
+        if let Err(e) = ensured {
+            tracing::warn!(error = ?e, organization = %org, "studio-environments: the preview sweep could not be scheduled");
+        }
+    }
+
+    /// Remove a preview of `project` now: queue a sweep of it alone. The
+    /// record says it is gone once the namespace is.
+    pub async fn remove_preview(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        id: Uuid,
+    ) -> Result<Uuid> {
+        let org = self.organization_of_project(ctx, project).await?;
+        let d = self.deployment(ctx, org, id).await?;
+        if d.project_id != project || d.preview.is_none() {
+            return Err(Refusal::NotFound(
+                id.to_string(),
+                format!("the project has no preview {id}"),
+            ));
+        }
+        if !d.is_live_preview() {
+            return Err(Refusal::Precondition(
+                "PREVIEW_ALREADY_REMOVED",
+                format!("preview {} is already removed", d.namespace),
+            ));
+        }
+        let queue = self
+            .hub
+            .get_scoped::<dyn crate::tasks::TaskQueue>(&ClientScope::gts_id(
+                crate::tasks::TASK_QUEUE_INSTANCE_ID,
+            ))
+            .map_err(|_| {
+                Refusal::Unavailable("background runs are not available in this deployment".into())
+            })?;
+        let svc = self.service(org)?;
+        let partition = format!("previews:{org}");
+        queue
+            .enqueue(
+                &svc,
+                crate::tasks::sdk::NewRun {
+                    tenant: org,
+                    task_type: preview::SWEEP_TASK_TYPE,
+                    payload: serde_json::to_value(SweepPayload {
+                        organization_id: org,
+                        deployment_id: Some(id),
+                    })
+                    .map_err(anyhow::Error::from)?,
+                    // After any sweep already going, so the two do not
+                    // delete the same namespace at once.
+                    partition_key: Some(&partition),
+                    idempotency_key: None,
+                    coalesce_queued: true,
+                    notify_workspace_id: None,
+                },
+            )
+            .await
+            .map_err(|e| Refusal::Unavailable(format!("the removal could not be queued: {e:#}")))
     }
 
     /// The request that installs again what `earlier` installed, into the
@@ -1268,6 +1471,7 @@ impl EnvironmentService {
             chart_version: Some(chart.version),
             action: DeploymentAction::Install,
             redeploy_of: Some(earlier),
+            preview: req.preview,
         })
     }
 
@@ -1339,6 +1543,7 @@ impl EnvironmentService {
             chart_version: Some(chart_version),
             action: DeploymentAction::Install,
             redeploy_of: None,
+            preview: req.preview,
         })
     }
 
@@ -1922,6 +2127,7 @@ impl EnvironmentService {
             reason: None,
             outcome: None,
             pending_chart: None,
+            preview: None,
             research: Some(research::ResearchDeploy {
                 research_project: target.project,
                 hardware: target.hardware,

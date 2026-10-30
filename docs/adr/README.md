@@ -66,6 +66,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0051](0051-an-owner-asks-for-an-organization-and-an-administrator-approves-it.md) | Anybody with a verified identity may sign in; an owner asks for an organization, and a platform administrator approves the organization, not the person | proposed | 2026-10-28 |
 | [0053](0053-a-products-description-is-kept-by-studio-and-built-with-the-code-of-a-chosen-branch.md) | A product's description is kept by Studio, versioned, and built with the code of a branch the build chooses; publishing it to the repository is optional | proposed | 2026-10-29 |
 | [0054](0054-a-project-keeps-environments-of-its-own-on-places-the-organization-opens.md) | A project keeps environments of its own, on places the organization opens to it | proposed | 2026-10-29 |
+| [0055](0055-a-build-is-previewed-in-a-namespace-of-its-own-that-expires.md) | A build is previewed in a namespace of its own that expires | proposed | 2026-10-30 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

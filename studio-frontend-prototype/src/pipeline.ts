@@ -98,6 +98,21 @@ export function deploysHint(s: {
       : { text: "A published build is ready: Deploy a build… in an environment.", tone: "todo" };
   }
   const where = `${latest.environment_name} (${latest.namespace})`;
+  if (latest.preview) {
+    const name = `Preview ${latest.preview.name} in ${latest.environment_name}`;
+    if (latest.preview.removed_at) return { text: `${name} is removed.`, tone: "done" };
+    switch (latest.state) {
+      case "succeeded":
+        return {
+          text: latest.preview.host ? `${name} runs at ${latest.preview.host}.` : `${name} runs in ${latest.namespace}.`,
+          tone: "done",
+        };
+      case "failed":
+        return { text: `${name} failed${latest.outcome ? `: ${latest.outcome}` : ""}.`, tone: "failed" };
+      default:
+        return { text: `${STATE_LABELS[latest.state] ?? latest.state}: ${name}.`, tone: "todo" };
+    }
+  }
   switch (latest.state) {
     case "succeeded":
       return latest.action === "uninstall"

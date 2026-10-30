@@ -48,6 +48,7 @@ export function emptyEnvironment(): DeployEnvironmentInput {
     protected: false,
     promote_from: null,
     projects: null,
+    previews: null,
   };
 }
 
@@ -68,6 +69,7 @@ export function environmentInput(e: DeployEnvironment): DeployEnvironmentInput {
     protected: e.protected,
     promote_from: e.promote_from ?? null,
     projects: e.projects ?? null,
+    previews: e.previews ?? null,
   };
 }
 
@@ -79,7 +81,8 @@ export type EnvironmentField =
   | "registry_connection_id"
   | "namespace_pattern"
   | "projects"
-  | "research_project";
+  | "research_project"
+  | "previews";
 
 /** Everything wrong with a form, by field, in the words the person reads:
  *  shown together at their fields, so one fix does not uncover the next. */
@@ -117,6 +120,17 @@ export function environmentProblems(
       out.registry = `The prefix is not on ${host}, the registry this login is for.`;
   }
   if (input.projects && input.projects.length === 0) out.projects = "Choose at least one project, or let every project deploy here.";
+  const previews = input.previews;
+  if (previews) {
+    const domain = previews.domain.trim().replace(/^\.+|\.+$/g, "");
+    const ttl = previews.ttl_hours ?? 72;
+    const most = previews.max_live ?? 3;
+    if (input.protected) out.previews = "A protected environment takes no previews: its deploys wait for approval.";
+    else if (domain && !domain.split(".").every((l) => isDnsLabel(l.toLowerCase())))
+      out.previews = "That is not a domain, e.g. preview.example.com.";
+    else if (!Number.isInteger(ttl) || ttl < 1 || ttl > 336) out.previews = "A preview lives from 1 to 336 hours.";
+    else if (!Number.isInteger(most) || most < 1 || most > 20) out.previews = "A project keeps from 1 to 20 previews at once.";
+  }
   return out;
 }
 

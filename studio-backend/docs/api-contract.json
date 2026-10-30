@@ -206,6 +206,24 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-environments/v1/previews/{deployment_id}",
+      "operation_id": "studio_environments.delete_preview",
+      "tag": "",
+      "summary": "Remove a preview of a project's product",
+      "authenticated": true,
+      "responses": [
+        "PreviewRemovalDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-environments/v1/project-environments/{environment_id}",
       "operation_id": "studio_environments.delete_project_environment",
       "tag": "",

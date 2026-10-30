@@ -21,7 +21,7 @@ use super::model::{
     Binding, DatabaseMode, DeployImage, Deployment, DeploymentAction, Environment,
     EnvironmentInput, EnvironmentKind, ResearchTarget,
 };
-use super::service::{DeployRequest, EnvironmentService, Refusal};
+use super::service::{DeployRequest, EnvironmentService, PreviewAsk, Refusal};
 use crate::org_scope::OrgCtx;
 
 /// Errors attributable to an environment or a deployment as a resource.
@@ -103,8 +103,50 @@ pub struct EnvironmentDto {
     /// organization's.
     #[schema(value_type = Option<String>)]
     pub project_id: Option<Uuid>,
+    /// Whether projects may preview a build here, and how (ADR-0055);
+    /// absent: no previews.
+    pub previews: Option<PreviewSettingsDto>,
     pub updated_by: String,
     pub updated_at: String,
+}
+
+/// What an environment says of previews (ADR-0055).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request, response)]
+pub struct PreviewSettingsDto {
+    /// A domain with a wildcard DNS record to the cluster's ingress
+    /// controller: a preview answers at `<namespace>.<domain>`. Empty: no
+    /// address.
+    #[serde(default)]
+    pub domain: String,
+    /// The Ingress class to ask for; absent for the cluster's default.
+    #[serde(default)]
+    pub ingress_class: Option<String>,
+    /// How long a preview lives, and the most a person may ask for; default
+    /// 72, at most 336.
+    #[serde(default)]
+    pub ttl_hours: Option<u32>,
+    /// How many previews a project keeps here at once; default 3, at most 20.
+    #[serde(default)]
+    pub max_live: Option<u32>,
+}
+
+fn preview_settings_dto(p: super::model::PreviewSettings) -> PreviewSettingsDto {
+    PreviewSettingsDto {
+        domain: p.domain,
+        ingress_class: p.ingress_class,
+        ttl_hours: Some(p.ttl_hours),
+        max_live: Some(p.max_live),
+    }
+}
+
+fn preview_settings(p: PreviewSettingsDto) -> super::model::PreviewSettings {
+    super::model::PreviewSettings {
+        domain: p.domain,
+        ingress_class: p.ingress_class,
+        ttl_hours: p.ttl_hours.unwrap_or(super::model::PREVIEW_TTL_HOURS),
+        max_live: p.max_live.unwrap_or(super::model::PREVIEW_MAX_LIVE),
+    }
 }
 
 fn database_str(d: DatabaseMode) -> &'static str {
@@ -140,6 +182,7 @@ fn env_dto(e: Environment) -> EnvironmentDto {
         promote_from: e.promote_from,
         projects: e.projects,
         project_id: e.project_id,
+        previews: e.previews.map(preview_settings_dto),
         updated_by: e.updated_by,
         updated_at: e.updated_at,
     }
@@ -303,6 +346,10 @@ pub struct EnvironmentRequest {
     #[schema(value_type = Option<Vec<String>>)]
     #[serde(default)]
     pub projects: Option<Vec<Uuid>>,
+    /// Let projects preview builds here (ADR-0055); absent: no previews. Not
+    /// on a protected or a Research environment.
+    #[serde(default)]
+    pub previews: Option<PreviewSettingsDto>,
 }
 
 fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> {
@@ -345,6 +392,7 @@ fn env_input(r: EnvironmentRequest) -> Result<EnvironmentInput, CanonicalError> 
         protected: r.protected,
         promote_from: r.promote_from,
         projects: r.projects,
+        previews: r.previews.map(preview_settings),
     })
 }
 
@@ -579,6 +627,22 @@ pub struct DeploymentDto {
     pub decided_at: Option<String>,
     pub reason: Option<String>,
     pub outcome: Option<String>,
+    /// A preview (ADR-0055); absent for a deploy of what runs there.
+    pub preview: Option<PreviewDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PreviewDto {
+    pub name: String,
+    /// RFC 3339: when the sweep removes it.
+    pub expires_at: String,
+    /// The host it answers on; absent for none.
+    pub host: Option<String>,
+    /// When it was removed; absent while it is there.
+    pub removed_at: Option<String>,
+    /// Why the last attempt to remove it failed; the next sweep tries again.
+    pub removal_error: Option<String>,
 }
 
 fn deployment_dto(d: Deployment) -> DeploymentDto {
@@ -617,6 +681,13 @@ fn deployment_dto(d: Deployment) -> DeploymentDto {
         decided_at: d.decided_at,
         reason: d.reason,
         outcome: d.outcome,
+        preview: d.preview.map(|p| PreviewDto {
+            name: p.name,
+            expires_at: p.expires_at,
+            host: p.host,
+            removed_at: p.removed_at,
+            removal_error: p.removal_error,
+        }),
     }
 }
 
@@ -674,6 +745,30 @@ pub struct CreateDeploymentRequest {
     #[schema(value_type = Option<String>)]
     #[serde(default)]
     pub redeploy_of: Option<Uuid>,
+    /// Install it as a preview (ADR-0055): into a namespace of its own, with
+    /// an address of its own, removed when it expires.
+    #[serde(default)]
+    pub preview: Option<PreviewRequest>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PreviewRequest {
+    /// Lowercase letters, digits and `-`, at most 20 (`pr-42`); default made
+    /// of the deployment's id.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// How long it lives; default, and at most, the environment's.
+    #[serde(default)]
+    pub ttl_hours: Option<u32>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PreviewRemovalDto {
+    /// The run that removes it.
+    #[schema(value_type = String)]
+    pub run_id: Uuid,
 }
 
 #[derive(Debug)]
@@ -1252,6 +1347,10 @@ async fn create_deployment(
             }
         },
         redeploy_of: body.redeploy_of,
+        preview: body.preview.map(|p| PreviewAsk {
+            name: p.name,
+            ttl_hours: p.ttl_hours,
+        }),
     };
     let d = envs
         .0
@@ -1260,6 +1359,20 @@ async fn create_deployment(
         .map_err(problem)?;
     // 202: queued, or waiting for an approval; the record says which.
     Ok((StatusCode::ACCEPTED, Json(deployment_dto(d))))
+}
+
+async fn remove_preview(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Path(deployment_id): Path<Uuid>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<(StatusCode, JsonBody<PreviewRemovalDto>)> {
+    let run_id = envs
+        .0
+        .remove_preview(&ctx, q.project_id, deployment_id)
+        .await
+        .map_err(problem)?;
+    Ok((StatusCode::ACCEPTED, Json(PreviewRemovalDto { run_id })))
 }
 
 async fn list_deployments(
@@ -1850,6 +1963,29 @@ pub fn register_routes(
         .json_request::<CreateDeploymentRequest>(openapi, "The deploy")
         .handler(create_deployment)
         .json_response_with_schema::<DeploymentDto>(openapi, StatusCode::ACCEPTED, "Accepted")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::delete("/studio-environments/v1/previews/{deployment_id}")
+        .operation_id("studio_environments.delete_preview")
+        .summary("Remove a preview of a project's product")
+        .description(
+            "For `?project_id=`: deletes the preview's namespace with everything in it, as a \
+             background run, before it expires (ADR-0055). Answers 202 with the run; the \
+             deployment's `preview.removed_at` says when it is gone.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("deployment_id", "The preview's deployment")
+        .query_param_typed("project_id", true, "The project", "string")
+        .handler(remove_preview)
+        .json_response_with_schema::<PreviewRemovalDto>(openapi, StatusCode::ACCEPTED, "Accepted")
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)

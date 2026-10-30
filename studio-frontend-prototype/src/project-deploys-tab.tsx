@@ -16,7 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, api, type Connection, type DeployEnvironment, type Deployment, type ProjectTargets } from "./api";
 import { ideBuildsOf, type IdeBuild } from "./builds";
 import { DataTable } from "./data-table";
-import { EnvironmentActions, EnvironmentConfig } from "./deploy-actions";
+import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews } from "./deploy-actions";
 import { EnvironmentForm, ProjectEnvironments } from "./environments-screen";
 import {
   STATE_LABELS,
@@ -266,6 +266,13 @@ export function ProjectDeploys({
                     envName={envName}
                     onChanged={changed}
                   />
+                  <EnvironmentPreviews
+                    token={token}
+                    projectId={projectId}
+                    env={e}
+                    deployments={deployments}
+                    onChanged={changed}
+                  />
                   <EnvironmentConfig
                     key={`${e.id}-${round}`}
                     token={token}
@@ -328,6 +335,7 @@ const DEPLOYS_CSS = `
 .project-deploys .deploy-actions .row { gap:6px; flex-wrap:wrap; }
 .project-deploys .deploy-pick { margin-top:8px; }
 .project-deploys .deploy-config { margin-top:10px; font-size:13px; }
+.project-deploys .deploy-previews { margin-top:10px; font-size:13px; }
 .project-deploys .deploy-config textarea { width:100%; font-family:var(--font-mono, monospace); font-size:12px; }
 .project-deploys .warn { color:var(--warning, #b45309); }
 .project-deploys .sub { color:var(--muted-foreground); font-size:12px; }

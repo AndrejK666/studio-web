@@ -4,8 +4,11 @@ import type { Deployment, DeployEnvironment } from "./api";
 import type { IdeBuild } from "./builds";
 import {
   deployableBuilds,
+  expiresIn,
   isSecretKey,
   latestByEnvironment,
+  livePreviews,
+  previewNameFor,
   parseValues,
   productUrls,
   profilesBoundTo,
@@ -154,5 +157,44 @@ describe("a Constructor Research environment's deploys (ADR-0049)", () => {
     ]);
     expect(productUrls("studio-web installed into studio-web-dev")).toEqual([]);
     expect(productUrls(null)).toEqual([]);
+  });
+});
+
+describe("a project's previews (ADR-0055)", () => {
+  const preview = (id: string, name: string, removed_at: string | null = null): Deployment => ({
+    ...dep(id, "dev", "succeeded"),
+    namespace: `studio-web-dev-pv-${name}`,
+    preview: { name, expires_at: "2026-10-31T10:00:00Z", host: null, removed_at },
+  });
+
+  it("are not what runs in the environment, nor what a rollback or a promotion counts", () => {
+    const history = [preview("3", "pr-1"), dep("2", "dev", "succeeded"), dep("1", "dev", "succeeded")];
+    expect(latestByEnvironment(history).get("dev")?.id).toBe("2");
+    expect(rollbackTarget([preview("9", "pr-1"), ...history], "dev")?.id).not.toBe("9");
+    const prod = { id: "prod", promote_from: "dev" } as DeployEnvironment;
+    const built = { buildId: "b1" } as IdeBuild;
+    const tried = { ...preview("4", "pr-2"), build: "b1" };
+    expect(promotionGap(prod, built, [tried], (id) => id)).toMatch(/deploy it there first/);
+  });
+
+  it("list the ones not removed, in one environment", () => {
+    const list = [preview("3", "pr-1"), preview("2", "pr-0", "2026-10-30T10:00:00Z"), dep("1", "dev", "succeeded")];
+    expect(livePreviews(list, "dev").map((d) => d.id)).toEqual(["3"]);
+    expect(livePreviews(list, "prod")).toEqual([]);
+  });
+
+  it("are named after the build, as a namespace takes it", () => {
+    expect(previewNameFor({ chartVersion: "0.1.0-sha.3f2a9c1", buildId: "b" })).toBe("0-1-0-sha-3f2a9c1");
+    expect(previewNameFor({ chartVersion: null, buildId: "ci-run-18234567890" })).toBe("ci-run-18234567890");
+    expect(previewNameFor({ chartVersion: "0.1.0-sha.3f2a9c1deadbeef0123", buildId: "b" })).toBe("3f2a9c1deadbeef0123");
+    expect(previewNameFor({ chartVersion: null, buildId: "" })).toBe("preview");
+  });
+
+  it("say how long they have", () => {
+    const now = Date.parse("2026-10-30T10:00:00Z");
+    expect(expiresIn("2026-11-02T10:00:00Z", now)).toBe("expires in 3 d");
+    expect(expiresIn("2026-10-30T15:00:00Z", now)).toBe("expires in 5 h");
+    expect(expiresIn("2026-10-30T10:20:00Z", now)).toBe("expires in 20 min");
+    expect(expiresIn("2026-10-30T09:00:00Z", now)).toBe("expiring");
   });
 });

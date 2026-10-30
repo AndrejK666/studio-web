@@ -6,7 +6,9 @@ The decision — why environments are the organization's, why a deploy runs on
 the server, what a record of it holds — is
 [ADR-0043](../../../docs/adr/0043-an-organization-deploys-products-to-its-environments.md);
 how a product's images and chart reach it through the organization's registry
-is [ADR-0048](../../../docs/adr/0048-a-product-ships-as-images-and-a-chart-in-the-organizations-registry.md).
+is [ADR-0048](../../../docs/adr/0048-a-product-ships-as-images-and-a-chart-in-the-organizations-registry.md);
+previews are
+[ADR-0055](../../../docs/adr/0055-a-build-is-previewed-in-a-namespace-of-its-own-that-expires.md).
 This README is what you need to work in the directory.
 
 ## REST
@@ -22,12 +24,13 @@ All under `/studio-environments/v1`. An organization is named with
 | `POST /environments/{environment_id}/test` | admin | ask the cluster for its version with the environment's connection |
 | `GET /targets?project_id=` | member | the environments the project may deploy to, its namespace in each, its bindings |
 | `PUT /bindings?project_id=` | member | bind the product's kubernetes profiles to environments |
-| `POST /deployments?project_id=` | member | ask for a deploy: the chart (`.tgz`, base64), a published one (`chart_ref` `oci://<registry prefix>/…` and `chart_version`), or a build by id alone (`build`: its chart, images, commit and lock come from its record), or an earlier deployment again (`redeploy_of`), or `action: uninstall` of the release (`product`); refused into an environment with `promote_from` until the release succeeded there (ADR-0048); 202 `queued` or `awaiting_approval` |
+| `POST /deployments?project_id=` | member | ask for a deploy: the chart (`.tgz`, base64), a published one (`chart_ref` `oci://<registry prefix>/…` and `chart_version`), or a build by id alone (`build`: its chart, images, commit and lock come from its record), or an earlier deployment again (`redeploy_of`), or `action: uninstall` of the release (`product`); refused into an environment with `promote_from` until the release succeeded there (ADR-0048); with `preview` (`name`, `ttl_hours`), into a namespace of its own that the sweep removes when it expires (ADR-0055); 202 `queued` or `awaiting_approval` |
 | `POST /builds?project_id=` | member | build the product in the environment's cluster: a Job in the project's namespace (prepare, rootless BuildKit, publish), watched until it ends and recorded as a `studio` build (ADR-0048 §9); naming neither `product_file` nor `ref` builds what the Product step last wrote, on its branch; 202 with `build_id` |
 | `POST /build-workflows?project_id=` | member | propose `.github/workflows/studio-build-<product>.yml` for the product `product_file` describes (default `product.gdl`) to the project's repository as a pull request (ADR-0048 §5) |
 | `POST /environments/{environment_id}/push-tokens?project_id=` | member | a push-only token for named repositories under the environment's registry prefix, from the registry's token service (ADR-0048 §1); 201 |
 | `PUT`/`DELETE /config-secrets/{key}?project_id=&environment_id=` | member | set or remove a secret of the release's configuration there; the value goes to credstore and never comes back |
 | `GET /deployments` | member | the history, newest first; filter by `project_id`, `environment_id` |
+| `DELETE /previews/{deployment_id}?project_id=` | member | remove a preview before it expires: a sweep of it alone deletes its namespace (ADR-0055); 202 with the run |
 | `POST /deployments/{deployment_id}/decisions` | admin | `approve` or `decline` (with a reason) a deploy to a protected environment |
 | `GET /deployments/{deployment_id}/status` | member | the release's workloads and ingress hosts, read from the cluster now |
 
@@ -84,6 +87,17 @@ of studio-user through `OrgAuthority`.
   `existingSecret`/`secretKeys`.
 - `helm` must be on the server's PATH (or `STUDIO_HELM`); both backend images
   install a pinned one.
+- Previews (ADR-0055): an environment with `previews` takes a deploy with
+  `preview: {name, ttl_hours}`. It goes into `<namespace>-pv-<name>`,
+  labelled `studio.constructor.tech/preview=true` and annotated
+  `studio.constructor.tech/expires-at`; with a preview `domain`, the run
+  routes `<namespace>.<domain>` to the Service port named `http`, else `rest`,
+  with the Ingress `studio-preview`. Task type `environments.previews.sweep`
+  deletes the namespaces of expired previews; the first preview of an
+  organization schedules it every 15 minutes (`studio-scheduler`, platform
+  tenant, the organization in the payload), and a removal by hand is one
+  more run. Deleting a namespace needs the current bootstrap manifest, which
+  allows it for preview namespaces only.
 
 ## Where things are kept
 
@@ -117,6 +131,8 @@ once the run ends.
   directory removed afterwards; the rollout read.
 - `database.rs` — what a rendered chart needs of databases, and the
   namespace's Postgres that gives it.
+- `preview.rs` — a preview's address (the Ingress) and the sweep that
+  removes expired previews.
 - `workflow.rs` — the build workflow proposed to a product's repository.
 - `build.rs` — a build in the organization's cluster: the Job, the start and
   watch runs, and the Job's own steps (`studio-backend build-prepare`,

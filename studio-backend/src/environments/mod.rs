@@ -30,6 +30,7 @@ pub(crate) mod build; // a product built by Studio in the organization's cluster
 mod database;
 mod deploy;
 mod model;
+mod preview; // a build tried in a namespace of its own, removed when it expires (ADR-0055)
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
 mod rest;
@@ -72,6 +73,8 @@ impl Gear for StudioEnvironmentsGear {
         crate::tasks::sdk::register(Arc::new(build::BuildTask::new(ctx.client_hub())))?;
         crate::tasks::sdk::register(Arc::new(build::WatchTask::new(ctx.client_hub())))?;
         crate::tasks::sdk::register(Arc::new(research::ResearchBuildTask::new(ctx.client_hub())))?;
+        // Previews removed when they expire, or when somebody asks (ADR-0055).
+        crate::tasks::sdk::register(Arc::new(preview::SweepTask::new(ctx.client_hub())))?;
         info!("studio-environments: deploy runs registered");
         Ok(())
     }

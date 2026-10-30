@@ -107,6 +107,10 @@ pub struct Environment {
     /// the organization's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<Uuid>,
+    /// Whether a project may preview a build here, and how (ADR-0055);
+    /// `None` takes no previews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previews: Option<PreviewSettings>,
     pub updated_by: String,
     pub updated_at: String,
 }
@@ -142,6 +146,7 @@ pub struct EnvironmentInput {
     pub protected: bool,
     pub promote_from: Option<Uuid>,
     pub projects: Option<Vec<Uuid>>,
+    pub previews: Option<PreviewSettings>,
 }
 
 /// A refusal of an environment as written.
@@ -243,6 +248,7 @@ pub fn checked(
     at: String,
 ) -> Result<Environment, Invalid> {
     let research = check_research(&input, input.registry.trim())?;
+    let previews = check_previews(&input)?;
     let name = input.name.trim().to_owned();
     if !is_dns_label(&name) {
         return Err(invalid(
@@ -323,6 +329,7 @@ pub fn checked(
             p
         }),
         project_id: None,
+        previews,
         updated_by: by,
         updated_at: at,
     })
@@ -1006,6 +1013,10 @@ pub struct Deployment {
     /// where it puts the application (ADR-0049 §4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub research: Option<super::research::ResearchDeploy>,
+    /// A preview (ADR-0055): until when, where it answers, whether it is
+    /// gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<Preview>,
 }
 
 impl Deployment {
@@ -1035,6 +1046,8 @@ pub fn promotion_gap(
     let promoted = history.iter().any(|p| {
         p.environment_id == src
             && p.project_id == d.project_id
+            // A preview there is not what runs there (ADR-0055).
+            && p.preview.is_none()
             && p.action == DeploymentAction::Install
             && p.state == DeploymentState::Succeeded
             && p.same_release(d)
@@ -1043,6 +1056,237 @@ pub fn promotion_gap(
         format!(
             "environment '{}' takes only what runs in '{from}': deploy this release there first",
             env.name
+        )
+    })
+}
+
+/// How long a preview lives unless the environment says otherwise.
+pub const PREVIEW_TTL_HOURS: u32 = 72;
+/// The longest an environment may let a preview live: two weeks.
+pub const MAX_PREVIEW_TTL_HOURS: u32 = 14 * 24;
+/// How many previews a project may keep in an environment at once unless
+/// the environment says otherwise.
+pub const PREVIEW_MAX_LIVE: u32 = 3;
+/// The most an environment may allow.
+pub const MAX_PREVIEW_MAX_LIVE: u32 = 20;
+/// A preview's name is short: it goes into the namespace after the
+/// project's own, and the namespace into the host.
+pub const MAX_PREVIEW_NAME: usize = 20;
+
+/// What an environment says of previews (ADR-0055).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewSettings {
+    /// A domain whose every name reaches the cluster's ingress controller
+    /// (a wildcard DNS record): a preview answers at `<namespace>.<domain>`.
+    /// Empty: previews get no address and are reached by port-forward.
+    #[serde(default)]
+    pub domain: String,
+    /// The `ingressClassName` a preview's Ingress asks for; `None` for the
+    /// cluster's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ingress_class: Option<String>,
+    /// How long a preview lives before the sweep removes it.
+    #[serde(default = "default_preview_ttl")]
+    pub ttl_hours: u32,
+    /// How many previews one project may keep here at once.
+    #[serde(default = "default_preview_max_live")]
+    pub max_live: u32,
+}
+
+fn default_preview_ttl() -> u32 {
+    PREVIEW_TTL_HOURS
+}
+
+fn default_preview_max_live() -> u32 {
+    PREVIEW_MAX_LIVE
+}
+
+/// Is `s` a DNS name: dot-separated labels, at most 253 characters?
+fn is_dns_name(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 253 && s.split('.').all(is_dns_label)
+}
+
+/// An environment's preview settings, checked. A preview is a namespace of
+/// its own on a cluster, so a Research environment takes none, and a
+/// protected one none either: a preview nobody may approve in time is no
+/// preview.
+fn check_previews(input: &EnvironmentInput) -> Result<Option<PreviewSettings>, Invalid> {
+    let Some(p) = &input.previews else {
+        return Ok(None);
+    };
+    if input.kind == EnvironmentKind::Research {
+        return Err(invalid(
+            "previews",
+            "a preview is a namespace of its own on a cluster: Constructor Research takes none",
+        ));
+    }
+    if input.protected {
+        return Err(invalid(
+            "previews",
+            "a protected environment takes no previews: its deploys wait for approval",
+        ));
+    }
+    let domain = p.domain.trim().trim_matches('.').to_ascii_lowercase();
+    if !domain.is_empty() && !is_dns_name(&domain) {
+        return Err(invalid(
+            "preview_domain",
+            format!("'{domain}' is not a domain, e.g. preview.example.com"),
+        ));
+    }
+    let ingress_class = p
+        .ingress_class
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned);
+    if let Some(class) = &ingress_class
+        && !is_dns_name(class)
+    {
+        return Err(invalid(
+            "preview_ingress_class",
+            format!("'{class}' is not an ingress class name"),
+        ));
+    }
+    if !(1..=MAX_PREVIEW_TTL_HOURS).contains(&p.ttl_hours) {
+        return Err(invalid(
+            "preview_ttl_hours",
+            format!("a preview lives from 1 to {MAX_PREVIEW_TTL_HOURS} hours"),
+        ));
+    }
+    if !(1..=MAX_PREVIEW_MAX_LIVE).contains(&p.max_live) {
+        return Err(invalid(
+            "preview_max_live",
+            format!("a project keeps from 1 to {MAX_PREVIEW_MAX_LIVE} previews at once"),
+        ));
+    }
+    Ok(Some(PreviewSettings {
+        domain,
+        ingress_class,
+        ttl_hours: p.ttl_hours,
+        max_live: p.max_live,
+    }))
+}
+
+/// A preview: a deploy into a namespace of its own that the sweep removes,
+/// namespace and all, once it expires or somebody removes it (ADR-0055).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Preview {
+    /// What distinguishes it from the project's other previews there.
+    pub name: String,
+    /// RFC 3339.
+    pub expires_at: String,
+    /// Where it answers; `None` when the environment has no preview domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// The cluster it was installed with, so its removal needs nothing that
+    /// could have changed or gone since: the environment may be edited or
+    /// removed while the preview lives.
+    pub connection_id: Uuid,
+    /// The tenant that connection is found from (ADR-0054 §5); `None` for
+    /// the organization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connections_from: Option<Uuid>,
+    /// When the sweep removed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_at: Option<String>,
+    /// Why the last attempt to remove it failed; the next sweep tries again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removal_error: Option<String>,
+}
+
+impl Deployment {
+    /// A preview whose namespace may still be there: not removed yet,
+    /// whatever its install came to (a failed one leaves its namespace too).
+    pub fn is_live_preview(&self) -> bool {
+        self.preview
+            .as_ref()
+            .is_some_and(|p| p.removed_at.is_none())
+    }
+
+    /// A live preview that has expired by `now`.
+    pub fn preview_due(&self, now: time::OffsetDateTime) -> bool {
+        self.is_live_preview()
+            && self.preview.as_ref().is_some_and(|p| {
+                time::OffsetDateTime::parse(
+                    &p.expires_at,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                // An expiry nobody can read is not kept for ever.
+                .map_or(true, |at| at <= now)
+            })
+    }
+}
+
+/// The name a preview gets: the one asked for, or one made of the
+/// deployment's id. Lowercase letters, digits and `-`, at most
+/// [`MAX_PREVIEW_NAME`].
+pub fn preview_name(asked: Option<&str>, id: Uuid) -> Result<String, Invalid> {
+    let Some(asked) = asked.map(str::trim).filter(|a| !a.is_empty()) else {
+        return Ok(format!("p{}", &id.simple().to_string()[..6]));
+    };
+    let name = asked.to_ascii_lowercase();
+    if !is_dns_label(&name) || name.len() > MAX_PREVIEW_NAME {
+        return Err(invalid(
+            "preview_name",
+            format!(
+                "a preview's name is lowercase letters, digits and '-', at most \
+                 {MAX_PREVIEW_NAME} (pr-42, login-fix)"
+            ),
+        ));
+    }
+    Ok(name)
+}
+
+/// The namespace of a preview: the project's namespace there, `-pv-`, its
+/// name. Never the project's own namespace, so removing it never touches
+/// what the environment runs.
+pub fn preview_namespace(base: &str, name: &str) -> Result<String, Invalid> {
+    let ns = format!("{base}-pv-{name}");
+    if !is_dns_label(&ns) {
+        return Err(invalid(
+            "preview_name",
+            format!(
+                "namespace '{ns}' would be longer than 63 characters: choose a shorter preview \
+                 name"
+            ),
+        ));
+    }
+    Ok(ns)
+}
+
+/// Where a preview in `namespace` answers: `<namespace>.<domain>`, when the
+/// environment has a preview domain.
+pub fn preview_host(settings: &PreviewSettings, namespace: &str) -> Option<String> {
+    (!settings.domain.is_empty()).then(|| format!("{namespace}.{}", settings.domain))
+}
+
+/// Why `project` may not have one more preview in `env`: one of that name is
+/// still there, or it already keeps as many as the environment allows.
+pub fn preview_refusal(
+    settings: &PreviewSettings,
+    history: &[Deployment],
+    project: Uuid,
+    env: Uuid,
+    name: &str,
+) -> Option<String> {
+    let live: Vec<&Deployment> = history
+        .iter()
+        .filter(|d| d.project_id == project && d.environment_id == env && d.is_live_preview())
+        .collect();
+    if live
+        .iter()
+        .any(|d| d.preview.as_ref().is_some_and(|p| p.name == name))
+    {
+        return Some(format!(
+            "the project already has a preview '{name}' here: remove it first, or name this one \
+             otherwise"
+        ));
+    }
+    (live.len() >= settings.max_live as usize).then(|| {
+        format!(
+            "the project keeps {} previews here, as many as the environment allows: remove one \
+             first",
+            live.len()
         )
     })
 }
@@ -1057,16 +1301,20 @@ pub struct DeploymentList {
 
 impl DeploymentList {
     /// Put `d` first and trim the history to [`HISTORY`], keeping the latest
-    /// deployment of every project and environment, and every one still
-    /// waiting for a decision.
+    /// deployment of every project and environment (a preview is not what
+    /// runs there), every one still waiting for a decision, and every
+    /// preview not yet removed, which the sweep must still find.
     pub fn record(&mut self, d: Deployment) {
         self.items.retain(|x| x.id != d.id);
         self.items.insert(0, d);
         let mut latest = std::collections::BTreeSet::new();
         let mut kept = 0usize;
         self.items.retain(|x| {
-            let first = latest.insert((x.project_id, x.environment_id));
-            let keep = first || x.state == DeploymentState::AwaitingApproval || kept < HISTORY;
+            let first = x.preview.is_none() && latest.insert((x.project_id, x.environment_id));
+            let keep = first
+                || x.state == DeploymentState::AwaitingApproval
+                || x.is_live_preview()
+                || kept < HISTORY;
             if keep {
                 kept += 1;
             }
@@ -1170,6 +1418,7 @@ mod tests {
             protected: false,
             promote_from: None,
             projects: None,
+            previews: None,
         }
     }
 
@@ -1523,6 +1772,7 @@ mod tests {
             outcome: None,
             pending_chart: None,
             research: None,
+            preview: None,
         }
     }
 
@@ -1793,5 +2043,180 @@ mod tests {
         let mut elsewhere = mine.clone();
         elsewhere.connection_id = Uuid::from_u128(8);
         assert!(namespace_clash(&elsewhere, &admitted, "Shop").is_none());
+    }
+    fn settings() -> PreviewSettings {
+        PreviewSettings {
+            domain: "preview.example.com".into(),
+            ingress_class: None,
+            ttl_hours: PREVIEW_TTL_HOURS,
+            max_live: 2,
+        }
+    }
+
+    fn preview(n: u128, name: &str, expires_at: &str) -> Deployment {
+        let mut d = deployment(n, 1, DeploymentState::Succeeded);
+        d.namespace = format!("p-prod-pv-{name}");
+        d.preview = Some(Preview {
+            name: name.into(),
+            expires_at: expires_at.into(),
+            host: None,
+            connection_id: Uuid::from_u128(7),
+            connections_from: None,
+            removed_at: None,
+            removal_error: None,
+        });
+        d
+    }
+
+    #[test]
+    fn an_environment_takes_previews_only_on_a_cluster_it_does_not_protect() {
+        let with = |f: fn(&mut EnvironmentInput)| {
+            let mut i = input("dev");
+            i.previews = Some(PreviewSettings {
+                domain: " Preview.Example.com. ".into(),
+                ingress_class: Some(" ".into()),
+                ..settings()
+            });
+            f(&mut i);
+            checked(
+                &EnvironmentList::default(),
+                None,
+                i,
+                String::new(),
+                String::new(),
+            )
+        };
+        let ok = with(|_| {}).expect("previews on dev").previews.unwrap();
+        assert_eq!(ok.domain, "preview.example.com");
+        assert_eq!(ok.ingress_class, None);
+        assert_eq!(with(|i| i.protected = true).unwrap_err().field, "previews");
+        assert_eq!(
+            with(|i| {
+                i.kind = EnvironmentKind::Research;
+                i.registry = String::new();
+                i.research = Some(ResearchTarget {
+                    project: "ml".into(),
+                    hardware: None,
+                });
+            })
+            .unwrap_err()
+            .field,
+            "previews"
+        );
+        let field = |f: fn(&mut PreviewSettings)| {
+            let mut i = input("dev");
+            let mut p = settings();
+            f(&mut p);
+            i.previews = Some(p);
+            checked(
+                &EnvironmentList::default(),
+                None,
+                i,
+                String::new(),
+                String::new(),
+            )
+            .unwrap_err()
+            .field
+        };
+        assert_eq!(
+            field(|p| p.domain = "not a domain".into()),
+            "preview_domain"
+        );
+        assert_eq!(field(|p| p.ttl_hours = 0), "preview_ttl_hours");
+        assert_eq!(
+            field(|p| p.ttl_hours = MAX_PREVIEW_TTL_HOURS + 1),
+            "preview_ttl_hours"
+        );
+        assert_eq!(field(|p| p.max_live = 0), "preview_max_live");
+        // Stored before previews existed: none.
+        let old: Environment = serde_json::from_value(serde_json::json!({
+            "id": Uuid::from_u128(1), "name": "dev", "connection_id": Uuid::from_u128(7),
+            "updated_by": "", "updated_at": "",
+        }))
+        .unwrap();
+        assert_eq!(old.previews, None);
+    }
+
+    #[test]
+    fn a_preview_lives_in_a_namespace_of_its_own_under_the_projects() {
+        let id = Uuid::from_u128(0xabcdef12_0000_0000_0000_000000000000);
+        assert_eq!(preview_name(None, id).unwrap(), "pabcdef");
+        assert_eq!(preview_name(Some(" PR-42 "), id).unwrap(), "pr-42");
+        assert_eq!(
+            preview_name(Some("a name"), id).unwrap_err().field,
+            "preview_name"
+        );
+        assert!(preview_name(Some(&"x".repeat(MAX_PREVIEW_NAME + 1)), id).is_err());
+        assert_eq!(
+            preview_namespace("shop-dev", "pr-42").unwrap(),
+            "shop-dev-pv-pr-42"
+        );
+        assert!(preview_namespace(&"s".repeat(50), "pr-42-login-fix").is_err());
+        assert_eq!(
+            preview_host(&settings(), "shop-dev-pv-pr-42").as_deref(),
+            Some("shop-dev-pv-pr-42.preview.example.com")
+        );
+        let none = PreviewSettings {
+            domain: String::new(),
+            ..settings()
+        };
+        assert_eq!(preview_host(&none, "shop-dev-pv-pr-42"), None);
+    }
+
+    #[test]
+    fn a_project_keeps_as_many_previews_as_the_environment_allows_each_name_once() {
+        let env = Uuid::from_u128(9);
+        let project = Uuid::from_u128(1);
+        let mut history = vec![preview(1, "a", "2030-01-01T00:00:00Z")];
+        assert!(preview_refusal(&settings(), &history, project, env, "b").is_none());
+        assert!(preview_refusal(&settings(), &history, project, env, "a").is_some());
+        history.push(preview(2, "b", "2030-01-01T00:00:00Z"));
+        assert!(preview_refusal(&settings(), &history, project, env, "c").is_some());
+        // A removed one makes room, and its name is free again.
+        history[0].preview.as_mut().unwrap().removed_at = Some("x".into());
+        assert!(preview_refusal(&settings(), &history, project, env, "a").is_none());
+        // Another project's previews are its own.
+        assert!(preview_refusal(&settings(), &history, Uuid::from_u128(2), env, "b").is_none());
+    }
+
+    #[test]
+    fn a_preview_is_due_once_it_expires_and_until_it_is_removed() {
+        let now = time::OffsetDateTime::parse(
+            "2026-10-30T12:00:00Z",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        assert!(preview(1, "a", "2026-10-30T11:59:59Z").preview_due(now));
+        assert!(!preview(1, "a", "2026-10-30T12:00:01Z").preview_due(now));
+        assert!(preview(1, "a", "garbled").preview_due(now));
+        let mut removed = preview(1, "a", "2026-10-30T11:00:00Z");
+        removed.preview.as_mut().unwrap().removed_at = Some("x".into());
+        assert!(!removed.preview_due(now));
+        assert!(!removed.is_live_preview());
+        assert!(!deployment(1, 1, DeploymentState::Succeeded).preview_due(now));
+        // A failed install leaves its namespace: still to remove.
+        let mut failed = preview(1, "a", "2026-10-30T11:00:00Z");
+        failed.state = DeploymentState::Failed;
+        assert!(failed.preview_due(now));
+    }
+
+    #[test]
+    fn the_history_keeps_every_live_preview_and_a_preview_is_not_what_runs_there() {
+        let mut list = DeploymentList::default();
+        list.record(deployment(1, 1, DeploymentState::Succeeded));
+        list.record(preview(2, "a", "2030-01-01T00:00:00Z"));
+        for n in 0..(HISTORY as u128 + 10) {
+            list.record(deployment(100 + n, 3, DeploymentState::Succeeded));
+        }
+        assert!(list.items.iter().any(|d| d.id == Uuid::from_u128(1)));
+        assert!(list.items.iter().any(|d| d.id == Uuid::from_u128(2)));
+        let mut removed = preview(3, "b", "2030-01-01T00:00:00Z");
+        removed.preview.as_mut().unwrap().removed_at = Some("x".into());
+        let mut list = DeploymentList::default();
+        list.record(removed);
+        for n in 0..(HISTORY as u128 + 10) {
+            list.record(deployment(100 + n, 3, DeploymentState::Succeeded));
+        }
+        assert!(!list.items.iter().any(|d| d.id == Uuid::from_u128(3)));
     }
 }

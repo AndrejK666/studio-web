@@ -11,7 +11,9 @@
 # account may create such a namespace and give itself `admin` inside it, and
 # nothing more: the admission policy below holds it to namespaces labelled as
 # made by Studio, so it can neither label its way into one it did not make nor
-# bind itself anywhere else. Needs Kubernetes 1.30 or newer
+# bind itself anywhere else. It may delete only a namespace it made for a
+# preview (ADR-0055), labelled studio.constructor.tech/preview=true, when
+# the preview ends. Needs Kubernetes 1.30 or newer
 # (ValidatingAdmissionPolicy).
 #
 # The Studio prototype shows this file, as it is, in its "Connect a cluster"
@@ -42,10 +44,11 @@ kind: ClusterRole
 metadata:
   name: constructor-studio-environments
 rules:
-  # Find a project's namespace, and make it when it is not there.
+  # Find a project's namespace, and make it when it is not there; delete a
+  # preview's (the policy below allows no other).
   - apiGroups: [""]
     resources: ["namespaces"]
-    verbs: ["get", "list", "create"]
+    verbs: ["get", "list", "create", "delete"]
   # Give itself `admin` in the namespace it made, and only `admin`.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["rolebindings"]
@@ -78,7 +81,7 @@ spec:
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]
-        operations: ["CREATE", "UPDATE"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
         resources: ["namespaces"]
       - apiGroups: ["rbac.authorization.k8s.io"]
         apiVersions: ["v1"]
@@ -89,11 +92,19 @@ spec:
       expression: "request.userInfo.username == 'system:serviceaccount:studio-environments:deployer'"
   validations:
     - expression: >-
-        request.resource.resource != 'namespaces' ||
+        request.resource.resource != 'namespaces' || request.operation == 'DELETE' ||
         (has(object.metadata.labels) &&
          'app.kubernetes.io/managed-by' in object.metadata.labels &&
          object.metadata.labels['app.kubernetes.io/managed-by'] == 'constructor-studio')
       message: "Studio makes only namespaces labelled app.kubernetes.io/managed-by=constructor-studio"
+    - expression: >-
+        request.operation != 'DELETE' ||
+        (has(oldObject.metadata.labels) &&
+         'app.kubernetes.io/managed-by' in oldObject.metadata.labels &&
+         oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'constructor-studio' &&
+         'studio.constructor.tech/preview' in oldObject.metadata.labels &&
+         oldObject.metadata.labels['studio.constructor.tech/preview'] == 'true')
+      message: "Studio deletes only the namespaces it made for previews"
     - expression: >-
         request.resource.resource != 'rolebindings' ||
         (has(namespaceObject.metadata.labels) &&

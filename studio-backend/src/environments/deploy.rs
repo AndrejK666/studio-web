@@ -99,6 +99,10 @@ pub struct DeployPayload {
     /// prepares and where it puts the application. `None` for a cluster.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub research: Option<super::research::ResearchDeploy>,
+    /// A preview (ADR-0055): its namespace is labelled as one, and its host
+    /// routed once the release is installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<super::preview::PreviewRoute>,
 }
 
 pub struct DeployTask {
@@ -349,20 +353,30 @@ impl TaskHandler for DeployTask {
             payload.release, payload.namespace
         ))
         .await;
-        match helm(&scratch, helm_args(&payload, &prepared), &ctx.cancel).await {
-            Ok(out) => {
-                info!(
-                    deployment = %payload.deployment_id,
-                    namespace = %payload.namespace,
-                    "studio-environments: release installed"
-                );
-                TaskOutcome::done_with(
-                    format!("{} installed into {}", payload.release, payload.namespace),
-                    serde_json::json!({ "output": tail(&out, 4000) }),
-                )
+        let out = match helm(&scratch, helm_args(&payload, &prepared), &ctx.cancel).await {
+            Ok(out) => out,
+            Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+        };
+        info!(
+            deployment = %payload.deployment_id,
+            namespace = %payload.namespace,
+            "studio-environments: release installed"
+        );
+        let mut summary = format!("{} installed into {}", payload.release, payload.namespace);
+        if let Some(route) = &payload.preview {
+            ctx.progress("routing the preview's address").await;
+            match super::preview::apply_route(&client, &payload.namespace, &payload.release, route)
+                .await
+            {
+                Ok(Some(said)) => summary = format!("{summary}; {said}"),
+                Ok(None) => {}
+                Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
             }
-            Err(e) => TaskOutcome::Failed(format!("{e:#}")),
         }
+        TaskOutcome::done_with(
+            summary.clone(),
+            serde_json::json!({ "output": format!("{}\n{summary}", tail(&out, 4000)) }),
+        )
     }
 }
 
@@ -386,26 +400,42 @@ pub(super) async fn prepare_namespace(
     namespace: &str,
     project: Uuid,
 ) -> anyhow::Result<()> {
+    make_namespace(client, namespace, project, None).await
+}
+
+/// [`prepare_namespace`], for a preview when `expires_at` is given: the
+/// namespace is labelled as one and says when it expires (ADR-0055).
+async fn make_namespace(
+    client: &kube::Client,
+    namespace: &str,
+    project: Uuid,
+    expires_at: Option<&str>,
+) -> anyhow::Result<()> {
     let namespaces: kube::Api<Namespace> = kube::Api::all(client.clone());
     match namespaces.get_opt(namespace).await {
         Ok(Some(_)) => Ok(()),
         Ok(None) => {
+            let mut labels: std::collections::BTreeMap<String, String> = [
+                (
+                    "app.kubernetes.io/managed-by".to_owned(),
+                    "constructor-studio".to_owned(),
+                ),
+                (
+                    "studio.constructor.tech/project".to_owned(),
+                    project.to_string(),
+                ),
+            ]
+            .into();
+            let mut annotations = std::collections::BTreeMap::new();
+            if let Some(at) = expires_at {
+                labels.insert(super::preview::PREVIEW_LABEL.to_owned(), "true".to_owned());
+                annotations.insert(super::preview::EXPIRES_ANNOTATION.to_owned(), at.to_owned());
+            }
             let ns = Namespace {
                 metadata: ObjectMeta {
                     name: Some(namespace.to_owned()),
-                    labels: Some(
-                        [
-                            (
-                                "app.kubernetes.io/managed-by".to_owned(),
-                                "constructor-studio".to_owned(),
-                            ),
-                            (
-                                "studio.constructor.tech/project".to_owned(),
-                                project.to_string(),
-                            ),
-                        ]
-                        .into(),
-                    ),
+                    labels: Some(labels),
+                    annotations: (!annotations.is_empty()).then_some(annotations),
                     ..ObjectMeta::default()
                 },
                 ..Namespace::default()
@@ -509,7 +539,12 @@ fn subject_for(username: &str) -> Subject {
 }
 
 async fn ensure_namespace(client: &kube::Client, p: &DeployPayload) -> anyhow::Result<()> {
-    prepare_namespace(client, &p.namespace, p.project_id).await
+    match &p.preview {
+        None => prepare_namespace(client, &p.namespace, p.project_id).await,
+        Some(route) => {
+            make_namespace(client, &p.namespace, p.project_id, Some(&route.expires_at)).await
+        }
+    }
 }
 
 /// The registry's login as the namespace's pull secret, used by every pod
@@ -922,6 +957,7 @@ mod tests {
             connections_from: None,
             values: serde_json::json!({}),
             research: None,
+            preview: None,
         }
     }
 

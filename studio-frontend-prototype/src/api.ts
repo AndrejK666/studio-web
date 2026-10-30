@@ -1636,8 +1636,32 @@ export interface DeployEnvironment {
   projects?: string[] | null;
   /** The project that keeps it (ADR-0054); absent: the organization's. */
   project_id?: string | null;
+  /** Whether projects may preview a build here (ADR-0055); absent: no. */
+  previews?: PreviewSettings | null;
   updated_by: string;
   updated_at: string;
+}
+
+/** What an environment says of previews (ADR-0055). */
+export interface PreviewSettings {
+  /** Wildcard DNS to the cluster's ingress: a preview answers at
+   *  `<namespace>.<domain>`. Empty: no address. */
+  domain: string;
+  /** Absent: the cluster's default Ingress class. */
+  ingress_class?: string | null;
+  /** How long a preview lives, and the most anybody may ask for. */
+  ttl_hours?: number | null;
+  /** How many previews one project keeps there at once. */
+  max_live?: number | null;
+}
+
+/** A deployment that is a preview (ADR-0055). */
+export interface DeploymentPreview {
+  name: string;
+  expires_at: string;
+  host?: string | null;
+  removed_at?: string | null;
+  removal_error?: string | null;
 }
 
 /** How a project builds (ADR-0054 §7): on gears from its `product.gdl`, or
@@ -1676,6 +1700,7 @@ export interface DeployEnvironmentInput {
   protected: boolean;
   promote_from?: string | null;
   projects?: string[] | null;
+  previews?: PreviewSettings | null;
 }
 
 /** A Constructor Research project, as its integration service names it. */
@@ -1757,6 +1782,8 @@ export interface Deployment {
   decided_at?: string | null;
   reason?: string | null;
   outcome?: string | null;
+  /** A preview (ADR-0055); absent for a deploy of what runs there. */
+  preview?: DeploymentPreview | null;
 }
 
 /** A release as its cluster reports it now. */
@@ -4567,12 +4594,22 @@ export const api = {
       build?: string;
       redeploy_of?: string;
       action?: "install" | "uninstall";
+      /** Install it as a preview (ADR-0055), in a namespace of its own. */
+      preview?: { name?: string; ttl_hours?: number };
     },
   ) =>
     request<Deployment>(`/studio-environments/v1/deployments?project_id=${encodeURIComponent(projectId)}`, token, {
       method: "POST",
       body: JSON.stringify({ profile: "", product: "", ...body }),
     }),
+  /** Remove a preview before it expires (ADR-0055): 202 with the run that
+   *  deletes its namespace. */
+  removePreview: (token: string, projectId: string, deploymentId: string) =>
+    request<{ run_id: string }>(
+      `/studio-environments/v1/previews/${encodeURIComponent(deploymentId)}?project_id=${encodeURIComponent(projectId)}`,
+      token,
+      { method: "DELETE" },
+    ),
   /** Build the product in an environment's cluster (ADR-0048 §9): 202 with
    *  the build's id, recorded as running and then passed or failed. */
   startBuild: (

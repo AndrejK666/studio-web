@@ -74,6 +74,16 @@ describe("an environment form", () => {
     expect(environmentProblem({ ...ready, projects: [] }, [])).toMatch(/at least one project/);
   });
 
+  it("takes previews only where nobody approves deploys, with a domain, a life and a limit that make sense", () => {
+    const previews = { domain: "preview.example.com", ingress_class: null, ttl_hours: 72, max_live: 3 };
+    expect(environmentProblem({ ...ready, previews }, [])).toBeNull();
+    expect(environmentProblem({ ...ready, previews: { ...previews, domain: "" } }, [])).toBeNull();
+    expect(environmentProblems({ ...ready, protected: true, previews }, []).previews).toMatch(/protected/);
+    expect(environmentProblems({ ...ready, previews: { ...previews, domain: "not a domain" } }, []).previews).toMatch(/domain/);
+    expect(environmentProblems({ ...ready, previews: { ...previews, ttl_hours: 0 } }, []).previews).toMatch(/336/);
+    expect(environmentProblems({ ...ready, previews: { ...previews, max_live: 21 } }, []).previews).toMatch(/20/);
+  });
+
   it("says everything wrong at once, by field", () => {
     // The form a person filled in on Dev: a capital, a literal namespace, no cluster.
     const p = environmentProblems({ ...ready, name: "Test", connection_id: "", namespace_pattern: "studio-web-dev" }, []);
