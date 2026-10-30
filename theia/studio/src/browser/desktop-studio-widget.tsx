@@ -35,6 +35,7 @@ import {
     openedProject, signOut, sourcesOf, startSignIn,
 } from './desktop-studio-client';
 import { StudioPicker } from './desktop-studio-picker';
+import { memberPhoto, organizationLogo, photoKey } from './desktop-account-avatar';
 
 export const DESKTOP_STUDIO_WIDGET_ID = 'studio.desktop';
 
@@ -97,6 +98,11 @@ export class DesktopStudioWidget extends ReactWidget {
     protected loading = false;
     protected loadError = '';
     protected poll: number | undefined;
+    /** The member's photo, for the sign-in it was read for (`photoKey`); `src` absent for none. */
+    protected photo: { key: string; src?: string } | undefined;
+    /** Each organization's logo from the portal, once asked: `null` for none. */
+    protected logos = new Map<string, string | null>();
+
     /** What each project's sources listing said, asked once the tree loads. */
     protected sources = new Map<string, SourcesState>();
     protected sourcesGeneration = 0;
@@ -112,9 +118,11 @@ export class DesktopStudioWidget extends ReactWidget {
         super();
         this.id = DESKTOP_STUDIO_WIDGET_ID;
         this.title.label = 'Constructor Studio';
-        this.title.caption = 'Your Constructor Studio account and projects';
+        this.title.caption = 'Constructor Studio on the web: your account, your organizations and their projects';
         this.title.closable = true;
-        this.title.iconClass = 'codicon codicon-account';
+        // The way into the Studio Web integration, not a person: the member's
+        // photo is beside their name inside the view.
+        this.title.iconClass = 'codicon codicon-globe';
         this.addClass('studio-desktop-view');
     }
 
@@ -461,10 +469,11 @@ export class DesktopStudioWidget extends ReactWidget {
     /** One compact block: which Studio, who, and the two ways out. */
     protected renderAccount(status: DesktopStatus, studio: React.ReactNode): React.ReactNode {
         const who = status.user?.name ?? status.user?.email ?? status.user?.sub;
+        const photo = this.photoOf(status);
         return <header className='studio-desktop__account'>
             {studio}
             <div className='studio-desktop__who'>
-                <span className='codicon codicon-account' />
+                {photo ? <img className='studio-desktop__avatar' src={photo} alt='' data-member-photo /> : <span className='codicon codicon-account' />}
                 <span className='studio-desktop__name' title={status.user?.email ? `${who} <${status.user.email}>` : who}>{who}</span>
             </div>
             <div className='studio-desktop__links'>
@@ -640,6 +649,7 @@ export class DesktopStudioWidget extends ReactWidget {
         const error = this.openErrors.get(row.id);
         const link = row.kind === 'organization' ? undefined : this.portalLinkOf(row.id);
         const icon = opening ? 'codicon-loading codicon-modifier-spin' : ICONS[row.kind];
+        const logo = row.kind === 'organization' && !opening ? this.logoOf(row.id) : undefined;
         const title = row.kind === 'organization'
             ? `${row.name}${row.hint ? ` (${row.hint})` : ''}`
             : here ? `${row.name} is open in this window`
@@ -670,7 +680,8 @@ export class DesktopStudioWidget extends ReactWidget {
                             this.setCollapsed(toggleCollapsed(this.collapsed, row.id));
                         }
                     }} />
-                <span className={`studio-desktop__icon codicon ${icon}`} />
+                {logo ? <img className='studio-desktop__icon studio-desktop__logo' src={logo} alt='' data-organization-logo={row.id} />
+                    : <span className={`studio-desktop__icon codicon ${icon}`} />}
                 <span className='studio-desktop__row-name'>{row.name}</span>
                 {row.hint && <span className='studio-desktop__hint'>{row.hint}</span>}
                 <span className='studio-desktop__row-meta'>
@@ -693,5 +704,36 @@ export class DesktopStudioWidget extends ReactWidget {
                     onClick={() => { this.openErrors.delete(row.id); this.update(); }} />
             </div>}
         </React.Fragment>;
+    }
+    /** The member's photo for this sign-in, asked for once; `undefined` until it is known, or for none. */
+    protected photoOf(status: DesktopStatus): string | undefined {
+        const key = photoKey(status);
+        if (!key) {
+            return undefined;
+        }
+        if (this.photo?.key !== key) {
+            this.photo = { key };
+            void memberPhoto(status.studioUrl).catch(() => undefined).then(src => {
+                if (this.photo?.key === key && src) {
+                    this.photo = { key, src };
+                    this.update();
+                }
+            });
+        }
+        return this.photo.src;
+    }
+
+    /** An organization's logo from the portal, asked for once; `undefined` until it is known, or for none. */
+    protected logoOf(organizationId: string): string | undefined {
+        if (!this.logos.has(organizationId)) {
+            this.logos.set(organizationId, null);
+            void organizationLogo(organizationId).catch(() => undefined).then(src => {
+                if (src) {
+                    this.logos.set(organizationId, src);
+                    this.update();
+                }
+            });
+        }
+        return this.logos.get(organizationId) ?? undefined;
     }
 }

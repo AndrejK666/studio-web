@@ -331,7 +331,7 @@ function FlowSection(props: DeployPanelProps & { readonly flow: DeployFlow; read
                   {BUILD_STAGES.map((stage) => (
                     <span
                       key={stage}
-                      className={`gbx-badge gbx-deploy-stage-${stages[stage]}`}
+                      className={`gbx-deploy-stage gbx-deploy-stage-${stages[stage]}`}
                       data-deploy-stage={stage}
                       data-deploy-stage-state={stages[stage]}
                       title={`${stage}: ${stages[stage]}`}
@@ -341,8 +341,8 @@ function FlowSection(props: DeployPanelProps & { readonly flow: DeployFlow; read
                   ))}
                 </div>
                 {build.status === "failed" && build.failure !== undefined && (
-                  <p className="gbx-inline-error" data-deploy-build-failure>
-                    {firstLine(build.failure)}
+                  <p className="gbx-inline-error" data-deploy-build-failure title={build.failure}>
+                    {failureLine(build.failure)}
                   </p>
                 )}
                 {(build.chartRef !== undefined || build.images.length > 0) && (
@@ -385,9 +385,10 @@ function FlowSection(props: DeployPanelProps & { readonly flow: DeployFlow; read
       )}
       {flow.deployments.length > 0 && (
         <ul className="gbx-deploy-history" aria-label="Deploys">
-          {flow.deployments.slice(0, SHOWN).map((d) => (
-            <li key={d.id} data-deploy-history={d.id} data-deploy-history-state={d.state}>
-              {deploymentStateLabel(d.state)} · {d.environmentName} ({d.namespace})
+          {groupDeployments(flow.deployments).slice(0, SHOWN).map(({ deployment: d, times }) => (
+            <li key={d.id} data-deploy-history={d.id} data-deploy-history-state={d.state} data-deploy-history-times={times}>
+              {deploymentStateLabel(d.state)}
+              {times > 1 ? <span className="gbx-deploy-times"> ×{times}</span> : null} · {d.environmentName} ({d.namespace})
               {d.action === "uninstall" ? " · uninstall" : d.chartVersion !== undefined ? ` · ${d.chartVersion}` : ""}
               {d.build !== undefined ? ` · build ${d.build}` : ""}
               {d.requestedBy !== undefined ? ` · ${d.requestedBy}` : ""}
@@ -468,8 +469,12 @@ function EnvironmentExtras(props: DeployPanelProps & { readonly environment: Stu
   if (props.onProposeWorkflow === undefined && props.onSecret === undefined) return null;
   const keyOk = validSecretKey(key);
   const prUrl = props.workflow?.prUrl;
+  const secrets = (props.secrets ?? []).length;
   return (
-    <div className="gbx-deploy-extras" data-deploy-extras={environment.id}>
+    <details className="gbx-deploy-extras" data-deploy-extras={environment.id}>
+      <summary>
+        More for {environment.name}: build in CI, secrets{secrets > 0 ? ` (${secrets})` : ""}
+      </summary>
       {props.onProposeWorkflow !== undefined && (
         <div className="gbx-generate-actions" data-deploy-workflow>
           <button
@@ -544,10 +549,42 @@ function EnvironmentExtras(props: DeployPanelProps & { readonly environment: Stu
           </form>
         </section>
       )}
-    </div>
+    </details>
   );
 }
 
-function firstLine(text: string): string {
-  return text.split(/\r?\n/)[0] ?? text;
+/**
+ * A build's failure as one line: its first line, without what gearbox adds
+ * after ` · ` (help, evidence), at most 240 characters. The whole of it is
+ * the line's tooltip.
+ */
+export function failureLine(text: string): string {
+  const first = (text.split(/\r?\n/).find((l) => l.trim() !== "") ?? text).split(" · ")[0]?.trim() ?? "";
+  return first.length > 240 ? `${first.slice(0, 240).trimEnd()}…` : first;
+}
+
+/**
+ * Deploys as they are read: one row for a run of the same deploy asked again
+ * and again with the same end -- five identical "Failed · dev · build X" lines
+ * were five rows, and pushed everything else off the screen.
+ */
+export function groupDeployments(
+  deployments: readonly ProductDeployment[],
+): { readonly deployment: ProductDeployment; readonly times: number }[] {
+  const out: { deployment: ProductDeployment; times: number }[] = [];
+  for (const d of deployments) {
+    const last = out[out.length - 1];
+    const same =
+      last !== undefined &&
+      last.deployment.state === d.state &&
+      last.deployment.environmentName === d.environmentName &&
+      last.deployment.namespace === d.namespace &&
+      last.deployment.action === d.action &&
+      last.deployment.build === d.build &&
+      last.deployment.chartVersion === d.chartVersion &&
+      last.deployment.reason === d.reason;
+    if (same) last.times += 1;
+    else out.push({ deployment: d, times: 1 });
+  }
+  return out;
 }

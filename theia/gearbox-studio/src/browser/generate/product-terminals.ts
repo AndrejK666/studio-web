@@ -12,6 +12,16 @@ import { TerminalService } from "@theia/terminal/lib/browser/base/terminal-servi
 
 export type ProductTerminalKind = "build" | "run" | "deploy";
 
+/** Whether the terminal's shell still runs: the backend answers for its process. */
+async function alive(terminal: TerminalWidget): Promise<boolean> {
+  try {
+    await terminal.processId;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The widget id of a product's terminal: stable, so the next press finds it. */
 export function productTerminalId(kind: ProductTerminalKind, product: string): string {
   return `gearbox-${kind}-${product}`;
@@ -45,6 +55,14 @@ export class ProductTerminals {
     // nothing of it and sent nothing to it, so Build typed into a blank tab.
     // Open a new one instead, as for a changed environment.
     if (terminal !== undefined && !terminal.isDisposed && (!this.opened.has(id) || this.opened.get(id) !== envKey)) {
+      terminal.dispose();
+      terminal = undefined;
+    }
+    // A tab whose shell has ended (it was exited, or the backend restarted)
+    // is still a widget, but the backend no longer knows its process, and
+    // the first call that names it fails with `terminal "<n>" does not
+    // exist` -- which the portal's Build on my machine showed as its error.
+    if (terminal !== undefined && !terminal.isDisposed && !(await alive(terminal))) {
       terminal.dispose();
       terminal = undefined;
     }

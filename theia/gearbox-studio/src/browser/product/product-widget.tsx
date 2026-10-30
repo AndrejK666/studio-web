@@ -83,13 +83,16 @@ import { pointKey, pointsOf } from "../../common/extension-points";
 import type { Message } from "@theia/core/shared/@lumino/messaging";
 
 /** One product workspace; old section names remain accepted by command adapters. */
-export type ProductSection = "composition" | "topology" | "checks" | "generate" | "settings";
+export type ProductSection = "composition" | "topology" | "checks" | "generate" | "deploy" | "settings";
 export type ProductSectionInput = ProductSection | "overview" | "validation";
 const SECTIONS: readonly { readonly id: ProductSection; readonly label: string }[] = [
   { id: "composition", label: "Composition" },
   { id: "topology", label: "Topology" },
   { id: "checks", label: "Checks" },
   { id: "generate", label: "Generate" },
+  // Constructor Studio: what comes after Generate -- build, run, deploy --
+  // drawn by the same Generate widget (`setView`), on a stage of its own.
+  { id: "deploy", label: "Run & Deploy" },
 ];
 
 @injectable()
@@ -788,7 +791,7 @@ export class ProductWidget extends ReactWidget {
               else return;
               event.preventDefault(); tabs[next]?.focus(); tabs[next]?.click();
             }}>
-            {SECTIONS.filter(section => section.id !== "generate" || this.catalogue.engineCapabilities?.generate !== false).map(section =>
+            {SECTIONS.filter(section => (section.id !== "generate" && section.id !== "deploy") || this.catalogue.engineCapabilities?.generate !== false).map(section =>
               <button type="button" key={section.id} role="tab" aria-selected={this.section === section.id}
                 tabIndex={this.section === section.id || (this.section === "settings" && section.id === "composition") ? 0 : -1}
                 className={`gbx-view-tab ${this.section === section.id ? "gbx-view-tab-on" : ""}`}
@@ -846,7 +849,7 @@ export class ProductWidget extends ReactWidget {
             </section>
           : this.section === "topology" && product ? this.renderTopology(product) : undefined}
         {/* No React children: the Generate widget's own node is attached here. */}
-        {this.generateVisited && <div className="gbx-embedded-generate" hidden={this.section !== "generate"}
+        {this.generateVisited && <div className="gbx-embedded-generate" hidden={this.section !== "generate" && this.section !== "deploy"}
           ref={(host) => this.mountGenerate(host)} />}
         </div>
       </div>
@@ -930,6 +933,8 @@ export class ProductWidget extends ReactWidget {
       });
       return;
     }
+    // One widget, two stages: the code on Generate, what comes after it on Run & Deploy.
+    (widget as unknown as { setView?: (view: "generate" | "deploy") => void }).setView?.(this.section === "deploy" ? "deploy" : "generate");
     if (widget.node.parentElement === host) return;
     if (widget.parent !== null) widget.parent = null;
     else if (widget.isAttached) Widget.detach(widget);
@@ -945,7 +950,7 @@ export class ProductWidget extends ReactWidget {
   /** Move to a stage, from somewhere other than the strip. */
   public showSection(section: ProductSectionInput): void {
     this.section = section === "overview" ? "settings" : section === "validation" ? "checks" : section;
-    if (this.section === "generate") this.generateVisited = true;
+    if (this.section === "generate" || this.section === "deploy") this.generateVisited = true;
     this.update();
   }
 
@@ -1357,6 +1362,7 @@ export class ProductWidget extends ReactWidget {
       case "composition":
       case "checks":
       case "generate":
+      case "deploy":
         return undefined;
     }
   }

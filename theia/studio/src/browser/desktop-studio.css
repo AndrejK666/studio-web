@@ -41,6 +41,7 @@
 }
 .studio-desktop__studio .codicon,
 .studio-desktop__who .codicon { color: var(--sd-muted); flex: none; }
+.studio-desktop__avatar { width: 16px; height: 16px; border-radius: 50%; object-fit: cover; flex: none; }
 .studio-desktop__host {
     color: var(--sd-muted);
     font-size: 0.92em;
@@ -206,6 +207,7 @@
 }
 .studio-desktop__twisty { flex: none; width: 16px; color: var(--sd-muted); }
 .studio-desktop__icon { flex: none; color: var(--sd-muted); }
+.studio-desktop__logo { width: 16px; height: 16px; object-fit: contain; border-radius: 3px; }
 .studio-desktop__row--organization .studio-desktop__icon,
 .studio-desktop__row--here .studio-desktop__icon { color: var(--theia-foreground); }
 .studio-desktop__row-name {
