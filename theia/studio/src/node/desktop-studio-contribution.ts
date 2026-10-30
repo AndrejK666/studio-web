@@ -4,14 +4,16 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as express from '@theia/core/shared/express';
-import { injectable } from '@theia/core/shared/inversify';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
+import { KeyStoreService } from '@theia/core/lib/common/key-store';
 import { BackendApplicationContribution } from '@theia/core/lib/node/backend-application';
 import { DesktopEnvironment, DesktopEnvironmentChoice, customEnvironment, parseEnvironments } from '../common/desktop-environments';
 import { clonePercent, parseGitProgress, type OpenProgress, type SourceProgress } from '../common/desktop-open-progress';
 import { GitRunner, describeRepository, pushRepository, repositoriesUnder, runGit, syncRepository } from './desktop-git';
 import { DesktopLeases, LeaseTarget } from './desktop-leases';
 import { LlmProxy, startLlmProxy } from './desktop-llm-proxy';
-import { DesktopSession, SignInExpired, signIn } from './desktop-sign-in';
+import { DesktopSession, DesktopTokens, SignInExpired, signIn } from './desktop-sign-in';
+import { RememberedSignIn } from './desktop-sign-in-store';
 import { CREDENTIALS_ENV, TokenBroker, startTokenBroker } from './desktop-token-broker';
 
 /**
@@ -274,6 +276,11 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     protected settings = readSettings(this.settingsFile);
     protected config = desktopConfigFrom(process.env, process.cwd(), this.settings);
     protected session: DesktopSession | undefined;
+    /** The OS keychain: the web session's backend has one too, and never reaches it (no config). */
+    @inject(KeyStoreService) @optional() protected readonly keyStore: KeyStoreService | undefined;
+    protected remembered(): RememberedSignIn {
+        return new RememberedSignIn(this.keyStore);
+    }
     protected broker: TokenBroker | undefined;
     protected llmProxy: LlmProxy | undefined;
     protected ready: Promise<void> | undefined;
@@ -379,7 +386,7 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 res.status(400).json({ error: `no Studio "${id ?? ''}" in this build` });
                 return;
             }
-            await this.signOut();
+            await this.signOut(false);
             // The update channel is the member's too, and outlives a change of Studio.
             // So is what each folder was opened for: it says which Studio too.
             // And the device is the same machine whichever Studio it talks to.
@@ -388,6 +395,10 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             });
             this.config = desktopConfigFrom(process.env, process.cwd(), this.settings);
             this.status = this.describe('signed-out');
+            // Back to a Studio signed in to before: signed in again, as at a start.
+            if (this.config) {
+                this.ready = this.resume(this.config).then(() => undefined);
+            }
             res.json(this.status);
         });
         // The update channel as the Studio view kept it before the choice
@@ -609,6 +620,11 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         // a deployment asks for it at launch.
         if (this.config && process.env.STUDIO_DESKTOP_AUTO_SIGN_IN === '1') {
             this.ready = this.start(this.config);
+        } else if (this.config) {
+            // A member who signed in last time is signed in again, if the
+            // identity provider still takes what was kept.
+            const config = this.config;
+            this.ready = this.resume(config).then(() => undefined);
         }
     }
 
@@ -659,7 +675,12 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     }
 
     /** Forget the token and stop handing it to git. */
-    protected async signOut(): Promise<void> {
+    protected async signOut(forget = true): Promise<void> {
+        // Signing out means the next start asks again: the kept sign-in goes
+        // too -- but not when the member only switches to another Studio.
+        if (forget && this.config && this.session) {
+            await this.remembered().forget(this.config.issuer, this.config.clientId);
+        }
         const target = this.leaseTarget();
         if (target) {
             await this.leases.endAll(target);
@@ -699,7 +720,58 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             // The member switched Studios while the browser was open.
             return;
         }
-        this.session = new DesktopSession(config.issuer, config.clientId, tokens);
+        this.session = this.sessionOf(config, tokens);
+        await this.remembered().save(config.issuer, config.clientId, tokens);
+        await this.prepare(config, tokens);
+    }
+
+    /** A session whose refreshed tokens are kept, so the next start resumes with the newest. */
+    protected sessionOf(config: DesktopStudioConfig, tokens: DesktopTokens): DesktopSession {
+        const keep = (t: DesktopTokens) => void this.remembered().save(config.issuer, config.clientId, t);
+        return new DesktopSession(config.issuer, config.clientId, tokens, fetch, Date.now, keep);
+    }
+
+    /**
+     * Sign in with the refresh token the last run kept, without a browser.
+     * False when there is none, or the identity provider no longer takes it
+     * (then it is forgotten): the member signs in from the Studio view.
+     */
+    protected async resume(config: DesktopStudioConfig): Promise<boolean> {
+        const kept = await this.remembered().load(config.issuer, config.clientId);
+        if (!kept) {
+            return false;
+        }
+        this.status = this.describe('signing-in');
+        const keep = (t: DesktopTokens) => void this.remembered().save(config.issuer, config.clientId, t);
+        const session = DesktopSession.resumed(config.issuer, config.clientId, kept, fetch, keep);
+        try {
+            await session.accessToken();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`[studio-desktop] the kept sign-in was not taken: ${message}`);
+            // An expired one is gone for good; a network failure may pass, so it stays.
+            if (error instanceof SignInExpired) {
+                await this.remembered().forget(config.issuer, config.clientId);
+            }
+            this.status = this.describe('signed-out');
+            return false;
+        }
+        if (config !== this.config) {
+            return false;
+        }
+        this.session = session;
+        try {
+            await this.prepare(config, session.current);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(`[studio-desktop] ${message}`);
+            this.status = { ...this.status, error: message };
+        }
+        return true;
+    }
+
+    /** What follows a sign-in, from a browser or a kept token: git, the status, the pinned workspace. */
+    protected async prepare(config: DesktopStudioConfig, tokens: DesktopTokens): Promise<void> {
         // Opened at start already, unless this run became a desktop Studio since.
         await this.openBroker();
         // And where Studio's own Git remotes are, with the helper that signs

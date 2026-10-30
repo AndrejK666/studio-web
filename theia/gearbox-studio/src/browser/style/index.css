@@ -1683,6 +1683,10 @@ button.gbx-health-pill:hover { border-color: var(--theia-focusBorder); }
 .gbx-deploy-status { margin: 6px 0 0 12px; font-size: 12px; }
 .gbx-deploy-status ul { list-style: none; margin: 0; padding: 0; }
 .gbx-deploy-status [data-deploy-workload-ready="false"] { color: var(--theia-editorWarning-foreground); }
+.gbx-deploy-status [data-deploy-problems] { list-style: none; margin: 0 0 4px; padding: 0; }
+.gbx-deploy-logs { margin: 6px 0 0 12px; font-size: 12px; }
+.gbx-deploy-logs summary { cursor: pointer; font-family: var(--theia-code-font-family); }
+.gbx-deploy-logs pre { max-height: 320px; overflow: auto; margin: 4px 0 8px; padding: 6px 8px; background: var(--theia-terminal-background, var(--theia-editor-background)); color: var(--theia-terminal-foreground, var(--theia-editor-foreground)); font-family: var(--theia-code-font-family); font-size: 11px; white-space: pre-wrap; word-break: break-all; }
 .gbx-deploy-extras { margin-top: 12px; }
 .gbx-deploy-extras form input { padding: 4px 6px; }
 .gbx-link { font: inherit; padding: 0 4px 0 0; border: 0; background: transparent; color: var(--theia-textLink-foreground); cursor: pointer; }

@@ -1825,6 +1825,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/deployments/{deployment_id}/logs",
+      "operation_id": "studio_environments.get_deployment_logs",
+      "tag": "",
+      "summary": "The end of each container's log of a deployed release",
+      "authenticated": true,
+      "responses": [
+        "DeploymentLogsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/deployments/{deployment_id}/status",
       "operation_id": "studio_environments.get_deployment_status",
       "tag": "",

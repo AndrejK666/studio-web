@@ -44,12 +44,14 @@ import {
   type RunTarget,
 } from "../../common/run-product";
 import { ProductTerminals } from "./product-terminals";
-import { PUBLISH_WAIT_MS, publishOutcome } from "./publish-outcome";
+import { PUBLISH_WAIT_MS } from "./publish-outcome";
 import { RunPanel, type PostgresState } from "./run-panel";
-import { DeployPanel, type DeployStatusView } from "./deploy-panel";
+import { DeployPanel, type DeployLogsView, type DeployStatusView } from "./deploy-panel";
 import { ProductDescriptionSync } from "../shell/product-description-sync";
 import {
-  defaultTarget,
+  flowToFollow,
+  nextTarget,
+  shouldAskFlow,
   deployAnswer,
   deployBuildRequest,
   deployCommands,
@@ -204,6 +206,10 @@ export class GenerateWidget extends ReactWidget {
    * read for. Followed every few seconds while a build runs.
    */
   protected flowFor: string | undefined;
+  /** When the environments were last asked for `flowFor`, and whether that placed the project. */
+  protected flowAsked: { at?: number; placed: boolean } = { placed: false };
+  /** Whether the member picked the deploy target, rather than it being the default. */
+  protected targetChosen = false;
   protected flowBuilds: readonly ProductBuild[] = [];
   protected flowDeployments: readonly ProductDeployment[] = [];
   protected flowError: string | undefined;
@@ -212,6 +218,7 @@ export class GenerateWidget extends ReactWidget {
   protected binding = false;
   /** Each deploy's live status, as last read from its cluster. */
   protected statuses: Record<string, DeployStatusView> = {};
+  protected logs: Record<string, DeployLogsView> = {};
   /** The CI build workflow proposed, by environment. */
   protected workflows: Record<string, BuildWorkflow> = {};
   protected proposingWorkflow = false;
@@ -580,7 +587,7 @@ export class GenerateWidget extends ReactWidget {
         this.deployTargets = undefined;
       }
     }
-    this.deployTarget ??= defaultTarget(this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
+    this.deployTarget = nextTarget(this.deployTarget, this.targetChosen, this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
     this.update();
   }
 
@@ -685,20 +692,13 @@ export class GenerateWidget extends ReactWidget {
         ...stamp,
         configDir,
       });
-      // Published only once the terminal says every push went through: a
-      // build recorded as published with a chart the registry refused sent
-      // every Deploy after it to "not found".
-      const marker = `studio-publish-${newBuildId()}`;
-      const terminal = await this.terminals.send(
-        "publish",
-        context.product,
-        context.cwd,
-        `${plan.commands.join(" && ")} && echo ${marker}-ok || echo ${marker}-failed`,
-        { DOCKER_BUILDKIT: "1" },
-      );
+      // Published only once every push went through, by the commands' exit
+      // code: a build recorded as published with a chart the registry
+      // refused sent every Deploy after it to "not found".
+      const run = await this.terminals.run("publish", context.product, context.cwd, plan.commands.join(" && "), { DOCKER_BUILDKIT: "1" }, PUBLISH_WAIT_MS);
       this.deployNote = `Publishing ${plan.chartVersion} to ${environment.registry} in the Publish terminal…`;
       this.update();
-      const ended = await publishOutcome(terminal, marker, PUBLISH_WAIT_MS);
+      const ended = await run.ended;
       if (ended.ok) {
         this.published = {
           environmentId: environment.id,
@@ -948,15 +948,24 @@ export class GenerateWidget extends ReactWidget {
    * has not asked yet.
    */
   protected async askFlow(file: string): Promise<void> {
-    if (this.flowFor === file || this.environments?.builds === undefined) return;
+    if (this.environments?.builds === undefined) return;
+    const asked = this.flowFor === file ? this.flowAsked : { placed: false };
+    if (!shouldAskFlow({ file: this.flowFor, ...asked }, file, Date.now())) return;
     this.flowFor = file;
+    this.flowAsked = { at: Date.now(), placed: false };
     if (this.deployTargets === undefined) {
       try {
         this.deployTargets = await this.environments.targets(file);
       } catch {
         this.deployTargets = undefined;
       }
-      this.deployTarget ??= defaultTarget(this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
+      this.deployTarget = nextTarget(this.deployTarget, this.targetChosen, this.deployTargets, this.product.current.profile, this.deploy?.contexts ?? [], this.deploy?.currentContext);
+    }
+    if (this.flowFor !== file) return;
+    this.flowAsked = { at: this.flowAsked.at, placed: this.deployTargets !== undefined };
+    if (this.deployTargets === undefined) {
+      this.update();
+      return;
     }
     await this.refreshFlow();
   }
@@ -978,7 +987,11 @@ export class GenerateWidget extends ReactWidget {
     } catch (error) {
       this.flowError = error instanceof Error ? error.message : String(error);
     }
-    if (this.flowBuilds.some((b) => b.status === "running") && !this.isDisposed) {
+    const follow = flowToFollow(this.flowBuilds, this.flowDeployments);
+    // A deploy that is installing is read from its cluster on each look, so a
+    // pod that cannot start shows here while helm still waits for it.
+    for (const id of follow.statuses) void this.readStatus(id, true);
+    if (follow.again && !this.isDisposed) {
       if (!this.flowFollowing) {
         this.flowFollowing = true;
         this.toDispose.push({ dispose: () => this.flowTimer !== undefined && clearTimeout(this.flowTimer) });
@@ -1010,17 +1023,42 @@ export class GenerateWidget extends ReactWidget {
   }
 
   /** Read a deploy's release from its cluster now, in the project's organization. */
-  protected async readStatus(deploymentId: string): Promise<void> {
+  protected async readStatus(deploymentId: string, quietly = false): Promise<void> {
     const source = this.environments;
     const organization = this.deployTargets?.organizationId;
     if (source?.status === undefined || organization === undefined) return;
-    this.statuses = { ...this.statuses, [deploymentId]: { kind: "loading" } };
-    this.update();
+    // Following a deploy keeps what it last read on screen instead of "Reading…".
+    if (!quietly || this.statuses[deploymentId] === undefined) {
+      this.statuses = { ...this.statuses, [deploymentId]: { kind: "loading" } };
+      this.update();
+    }
     try {
       const status = await source.status(organization, deploymentId);
       this.statuses = { ...this.statuses, [deploymentId]: { kind: "status", status } };
     } catch (error) {
       this.statuses = { ...this.statuses, [deploymentId]: { kind: "error", error: error instanceof Error ? error.message : String(error) } };
+    }
+    this.update();
+  }
+
+  /** Read the end of each container's log of a deploy's release, or hide it when it shows. */
+  protected async readLogs(deploymentId: string): Promise<void> {
+    const source = this.environments;
+    const organization = this.deployTargets?.organizationId;
+    if (source?.logs === undefined || organization === undefined) return;
+    if (this.logs[deploymentId]?.kind === "logs") {
+      const { [deploymentId]: _shown, ...rest } = this.logs;
+      this.logs = rest;
+      this.update();
+      return;
+    }
+    this.logs = { ...this.logs, [deploymentId]: { kind: "loading" } };
+    this.update();
+    try {
+      const logs = await source.logs(organization, deploymentId);
+      this.logs = { ...this.logs, [deploymentId]: { kind: "logs", logs } };
+    } catch (error) {
+      this.logs = { ...this.logs, [deploymentId]: { kind: "error", error: error instanceof Error ? error.message : String(error) } };
     }
     this.update();
   }
@@ -1122,6 +1160,7 @@ export class GenerateWidget extends ReactWidget {
         target={this.deployTarget}
         onTarget={(next) => {
           this.deployTarget = next;
+          this.targetChosen = true;
           this.deployNote = undefined;
           this.update();
         }}
@@ -1147,6 +1186,8 @@ export class GenerateWidget extends ReactWidget {
         onDeployBuild={(buildId) => void this.requestStudioBuildDeploy(buildId)}
         onBind={(environmentId) => void this.bindProfile(environmentId)}
         statuses={this.statuses}
+        logs={this.logs}
+        {...(this.environments?.logs !== undefined ? { onLogs: (id: string) => void this.readLogs(id) } : {})}
         {...(this.environments?.status !== undefined && this.deployTargets?.organizationId !== undefined
           ? { onStatus: (id: string) => void this.readStatus(id) }
           : {})}

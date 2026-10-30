@@ -211,7 +211,25 @@ export class DesktopSession {
         private tokens: DesktopTokens,
         private readonly fetchImpl: typeof fetch = fetch,
         private readonly now: () => number = Date.now,
+        /** Told each refresh's tokens: the provider may rotate the refresh token, and the kept one must follow. */
+        private readonly onRefresh: (tokens: DesktopTokens) => void = () => undefined,
     ) { }
+
+    /** A session from a kept refresh token: the first `accessToken()` trades it. */
+    static resumed(
+        issuer: string,
+        clientId: string,
+        refreshToken: string,
+        fetchImpl: typeof fetch = fetch,
+        onRefresh?: (tokens: DesktopTokens) => void,
+    ): DesktopSession {
+        return new DesktopSession(issuer, clientId, { accessToken: '', expiresAt: 0, refreshToken }, fetchImpl, Date.now, onRefresh);
+    }
+
+    /** The tokens now: what the sign-in keeps. */
+    get current(): DesktopTokens {
+        return this.tokens;
+    }
 
     async accessToken(): Promise<string> {
         if (this.tokens.expiresAt - this.now() > 30_000) {
@@ -229,7 +247,10 @@ export class DesktopSession {
             refresh_token: refreshToken,
         }, this.fetchImpl);
         try {
-            this.tokens = await this.pending;
+            const refreshed = await this.pending;
+            // A provider that does not rotate answers without one: the old stays good.
+            this.tokens = refreshed.refreshToken ? refreshed : { ...refreshed, refreshToken };
+            this.onRefresh(this.tokens);
         } catch (error) {
             // 400/401 from the token endpoint is a refresh token it will never
             // take again (invalid_grant); anything else may pass.

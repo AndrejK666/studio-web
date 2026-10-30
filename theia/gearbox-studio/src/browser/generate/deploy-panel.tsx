@@ -13,6 +13,7 @@
 import React from "@theia/core/shared/react";
 
 import {
+  logHeading,
   BUILD_STAGES,
   buildStages,
   deploymentStateLabel,
@@ -22,6 +23,7 @@ import {
   targetValue,
   validSecretKey,
   type BuildWorkflow,
+  type ContainerLog,
   type DeployImage,
   type DeploymentStatus,
   type DeployTarget,
@@ -109,7 +111,17 @@ export interface DeployPanelProps {
   readonly onSecret?: (key: string, value: string | undefined) => void;
   /** Open the Generate stage, where Apply writes the tree a build on this machine needs. */
   readonly onShowGenerate?: () => void;
+  /** A deploy's container logs, by deployment id, once asked for. */
+  readonly logs?: Readonly<Record<string, DeployLogsView>>;
+  /** Read (or hide) a deploy's container logs; absent where Studio cannot be asked. */
+  readonly onLogs?: (deploymentId: string) => void;
 }
+
+/** A deploy's container logs as the panel holds them: asked, answered, or refused. */
+export type DeployLogsView =
+  | { readonly kind: "loading" }
+  | { readonly kind: "logs"; readonly logs: readonly ContainerLog[] }
+  | { readonly kind: "error"; readonly error: string };
 
 /** A deploy's live status as the panel holds it: asked, answered, or refused. */
 export type DeployStatusView =
@@ -509,7 +521,7 @@ function DeployRow(props: DeployPanelProps & { readonly row: { readonly deployme
           -- {failureLine(why)}
         </span>
       )}
-      {props.onStatus !== undefined && d.action !== "uninstall" && d.state === "succeeded" && (
+      {props.onStatus !== undefined && d.action !== "uninstall" && (d.state === "succeeded" || d.state === "failed") && (
         <>
           {" "}
           <button
@@ -524,7 +536,23 @@ function DeployRow(props: DeployPanelProps & { readonly row: { readonly deployme
           </button>
         </>
       )}
+      {props.onLogs !== undefined && d.action !== "uninstall" && (d.state === "succeeded" || d.state === "failed" || d.state === "running") && (
+        <>
+          {" "}
+          <button
+            type="button"
+            className="gbx-choice"
+            data-deploy-logs={d.id}
+            disabled={props.logs?.[d.id]?.kind === "loading"}
+            aria-label={`Logs of the deploy to ${d.environmentName}`}
+            onClick={() => props.onLogs?.(d.id)}
+          >
+            {props.logs?.[d.id]?.kind === "loading" ? "Reading…" : props.logs?.[d.id]?.kind === "logs" ? "Hide logs" : "Logs"}
+          </button>
+        </>
+      )}
       {renderStatus(props.statuses?.[d.id], props.onOpen)}
+      {renderLogs(props.logs?.[d.id])}
     </div>
   );
 }
@@ -558,6 +586,35 @@ function FlowSection(props: DeployPanelProps & { readonly flow: DeployFlow; read
   );
 }
 
+/** The end of each container's log, one block each, scrolled to its end. */
+function renderLogs(view: DeployLogsView | undefined): React.ReactNode {
+  if (view === undefined || view.kind === "loading") return null;
+  if (view.kind === "error") {
+    return (
+      <p className="gbx-inline-error" data-deploy-logs-error>
+        The logs could not be read: {view.error}
+      </p>
+    );
+  }
+  if (view.logs.length === 0) {
+    return (
+      <p className="gbx-waiting" data-deploy-logs-view>
+        No pods of this release run in the namespace.
+      </p>
+    );
+  }
+  return (
+    <div className="gbx-deploy-logs" data-deploy-logs-view>
+      {view.logs.map((log) => (
+        <details key={`${log.pod}/${log.container}/${log.previous ? "previous" : "now"}`} open={view.logs.length === 1 || log.previous} data-deploy-log={`${log.pod}/${log.container}`}>
+          <summary>{logHeading(log)}</summary>
+          <pre ref={(node) => node?.scrollTo?.(0, node.scrollHeight)}>{log.text.trim() === "" ? "(empty)" : log.text}</pre>
+        </details>
+      ))}
+    </div>
+  );
+}
+
 /** What the cluster says of a release now: each workload's pods ready of desired, and where it answers. */
 function renderStatus(view: DeployStatusView | undefined, open: ((url: string) => void) | undefined): React.ReactNode {
   if (view === undefined || view.kind === "loading") return null;
@@ -569,8 +626,18 @@ function renderStatus(view: DeployStatusView | undefined, open: ((url: string) =
     );
   }
   const { workloads, hosts } = view.status;
+  const problems = view.status.problems ?? [];
   return (
     <div className="gbx-deploy-status" data-deploy-status-view>
+      {problems.length > 0 && (
+        <ul className="gbx-inline-error" aria-label="Why it does not start" data-deploy-problems>
+          {problems.map((p) => (
+            <li key={p} data-deploy-problem>
+              {p}
+            </li>
+          ))}
+        </ul>
+      )}
       {workloads.length === 0 ? (
         <p className="gbx-waiting">No workloads of this release run in the namespace.</p>
       ) : (

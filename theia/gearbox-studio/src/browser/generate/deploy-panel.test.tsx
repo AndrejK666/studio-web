@@ -211,6 +211,74 @@ describe("the Deploy panel", () => {
       expect(onOpen).toHaveBeenCalledWith("https://shop.example.com");
     });
 
+    it("say why a failed deploy's release does not start, and offer its status", async () => {
+      const onStatus = jest.fn();
+      const failed = { ...succeeded, state: "failed", outcome: "the release could not start" };
+      await draw({
+        environments: [prod],
+        target: { kind: "environment", id: "e-prod" },
+        onStatus,
+        flow: { next: { text: "x", tone: "todo" }, builds: [], deployments: [failed] },
+        statuses: {
+          d2: {
+            kind: "status",
+            status: {
+              workloads: [{ name: "shop-api", ready: 0, desired: 1, images: [] }],
+              hosts: [],
+              problems: ['pod shop-api-7c9 container api: CreateContainerConfigError: secret "shop-db" not found'],
+            },
+          },
+        },
+      });
+      expect(q("[data-deploy-status=d2]")).not.toBeNull();
+      const problems = host.querySelectorAll("[data-deploy-problem]");
+      expect(problems).toHaveLength(1);
+      expect(problems[0]?.textContent).toMatch(/CreateContainerConfigError: secret "shop-db" not found/);
+    });
+
+    it("read a deploy's container logs, headed by pod and container, the crashed run's open", async () => {
+      const onLogs = jest.fn();
+      const failed = { ...succeeded, state: "failed" };
+      await draw({
+        environments: [prod],
+        target: { kind: "environment", id: "e-prod" },
+        onLogs,
+        flow: { next: { text: "x", tone: "todo" }, builds: [], deployments: [failed] },
+        logs: {
+          d2: {
+            kind: "logs",
+            logs: [
+              { pod: "shop-api-7c9", container: "api", previous: false, text: "" },
+              { pod: "shop-api-7c9", container: "api", previous: true, text: "Error: GEARS_PG_PASSWORD is not set\n" },
+            ],
+          },
+        },
+      });
+      await act(() => q("[data-deploy-logs=d2]")?.click());
+      expect(onLogs).toHaveBeenCalledWith("d2");
+      expect(q("[data-deploy-logs=d2]")?.textContent).toBe("Hide logs");
+      const blocks = host.querySelectorAll("[data-deploy-log]");
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0]?.textContent).toMatch(/shop-api-7c9 · api\(empty\)/);
+      expect(blocks[0]?.hasAttribute("open")).toBe(false);
+      expect(blocks[1]?.textContent).toMatch(/the run before its last restart/);
+      expect(blocks[1]?.textContent).toMatch(/GEARS_PG_PASSWORD is not set/);
+      expect(blocks[1]?.hasAttribute("open")).toBe(true);
+    });
+
+    it("say when the logs could not be read, and offer none for an uninstall", async () => {
+      const onLogs = jest.fn();
+      await draw({
+        environments: [prod],
+        target: { kind: "environment", id: "e-prod" },
+        onLogs,
+        flow: { next: { text: "x", tone: "todo" }, builds: [], deployments: [{ ...succeeded, id: "d3", action: "uninstall" }, succeeded] },
+        logs: { d2: { kind: "error", error: "ENVIRONMENT_CLUSTER_UNREACHABLE" } },
+      });
+      expect(q("[data-deploy-logs=d3]")).toBeNull();
+      expect(host.querySelector("[data-deploy-logs-error]")?.textContent).toMatch(/could not be read: ENVIRONMENT_CLUSTER_UNREACHABLE/);
+    });
+
     it("propose the CI workflow, and set and remove a secret of the chosen environment without showing values", async () => {
       const onProposeWorkflow = jest.fn();
       const onSecret = jest.fn();

@@ -123,4 +123,34 @@ describe('desktop session', () => {
         expect(error).not.toBeInstanceOf(SignInExpired);
         expect(String(error)).toMatch(/503/);
     });
+
+    it('tells who keeps the sign-in each refresh, with the rotated refresh token', async () => {
+        const kept: (string | undefined)[] = [];
+        const fetchImpl = jest.fn(async () => tokenAnswer({ access_token: 'a2', refresh_token: 'r2', expires_in: 300 }));
+        const session = new DesktopSession(ISSUER, 'studio-desktop', { accessToken: 'a1', refreshToken: 'r1', expiresAt: 0 },
+            fetchImpl as unknown as typeof fetch, () => 0, t => kept.push(t.refreshToken));
+        await session.accessToken();
+        expect(kept).toEqual(['r2']);
+        expect(session.current.refreshToken).toBe('r2');
+    });
+
+    it('keeps the refresh token it had when the provider does not rotate it', async () => {
+        const kept: (string | undefined)[] = [];
+        const session = new DesktopSession(ISSUER, 'studio-desktop', { accessToken: 'a1', refreshToken: 'r1', expiresAt: 0 },
+            (async () => tokenAnswer({ access_token: 'a2', expires_in: 300 })) as unknown as typeof fetch, () => 0, t => kept.push(t.refreshToken));
+        await session.accessToken();
+        expect(kept).toEqual(['r1']);
+    });
+
+    it('resumes from a kept refresh token by trading it on the first ask', async () => {
+        let body = '';
+        const fetchImpl = jest.fn(async (_url: string, init?: RequestInit) => {
+            body = String(init?.body);
+            return tokenAnswer({ access_token: 'a9', refresh_token: 'r9', expires_in: 300 });
+        });
+        const session = DesktopSession.resumed(ISSUER, 'studio-desktop', 'kept', fetchImpl as unknown as typeof fetch);
+        await expect(session.accessToken()).resolves.toBe('a9');
+        expect(body).toMatch(/grant_type=refresh_token/);
+        expect(body).toMatch(/refresh_token=kept/);
+    });
 });

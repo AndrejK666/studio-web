@@ -6,9 +6,12 @@
 // a second press restarts the product rather than typing into its stdin.
 
 import { FileUri } from "@theia/core/lib/common/file-uri";
+import { OS } from "@theia/core/lib/common/os";
 import { inject, injectable } from "@theia/core/shared/inversify";
 import type { TerminalWidget } from "@theia/terminal/lib/browser/base/terminal-widget";
 import { TerminalService } from "@theia/terminal/lib/browser/base/terminal-service";
+import { TerminalWatcher } from "@theia/terminal/lib/common/terminal-watcher";
+import { commandEnd, shellFor, type CommandEnd } from "./publish-outcome";
 
 /** `publish` has a terminal of its own: typed into the Deploy terminal while a build ran there, it was lost. */
 export type ProductTerminalKind = "build" | "run" | "deploy" | "publish";
@@ -28,9 +31,14 @@ export function productTerminalId(kind: ProductTerminalKind, product: string): s
   return `gearbox-${kind}-${product}`;
 }
 
+function titleOf(kind: ProductTerminalKind, product: string): string {
+  return `${kind === "build" ? "Build" : kind === "run" ? "Run" : kind === "publish" ? "Publish" : "Deploy"} ${product}`;
+}
+
 @injectable()
 export class ProductTerminals {
   @inject(TerminalService) protected readonly terminals!: TerminalService;
+  @inject(TerminalWatcher) protected readonly watcher!: TerminalWatcher;
   /** The environment each terminal was opened with: a terminal keeps it for life. */
   protected readonly opened = new Map<string, string>();
 
@@ -71,7 +79,7 @@ export class ProductTerminals {
     if (terminal === undefined || terminal.isDisposed) {
       terminal = await this.terminals.newTerminal({
         id,
-        title: `${kind === "build" ? "Build" : kind === "run" ? "Run" : kind === "publish" ? "Publish" : "Deploy"} ${product}`,
+        title: titleOf(kind, product),
         cwd: FileUri.create(cwd),
         env,
         destroyTermOnClose: true,
@@ -83,5 +91,44 @@ export class ProductTerminals {
     if (reused && kind === "run") terminal.sendText("\x03");
     terminal.sendText(`${command}\r`);
     return terminal;
+  }
+
+  /**
+   * Run `command` as the process of the product's `kind` terminal -- a new
+   * one each time, replacing the last -- and answer, with the terminal, how
+   * it ended by its exit code. Its output stays on screen after it ends.
+   */
+  async run(
+    kind: ProductTerminalKind,
+    product: string,
+    cwd: string,
+    command: string,
+    env: Record<string, string>,
+    waitMs: number,
+  ): Promise<{ readonly terminal: TerminalWidget; readonly ended: Promise<CommandEnd> }> {
+    const id = productTerminalId(kind, product);
+    const last = this.terminals.getById(id);
+    if (last !== undefined && !last.isDisposed) last.dispose();
+    this.opened.delete(id);
+    const terminal = await this.terminals.newTerminal({
+      id,
+      title: titleOf(kind, product),
+      cwd: FileUri.create(cwd),
+      env,
+      ...shellFor(OS.backend.isWindows, command),
+      destroyTermOnClose: true,
+    });
+    let started!: (id: number) => void;
+    let refused!: (e: unknown) => void;
+    const startedId = new Promise<number>((resolve, reject) => {
+      started = resolve;
+      refused = reject;
+    });
+    // Listening before the process starts: a command that fails at once ends
+    // before `start` answers.
+    const ended = commandEnd(terminal, this.watcher.onTerminalExit, startedId, waitMs);
+    await this.terminals.open(terminal, { mode: "activate" });
+    terminal.start().then(started, refused);
+    return { terminal, ended };
   }
 }

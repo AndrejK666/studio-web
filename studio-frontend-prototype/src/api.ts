@@ -1764,6 +1764,17 @@ export interface DeploymentStatus {
   deployment: Deployment;
   workloads: { name: string; ready: number; desired: number; images: string[] }[];
   hosts: string[];
+  /** The containers that cannot start, and why: one line each. Absent from a server before it. */
+  problems?: string[];
+}
+
+/** The end of one container's log of a deployed release. */
+export interface ContainerLog {
+  pod: string;
+  container: string;
+  /** The run before its last restart. */
+  previous: boolean;
+  text: string;
 }
 
 /** `build_artifact`: a file a CI run kept. `release`: a release and its files. */
@@ -4636,6 +4647,13 @@ export const api = {
   deploymentStatus: (token: string, org: string, id: string) =>
     request<DeploymentStatus>(
       `/studio-environments/v1/deployments/${encodeURIComponent(id)}/status?organization_id=${encodeURIComponent(org)}`,
+      token,
+    ),
+
+  /** The end of each container's log of a deployed release, read from its cluster now. */
+  deploymentLogs: (token: string, org: string, id: string) =>
+    request<{ containers: ContainerLog[] }>(
+      `/studio-environments/v1/deployments/${encodeURIComponent(id)}/logs?organization_id=${encodeURIComponent(org)}`,
       token,
     ),
 

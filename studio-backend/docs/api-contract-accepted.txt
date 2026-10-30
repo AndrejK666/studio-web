@@ -2502,6 +2502,11 @@ response	GET /studio-environments/v1/deployments	items.requested_by_name	String	
 response	GET /studio-environments/v1/deployments	items.run_id	Uuid	optional
 response	GET /studio-environments/v1/deployments	items.state	String	always
 response	GET /studio-environments/v1/deployments	total	u32	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers	Vec<{}>	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers.container	String	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers.pod	String	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers.previous	bool	always
+response	GET /studio-environments/v1/deployments/{}/logs	containers.text	String	always
 response	GET /studio-environments/v1/deployments/{}/status	deployment	{}	always
 response	GET /studio-environments/v1/deployments/{}/status	deployment.action	String	always
 response	GET /studio-environments/v1/deployments/{}/status	deployment.build	String	optional
@@ -2533,6 +2538,7 @@ response	GET /studio-environments/v1/deployments/{}/status	deployment.requested_
 response	GET /studio-environments/v1/deployments/{}/status	deployment.run_id	Uuid	optional
 response	GET /studio-environments/v1/deployments/{}/status	deployment.state	String	always
 response	GET /studio-environments/v1/deployments/{}/status	hosts	Vec<String>	always
+response	GET /studio-environments/v1/deployments/{}/status	problems	Vec<String>	always
 response	GET /studio-environments/v1/deployments/{}/status	workloads	Vec<{}>	always
 response	GET /studio-environments/v1/deployments/{}/status	workloads.desired	i32	always
 response	GET /studio-environments/v1/deployments/{}/status	workloads.images	Vec<String>	always
@@ -5692,6 +5698,7 @@ route	GET /studio-domain-model/v1/types/{}
 route	GET /studio-domain-model/v1/types/{}/conformance
 route	GET /studio-environments/v1/builds/{}/log
 route	GET /studio-environments/v1/deployments
+route	GET /studio-environments/v1/deployments/{}/logs
 route	GET /studio-environments/v1/deployments/{}/status
 route	GET /studio-environments/v1/environments
 route	GET /studio-environments/v1/project-build
