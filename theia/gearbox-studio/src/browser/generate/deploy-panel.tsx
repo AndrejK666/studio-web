@@ -132,6 +132,7 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
         ? "no-plan"
         : "ready";
   const studioBuild = environment?.registryLogin === true && props.onBuildInStudio !== undefined;
+  const buildHere = local === "ready" && props.docker;
   // The server packs nothing and needs no helm here; a kube context does.
   const canDeploy = environment !== undefined ? props.requesting !== true : target?.kind === "context" && props.helm !== undefined && local === "ready";
   const builds = flow?.builds ?? [];
@@ -207,47 +208,58 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
           flow !== undefined && <p className="gbx-waiting">No build of this product yet.</p>
         )}
         <div className="gbx-generate-actions" data-deploy-state={local}>
-          {studioBuild && environment !== undefined && (
+          {/* This computer first when it can build -- the IDE is where the
+              code is -- and Studio's cluster second; Studio's cluster first
+              when this machine cannot (no tree yet, or no docker). */}
+          {buildHere && (
             <button
               type="button"
               className="gbx-start-primary"
+              data-deploy-build
+              onClick={props.onBuildImages}
+              title="docker build of each image, here, from the code on this computer"
+            >
+              Build on this computer
+            </button>
+          )}
+          {studioBuild && environment !== undefined && (
+            <button
+              type="button"
+              className={buildHere ? "gbx-choice" : "gbx-start-primary"}
               data-deploy-studio-build
               disabled={props.startingBuild === true}
               onClick={props.onBuildInStudio}
-              title={`Studio builds what is pushed, in ${environment.name}'s cluster, and publishes to ${environment.registry}: nothing is built on this machine`}
+              title={`Studio builds what is pushed to the branch, in ${environment.name}'s cluster, and publishes to ${environment.registry}: nothing is built on this computer`}
             >
-              {props.startingBuild === true ? "Starting…" : "Build in Studio"}
+              {props.startingBuild === true ? "Starting…" : "Build in the Studio cluster"}
+            </button>
+          )}
+          {local === "ready" && !buildHere && (
+            <button type="button" className="gbx-choice" data-deploy-build disabled title="docker does not answer on this computer">
+              Build on this computer
             </button>
           )}
           {local === "ready" && (
-            <>
-              <button
-                type="button"
-                className={studioBuild ? "gbx-choice" : "gbx-start-primary"}
-                data-deploy-build
-                disabled={!props.docker}
-                onClick={props.onBuildImages}
-                title="docker build of each image, on this machine"
-              >
-                Build here
-              </button>
-              <button
-                type="button"
-                className="gbx-choice"
-                data-deploy-push
-                disabled={!props.docker || !props.registry || props.publishing === true}
-                onClick={props.onPush}
-                title={
-                  environment?.registryLogin === true
-                    ? `Push the images and the chart to ${props.registry} with a token the Studio server gets for them`
-                    : props.registry
-                      ? `docker push to ${props.registry}`
-                      : "No image registry: set one on the environment or the profile to push"
-                }
-              >
-                {environment?.registryLogin === true ? (props.publishing === true ? "Getting a token…" : "Publish") : "Push"}
-              </button>
-            </>
+            <button
+              type="button"
+              className="gbx-choice"
+              data-deploy-push
+              disabled={!props.docker || !props.registry || props.publishing === true}
+              onClick={props.onPush}
+              title={
+                environment?.registryLogin === true
+                  ? `Push the images built on this computer, and the chart, to ${props.registry} with a token the Studio server gets for them`
+                  : props.registry
+                    ? `docker push to ${props.registry}`
+                    : "No image registry: set one on the environment or the profile to push"
+              }
+            >
+              {props.publishing === true
+                ? "Publishing…"
+                : environment?.registryLogin === true
+                  ? `Publish to ${props.registry}`
+                  : "Push"}
+            </button>
           )}
           {local === "not-generated" && (
             <span className="gbx-waiting" data-deploy-state="not-generated">

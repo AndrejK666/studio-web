@@ -44,6 +44,7 @@ import {
   type RunTarget,
 } from "../../common/run-product";
 import { ProductTerminals } from "./product-terminals";
+import { PUBLISH_WAIT_MS, publishOutcome } from "./publish-outcome";
 import { RunPanel, type PostgresState } from "./run-panel";
 import { DeployPanel, type DeployStatusView } from "./deploy-panel";
 import { ProductDescriptionSync } from "../shell/product-description-sync";
@@ -684,19 +685,35 @@ export class GenerateWidget extends ReactWidget {
         ...stamp,
         configDir,
       });
-      await this.sendDeploy(plan.commands);
-      this.published = {
-        environmentId: environment.id,
-        buildId: newBuildId(),
-        startedAt: new Date().toISOString(),
-        ...(commit !== undefined ? { commit } : {}),
-        images: plan.images,
-        chartRef: plan.chartRef,
-        chartVersion: plan.chartVersion,
-      };
-      this.deployNote =
-        `Publishing ${plan.chartVersion} to ${environment.registry} in the Deploy terminal. ` +
-        `When it has finished, Deploy asks the Studio server to install that build into ${environment.name}.`;
+      // Published only once the terminal says every push went through: a
+      // build recorded as published with a chart the registry refused sent
+      // every Deploy after it to "not found".
+      const marker = `studio-publish-${newBuildId()}`;
+      const terminal = await this.terminals.send(
+        "deploy",
+        context.product,
+        context.cwd,
+        `${plan.commands.join(" && ")} && echo ${marker}-ok || echo ${marker}-failed`,
+        { DOCKER_BUILDKIT: "1" },
+      );
+      this.deployNote = `Publishing ${plan.chartVersion} to ${environment.registry} in the Deploy terminal…`;
+      this.update();
+      const ended = await publishOutcome(terminal, marker, PUBLISH_WAIT_MS);
+      if (ended.ok) {
+        this.published = {
+          environmentId: environment.id,
+          buildId: newBuildId(),
+          startedAt: new Date().toISOString(),
+          ...(commit !== undefined ? { commit } : {}),
+          images: plan.images,
+          chartRef: plan.chartRef,
+          chartVersion: plan.chartVersion,
+        };
+        this.deployNote = `Published ${plan.chartVersion} to ${environment.registry}. Deploy asks the Studio server to install it into ${environment.name}.`;
+      } else {
+        this.deployNote = `Publish failed${ended.why ? `: ${ended.why}` : ""}. Nothing was recorded as published; see the Deploy terminal.`;
+        this.messages.error(`Publish to ${environment.registry} failed${ended.why ? `: ${ended.why}` : ""}`);
+      }
     } catch (error) {
       this.messages.error(`Publish did not start: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
