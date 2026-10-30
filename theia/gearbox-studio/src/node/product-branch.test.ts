@@ -106,6 +106,33 @@ describe("a product saved on its own branch", () => {
     expect(await descriptionFromBranch(workspace, BRANCH, "nowhere.gdl")).toBeUndefined();
   });
 
+  it("moves a checkout an earlier desktop left on the product branch back onto main, with only the description", async () => {
+    await fileOnBranch(workspace, BRANCH, "product.gdl", { inPlace: true });
+    expect(sh(checkout, "branch", "--show-current")).toBe(BRANCH);
+    // main moved on since the product was saved; a build left files untracked.
+    const origin = path.join(scratch, "origin");
+    fs.writeFileSync(path.join(origin, "README.md"), "studio-web, today");
+    sh(origin, "commit", "--quiet", "-am", "today");
+    fs.mkdirSync(path.join(checkout, ".gearbox"));
+    fs.writeFileSync(path.join(checkout, ".gearbox", "out"), "generated");
+
+    const file = await descriptionFromBranch(workspace, BRANCH, "product.gdl");
+    expect(file).toBe(path.join(checkout, "product.gdl"));
+    expect(sh(checkout, "branch", "--show-current")).toBe("main");
+    expect(fs.readFileSync(path.join(checkout, "README.md"), "utf8")).toBe("studio-web, today");
+    expect(fs.readFileSync(file as string, "utf8")).toBe("product studioweb {}");
+    expect(fs.existsSync(path.join(checkout, ".gearbox", "out"))).toBe(true);
+  });
+
+  it("keeps a checkout on the product branch when a tracked file there is changed", async () => {
+    await fileOnBranch(workspace, BRANCH, "product.gdl", { inPlace: true });
+    fs.writeFileSync(path.join(checkout, "README.md"), "edited");
+    const file = await descriptionFromBranch(workspace, BRANCH, "product.gdl");
+    expect(file).toBe(path.join(checkout, "product.gdl"));
+    expect(sh(checkout, "branch", "--show-current")).toBe(BRANCH);
+    expect(fs.readFileSync(path.join(checkout, "README.md"), "utf8")).toBe("edited");
+  });
+
   it("leaves a desktop's checkout with uncommitted work alone", async () => {
     fs.writeFileSync(path.join(checkout, "README.md"), "edited");
     const file = await fileOnBranch(workspace, BRANCH, "product.gdl", { inPlace: true });
