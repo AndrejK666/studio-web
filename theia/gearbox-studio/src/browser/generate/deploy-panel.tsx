@@ -137,7 +137,9 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
   const canDeploy = environment !== undefined ? props.requesting !== true : target?.kind === "context" && props.helm !== undefined && local === "ready";
   const builds = flow?.builds ?? [];
   const latestBuild = builds[0];
-  const deployable = environment !== undefined ? builds.find((b) => isDeployable(b)) : undefined;
+  // What was just published or built here comes first: the server's history
+  // does not have it yet, and its newest deployable build is an older one.
+  const deployable = environment !== undefined && props.published !== true && props.studioBuild !== true ? builds.find((b) => isDeployable(b)) : undefined;
   const deploys = groupDeployments(flow?.deployments ?? []);
   const latestDeploy = deploys.find((d) => environment === undefined || d.deployment.environmentId === environment.id) ?? deploys[0];
   const where = environment?.name ?? (target?.kind === "context" ? target.name : "the cluster");
@@ -357,7 +359,7 @@ export function DeployPanel(props: DeployPanelProps): React.ReactElement {
               Preview manifests
             </button>
           )}
-          {deployable === undefined && environment !== undefined && flow !== undefined && (
+          {deployable === undefined && environment !== undefined && flow !== undefined && props.published !== true && props.studioBuild !== true && (
             <span className="gbx-waiting">Nothing published to deploy yet: build first.</span>
           )}
         </div>
