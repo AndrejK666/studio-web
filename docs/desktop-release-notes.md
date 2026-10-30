@@ -9,6 +9,35 @@ change for the person using the app. How the app works is
 
 Releases up to 0.3.0-beta.4 are described only on their GitHub release pages.
 
+## 0.3.0-beta.13
+
+The product's description is kept by Studio, and the photo is where a member
+sees it. Everything merged since `desktop-v0.3.0-beta.12`.
+
+### The product's description
+
+- **Studio keeps the product's description.** Opening a product from Studio
+  writes Studio's latest revision into `product.gdl`, and every later save --
+  in the editor, or Apply in Gearbox -- becomes a new revision in Studio. It
+  no longer has to be committed to a branch to reach a build. (#942,
+  ADR-0053)
+- **When somebody saved a newer revision meanwhile**, you see both texts and
+  choose which one stays. (#942)
+- **A build from a `product/…` branch** takes only `product.gdl` from that
+  branch and the code from the branch you build, so an old product branch no
+  longer builds old code. (#942)
+
+### Account
+
+- **Your photo shows on the Constructor Studio tab**, the person icon in the
+  left bar. 0.3.0-beta.12 put it on a menu the desktop hides.
+
+### Known not to work
+
+- **Opening a product overwrites a `product.gdl` you changed by hand** in the
+  checkout with Studio's revision, without asking.
+- **None of this was run in a built app** before this release.
+
 ## 0.3.0-beta.12
 
 Two fixes found trying 0.3.0-beta.11, through the PR that carries #935 and
