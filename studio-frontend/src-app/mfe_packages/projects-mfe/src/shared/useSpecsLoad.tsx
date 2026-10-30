@@ -16,7 +16,8 @@ import {
   type SpecRow,
   type SpecsQuery,
 } from '../model/specRows';
-import { TEXT_SEARCH_FILTER_KEY } from './dataGridFilters';
+import { isSpecsFilter, type SpecsFilter } from '../model/specsFilter';
+import { TEXT_SEARCH_FILTER_KEY, tagGroupChoice } from './dataGridFilters';
 
 /** Where the table's plugins put each filter in `DataGridLoadContext.filters` (#692, #878). */
 export const SPECS_FILTER_KEYS = {
@@ -30,6 +31,8 @@ export interface SpecsSnapshot {
   rows: SpecRow[];
   /** The rows the filters keep, in the table's order: what Check takes with nothing selected. */
   shown: SpecRow[];
+  /** The *Filter specs* value `shown` was kept by: the footer counts the rows it picks from. */
+  filter: SpecsFilter;
   sources: SpecRowsSourcesDto;
   /**
    * What the Type menu offers (#690): the workspace's catalogue in its own order,
@@ -63,11 +66,12 @@ const NO_SOURCES: SpecRowsSourcesDto = {
   counts: [],
 };
 
-// The search comes from the kit's text search (#692); the filter and the document type will come from its filters (#878).
+// The search comes from the kit's text search (#692), the filter and the document type from its tag groups (#878).
 function queryOf(filters: DataGridLoadContext['filters']): SpecsQuery {
+  const filter = tagGroupChoice(filters?.[SPECS_FILTER_KEYS.filter]);
   return {
-    filter: filters?.[SPECS_FILTER_KEYS.filter]?.value ?? 'all',
-    documentType: filters?.[SPECS_FILTER_KEYS.documentType]?.value ?? null,
+    filter: isSpecsFilter(filter) ? filter : 'all',
+    documentType: tagGroupChoice(filters?.[SPECS_FILTER_KEYS.documentType]),
     search: filters?.[SPECS_FILTER_KEYS.search]?.value ?? '',
   };
 }
@@ -134,18 +138,26 @@ export function useSpecsLoad(projectId: string, workspaceId: string): SpecsLoad 
           // Only a load whose read reload() replaced with a newer one waits on that.
           if (!kept.current || kept.current.answer === pending) {
             kept.current = null;
-            setSnapshot({ rows: [], shown: [], sources: NO_SOURCES, types: [], failed: true });
+            setSnapshot({
+              rows: [],
+              shown: [],
+              filter: 'all',
+              sources: NO_SOURCES,
+              types: [],
+              failed: true,
+            });
             throw error;
           }
         }
         context.signal?.throwIfAborted();
       }
 
-      const filtered = filterSpecRows(answer.rows, queryOf(context.filters));
-      const shown = sortSpecRows(filtered, context.order?.[0]);
+      const query = queryOf(context.filters);
+      const shown = sortSpecRows(filterSpecRows(answer.rows, query), context.order?.[0]);
       setSnapshot({
         rows: answer.rows,
         shown,
+        filter: query.filter,
         sources: answer.sources,
         types: answer.types,
         failed: false,
