@@ -982,17 +982,11 @@ impl ConnectorService {
 
         let driver = self.driver(&pending.provider)?;
         let tokens = driver.exchange_code(code.trim(), &pending.verifier).await?;
-        let Some(refresh) = tokens.refresh_token.filter(|t| !t.is_empty()) else {
-            return Err(anyhow!(
-                "{} gave no lasting sign-in (no refresh token); its client needs \
-                 the offline_access scope",
-                driver.display_name()
-            ));
-        };
+        let signed = driver.signed_in(&pending.base_url, tokens).await?;
         let identity = driver
             .test(&ConnectionAuth {
                 base_url: pending.base_url.clone(),
-                token: tokens.access_token,
+                token: signed.token,
             })
             .await
             .context(refusal(driver.as_ref()))?;
@@ -1006,7 +1000,7 @@ impl ConnectorService {
                 provider: &pending.provider,
                 label: &pending.label,
                 base_url: pending.base_url.clone(),
-                secret: &refresh,
+                secret: &signed.stored,
                 scope: ConnectionScope::parse(&pending.scope)?,
                 options: Default::default(),
             },

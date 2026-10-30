@@ -26,8 +26,8 @@ pub struct OAuthClient {
     pub token_url: String,
     pub client_id: String,
     pub client_secret: String,
-    /// Space-separated; must include `offline_access`, or no refresh token
-    /// comes back and the connection would last one access token.
+    /// Space-separated. A driver that keeps the refresh token needs
+    /// `offline_access` in it, or the connection lasts one access token.
     pub scope: String,
     /// Where the provider sends the person back: the portal's callback page,
     /// fixed by configuration so a request cannot name another.

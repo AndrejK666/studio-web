@@ -105,6 +105,14 @@ pub struct AccessToken {
     pub rotated: Option<String>,
 }
 
+/// What a finished sign-in is kept as ([`ConnectorDriver::signed_in`]).
+pub struct SignedIn {
+    /// The credential stored for the connection.
+    pub stored: String,
+    /// The credential the connection is tested with right away.
+    pub token: String,
+}
+
 /// One repository as the provider describes it.
 #[derive(Debug, Clone)]
 pub struct RemoteRepo {
@@ -644,6 +652,28 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             "{} is not signed in to -- its credential is pasted",
             self.display_name()
         ))
+    }
+
+    /// What the connection keeps from a sign-in's tokens: by default the
+    /// refresh token, traded for an access token on every use
+    /// ([`Self::access_token`]). `base_url` is the connection's address.
+    async fn signed_in(
+        &self,
+        base_url: &str,
+        tokens: super::oauth::Tokens,
+    ) -> anyhow::Result<SignedIn> {
+        let _ = base_url;
+        let Some(refresh) = tokens.refresh_token.filter(|t| !t.is_empty()) else {
+            return Err(anyhow::anyhow!(
+                "{} gave no lasting sign-in (no refresh token); its client needs \
+                 the offline_access scope",
+                self.display_name()
+            ));
+        };
+        Ok(SignedIn {
+            stored: refresh,
+            token: tokens.access_token,
+        })
     }
 
     /// The credential a call is made with, from the one stored. A pasted
