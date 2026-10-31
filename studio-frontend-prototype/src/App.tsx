@@ -114,9 +114,8 @@ import {
   usePreference,
 } from "./view-mode";
 
-/** The person's theme and language, among their other preferences. */
+/** The person's theme, among their other preferences. */
 const PREF_THEME = "app.theme";
-const PREF_LANGUAGE = "app.language";
 /** Whether the person shows the navigation rail at all: `shown` | `hidden`.
  *  The rail holds only what they pinned; every level's own sections are the
  *  band above the work area, so hiding it loses no destination. */
@@ -7814,7 +7813,7 @@ function AddConnector({
                     className="conn-picker-tile"
                     disabled
                     data-research-pending
-                    title="This Studio has no Constructor sign-in client and no Research integration service address yet (research-connector-plugin: issuer, client_id, client_secret, redirect_uri, api_url)."
+                    title="This Studio is not registered with the Constructor sign-in yet, or does not know Research's address: the platform administrator sets it up."
                   >
                     <span className="conn-logo-slot" aria-hidden>
                       <ConnectorLogo provider="research" label="Constructor Research" />
@@ -9579,23 +9578,19 @@ function ProfileView({
   // Stored with the person's other preferences (`usePreference`); the form
   // edits a draft and Save commits it.
   const [savedTheme, saveTheme] = usePreference(PREF_THEME, "light");
-  const [savedLanguage, saveLanguage] = usePreference(PREF_LANGUAGE, "en");
   const [rail, saveRail] = usePreference(PREF_RAIL, "shown");
   const [theme, setTheme] = useState(savedTheme);
-  const [language, setLanguage] = useState(savedLanguage);
   const [saved, setSaved] = useState(false);
   const [error] = useState<string | null>(null);
 
   // The record answers a moment after mount; the draft follows it until the
   // person starts editing.
   useEffect(() => setTheme(savedTheme), [savedTheme]);
-  useEffect(() => setLanguage(savedLanguage), [savedLanguage]);
 
   function save(e: FormEvent) {
     e.preventDefault();
     setSaved(false);
     saveTheme(theme);
-    saveLanguage(language);
     document.documentElement.dataset.theme = theme;
     setSaved(true);
   }
@@ -9621,8 +9616,10 @@ function ProfileView({
 
       <MyIdentitiesCard token={token} sessionSubject={me.subject_id} />
 
-      <div className="card">
-        <h2>This session</h2>
+      {/* For support and debugging: what the token says. Folded, because
+          nothing in it is something a person acts on. */}
+      <details className="card">
+        <summary>Technical details of this sign-in</summary>
         <p className="hint">What the token you are signed in with says. It identifies one sign-in, not you.</p>
         <ul className="rows">
           <li>
@@ -9665,7 +9662,7 @@ function ProfileView({
         <p className="hint" style={{ marginTop: 12 }}>
           API: <a href="/api-docs/">/api-docs/</a>
         </p>
-      </div>
+      </details>
 
       <AiKeysCard token={token} />
 
@@ -9673,13 +9670,11 @@ function ProfileView({
         <h2>Preferences</h2>
         <p className="hint">Stored server-side per user, with your other Studio preferences.</p>
         <form className="inline" onSubmit={save}>
-          <select value={theme} onChange={(e) => setTheme(e.target.value)}>
-            <option value="light">light</option>
-            <option value="dark">dark</option>
-          </select>
-          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-            <option value="en">en</option>
-            <option value="ru">ru</option>
+          {/* No language here: the portal has one, English, until it is
+              translated; a choice that changed nothing was a promise. */}
+          <select aria-label="Theme" value={theme} onChange={(e) => setTheme(e.target.value)}>
+            <option value="light">Light theme</option>
+            <option value="dark">Dark theme</option>
           </select>
           <button className="primary">Save</button>
           {saved && <span className="hint">saved ✓</span>}
