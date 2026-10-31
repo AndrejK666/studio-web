@@ -10,6 +10,7 @@ import { BackendApplicationContribution } from '@theia/core/lib/node/backend-app
 import { DesktopEnvironment, DesktopEnvironmentChoice, customEnvironment, parseEnvironments } from '../common/desktop-environments';
 import { clonePercent, parseGitProgress, type OpenProgress, type SourceProgress } from '../common/desktop-open-progress';
 import { GitRunner, describeRepository, pushRepository, repositoriesUnder, runGit, syncRepository } from './desktop-git';
+import { CommandInbox, CommandListener, CommandOutcome, commandActivity, postDesktopEvent } from './desktop-bridge';
 import { DesktopLeases, LeaseTarget } from './desktop-leases';
 import { LlmProxy, startLlmProxy } from './desktop-llm-proxy';
 import { DesktopSession, DesktopTokens, SignInExpired, signIn } from './desktop-sign-in';
@@ -288,6 +289,13 @@ export class DesktopStudioContribution implements BackendApplicationContribution
     /** How the git routes run git; a test swaps it. */
     protected git: GitRunner = runGit;
     protected readonly leases = new DesktopLeases();
+    /** Commands from the portal, waiting for the window that shows their workspace (ADR-0027 §5). */
+    protected readonly inbox = new CommandInbox();
+    protected readonly commands = new CommandListener(
+        () => this.leaseTarget(),
+        leaseId => this.leases.workspaceOf(leaseId),
+        this.inbox,
+    );
 
     /** The open in progress, or the last one, for the Studio view to draw. */
     protected openProgress: OpenProgress | undefined;
@@ -478,13 +486,46 @@ export class DesktopStudioContribution implements BackendApplicationContribution
                 // Only a change is worth a line; a renewal every 30 s is not.
                 if (held && !had) {
                     console.info(`[studio-desktop] ${target.studioUrl} sees workspace ${tenantId} open on this device`);
+                    void this.postEvent(tenantId, 'workspace-activity', { type: 'desktop-opened', at: new Date().toISOString() });
                 } else if (!held && had) {
                     console.warn(`[studio-desktop] ${target.studioUrl} no longer holds workspace ${tenantId} open for this device`);
+                }
+                // The portal reaches a desktop only while it holds a lease.
+                if (this.leases.open.length > 0) {
+                    this.commands.start();
+                } else {
+                    this.commands.stop();
                 }
                 res.status(held ? 204 : 409).end();
             } catch (error) {
                 res.status(502).json({ error: error instanceof Error ? error.message : String(error) });
             }
+        });
+        // The window showing a workspace asks for the portal's commands to it,
+        // waiting up to 25 s for one (a long poll, below the gateway's 30 s).
+        app.get('/studio-desktop/commands', async (req, res) => {
+            const root = typeof req.query.root === 'string' ? req.query.root : '';
+            const tenantId = root ? openedTenant(this.settings, this.config!, root) : undefined;
+            if (!tenantId) {
+                res.status(404).json({ error: 'this folder was not opened from Studio' });
+                return;
+            }
+            const waitMs = Math.min(25_000, Math.max(0, Number(req.query.wait_ms ?? 25_000) || 0));
+            const commands = await this.inbox.take(tenantId, waitMs);
+            res.json({ commands: commands.map(({ commandId, command, params }) => ({ commandId, command, params })) });
+        });
+        // What came of a command, from the window that ran it: back to the
+        // portal as the desktop session's own event (ADR-0027 §5).
+        app.post('/studio-desktop/commands/outcome', express.json(), async (req, res) => {
+            const body = (req.body ?? {}) as { root?: string } & Partial<CommandOutcome>;
+            const tenantId = body.root ? openedTenant(this.settings, this.config!, body.root) : undefined;
+            if (!tenantId || typeof body.commandId !== 'string' || typeof body.command !== 'string') {
+                res.status(400).json({ error: 'root, commandId and command are required' });
+                return;
+            }
+            const outcome: CommandOutcome = { commandId: body.commandId, command: body.command, ok: body.ok === true, detail: body.detail };
+            const sent = await this.postEvent(tenantId, 'workspace-activity', commandActivity(outcome, new Date().toISOString()));
+            res.status(sent ? 204 : 502).end();
         });
         // The window closed. Another window on the same workspace renews the
         // lease again on its next heartbeat, so ending it here is never wrong
@@ -663,7 +704,18 @@ export class DesktopStudioContribution implements BackendApplicationContribution
         }
     }
 
+    /** One event of this desktop's session on a workspace (ADR-0027 §5, phase 4). */
+    protected async postEvent(workspaceId: string, kind: string, event: unknown): Promise<boolean> {
+        const target = this.leaseTarget();
+        const leaseId = this.leases.leaseOf(workspaceId);
+        if (!target || !leaseId) {
+            return false;
+        }
+        return postDesktopEvent((input, init) => fetch(input, init), target, leaseId, workspaceId, kind, event);
+    }
+
     onStop(): void {
+        this.commands.stop();
         // Best effort: the process may be gone before Studio answers, and a
         // lease nobody renews ends on its own there.
         const target = this.leaseTarget();
@@ -686,6 +738,8 @@ export class DesktopStudioContribution implements BackendApplicationContribution
             await this.leases.endAll(target);
         }
         this.leases.forget();
+        this.commands.stop();
+        this.inbox.clear();
         // The broker stays: it refuses from now on, and whatever inherited its
         // address gets the next member's token without a restart.
         this.session = undefined;

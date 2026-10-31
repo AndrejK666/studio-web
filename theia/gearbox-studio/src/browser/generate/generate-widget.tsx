@@ -9,12 +9,15 @@
 import { codicon, ConfirmDialog, ReactWidget } from "@theia/core/lib/browser";
 import { WindowService } from "@theia/core/lib/browser/window/window-service";
 import { CommandService } from "@theia/core/lib/common/command";
+import { FileUri } from "@theia/core/lib/common/file-uri";
 import { Disposable, DisposableCollection } from "@theia/core/lib/common/disposable";
 import { MessageService } from "@theia/core/lib/common/message-service";
 import type { Message } from "@theia/core/shared/@lumino/messaging";
 import { inject, injectable, optional, postConstruct } from "@theia/core/shared/inversify";
 import React from "@theia/core/shared/react";
 import * as monaco from "@theia/monaco-editor-core";
+import { FileService } from "@theia/filesystem/lib/browser/file-service";
+import { WorkspaceService } from "@theia/workspace/lib/browser/workspace-service";
 
 import type { FileAction } from "../../common/generated/FileAction";
 import type { FileKind } from "../../common/generated/FileKind";
@@ -43,7 +46,19 @@ import {
   type BuildToolchain,
   type RunTarget,
 } from "../../common/run-product";
-import { ProductTerminals } from "./product-terminals";
+import { ProductTerminals, testTerminalName } from "./product-terminals";
+import { debugConfigurationsFor, debugNamePrefix, folderFromLaunch, type DebugTarget } from "../../common/debug-configurations";
+import { mergeLaunchJson } from "../../common/launch-json";
+import {
+  TEST_WAIT_MS,
+  TestSummaryReader,
+  gearTestTargetsOf,
+  testCommand,
+  testStateOf,
+  type GearTestState,
+  type GearTestTarget,
+} from "../../common/gear-tests";
+import { GearTestsPanel } from "./gear-tests-panel";
 import { PUBLISH_WAIT_MS } from "./publish-outcome";
 import { RunPanel, type PostgresState } from "./run-panel";
 import { DeployPanel, type DeployLogsView, type DeployStatusView } from "./deploy-panel";
@@ -159,6 +174,9 @@ export class GenerateWidget extends ReactWidget {
   @inject(ProductTerminals) protected readonly terminals!: ProductTerminals;
   @inject(WindowService) protected readonly windows!: WindowService;
   @inject(MessageService) protected readonly messages!: MessageService;
+  // Constructor Studio: debug configurations go into the workspace's launch.json.
+  @inject(FileService) protected readonly files!: FileService;
+  @inject(WorkspaceService) protected readonly workspace!: WorkspaceService;
   // Constructor Studio: the organization's environments (ADR-0043); absent
   // in Gearbox Studio proper, where Deploy offers the kube contexts alone.
   @inject(DeployEnvironmentsSource) @optional() protected readonly environments?: DeployEnvironmentsSource;
@@ -224,6 +242,10 @@ export class GenerateWidget extends ReactWidget {
   protected proposingWorkflow = false;
   protected savingSecret = false;
   protected fetchingProtoc = false;
+  protected addingDebugConfigurations = false;
+  /** How each gear's tests went, by gear id: what the Tests section shows. */
+  protected testStates: Record<string, GearTestState> = {};
+  protected testingAll = false;
 
   protected selected: string | undefined;
   protected preview: GenerateFileResult | undefined;
@@ -498,6 +520,136 @@ export class GenerateWidget extends ReactWidget {
     const context = this.runContext();
     if (context === undefined) return;
     await this.terminals.send("build", context.product, context.cwd, linkedGearsCommand(target), this.terminalEnv(target));
+  }
+
+  /**
+   * Constructor Studio: write a CodeLLDB configuration per application into
+   * the launch.json of the workspace folder the generated tree is in -- the
+   * file F5 reads -- so the debugger starts what Run starts
+   * (`common/debug-configurations.ts`). The run configuration is written
+   * first, as Run writes it, so the file the configuration names is there.
+   * Studio's earlier configurations for this product are replaced; the
+   * member's own are left as they are (`common/launch-json.ts`).
+   */
+  async addDebugConfigurations(): Promise<void> {
+    if (this.addingDebugConfigurations) return;
+    const context = this.runContext();
+    const targets = this.runTargets();
+    if (context === undefined || targets.length === 0) {
+      this.messages.warn("No debug configuration was added: the product has no generated application Run can start.");
+      return;
+    }
+    this.addingDebugConfigurations = true;
+    this.update();
+    try {
+      await this.toolchainKnown();
+      const outRoot = FileUri.create(context.cwd);
+      const folder = this.workspace.getWorkspaceRootUri(outRoot) ?? outRoot;
+      const cwd = folderFromLaunch(folder.path.fsPath(), context.cwd);
+      const applications = this.product.current.resolution?.product?.applications ?? [];
+      const configurations: Record<string, unknown>[] = [];
+      for (const target of targets) {
+        const written = await this.service.writeRunConfig(context.cwd, target.app, [...target.dbGears]);
+        const debug: DebugTarget = {
+          app: target.app,
+          bin: target.bin,
+          // The generated crate's package; the binary's name when the resolution does not say.
+          pkg: applications.find((app) => app.name === target.app)?.crate_name ?? target.bin,
+          config: written.config,
+        };
+        configurations.push(...debugConfigurationsFor(context.product, [debug], cwd, this.terminalEnv(target)));
+      }
+      const file = folder.resolve(".vscode/launch.json");
+      // Read only when it is there: a read that fails for another reason must not be taken for "no file" and overwritten.
+      const existing = (await this.files.exists(file)) ? (await this.files.read(file)).value : undefined;
+      const prefix = debugNamePrefix(context.product);
+      const merged = mergeLaunchJson(existing, configurations, (name) => name.startsWith(prefix));
+      if (!merged.ok) {
+        this.messages.error(`No debug configuration was added: ${merged.why}. Fix the file, then press Debug configurations again.`);
+        return;
+      }
+      if (merged.text !== existing) await this.files.write(file, merged.text);
+      this.messages.info(
+        `${configurations.length === 1 ? "A debug configuration" : `${configurations.length} debug configurations`} for ${context.product} ` +
+          `${merged.removed > 0 ? "updated" : "added"} in ${this.workspace.getWorkspaceRootUri(outRoot) !== undefined ? ".vscode/launch.json" : file.path.fsPath()}. ` +
+          "F5 builds and starts it under the debugger; it needs the CodeLLDB extension (vadimcn.vscode-lldb).",
+      );
+    } catch (error) {
+      this.messages.error(`The debug configurations could not be written: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.addingDebugConfigurations = false;
+      this.update();
+    }
+  }
+
+  /** The product's gears whose tests can be run, with their crates where this machine has their source. */
+  protected testTargets(): GearTestTarget[] {
+    const product = this.product.current.resolution?.product;
+    if (product === undefined || product === null) return [];
+    return gearTestTargetsOf(product, (source, crateDir) => this.catalogue.absolutePath(source, crateDir));
+  }
+
+  /**
+   * Constructor Studio: one gear's tests, in a terminal of their own, and how
+   * they went -- by the exit code, with libtest's counts read off the output
+   * (`common/gear-tests.ts`). Answers whether they passed.
+   */
+  protected async runGearTests(target: GearTestTarget): Promise<boolean> {
+    const context = this.runContext();
+    if (context === undefined) return false;
+    this.testStates = { ...this.testStates, [target.gear]: { status: "running" } };
+    this.update();
+    let state: GearTestState;
+    try {
+      await this.toolchainKnown();
+      const name = testTerminalName(context.product, target.gear);
+      const run = await this.terminals.run("test", name, context.cwd, testCommand(target), { ...(this.toolchain?.env ?? {}) }, TEST_WAIT_MS);
+      const reader = new TestSummaryReader();
+      const reading = run.terminal.onOutput((chunk) => reader.feed(chunk));
+      const end = await run.ended;
+      reading.dispose();
+      state = testStateOf(end, reader.summary());
+    } catch (error) {
+      state = { status: "failed", why: `the tests did not start: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    this.testStates = { ...this.testStates, [target.gear]: state };
+    this.update();
+    return state.status === "passed";
+  }
+
+  /** Every gear's tests, one gear after another; a gear that passed closes its terminal, one that failed keeps it open to read. */
+  protected async runAllGearTests(): Promise<void> {
+    if (this.testingAll) return;
+    const context = this.runContext();
+    if (context === undefined) return;
+    this.testingAll = true;
+    this.testStates = {};
+    this.update();
+    try {
+      for (const target of this.testTargets()) {
+        if (await this.runGearTests(target)) this.terminals.close("test", testTerminalName(context.product, target.gear));
+      }
+    } finally {
+      this.testingAll = false;
+      this.update();
+    }
+  }
+
+  protected renderTests(generated: boolean): React.ReactNode {
+    // Tests build with cargo, as Build does: offered once the tree is there and cargo is.
+    if (!generated || this.toolchain === undefined || !toolchainVerdict(this.toolchain).ready) return undefined;
+    return (
+      <GearTestsPanel
+        targets={this.testTargets()}
+        states={this.testStates}
+        runningAll={this.testingAll}
+        onRun={(gear) => {
+          const target = this.testTargets().find((t) => t.gear === gear);
+          if (target !== undefined) void this.runGearTests(target);
+        }}
+        onRunAll={() => void this.runAllGearTests()}
+      />
+    );
   }
 
   protected async run(target: RunTarget): Promise<void> {
@@ -1209,33 +1361,45 @@ export class GenerateWidget extends ReactWidget {
   protected renderRun(plans: readonly FilePlan[]): React.ReactNode {
     const generated = this.isGenerated(plans);
     // A kubernetes profile runs in a cluster, not on this machine.
-    if (this.kubernetes() !== undefined) return this.renderDeploy(generated);
+    if (this.kubernetes() !== undefined) {
+      return (
+        <>
+          {this.renderDeploy(generated)}
+          {this.renderTests(generated)}
+        </>
+      );
+    }
     if (generated && this.toolchain === undefined) void this.askToolchain();
     const targets = this.runTargets();
     const chosen = this.chosenTarget(targets);
     return (
-      <RunPanel
-        generated={generated}
-        verdict={this.toolchain === undefined ? undefined : toolchainVerdict(this.toolchain)}
-        targets={targets}
-        chosen={chosen}
-        postgres={this.postgres}
-        docker={this.toolchain?.docker === true}
-        startingPostgres={this.startingPostgres}
-        onChoose={(app) => {
-          this.runApp = app;
-          void this.probePostgres().then(() => this.update());
-        }}
-        onBuild={() => chosen !== undefined && void this.build(chosen)}
-        onRun={() => chosen !== undefined && void this.run(chosen)}
-        onLinkedGears={() => chosen !== undefined && void this.linkedGears(chosen)}
-        onStartPostgres={() => chosen !== undefined && void this.startPostgres(chosen)}
-        onOpen={(url) => this.windows.openNewWindow(url, { external: true })}
-        onFetchProtoc={() => void this.fetchProtoc()}
-        fetchingProtoc={this.fetchingProtoc}
-        onCreateDatabases={() => chosen !== undefined && void this.createDatabases(chosen)}
-        creatingDatabases={this.creatingDatabases}
-      />
+      <>
+        <RunPanel
+          generated={generated}
+          verdict={this.toolchain === undefined ? undefined : toolchainVerdict(this.toolchain)}
+          targets={targets}
+          chosen={chosen}
+          postgres={this.postgres}
+          docker={this.toolchain?.docker === true}
+          startingPostgres={this.startingPostgres}
+          onChoose={(app) => {
+            this.runApp = app;
+            void this.probePostgres().then(() => this.update());
+          }}
+          onBuild={() => chosen !== undefined && void this.build(chosen)}
+          onRun={() => chosen !== undefined && void this.run(chosen)}
+          onLinkedGears={() => chosen !== undefined && void this.linkedGears(chosen)}
+          onStartPostgres={() => chosen !== undefined && void this.startPostgres(chosen)}
+          onOpen={(url) => this.windows.openNewWindow(url, { external: true })}
+          onFetchProtoc={() => void this.fetchProtoc()}
+          fetchingProtoc={this.fetchingProtoc}
+          onCreateDatabases={() => chosen !== undefined && void this.createDatabases(chosen)}
+          creatingDatabases={this.creatingDatabases}
+          onAddDebugConfigurations={() => void this.addDebugConfigurations()}
+          addingDebugConfigurations={this.addingDebugConfigurations}
+        />
+        {this.renderTests(generated)}
+      </>
     );
   }
 

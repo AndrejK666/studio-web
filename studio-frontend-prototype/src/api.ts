@@ -6241,6 +6241,14 @@ export const api = {
       token,
       "items",
     ),
+  /** Send a command to a desktop the member holds open (ADR-0027 §5): it goes
+   *  out on studio-events, and the desktop runs it. 404 for an ended one. */
+  sendDesktopCommand: (token: string, desktopSessionId: string, command: string, params: Record<string, unknown>) =>
+    request<{ command_id: string; desktop_session_id: string; command: string }>(
+      `/studio-theia/v1/desktop-sessions/${encodeURIComponent(desktopSessionId)}/commands`,
+      token,
+      { method: "POST", body: JSON.stringify({ command, params }) },
+    ),
 
   /**
    * POST /mini-chat/v1/chats/{id}/messages:stream — SSE.

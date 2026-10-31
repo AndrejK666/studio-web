@@ -1691,3 +1691,15 @@ button.gbx-health-pill:hover { border-color: var(--theia-focusBorder); }
 .gbx-deploy-extras form input { padding: 4px 6px; }
 .gbx-link { font: inherit; padding: 0 4px 0 0; border: 0; background: transparent; color: var(--theia-textLink-foreground); cursor: pointer; }
 .gbx-link:hover { text-decoration: underline; }
+/* Constructor Studio: the product's tests, gear by gear (gear-tests-panel.tsx). */
+.gbx-generate-tests { margin-top: 12px; }
+.gbx-generate-tests-tally { color: var(--theia-descriptionForeground); font-size: 12px; }
+.gbx-generate-tests-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.gbx-generate-tests-list > li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 0; }
+.gbx-generate-tests-icon { display: inline-flex; width: 16px; justify-content: center; }
+.gbx-generate-tests-gear { font-family: var(--theia-code-font-family); }
+.gbx-generate-tests-state { flex: 1; min-width: 0; color: var(--theia-descriptionForeground); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gbx-generate-tests-passed { color: var(--theia-testing-iconPassed, var(--theia-descriptionForeground)); }
+.gbx-generate-tests-failed { color: var(--theia-testing-iconFailed, var(--theia-errorForeground)); }
+.gbx-generate-tests-running { color: var(--theia-focusBorder); }
+.gbx-generate-tests-failing { flex-basis: 100%; list-style: none; margin: 0 0 4px 22px; padding: 0; font-size: 12px; color: var(--theia-errorForeground); }

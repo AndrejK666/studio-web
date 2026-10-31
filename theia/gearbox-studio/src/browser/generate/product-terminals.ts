@@ -13,8 +13,13 @@ import { TerminalService } from "@theia/terminal/lib/browser/base/terminal-servi
 import { TerminalWatcher } from "@theia/terminal/lib/common/terminal-watcher";
 import { commandEnd, shellFor, type CommandEnd } from "./publish-outcome";
 
-/** `publish` has a terminal of its own: typed into the Deploy terminal while a build ran there, it was lost. */
-export type ProductTerminalKind = "build" | "run" | "deploy" | "publish";
+/**
+ * `publish` has a terminal of its own: typed into the Deploy terminal while a
+ * build ran there, it was lost. `test` is one gear's tests, named by product
+ * and gear (`testTerminalName`), so gears tested one after another each keep
+ * their output.
+ */
+export type ProductTerminalKind = "build" | "run" | "deploy" | "publish" | "test";
 
 /** Whether the terminal's shell still runs: the backend answers for its process. */
 async function alive(terminal: TerminalWidget): Promise<boolean> {
@@ -32,7 +37,12 @@ export function productTerminalId(kind: ProductTerminalKind, product: string): s
 }
 
 function titleOf(kind: ProductTerminalKind, product: string): string {
-  return `${kind === "build" ? "Build" : kind === "run" ? "Run" : kind === "publish" ? "Publish" : "Deploy"} ${product}`;
+  return `${kind === "build" ? "Build" : kind === "run" ? "Run" : kind === "publish" ? "Publish" : kind === "test" ? "Test" : "Deploy"} ${product}`;
+}
+
+/** What a gear's Test terminal is named by, in place of the product alone. */
+export function testTerminalName(product: string, gear: string): string {
+  return `${product}.${gear}`;
 }
 
 @injectable()
@@ -130,5 +140,12 @@ export class ProductTerminals {
     await this.terminals.open(terminal, { mode: "activate" });
     terminal.start().then(started, refused);
     return { terminal, ended };
+  }
+
+  /** Close the product's `kind` terminal, if one is open. */
+  close(kind: ProductTerminalKind, product: string): void {
+    const terminal = this.terminals.getById(productTerminalId(kind, product));
+    if (terminal !== undefined && !terminal.isDisposed) terminal.dispose();
+    this.opened.delete(productTerminalId(kind, product));
   }
 }
