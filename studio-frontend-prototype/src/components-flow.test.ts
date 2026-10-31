@@ -153,8 +153,8 @@ describe("the next step", () => {
     expect(nextStep({ ...base, resolves: false }).action).toBeUndefined();
   });
 
-  it("builds once it resolves, and says what is still open", () => {
-    expect(nextStep(base).action).toBe("build");
+  it("saves once it resolves, builds once saved, and says what is still open", () => {
+    expect(nextStep(base).action).toBe("save");
     const gap = nextStep({ ...base, open: 2 });
     expect(gap.tone).toBe("warn");
     expect(gap.text).toContain("2 capabilities the specs ask for are not closed yet.");

@@ -359,10 +359,10 @@ export function ProjectKits({
       </p>
       {product.composing && (
         <section className="card pstep-build" hidden={pane !== "build"}>
-          <h2>3 · Open it in the desktop app</h2>
+          <h2>3 · Save and build</h2>
           <p className="subtitle">
-            Saves <code>product.gdl</code> in Studio if it changed, and opens the desktop Studio on it, in its Gearbox view,
-            where it is built.
+            Studio keeps <code>product.gdl</code> as the project&apos;s revision, and every build takes it from there:
+            in Studio or Constructor Research from Builds, or in the desktop app.
           </p>
           {verdict.resolves !== true ? (
             <p>
@@ -373,7 +373,22 @@ export function ProjectKits({
             </p>
           ) : (
             <div className="dm-actions">
-              <button type="button" className="primary" onClick={() => setCommand({ kind: "build", at: Date.now() })}>
+              {onOpenTab && (
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!product.record?.description}
+                  title={product.record?.description ? undefined : "Save the product first (step 2)"}
+                  onClick={() => onOpenTab("builds")}
+                >
+                  Build in Studio →
+                </button>
+              )}
+              <button
+                type="button"
+                className={onOpenTab ? "ghost" : "primary"}
+                onClick={() => setCommand({ kind: "build", at: Date.now() })}
+              >
                 Open in the desktop app →
               </button>
               {product.record?.description ? (
@@ -612,6 +627,7 @@ function NextStepBar({ step, onAct }: { step: NextStep; onAct: (action: NextActi
     "take-from-code": "Take the product from the code",
     preview: "Check it",
     fix: "Show the fixes",
+    save: "Save",
     build: "Open in the desktop app →",
     open: "Open in the desktop app",
     builds: "Builds →",
@@ -1606,6 +1622,7 @@ function ProductCard({
     cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (command.kind === "preview") void run(false);
     if (command.kind === "fix" && fixes && fixes.length > 0) document.getElementById("product-fixes")?.focus();
+    if (command.kind === "save") void run(true);
     if (command.kind === "build") void buildInTheia();
     if (command.kind === "open") openOnDesktop();
     if (command.kind === "take-from-code") setFromCode(true);
