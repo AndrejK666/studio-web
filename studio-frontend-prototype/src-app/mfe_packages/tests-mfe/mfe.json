@@ -28,7 +28,8 @@
         "icon": "lucide:flask-conical",
         "route": "/tests",
         "order": 33,
-        "level": "project"
+        "level": "project",
+        "experimental": true
       }
     }
   ]

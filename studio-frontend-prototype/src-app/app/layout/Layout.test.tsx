@@ -8,7 +8,6 @@ vi.mock('@/app/actions/bootstrapActions', () => ({
   fetchAppContext: vi.fn(),
 }));
 vi.mock('./Header', () => ({ Header: () => <div data-testid="top-bar" /> }));
-vi.mock('./LevelHeader', () => ({ LevelHeader: () => <div data-testid="level-header" /> }));
 vi.mock('./LevelTabs', () => ({ LevelTabs: () => <div data-testid="level-tabs" /> }));
 vi.mock('./Popup', () => ({ Popup: () => null }));
 vi.mock('./Overlay', () => ({ Overlay: () => null }));
@@ -33,10 +32,9 @@ describe('Layout', () => {
     noOrganization.value = false;
   });
 
-  it('draws the level header and its tabs between the top bar and the screen', () => {
+  it("draws the level's tabs between the top bar and the screen (the name is in the path)", () => {
     renderLayout();
     expect(screen.getByTestId('top-bar')).toBeTruthy();
-    expect(screen.getByTestId('level-header')).toBeTruthy();
     expect(screen.getByTestId('level-tabs')).toBeTruthy();
     expect(screen.getByTestId('mounted-screen')).toBeTruthy();
   });
@@ -46,7 +44,6 @@ describe('Layout', () => {
     noOrganization.value = true;
     renderLayout();
     expect(screen.getByTestId('top-bar')).toBeTruthy();
-    expect(screen.queryByTestId('level-header')).toBeNull();
     expect(screen.queryByTestId('level-tabs')).toBeNull();
     expect(screen.queryByTestId('mounted-screen')).toBeNull();
     expect(screen.getByTestId('access-gate')).toBeTruthy();

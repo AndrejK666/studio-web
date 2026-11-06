@@ -34,5 +34,8 @@
   "level_platform_eyebrow": "Every organization",
   "level_admin": "Administration",
   "level_admin_eyebrow": "Studio",
-  "level_back_to_organization": "Back to {organization}"
+  "level_back_to_organization": "Back to {organization}",
+  "chain_organization": "Organization",
+  "chain_organization_overview": "{organization} — overview",
+  "level_tab_experimental": "Experimental: it works, its place is not settled yet"
 }

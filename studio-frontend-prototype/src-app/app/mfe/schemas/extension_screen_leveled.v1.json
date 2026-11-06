@@ -3,7 +3,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Leveled Screen Extension Schema (Derived). Constructor Studio has five levels — platform, organization, workspace, project, admin (ADR-0069) — and the tabs show the items of the level in scope. FrontX's ExtensionPresentation carries label/icon/route/order and is not ours to widen, so the level is added the way the framework intends: a further derived Extension type, chained after frontx.screensets.layout.screen.v1 so the screen domain's extensionsTypeId still matches by prefix. An extension that does not chain through this type has no declared level and the shell reads it as the organization level.",
   "allOf": [
-    { "$ref": "gts://gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~" }
+    {
+      "$ref": "gts://gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~"
+    }
   ],
   "properties": {
     "presentation": {
@@ -11,7 +13,13 @@
       "properties": {
         "level": {
           "type": "string",
-          "enum": ["platform", "organization", "workspace", "project", "admin"],
+          "enum": [
+            "platform",
+            "organization",
+            "workspace",
+            "project",
+            "admin"
+          ],
           "$comment": "Which level's tabs this screen appears in. REQUIRED here: opting into this type is the act of declaring the level, so a leveled extension without one is a mistake rather than a default."
         },
         "section": {
@@ -26,12 +34,24 @@
         },
         "placement": {
           "type": "string",
-          "enum": ["main", "settings", "hidden"],
+          "enum": [
+            "main",
+            "settings",
+            "hidden"
+          ],
           "$comment": "Where in the level's tabs the item sits. 'settings' pins it to the end regardless of order — the rule that replaced the order >= 100 band the shell used to read. 'hidden' keeps the screen registered and mountable but out of the tabs, and so never the screen a level opens on: it is reached some other way, such as opening an artifact. Defaults to 'main' when absent."
+        },
+        "experimental": {
+          "type": "boolean",
+          "$comment": "The tab works but its place is not settled: the tabs mark it EXP, as the prototype did. A kit sets it in its own manifest; the shell only draws the mark."
         }
       },
-      "required": ["level"]
+      "required": [
+        "level"
+      ]
     }
   },
-  "required": ["presentation"]
+  "required": [
+    "presentation"
+  ]
 }

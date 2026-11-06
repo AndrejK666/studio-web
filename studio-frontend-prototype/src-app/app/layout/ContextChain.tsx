@@ -3,7 +3,7 @@
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-chain:p1
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-workspace-level:p1
 import React, { useCallback, useRef, useState } from 'react';
-import { useAppSelector, eventBus } from '@gears-frontx/react';
+import { useAppSelector, useDomainExtensions, eventBus, FRONTX_SCREEN_DOMAIN } from '@gears-frontx/react';
 import {
   Breadcrumb,
   BreadcrumbList,
@@ -26,11 +26,13 @@ import { Popover, PopoverContent, PopoverTrigger } from '@gears-frontx/ui-kit/po
 import { Skeleton } from '@gears-frontx/ui-kit/skeleton';
 import {
   ArrowRight,
+  Building2,
   Check,
   ChevronDown,
   Folder,
   Layers,
   Search,
+  Server,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -38,14 +40,14 @@ import {
   type AppContextState,
   type ContextEntity,
 } from '@/app/slices/appContextSlice';
-import type { ScreenLevel } from '@/app/mfe/screenLevels';
+import { resolveLevelMenu, type ScreenLevel, type StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { useShellText } from '@/app/i18n/shellTranslations';
 import type { ScreenText } from '@constructor-studio/mfe-shared';
 import { useScreenLevel } from './useScreenLevel';
 import styles from './ContextChain.module.css';
 
 interface ChainSlot {
-  level: 'workspace' | 'project';
+  level: 'platform' | 'organization' | 'workspace' | 'project';
   caps: string;
   /** The entity in scope; `null` names none — the workspace slot at the organization level. */
   current: ContextEntity | null;
@@ -56,6 +58,8 @@ interface ChainSlot {
   /** The entry for the level above, at the top of the menu. */
   up?: { label: string; level: ScreenLevel };
   pick: (id: string) => void;
+  /** A level with one item (the platform): a button to it, no menu. */
+  only?: boolean;
 }
 
 const pickWorkspace = (id: string) =>
@@ -67,14 +71,50 @@ const pickProject = (id: string) =>
 
 // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-1
 // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-2
+const pickOrg = (id: string) => eventBus.emit('app/context/org/changed', { orgId: id });
+
+/**
+ * The whole path, the prototype's way (ADR-0069): the platform, then the
+ * organization, then the workspace and the project as deep as the level goes.
+ * Each segment names its level above its name and is the way to move along
+ * it; the level header that used to repeat the name is gone.
+ */
 function slotsOf(
   level: ScreenLevel,
   context: AppContextState | undefined,
-  t: ScreenText
+  t: ScreenText,
+  hasPlatform: boolean
 ): ChainSlot[] {
-  if (!context?.org) return [];
+  const head: ChainSlot[] = [];
+  if (hasPlatform) {
+    head.push({
+      level: 'platform',
+      caps: '',
+      current: { id: 'platform', name: t('level_platform') },
+      options: [],
+      Icon: Server,
+      pick: () => requestLevel('platform'),
+      only: true,
+    });
+  }
+  if (!context?.org) return head;
+  head.push({
+    level: 'organization',
+    caps: t('chain_organization'),
+    current: context.org,
+    options: context.orgs ?? [],
+    Icon: Building2,
+    up: { label: t('chain_organization_overview', { organization: context.org.name }), level: 'organization' },
+    pick: (id) => {
+      if (id !== context.org?.id) pickOrg(id);
+    },
+  });
   // The platform and Admin sit beside the organizations: no workspace to pick.
-  if (level === 'platform' || level === 'admin') return [];
+  if (level === 'platform' || level === 'admin') return head;
+  return [...head, ...belowOrganization(level, context, t)];
+}
+
+function belowOrganization(level: ScreenLevel, context: AppContextState, t: ScreenText): ChainSlot[] {
   const workspaces = context.workspaces ?? [];
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-4
@@ -137,6 +177,7 @@ const SlotFace = React.forwardRef<
   React.ComponentProps<typeof Button> & { chainSlot: ChainSlot; isCurrent: boolean }
 >(({ chainSlot: slot, isCurrent, ...props }, ref) => {
   const name = slot.current ? slot.current.name : slot.none;
+  const label = slot.caps ? `${slot.caps}: ${name || '…'}` : name || '…';
   return (
     <Button
       ref={ref}
@@ -144,19 +185,22 @@ const SlotFace = React.forwardRef<
       size="sm"
       icon={<slot.Icon strokeWidth={1.5} />}
       aria-current={isCurrent ? 'page' : undefined}
-      aria-label={`${slot.caps}: ${name || '…'}`}
+      aria-label={label}
       className={styles.slot}
       {...props}
     >
       <span className={styles.face}>
-        {name ? (
-          <span className={styles.name}>{name}</span>
-        ) : (
-          // An address can name a project before its tenant has been read
-          // (ADR-0028): the id is published to the MFE at once, the name follows.
-          <Skeleton className="h-4 w-24" data-testid="context-slot-pending" />
-        )}
-        <ChevronDown className={styles.chevron} strokeWidth={1.5} aria-hidden="true" />
+        <span className={styles.text}>
+          {slot.caps && <span className={styles.caps}>{slot.caps}</span>}
+          {name ? (
+            <span className={styles.name}>{name}</span>
+          ) : (
+            // An address can name a project before its tenant has been read
+            // (ADR-0028): the id is published to the MFE at once, the name follows.
+            <Skeleton className="h-4 w-24" data-testid="context-slot-pending" />
+          )}
+        </span>
+        {!slot.only && <ChevronDown className={styles.chevron} strokeWidth={1.5} aria-hidden="true" />}
       </span>
     </Button>
   );
@@ -167,7 +211,8 @@ const MenuSlot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isC
   const onPick = useCallback(
     (id: string) => {
       slot.pick(id);
-      if (!isCurrent && slot.current) requestLevel(slot.level);
+      // Switching the organization moves the address itself (org/changed).
+      if (!isCurrent && slot.current && slot.level !== 'organization') requestLevel(slot.level);
     },
     [slot, isCurrent]
   );
@@ -285,8 +330,10 @@ export const ContextChain: React.FC = () => {
     (state) => state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined
   );
   const level = useScreenLevel();
+  const screens = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
+  const hasPlatform = resolveLevelMenu(screens, 'platform').length > 0;
 
-  const slots = slotsOf(level, context, t);
+  const slots = slotsOf(level, context, t, hasPlatform);
   if (slots.length === 0) {
     return context?.loading ? <Skeleton className="h-8 w-40" /> : null;
   }
@@ -303,7 +350,9 @@ export const ContextChain: React.FC = () => {
               </BreadcrumbSeparator>
             )}
             <BreadcrumbItem>
-              {slot.level === 'project' ? (
+              {slot.only ? (
+                <SlotFace chainSlot={slot} isCurrent={slot.level === level} onClick={() => slot.pick('')} />
+              ) : slot.level === 'project' ? (
                 <SearchSlot slot={slot} isCurrent={slot.level === level} />
               ) : (
                 <MenuSlot slot={slot} isCurrent={slot.level === level} />

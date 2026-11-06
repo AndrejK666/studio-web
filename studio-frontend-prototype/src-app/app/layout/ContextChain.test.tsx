@@ -12,7 +12,8 @@ interface TestContext {
   loading: boolean;
 }
 
-const { mockEventBus, context, level } = vi.hoisted(() => ({
+const { mockEventBus, context, level, screens } = vi.hoisted(() => ({
+  screens: [] as Array<{ id: string; presentation: { label: string; route: string; level?: string } }>,
   mockEventBus: { emit: vi.fn() },
   level: { value: 'organization' as 'organization' | 'workspace' | 'project' },
   context: { value: {} as TestContext },
@@ -23,6 +24,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useAppSelector: (selector: (state: Record<string, unknown>) => unknown) =>
     selector({ 'app/context': context.value }),
   eventBus: mockEventBus,
+  useDomainExtensions: () => screens,
 }));
 
 vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellText'));
@@ -81,13 +83,31 @@ describe('ContextChain (the path in the top bar)', () => {
     });
 
     // The organization is named and switched in its header, not in the path.
-    it('has no organization slot at any level', () => {
+    it('names the organization first at every level, under its level caption (ADR-0069)', () => {
       for (const value of ['organization', 'workspace', 'project'] as const) {
         level.value = value;
         render(<ContextChain />);
-        expect(screen.queryByText('Acme Corporation')).toBeNull();
+        expect(screen.getByRole('button', { name: 'Organization: Acme Corporation' })).toBeTruthy();
         cleanup();
       }
+    });
+
+    it('starts the path at the platform once a platform screen is registered', () => {
+      screens.push({ id: 'kits', presentation: { label: 'Kits', route: '/kits', level: 'platform' } });
+      render(<ContextChain />);
+      fireEvent.click(screen.getByRole('button', { name: 'Platform' }));
+      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/level/requested', { level: 'platform' });
+      screens.length = 0;
+    });
+
+    it('keeps only the platform and the organization on the platform level', () => {
+      screens.push({ id: 'kits', presentation: { label: 'Kits', route: '/kits', level: 'platform' } });
+      level.value = 'platform' as never;
+      render(<ContextChain />);
+      expect(screen.getByRole('button', { name: 'Platform' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Organization: Acme Corporation' })).toBeTruthy();
+      expect(screen.queryByText('All workspaces')).toBeNull();
+      screens.length = 0;
     });
 
     it('holds the workspace slot alone at the organization level, naming none', () => {
@@ -112,10 +132,11 @@ describe('ContextChain (the path in the top bar)', () => {
       expect(screen.queryByRole('menu')).toBeNull();
     });
 
-    it('draws no slot for an organization that has no workspace', () => {
+    it('draws no workspace slot for an organization that has no workspace', () => {
       context.value.workspaces = [];
-      const { container } = render(<ContextChain />);
-      expect(container.firstChild).toBeNull();
+      render(<ContextChain />);
+      expect(screen.queryByText('All workspaces')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Organization: Acme Corporation' })).toBeTruthy();
     });
 
     it('keeps the project out of the path until one is open', () => {
@@ -143,8 +164,8 @@ describe('ContextChain (the path in the top bar)', () => {
     it('draws no path below the organization while no workspace is selected', () => {
       level.value = 'workspace';
       context.value.workspace = null;
-      const { container } = render(<ContextChain />);
-      expect(container.firstChild).toBeNull();
+      render(<ContextChain />);
+      expect(screen.getAllByRole('button')).toHaveLength(1);
     });
 
     it('renders nothing at all before an organization resolves', () => {

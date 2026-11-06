@@ -34,6 +34,8 @@ export type ScreenPlacement = 'main' | 'settings' | 'hidden';
 
 export interface LeveledPresentation {
   level?: string;
+  /** The tab works but its place is not settled: drawn with an EXP mark. */
+  experimental?: boolean;
   placement?: string;
   section?: string;
   parentSection?: string;

@@ -85,6 +85,11 @@ export const LevelTabs: React.FC = () => {
               >
                 {icon && <DynamicIcon name={icon} className={styles.glyph} aria-hidden="true" />}
                 {ext.presentation?.label}
+                {ext.presentation?.experimental && (
+                  <span className={styles.exp} title={t('level_tab_experimental')}>
+                    EXP
+                  </span>
+                )}
               </NavigationMenuLink>
             </NavigationMenuItem>
           );

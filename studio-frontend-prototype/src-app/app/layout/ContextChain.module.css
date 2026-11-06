@@ -32,3 +32,24 @@
   height: var(--icon-size-xs);
   color: var(--muted-foreground);
 }
+
+/* The level above the name, as the prototype's path names it. */
+.text {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+  min-width: 0;
+}
+
+.caps {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.list .slot[aria-current='page'] {
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}

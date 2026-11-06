@@ -7,7 +7,6 @@
 import React, { useEffect } from 'react';
 import { fetchCurrentUser, fetchAppContext } from '@/app/actions/bootstrapActions';
 import { Header } from './Header';
-import { LevelHeader } from './LevelHeader';
 import { LevelTabs } from './LevelTabs';
 import { Screen } from './Screen';
 import { Popup } from './Popup';
@@ -36,8 +35,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* Global top bar: brand, the path to the level in scope, session */}
       <Header />
 
-      {/* The level: its name, its tabs, then the screen they mount. */}
-      {!noOrganization && <LevelHeader />}
+      {/* The level's tabs, then the screen they mount. Its name is in the path
+          (ContextChain), the prototype's way (ADR-0069). */}
       {!noOrganization && <LevelTabs />}
       <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
 

@@ -35,5 +35,8 @@
   "level_platform_eyebrow": "Все организации",
   "level_admin": "Администрирование",
   "level_admin_eyebrow": "Studio",
-  "level_back_to_organization": "Назад в {organization}"
+  "level_back_to_organization": "Назад в {organization}",
+  "chain_organization": "Организация",
+  "chain_organization_overview": "{organization} — обзор",
+  "level_tab_experimental": "Экспериментальная: работает, но её место ещё не определено"
 }
