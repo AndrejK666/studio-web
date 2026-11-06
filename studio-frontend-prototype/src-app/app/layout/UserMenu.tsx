@@ -18,6 +18,8 @@ import {
   useAppSelector,
   clearUser,
   eventBus,
+  useDomainExtensions,
+  FRONTX_SCREEN_DOMAIN,
   type HeaderState,
 } from '@gears-frontx/react';
 import {
@@ -29,7 +31,8 @@ import {
 } from '@gears-frontx/ui-kit/dropdown-menu';
 import { Avatar, AvatarImage, AvatarFallback } from '@gears-frontx/ui-kit/avatar';
 import { Skeleton } from '@gears-frontx/ui-kit/skeleton';
-import { Building2, Inbox, LogOut } from 'lucide-react';
+import { Building2, Inbox, LogOut, Shield, Server } from 'lucide-react';
+import { resolveLevelMenu, type StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { useShellText } from '@/app/i18n/shellTranslations';
 import { OrganizationRequestsDialog, useDecidesRequests } from './OrganizationRequests';
 
@@ -54,6 +57,10 @@ export const UserMenu: React.FC = () => {
   const user = headerState?.user;
   const loading = headerState?.loading ?? false;
   const decidesRequests = useDecidesRequests();
+  // The platform and Admin are offered once some screen lives there (ADR-0069).
+  const screens = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
+  const hasPlatform = resolveLevelMenu(screens, 'platform').length > 0;
+  const hasAdmin = resolveLevelMenu(screens, 'admin').length > 0;
   const [requestsOpen, setRequestsOpen] = useState(false);
   const closeRequests = useCallback(() => setRequestsOpen(false), []);
 
@@ -97,6 +104,22 @@ export const UserMenu: React.FC = () => {
             <Building2 aria-hidden="true" />
             {t('user_menu_organization')}
           </DropdownMenuItem>
+          {hasPlatform && (
+            <DropdownMenuItem
+              onClick={() => eventBus.emit('app/context/level/requested', { level: 'platform' })}
+            >
+              <Server aria-hidden="true" />
+              {t('user_menu_platform')}
+            </DropdownMenuItem>
+          )}
+          {hasAdmin && (
+            <DropdownMenuItem
+              onClick={() => eventBus.emit('app/context/level/requested', { level: 'admin' })}
+            >
+              <Shield aria-hidden="true" />
+              {t('user_menu_admin')}
+            </DropdownMenuItem>
+          )}
           {decidesRequests && (
             <DropdownMenuItem onClick={() => setRequestsOpen(true)}>
               <Inbox aria-hidden="true" />

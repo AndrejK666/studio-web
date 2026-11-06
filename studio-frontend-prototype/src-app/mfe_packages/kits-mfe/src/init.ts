@@ -22,10 +22,12 @@ import {
 import { homeSlice } from './slices/homeSlice';
 import { initHomeEffects } from './effects/homeEffects';
 import { _BlankApiService } from './api/_BlankApiService';
+import { KitsApiService } from './api/KitsApiService';
 
 // Register API services BEFORE build — mock plugin syncs during build(),
 // so services must already be present for mock activation to find them
 apiRegistry.register(_BlankApiService);
+apiRegistry.register(KitsApiService);
 apiRegistry.initialize();
 
 // Create only the local MFE app shell.

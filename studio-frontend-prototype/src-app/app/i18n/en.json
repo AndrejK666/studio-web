@@ -27,5 +27,12 @@
   "user_menu_organization_requests": "Organization requests",
   "user_menu_sign_out": "Sign out",
   "toast_close": "Close",
-  "toast_region": "Notifications"
+  "toast_region": "Notifications",
+  "user_menu_platform": "Platform",
+  "user_menu_admin": "Administration",
+  "level_platform": "Platform",
+  "level_platform_eyebrow": "Every organization",
+  "level_admin": "Administration",
+  "level_admin_eyebrow": "Studio",
+  "level_back_to_organization": "Back to {organization}"
 }

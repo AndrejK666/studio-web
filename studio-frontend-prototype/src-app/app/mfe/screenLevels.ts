@@ -1,8 +1,10 @@
 /**
  * Screen levels
  *
- * Constructor Studio has three levels — organization, workspace, project — and
- * the tabs show the items of the level in scope and nothing else. This module
+ * Constructor Studio has five levels (ADR-0069): the platform above every
+ * organization, the organization, a workspace, a project, and Admin — the
+ * administration beside them. The tabs show the items of the level in scope
+ * and nothing else. This module
  * is the whole of what the shell knows about that: how a screen extension
  * declares its level, and how the items of one level are ordered.
  */
@@ -10,9 +12,18 @@
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-declared:p1
 import type { ExtensionPresentation, ScreenExtension } from '@gears-frontx/react';
 
-export const SCREEN_LEVELS = ['organization', 'workspace', 'project'] as const;
+export const SCREEN_LEVELS = ['platform', 'organization', 'workspace', 'project', 'admin'] as const;
 
 export type ScreenLevel = (typeof SCREEN_LEVELS)[number];
+
+/**
+ * A level whose screens carry no workspace and no project: the platform, the
+ * organization and Admin. Below it the address names a workspace, and a
+ * project under it.
+ */
+export function isAboveWorkspace(level: ScreenLevel | undefined): boolean {
+  return level === 'platform' || level === 'organization' || level === 'admin';
+}
 
 /** The order of a screen that declares none: after every screen that does. */
 export const UNDECLARED_ORDER = 999;

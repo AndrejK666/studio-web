@@ -10,7 +10,7 @@
  * data, fetched in `contextCatalogs.ts` and stored before any navigation.
  */
 import { eventBus, screenDomain, type FrontXApp } from '@gears-frontx/react';
-import { levelOf, placementOf, sectionOf, type ScreenLevel, type StudioScreenExtension } from '@/app/mfe/screenLevels';
+import { isAboveWorkspace, levelOf, placementOf, sectionOf, type ScreenLevel, type StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { createContextCatalogs } from '@/app/effects/contextCatalogs';
 import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
@@ -55,7 +55,7 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
     const route: ShellRoute = { token };
     const org = overrides.org ?? current?.org ?? slice.org?.id;
     if (org) route.org = org;
-    if (level !== 'organization') {
+    if (!isAboveWorkspace(level)) {
       const workspace = overrides.workspace ?? current?.workspace ?? slice.workspace?.id;
       if (workspace) route.workspace = workspace;
     }
@@ -143,7 +143,7 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
     if (!routing) return;
     if (staleScope(currentOrgId(), organizationId)) return;
     if (name !== undefined) dispatch(addContextWorkspace({ id: workspaceId, name }));
-    if (!enter && currentGroupLevel() === 'organization') {
+    if (!enter && isAboveWorkspace(currentGroupLevel())) {
       // Below the organization the address decides; at its level the workspace
       // is a preference the slice keeps for the next descent (ADR-0028).
       dispatch(setContextWorkspace(workspaceId));
@@ -161,7 +161,7 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
     if (staleScope(currentOrgId(), organizationId)) return;
     dispatch(addContextWorkspace({ id, name }));
     const current = routing.navigation.currentRoute();
-    if (current && currentGroupLevel() !== 'organization') {
+    if (current && !isAboveWorkspace(currentGroupLevel())) {
       routing.navigation.navigate(routeFor(current.token, 'workspace', { workspace: id }), 'push');
     } else {
       routing.materialize();

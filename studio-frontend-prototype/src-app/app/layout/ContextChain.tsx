@@ -73,6 +73,8 @@ function slotsOf(
   t: ScreenText
 ): ChainSlot[] {
   if (!context?.org) return [];
+  // The platform and Admin sit beside the organizations: no workspace to pick.
+  if (level === 'platform' || level === 'admin') return [];
   const workspaces = context.workspaces ?? [];
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-4

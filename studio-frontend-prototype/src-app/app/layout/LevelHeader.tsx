@@ -85,6 +85,26 @@ export const LevelHeader: React.FC = () => {
     ) : null;
   }
 
+  // The platform and Admin are not an organization's: their header names the
+  // level, and the way back is the organization below it.
+  if (level === 'platform' || level === 'admin') {
+    return (
+      <div className={`${styles.header} ${styles.organization}`}>
+        <div className={styles.stack}>
+          <span className={styles.eyebrow}>{t(level === 'platform' ? 'level_platform_eyebrow' : 'level_admin_eyebrow')}</span>
+          <h1 className={`${styles.name} ${styles.display}`}>{t(level === 'platform' ? 'level_platform' : 'level_admin')}</h1>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => eventBus.emit('app/context/level/requested', { level: 'organization' })}
+        >
+          {t('level_back_to_organization', { organization: context.org.name })}
+        </Button>
+      </div>
+    );
+  }
+
   if (level === 'project' && context.project) {
     return (
       <div className={`${styles.header} ${styles.project}`}>

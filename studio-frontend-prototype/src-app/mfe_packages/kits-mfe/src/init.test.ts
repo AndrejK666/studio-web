@@ -34,6 +34,10 @@ vi.mock('./api/_BlankApiService', () => ({
   },
 }));
 
+vi.mock('./api/KitsApiService', () => ({
+  KitsApiService: class KitsApiService {},
+}));
+
 vi.mock('./slices/homeSlice', () => ({
   homeSlice: { name: '_blank/home' },
 }));
@@ -58,7 +62,8 @@ describe('_blank-mfe init', () => {
     const { initHomeEffects } = await import('./effects/homeEffects');
     const module = await import('./init');
 
-    expect(register).toHaveBeenCalledTimes(1);
+    // The template's service, and the kit library's catalogue.
+    expect(register).toHaveBeenCalledTimes(2);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);

@@ -11,7 +11,14 @@
  */
 import { screenDomain, type FrontXApp, type MfeRegistry } from '@gears-frontx/react';
 import { TENANT_TYPES, errorMessage, isStudioArtifactKind, type StudioArtifact } from '@constructor-studio/mfe-shared';
-import { entryPointOf, levelOf, sectionOf, type ScreenLevel, type StudioScreenExtension } from '@/app/mfe/screenLevels';
+import {
+  entryPointOf,
+  isAboveWorkspace,
+  levelOf,
+  sectionOf,
+  type ScreenLevel,
+  type StudioScreenExtension,
+} from '@/app/mfe/screenLevels';
 import { occupancyOf } from '@/app/mfe/domainOccupancy';
 import { mountScreen } from '@/app/mfe/mountScreen';
 import { publishStudioContext } from '@/app/mfe/sharedContext';
@@ -108,7 +115,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     const route: ShellRoute = { token: group.token };
     const org = from?.org ?? context.org?.id;
     if (org) route.org = org;
-    if (level !== 'organization') {
+    if (!isAboveWorkspace(level)) {
       const workspace = from?.workspace ?? context.workspace?.id;
       if (workspace) route.workspace = workspace;
     }
@@ -284,7 +291,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     // the preference the next descent starts from (ADR-0028). Either way it
     // is checked against the list once that is known, and defaulted from it —
     // the catalog reducers keep or drop a selection, they never pick one.
-    if (ownerLevel === 'organization') wanted.workspace = undefined;
+    if (isAboveWorkspace(ownerLevel)) wanted.workspace = undefined;
     if (context.workspacesStatus === 'ready') {
       if (wanted.workspace && !context.workspaces.some((workspace) => workspace.id === wanted.workspace)) {
         warn(`Workspace ${wanted.workspace} is not in this organization; opening the first one`);
@@ -298,7 +305,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
 
     // Project: only a screen below the organization carries it.
     // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-4
-    if (ownerLevel !== 'organization') {
+    if (!isAboveWorkspace(ownerLevel)) {
       if (wanted.workspace) next.workspace = wanted.workspace;
 
       context = readAppContext(app);

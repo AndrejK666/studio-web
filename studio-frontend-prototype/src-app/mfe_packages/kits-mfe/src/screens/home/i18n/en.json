@@ -1,1 +1,10 @@
-{"title": "Kits", "description": "Kits available to your projects.", "coming_soon": "This area is under construction."}
+{
+  "title": "Kits",
+  "description": "What extends this Studio. A base kit is installed by the platform for every organization; an organization can add kits for itself.",
+  "loading_failed": "The kit catalogue could not be read: {error}",
+  "empty": "No kits in the catalogue yet.",
+  "publisher": "Publisher",
+  "version": "Version",
+  "repository": "Repository",
+  "base_kit_pending": "Installing as a base kit arrives with the installer."
+}

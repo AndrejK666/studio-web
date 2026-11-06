@@ -28,5 +28,12 @@
   "user_menu_organization_requests": "Запросы на организации",
   "user_menu_sign_out": "Выйти",
   "toast_close": "Закрыть",
-  "toast_region": "Уведомления"
+  "toast_region": "Уведомления",
+  "user_menu_platform": "Платформа",
+  "user_menu_admin": "Администрирование",
+  "level_platform": "Платформа",
+  "level_platform_eyebrow": "Все организации",
+  "level_admin": "Администрирование",
+  "level_admin_eyebrow": "Studio",
+  "level_back_to_organization": "Назад в {organization}"
 }

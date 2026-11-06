@@ -23,10 +23,10 @@
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.kits.mfe.main.v1",
       "presentation": {
         "label": "Kits",
-        "icon": "lucide:files",
+        "icon": "lucide:package",
         "route": "/kits",
-        "order": 50,
-        "level": "organization"
+        "order": 10,
+        "level": "platform"
       }
     }
   ]

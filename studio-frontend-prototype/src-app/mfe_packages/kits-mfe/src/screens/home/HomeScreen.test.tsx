@@ -6,8 +6,15 @@ import {
 import { createMfeBridgeFixture } from '@frontx-test-utils/createMfeBridgeFixture';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { useScreenTranslationsMock } = vi.hoisted(() => ({
+const { useScreenTranslationsMock, useApiQueryMock } = vi.hoisted(() => ({
   useScreenTranslationsMock: vi.fn(),
+  useApiQueryMock: vi.fn(),
+}));
+
+vi.mock('@gears-frontx/react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gears-frontx/react')>()),
+  apiRegistry: { getService: () => ({ catalog: {} }) },
+  useApiQuery: useApiQueryMock,
 }));
 
 vi.mock('../../i18n', () => ({
@@ -25,13 +32,33 @@ const TEST_INSTANCE_ID = 'smoke-instance';
 describe('HomeScreen', () => {
   beforeEach(() => {
     useScreenTranslationsMock.mockReturnValue({ t: (key: string) => key, loading: false });
+    useApiQueryMock.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        total: 1,
+        items: [
+          {
+            slug: 'sdlc',
+            name: 'SDLC',
+            description: 'How a project goes from spec to release',
+            publisher: 'Constructor',
+            visibility: 'public',
+            source: 'official',
+            repository_url: 'https://github.com/example/sdlc',
+            default_version: 'v1.2.0',
+            manifest_path: '.cf-studio-kit.toml',
+          },
+        ],
+      },
+    });
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('renders the localized title, description, and placeholder note', async () => {
+  it('renders the localized title, description, and a card per catalogue kit', async () => {
     const { bridge } = createMfeBridgeFixture({
       domainId: TEST_DOMAIN_ID,
       instanceId: TEST_INSTANCE_ID,
@@ -46,7 +73,9 @@ describe('HomeScreen', () => {
     // The key-echoing translation mock makes the i18n keys directly assertable.
     expect(await screen.findByText('title')).toBeTruthy();
     expect(screen.getByText('description')).toBeTruthy();
-    expect(screen.getByText('coming_soon')).toBeTruthy();
+    expect(screen.getByText('SDLC')).toBeTruthy();
+    expect(screen.getByText('v1.2.0')).toBeTruthy();
+    expect(screen.getByText('github.com/example/sdlc')).toBeTruthy();
 
     // An unknown host theme bridges to the kit's light scope.
     expect((container.firstChild as HTMLElement).getAttribute('data-theme')).toBe('light');

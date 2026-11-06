@@ -1,10 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import {
+  apiRegistry,
+  useApiQuery,
   FRONTX_SHARED_PROPERTY_THEME,
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
 import { Empty, EmptyDescription, Skeleton } from '@gears-frontx/ui-kit';
+import { KitsApiService, type CatalogKit } from '../../api/KitsApiService';
 import { useHomeTranslations } from '../../i18n';
 import styles from './HomeScreen.module.css';
 
@@ -37,11 +40,9 @@ interface HomeScreenProps {
 }
 
 /**
- * Placeholder screen for this screenset, built from @gears-frontx/ui-kit
- * (components + tokens; no Tailwind). Keeps the scaffold's bridge wiring:
- * theme/language subscriptions, per-MFE i18n, RTL sync. The scaffold's demo
- * data layer (src/api, src/slices, src/effects) is untouched reference code —
- * wire it in when this area grows real content.
+ * Platform › Kits: the kit library (ADR-0068 §4, ADR-0069 §4). Lists the
+ * catalogue the `studio-kits` gear keeps; installing a kit as a base kit
+ * arrives with the installer.
  */
 export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -66,6 +67,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   }
 
   const { t, loading } = useHomeTranslations();
+  const catalog = useApiQuery(apiRegistry.getService(KitsApiService).catalog);
+  const kits: CatalogKit[] = catalog.data?.items ?? [];
 
   useEffect(() => {
     const themeUnsubscribe = bridge.subscribeToProperty(
@@ -116,9 +119,39 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     <div ref={containerRef} className={styles.screen} data-theme={toKitTheme(theme)}>
       <h2 className={styles.title}>{t('title')}</h2>
       <p className={styles.description}>{t('description')}</p>
-      <Empty className={styles.empty}>
-        <EmptyDescription>{t('coming_soon')}</EmptyDescription>
-      </Empty>
+      {catalog.isLoading ? (
+        <Skeleton className={styles.skeletonLine} />
+      ) : catalog.isError ? (
+        <p role="alert" className={styles.error}>
+          {t('loading_failed', { error: String(catalog.error) })}
+        </p>
+      ) : kits.length === 0 ? (
+        <Empty className={styles.empty}>
+          <EmptyDescription>{t('empty')}</EmptyDescription>
+        </Empty>
+      ) : (
+        <ul className={styles.grid}>
+          {kits.map((kit) => (
+            <li key={kit.slug} className={styles.card} data-kit={kit.slug}>
+              <h3 className={styles.cardTitle}>{kit.name}</h3>
+              <p className={styles.cardText}>{kit.description}</p>
+              <dl className={styles.facts}>
+                <dt>{t('publisher')}</dt>
+                <dd>{kit.publisher}</dd>
+                <dt>{t('version')}</dt>
+                <dd>{kit.default_version}</dd>
+                <dt>{t('repository')}</dt>
+                <dd>
+                  <a href={kit.repository_url} target="_blank" rel="noreferrer">
+                    {kit.repository_url.replace('https://', '')}
+                  </a>
+                </dd>
+              </dl>
+              <p className={styles.note}>{t('base_kit_pending')}</p>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 };

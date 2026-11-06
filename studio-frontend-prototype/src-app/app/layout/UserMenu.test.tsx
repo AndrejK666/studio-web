@@ -14,7 +14,9 @@ interface TestUser {
   avatarUrl?: string;
 }
 
-const { mockAuth, mockDispatch, mockEventBus, headerState, mockApiRegistry } = vi.hoisted(() => ({
+const { mockAuth, mockDispatch, mockEventBus, headerState, mockApiRegistry, screens } = vi.hoisted(() => ({
+  /** The screens registered in the shell: what decides the Platform and Admin entries. */
+  screens: [] as Array<{ id: string; presentation: { label: string; route: string; level?: string } }>,
   mockApiRegistry: { has: vi.fn(() => false), getService: vi.fn() },
   mockAuth: { logout: vi.fn() },
   mockEventBus: { emit: vi.fn() },
@@ -33,6 +35,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
     selector({ 'layout/header': headerState }),
   eventBus: mockEventBus,
   apiRegistry: mockApiRegistry,
+  useDomainExtensions: () => screens,
 }));
 
 vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellText'));
@@ -101,6 +104,22 @@ describe('UserMenu', () => {
     expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/level/requested', {
       level: 'organization',
     });
+  });
+
+  it('offers the platform only once a platform screen is registered', async () => {
+    screens.length = 0;
+    const { unmount } = render(<UserMenu />);
+    openMenu();
+    await screen.findByText('Organization');
+    expect(screen.queryByText('Platform')).toBeNull();
+    unmount();
+
+    screens.push({ id: 'kits', presentation: { label: 'Kits', route: '/kits', level: 'platform' } });
+    render(<UserMenu />);
+    openMenu();
+    fireEvent.click(await screen.findByText('Platform'));
+    expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/level/requested', { level: 'platform' });
+    screens.length = 0;
   });
 
   it('sign-out clears the user and logs out via the auth runtime', async () => {

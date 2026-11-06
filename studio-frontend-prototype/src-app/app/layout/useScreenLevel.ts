@@ -19,6 +19,9 @@ export function useScreenLevel(): ScreenLevel {
   // projects MFE opens one from its own list, and its announcement is what
   // moves the session down. Mounting is the only other way levels change, so
   // the two together are the whole rule.
+  // A platform or Admin screen is its own level whatever project is open.
+  const declared = mounted ? levelOf(mounted) : 'organization';
+  if (declared === 'platform' || declared === 'admin') return declared;
   if (project) return 'project';
-  return mounted ? levelOf(mounted) : 'organization';
+  return declared;
 }

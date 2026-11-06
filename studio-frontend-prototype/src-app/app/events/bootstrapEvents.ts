@@ -35,7 +35,7 @@ declare module '@gears-frontx/react' {
     /** Left the project scope (a global screen mounted, or "All projects"). */
     'app/context/project/closed': void;
     /** Go to a level: mount its first item. Emitted when a slot above or below the level in scope is picked. */
-    'app/context/level/requested': { level: 'organization' | 'workspace' | 'project' };
+    'app/context/level/requested': { level: 'platform' | 'organization' | 'workspace' | 'project' | 'admin' };
     /** Go to one screen of the level in scope, named in the tabs. The shell decides what it means: another section of the mounted entry, or a mount. */
     'app/context/screen/requested': { extensionId: string };
     /** A member asked to open one artifact of a project (#319's action); the shell navigates to the editor (#320). */
