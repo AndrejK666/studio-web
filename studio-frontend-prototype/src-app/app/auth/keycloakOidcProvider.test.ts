@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   KeycloakOidcProvider,
+  PasswordRejectedError,
   decodeJwtClaims,
   type StudioAuthStateEvent,
 } from './keycloakOidcProvider';
@@ -58,6 +59,38 @@ describe('KeycloakOidcProvider', () => {
     vi.unstubAllEnvs();
     // jsdom keeps one window per file: an address a test wrote must not outlive it.
     window.history.replaceState({}, '', '/');
+  });
+
+  describe('login (password)', () => {
+    const refusal = (error: string, error_description: string) =>
+      ({ ok: false, status: 401, json: async () => ({ error, error_description }) }) as Response;
+
+    it('signs in with the password grant and holds the session', async () => {
+      fetchMock.mockResolvedValue(tokenResponse());
+      const transition = await provider.login({ type: 'password', payload: { username: 'ann', password: 'pw' } });
+      expect(transition).toEqual({ type: 'none' });
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = new URLSearchParams(String(init.body));
+      expect(body.get('grant_type')).toBe('password');
+      expect(body.get('username')).toBe('ann');
+      expect(sessionStorage.getItem('studio.oidc.refresh')).toBe('rt-1');
+    });
+
+    it('keeps a refusal of the credentials on the page', async () => {
+      fetchMock.mockResolvedValue(refusal('invalid_grant', 'Invalid user credentials'));
+      await expect(
+        provider.login({ type: 'password', payload: { username: 'ann', password: 'bad' } })
+      ).rejects.toEqual(new PasswordRejectedError('Wrong email or password.'));
+    });
+
+    it("hands what the grant cannot finish to the IdP's form, with the e-mail filled in", async () => {
+      fetchMock.mockResolvedValue(refusal('invalid_grant', 'Account is not fully set up'));
+      const transition = await provider.login({ type: 'password', payload: { username: 'ann', password: 'pw' } });
+      expect(transition.type).toBe('redirect');
+      const url = new URL((transition as { redirectUrl: string }).redirectUrl);
+      expect(url.pathname).toContain('/protocol/openid-connect/auth');
+      expect(url.searchParams.get('login_hint')).toBe('ann');
+    });
   });
 
   describe('login (oauth)', () => {

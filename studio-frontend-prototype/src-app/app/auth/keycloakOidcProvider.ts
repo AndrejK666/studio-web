@@ -107,6 +107,14 @@ interface TokenResponse {
   id_token?: string;
 }
 
+/** The IdP refused the e-mail and password; the message is for the person. */
+export class PasswordRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PasswordRejectedError';
+  }
+}
+
 export class KeycloakOidcProvider implements AuthProvider {
   private session: BearerAuthSession | null = null;
   private readonly listeners = new Set<AuthStateListener>();
@@ -177,6 +185,8 @@ export class KeycloakOidcProvider implements AuthProvider {
       throw new Error('static-token sign-in is available only in dev builds');
     }
 
+    if (input.type === 'password') return this.loginWithPassword(input);
+
     if (!crypto.subtle) {
       throw new Error('Sign-in requires a secure context (HTTPS or localhost).');
     }
@@ -197,9 +207,64 @@ export class KeycloakOidcProvider implements AuthProvider {
     url.searchParams.set('code_challenge_method', 'S256');
     const idpHint = input.payload.idpHint;
     if (typeof idpHint === 'string' && idpHint) url.searchParams.set('kc_idp_hint', idpHint);
+    // Pre-fills the IdP's own form, so an e-mail typed on ours is not asked twice.
+    const loginHint = input.payload.loginHint;
+    if (typeof loginHint === 'string' && loginHint) url.searchParams.set('login_hint', loginHint);
     // The address the person came back to is the root; remember where they were.
     rememberReturnTo();
     return { type: 'redirect', redirectUrl: url.toString() };
+  }
+
+  /**
+   * E-mail and password on the portal's own page (the prototype's front door):
+   * the Resource Owner Password grant, which the realm allows for
+   * `studio-portal`. The grant cannot run anything interactive — no OTP, no
+   * "update your password", no terms — so whatever it cannot finish goes on
+   * to the IdP's own form with the e-mail filled in, rather than failing: a
+   * client with direct grants off (`unauthorized_client`), an account
+   * Keycloak calls "not fully set up". Only a refusal of the credentials
+   * stays here, as a {@link PasswordRejectedError}, because the IdP's form
+   * would refuse them too.
+   */
+  private async loginWithPassword(input: AuthLoginInput): Promise<AuthTransition> {
+    const username = String(input.payload.username ?? '').trim();
+    const password = String(input.payload.password ?? '');
+    const res = await fetch(this.endpoint('token'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'password',
+        client_id: this.clientId,
+        username,
+        password,
+        scope: 'openid profile email',
+      }),
+      signal: timeoutSignal(),
+    });
+    if (res.ok) {
+      this.storeSession(await parseTokenResponse(res));
+      return { type: 'none' };
+    }
+    let body: { error?: string; error_description?: string } = {};
+    try {
+      body = (await res.json()) as typeof body;
+    } catch {
+      /* not an OAuth error body — "cannot finish here", below */
+    }
+    const description = body.error_description ?? '';
+    if (body.error === 'invalid_grant' && !/not fully set up/i.test(description)) {
+      throw new PasswordRejectedError(
+        !description || /invalid user credentials/i.test(description)
+          ? 'Wrong email or password.'
+          : description
+      );
+    }
+    return this.login({ type: 'oauth', payload: { loginHint: username } });
+  }
+
+  /** Keycloak's own "forgot password" form for this client. */
+  resetPasswordUrl(): string {
+    return `${this.issuer}/login-actions/reset-credentials?${new URLSearchParams({ client_id: this.clientId })}`;
   }
 
   async handleCallback(input: AuthCallbackInput): Promise<AuthTransition> {

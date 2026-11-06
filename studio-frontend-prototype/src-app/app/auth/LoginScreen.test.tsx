@@ -28,11 +28,34 @@ describe('LoginScreen', () => {
     vi.unstubAllEnvs();
   });
 
-  it('starts the SSO flow through the auth runtime', async () => {
+  it('signs in with the e-mail and password through the auth runtime', async () => {
     render(<LoginScreen />);
-    fireEvent.click(screen.getByText('Continue with Constructor ID'));
+    fireEvent.change(screen.getByPlaceholderText('name@company.com'), { target: { value: ' ann@example.com ' } });
+    fireEvent.change(screen.getByPlaceholderText('Enter your password'), { target: { value: 'secret' } });
+    fireEvent.submit(screen.getByPlaceholderText('name@company.com').closest('form')!);
     await waitFor(() =>
-      expect(mockAuth.login).toHaveBeenCalledWith({ type: 'oauth', payload: {} })
+      expect(mockAuth.login).toHaveBeenCalledWith({
+        type: 'password',
+        payload: { username: 'ann@example.com', password: 'secret' },
+      })
+    );
+  });
+
+  it('says a refused password on the page', async () => {
+    const { PasswordRejectedError } = await import('./keycloakOidcProvider');
+    mockAuth.login.mockRejectedValue(new PasswordRejectedError('Wrong email or password.'));
+    render(<LoginScreen />);
+    fireEvent.change(screen.getByPlaceholderText('name@company.com'), { target: { value: 'ann' } });
+    fireEvent.change(screen.getByPlaceholderText('Enter your password'), { target: { value: 'x' } });
+    fireEvent.submit(screen.getByPlaceholderText('name@company.com').closest('form')!);
+    expect(await screen.findByText('Wrong email or password.')).toBeTruthy();
+  });
+
+  it('goes to GitHub through the IdP hint', async () => {
+    render(<LoginScreen />);
+    fireEvent.click(screen.getAllByRole('button', { name: /GitHub/ })[0]);
+    await waitFor(() =>
+      expect(mockAuth.login).toHaveBeenCalledWith({ type: 'oauth', payload: { idpHint: 'github' } })
     );
   });
 
