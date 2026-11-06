@@ -307,11 +307,13 @@ jobs:
           if-no-files-found: ignore
 
   # The prototype is independently deployable on its dedicated POC host, so changes to
-  # it must now pass Test before an immutable image may be published.
+  # it must now pass Test before an immutable image may be published. Since
+  # ADR-0069 it is a copy of the FrontX app growing to the old prototype's
+  # features, so it passes the same gates as test-frontend.
   test-prototype:
     needs: test-changes
     if: needs.test-changes.outputs.prototype == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
+    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-large' }}
     permissions:
       contents: read
     defaults:
@@ -324,16 +326,18 @@ jobs:
           ref: ${{ github.event.inputs.source_ref || github.sha }}
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: studio-frontend-prototype/package-lock.json
       - name: Install
         run: npm ci
+      - name: Lint
+        run: npm run lint
+      # Build precedes Test, as in test-frontend: the suites read build output.
+      - name: Build
+        run: npm run build
       - name: Test
         run: npm test
-      # The commit the /architecture/ page names as the prototype's.
-      - name: Build
-        run: STUDIO_BUILD_COMMIT="$(git rev-parse HEAD)" npm run build
       - uses: actions/upload-artifact@v6
         with:
           name: studio-frontend-prototype-dist
@@ -836,8 +840,8 @@ jobs:
           name: studio-frontend-dist
           path: studio-frontend/dist
 
-  # The pre-FrontX prototype ships as its OWN image and rides along in
-  # compose on :8081. It is tested and built only here, at release time —
+  # The prototype (a FrontX app since ADR-0069) ships as its OWN image and
+  # rides along in compose on :8081. It is tested and built only here, at release time —
   # ci.yml deliberately does not gate on it.
   build-prototype-dist:
     needs: build-require-ci
@@ -870,13 +874,13 @@ jobs:
       - uses: actions/setup-node@v6
         if: steps.test_dist.outcome != 'success'
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: studio-frontend-prototype/package-lock.json
       - if: steps.test_dist.outcome != 'success'
         run: npm ci
       - if: steps.test_dist.outcome != 'success'
-        run: STUDIO_BUILD_COMMIT="$(git rev-parse HEAD)" npm run build
+        run: npm run build
       - uses: actions/upload-artifact@v6
         with:
           name: studio-frontend-prototype-dist

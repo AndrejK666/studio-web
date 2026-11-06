@@ -43,7 +43,7 @@ const BASELINE = join(ROOT, 'scripts/api-usage-baseline.txt');
 /** Where a portal's sources live. */
 const PORTALS = [
   { name: 'studio-frontend', dirs: ['studio-frontend/src', 'studio-frontend/src-app'] },
-  { name: 'studio-frontend-prototype', dirs: ['studio-frontend-prototype/src'] },
+  { name: 'studio-frontend-prototype', dirs: ['studio-frontend-prototype/src', 'studio-frontend-prototype/src-app'] },
 ];
 
 // ---------------------------------------------------------------------------

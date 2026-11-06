@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Generate the prototype's types for the domain-model query from the model.
+// Generate the portal's types for the domain-model query from the model
+// (into the shared MFE library, so every kit reads the same ones; ADR-0069 §5).
 //
 //   node scripts/gen-domain-client.mjs            # write the file
 //   node scripts/gen-domain-client.mjs --check    # fail if the file is stale
 //
 // Input: the seed ontology the studio-domain-model gear boots every tenant
 // with, `studio-backend/src/domain_model/ontology.core.json`. Output:
-// `studio-frontend-prototype/src/domain-model.gen.ts`, one interface per
+// `studio-frontend-prototype/src-app/mfe_packages/shared/src/domain/model.gen.ts`, one interface per
 // entity with every field it has (its own and its bases'), and per entity the
 // relations `include` can follow and the entity each one reaches.
 //
@@ -27,7 +28,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const INPUT = resolve(ROOT, "studio-backend/src/domain_model/ontology.core.json");
-const OUTPUT = resolve(ROOT, "studio-frontend-prototype/src/domain-model.gen.ts");
+const OUTPUT = resolve(ROOT, "studio-frontend-prototype/src-app/mfe_packages/shared/src/domain/model.gen.ts");
 
 const doc = JSON.parse(readFileSync(INPUT, "utf8"));
 const entities = doc.entities ?? [];
@@ -233,7 +234,7 @@ if (process.argv.includes("--check")) {
   }
   if (current.replace(/\r\n/g, "\n") !== out) {
     console.error(
-      "studio-frontend-prototype/src/domain-model.gen.ts is stale against the domain model.\n" +
+      "studio-frontend-prototype/src-app/mfe_packages/shared/src/domain/model.gen.ts is stale against the domain model.\n" +
         "Run: node scripts/gen-domain-client.mjs",
     );
     process.exit(1);
