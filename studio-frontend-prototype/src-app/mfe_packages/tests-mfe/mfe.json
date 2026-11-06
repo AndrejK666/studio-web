@@ -31,7 +31,8 @@
         "route": "/tests",
         "order": 33,
         "level": "project",
-        "experimental": true
+        "experimental": true,
+        "kit": "project-tests"
       }
     }
   ]

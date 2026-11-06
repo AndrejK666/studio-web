@@ -6,5 +6,16 @@
   "publisher": "Издатель",
   "version": "Версия",
   "repository": "Репозиторий",
-  "base_kit_pending": "Установка базовым китом появится вместе с установщиком."
+  "levels": "Ставит экраны на",
+  "shelf_builtin": "встроенный",
+  "shelf_official": "официальный",
+  "shelf_organization": "организации",
+  "base": "базовый кит",
+  "base_default": "базовый кит (по умолчанию)",
+  "installed_for": "стоит у {organization}",
+  "not_installed": "не установлен",
+  "make_base": "Сделать базовым",
+  "remove_base": "Убрать из базовых",
+  "install_for": "Поставить для {organization}",
+  "remove_from": "Убрать из {organization}"
 }

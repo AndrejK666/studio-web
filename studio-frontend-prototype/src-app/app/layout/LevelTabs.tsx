@@ -27,6 +27,7 @@ import { parentSectionOf, resolveLevelMenu, sectionOf, type StudioScreenExtensio
 import { useShellText } from '@/app/i18n/shellTranslations';
 import { levelIconName } from './levelIcon';
 import { useScreenLevel } from './useScreenLevel';
+import { screenShows, useInstalledKits } from './useInstalledKits';
 import styles from './LevelTabs.module.css';
 
 function isActiveItem(
@@ -48,7 +49,8 @@ export const LevelTabs: React.FC = () => {
   const t = useShellText();
   const level = useScreenLevel();
   const registered = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
-  const items = resolveLevelMenu(registered, level);
+  const installed = useInstalledKits();
+  const items = resolveLevelMenu(registered, level).filter((ext) => screenShows(ext, installed));
   const mounted = useMountedExtensions(FRONTX_SCREEN_DOMAIN)[0] as StudioScreenExtension | undefined;
   const section = useAppSelector(
     (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.section ?? null

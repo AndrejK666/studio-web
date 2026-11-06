@@ -6,5 +6,16 @@
   "publisher": "Publisher",
   "version": "Version",
   "repository": "Repository",
-  "base_kit_pending": "Installing as a base kit arrives with the installer."
+  "levels": "Puts screens on",
+  "shelf_builtin": "built-in",
+  "shelf_official": "official",
+  "shelf_organization": "organization's",
+  "base": "base kit",
+  "base_default": "base kit (by default)",
+  "installed_for": "installed for {organization}",
+  "not_installed": "not installed",
+  "make_base": "Make a base kit",
+  "remove_base": "Remove the base kit",
+  "install_for": "Install for {organization}",
+  "remove_from": "Remove from {organization}"
 }

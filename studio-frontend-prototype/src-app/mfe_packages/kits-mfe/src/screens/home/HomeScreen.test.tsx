@@ -155,13 +155,14 @@ describe('HomeScreen', () => {
     // subscriptions only deliver future changes and never fire here.
     expect(host.dir).toBe('rtl');
 
+    // Theme, language, and the organization in scope (the installer reads it).
     // The old bridge's subscriptions were torn down and re-registered on the
     // new instance.
-    expect(first.unsubscriptions).toHaveLength(2);
+    expect(first.unsubscriptions).toHaveLength(3);
     for (const { unsubscribe } of first.unsubscriptions) {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     }
-    expect(second.subscribeToProperty).toHaveBeenCalledTimes(2);
+    expect(second.subscribeToProperty).toHaveBeenCalledTimes(3);
 
     host.remove();
   });
@@ -206,8 +207,9 @@ describe('HomeScreen', () => {
     expect((mountNode.firstChild as HTMLElement).getAttribute('data-theme')).toBe('light');
 
     unmount();
+    // Theme, language, and the organization in scope.
 
-    expect(bridgeFixture.unsubscriptions).toHaveLength(2);
+    expect(bridgeFixture.unsubscriptions).toHaveLength(3);
     for (const { unsubscribe } of bridgeFixture.unsubscriptions) {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     }

@@ -112,6 +112,13 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useDomainExtensions: () => registered.value,
   eventBus: mockEventBus,
 }));
+const { installedKits } = vi.hoisted(() => ({
+  installedKits: { value: null as ReadonlySet<string> | null },
+}));
+vi.mock('./useInstalledKits', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./useInstalledKits')>()),
+  useInstalledKits: () => installedKits.value,
+}));
 vi.mock('@/app/mfe/domainOccupancy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/app/mfe/domainOccupancy')>()),
   useMountedExtensions: () => mounted.value,
@@ -243,5 +250,17 @@ describe('LevelTabs (the level navigation)', () => {
     bootstrapState.status = 'failed';
     const { container } = render(<LevelTabs />);
     expect(container.firstChild).toBeNull();
+  });
+});
+
+describe('LevelTabs and kits (ADR-0069 §4)', () => {
+  it('shows a kit\'s tab only where the kit is installed, and while that is unknown', async () => {
+    const { screenShows } = await import('./useInstalledKits');
+    const kitTab = { id: 'tests', presentation: { label: 'Tests', route: '/tests', level: 'project', kit: 'project-tests' } };
+    const shellTab = { id: 'specs', presentation: { label: 'Specs', route: '/projects/specs', level: 'project' } };
+    expect(screenShows(kitTab as never, null)).toBe(true);
+    expect(screenShows(kitTab as never, new Set(['project-tests']))).toBe(true);
+    expect(screenShows(kitTab as never, new Set())).toBe(false);
+    expect(screenShows(shellTab as never, new Set())).toBe(true);
   });
 });

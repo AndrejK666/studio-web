@@ -8,7 +8,8 @@
       "id": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.kits.mfe.main.v1",
       "requiredProperties": [
         "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.theme.v1~",
-        "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.language.v1~"
+        "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.language.v1~",
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.organization.selected.v1~"
       ],
       "actions": [],
       "domainActions": [],

@@ -44,6 +44,11 @@
         "experimental": {
           "type": "boolean",
           "$comment": "The tab works but its place is not settled: the tabs mark it EXP, as the prototype did. A kit sets it in its own manifest; the shell only draws the mark."
+        },
+        "kit": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "$comment": "The slug of the kit that brings this screen (ADR-0068 §2, ADR-0069 §4). The shell shows it only where the kit is installed — as a base kit or by the organization — and shows it while that is not yet known. Absent: the shell's own screen, always shown."
         }
       },
       "required": [

@@ -36,6 +36,8 @@ export interface LeveledPresentation {
   level?: string;
   /** The tab works but its place is not settled: drawn with an EXP mark. */
   experimental?: boolean;
+  /** The kit that brings the screen; shown only where the kit is installed. */
+  kit?: string;
   placement?: string;
   section?: string;
   parentSection?: string;

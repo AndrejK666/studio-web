@@ -3,11 +3,13 @@ import type { ChildMfeBridge } from '@gears-frontx/react';
 import {
   apiRegistry,
   useApiQuery,
+  useSharedProperty,
   FRONTX_SHARED_PROPERTY_THEME,
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
-import { Empty, EmptyDescription, Skeleton } from '@gears-frontx/ui-kit';
-import { KitsApiService, type CatalogKit } from '../../api/KitsApiService';
+import { Badge, Button, Empty, EmptyDescription, Skeleton } from '@gears-frontx/ui-kit';
+import { STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION } from '@constructor-studio/mfe-shared';
+import { KitsApiService, type CatalogKit, type InstalledKits } from '../../api/KitsApiService';
 import { useHomeTranslations } from '../../i18n';
 import styles from './HomeScreen.module.css';
 
@@ -40,9 +42,13 @@ interface HomeScreenProps {
 }
 
 /**
- * Platform › Kits: the kit library (ADR-0068 §4, ADR-0069 §4). Lists the
- * catalogue the `studio-kits` gear keeps; installing a kit as a base kit
- * arrives with the installer.
+ * Platform › Kits: the kit library and the installer (ADR-0068 §4–5,
+ * ADR-0069 §4). Every kit of the catalogue, and for each whether it is a base
+ * kit (the platform's, for every organization) and whether the organization in
+ * view installed it for itself. A platform administrator makes a kit a base
+ * kit or takes it back; an organization administrator installs one for the
+ * organization. The gear refuses what the person may not do, and the card
+ * says why.
  */
 export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,8 +73,46 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   }
 
   const { t, loading } = useHomeTranslations();
-  const catalog = useApiQuery(apiRegistry.getService(KitsApiService).catalog);
+  const api = apiRegistry.getService(KitsApiService);
+  const catalog = useApiQuery(api.catalog);
   const kits: CatalogKit[] = catalog.data?.items ?? [];
+  const organization = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION, { bridge }) as
+    | { id: string; name: string }
+    | null
+    | undefined;
+  const orgId = organization?.id ?? null;
+  const [installed, setInstalled] = useState<InstalledKits | null>(null);
+  const [tick, setTick] = useState(0);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [problem, setProblem] = useState<{ slug: string; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    api
+      .installed({ organizationId: orgId })
+      .fetch({ staleTime: 0 })
+      .then(
+        (r) => alive && setInstalled(r),
+        () => alive && setInstalled(null)
+      );
+    return () => {
+      alive = false;
+    };
+  }, [api, orgId, tick]);
+
+  const act = async (slug: string, run: () => Promise<unknown>) => {
+    setBusy(slug);
+    setProblem(null);
+    try {
+      await run();
+    } catch (e) {
+      setProblem({ slug, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(null);
+      setTick((n) => n + 1);
+    }
+  };
 
   useEffect(() => {
     const themeUnsubscribe = bridge.subscribeToProperty(
@@ -140,14 +184,35 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
                 <dd>{kit.publisher}</dd>
                 <dt>{t('version')}</dt>
                 <dd>{kit.default_version}</dd>
-                <dt>{t('repository')}</dt>
-                <dd>
-                  <a href={kit.repository_url} target="_blank" rel="noreferrer">
-                    {kit.repository_url.replace('https://', '')}
-                  </a>
-                </dd>
+                {kit.repository_url && (
+                  <>
+                    <dt>{t('repository')}</dt>
+                    <dd>
+                      <a href={kit.repository_url} target="_blank" rel="noreferrer">
+                        {kit.repository_url.replace('https://', '')}
+                      </a>
+                    </dd>
+                  </>
+                )}
+                {kit.levels && kit.levels.length > 0 && (
+                  <>
+                    <dt>{t('levels')}</dt>
+                    <dd>{kit.levels.join(', ')}</dd>
+                  </>
+                )}
               </dl>
-              <p className={styles.note}>{t('base_kit_pending')}</p>
+              <KitControls
+                kit={kit}
+                installed={installed}
+                organization={organization ?? null}
+                busy={busy === kit.slug}
+                problem={problem?.slug === kit.slug ? problem.text : null}
+                t={t}
+                onMakeBase={() => void act(kit.slug, () => api.installBase(kit.slug).fetch({}))}
+                onRemoveBase={() => void act(kit.slug, () => api.removeBase(kit.slug).fetch(undefined))}
+                onInstall={(org) => void act(kit.slug, () => api.installForOrganization(kit.slug, org).fetch({}))}
+                onRemove={(org) => void act(kit.slug, () => api.removeFromOrganization(kit.slug, org).fetch(undefined))}
+              />
             </li>
           ))}
         </ul>
@@ -157,3 +222,80 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
 };
 
 HomeScreen.displayName = 'HomeScreen';
+
+type Text = ReturnType<typeof useHomeTranslations>['t'];
+
+/** What one kit is here, and what may be done with it. */
+function KitControls({
+  kit,
+  installed,
+  organization,
+  busy,
+  problem,
+  t,
+  onMakeBase,
+  onRemoveBase,
+  onInstall,
+  onRemove,
+}: {
+  kit: CatalogKit;
+  installed: InstalledKits | null;
+  organization: { id: string; name: string } | null;
+  busy: boolean;
+  problem: string | null;
+  t: Text;
+  onMakeBase: () => void;
+  onRemoveBase: () => void;
+  onInstall: (organizationId: string) => void;
+  onRemove: (organizationId: string) => void;
+}) {
+  const base = installed?.base.find((k) => k.kit_slug === kit.slug);
+  const own = installed?.organization.find((k) => k.kit_slug === kit.slug);
+  const name = organization?.name ?? '';
+  return (
+    <>
+      <div className={styles.badges}>
+        {kit.shelf && <Badge variant="secondary">{t('shelf_' + kit.shelf)}</Badge>}
+        {base && (
+          <Badge variant="success" dot>
+            {base.by_default ? t('base_default') : t('base')}
+          </Badge>
+        )}
+        {own && (
+          <Badge variant="info" dot>
+            {t('installed_for', { organization: name })}
+          </Badge>
+        )}
+        {installed && !base && !own && <Badge variant="outline">{t('not_installed')}</Badge>}
+      </div>
+      {installed && (
+        <div className={styles.actions}>
+          {base ? (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={onRemoveBase}>
+              {t('remove_base')}
+            </Button>
+          ) : (
+            <Button size="sm" disabled={busy} onClick={onMakeBase}>
+              {t('make_base')}
+            </Button>
+          )}
+          {organization && !base && !own && (
+            <Button variant="outline" size="sm" disabled={busy} onClick={() => onInstall(organization.id)}>
+              {t('install_for', { organization: name })}
+            </Button>
+          )}
+          {organization && own && (
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onRemove(organization.id)}>
+              {t('remove_from', { organization: name })}
+            </Button>
+          )}
+        </div>
+      )}
+      {problem && (
+        <p role="alert" className={styles.error}>
+          {problem}
+        </p>
+      )}
+    </>
+  );
+}

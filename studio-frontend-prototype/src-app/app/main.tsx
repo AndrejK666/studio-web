@@ -11,6 +11,7 @@ import {
   StudioTasksApiService,
 } from '@constructor-studio/mfe-shared';
 import { IdentityApiService, OrganizationsApiService, StudioSessionApiService } from '@/app/api';
+import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
 import { MfeHandlerIframe } from '@/app/mfe/MfeHandlerIframe';
 import './globals.css'; // Global styles with CSS variables
 import '@/app/i18n/shellTranslations'; // The shell's own strings (`shell:`)
@@ -40,6 +41,8 @@ for (const schema of SHELL_SCHEMAS) gtsPlugin.registerSchema(schema);
 apiRegistry.register(AccountsApiService);
 apiRegistry.register(IdentityApiService);
 apiRegistry.register(OrganizationsApiService);
+// Which kits apply to the organization in scope: a kit's tabs show only there.
+apiRegistry.register(InstalledKitsApiService);
 // The backend's push channel: studio-tasks announces every background run on
 // it, so a view is told instead of polling.
 apiRegistry.register(StudioEventsApiService);

@@ -114,3 +114,10 @@
 .error {
   color: var(--destructive);
 }
+
+.badges,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
