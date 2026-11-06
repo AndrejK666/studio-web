@@ -5,11 +5,14 @@
  */
 
 import { createFrontX, apiRegistry, i18n, queryCacheShared } from '@gears-frontx/react';
+import { authShared } from '@constructor-studio/mfe-shared';
 import { TestsApiService } from './api/TestsApiService';
 
 apiRegistry.register(TestsApiService);
 apiRegistry.initialize();
 
-const mfeApp = createFrontX().use(i18n()).use(queryCacheShared()).build();
+// authShared(): the host's auth plugin lives in the host's realm, so without it
+// every read goes out with no bearer and answers 401.
+const mfeApp = createFrontX().use(i18n()).use(queryCacheShared()).use(authShared()).build();
 
 export { mfeApp };

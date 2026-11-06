@@ -23,6 +23,7 @@ import { homeSlice } from './slices/homeSlice';
 import { initHomeEffects } from './effects/homeEffects';
 import { _BlankApiService } from './api/_BlankApiService';
 import { KitsApiService } from './api/KitsApiService';
+import { authShared } from '@constructor-studio/mfe-shared';
 
 // Register API services BEFORE build — mock plugin syncs during build(),
 // so services must already be present for mock activation to find them
@@ -32,7 +33,15 @@ apiRegistry.initialize();
 
 // Create only the local MFE app shell.
 // queryCacheShared() joins the host-owned QueryClient without reconfiguring it.
-const mfeApp = createFrontX().use(effects()).use(i18n()).use(queryCacheShared()).use(mock()).build();
+// authShared(): the host's auth plugin lives in the host's realm, so without it
+// the catalogue and the installer go out with no bearer and answer 401.
+const mfeApp = createFrontX()
+  .use(effects())
+  .use(i18n())
+  .use(queryCacheShared())
+  .use(mock())
+  .use(authShared())
+  .build();
 
 // Register slices with effects (needs store from build())
 registerSlice(homeSlice, initHomeEffects);

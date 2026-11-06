@@ -34,6 +34,9 @@ vi.mock('./api/_BlankApiService', () => ({
   },
 }));
 
+const { authShared } = vi.hoisted(() => ({ authShared: vi.fn(() => 'auth-shared-plugin') }));
+vi.mock('@constructor-studio/mfe-shared', () => ({ authShared }));
+
 vi.mock('./api/KitsApiService', () => ({
   KitsApiService: class KitsApiService {},
 }));
@@ -76,6 +79,8 @@ describe('_blank-mfe init', () => {
       ['i18n-plugin'],
       ['query-cache-shared-plugin'],
       ['mock-plugin'],
+      // Without it every request goes out with no bearer (401).
+      ['auth-shared-plugin'],
     ]));
     expect(build).toHaveBeenCalledTimes(1);
     expect(registerSlice).toHaveBeenCalledWith({ name: '_blank/home' }, initHomeEffects);

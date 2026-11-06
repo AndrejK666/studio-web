@@ -16,6 +16,9 @@ vi.mock('@gears-frontx/react', () => ({
   queryCacheShared,
 }));
 
+const { authShared } = vi.hoisted(() => ({ authShared: vi.fn(() => 'auth-shared-plugin') }));
+vi.mock('@constructor-studio/mfe-shared', () => ({ authShared }));
+
 vi.mock('./api/TestsApiService', () => ({
   TestsApiService: class TestsApiService {},
 }));
@@ -26,7 +29,8 @@ describe('tests-mfe init', () => {
     expect(register).toHaveBeenCalledTimes(1);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(register.mock.invocationCallOrder[0]).toBeLessThan(build.mock.invocationCallOrder[0]);
-    expect(use.mock.calls).toEqual([['i18n-plugin'], ['query-cache-shared-plugin']]);
+    // authShared last: without it every read goes out with no bearer (401).
+    expect(use.mock.calls).toEqual([['i18n-plugin'], ['query-cache-shared-plugin'], ['auth-shared-plugin']]);
     expect(module.mfeApp).toEqual({ id: 'tests-mfe-app' });
   });
 });
