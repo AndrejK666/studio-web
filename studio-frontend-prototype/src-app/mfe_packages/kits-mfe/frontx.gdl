@@ -9,9 +9,9 @@ mfe(
     name = "@constructor-studio/kits-mfe",
     version = "0.2.0-alpha.0",
 
-    # The backend gears its screens call, by gear id. None yet: its only API
-    # service is the scaffold's _BlankApiService (`/api/blank`), which is mocked.
-    requires = [],
+    # The backend gears its screens call, by gear id: the kit library reads
+    # the studio-kits catalogue.
+    requires = ["studio-kits"],
 
     # What it brings, as mfe.json says: the label of its screen, then the
     # route of its extension (presentation.route).

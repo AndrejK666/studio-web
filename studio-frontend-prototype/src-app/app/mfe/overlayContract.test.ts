@@ -259,10 +259,13 @@ describe('generated MFE manifest', () => {
       const declaring = entries.filter((entry) =>
         (entry.requiredProperties ?? []).includes(STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT)
       );
-      expect(declaring.map((entry) => entry.id)).toEqual([
-        expect.stringContaining('constructor_studio.projects.mfe.main'),
-        expect.stringContaining('constructor_studio.projects.mfe.sources_connect'),
-      ]);
+      // A kit's project screen (ADR-0069) reads it too; projects-mfe must stay among them.
+      expect(declaring.map((entry) => entry.id)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('constructor_studio.projects.mfe.main'),
+          expect.stringContaining('constructor_studio.projects.mfe.sources_connect'),
+        ])
+      );
     });
 
     it('admits a tenant id', () => {
@@ -376,6 +379,8 @@ describe('generated MFE manifest', () => {
         'Overview',
         'Artifacts',
         'Specs',
+        // The Tests kit's own screen (ADR-0069), between the shell's sections.
+        'Tests',
         'Sources',
         'Activity',
         'Timeline',
@@ -391,12 +396,14 @@ describe('generated MFE manifest', () => {
       );
       const workspaceEntry = screens.find((ext) => ext.presentation?.level === 'workspace')?.entry;
 
-      // One entry for every tab: that is what lets the shell relay a
-      // section instead of mounting eight screens.
-      expect(new Set(project.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
-      // And each item carries the token the MFE understands for it.
-      expect(project.filter((ext) => !ext.presentation?.section)).toEqual([]);
-      expect(project.length).toBeGreaterThan(1);
+      // The project's own sections share one entry: that is what lets the
+      // shell relay a section instead of mounting eight screens. A kit's tab
+      // (ADR-0069) is a screen of its own, with no section to relay.
+      const sections = project.filter((ext) => ext.presentation?.section);
+      expect(new Set(sections.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
+      expect(sections.length).toBeGreaterThan(1);
+      const kitTabs = project.filter((ext) => !ext.presentation?.section);
+      for (const tab of kitTabs) expect(tab.entry).not.toBe(workspaceEntry);
     });
 
     it('gives every item sharing an entry with another of its level a section of its own', () => {

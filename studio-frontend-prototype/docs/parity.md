@@ -85,7 +85,7 @@ copy).
 | Product (map, configurator, frontend, gear config) | Product & Releases | — | todo |
 | Components (inventory) | Product & Releases | — | todo |
 | Releases (environments ladder, builds, deploys) | Product & Releases | — | todo |
-| Tests | Tests | — | todo |
+| Tests | Tests (`tests-mfe`) | Tests kit: mainline, pull requests, spec ↔ code, runs; the Spec ↔ code card does not open Specs yet | partial |
 | Kits (IDE kits) | shell (installer, working material) | — | todo |
 | Artifacts (outputs, documents) | Artifacts | `projects-mfe` Artifacts | partial |
 | Sources | shell (Sources) | `projects-mfe` Sources | partial |
