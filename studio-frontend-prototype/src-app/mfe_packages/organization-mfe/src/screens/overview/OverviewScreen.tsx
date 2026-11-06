@@ -33,12 +33,13 @@ import styles from './OverviewScreen.module.css';
 type Text = ReturnType<typeof useOverviewTranslations>['t'];
 
 /** Where a row's action leads, among the screens this portal has so far.
- *  Costs, Components and Background work are not here yet (parity.md): their
+ *  Costs and Components are not here yet (parity.md): their
  *  rows say what is wrong and offer no button rather than a dead one. */
 const TARGET_ROUTE: Partial<Record<NeedTarget, string>> = {
   connectors: '/connections',
   projects: '/organization/workspaces',
   people: '/people',
+  tasks: '/organization/tasks',
 };
 
 function money(value: number, currency: string, language: string): string {

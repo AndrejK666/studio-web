@@ -42,6 +42,10 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   authShared,
 }));
 
+vi.mock('./api/BackgroundApiService', () => ({
+  BackgroundApiService: class BackgroundApiService {},
+}));
+
 vi.mock('./api/OverviewApiService', () => ({
   OverviewApiService: class OverviewApiService {},
 }));
@@ -80,7 +84,7 @@ describe('organization-mfe init', () => {
 
     // Two services now: the scaffold's and the accounts client this MFE reads
     // the organization's workspaces with.
-    expect(register).toHaveBeenCalledTimes(3);
+    expect(register).toHaveBeenCalledTimes(4);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);

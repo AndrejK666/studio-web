@@ -61,7 +61,7 @@ copy).
 | Costs | Costs kit | — | todo |
 | Components (registry, catalogue, gear repositories) | Product & Releases | — | todo |
 | Reports | Reports kit | — | todo |
-| Background work (tasks, schedules) | shell | — | todo |
+| Background work (tasks, schedules) | shell | `organization-mfe` Background work: runs (failed + running by default, state and type filters, retry, cancel, details), schedules (run now); refreshes by polling, not studio-events | partial |
 | Domain-model tabs of the organization (`type:<name>`) | shell (generic screens) | — | todo |
 | Settings | shell | `organization-mfe` | partial |
 

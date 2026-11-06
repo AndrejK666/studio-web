@@ -49,3 +49,13 @@ export const useOverviewTranslations = createScreenTranslations(
   overviewModules,
   './screens/overview/i18n'
 );
+
+const backgroundModules = import.meta.glob('./screens/background/i18n/*.json') as ModuleMap;
+
+/** Background work's dictionary and its text function in one call. */
+export const useBackgroundTranslations = createScreenTranslations(
+  SCREENSET,
+  'background',
+  backgroundModules,
+  './screens/background/i18n'
+);

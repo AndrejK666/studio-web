@@ -63,6 +63,19 @@
         "placement": "settings",
         "section": "settings"
       }
+    },
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.organization.screens.tasks.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.organization.mfe.main.v1",
+      "presentation": {
+        "label": "Background work",
+        "icon": "lucide:activity",
+        "route": "/organization/tasks",
+        "order": 90,
+        "level": "organization",
+        "section": "tasks"
+      }
     }
   ]
 }

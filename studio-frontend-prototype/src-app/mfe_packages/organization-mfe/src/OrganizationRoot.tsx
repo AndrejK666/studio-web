@@ -10,6 +10,7 @@ import {
 import { HomeScreen } from './screens/home/HomeScreen';
 import { WorkspacesScreen } from './screens/workspaces/WorkspacesScreen';
 import { OverviewScreen } from './screens/overview/OverviewScreen';
+import { BackgroundScreen } from './screens/background/BackgroundScreen';
 
 export interface OrganizationRootProps {
   bridge: ChildMfeBridge;
@@ -21,6 +22,7 @@ export const OrganizationRoot: React.FC<OrganizationRootProps> = ({ bridge }) =>
   // The overview is the level's entry point (ADR-0069 parity), and what a
   // section this root does not know falls back to.
   if (section === 'settings') return <HomeScreen bridge={bridge} />;
+  if (section === 'tasks') return <BackgroundScreen />;
   return (
     <OrganizationProvider>
       {section === 'workspaces' ? <WorkspacesScreen /> : <OverviewScreen />}
