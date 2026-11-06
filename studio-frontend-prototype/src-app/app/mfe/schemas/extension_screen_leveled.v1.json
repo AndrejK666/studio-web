@@ -1,7 +1,7 @@
 {
   "$id": "gts://gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Leveled Screen Extension Schema (Derived). Constructor Studio has three levels — organization, workspace, project — and the tabs show the items of the level in scope. FrontX's ExtensionPresentation carries label/icon/route/order and is not ours to widen, so the level is added the way the framework intends: a further derived Extension type, chained after frontx.screensets.layout.screen.v1 so the screen domain's extensionsTypeId still matches by prefix. An extension that does not chain through this type has no declared level and the shell reads it as the organization level.",
+  "$comment": "Leveled Screen Extension Schema (Derived). Constructor Studio has five levels — platform, organization, workspace, project, admin (ADR-0069) — and the tabs show the items of the level in scope. FrontX's ExtensionPresentation carries label/icon/route/order and is not ours to widen, so the level is added the way the framework intends: a further derived Extension type, chained after frontx.screensets.layout.screen.v1 so the screen domain's extensionsTypeId still matches by prefix. An extension that does not chain through this type has no declared level and the shell reads it as the organization level.",
   "allOf": [
     { "$ref": "gts://gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~" }
   ],
@@ -11,7 +11,7 @@
       "properties": {
         "level": {
           "type": "string",
-          "enum": ["organization", "workspace", "project"],
+          "enum": ["platform", "organization", "workspace", "project", "admin"],
           "$comment": "Which level's tabs this screen appears in. REQUIRED here: opting into this type is the act of declaring the level, so a leveled extension without one is a mistake rather than a default."
         },
         "section": {
