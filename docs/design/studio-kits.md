@@ -200,7 +200,12 @@ and never written back in the old shape.
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `GET` | `/studio-kits/v1/catalog` | Every kit this deployment knows about | unstable |
+| `GET` | `/studio-kits/v1/catalog` | Every kit of the library, each with its `shelf` (`builtin`, `official`, `organization`) and `levels`; `?shelf=` filters | unstable |
+| `GET` | `/studio-kits/v1/installed-kits` | The kits that apply to an organization (`?organization_id=`): `base`, `organization`, `effective` | unstable |
+| `PUT` | `/studio-kits/v1/base-kits/{kit_slug}` | Install a kit for every organization (`{version?}`); platform administrators | unstable |
+| `DELETE` | `/studio-kits/v1/base-kits/{kit_slug}` | Stop a kit being a base kit; a built-in kit stays removed | unstable |
+| `PUT` | `/studio-kits/v1/organization-kits/{kit_slug}` | Install a kit for one organization (`?organization_id=`, `{version?}`); its administrators | unstable |
+| `DELETE` | `/studio-kits/v1/organization-kits/{kit_slug}` | Uninstall the organization's own kit; a base kit is 400 `BASE_KIT` | unstable |
 | `GET` | `/studio-kits/v1/projects/{project_id}/installations` | What the project wants installed | unstable |
 | `POST` | `/studio-kits/v1/projects/{project_id}/installations` | Request a kit (`kit_slug`, `version`, `install_mode`, `scope`); recorded as `pending` | unstable |
 | `DELETE` | `/studio-kits/v1/projects/{project_id}/installations/{kit_slug}` | Stop wanting one; files in a checkout stay | unstable |
@@ -266,6 +271,16 @@ under `gts.cf.core.am.tenant_metadata.v1~cf.studio.project.kit_installations.v1~
 sorted by kit slug. The metadata type is declared in the backend's
 `config/*.yaml` with `inheritance_policy: override_only`, so a project never
 inherits another tenant's list.
+
+Installed kits (ADR-0069 §4) are one document `{ "kits": [...],
+"removed_builtin": [...] }` under
+`gts.cf.core.am.tenant_metadata.v1~cf.studio.kits.installed.v1~`
+(`override_only`): on the platform root for the base kits, on an organization
+for its own. Each record is `kit_slug`, `version`, `shelf`, `installed_by`,
+`installed_at`. `removed_builtin` (root only) lists the built-in kits a
+platform administrator removed; every other built-in kit is a base kit by
+default. Only the gear writes the document, as its service identity, after
+checking the caller (`studio_authz_plugin::GEAR_HELD_METADATA`).
 
 ### 3.8 Deployment Topology
 

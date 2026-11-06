@@ -197,6 +197,18 @@ without the portal; each step is the REST route the portal calls for it.
 | | `deployment_logs` | the end of each container's log |
 | Runs | `task_run` | the background run an import, build or deploy started |
 
+**Kits.** What Studio has for an organization comes from kits (ADR-0068,
+ADR-0069 §4); an agent installs one the way a person does.
+
+| Tool | What it answers or does |
+| --- | --- |
+| `kits_catalog` | the kit library, each kit with its shelf (`builtin`, `official`, `organization`) |
+| `kits_installed` | an organization's kits: `base`, its own, and `effective` |
+| `kit_base_install` | *changes:* installs a kit for every organization (platform administrators) |
+| `kit_base_uninstall` | *changes:* stops a kit being a base kit (platform administrators) |
+| `kit_organization_install` | *changes:* installs a kit for one organization (its administrators) |
+| `kit_organization_uninstall` | *changes:* uninstalls the organization's own kit; a base kit is refused |
+
 There is no tool that checks a saved description revision's text for a
 profile: Studio has no route for it. `product_check` composes the description
 from the picked gears; the kept verdicts are in `product_record`.

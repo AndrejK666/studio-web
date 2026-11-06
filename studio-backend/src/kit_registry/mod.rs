@@ -5,8 +5,12 @@
 //! desired installations; `cfs` remains the only component that materializes
 //! kit files into a checkout.
 
+pub(crate) mod installed;
+mod mcp;
 mod rest;
 pub(crate) mod service;
+
+pub(crate) use mcp::tools as mcp_tools;
 
 use std::sync::{Arc, OnceLock};
 
@@ -16,6 +20,7 @@ use axum::Router;
 use toolkit::api::OpenApiRegistry;
 use toolkit::{Gear, GearCtx};
 
+use installed::{AmInstalledStore, HubAuthority, KitInstaller};
 use service::KitRegistryService;
 
 #[toolkit::gear(
@@ -26,17 +31,40 @@ use service::KitRegistryService;
 #[derive(Default)]
 pub struct StudioKitsGear {
     service: OnceLock<Arc<KitRegistryService>>,
+    installer: OnceLock<Arc<KitInstaller>>,
+    access: OnceLock<crate::org_scope::OrgAccess>,
 }
 
 #[async_trait]
 impl Gear for StudioKitsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let account_management = ctx.client_hub().get::<dyn AccountManagementClient>()?;
+        let service = Arc::new(KitRegistryService::new(
+            crate::model_metadata::client_for(
+                ctx,
+                account_management.clone(),
+                service::MODEL_KINDS,
+            ),
+            ctx.client_hub(),
+        )?);
+        // Which kits apply to an organization (ADR-0069 §4): plain tenant
+        // metadata, written as the gear after it has checked who asks.
+        let installer = Arc::new(KitInstaller::new(
+            service.catalogue(),
+            Arc::new(AmInstalledStore::new(account_management.clone())),
+            Arc::new(HubAuthority::new(ctx.client_hub())),
+        ));
+        let access = crate::org_scope::OrgAccess(Arc::new(
+            crate::studio_session::sdk::TenantMembership::new(account_management),
+        ));
         self.service
-            .set(Arc::new(KitRegistryService::new(
-                crate::model_metadata::client_for(ctx, account_management, service::MODEL_KINDS),
-                ctx.client_hub(),
-            )?))
+            .set(service)
+            .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
+        self.installer
+            .set(installer)
+            .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
+        self.access
+            .set(access)
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
         Ok(())
     }
@@ -55,6 +83,18 @@ impl toolkit::contracts::RestApiCapability for StudioKitsGear {
             .get()
             .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?
             .clone();
-        Ok(rest::register_routes(router, openapi, service))
+        let installer = self
+            .installer
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?
+            .clone();
+        let access = self
+            .access
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?
+            .clone();
+        Ok(rest::register_routes(
+            router, openapi, service, installer, access,
+        ))
     }
 }

@@ -8,9 +8,11 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::installed::{BASE_KIT, InstalledKit, KitInstaller, Refusal};
 use super::service::{
     KitDescriptor, KitInstallation, KitMaterialization, KitRegistryService, ProjectRepository,
 };
+use crate::org_scope::{OrgAccess, OrgCtx};
 use crate::pagination::{PageQuery, page_of};
 
 #[resource_error(gts_id!("cf.studio.kits.registry.v1~"))]
@@ -36,6 +38,14 @@ pub struct KitDto {
     pub repository_url: String,
     pub default_version: String,
     pub manifest_path: String,
+    /// The library shelf: `builtin` (shipped in Studio's image; no
+    /// repository, so `repository_url` is empty and `source` is `builtin`),
+    /// `official` (Constructor's kits in their own repositories) or
+    /// `organization` (an organization's own).
+    pub shelf: String,
+    /// The levels the kit may be installed on: `organization`, `workspace`,
+    /// `project`.
+    pub levels: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -158,6 +168,8 @@ impl From<KitDescriptor> for KitDto {
             repository_url: value.repository_url,
             default_version: value.default_version,
             manifest_path: value.manifest_path,
+            shelf: value.shelf,
+            levels: value.levels,
         }
     }
 }
@@ -213,6 +225,311 @@ impl From<KitInstallation> for KitInstallationDto {
     }
 }
 
+/// `GET /catalog`'s query: a shelf, and the page.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct CatalogueQuery {
+    #[serde(default)]
+    pub shelf: Option<String>,
+    #[serde(flatten)]
+    pub page: PageQuery,
+}
+
+/// One installed kit (ADR-0069 §4).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InstalledKitDto {
+    pub kit_slug: String,
+    /// The version that applies. A built-in kit is always at Studio's own.
+    pub version: String,
+    /// `builtin`, `official` or `organization`: the library shelf.
+    pub shelf: String,
+    /// `base` (installed by the platform for every organization) or
+    /// `organization` (installed by the organization for itself). In
+    /// `effective`, the installation whose version won.
+    pub kind: String,
+    /// Who installed it: a subject id. Absent for a built-in kit installed by
+    /// default, which nobody installed.
+    pub installed_by: Option<String>,
+    /// When, RFC 3339 UTC. Absent exactly when `installed_by` is.
+    pub installed_at: Option<String>,
+    /// A built-in kit installed because nobody removed it.
+    pub by_default: bool,
+}
+
+/// The kits that apply to one organization.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InstalledKitsDto {
+    /// The organization this is about (a project or workspace named in
+    /// `organization_id` answers for its organization).
+    pub organization_id: String,
+    /// What the platform installed for every organization, built-in kits
+    /// nobody removed included. An organization cannot uninstall these.
+    pub base: Vec<InstalledKitDto>,
+    /// What the organization installed for itself.
+    pub organization: Vec<InstalledKitDto>,
+    /// What applies: `base` and `organization` together, one entry per kit,
+    /// at the newer of the two versions.
+    pub effective: Vec<InstalledKitDto>,
+}
+
+/// Install a kit: at `version`, or the kit's default when absent.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct InstallKitDto {
+    /// A Git ref for an official kit. A built-in kit takes Studio's version
+    /// only; another is refused.
+    pub version: Option<String>,
+}
+
+impl From<InstalledKit> for InstalledKitDto {
+    fn from(value: InstalledKit) -> Self {
+        Self {
+            kit_slug: value.kit_slug,
+            version: value.version,
+            shelf: value.shelf,
+            kind: value.kind.to_owned(),
+            installed_by: value.installed_by,
+            installed_at: value.installed_at,
+            by_default: value.by_default,
+        }
+    }
+}
+
+fn refused(refusal: Refusal) -> CanonicalError {
+    match refusal {
+        Refusal::Forbidden(reason) => KitRegistryError::permission_denied()
+            .with_reason(reason)
+            .create(),
+        Refusal::Invalid(detail) => KitRegistryError::invalid_argument()
+            .with_constraint(detail)
+            .create(),
+        Refusal::NotFound(slug, detail) => KitRegistryError::not_found(detail)
+            .with_resource(slug)
+            .create(),
+        Refusal::BaseKit(slug) => KitRegistryError::failed_precondition()
+            .with_precondition_violation(
+                "kit",
+                format!(
+                    "`{slug}` is a base kit, installed by the platform for every organization; \
+                     an organization cannot uninstall it"
+                ),
+                BASE_KIT,
+            )
+            .create(),
+        Refusal::Internal(error) => internal(error),
+    }
+}
+
+async fn get_installed(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+) -> ApiResult<JsonBody<InstalledKitsDto>> {
+    let installed = installer
+        .installed(&ctx, ctx.subject_tenant_id())
+        .await
+        .map_err(refused)?;
+    let list = |kits: Vec<InstalledKit>| kits.into_iter().map(Into::into).collect();
+    Ok(Json(InstalledKitsDto {
+        organization_id: installed.organization_id.to_string(),
+        base: list(installed.base),
+        organization: list(installed.organization),
+        effective: list(installed.effective),
+    }))
+}
+
+async fn upsert_base_kit(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Path(kit_slug): Path<String>,
+    Json(body): Json<InstallKitDto>,
+) -> ApiResult<JsonBody<InstalledKitDto>> {
+    let kit = installer
+        .install_base(&ctx, &kit_slug, body.version.as_deref())
+        .await
+        .map_err(refused)?;
+    Ok(Json(kit.into()))
+}
+
+async fn delete_base_kit(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Path(kit_slug): Path<String>,
+) -> ApiResult<StatusCode> {
+    installer
+        .uninstall_base(&ctx, &kit_slug)
+        .await
+        .map_err(refused)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn upsert_organization_kit(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Path(kit_slug): Path<String>,
+    Json(body): Json<InstallKitDto>,
+) -> ApiResult<JsonBody<InstalledKitDto>> {
+    let kit = installer
+        .install_for_organization(
+            &ctx,
+            ctx.subject_tenant_id(),
+            &kit_slug,
+            body.version.as_deref(),
+        )
+        .await
+        .map_err(refused)?;
+    Ok(Json(kit.into()))
+}
+
+async fn delete_organization_kit(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Path(kit_slug): Path<String>,
+) -> ApiResult<StatusCode> {
+    installer
+        .uninstall_for_organization(&ctx, ctx.subject_tenant_id(), &kit_slug)
+        .await
+        .map_err(refused)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The installer's routes (ADR-0069 §4).
+fn register_installer_routes(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    router = OperationBuilder::get("/studio-kits/v1/installed-kits")
+        .operation_id("studio_kits.get_installed_kits")
+        .summary("The kits that apply to an organization: base, its own, and the two together")
+        .description(
+            "Any member of the organization may read it. `base` is what the platform installed \
+             for every organization (the built-in kits nobody removed among them), \
+             `organization` what the organization installed for itself, and `effective` the \
+             two together, one entry per kit at the newer version. A project or workspace \
+             named in `organization_id` answers for its organization; one the caller does not \
+             reach is 404.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .handler(get_installed)
+        .json_response_with_schema::<InstalledKitsDto>(openapi, StatusCode::OK, "Installed kits")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-kits/v1/base-kits/{kit_slug}")
+        .operation_id("studio_kits.upsert_base_kit")
+        .summary("Install a kit for every organization (a base kit)")
+        .description(
+            "Platform administrators only (403 `PLATFORM_ADMIN_REQUIRED`). Installs a built-in \
+             or official kit of the library as a base kit, at `version` or the kit's default; \
+             installing it again changes the version. A built-in kit removed earlier comes \
+             back. A slug the library does not hold is 404.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("kit_slug", "Kit slug")
+        .json_request::<InstallKitDto>(openapi, "The version, optional")
+        .handler(upsert_base_kit)
+        .json_response_with_schema::<InstalledKitDto>(openapi, StatusCode::OK, "The base kit")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::delete("/studio-kits/v1/base-kits/{kit_slug}")
+        .operation_id("studio_kits.delete_base_kit")
+        .summary("Stop a kit being installed for every organization")
+        .description(
+            "Platform administrators only (403 `PLATFORM_ADMIN_REQUIRED`). A built-in kit stays \
+             removed until it is installed again. Organizations that installed the kit for \
+             themselves keep it. A kit that is not a base kit is 404.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("kit_slug", "Kit slug")
+        .handler(delete_base_kit)
+        .no_content_response(StatusCode::NO_CONTENT, "No longer a base kit")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-kits/v1/organization-kits/{kit_slug}")
+        .operation_id("studio_kits.upsert_organization_kit")
+        .summary("Install a kit for one organization")
+        .description(
+            "The organization's administrators (its owner, a role with `kit.manage`) or a \
+             platform administrator; 403 `KIT_ADMIN_REQUIRED` otherwise. `organization_id` \
+             names the organization, the caller's home when absent; a project or workspace is \
+             400. At `version` or the kit's default; installing it again changes the version. \
+             A kit that is also a base kit applies at the newer of the two versions.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("kit_slug", "Kit slug")
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .json_request::<InstallKitDto>(openapi, "The version, optional")
+        .handler(upsert_organization_kit)
+        .json_response_with_schema::<InstalledKitDto>(
+            openapi,
+            StatusCode::OK,
+            "The organization kit",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    OperationBuilder::delete("/studio-kits/v1/organization-kits/{kit_slug}")
+        .operation_id("studio_kits.delete_organization_kit")
+        .summary("Uninstall a kit the organization installed for itself")
+        .description(
+            "The organization's administrators or a platform administrator; 403 \
+             `KIT_ADMIN_REQUIRED` otherwise. A kit the organization has only as a base kit is \
+             refused with 400 `failed_precondition` (`BASE_KIT`): the platform installed it for \
+             everyone, and the organization may only hide its tabs. A kit it never installed \
+             is 404.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("kit_slug", "Kit slug")
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .handler(delete_organization_kit)
+        .no_content_response(StatusCode::NO_CONTENT, "Uninstalled")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+}
+
 fn internal(error: anyhow::Error) -> CanonicalError {
     CanonicalError::internal(format!("kit registry failed: {error:#}")).create()
 }
@@ -220,9 +537,20 @@ fn internal(error: anyhow::Error) -> CanonicalError {
 async fn catalogue(
     Extension(_ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<KitRegistryService>>,
-    Query(page): Query<PageQuery>,
+    Query(query): Query<CatalogueQuery>,
 ) -> ApiResult<JsonBody<KitListDto>> {
-    let items: Vec<KitDto> = service.catalogue().into_iter().map(Into::into).collect();
+    let page = query.page;
+    let items: Vec<KitDto> = service
+        .catalogue()
+        .into_iter()
+        .filter(|kit| {
+            query
+                .shelf
+                .as_deref()
+                .is_none_or(|shelf| kit.shelf == shelf)
+        })
+        .map(Into::into)
+        .collect();
     let (items, total) = page_of(items, page);
     Ok(Json(KitListDto { items, total }))
 }
@@ -373,7 +701,10 @@ pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Arc<KitRegistryService>,
+    installer: Arc<KitInstaller>,
+    access: OrgAccess,
 ) -> Router {
+    router = register_installer_routes(router, openapi);
     router = OperationBuilder::get("/studio-kits/v1/catalog")
         .operation_id("studio_kits.list_catalog")
         .summary("List kits available to Constructor Studio")
@@ -392,6 +723,12 @@ pub fn register_routes(
             "integer",
         )
         .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .query_param_typed(
+            "shelf",
+            false,
+            "Only this shelf: builtin, official or organization",
+            "string",
+        )
         .handler(catalogue)
         .json_response_with_schema::<KitListDto>(openapi, StatusCode::OK, "Kit catalogue")
         .error_401(openapi)
@@ -537,4 +874,6 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi)
         .layer(Extension(service))
+        .layer(Extension(installer))
+        .layer(Extension(access))
 }

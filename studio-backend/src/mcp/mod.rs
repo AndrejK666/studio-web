@@ -53,6 +53,8 @@ pub fn tools() -> Vec<sdk::Tool> {
     all.extend(crate::environments::mcp_tools());
     all.extend(crate::artifact_ingest::mcp_tools());
     all.extend(crate::tasks::mcp_tools());
+    // The kit library, and installing kits for everyone or one organization.
+    all.extend(crate::kit_registry::mcp_tools());
     all
 }
 
