@@ -10,6 +10,7 @@ mod mcp;
 mod rest;
 pub(crate) mod service;
 
+pub(crate) use installed::KITS_INSTALLED_METADATA_TYPE;
 pub(crate) use mcp::tools as mcp_tools;
 
 use std::sync::{Arc, OnceLock};

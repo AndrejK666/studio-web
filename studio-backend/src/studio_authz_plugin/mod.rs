@@ -700,7 +700,7 @@ const GEAR_HELD_METADATA: [&str; 7] = [
     crate::organizations::LOGO_METADATA_TYPE,
     crate::product::EXPLANATIONS_METADATA_TYPE,
     // Base kits (on the root) and an organization's kits (ADR-0069 §4).
-    crate::kit_registry::installed::KITS_INSTALLED_METADATA_TYPE,
+    crate::kit_registry::KITS_INSTALLED_METADATA_TYPE,
 ];
 
 /// Is this a caller's own write to a document only its gear writes?

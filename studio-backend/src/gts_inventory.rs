@@ -301,7 +301,7 @@ pub fn config_declared_types() -> Vec<(&'static str, &'static str)> {
         ),
         (
             "studio-kits",
-            crate::kit_registry::installed::KITS_INSTALLED_METADATA_TYPE,
+            crate::kit_registry::KITS_INSTALLED_METADATA_TYPE,
         ),
         ("studio-product", crate::product::EXPLANATIONS_METADATA_TYPE),
         // Declared by the profile and consumed by account-management and the
