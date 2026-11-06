@@ -65,5 +65,6 @@
   "status_queued": "в очереди",
   "status_cancelled": "отменён",
   "status_skipped": "пропущен",
-  "status_unknown": "неизвестно"
+  "status_unknown": "неизвестно",
+  "open_specs": "Открыть Specs →"
 }

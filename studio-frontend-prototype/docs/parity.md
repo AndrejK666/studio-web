@@ -53,7 +53,7 @@ copy).
 
 | Prototype | Who takes it | Here today | State |
 |---|---|---|---|
-| Overview (dashboard for leaders) | shell | `organization-mfe` Overview: tiles, needs attention for others, workspaces; no metrics board, no "for you" (Inbox), rows do not open their screens | partial |
+| Overview (dashboard for leaders) | shell | `organization-mfe` Overview: tiles, needs attention for others (rows open Connections, Workspaces, People), workspaces; no metrics board, no "for you" (Inbox) | partial |
 | Workspaces | shell | `organization-mfe` | partial |
 | People | shell | `people-mfe` | partial |
 | Connections | shell (Sources) | `connections-mfe` | partial |
@@ -85,7 +85,7 @@ copy).
 | Product (map, configurator, frontend, gear config) | Product & Releases | — | todo |
 | Components (inventory) | Product & Releases | — | todo |
 | Releases (environments ladder, builds, deploys) | Product & Releases | — | todo |
-| Tests | Tests (`tests-mfe`) | Tests kit: mainline, pull requests, spec ↔ code, runs; the Spec ↔ code card does not open Specs yet | partial |
+| Tests | Tests (`tests-mfe`) | Tests kit: mainline, pull requests, spec ↔ code, runs | done |
 | Kits (IDE kits) | shell (installer, working material) | — | todo |
 | Artifacts (outputs, documents) | Artifacts | `projects-mfe` Artifacts | partial |
 | Sources | shell (Sources) | `projects-mfe` Sources | partial |

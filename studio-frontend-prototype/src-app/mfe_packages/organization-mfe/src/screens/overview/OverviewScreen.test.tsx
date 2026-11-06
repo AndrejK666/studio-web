@@ -19,6 +19,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   apiRegistry: { getService: () => ({ overview: () => ({}) }) },
   useApiQuery: query,
   useSharedProperty: () => 'en',
+  useMfeBridge: () => null,
 }));
 
 import { OverviewScreen } from './OverviewScreen';
@@ -57,6 +58,8 @@ describe('OverviewScreen', () => {
     expect(screen.getByText(/"merged":"12"/)).toBeTruthy();
     expect(screen.getByText('Main')).toBeTruthy();
     expect(screen.getByText('1 thing needs attention')).toBeTruthy();
+    // A refused connection is fixed on Connections, which this portal has.
+    expect(screen.getByRole('button', { name: 'Fix the connection' })).toBeTruthy();
   });
 
   it('says when the overview cannot be read', () => {

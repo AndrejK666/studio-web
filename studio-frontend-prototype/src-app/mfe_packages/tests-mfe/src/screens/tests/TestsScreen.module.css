@@ -137,3 +137,17 @@
   height: 2rem;
   width: 16rem;
 }
+
+.link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.link:hover {
+  text-decoration: underline;
+}

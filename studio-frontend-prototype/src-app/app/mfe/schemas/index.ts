@@ -13,6 +13,7 @@ import actionContextPublishSchemaJson from './action_context_publish.v1.json';
 import actionContextWorkspacesPublishSchemaJson from './action_context_workspaces_publish.v1.json';
 import actionContextArtifactOpenSchemaJson from './action_context_artifact_open.v1.json';
 import actionShellNotificationShowSchemaJson from './action_shell_notification_show.v1.json';
+import actionShellScreenOpenSchemaJson from './action_shell_screen_open.v1.json';
 import actionChainOutcomeDoneSchemaJson from './action_chain_outcome_done.v1.json';
 import actionChainOutcomeFailedSchemaJson from './action_chain_outcome_failed.v1.json';
 import sharedPropertyContextArtifactSchemaJson from './shared_property_context_artifact.v1.json';
@@ -56,6 +57,7 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   sharedPropertyContextArtifactSchemaJson as JSONSchema,
   // A toast an MFE asks for: the shell owns the only toaster.
   actionShellNotificationShowSchemaJson as JSONSchema,
+  actionShellScreenOpenSchemaJson as JSONSchema,
   // The replies that say how a request ended: see chainOutcome in mfe-shared.
   actionChainOutcomeDoneSchemaJson as JSONSchema,
   actionChainOutcomeFailedSchemaJson as JSONSchema,

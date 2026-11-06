@@ -48,6 +48,7 @@ import {
   STUDIO_ACTION_CHAIN_FAILED,
   STUDIO_ACTION_CONTEXT_PUBLISH,
   STUDIO_ACTION_NOTIFY,
+  STUDIO_ACTION_SCREEN_OPEN,
   STUDIO_ACTION_WORKSPACES_PUBLISH,
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
@@ -64,6 +65,8 @@ import {
   createWorkspacePublishHandler,
 } from '@/app/mfe/contextActions';
 import { createNotifyHandler } from '@/app/mfe/notifyAction';
+import { createScreenOpenHandler } from '@/app/mfe/screenOpenAction';
+import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { occupancyOf } from '@/app/mfe/domainOccupancy';
 import { outcomesOf } from '@/app/mfe/shellOutcomes';
 import { publishFrameUrl, publishStudioContext } from '@/app/mfe/sharedContext';
@@ -228,6 +231,10 @@ class ScreenDomainImpl extends ExtensionDomainImplementation {
     ctx.registerHandler(STUDIO_ACTION_WORKSPACES_PUBLISH, createWorkspacePublishHandler());
     ctx.registerHandler(STUDIO_ACTION_ARTIFACT_OPEN, createArtifactOpenHandler());
     ctx.registerHandler(STUDIO_ACTION_NOTIFY, createNotifyHandler());
+    ctx.registerHandler(
+      STUDIO_ACTION_SCREEN_OPEN,
+      createScreenOpenHandler(() => registry.getExtensionsForDomain(screenDomain.id) as StudioScreenExtension[])
+    );
     // Where every shell request reports how it ended (shellOutcomes.ts).
     ctx.registerHandler(STUDIO_ACTION_CHAIN_DONE, outcomesOf(registry).done);
     ctx.registerHandler(STUDIO_ACTION_CHAIN_FAILED, outcomesOf(registry).failed);
@@ -448,6 +455,7 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_ACTION_WORKSPACES_PUBLISH,
       STUDIO_ACTION_ARTIFACT_OPEN,
       STUDIO_ACTION_NOTIFY,
+      STUDIO_ACTION_SCREEN_OPEN,
       STUDIO_ACTION_CHAIN_DONE,
       STUDIO_ACTION_CHAIN_FAILED,
     ],

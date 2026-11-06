@@ -15,16 +15,31 @@
  */
 
 import React from 'react';
-import { apiRegistry, useApiQuery, useSharedProperty, FRONTX_SHARED_PROPERTY_LANGUAGE } from '@gears-frontx/react';
+import {
+  apiRegistry,
+  useApiQuery,
+  useMfeBridge,
+  useSharedProperty,
+  FRONTX_SHARED_PROPERTY_LANGUAGE,
+} from '@gears-frontx/react';
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
-import { useOrganization } from '@constructor-studio/mfe-shared';
+import { openScreen, useOrganization } from '@constructor-studio/mfe-shared';
 import { OverviewApiService } from '../../api/OverviewApiService';
-import { attentionStatus, growthText, othersAttention, workspaceLine } from '../../overview/model';
+import { attentionStatus, growthText, othersAttention, workspaceLine, type NeedTarget } from '../../overview/model';
 import type { OrgOverview } from '../../overview/types';
 import { useOverviewTranslations } from '../../i18n';
 import styles from './OverviewScreen.module.css';
 
 type Text = ReturnType<typeof useOverviewTranslations>['t'];
+
+/** Where a row's action leads, among the screens this portal has so far.
+ *  Costs, Components and Background work are not here yet (parity.md): their
+ *  rows say what is wrong and offer no button rather than a dead one. */
+const TARGET_ROUTE: Partial<Record<NeedTarget, string>> = {
+  connectors: '/connections',
+  projects: '/organization/workspaces',
+  people: '/people',
+};
 
 function money(value: number, currency: string, language: string): string {
   try {
@@ -58,6 +73,7 @@ function OrganizationOverview({
   t: Text;
   language: string;
 }) {
+  const bridge = useMfeBridge();
   const read = useApiQuery(apiRegistry.getService(OverviewApiService).overview({ organizationId }));
   const o: OrgOverview | undefined = read.data;
   const cash = (n: number) => money(n, o?.spend?.currency || 'USD', language);
@@ -149,6 +165,15 @@ function OrganizationOverview({
                       <li key={r.key} className={`${styles.row} ${styles[r.tone]}`} data-attention={r.key.split(':')[0]}>
                         <b>{r.sentence}</b>
                         {r.detail && <span className={styles.muted}> · {r.detail}</span>}
+                        {TARGET_ROUTE[r.action.target] && (
+                          <button
+                            type="button"
+                            className={styles.action}
+                            onClick={() => openScreen(bridge, TARGET_ROUTE[r.action.target]!)}
+                          >
+                            {r.action.label}
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>

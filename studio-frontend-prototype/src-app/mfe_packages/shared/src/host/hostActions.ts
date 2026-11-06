@@ -67,6 +67,14 @@ export type StudioArtifactRequest = StudioArtifact & { projectId: string };
 export const STUDIO_ACTION_NOTIFY =
   'gts.frontx.mfes.comm.action.v1~constructor_studio.shell.notification.show.v1~';
 
+/**
+ * Screen domain: open another screen of the shell, named by its manifest route
+ * (`presentation.route`) — the way a kit's screen leads to a screen it does not
+ * own (ADR-0069). The shell moves the address as a tab click does.
+ */
+export const STUDIO_ACTION_SCREEN_OPEN =
+  'gts.frontx.mfes.comm.action.v1~constructor_studio.shell.screen.open.v1~';
+
 /** `loading` stays up until a notice with its `id` replaces it, so a `loading` notice needs an `id`. */
 export const STUDIO_NOTICE_KINDS = ['error', 'success', 'info', 'loading'] as const;
 
@@ -118,6 +126,11 @@ export function requestFromHost(bridge: ChildMfeBridge | null, action: HostActio
     outcomesByBridge.set(bridge, outcomes);
   }
   return outcomes.run((chain) => bridge.executeActionsChain(chain), action, bridge.extensionId);
+}
+
+/** Open the shell's screen whose manifest route is `route` (STUDIO_ACTION_SCREEN_OPEN). */
+export function openScreen(bridge: ChildMfeBridge | null, route: string): void {
+  sendToHost(bridge, { type: STUDIO_ACTION_SCREEN_OPEN, target: FRONTX_SCREEN_DOMAIN, payload: { route } });
 }
 
 export function notify(bridge: ChildMfeBridge | null, notice: StudioNotice): void {
