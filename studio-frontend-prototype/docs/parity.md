@@ -53,7 +53,7 @@ copy).
 
 | Prototype | Who takes it | Here today | State |
 |---|---|---|---|
-| Overview (dashboard for leaders) | shell | — | todo |
+| Overview (dashboard for leaders) | shell | `organization-mfe` Overview: tiles, needs attention for others, workspaces; no metrics board, no "for you" (Inbox), rows do not open their screens | partial |
 | Workspaces | shell | `organization-mfe` | partial |
 | People | shell | `people-mfe` | partial |
 | Connections | shell (Sources) | `connections-mfe` | partial |
@@ -79,7 +79,7 @@ copy).
 | Prototype | Who takes it | Here today | State |
 |---|---|---|---|
 | Overview | shell | `projects-mfe` Overview | partial |
-| Issues | Issues | — | todo |
+| Issues | Issues | — (needs the spec-model resolve queue and fact keys on the backend first) | todo |
 | Specs, with Spec quality | Specs | `projects-mfe` Specs | partial |
 | Domain model (editor, questions, graph) | Domain model | — | todo |
 | Product (map, configurator, frontend, gear config) | Product & Releases | — | todo |

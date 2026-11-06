@@ -21,12 +21,14 @@ import {
 import { homeSlice } from './slices/homeSlice';
 import { initHomeEffects } from './effects/homeEffects';
 import { _BlankApiService } from './api/_BlankApiService';
+import { OverviewApiService } from './api/OverviewApiService';
 import { AccountsApiService, authShared } from '@constructor-studio/mfe-shared';
 
 // Register API services BEFORE build — mock plugin syncs during build(),
 // so services must already be present for mock activation to find them
 apiRegistry.register(_BlankApiService);
 apiRegistry.register(AccountsApiService);
+apiRegistry.register(OverviewApiService);
 apiRegistry.initialize();
 
 // Create only the local MFE app shell.

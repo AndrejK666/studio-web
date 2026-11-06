@@ -39,3 +39,13 @@ export const useWorkspacesText = createText(WORKSPACES_NAMESPACE);
 
 /** The home screen's dictionary and its text function in one call. */
 export const useHomeTranslations = createScreenTranslations(SCREENSET, 'home', homeModules, './screens/home/i18n');
+
+const overviewModules = import.meta.glob('./screens/overview/i18n/*.json') as ModuleMap;
+
+/** The overview's dictionary and its text function in one call. */
+export const useOverviewTranslations = createScreenTranslations(
+  SCREENSET,
+  'overview',
+  overviewModules,
+  './screens/overview/i18n'
+);

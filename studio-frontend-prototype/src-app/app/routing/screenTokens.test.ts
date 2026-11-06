@@ -105,10 +105,10 @@ describe('the real manifests', () => {
     expect(space?.owner.presentation).toMatchObject({ level: 'project', placement: 'hidden' });
   });
 
-  it('open the organization on its Workspaces', () => {
+  it('open the organization on its Overview, as the prototype does', () => {
     expect(entryTokenOf(extensions, 'organization')).toBe('organization');
     expect(groupOfToken(groupScreens(extensions), 'organization')?.owner.presentation.route).toBe(
-      '/organization/workspaces'
+      '/organization/overview'
     );
   });
 });

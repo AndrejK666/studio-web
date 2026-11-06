@@ -53,6 +53,10 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   },
 }));
 
+vi.mock('./screens/overview/OverviewScreen', () => ({
+  OverviewScreen: () => <div data-testid="overview" />,
+}));
+
 vi.mock('./init', () => ({
   mfeApp: { id: 'blank-mfe-app' },
 }));
@@ -98,7 +102,7 @@ describe('organization-mfe lifecycle', () => {
     expect(Reflect.get(lifecycle, 'app')).toEqual({ id: 'blank-mfe-app' } satisfies TestApp);
   });
 
-  it('opens on the workspaces, which is also the fallback when no section is relayed', async () => {
+  it('opens on the overview, which is also the fallback when no section is relayed', async () => {
     const module = await import('./lifecycle');
     const lifecycle = module.default;
     const renderContent = Reflect.get(lifecycle, 'renderContent');
@@ -120,6 +124,26 @@ describe('organization-mfe lifecycle', () => {
       </FrontXProvider>
     );
 
+    expect(await screen.findByTestId('overview')).toBeTruthy();
+  });
+
+  it('renders the workspaces when the shell relays that section', async () => {
+    const module = await import('./lifecycle');
+    const renderContent = Reflect.get(module.default, 'renderContent');
+    const { bridge } = createMfeBridgeFixture({
+      domainId: 'organization-domain',
+      instanceId: 'organization-instance',
+      initialProperties: {
+        [FRONTX_SHARED_PROPERTY_THEME]: 'blank-theme',
+        [FRONTX_SHARED_PROPERTY_LANGUAGE]: 'en',
+        [STUDIO_SHARED_PROPERTY_CONTEXT_SECTION]: 'workspaces',
+      },
+    });
+    render(
+      <FrontXProvider app={app} mfeBridge={mfeContextValue(bridge)}>
+        {renderContent(bridge) as React.ReactNode}
+      </FrontXProvider>
+    );
     expect(await screen.findByRole('toolbar', { name: 'Workspaces' })).toBeTruthy();
   });
 

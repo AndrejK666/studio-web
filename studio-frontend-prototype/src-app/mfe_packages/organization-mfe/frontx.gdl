@@ -13,12 +13,12 @@ mfe(
     # `/cf/<gear>/v1` base URL), its own and those it calls through
     # @constructor-studio/mfe-shared: AccountsApiService. Its _BlankApiService
     # (`/api/blank`) is the scaffold's mock, not a gear's.
-    requires = ["account-management"],
+    requires = ["account-management", "studio-organizations"],
 
     # What it brings, as mfe.json says: the labels of its screens, then the
     # route of each extension (presentation.route), in mfe.json's order.
-    screens = ["Workspaces", "Settings"],
-    mounts = ["/organization/workspaces", "/organization/settings"],
+    screens = ["Overview", "Workspaces", "Settings"],
+    mounts = ["/organization/overview", "/organization/workspaces", "/organization/settings"],
 
     # The FrontX it is written against: its @gears-frontx/react pin. A shell
     # mounting it gives it the shell's own version, whatever this says.
