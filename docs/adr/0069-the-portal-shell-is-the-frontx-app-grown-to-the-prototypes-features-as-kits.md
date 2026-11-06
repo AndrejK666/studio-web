@@ -90,6 +90,10 @@ Its `presentation` already carries `level`, `placement`, `section` and
 `order`. The levels grow from three to the five the prototype has:
 platform, organization, workspace, project, and Admin.
 
+A kit says where its screens go in its `kit.gdl` (ADR-0068 §3), through
+`frontx_mfe(...)`, and the shell loads them at run time from the kit's
+artifact (ADR-0068 §8, §10).
+
 Today the host reads its micro-frontends from a manifest generated at build
 time (`generated-mfe-manifests.json`). It changes to read the kits installed
 for the organization in view from the backend (`studio-kits`), each with its
