@@ -308,24 +308,32 @@ pub struct ConnectorService {
 /// set one comes through here: creating a connection, editing one, and probing
 /// a credential before it is stored.
 ///
-/// The driver's own default is checked too. It is ours and it passes, so the
-/// check costs nothing and means the rule has no exception to remember. A
-/// driver without one (a gear repository) is refused an empty address.
+/// The driver's own default is not a member's input: it is the deployment's
+/// configuration (Research's address is the operator's, and on a stand that
+/// runs the Research emulator it is `http://research.localhost:…`). It is
+/// parsed, not held to the rule a typed address is. A driver without one (a
+/// gear repository) is refused an empty address.
 fn resolve_base_url(
     driver: &dyn ConnectorDriver,
     supplied: Option<&str>,
 ) -> anyhow::Result<String> {
-    let raw = supplied
-        .map(str::trim)
-        .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| driver.default_base_url());
+    let typed = supplied.map(str::trim).filter(|u| !u.is_empty());
+    let raw = typed.unwrap_or_else(|| driver.default_base_url());
     if raw.is_empty() {
         anyhow::bail!(
             "a {} connection needs its Server URL: there is no default to connect to",
             driver.display_name().to_lowercase()
         );
     }
-    let url = check_url(raw, "Server URL", driver.base_url_rule())?;
+    let url = match typed {
+        Some(raw) => check_url(raw, "Server URL", driver.base_url_rule())?,
+        None => reqwest::Url::parse(raw).map_err(|e| {
+            anyhow::anyhow!(
+                "this Studio's {} address '{raw}' is not a URL: {e}",
+                driver.display_name()
+            )
+        })?,
+    };
     // Parsed and re-rendered rather than passed through: `Url` has already
     // normalised the host, and what the driver joins paths onto should be what
     // was checked, not the string beside it.
@@ -2410,6 +2418,25 @@ mod base_url_rule_tests {
                 .unwrap_or_else(|e| panic!("{} rejects its own default: {e}", driver.provider()));
             assert_eq!(resolved, driver.default_base_url());
         }
+    }
+
+    /// The deployment's own Research address is taken as configured -- a stand
+    /// on the Research emulator runs it over plain http on a `.localhost` name
+    /// -- while the same address typed by a member is still refused.
+    #[test]
+    fn a_configured_research_address_is_the_operators_not_a_members() {
+        let oauth = crate::connectors::oauth::OAuthClient {
+            authorize_url: "http://research.localhost:8095/idp/connect/authorize".into(),
+            token_url: "http://research.localhost:8095/idp/connect/token".into(),
+            client_id: "constructor-studio".into(),
+            client_secret: "research-emulator".into(),
+            scope: "openid offline_access".into(),
+            redirect_uris: vec!["http://localhost:8081/connections/oauth/callback".into()],
+        };
+        let api = "http://research.localhost:8095/api/platform-account/v1";
+        let driver = crate::connectors::research::ResearchDriver::new(http(), oauth, api.into());
+        assert_eq!(resolve_base_url(&driver, None).unwrap(), api);
+        assert!(resolve_base_url(&driver, Some(api)).is_err());
     }
 
     /// A gear repository is one repository; none is assumed for it.
