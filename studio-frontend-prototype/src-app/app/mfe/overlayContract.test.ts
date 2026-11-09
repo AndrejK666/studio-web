@@ -368,9 +368,11 @@ describe('generated MFE manifest', () => {
       }
     });
 
-    it('leaves the workspace level one screen — the projects list', () => {
-      const workspace = screens.filter((ext) => ext.presentation?.level === 'workspace');
-      expect(workspace.map((ext) => ext.presentation?.label)).toEqual(['Projects']);
+    it("draws the workspace's tabs: the projects list, then the catalogue kits' screens", () => {
+      // Project templates (kit project-lifecycle) and Document types (kit
+      // project-specs) are the prototype's workspace catalogue tabs (ADR-0069).
+      const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'workspace');
+      expect(tabs.map((ext) => ext.presentation.label)).toEqual(['Projects', 'Project templates', 'Document types']);
     });
 
     it("draws the project's tabs in the design's order, Specs and Sources after Artifacts", () => {
@@ -396,7 +398,10 @@ describe('generated MFE manifest', () => {
       const project = screens.filter(
         (ext) => ext.presentation?.level === 'project' && ext.presentation?.placement !== 'hidden'
       );
-      const workspaceEntry = screens.find((ext) => ext.presentation?.level === 'workspace')?.entry;
+      // The projects list's entry: the workspace level also holds kit screens of their own.
+      const workspaceEntry = screens.find(
+        (ext) => ext.presentation?.level === 'workspace' && ext.presentation?.route === '/projects'
+      )?.entry;
 
       // The project's own sections share one entry: that is what lets the
       // shell relay a section instead of mounting eight screens. A kit's tab
