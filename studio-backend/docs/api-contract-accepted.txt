@@ -1074,6 +1074,7 @@ request	PUT /studio-environments/v1/project-environments/{}	research_project	Str
 request	PUT /studio-environments/v1/project-environments/{}	strictness	String	optional
 request	PUT /studio-kits/v1/base-kits/{}	version	String	optional
 request	PUT /studio-kits/v1/organization-kits/{}	version	String	optional
+request	PUT /studio-kits/v1/project-kits/{}	version	String	optional
 request	PUT /studio-organizations/v1/logo	content_type	String	required
 request	PUT /studio-organizations/v1/logo	data	String	required
 request	PUT /studio-organizations/v1/project-types	types	Vec<Value>	required
@@ -3264,6 +3265,55 @@ response	GET /studio-kits/v1/catalog	items.slug	String	always
 response	GET /studio-kits/v1/catalog	items.source	String	always
 response	GET /studio-kits/v1/catalog	items.visibility	String	always
 response	GET /studio-kits/v1/catalog	total	u32	always
+response	GET /studio-kits/v1/catalog/{}	contents	{}	always
+response	GET /studio-kits/v1/catalog/{}	contents.docs	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.functions	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.functions.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.functions.name	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.functions.runtime	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.inbox	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.inbox.id	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.inbox.label	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.kinds	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.material	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.material.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.material.path	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.mcp_tools	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.mcp_tools.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.mcp_tools.name	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.permissions	{}	always
+response	GET /studio-kits/v1/catalog/{}	contents.permissions.listens	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.permissions.reads	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.permissions.writes	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.rules	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.rules.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.rules.name	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens.kind	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens.label	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens.level	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens.route	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.screens.slot	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.services	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.services.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.services.name	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.types	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.types.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.types.gts	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.types.name	String	always
+response	GET /studio-kits/v1/catalog/{}	kit	{}	always
+response	GET /studio-kits/v1/catalog/{}	kit.default_version	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.description	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.levels	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	kit.manifest_path	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.name	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.publisher	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.repository_url	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.shelf	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.slug	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.source	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.visibility	String	always
+response	GET /studio-kits/v1/catalog/{}	manifest	String	optional
 response	GET /studio-kits/v1/installed-kits	base	Vec<{}>	always
 response	GET /studio-kits/v1/installed-kits	base.by_default	bool	always
 response	GET /studio-kits/v1/installed-kits	base.installed_at	String	optional
@@ -3289,6 +3339,15 @@ response	GET /studio-kits/v1/installed-kits	organization.kit_slug	String	always
 response	GET /studio-kits/v1/installed-kits	organization.shelf	String	always
 response	GET /studio-kits/v1/installed-kits	organization.version	String	always
 response	GET /studio-kits/v1/installed-kits	organization_id	String	always
+response	GET /studio-kits/v1/installed-kits	project	Vec<{}>	always
+response	GET /studio-kits/v1/installed-kits	project.by_default	bool	always
+response	GET /studio-kits/v1/installed-kits	project.installed_at	String	optional
+response	GET /studio-kits/v1/installed-kits	project.installed_by	String	optional
+response	GET /studio-kits/v1/installed-kits	project.kind	String	always
+response	GET /studio-kits/v1/installed-kits	project.kit_slug	String	always
+response	GET /studio-kits/v1/installed-kits	project.shelf	String	always
+response	GET /studio-kits/v1/installed-kits	project.version	String	always
+response	GET /studio-kits/v1/installed-kits	project_id	String	optional
 response	GET /studio-kits/v1/projects/{}/installations	items	Vec<{}>	always
 response	GET /studio-kits/v1/projects/{}/installations	items.failure_reason	String	optional
 response	GET /studio-kits/v1/projects/{}/installations	items.install_mode	String	always
@@ -6273,6 +6332,13 @@ response	PUT /studio-kits/v1/organization-kits/{}	kind	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	kit_slug	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	shelf	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	version	String	always
+response	PUT /studio-kits/v1/project-kits/{}	by_default	bool	always
+response	PUT /studio-kits/v1/project-kits/{}	installed_at	String	optional
+response	PUT /studio-kits/v1/project-kits/{}	installed_by	String	optional
+response	PUT /studio-kits/v1/project-kits/{}	kind	String	always
+response	PUT /studio-kits/v1/project-kits/{}	kit_slug	String	always
+response	PUT /studio-kits/v1/project-kits/{}	shelf	String	always
+response	PUT /studio-kits/v1/project-kits/{}	version	String	always
 response	PUT /studio-organizations/v1/logo	content_type	String	always
 response	PUT /studio-organizations/v1/logo	data	String	always
 response	PUT /studio-organizations/v1/logo	digest	String	always
@@ -6584,6 +6650,7 @@ route	DELETE /studio-environments/v1/project-environments/{}
 route	DELETE /studio-environments/v1/registries/{}/repositories/{}/versions/{}
 route	DELETE /studio-kits/v1/base-kits/{}
 route	DELETE /studio-kits/v1/organization-kits/{}
+route	DELETE /studio-kits/v1/project-kits/{}
 route	DELETE /studio-kits/v1/projects/{}/installations/{}
 route	DELETE /studio-organizations/v1/logo
 route	DELETE /studio-organizations/v1/organizations/{}
@@ -6718,6 +6785,7 @@ route	GET /studio-git/v1/workspaces/{}/sources/{}/info/refs
 route	GET /studio-identity/v1/users
 route	GET /studio-insight/v1/health
 route	GET /studio-kits/v1/catalog
+route	GET /studio-kits/v1/catalog/{}
 route	GET /studio-kits/v1/installed-kits
 route	GET /studio-kits/v1/projects/{}/installations
 route	GET /studio-kits/v1/projects/{}/repositories
@@ -6987,6 +7055,7 @@ route	PUT /studio-environments/v1/project-build
 route	PUT /studio-environments/v1/project-environments/{}
 route	PUT /studio-kits/v1/base-kits/{}
 route	PUT /studio-kits/v1/organization-kits/{}
+route	PUT /studio-kits/v1/project-kits/{}
 route	PUT /studio-organizations/v1/logo
 route	PUT /studio-organizations/v1/project-types
 route	PUT /studio-product/v1/gear-explanations/{}

@@ -11,9 +11,16 @@
 //!   platform administrator) for that organization only. One document on the
 //!   organization's tenant.
 //!
-//! An organization cannot uninstall a base kit. A kit that is both is one
-//! installation for that organization, at the newer of the two versions
-//! ([`effective`]).
+//! * **Project kits**, installed for one project only by whoever may install
+//!   kits for the project's organization (its owner, a role with
+//!   [`MANAGE_PRIVILEGE`], or a platform administrator): a project has no
+//!   access config of its own, so the organization's answers for it. One
+//!   document on the project's tenant. Only a kit whose `levels` name
+//!   `project` may be.
+//!
+//! An organization cannot uninstall a base kit, and a project neither a base
+//! kit nor an organization kit. A kit installed on more than one level is one
+//! installation where they meet, at the newest of the versions ([`effective`]).
 //!
 //! Both documents are account-management tenant metadata of
 //! [`KITS_INSTALLED_METADATA_TYPE`], written by this gear as the service after
@@ -66,6 +73,10 @@ const WRITE_ATTEMPTS: usize = 4;
 pub const KIND_BASE: &str = "base";
 /// An organization kit (installed by the organization for itself).
 pub const KIND_ORGANIZATION: &str = "organization";
+/// A project kit (installed for that project only).
+pub const KIND_PROJECT: &str = "project";
+/// The level a kit's `levels` must name to be installed in a project.
+pub const LEVEL_PROJECT: &str = "project";
 
 /// The stored document, on the root (base kits) or an organization.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,7 +107,7 @@ pub struct InstalledKit {
     pub kit_slug: String,
     pub version: String,
     pub shelf: String,
-    /// [`KIND_BASE`] or [`KIND_ORGANIZATION`].
+    /// [`KIND_BASE`], [`KIND_ORGANIZATION`] or [`KIND_PROJECT`].
     pub kind: &'static str,
     /// `None` for a built-in kit installed by default: nobody installed it.
     pub installed_by: Option<String>,
@@ -104,12 +115,16 @@ pub struct InstalledKit {
     pub by_default: bool,
 }
 
-/// What applies to one organization.
+/// What applies to one organization, or to one project of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Installed {
     pub organization_id: Uuid,
+    /// The project asked about; `None` for an organization.
+    pub project_id: Option<Uuid>,
     pub base: Vec<InstalledKit>,
     pub organization: Vec<InstalledKit>,
+    /// The project's own kits; empty for an organization.
+    pub project: Vec<InstalledKit>,
     pub effective: Vec<InstalledKit>,
 }
 
@@ -123,8 +138,14 @@ pub enum Refusal {
     /// 404: the slug names no kit of the library, or nothing installed.
     NotFound(String, String),
     /// 400 `failed_precondition`: the kit is a base kit, which an
-    /// organization cannot uninstall.
+    /// organization or a project cannot uninstall.
     BaseKit(String),
+    /// 400 `failed_precondition`: the kit is the organization's, which a
+    /// project cannot uninstall.
+    OrganizationKit(String),
+    /// 400 `failed_precondition`: the kit's `levels` do not name `project`,
+    /// so it cannot be installed in one.
+    NotAProjectKit(String),
     Internal(anyhow::Error),
 }
 
@@ -139,6 +160,11 @@ pub const PLATFORM_ADMIN_REQUIRED: &str = "PLATFORM_ADMIN_REQUIRED";
 pub const KIT_ADMIN_REQUIRED: &str = "KIT_ADMIN_REQUIRED";
 /// The `failed_precondition` kind for removing a base kit.
 pub const BASE_KIT: &str = "BASE_KIT";
+/// The `failed_precondition` kind for a project removing its organization's kit.
+pub const ORGANIZATION_KIT: &str = "ORGANIZATION_KIT";
+/// The `failed_precondition` kind for installing in a project a kit whose
+/// `levels` do not name `project`.
+pub const NOT_A_PROJECT_KIT: &str = "NOT_A_PROJECT_KIT";
 
 /// Where the documents are kept.
 #[async_trait]
@@ -161,6 +187,9 @@ pub trait InstalledStore: Send + Sync {
 
     /// The organization `tenant` belongs to (itself for an organization).
     async fn organization_of(&self, ctx: &SecurityContext, tenant: Uuid) -> Uuid;
+
+    /// Is `tenant` a project (account-management's tenant type), read as `ctx`?
+    async fn is_project(&self, ctx: &SecurityContext, tenant: Uuid) -> bool;
 }
 
 /// Who may change installations.
@@ -218,10 +247,103 @@ impl KitInstaller {
         let effective = effective(&base, &organization);
         Ok(Installed {
             organization_id: org,
+            project_id: None,
             base,
             organization,
+            project: Vec::new(),
             effective,
         })
+    }
+
+    /// What applies to `project`: its organization's kits and its own. The
+    /// caller has already been shown to reach `project`.
+    pub async fn installed_in_project(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> Result<Installed, Refusal> {
+        self.require_project(ctx, project).await?;
+        let mut installed = self.installed(ctx, project).await?;
+        // Read as the service, as the organization's document is.
+        let own = project_kits(
+            &self.store.read(&service_context(project)?, project).await?,
+            &self.catalogue,
+        );
+        installed.effective = effective(&installed.effective, &own);
+        installed.project_id = Some(project);
+        installed.project = own;
+        Ok(installed)
+    }
+
+    /// Install `slug` for `project` only, at `version` or the kit's default.
+    /// The kit's `levels` must name `project`.
+    pub async fn install_for_project(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        slug: &str,
+        version: Option<&str>,
+    ) -> Result<InstalledKit, Refusal> {
+        let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
+        self.require_project_admin(ctx, project).await?;
+        let kit = self.kit(&slug)?;
+        if !kit.levels.iter().any(|level| level == LEVEL_PROJECT) {
+            return Err(Refusal::NotAProjectKit(slug));
+        }
+        let record = record_for(&kit, version, ctx, now_rfc3339()?)?;
+        let installed = self
+            .store
+            .update(project, &mut |doc| {
+                Ok(Some(install_project(doc, record.clone())))
+            })
+            .await?;
+        installed.ok_or_else(|| Refusal::Internal(anyhow!("the project kit was not recorded")))
+    }
+
+    /// Stop `project` having `slug` as its own. Refused for a kit it has only
+    /// from its organization or the platform.
+    pub async fn uninstall_for_project(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        slug: &str,
+    ) -> Result<(), Refusal> {
+        let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
+        self.require_project_admin(ctx, project).await?;
+        let above = self.installed(ctx, project).await?;
+        self.store
+            .update(project, &mut |doc| {
+                uninstall_project(doc, &slug, &above.base, &above.organization).map(|()| None)
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// `project` is a project, or the request is not one this answers.
+    async fn require_project(&self, ctx: &SecurityContext, project: Uuid) -> Result<(), Refusal> {
+        if self.store.is_project(ctx, project).await {
+            Ok(())
+        } else {
+            Err(Refusal::Invalid(format!(
+                "{project} is not a project: name an organization with `organization_id`"
+            )))
+        }
+    }
+
+    /// The organization `project` belongs to, when the caller may install
+    /// kits for the project: whoever may for that organization.
+    async fn require_project_admin(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> Result<Uuid, Refusal> {
+        self.require_project(ctx, project).await?;
+        let org = self.store.organization_of(ctx, project).await;
+        if org != project && self.authority.may_manage(ctx, org).await {
+            Ok(org)
+        } else {
+            Err(Refusal::Forbidden(KIT_ADMIN_REQUIRED))
+        }
     }
 
     /// Install `slug` as a base kit, at `version` or the kit's default.
@@ -456,8 +578,22 @@ pub fn organization_kits(
     kits
 }
 
-/// What applies to the organization: base ∪ organization, one entry per
-/// slug, the newer version winning (ADR-0069 §4). Sorted by slug.
+/// A project's own kits, sorted by slug.
+pub fn project_kits(doc: &InstalledDocument, catalogue: &[KitDescriptor]) -> Vec<InstalledKit> {
+    let mut kits: Vec<InstalledKit> = doc
+        .kits
+        .iter()
+        .filter(|record| applies(record, catalogue))
+        .map(|record| view(record, KIND_PROJECT, catalogue))
+        .collect();
+    kits.sort_by(|a, b| a.kit_slug.cmp(&b.kit_slug));
+    kits
+}
+
+/// What applies: the kits of the levels above (`base`) with a level's own
+/// (`organization`), one entry per slug, the newer version winning
+/// (ADR-0069 §4). For a project it is folded once more:
+/// (base ∪ organization) ∪ project. Sorted by slug.
 pub fn effective(base: &[InstalledKit], organization: &[InstalledKit]) -> Vec<InstalledKit> {
     let mut all: Vec<InstalledKit> = base.to_vec();
     for org in organization {
@@ -528,6 +664,14 @@ pub fn install_organization(doc: &mut InstalledDocument, record: InstalledRecord
     }
 }
 
+pub fn install_project(doc: &mut InstalledDocument, record: InstalledRecord) -> InstalledKit {
+    upsert(doc, record.clone());
+    InstalledKit {
+        kind: KIND_PROJECT,
+        ..view_plain(record)
+    }
+}
+
 fn view_plain(record: InstalledRecord) -> InstalledKit {
     InstalledKit {
         kit_slug: record.kit_slug,
@@ -590,6 +734,31 @@ pub fn uninstall_organization(
     Err(Refusal::NotFound(
         slug.to_owned(),
         "the organization has not installed this kit".into(),
+    ))
+}
+
+/// Take `slug` out of a project's own kits. A kit the project has only from
+/// its organization or the platform is refused: it is theirs to remove.
+pub fn uninstall_project(
+    doc: &mut InstalledDocument,
+    slug: &str,
+    base: &[InstalledKit],
+    organization: &[InstalledKit],
+) -> Result<(), Refusal> {
+    let before = doc.kits.len();
+    doc.kits.retain(|k| k.kit_slug != slug);
+    if doc.kits.len() != before {
+        return Ok(());
+    }
+    if organization.iter().any(|k| k.kit_slug == slug) {
+        return Err(Refusal::OrganizationKit(slug.to_owned()));
+    }
+    if base.iter().any(|k| k.kit_slug == slug) {
+        return Err(Refusal::BaseKit(slug.to_owned()));
+    }
+    Err(Refusal::NotFound(
+        slug.to_owned(),
+        "the project has not installed this kit".into(),
     ))
 }
 
@@ -666,6 +835,12 @@ impl InstalledStore for AmInstalledStore {
 
     async fn organization_of(&self, ctx: &SecurityContext, tenant: Uuid) -> Uuid {
         crate::org_scope::org_of(self.am.as_ref(), ctx, tenant).await
+    }
+
+    async fn is_project(&self, ctx: &SecurityContext, tenant: Uuid) -> bool {
+        self.am.get_tenant(ctx, tenant).await.is_ok_and(|t| {
+            t.tenant_type.as_deref() == Some(crate::organizations::sdk::PROJECT_TENANT_TYPE)
+        })
     }
 }
 

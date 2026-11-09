@@ -50,6 +50,10 @@ impl InstalledStore for Memory {
     async fn organization_of(&self, _: &SecurityContext, tenant: Uuid) -> Uuid {
         if tenant == PROJECT { ORG } else { tenant }
     }
+
+    async fn is_project(&self, _: &SecurityContext, tenant: Uuid) -> bool {
+        tenant == PROJECT
+    }
 }
 
 /// Who is what, by subject.
@@ -117,11 +121,15 @@ async fn every_builtin_kit_is_a_base_kit_until_the_platform_removes_it() {
     assert_eq!(
         slugs(&installed.base),
         [
+            "org-costs",
+            "org-reports",
             "project-activity",
             "project-artifacts",
             "project-issues",
             "project-lifecycle",
-            "project-tests"
+            "project-specs",
+            "project-tests",
+            "studio-api-docs"
         ]
     );
     assert!(
@@ -411,4 +419,160 @@ fn the_document_reads_without_the_removed_list() {
         serde_json::to_value(&doc).unwrap(),
         serde_json::json!({"kits": []})
     );
+}
+
+#[tokio::test]
+async fn a_project_has_three_layers_and_the_newest_version_wins() {
+    let (installer, _) = installer();
+    let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
+    let org_admin = caller(ORG_ADMIN, ORG);
+    installer
+        .install_base(&platform, "sdlc", Some("1.0.0"))
+        .await
+        .unwrap();
+    installer
+        .install_for_organization(&org_admin, ORG, "sdlc", Some("1.2.0"))
+        .await
+        .unwrap();
+    installer
+        .install_for_organization(&org_admin, ORG, "compete", Some("2.0.0"))
+        .await
+        .unwrap();
+    // The project's sdlc is the newest; its compete is older than the
+    // organization's, which keeps it.
+    let mine = installer
+        .install_for_project(&org_admin, PROJECT, "sdlc", Some("1.10.0"))
+        .await
+        .unwrap();
+    assert_eq!(mine.kind, KIND_PROJECT);
+    installer
+        .install_for_project(&org_admin, PROJECT, "compete", Some("1.0.0"))
+        .await
+        .unwrap();
+
+    let installed = installer
+        .installed_in_project(&caller(MEMBER, PROJECT), PROJECT)
+        .await
+        .unwrap();
+    assert_eq!(installed.organization_id, ORG);
+    assert_eq!(installed.project_id, Some(PROJECT));
+    assert_eq!(slugs(&installed.project), ["compete", "sdlc"]);
+    let at = |slug: &str| {
+        installed
+            .effective
+            .iter()
+            .find(|k| k.kit_slug == slug)
+            .map(|k| (k.version.clone(), k.kind))
+            .unwrap()
+    };
+    assert_eq!(at("sdlc"), ("1.10.0".to_owned(), KIND_PROJECT));
+    assert_eq!(at("compete"), ("2.0.0".to_owned(), KIND_ORGANIZATION));
+    // The built-in base kits still apply, once each.
+    assert!(slugs(&installed.effective).contains(&"project-tests"));
+    let mut seen = slugs(&installed.effective);
+    seen.dedup();
+    assert_eq!(seen.len(), installed.effective.len());
+
+    // The organization's answer is unchanged by the project's kits.
+    let org = installer.installed(&org_admin, ORG).await.unwrap();
+    assert!(org.project.is_empty());
+    assert_eq!(org.project_id, None);
+    assert_eq!(
+        org.effective
+            .iter()
+            .find(|k| k.kit_slug == "sdlc")
+            .unwrap()
+            .version,
+        "1.2.0"
+    );
+}
+
+#[tokio::test]
+async fn only_the_organization_s_kit_administrators_change_a_project_s_kits() {
+    let (installer, store) = installer();
+    assert!(matches!(
+        installer
+            .install_for_project(&caller(MEMBER, PROJECT), PROJECT, "sdlc", None)
+            .await,
+        Err(Refusal::Forbidden(KIT_ADMIN_REQUIRED))
+    ));
+    assert!(matches!(
+        installer
+            .uninstall_for_project(&caller(MEMBER, PROJECT), PROJECT, "sdlc")
+            .await,
+        Err(Refusal::Forbidden(KIT_ADMIN_REQUIRED))
+    ));
+    assert!(store.docs.lock().unwrap().is_empty(), "a refusal wrote");
+    // A platform administrator may, and so may the organization's.
+    installer
+        .install_for_project(
+            &caller(PLATFORM_ADMIN, PLATFORM_TENANT),
+            PROJECT,
+            "sdlc",
+            None,
+        )
+        .await
+        .unwrap();
+    installer
+        .uninstall_for_project(&caller(ORG_ADMIN, ORG), PROJECT, "sdlc")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_project_cannot_remove_what_its_organization_or_the_platform_installed() {
+    let (installer, _) = installer();
+    let admin = caller(ORG_ADMIN, ORG);
+    assert!(matches!(
+        installer
+            .uninstall_for_project(&admin, PROJECT, "project-issues")
+            .await,
+        Err(Refusal::BaseKit(slug)) if slug == "project-issues"
+    ));
+    installer
+        .install_for_organization(&admin, ORG, "compete", None)
+        .await
+        .unwrap();
+    assert!(matches!(
+        installer
+            .uninstall_for_project(&admin, PROJECT, "compete")
+            .await,
+        Err(Refusal::OrganizationKit(slug)) if slug == "compete"
+    ));
+    assert!(matches!(
+        installer
+            .uninstall_for_project(&admin, PROJECT, "sdlc")
+            .await,
+        Err(Refusal::NotFound(..))
+    ));
+}
+
+#[tokio::test]
+async fn only_a_project_level_kit_goes_in_a_project() {
+    let (installer, store) = installer();
+    let admin = caller(ORG_ADMIN, ORG);
+    // `org-costs` is installed on organizations only.
+    assert!(matches!(
+        installer
+            .install_for_project(&admin, PROJECT, "org-costs", None)
+            .await,
+        Err(Refusal::NotAProjectKit(slug)) if slug == "org-costs"
+    ));
+    // An organization is not a project.
+    assert!(matches!(
+        installer
+            .install_for_project(&admin, ORG, "sdlc", None)
+            .await,
+        Err(Refusal::Invalid(_))
+    ));
+    assert!(matches!(
+        installer.installed_in_project(&admin, ORG).await,
+        Err(Refusal::Invalid(_))
+    ));
+    assert!(store.docs.lock().unwrap().is_empty(), "a refusal wrote");
+    // A kit whose levels name `project` does.
+    installer
+        .install_for_project(&admin, PROJECT, "project-lifecycle", None)
+        .await
+        .unwrap();
 }
