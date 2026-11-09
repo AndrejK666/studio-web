@@ -9,7 +9,8 @@ import {
 } from '@gears-frontx/react';
 import { Badge, Button, Empty, EmptyDescription, Skeleton } from '@gears-frontx/ui-kit';
 import { STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION } from '@constructor-studio/mfe-shared';
-import { KitsApiService, type CatalogKit, type InstalledKits } from '../../api/KitsApiService';
+import { KitsApiService, type CatalogKit, type InstalledKits, type KitDetail } from '../../api/KitsApiService';
+import { KitDetailView, contentsSummary } from './KitDetailView';
 import { useHomeTranslations } from '../../i18n';
 import styles from './HomeScreen.module.css';
 
@@ -85,6 +86,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   const [tick, setTick] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<{ slug: string; text: string } | null>(null);
+  /** What is inside each kit, read once per catalogue: null = could not be read. */
+  const [details, setDetails] = useState<Record<string, KitDetail | null>>({});
+  const [selected, setSelected] = useState<string | null>(null);
+  const slugs = kits.map((k) => k.slug).join(',');
+
+  useEffect(() => {
+    if (!slugs) return;
+    let alive = true;
+    void Promise.all(
+      slugs.split(',').map((slug) =>
+        api
+          .describe({ slug })
+          .fetch()
+          .then(
+            (d) => [slug, d] as const,
+            () => [slug, null] as const
+          )
+      )
+    ).then((pairs) => alive && setDetails(Object.fromEntries(pairs)));
+    return () => {
+      alive = false;
+    };
+  }, [api, slugs]);
 
   useEffect(() => {
     if (!orgId) return;
@@ -149,6 +173,22 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     }
   }, [language]);
 
+  const controlsFor = (kit: CatalogKit) => (
+    <KitControls
+      kit={kit}
+      installed={installed}
+      organization={organization ?? null}
+      busy={busy === kit.slug}
+      problem={problem?.slug === kit.slug ? problem.text : null}
+      t={t}
+      onMakeBase={() => void act(kit.slug, () => api.installBase(kit.slug).fetch({}))}
+      onRemoveBase={() => void act(kit.slug, () => api.removeBase(kit.slug).fetch(undefined))}
+      onInstall={(org) => void act(kit.slug, () => api.installForOrganization(kit.slug, org).fetch({}))}
+      onRemove={(org) => void act(kit.slug, () => api.removeFromOrganization(kit.slug, org).fetch(undefined))}
+    />
+  );
+  const open = selected ? kits.find((k) => k.slug === selected) : undefined;
+
   // Show skeleton while translations are loading
   if (loading) {
     return (
@@ -169,6 +209,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
         <p role="alert" className={styles.error}>
           {t('loading_failed', { error: String(catalog.error) })}
         </p>
+      ) : open ? (
+        <KitDetailView
+          kit={open}
+          detail={details[open.slug] ?? null}
+          failed={open.slug in details && details[open.slug] === null}
+          controls={controlsFor(open)}
+          onBack={() => setSelected(null)}
+          t={t}
+        />
       ) : kits.length === 0 ? (
         <Empty className={styles.empty}>
           <EmptyDescription>{t('empty')}</EmptyDescription>
@@ -177,7 +226,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
         <ul className={styles.grid}>
           {kits.map((kit) => (
             <li key={kit.slug} className={styles.card} data-kit={kit.slug}>
-              <h3 className={styles.cardTitle}>{kit.name}</h3>
+              <h3 className={styles.cardTitle}>
+                <button type="button" className={styles.cardLink} onClick={() => setSelected(kit.slug)}>
+                  {kit.name}
+                </button>
+              </h3>
               <p className={styles.cardText}>{kit.description}</p>
               <dl className={styles.facts}>
                 <dt>{t('publisher')}</dt>
@@ -201,18 +254,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
                   </>
                 )}
               </dl>
-              <KitControls
-                kit={kit}
-                installed={installed}
-                organization={organization ?? null}
-                busy={busy === kit.slug}
-                problem={problem?.slug === kit.slug ? problem.text : null}
-                t={t}
-                onMakeBase={() => void act(kit.slug, () => api.installBase(kit.slug).fetch({}))}
-                onRemoveBase={() => void act(kit.slug, () => api.removeBase(kit.slug).fetch(undefined))}
-                onInstall={(org) => void act(kit.slug, () => api.installForOrganization(kit.slug, org).fetch({}))}
-                onRemove={(org) => void act(kit.slug, () => api.removeFromOrganization(kit.slug, org).fetch(undefined))}
-              />
+              {details[kit.slug] && (
+                <p className={styles.summary} data-kit-summary>
+                  {contentsSummary(details[kit.slug]!.contents, t) || t('sum_nothing')}
+                </p>
+              )}
+              <button type="button" className={styles.inside} onClick={() => setSelected(kit.slug)}>
+                {t('inside')}
+              </button>
+              {controlsFor(kit)}
             </li>
           ))}
         </ul>

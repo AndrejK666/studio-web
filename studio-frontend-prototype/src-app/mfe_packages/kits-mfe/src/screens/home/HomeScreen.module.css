@@ -121,3 +121,88 @@
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+
+/* The card's way into the kit. */
+.cardLink,
+.inside {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cardLink:hover {
+  text-decoration: underline;
+}
+
+.inside {
+  align-self: flex-start;
+  color: var(--primary);
+  font-size: 0.875rem;
+}
+
+.summary {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--foreground);
+}
+
+/* The kit's own page: its header, then one block per manifest section. */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.detailHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: var(--space-4);
+}
+
+.detailSection {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 0.5rem);
+  background: var(--card);
+}
+
+.detailTitle {
+  margin: 0 0 0.25rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.detailHint {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.detailEmpty {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.detailList {
+  display: grid;
+  gap: 0.375rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.detailNote {
+  color: var(--muted-foreground);
+}

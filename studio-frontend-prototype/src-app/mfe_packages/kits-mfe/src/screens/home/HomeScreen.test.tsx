@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import {
   FRONTX_SHARED_PROPERTY_LANGUAGE,
   FRONTX_SHARED_PROPERTY_THEME,
@@ -13,7 +13,31 @@ const { useScreenTranslationsMock, useApiQueryMock } = vi.hoisted(() => ({
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
-  apiRegistry: { getService: () => ({ catalog: {} }) },
+  apiRegistry: {
+    getService: () => ({
+      catalog: {},
+      describe: ({ slug }: { slug: string }) => ({
+        fetch: () =>
+          Promise.resolve({
+            kit: { slug },
+            manifest: '.cf-studio-kit.toml',
+            contents: {
+              screens: [{ kind: 'tab', level: 'project', label: 'Tests', route: '/tests', slot: null }],
+              types: [],
+              rules: [],
+              functions: [],
+              services: [],
+              inbox: [],
+              mcp_tools: [{ name: 'kits_describe', description: 'what a kit brings' }],
+              permissions: { reads: ['studio-artifact-ingest runs'], writes: [], listens: [] },
+              material: [{ path: 'templates/', description: 'artifact templates' }],
+              kinds: ['PRD', 'ADR'],
+              docs: [],
+            },
+          }),
+      }),
+    }),
+  },
   useApiQuery: useApiQueryMock,
 }));
 
@@ -215,5 +239,29 @@ describe('HomeScreen', () => {
     }
 
     host.remove();
+  });
+
+  it('says on the card what the kit brings, and opens its page with every section', async () => {
+    const { bridge } = createMfeBridgeFixture({
+      domainId: TEST_DOMAIN_ID,
+      instanceId: TEST_INSTANCE_ID,
+      initialProperties: {
+        [FRONTX_SHARED_PROPERTY_THEME]: TEST_THEME,
+        [FRONTX_SHARED_PROPERTY_LANGUAGE]: TEST_LANGUAGE,
+      },
+    });
+    render(<HomeScreen bridge={bridge} />);
+    // The card's one line, from the kit's contents.
+    expect(await screen.findByText(/sum_screens/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'inside' }));
+    // The page: one block per manifest section, an empty one says so.
+    expect(await screen.findByText('sec_screens')).toBeTruthy();
+    expect(screen.getByText('sec_permissions')).toBeTruthy();
+    expect(screen.getByText('kits_describe')).toBeTruthy();
+    expect(screen.getByText('templates/')).toBeTruthy();
+    expect(screen.getByText('PRD')).toBeTruthy();
+    expect(screen.getByText('.cf-studio-kit.toml')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /back/ }));
+    expect(await screen.findByRole('button', { name: 'inside' })).toBeTruthy();
   });
 });

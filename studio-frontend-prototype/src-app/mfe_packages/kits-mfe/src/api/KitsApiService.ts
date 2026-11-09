@@ -51,6 +51,29 @@ export interface InstalledKits {
   effective: InstalledKit[];
 }
 
+/** What a kit brings, by the sections of its manifest (ADR-0068 §3, §8). */
+export interface KitContents {
+  screens: { kind: 'tab' | 'section'; level: string; label: string; route: string | null; slot: string | null }[];
+  types: { gts: string; name: string; description: string | null }[];
+  rules: { name: string; description: string | null }[];
+  functions: { name: string; runtime: 'wasm' | 'agent'; description: string | null }[];
+  services: { name: string; description: string | null }[];
+  inbox: { id: string; label: string }[];
+  mcp_tools: { name: string; description: string | null }[];
+  permissions: { reads: string[]; writes: string[]; listens: string[] };
+  material: { path: string; description: string | null }[];
+  kinds: string[];
+  docs: string[];
+}
+
+/** One kit with what is inside it (GET /studio-kits/v1/catalog/{slug}). */
+export interface KitDetail {
+  kit: CatalogKit;
+  contents: KitContents;
+  /** Where the description came from: built-in, .cf-studio-kit.toml, kit.gdl — or unknown. */
+  manifest: string | null;
+}
+
 const org = (organizationId: string) => new URLSearchParams({ organization_id: organizationId }).toString();
 
 export class KitsApiService extends BaseApiService {
@@ -62,6 +85,10 @@ export class KitsApiService extends BaseApiService {
 
   /** The whole catalogue: the gear pages at 200, and holds far fewer. */
   readonly catalog = this.protocol(RestEndpointProtocol).query<CatalogPage>('/catalog?limit=200');
+
+  readonly describe = this.protocol(RestEndpointProtocol).queryWith<KitDetail, { slug: string }>(
+    ({ slug }) => `/catalog/${encodeURIComponent(slug)}`
+  );
 
   readonly installed = this.protocol(RestEndpointProtocol).queryWith<InstalledKits, { organizationId: string }>(
     ({ organizationId }) => `/installed-kits?${org(organizationId)}`
