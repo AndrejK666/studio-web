@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "gts.frontx.mfes.mfe.mf_manifest.v1~constructor_studio.admin.mfe.manifest.v1",
-    "remoteEntry": "http://localhost:3241/assets/remoteEntry.js"
+    "remoteEntry": "http://localhost:3243/assets/remoteEntry.js"
   },
   "entries": [
     {
