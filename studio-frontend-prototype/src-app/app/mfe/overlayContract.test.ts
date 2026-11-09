@@ -385,6 +385,8 @@ describe('generated MFE manifest', () => {
         'Activity',
         'Timeline',
         'Team',
+        // The project's own kits (ADR-0069 §4), before its settings.
+        'Kits',
         'Settings',
       ]);
     });
