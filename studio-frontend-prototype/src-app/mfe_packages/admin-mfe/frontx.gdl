@@ -1,0 +1,46 @@
+# This micro-frontend's passport: everything a tool that assembles a product
+# from FrontX packages (Gearbox, Constructor Studio) needs to know about it, in
+# one file. It restates what package.json and mfe.json say, and those tools
+# check that they agree, so keep them in step when either changes.
+#
+# Admin: the shell's administration (ADR-0068 §1: people, rights, settings),
+# not a kit. Its screens are the Admin level's sections.
+gdl_version = "1.5"
+
+mfe(
+    name = "@constructor-studio/admin-mfe",
+    version = "0.2.0-alpha.0",
+
+    # The backend gears its sections call, by gear id.
+    requires = [
+        "account-management",
+        "studio-user",
+        "studio-identity",
+        "resource-group",
+        "studio-organizations",
+        "credstore",
+        "studio-connector",
+        "studio-components-catalog",
+        "types-registry",
+    ],
+
+    # What it brings, as mfe.json says: the labels of its screens, then the
+    # route of each extension (presentation.route), in mfe.json's order.
+    screens = ["Organizations", "People", "Access", "Secrets", "Objects", "All identities", "Project tenants"],
+    mounts = [
+        "/admin/organizations",
+        "/admin/people",
+        "/admin/access",
+        "/admin/secrets",
+        "/admin/objects",
+        "/admin/identities",
+        "/admin/tenants",
+    ],
+
+    frontx = "0.2.0-alpha.15",
+
+    # No `roles`: who may is the backend's answer, shown when it refuses.
+    roles = [],
+
+    preview = ["/admin/people", "/admin/access"],
+)
