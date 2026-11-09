@@ -58,7 +58,7 @@ copy).
 | People | shell | `people-mfe` | partial |
 | Connections | shell (Sources) | `connections-mfe` | partial |
 | Infrastructure (places, environments) | Product & Releases | — | todo |
-| Costs | Costs kit | — | todo |
+| Costs | `org-costs` kit (`costs-mfe`) | Report by project, person, model, source or payer over this month, last month or 30 days, with the own-keys switch; price list editor (`may_manage`; read-only otherwise, price list only without `may_view_costs`); Budgets dialog with standings, warnings and editor; header chips for no prices and budgets that warn. Not yet: the model-composed sentences (row names, standings, validation) are English only | done |
 | Components (registry, catalogue, gear repositories) | Product & Releases | — | todo |
 | Reports | Reports kit | — | todo |
 | Background work (tasks, schedules) | shell | `organization-mfe` Background work: runs (failed + running by default, state and type filters, retry, cancel, details), schedules (run now); refreshes by polling, not studio-events | partial |
