@@ -680,10 +680,11 @@ export function openInfrastructure(add?: "registry" | "cluster") {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-/** Opens Organization › Connections, where a member signs in to Research
- *  with their own account (ADR-0049 §5). */
+/** Opens the person's profile › My connections, where a member signs in to
+ *  Constructor Research with their own account (ADR-0049 §5): a sign-in is
+ *  the member's, so it is made neither here nor on the organization's page. */
 function openConnections() {
-  window.history.pushState(null, "", `/connections${window.location.search}`);
+  window.history.pushState(null, "", `/profile${window.location.search}`);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
