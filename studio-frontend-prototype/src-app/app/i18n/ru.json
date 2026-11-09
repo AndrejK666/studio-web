@@ -38,5 +38,7 @@
   "level_back_to_organization": "Назад в {organization}",
   "chain_organization": "Организация",
   "chain_organization_overview": "{organization} — обзор",
-  "level_tab_experimental": "Экспериментальная: работает, но её место ещё не определено"
+  "level_tab_experimental": "Экспериментальная: работает, но её место ещё не определено",
+  "product_menu": "Сменить продукт",
+  "product_studio": "Studio"
 }

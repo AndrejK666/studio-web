@@ -37,9 +37,10 @@
           "enum": [
             "main",
             "settings",
-            "hidden"
+            "hidden",
+            "product"
           ],
-          "$comment": "Where in the level's tabs the item sits. 'settings' pins it to the end regardless of order — the rule that replaced the order >= 100 band the shell used to read. 'hidden' keeps the screen registered and mountable but out of the tabs, and so never the screen a level opens on: it is reached some other way, such as opening an artifact. Defaults to 'main' when absent."
+          "$comment": "Where in the level's tabs the item sits. 'settings' pins it to the end regardless of order — the rule that replaced the order >= 100 band the shell used to read. 'hidden' keeps the screen registered and mountable but out of the tabs, and so never the screen a level opens on: it is reached some other way, such as opening an artifact. Defaults to 'main' when absent. 'product' puts it in the product menu on the wordmark (Docs & API, Architecture — ADR-0069) and out of every level's tabs; it opens across the screen."
         },
         "experimental": {
           "type": "boolean",

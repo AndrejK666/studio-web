@@ -14,6 +14,7 @@ import { cn } from '@/app/lib/utils';
 import type { OverlayExtension } from './overlayExtension';
 import { ContextChain } from './ContextChain';
 import { UserMenu } from './UserMenu';
+import { ProductMenu } from './ProductMenu';
 
 export interface HeaderProps {
   children?: React.ReactNode;
@@ -86,9 +87,8 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
         className="ml-2 size-8 shrink-0"
       />
 
-      <span className="ml-2 whitespace-nowrap text-heading-2 font-semibold text-foreground">
-        Constructor Studio
-      </span>
+      {/* The product family: Studio, what kits add (Docs & API, ...), Admin. */}
+      <ProductMenu />
 
       <div className="ml-8 flex min-w-0 items-center">
         <ContextChain />

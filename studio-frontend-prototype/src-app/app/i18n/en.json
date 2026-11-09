@@ -37,5 +37,7 @@
   "level_back_to_organization": "Back to {organization}",
   "chain_organization": "Organization",
   "chain_organization_overview": "{organization} — overview",
-  "level_tab_experimental": "Experimental: it works, its place is not settled yet"
+  "level_tab_experimental": "Experimental: it works, its place is not settled yet",
+  "product_menu": "Switch product",
+  "product_studio": "Studio"
 }

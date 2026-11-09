@@ -56,6 +56,12 @@ vi.mock('@/app/mfe/domainOccupancy', async (importOriginal) => ({
 // The right-hand cluster is covered by its own suites; the top bar's job here is
 // composition, so identity is stubbed out to keep this focused.
 vi.mock('./UserMenu', () => ({ UserMenu: () => <div data-testid="user-menu" /> }));
+vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellText'));
+// Which kits apply is a backend read; here nothing is known, so nothing is hidden.
+vi.mock('./useInstalledKits', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./useInstalledKits')>()),
+  useInstalledKits: () => null,
+}));
 vi.mock('./ContextChain', () => ({
   ContextChain: () => <div data-testid="context-chain" />,
 }));

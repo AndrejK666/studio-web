@@ -30,7 +30,8 @@ export const UNDECLARED_ORDER = 999;
 
 // 'hidden' is registered and mountable but never listed: a screen reached by
 // something other than the tabs, such as opening an artifact.
-export type ScreenPlacement = 'main' | 'settings' | 'hidden';
+// 'product' is listed in the product menu on the wordmark, never in the tabs.
+export type ScreenPlacement = 'main' | 'settings' | 'hidden' | 'product';
 
 export interface LeveledPresentation {
   level?: string;
@@ -78,7 +79,7 @@ export function parentSectionOf(extension: StudioScreenExtension): string | unde
 
 export function placementOf(extension: StudioScreenExtension): ScreenPlacement {
   const declared = extension.presentation.placement;
-  return declared === 'settings' || declared === 'hidden' ? declared : 'main';
+  return declared === 'settings' || declared === 'hidden' || declared === 'product' ? declared : 'main';
 }
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-entry-point:p1
