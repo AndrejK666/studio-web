@@ -44,6 +44,19 @@ pub fn tools() -> Vec<Tool> {
             run: Run::Get("/studio-kits/v1/catalog"),
         },
         Tool {
+            name: "kits_describe",
+            description: "What is inside one kit, before anyone installs it: the catalogue \
+                entry and its `contents` by the sections of a kit manifest (`screens`, `types`, \
+                `rules`, `functions`, `services`, `inbox`, `mcp_tools`, `permissions`, the \
+                `material` cfs writes into a checkout, artifact `kinds`, `docs`), and \
+                `manifest`, where that came from (`built-in`, `.cf-studio-kit.toml`, or null \
+                when nothing reliable describes it).",
+            input_schema: || object(json!({ "kit_slug": kit_slug() }), &["kit_slug"]),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-kits/v1/catalog/{kit_slug}"),
+        },
+        Tool {
             name: "kits_installed",
             description: "The kits that apply to an organization: `base` (installed by the \
                 platform for every organization; the organization cannot uninstall these), \
@@ -132,6 +145,11 @@ mod tests {
     #[test]
     fn each_tool_sends_the_route_a_person_would() {
         let all = tools();
+        let r = request_of(&all, "kits_describe", json!({"kit_slug": "sdlc"}));
+        assert_eq!(r.method, Method::Get);
+        assert_eq!(r.path, "/studio-kits/v1/catalog/sdlc");
+        assert!(r.query.is_empty());
+
         let r = request_of(&all, "kits_installed", json!({"organization_id": "o-1"}));
         assert_eq!(r.method, Method::Get);
         assert_eq!(r.path, "/studio-kits/v1/installed-kits");

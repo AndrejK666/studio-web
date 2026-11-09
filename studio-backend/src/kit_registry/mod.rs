@@ -5,6 +5,7 @@
 //! desired installations; `cfs` remains the only component that materializes
 //! kit files into a checkout.
 
+mod contents;
 pub(crate) mod installed;
 mod mcp;
 mod rest;

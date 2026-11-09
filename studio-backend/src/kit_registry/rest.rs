@@ -8,6 +8,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::contents::{KitDetail, KitNamed};
 use super::installed::{BASE_KIT, InstalledKit, KitInstaller, Refusal};
 use super::service::{
     KitDescriptor, KitInstallation, KitMaterialization, KitRegistryService, ProjectRepository,
@@ -55,6 +56,110 @@ pub struct KitListDto {
     /// Kits in the catalogue across every page, so a caller can show "N of M" and
     /// knows a next page exists exactly when `offset + items.len() < total`.
     pub total: u32,
+}
+
+/// A screen a kit brings (ADR-0068 §2).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitScreenDto {
+    /// `tab` (on a level's tab bar) or `section` (inside another screen).
+    pub kind: String,
+    /// The level it shows on: `organization`, `workspace` or `project`.
+    pub level: String,
+    pub label: String,
+    /// The portal route; null when the screen is not in the portal yet.
+    pub route: Option<String>,
+    /// For a section, the slot of the screen it goes in; null for a tab.
+    pub slot: Option<String>,
+}
+
+/// A GTS type a kit registers under its own namespace.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitTypeDto {
+    pub gts: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// A rule, a kit service or an MCP tool a kit brings.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitNamedDto {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// A function a kit brings (ADR-0068 §8).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitFunctionDto {
+    pub name: String,
+    /// `wasm` (the kit's own code) or `agent` (a prompt and the tools it may call).
+    pub runtime: String,
+    pub description: Option<String>,
+}
+
+/// A source of the person's Inbox a kit brings (ADR-0068 §6).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitInboxSourceDto {
+    pub id: String,
+    pub label: String,
+}
+
+/// What a kit's code and rules are held to.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitPermissionsDto {
+    /// What it reads: GTS types, or for a built-in kit the gears' routes its
+    /// screen calls (`METHOD /path`).
+    pub reads: Vec<String>,
+    pub writes: Vec<String>,
+    /// Event kinds it listens to.
+    pub listens: Vec<String>,
+}
+
+/// A file or directory `cfs` writes into a project's checkout.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitMaterialDto {
+    /// Relative to the kit's directory in the checkout
+    /// (`<cf-studio-path>/config/kits/<slug>/`); a directory ends in `/`.
+    pub path: String,
+    pub description: Option<String>,
+}
+
+/// What a kit brings, by the sections of its manifest (ADR-0068 §3, §8).
+/// Every list is present, empty when the kit brings none.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitContentsDto {
+    pub screens: Vec<KitScreenDto>,
+    pub types: Vec<KitTypeDto>,
+    pub rules: Vec<KitNamedDto>,
+    pub functions: Vec<KitFunctionDto>,
+    pub services: Vec<KitNamedDto>,
+    pub inbox: Vec<KitInboxSourceDto>,
+    pub mcp_tools: Vec<KitNamedDto>,
+    pub permissions: KitPermissionsDto,
+    pub material: Vec<KitMaterialDto>,
+    /// The artifact kinds it brings templates and rules for (PRD, ADR, ...).
+    pub kinds: Vec<String>,
+    pub docs: Vec<String>,
+}
+
+/// One kit of the library and what is inside it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitDetailDto {
+    /// The same entry `GET /catalog` lists.
+    pub kit: KitDto,
+    pub contents: KitContentsDto,
+    /// Where `contents` came from: `built-in`, `.cf-studio-kit.toml`
+    /// (a copy at the pinned version) or `kit.gdl`; null when nothing reliable
+    /// describes the kit, and every list is empty.
+    pub manifest: Option<String>,
 }
 
 #[derive(Debug)]
@@ -170,6 +275,82 @@ impl From<KitDescriptor> for KitDto {
             manifest_path: value.manifest_path,
             shelf: value.shelf,
             levels: value.levels,
+        }
+    }
+}
+
+impl From<KitDetail> for KitDetailDto {
+    fn from(value: KitDetail) -> Self {
+        let named = |items: Vec<KitNamed>| {
+            items
+                .into_iter()
+                .map(|n| KitNamedDto {
+                    name: n.name,
+                    description: n.description,
+                })
+                .collect()
+        };
+        let c = value.contents;
+        Self {
+            kit: value.kit.into(),
+            contents: KitContentsDto {
+                screens: c
+                    .screens
+                    .into_iter()
+                    .map(|s| KitScreenDto {
+                        kind: s.kind.to_owned(),
+                        level: s.level,
+                        label: s.label,
+                        route: s.route,
+                        slot: s.slot,
+                    })
+                    .collect(),
+                types: c
+                    .types
+                    .into_iter()
+                    .map(|t| KitTypeDto {
+                        gts: t.gts,
+                        name: t.name,
+                        description: t.description,
+                    })
+                    .collect(),
+                rules: named(c.rules),
+                functions: c
+                    .functions
+                    .into_iter()
+                    .map(|f| KitFunctionDto {
+                        name: f.name,
+                        runtime: f.runtime.to_owned(),
+                        description: f.description,
+                    })
+                    .collect(),
+                services: named(c.services),
+                inbox: c
+                    .inbox
+                    .into_iter()
+                    .map(|i| KitInboxSourceDto {
+                        id: i.id,
+                        label: i.label,
+                    })
+                    .collect(),
+                mcp_tools: named(c.mcp_tools),
+                permissions: KitPermissionsDto {
+                    reads: c.permissions.reads,
+                    writes: c.permissions.writes,
+                    listens: c.permissions.listens,
+                },
+                material: c
+                    .material
+                    .into_iter()
+                    .map(|m| KitMaterialDto {
+                        path: m.path,
+                        description: m.description,
+                    })
+                    .collect(),
+                kinds: c.kinds,
+                docs: c.docs,
+            },
+            manifest: value.manifest.map(str::to_owned),
         }
     }
 }
@@ -555,6 +736,19 @@ async fn catalogue(
     Ok(Json(KitListDto { items, total }))
 }
 
+async fn get_kit(
+    Extension(_ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<KitRegistryService>>,
+    Path(kit_slug): Path<String>,
+) -> ApiResult<JsonBody<KitDetailDto>> {
+    let detail = service.kit(&kit_slug).ok_or_else(|| {
+        KitRegistryError::not_found("the kit library does not hold this kit")
+            .with_resource(kit_slug.clone())
+            .create()
+    })?;
+    Ok(Json(detail.into()))
+}
+
 async fn list_installations(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<KitRegistryService>>,
@@ -732,6 +926,35 @@ pub fn register_routes(
         .handler(catalogue)
         .json_response_with_schema::<KitListDto>(openapi, StatusCode::OK, "Kit catalogue")
         .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-kits/v1/catalog/{kit_slug}")
+        .operation_id("studio_kits.get_kit")
+        .summary("One kit of the library and what is inside it")
+        .description(
+            "Any signed-in user. The catalogue entry and what the kit brings, by the sections \
+             of its manifest (ADR-0068 §3): screens, types, rules, functions, services, inbox \
+             sources, MCP tools, permissions, the material `cfs` writes into a checkout, the \
+             artifact kinds it covers and its docs. Every list is present, empty when the kit \
+             brings none. `manifest` says where the description came from: `built-in` \
+             (compiled into Studio), `.cf-studio-kit.toml` (a copy of the official kit's \
+             manifest at the pinned version; never fetched on request) or null when nothing \
+             reliable describes it, such as a kit pinned to another version by the \
+             deployment. A slug the library does not hold is 404.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("kit_slug", "Kit slug")
+        .handler(get_kit)
+        .json_response_with_schema::<KitDetailDto>(
+            openapi,
+            StatusCode::OK,
+            "The kit and its contents",
+        )
+        .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

@@ -2456,6 +2456,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-kits/v1/catalog/{kit_slug}",
+      "operation_id": "studio_kits.get_kit",
+      "tag": "StudioKits",
+      "summary": "One kit of the library and what is inside it",
+      "authenticated": true,
+      "responses": [
+        "KitDetailDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-kits/v1/installed-kits",
       "operation_id": "studio_kits.get_installed_kits",
       "tag": "StudioKits",

@@ -30,6 +30,26 @@ This README is what you need to work in the directory.
   own version, empty `repository_url`), `official` (the catalogue above) and
   `organization` (none yet: ADR-0068 phase 7). `?shelf=` filters
   `GET /catalog`; the IDE asks for `official` only, the kits `cfs` can install.
+- What is inside a kit before anyone installs it (ADR-0068 §4), `contents.rs`:
+  `GET /studio-kits/v1/catalog/{kit_slug}` (any signed-in user; 404 for a
+  slug the library does not hold) answers `{kit, contents, manifest}`;
+  `contents` holds every section of a kit manifest (`screens`, `types`,
+  `rules`, `functions`, `services`, `inbox`, `mcp_tools`, `permissions`,
+  `material`, `kinds`, `docs`), each present and possibly empty. Where it
+  comes from, in `manifest`:
+  - `built-in`: declared in `builtin_contents()`, only what Studio has today
+    (the tab, its route, the gears' routes its screen calls). Change it when
+    the screen changes.
+  - `.cf-studio-kit.toml`: an official kit, read from the copy of its
+    manifest in `manifests/` at the commit `official_catalogue()` pins
+    (material = each resource's `install_path`, kinds = the
+    `[kits.resources.artifacts.<KIND>]` keys). Nothing is fetched on request.
+    **Moving a pin means replacing that copy** — a test holds the two
+    together. A deployment that pins another commit or repository gets empty
+    contents and `null`.
+  - `null`: nothing reliable describes the kit (organization kits, re-pinned
+    kits).
+  Also the MCP tool `kits_describe`.
 - Who installs a kit (ADR-0069 §4), `installed.rs`: **base kits** for every
   organization, by a platform administrator, kept on the platform root
   (`00000000-…-0001`); **organization kits**, by the organization's

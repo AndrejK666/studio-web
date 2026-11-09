@@ -201,6 +201,7 @@ and never written back in the old shape.
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
 | `GET` | `/studio-kits/v1/catalog` | Every kit of the library, each with its `shelf` (`builtin`, `official`, `organization`) and `levels`; `?shelf=` filters | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}` | One kit and what is inside it (`contents` by the sections of a kit manifest, `manifest` = where that came from); 404 for an unknown slug | unstable |
 | `GET` | `/studio-kits/v1/installed-kits` | The kits that apply to an organization (`?organization_id=`): `base`, `organization`, `effective` | unstable |
 | `PUT` | `/studio-kits/v1/base-kits/{kit_slug}` | Install a kit for every organization (`{version?}`); platform administrators | unstable |
 | `DELETE` | `/studio-kits/v1/base-kits/{kit_slug}` | Stop a kit being a base kit; a built-in kit stays removed | unstable |

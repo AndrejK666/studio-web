@@ -203,6 +203,7 @@ ADR-0069 §4); an agent installs one the way a person does.
 | Tool | What it answers or does |
 | --- | --- |
 | `kits_catalog` | the kit library, each kit with its shelf (`builtin`, `official`, `organization`) |
+| `kits_describe` | one kit and what is inside it before install: screens, types, rules, functions, services, inbox, MCP tools, permissions, material, kinds, docs, and the manifest it was read from |
 | `kits_installed` | an organization's kits: `base`, its own, and `effective` |
 | `kit_base_install` | *changes:* installs a kit for every organization (platform administrators) |
 | `kit_base_uninstall` | *changes:* stops a kit being a base kit (platform administrators) |

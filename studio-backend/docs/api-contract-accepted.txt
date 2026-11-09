@@ -3264,6 +3264,55 @@ response	GET /studio-kits/v1/catalog	items.slug	String	always
 response	GET /studio-kits/v1/catalog	items.source	String	always
 response	GET /studio-kits/v1/catalog	items.visibility	String	always
 response	GET /studio-kits/v1/catalog	total	u32	always
+response	GET /studio-kits/v1/catalog/{}	contents	{}	always
+response	GET /studio-kits/v1/catalog/{}	contents.docs	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.functions	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.functions.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.functions.name	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.functions.runtime	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.inbox	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.inbox.id	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.inbox.label	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.kinds	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.material	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.material.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.material.path	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.mcp_tools	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.mcp_tools.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.mcp_tools.name	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.permissions	{}	always
+response	GET /studio-kits/v1/catalog/{}	contents.permissions.listens	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.permissions.reads	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.permissions.writes	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.rules	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.rules.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.rules.name	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens.kind	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens.label	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens.level	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens.route	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.screens.slot	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.services	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.services.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.services.name	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.types	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.types.description	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.types.gts	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.types.name	String	always
+response	GET /studio-kits/v1/catalog/{}	kit	{}	always
+response	GET /studio-kits/v1/catalog/{}	kit.default_version	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.description	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.levels	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	kit.manifest_path	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.name	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.publisher	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.repository_url	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.shelf	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.slug	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.source	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.visibility	String	always
+response	GET /studio-kits/v1/catalog/{}	manifest	String	optional
 response	GET /studio-kits/v1/installed-kits	base	Vec<{}>	always
 response	GET /studio-kits/v1/installed-kits	base.by_default	bool	always
 response	GET /studio-kits/v1/installed-kits	base.installed_at	String	optional
@@ -6718,6 +6767,7 @@ route	GET /studio-git/v1/workspaces/{}/sources/{}/info/refs
 route	GET /studio-identity/v1/users
 route	GET /studio-insight/v1/health
 route	GET /studio-kits/v1/catalog
+route	GET /studio-kits/v1/catalog/{}
 route	GET /studio-kits/v1/installed-kits
 route	GET /studio-kits/v1/projects/{}/installations
 route	GET /studio-kits/v1/projects/{}/repositories

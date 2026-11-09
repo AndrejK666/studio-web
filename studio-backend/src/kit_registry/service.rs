@@ -206,6 +206,12 @@ impl KitRegistryService {
         all
     }
 
+    /// One kit of the library with what it brings (ADR-0068 §4: shown before
+    /// it is installed). `None` for a slug the library does not hold.
+    pub fn kit(&self, slug: &str) -> Option<super::contents::KitDetail> {
+        super::contents::find(self.catalogue(), slug)
+    }
+
     /// The kits the IDE's installer can write into a checkout: the official
     /// shelf only. A built-in kit is compiled into the portal and has no
     /// repository for `cfs` to read.
