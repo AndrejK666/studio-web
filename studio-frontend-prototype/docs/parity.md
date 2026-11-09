@@ -71,8 +71,8 @@ copy).
 |---|---|---|---|
 | Projects | shell | `projects-mfe` | partial |
 | Attributes (what the domain model records about it) | shell (generic card) | — | todo |
-| Project templates | Project lifecycle | — | todo |
-| Document types | Specs | — | todo |
+| Project templates | `project-lifecycle` kit (`project-templates-mfe`) | The editor: whose list is shown (the workspace's, the organization's, built-in), presets (built-in, Learning), add, move up, remove, offer none; per template the title, key, description, sources (none, new, attached; starter gear), brief, tabs shown, the tab it opens on, kits ticked from the catalogue; save for the organization or only this workspace, use the inherited list, discard; the model's checks block saving. Not yet: the tabs offered are the prototype's project tab list taken as data (`model/project-tabs.ts`), not the project screens registered in this portal (needs the shell to hand that list to a kit); no live refresh when someone else changes the list (studio-events not in the shell yet); the sentences the model composes (what a template fills in, why it cannot be saved) are English only | partial |
+| Document types | `project-specs` kit (`document-types-mfe`) | The concept strip; the table of the workspace's effective types (name, key, owner, sections, front-matter, whether the spec-quality analyser accepts the key); the editor (identity, template, section checklist with required and minimum words, conformance rules) with the live "conforms when" summary; save as a workspace-owned type. Not yet: no live refresh when someone else changes a type (studio-events not in the shell yet); the slug `project-specs` is not in the backend's built-in kit catalogue on this branch, so the tab shows once the backend adds it | partial |
 
 ## Project
 
