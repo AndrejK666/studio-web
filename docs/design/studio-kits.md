@@ -202,11 +202,13 @@ and never written back in the old shape.
 |--------|------|-------------|-----------|
 | `GET` | `/studio-kits/v1/catalog` | Every kit of the library, each with its `shelf` (`builtin`, `official`, `organization`) and `levels`; `?shelf=` filters | unstable |
 | `GET` | `/studio-kits/v1/catalog/{kit_slug}` | One kit and what is inside it (`contents` by the sections of a kit manifest, `manifest` = where that came from); 404 for an unknown slug | unstable |
-| `GET` | `/studio-kits/v1/installed-kits` | The kits that apply to an organization (`?organization_id=`): `base`, `organization`, `effective` | unstable |
+| `GET` | `/studio-kits/v1/installed-kits` | The kits that apply to an organization (`?organization_id=`) or a project (`?project_id=`): `base`, `organization`, `project`, `effective` | unstable |
 | `PUT` | `/studio-kits/v1/base-kits/{kit_slug}` | Install a kit for every organization (`{version?}`); platform administrators | unstable |
 | `DELETE` | `/studio-kits/v1/base-kits/{kit_slug}` | Stop a kit being a base kit; a built-in kit stays removed | unstable |
 | `PUT` | `/studio-kits/v1/organization-kits/{kit_slug}` | Install a kit for one organization (`?organization_id=`, `{version?}`); its administrators | unstable |
 | `DELETE` | `/studio-kits/v1/organization-kits/{kit_slug}` | Uninstall the organization's own kit; a base kit is 400 `BASE_KIT` | unstable |
+| `PUT` | `/studio-kits/v1/project-kits/{kit_slug}` | Install a kit for one project (`?project_id=`, `{version?}`); the organization's kit administrators; only a kit whose `levels` include `project` (`NOT_A_PROJECT_KIT`) | unstable |
+| `DELETE` | `/studio-kits/v1/project-kits/{kit_slug}` | Uninstall the project's own kit; an organization or base kit is 400 `ORGANIZATION_KIT` / `BASE_KIT` | unstable |
 | `GET` | `/studio-kits/v1/projects/{project_id}/installations` | What the project wants installed | unstable |
 | `POST` | `/studio-kits/v1/projects/{project_id}/installations` | Request a kit (`kit_slug`, `version`, `install_mode`, `scope`); recorded as `pending` | unstable |
 | `DELETE` | `/studio-kits/v1/projects/{project_id}/installations/{kit_slug}` | Stop wanting one; files in a checkout stay | unstable |

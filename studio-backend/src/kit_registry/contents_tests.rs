@@ -51,7 +51,45 @@ fn the_builtin_screens_are_today_s_tabs() {
     );
     // No screen in the portal yet.
     assert_eq!(screens("project-issues"), [("Issues".to_owned(), None)]);
-    assert!(screens("project-lifecycle").is_empty());
+    assert_eq!(
+        screens("project-lifecycle"),
+        [(
+            "Project templates".to_owned(),
+            Some("/project-templates".to_owned())
+        )]
+    );
+    assert_eq!(
+        screens("project-specs"),
+        [
+            (
+                "Document types".to_owned(),
+                Some("/document-types".to_owned())
+            ),
+            ("Specs".to_owned(), Some("/projects/specs".to_owned())),
+        ]
+    );
+    assert_eq!(
+        screens("org-reports"),
+        [("Reports".to_owned(), Some("/reports".to_owned()))]
+    );
+    assert_eq!(
+        screens("org-costs"),
+        [("Costs".to_owned(), Some("/costs".to_owned()))]
+    );
+    // A section of the product menu, not a tab.
+    let docs = describe(
+        builtin_catalogue()
+            .into_iter()
+            .find(|kit| kit.slug == "studio-api-docs")
+            .unwrap(),
+    );
+    let screen = &docs.contents.screens[0];
+    assert_eq!(
+        (screen.kind, screen.level.as_str(), screen.slot.as_deref()),
+        ("section", "platform", Some("product-menu"))
+    );
+    assert_eq!(screen.route.as_deref(), Some("/api-docs"));
+    assert_eq!(docs.contents.permissions.reads, ["GET /openapi.json"]);
 }
 
 #[test]

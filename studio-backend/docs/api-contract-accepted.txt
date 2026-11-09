@@ -1074,6 +1074,7 @@ request	PUT /studio-environments/v1/project-environments/{}	research_project	Str
 request	PUT /studio-environments/v1/project-environments/{}	strictness	String	optional
 request	PUT /studio-kits/v1/base-kits/{}	version	String	optional
 request	PUT /studio-kits/v1/organization-kits/{}	version	String	optional
+request	PUT /studio-kits/v1/project-kits/{}	version	String	optional
 request	PUT /studio-organizations/v1/logo	content_type	String	required
 request	PUT /studio-organizations/v1/logo	data	String	required
 request	PUT /studio-organizations/v1/project-types	types	Vec<Value>	required
@@ -3338,6 +3339,15 @@ response	GET /studio-kits/v1/installed-kits	organization.kit_slug	String	always
 response	GET /studio-kits/v1/installed-kits	organization.shelf	String	always
 response	GET /studio-kits/v1/installed-kits	organization.version	String	always
 response	GET /studio-kits/v1/installed-kits	organization_id	String	always
+response	GET /studio-kits/v1/installed-kits	project	Vec<{}>	always
+response	GET /studio-kits/v1/installed-kits	project.by_default	bool	always
+response	GET /studio-kits/v1/installed-kits	project.installed_at	String	optional
+response	GET /studio-kits/v1/installed-kits	project.installed_by	String	optional
+response	GET /studio-kits/v1/installed-kits	project.kind	String	always
+response	GET /studio-kits/v1/installed-kits	project.kit_slug	String	always
+response	GET /studio-kits/v1/installed-kits	project.shelf	String	always
+response	GET /studio-kits/v1/installed-kits	project.version	String	always
+response	GET /studio-kits/v1/installed-kits	project_id	String	optional
 response	GET /studio-kits/v1/projects/{}/installations	items	Vec<{}>	always
 response	GET /studio-kits/v1/projects/{}/installations	items.failure_reason	String	optional
 response	GET /studio-kits/v1/projects/{}/installations	items.install_mode	String	always
@@ -6322,6 +6332,13 @@ response	PUT /studio-kits/v1/organization-kits/{}	kind	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	kit_slug	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	shelf	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	version	String	always
+response	PUT /studio-kits/v1/project-kits/{}	by_default	bool	always
+response	PUT /studio-kits/v1/project-kits/{}	installed_at	String	optional
+response	PUT /studio-kits/v1/project-kits/{}	installed_by	String	optional
+response	PUT /studio-kits/v1/project-kits/{}	kind	String	always
+response	PUT /studio-kits/v1/project-kits/{}	kit_slug	String	always
+response	PUT /studio-kits/v1/project-kits/{}	shelf	String	always
+response	PUT /studio-kits/v1/project-kits/{}	version	String	always
 response	PUT /studio-organizations/v1/logo	content_type	String	always
 response	PUT /studio-organizations/v1/logo	data	String	always
 response	PUT /studio-organizations/v1/logo	digest	String	always
@@ -6633,6 +6650,7 @@ route	DELETE /studio-environments/v1/project-environments/{}
 route	DELETE /studio-environments/v1/registries/{}/repositories/{}/versions/{}
 route	DELETE /studio-kits/v1/base-kits/{}
 route	DELETE /studio-kits/v1/organization-kits/{}
+route	DELETE /studio-kits/v1/project-kits/{}
 route	DELETE /studio-kits/v1/projects/{}/installations/{}
 route	DELETE /studio-organizations/v1/logo
 route	DELETE /studio-organizations/v1/organizations/{}
@@ -7037,6 +7055,7 @@ route	PUT /studio-environments/v1/project-build
 route	PUT /studio-environments/v1/project-environments/{}
 route	PUT /studio-kits/v1/base-kits/{}
 route	PUT /studio-kits/v1/organization-kits/{}
+route	PUT /studio-kits/v1/project-kits/{}
 route	PUT /studio-organizations/v1/logo
 route	PUT /studio-organizations/v1/project-types
 route	PUT /studio-product/v1/gear-explanations/{}

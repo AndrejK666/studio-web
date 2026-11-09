@@ -318,6 +318,21 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-kits/v1/project-kits/{kit_slug}",
+      "operation_id": "studio_kits.delete_project_kit",
+      "tag": "StudioKits",
+      "summary": "Uninstall a kit installed for one project",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-kits/v1/projects/{project_id}/installations/{kit_slug}",
       "operation_id": "studio_kits.remove_installation",
       "tag": "StudioKits",
@@ -2475,12 +2490,13 @@
       "path": "/studio-kits/v1/installed-kits",
       "operation_id": "studio_kits.get_installed_kits",
       "tag": "StudioKits",
-      "summary": "The kits that apply to an organization: base, its own, and the two together",
+      "summary": "The kits that apply to an organization or a project: each level's, and all together",
       "authenticated": true,
       "responses": [
         "InstalledKitsDto"
       ],
       "errors": [
+        "400",
         "401",
         "404",
         "500"
@@ -6917,6 +6933,25 @@
       "operation_id": "studio_kits.upsert_organization_kit",
       "tag": "StudioKits",
       "summary": "Install a kit for one organization",
+      "authenticated": true,
+      "request": "InstallKitDto",
+      "responses": [
+        "InstalledKitDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-kits/v1/project-kits/{kit_slug}",
+      "operation_id": "studio_kits.upsert_project_kit",
+      "tag": "StudioKits",
+      "summary": "Install a kit for one project",
       "authenticated": true,
       "request": "InstallKitDto",
       "responses": [

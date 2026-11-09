@@ -137,14 +137,18 @@ pub fn describe(kit: KitDescriptor) -> KitDetail {
     }
 }
 
-fn project_tab(label: &str, route: Option<&str>) -> KitScreen {
+fn tab(level: &str, label: &str, route: Option<&str>) -> KitScreen {
     KitScreen {
         kind: "tab",
-        level: "project".to_owned(),
+        level: level.to_owned(),
         label: label.to_owned(),
         route: route.map(str::to_owned),
         slot: None,
     }
+}
+
+fn project_tab(label: &str, route: Option<&str>) -> KitScreen {
+    tab("project", label, route)
 }
 
 fn owned(items: &[&str]) -> Vec<String> {
@@ -158,9 +162,49 @@ fn owned(items: &[&str]) -> Vec<String> {
 /// `METHOD /path`, and only routes it calls today.
 fn builtin_contents(slug: &str) -> Option<KitContents> {
     let contents = match slug {
-        // Project status and phases. No screen of its own in the portal yet,
-        // and nothing it reads that a route serves under its name.
-        "project-lifecycle" => KitContents::default(),
+        // Project status and phases, which have no screen of their own yet;
+        // and the project templates a workspace offers (`project-templates-mfe`).
+        "project-lifecycle" => KitContents {
+            screens: vec![tab(
+                "workspace",
+                "Project templates",
+                Some("/project-templates"),
+            )],
+            permissions: KitPermissions {
+                reads: owned(&["GET /studio-organizations/v1/project-types"]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
+        // The project's Specs section of `projects-mfe`, and the document types
+        // a workspace offers (`document-types-mfe`).
+        "project-specs" => KitContents {
+            screens: vec![
+                tab("workspace", "Document types", Some("/document-types")),
+                project_tab("Specs", Some("/projects/specs")),
+            ],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-documents/v1/workspaces/{workspace_id}/types",
+                    "GET /studio-documents/v1/spec-rows",
+                    "GET /studio-spec-quality/v1/status",
+                ]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
+        // `reports-mfe`: the organization's reports (studio-reports).
+        "org-reports" => KitContents {
+            screens: vec![tab("organization", "Reports", Some("/reports"))],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-reports/v1/reports",
+                    "GET /studio-reports/v1/reports/{report_id}",
+                ]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
         // The Issues tab has no screen in the new portal yet.
         "project-issues" => KitContents {
             screens: vec![project_tab("Issues", None)],
@@ -197,6 +241,43 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         // A section of `projects-mfe` today, which reads nothing yet.
         "project-activity" => KitContents {
             screens: vec![project_tab("Activity", Some("/projects/activity"))],
+            ..KitContents::default()
+        },
+        // `costs-mfe`: the organization's costs, its price list and budgets
+        // (studio-usage).
+        "org-costs" => KitContents {
+            screens: vec![KitScreen {
+                kind: "tab",
+                level: "organization".to_owned(),
+                label: "Costs".to_owned(),
+                route: Some("/costs".to_owned()),
+                slot: None,
+            }],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-usage/v1/costs",
+                    "GET /studio-usage/v1/prices",
+                    "GET /studio-usage/v1/budgets",
+                    "GET /studio-usage/v1/budget-status",
+                ]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
+        // `api-docs-mfe`, opened from the product menu: the gateway's
+        // OpenAPI document, grouped by the gear that serves each route.
+        "studio-api-docs" => KitContents {
+            screens: vec![KitScreen {
+                kind: "section",
+                level: "platform".to_owned(),
+                label: "Docs & API".to_owned(),
+                route: Some("/api-docs".to_owned()),
+                slot: Some("product-menu".to_owned()),
+            }],
+            permissions: KitPermissions {
+                reads: owned(&["GET /openapi.json"]),
+                ..KitPermissions::default()
+            },
             ..KitContents::default()
         },
         _ => return None,

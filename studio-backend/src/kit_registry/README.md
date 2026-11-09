@@ -30,6 +30,11 @@ This README is what you need to work in the directory.
   own version, empty `repository_url`), `official` (the catalogue above) and
   `organization` (none yet: ADR-0068 phase 7). `?shelf=` filters
   `GET /catalog`; the IDE asks for `official` only, the kits `cfs` can install.
+  The built-in kits are the portal's features, each arriving as a kit:
+  `project-lifecycle`, `project-issues`, `project-tests`, `project-artifacts`,
+  `project-activity`, `project-specs`, `org-costs`, `org-reports` and
+  `studio-api-docs` (level `platform`). A feature ported into the portal is
+  added here, with its contents in `contents.rs`.
 - What is inside a kit before anyone installs it (ADR-0068 §4), `contents.rs`:
   `GET /studio-kits/v1/catalog/{kit_slug}` (any signed-in user; 404 for a
   slug the library does not hold) answers `{kit, contents, manifest}`;
@@ -54,23 +59,34 @@ This README is what you need to work in the directory.
   organization, by a platform administrator, kept on the platform root
   (`00000000-…-0001`); **organization kits**, by the organization's
   administrators (owner, a role with `kit.manage`, or a platform
-  administrator), kept on the organization. Both are tenant metadata
-  `cf.studio.kits.installed.v1~` (`config/*.yaml`, `override_only`), written
-  only by this gear as its service identity (`GEAR_HELD_METADATA`). A built-in
-  kit is a base kit until a platform administrator removes it
-  (`removed_builtin`). An organization cannot uninstall a base kit (400
-  `failed_precondition`, `BASE_KIT`); a kit that is both applies at the newer
-  version (dotted numbers compare as numbers, anything else by install time).
+  administrator), kept on the organization; **project kits**, for one project,
+  by whoever may install kits for the project's organization (a project has
+  no access config of its own), kept on the project, and only a kit whose
+  `levels` include `project` (400 `failed_precondition`,
+  `NOT_A_PROJECT_KIT`). All are tenant metadata
+  `cf.studio.kits.installed.v1~` (`config/*.yaml`, `override_only`, so a
+  project never inherits its organization's document), written only by this
+  gear as its service identity (`GEAR_HELD_METADATA`). A built-in kit is a
+  base kit until a platform administrator removes it (`removed_builtin`). An
+  organization cannot uninstall a base kit (400 `failed_precondition`,
+  `BASE_KIT`); a project neither a base kit nor an organization kit
+  (`BASE_KIT`, `ORGANIZATION_KIT`). A kit on more than one level applies at
+  the newest version (dotted numbers compare as numbers, anything else by
+  install time): `effective` = (base ∪ organization) ∪ project.
 
   | Method | Path | Who |
   | --- | --- | --- |
-  | `GET` | `/studio-kits/v1/installed-kits?organization_id=` | any member: `{organization_id, base, organization, effective}` |
+  | `GET` | `/studio-kits/v1/installed-kits?organization_id=` or `?project_id=` | any member: `{organization_id, project_id, base, organization, project, effective}` (`project` empty and `project_id` null without a project) |
   | `PUT` / `DELETE` | `/studio-kits/v1/base-kits/{kit_slug}` | platform administrator (`PLATFORM_ADMIN_REQUIRED`) |
   | `PUT` / `DELETE` | `/studio-kits/v1/organization-kits/{kit_slug}?organization_id=` | organization administrator (`KIT_ADMIN_REQUIRED`) |
+  | `PUT` / `DELETE` | `/studio-kits/v1/project-kits/{kit_slug}?project_id=` | the project's organization administrator (`KIT_ADMIN_REQUIRED`) |
 
   `PUT` takes `{version?}` and answers the installation; `DELETE` answers 204.
-  Each is also an MCP tool (`mcp.rs`): `kits_catalog`, `kits_installed`,
-  `kit_base_install`, `kit_base_uninstall`, `kit_organization_install`,
-  `kit_organization_uninstall`.
+  Each is also an MCP tool (`mcp.rs`): `kits_catalog`, `kits_describe`,
+  `kits_installed`, `kit_base_install`, `kit_base_uninstall`,
+  `kit_organization_install`, `kit_organization_uninstall`,
+  `kit_project_install`, `kit_project_uninstall`. The project-scoped
+  `/projects/{project_id}/installations` routes (what the IDE materializes)
+  are a separate record and unchanged.
 - The prototype flow and the installer inside the session are in the
   repository-root [`docs/kit-registry-prototype.md`](../../../docs/kit-registry-prototype.md).

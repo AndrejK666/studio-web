@@ -204,11 +204,13 @@ ADR-0069 §4); an agent installs one the way a person does.
 | --- | --- |
 | `kits_catalog` | the kit library, each kit with its shelf (`builtin`, `official`, `organization`) |
 | `kits_describe` | one kit and what is inside it before install: screens, types, rules, functions, services, inbox, MCP tools, permissions, material, kinds, docs, and the manifest it was read from |
-| `kits_installed` | an organization's kits: `base`, its own, and `effective` |
+| `kits_installed` | an organization's kits, or a project's with `project_id`: `base`, the organization's, the project's, and `effective` |
 | `kit_base_install` | *changes:* installs a kit for every organization (platform administrators) |
 | `kit_base_uninstall` | *changes:* stops a kit being a base kit (platform administrators) |
 | `kit_organization_install` | *changes:* installs a kit for one organization (its administrators) |
 | `kit_organization_uninstall` | *changes:* uninstalls the organization's own kit; a base kit is refused |
+| `kit_project_install` | *changes:* installs a kit for one project (the organization's kit administrators); only a kit whose levels include `project` |
+| `kit_project_uninstall` | *changes:* uninstalls the project's own kit; a base or organization kit is refused |
 
 There is no tool that checks a saved description revision's text for a
 profile: Studio has no route for it. `product_check` composes the description

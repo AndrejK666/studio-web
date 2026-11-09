@@ -11,6 +11,11 @@ fn organization_id() -> Value {
         "description": "The organization (its tenant id); the caller's own when absent." })
 }
 
+fn project_id() -> Value {
+    json!({ "type": "string",
+        "description": "The project (its tenant id)." })
+}
+
 fn kit_slug() -> Value {
     json!({ "type": "string",
         "description": "The kit's slug, from `kits_catalog`." })
@@ -58,11 +63,18 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "kits_installed",
-            description: "The kits that apply to an organization: `base` (installed by the \
-                platform for every organization; the organization cannot uninstall these), \
-                `organization` (installed by the organization for itself) and `effective` \
-                (the two together, one entry per kit at the newer version).",
-            input_schema: || object(json!({ "organization_id": organization_id() }), &[]),
+            description: "The kits that apply to an organization, or to a project with \
+                `project_id`: `base` (installed by the platform for every organization; the \
+                organization cannot uninstall these), `organization` (installed by the \
+                organization for itself), `project` (installed for that project alone; empty \
+                without `project_id`) and `effective` (all together, one entry per kit at the \
+                newest version).",
+            input_schema: || {
+                object(
+                    json!({ "organization_id": organization_id(), "project_id": project_id() }),
+                    &[],
+                )
+            },
             effect: Effect::Read,
             experimental: false,
             run: Run::Get("/studio-kits/v1/installed-kits"),
@@ -132,6 +144,46 @@ pub fn tools() -> Vec<Tool> {
             experimental: true,
             run: Run::Delete("/studio-kits/v1/organization-kits/{kit_slug}"),
         },
+        Tool {
+            name: "kit_project_install",
+            description: "Install a kit for one project only. Whoever may install kits for the \
+                project's organization (its administrators, or a platform administrator). Only \
+                a kit whose `levels` include `project` (refused with `NOT_A_PROJECT_KIT`). \
+                Installing it again changes its version; a kit the organization or the \
+                platform also installed applies at the newest version.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "kit_slug": kit_slug(),
+                        "version": version()
+                    }),
+                    &["project_id", "kit_slug"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Put {
+                path: "/studio-kits/v1/project-kits/{kit_slug}",
+                query: &["project_id"],
+            },
+        },
+        Tool {
+            name: "kit_project_uninstall",
+            description: "Uninstall a kit installed for one project. Whoever may install kits \
+                for the project's organization. A kit the project has from its organization \
+                (`ORGANIZATION_KIT`) or the platform (`BASE_KIT`) is refused. Ask your person \
+                first.",
+            input_schema: || {
+                object(
+                    json!({ "project_id": project_id(), "kit_slug": kit_slug() }),
+                    &["project_id", "kit_slug"],
+                )
+            },
+            effect: Effect::Destructive,
+            experimental: true,
+            run: Run::Delete("/studio-kits/v1/project-kits/{kit_slug}"),
+        },
     ]
 }
 
@@ -178,6 +230,29 @@ mod tests {
         );
         assert_eq!(r.path, "/studio-kits/v1/base-kits/project-issues");
         assert_eq!(r.body, json!({}));
+
+        let r = request_of(
+            &all,
+            "kit_project_install",
+            json!({"project_id": "p-1", "kit_slug": "sdlc", "version": "v2"}),
+        );
+        assert_eq!(r.method, Method::Put);
+        assert_eq!(r.path, "/studio-kits/v1/project-kits/sdlc");
+        assert_eq!(r.query, vec![("project_id".to_owned(), "p-1".to_owned())]);
+        assert_eq!(r.body, json!({"version": "v2"}));
+
+        let r = request_of(
+            &all,
+            "kit_project_uninstall",
+            json!({"project_id": "p-1", "kit_slug": "sdlc"}),
+        );
+        assert_eq!(r.method, Method::Delete);
+        assert_eq!(r.path, "/studio-kits/v1/project-kits/sdlc");
+        assert_eq!(r.query, vec![("project_id".to_owned(), "p-1".to_owned())]);
+
+        let r = request_of(&all, "kits_installed", json!({"project_id": "p-1"}));
+        assert_eq!(r.path, "/studio-kits/v1/installed-kits");
+        assert_eq!(r.query, vec![("project_id".to_owned(), "p-1".to_owned())]);
 
         let r = request_of(
             &all,

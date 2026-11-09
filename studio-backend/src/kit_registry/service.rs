@@ -53,7 +53,7 @@ pub struct KitDescriptor {
     /// `STUDIO_KIT_CATALOGUE` names official kits only, so it defaults to that.
     #[serde(default = "default_shelf")]
     pub shelf: String,
-    /// The levels the kit may be installed on (`organization`, `workspace`,
+    /// The levels the kit may be installed on (`platform`, `organization`, `workspace`,
     /// `project`), from its manifest's `[kit] levels`. Empty for a kit whose
     /// manifest is read in its repository rather than by this gear.
     #[serde(default)]
@@ -720,6 +720,30 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "The project's Activity tab, beyond the shell's own run list.",
             &["project"],
         ),
+        kit(
+            "org-costs",
+            "Costs",
+            "What an organization's model calls and IDE sessions cost, its price list and monthly budgets.",
+            &["organization"],
+        ),
+        kit(
+            "org-reports",
+            "Reports",
+            "Every report Studio draws, configured once for the organization.",
+            &["organization"],
+        ),
+        kit(
+            "project-specs",
+            "Specs",
+            "A project's specifications and their quality, and the document types a workspace offers.",
+            &["workspace", "project"],
+        ),
+        kit(
+            "studio-api-docs",
+            "Docs & API",
+            "The backend's API reference, grouped by the gear that serves it, opened from the product menu.",
+            &["platform"],
+        ),
     ]
 }
 
@@ -1053,7 +1077,11 @@ mod tests {
                 "project-issues",
                 "project-tests",
                 "project-artifacts",
-                "project-activity"
+                "project-activity",
+                "org-costs",
+                "org-reports",
+                "project-specs",
+                "studio-api-docs"
             ]
         );
         for kit in &kits {
