@@ -36,8 +36,8 @@ export interface InstalledKit {
   kit_slug: string;
   version: string;
   shelf: string;
-  /** `base` (the platform's, for every organization) or `organization`. */
-  kind: 'base' | 'organization';
+  /** `base` (the platform's, for every organization), `organization`, or `project`. */
+  kind: 'base' | 'organization' | 'project';
   installed_by?: string | null;
   installed_at?: string | null;
   /** A built-in kit nobody removed: installed by default. */
@@ -46,9 +46,26 @@ export interface InstalledKit {
 
 export interface InstalledKits {
   organization_id: string;
+  /** Set when the read named a project. */
+  project_id?: string | null;
   base: InstalledKit[];
   organization: InstalledKit[];
+  /** What the project installed for itself; empty for an organization's read. */
+  project?: InstalledKit[];
   effective: InstalledKit[];
+}
+
+/** Whose installations a read is about: an organization, or a project in it. */
+export interface InstalledScope {
+  organizationId?: string;
+  projectId?: string;
+}
+
+function scopeQuery({ organizationId, projectId }: InstalledScope): string {
+  const q = new URLSearchParams();
+  if (projectId) q.set('project_id', projectId);
+  else if (organizationId) q.set('organization_id', organizationId);
+  return q.toString();
 }
 
 /** What a kit brings, by the sections of its manifest (ADR-0068 §3, §8). */
@@ -90,8 +107,8 @@ export class KitsApiService extends BaseApiService {
     ({ slug }) => `/catalog/${encodeURIComponent(slug)}`
   );
 
-  readonly installed = this.protocol(RestEndpointProtocol).queryWith<InstalledKits, { organizationId: string }>(
-    ({ organizationId }) => `/installed-kits?${org(organizationId)}`
+  readonly installed = this.protocol(RestEndpointProtocol).queryWith<InstalledKits, InstalledScope>(
+    (scope) => `/installed-kits?${scopeQuery(scope)}`
   );
 
   installBase(slug: string) {
@@ -109,6 +126,20 @@ export class KitsApiService extends BaseApiService {
     return this.protocol(RestEndpointProtocol).mutation<InstalledKit, Record<string, never>>(
       'PUT',
       `/organization-kits/${encodeURIComponent(slug)}?${org(organizationId)}`
+    );
+  }
+
+  installForProject(slug: string, projectId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<InstalledKit, Record<string, never>>(
+      'PUT',
+      `/project-kits/${encodeURIComponent(slug)}?${new URLSearchParams({ project_id: projectId })}`
+    );
+  }
+
+  removeFromProject(slug: string, projectId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<void, void>(
+      'DELETE',
+      `/project-kits/${encodeURIComponent(slug)}?${new URLSearchParams({ project_id: projectId })}`
     );
   }
 

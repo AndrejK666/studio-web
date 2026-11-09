@@ -1,6 +1,5 @@
 {
   "title": "Kits",
-  "description": "What extends this Studio. A base kit is installed by the platform for every organization; an organization can add kits for itself.",
   "loading_failed": "The kit catalogue could not be read: {error}",
   "empty": "No kits in the catalogue yet.",
   "publisher": "Publisher",
@@ -56,5 +55,13 @@
   "sec_material": "Files for the project",
   "sec_material_hint": "What it writes into a project checkout: templates, workflows, prompts.",
   "sec_kinds": "Artifact kinds and docs",
-  "sec_kinds_hint": "The kinds of document it brings templates and rules for."
+  "sec_kinds_hint": "The kinds of document it brings templates and rules for.",
+  "description_platform": "Base kits: what the platform installs for every organization. An organization adds kits for itself on its own Kits tab, a project on its own.",
+  "description_organization": "Kits for this organization: install what it needs on top of the base kits. The base kits are the platform's and stay.",
+  "description_project": "Kits for this project only, on top of what the platform and the organization installed.",
+  "installed_project": "installed in this project",
+  "install_project": "Install in this project",
+  "remove_project": "Remove from this project",
+  "from_platform": "Installed by the platform for every organization",
+  "from_organization": "Installed by the organization"
 }

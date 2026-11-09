@@ -8,7 +8,10 @@ import {
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
 import { Badge, Button, Empty, EmptyDescription, Skeleton } from '@gears-frontx/ui-kit';
-import { STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION } from '@constructor-studio/mfe-shared';
+import {
+  STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
+  STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
+} from '@constructor-studio/mfe-shared';
 import { KitsApiService, type CatalogKit, type InstalledKits, type KitDetail } from '../../api/KitsApiService';
 import { KitDetailView, contentsSummary } from './KitDetailView';
 import { useHomeTranslations } from '../../i18n';
@@ -51,7 +54,22 @@ interface HomeScreenProps {
  * organization. The gear refuses what the person may not do, and the card
  * says why.
  */
+/**
+ * Which level the screen was opened on: each level installs from its own
+ * context (ADR-0069 §4) — the platform its base kits, an organization kits for
+ * itself, a project kits for itself. One entry, three extensions in mfe.json;
+ * the extension the shell mounted says which.
+ */
+export type KitScope = 'platform' | 'organization' | 'project';
+
+export function scopeOf(extensionId: string | undefined): KitScope {
+  if (extensionId?.endsWith('.screens.organization.v1')) return 'organization';
+  if (extensionId?.endsWith('.screens.project.v1')) return 'project';
+  return 'platform';
+}
+
 export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
+  const scope = scopeOf(bridge.extensionId);
   const containerRef = useRef<HTMLDivElement>(null);
   // Initial value read directly from the bridge's lazy useState initializer (runs once,
   // synchronously, during the first render) instead of via setState in a mount effect —
@@ -82,6 +100,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     | null
     | undefined;
   const orgId = organization?.id ?? null;
+  const publishedProject = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, { bridge });
+  const projectId = scope === 'project' && typeof publishedProject === 'string' && publishedProject ? publishedProject : null;
   const [installed, setInstalled] = useState<InstalledKits | null>(null);
   const [tick, setTick] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
@@ -114,7 +134,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     if (!orgId) return;
     let alive = true;
     api
-      .installed({ organizationId: orgId })
+      .installed(projectId ? { projectId } : { organizationId: orgId })
       .fetch({ staleTime: 0 })
       .then(
         (r) => alive && setInstalled(r),
@@ -123,7 +143,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     return () => {
       alive = false;
     };
-  }, [api, orgId, tick]);
+  }, [api, orgId, projectId, tick]);
 
   const act = async (slug: string, run: () => Promise<unknown>) => {
     setBusy(slug);
@@ -175,6 +195,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
 
   const controlsFor = (kit: CatalogKit) => (
     <KitControls
+      scope={scope}
       kit={kit}
       installed={installed}
       organization={organization ?? null}
@@ -185,9 +206,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
       onRemoveBase={() => void act(kit.slug, () => api.removeBase(kit.slug).fetch(undefined))}
       onInstall={(org) => void act(kit.slug, () => api.installForOrganization(kit.slug, org).fetch({}))}
       onRemove={(org) => void act(kit.slug, () => api.removeFromOrganization(kit.slug, org).fetch(undefined))}
+      onInstallProject={() =>
+        projectId && void act(kit.slug, () => api.installForProject(kit.slug, projectId).fetch({}))
+      }
+      onRemoveProject={() =>
+        projectId && void act(kit.slug, () => api.removeFromProject(kit.slug, projectId).fetch(undefined))
+      }
     />
   );
   const open = selected ? kits.find((k) => k.slug === selected) : undefined;
+  // A project lists only what may be installed in a project.
+  const shown = scope === 'project' ? kits.filter((k) => !k.levels || k.levels.includes('project')) : kits;
 
   // Show skeleton while translations are loading
   if (loading) {
@@ -202,7 +231,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   return (
     <div ref={containerRef} className={styles.screen} data-theme={toKitTheme(theme)}>
       <h2 className={styles.title}>{t('title')}</h2>
-      <p className={styles.description}>{t('description')}</p>
+      <p className={styles.description}>{t(`description_${scope}`)}</p>
       {catalog.isLoading ? (
         <Skeleton className={styles.skeletonLine} />
       ) : catalog.isError ? (
@@ -218,13 +247,13 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
           onBack={() => setSelected(null)}
           t={t}
         />
-      ) : kits.length === 0 ? (
+      ) : shown.length === 0 ? (
         <Empty className={styles.empty}>
           <EmptyDescription>{t('empty')}</EmptyDescription>
         </Empty>
       ) : (
         <ul className={styles.grid}>
-          {kits.map((kit) => (
+          {shown.map((kit) => (
             <li key={kit.slug} className={styles.card} data-kit={kit.slug}>
               <h3 className={styles.cardTitle}>
                 <button type="button" className={styles.cardLink} onClick={() => setSelected(kit.slug)}>
@@ -275,8 +304,9 @@ HomeScreen.displayName = 'HomeScreen';
 
 type Text = ReturnType<typeof useHomeTranslations>['t'];
 
-/** What one kit is here, and what may be done with it. */
+/** What one kit is here, and what this level may do with it. */
 function KitControls({
+  scope,
   kit,
   installed,
   organization,
@@ -287,7 +317,10 @@ function KitControls({
   onRemoveBase,
   onInstall,
   onRemove,
+  onInstallProject,
+  onRemoveProject,
 }: {
+  scope: KitScope;
   kit: CatalogKit;
   installed: InstalledKits | null;
   organization: { id: string; name: string } | null;
@@ -298,9 +331,12 @@ function KitControls({
   onRemoveBase: () => void;
   onInstall: (organizationId: string) => void;
   onRemove: (organizationId: string) => void;
+  onInstallProject: () => void;
+  onRemoveProject: () => void;
 }) {
   const base = installed?.base.find((k) => k.kit_slug === kit.slug);
   const own = installed?.organization.find((k) => k.kit_slug === kit.slug);
+  const mine = installed?.project?.find((k) => k.kit_slug === kit.slug);
   const name = organization?.name ?? '';
   return (
     <>
@@ -316,29 +352,50 @@ function KitControls({
             {t('installed_for', { organization: name })}
           </Badge>
         )}
-        {installed && !base && !own && <Badge variant="outline">{t('not_installed')}</Badge>}
+        {mine && (
+          <Badge variant="info" dot>
+            {t('installed_project')}
+          </Badge>
+        )}
+        {installed && !base && !own && !mine && <Badge variant="outline">{t('not_installed')}</Badge>}
       </div>
       {installed && (
         <div className={styles.actions}>
-          {base ? (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={onRemoveBase}>
-              {t('remove_base')}
-            </Button>
-          ) : (
-            <Button size="sm" disabled={busy} onClick={onMakeBase}>
-              {t('make_base')}
-            </Button>
-          )}
-          {organization && !base && !own && (
-            <Button variant="outline" size="sm" disabled={busy} onClick={() => onInstall(organization.id)}>
-              {t('install_for', { organization: name })}
-            </Button>
-          )}
-          {organization && own && (
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => onRemove(organization.id)}>
-              {t('remove_from', { organization: name })}
-            </Button>
-          )}
+          {scope === 'platform' &&
+            (base ? (
+              <Button variant="ghost" size="sm" disabled={busy} onClick={onRemoveBase}>
+                {t('remove_base')}
+              </Button>
+            ) : (
+              <Button size="sm" disabled={busy} onClick={onMakeBase}>
+                {t('make_base')}
+              </Button>
+            ))}
+          {scope === 'organization' &&
+            organization &&
+            (own ? (
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => onRemove(organization.id)}>
+                {t('remove_from', { organization: name })}
+              </Button>
+            ) : base ? (
+              <span className={styles.note}>{t('from_platform')}</span>
+            ) : (
+              <Button size="sm" disabled={busy} onClick={() => onInstall(organization.id)}>
+                {t('install_for', { organization: name })}
+              </Button>
+            ))}
+          {scope === 'project' &&
+            (mine ? (
+              <Button variant="ghost" size="sm" disabled={busy} onClick={onRemoveProject}>
+                {t('remove_project')}
+              </Button>
+            ) : base || own ? (
+              <span className={styles.note}>{base ? t('from_platform') : t('from_organization')}</span>
+            ) : (
+              <Button size="sm" disabled={busy} onClick={onInstallProject}>
+                {t('install_project')}
+              </Button>
+            ))}
         </div>
       )}
       {problem && (

@@ -96,7 +96,7 @@ describe('HomeScreen', () => {
 
     // The key-echoing translation mock makes the i18n keys directly assertable.
     expect(await screen.findByText('title')).toBeTruthy();
-    expect(screen.getByText('description')).toBeTruthy();
+    expect(screen.getByText('description_platform')).toBeTruthy();
     expect(screen.getByText('SDLC')).toBeTruthy();
     expect(screen.getByText('v1.2.0')).toBeTruthy();
     expect(screen.getByText('github.com/example/sdlc')).toBeTruthy();
@@ -179,14 +179,14 @@ describe('HomeScreen', () => {
     // subscriptions only deliver future changes and never fire here.
     expect(host.dir).toBe('rtl');
 
-    // Theme, language, and the organization in scope (the installer reads it).
+    // Theme, language, the organization and the project in scope (the installer reads them).
     // The old bridge's subscriptions were torn down and re-registered on the
     // new instance.
-    expect(first.unsubscriptions).toHaveLength(3);
+    expect(first.unsubscriptions).toHaveLength(4);
     for (const { unsubscribe } of first.unsubscriptions) {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     }
-    expect(second.subscribeToProperty).toHaveBeenCalledTimes(3);
+    expect(second.subscribeToProperty).toHaveBeenCalledTimes(4);
 
     host.remove();
   });
@@ -231,9 +231,9 @@ describe('HomeScreen', () => {
     expect((mountNode.firstChild as HTMLElement).getAttribute('data-theme')).toBe('light');
 
     unmount();
-    // Theme, language, and the organization in scope.
+    // Theme, language, the organization and the project in scope.
 
-    expect(bridgeFixture.unsubscriptions).toHaveLength(3);
+    expect(bridgeFixture.unsubscriptions).toHaveLength(4);
     for (const { unsubscribe } of bridgeFixture.unsubscriptions) {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     }
@@ -263,5 +263,15 @@ describe('HomeScreen', () => {
     expect(screen.getByText('.cf-studio-kit.toml')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /back/ }));
     expect(await screen.findByRole('button', { name: 'inside' })).toBeTruthy();
+  });
+});
+
+describe('the level a Kits screen is opened on', () => {
+  it('is said by the extension the shell mounted', async () => {
+    const { scopeOf } = await import('./HomeScreen');
+    expect(scopeOf('gts…~constructor_studio.kits.screens.main.v1')).toBe('platform');
+    expect(scopeOf('gts…~constructor_studio.kits.screens.organization.v1')).toBe('organization');
+    expect(scopeOf('gts…~constructor_studio.kits.screens.project.v1')).toBe('project');
+    expect(scopeOf(undefined)).toBe('platform');
   });
 });

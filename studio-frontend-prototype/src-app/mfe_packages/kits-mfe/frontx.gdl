@@ -15,8 +15,8 @@ mfe(
 
     # What it brings, as mfe.json says: the label of its screen, then the
     # route of its extension (presentation.route).
-    screens = ["Kits"],
-    mounts = ["/kits"],
+    screens = ["Kits", "Kits", "Kits"],
+    mounts = ["/kits", "/organization-kits", "/project-kits"],
 
     # The FrontX it is written against: its @gears-frontx/react pin. A shell
     # mounting it gives it the shell's own version, whatever this says.

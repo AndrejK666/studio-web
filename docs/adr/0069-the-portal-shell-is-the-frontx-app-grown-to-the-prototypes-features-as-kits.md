@@ -123,24 +123,28 @@ done. The new image is built by CI but not deployed to Dev before then.
 ### 4. Who installs a kit
 
 ADR-0068 §5 says on which level a kit's parts are installed. This adds who
-installs it. There are two kinds of installation:
+installs it. Each level installs from its own context, on its own Kits tab:
 
 | Kind | Installed by | Where it applies | From which shelf |
 |---|---|---|---|
 | **Base kits** | the platform: a platform administrator, in Platform › Kits | every organization: this is what Studio is for everyone | built-in, official |
-| **Organization kits** | an organization, for itself: an organization administrator, in Organization › Kits | that organization only | built-in, official, the organization's own |
+| **Organization kits** | an organization, for itself: an organization administrator, in Organization › Kits | that organization and its projects | built-in, official, the organization's own |
+| **Project kits** | a project, for itself: whoever may administer the project, in Project › Kits | that project only | any kit whose levels include the project |
 
 The base kits are what a new organization starts with. Today's features,
 once they are built-in kits (ADR-0068 §7), are base kits. An organization
-adds what it needs on top of them.
+adds what it needs on top of them, and a project on top of both.
 
 What a kit's screens are placed on is still the kit's. Each tab names its
-level (§1). Installing only decides for whom those screens exist.
+level (§1). Installing only decides for whom those screens exist: a project
+shows a kit's tab when the kit is a base kit, the organization's, or the
+project's own.
 
-An organization cannot uninstall a base kit. It can hide that kit's tabs on
-its levels, as with any tab (ADR-0066). A kit that is both a base kit and
-one the organization installed is one installation for that organization, at
-the newer of the two versions.
+A level cannot uninstall what a level above installed: an organization not a
+base kit, a project neither a base kit nor an organization kit. It can hide
+that kit's tabs on its levels, as with any tab (ADR-0066). A kit installed on
+more than one level is one installation where they meet, at the newest of the
+versions.
 
 ### 5. How the prototype's code moves
 
@@ -158,7 +162,7 @@ the newer of the two versions.
 | Phase | Delivers | Depends on |
 |---|---|---|
 | 1 | The copy boots in the prototype's place on Studio's backend and sign-in. CI runs its gates. The parity list exists | — |
-| 2 | Shell mechanisms: five levels, kits read from the backend, Platform › Kits (base kits) and Organization › Kits, Inbox sources, pins, saved views and filters, tab order, the event channel, domain-model tabs | 1, ADR-0068 phases 1–2 |
+| 2 | Shell mechanisms: five levels, kits read from the backend, Platform › Kits (base kits), Organization › Kits and Project › Kits, Inbox sources, pins, saved views and filters, tab order, the event channel, domain-model tabs | 1, ADR-0068 phases 1–2 |
 | 3 | The prototype's features as built-in kits, one per change, each closing its parity rows, in ADR-0068 §7 order | 2 |
 | 4 | The prototype's image leaves Dev. The final directory name is settled (open question 1) | 3 |
 
@@ -183,7 +187,8 @@ the newer of the two versions.
 - `studio-frontend-prototype/docs/parity.md` has no open row when the
   prototype's image leaves Dev.
 - A kit installed by an organization for itself shows its tabs in that
-  organization only. A base kit shows them in every organization.
+  organization only, a project kit in that project only. A base kit shows them
+  in every organization.
 
 ## Open questions
 

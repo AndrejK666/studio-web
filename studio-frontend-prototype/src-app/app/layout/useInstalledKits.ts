@@ -1,5 +1,7 @@
 /**
- * The kits installed for the organization in scope, as a set of slugs — or
+ * The kits installed where the person is — the organization in scope, or the
+ * open project (its own kits, its organization's and the base kits) — as a set
+ * of slugs — or
  * `null` while it is unknown (no organization yet, the read in flight, or a
  * backend without the installer). Unknown never hides anything: a screen is
  * hidden only once the gear has said its kit is not installed.
@@ -14,11 +16,16 @@ export function useInstalledKits(): ReadonlySet<string> | null {
   const orgId = useAppSelector(
     (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.org?.id ?? null
   );
-  const read = useApiQuery(
-    apiRegistry.getService(InstalledKitsApiService).installed({ organizationId: orgId ?? '' }),
-    { enabled: !!orgId }
+  const projectId = useAppSelector(
+    (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.project?.id ?? null
   );
-  if (!orgId || !read.data || read.data.organization_id !== orgId) return null;
+  const scope = projectId ? { projectId } : { organizationId: orgId ?? '' };
+  const read = useApiQuery(apiRegistry.getService(InstalledKitsApiService).installed(scope), {
+    enabled: !!orgId || !!projectId,
+  });
+  if (!read.data) return null;
+  // An answer for another scope (the read before a switch) is not this one's.
+  if (projectId ? read.data.project_id !== projectId : read.data.organization_id !== orgId) return null;
   return new Set(read.data.effective.map((k) => k.kit_slug));
 }
 
