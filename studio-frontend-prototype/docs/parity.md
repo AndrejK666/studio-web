@@ -24,7 +24,7 @@ copy).
 |---|---|---|---|
 | Sign-in page: e-mail and password, GitHub, forgot password, Create account | shell | the prototype's page | done |
 | Organization access gate and pending requests | shell | `OrganizationAccessGate`, `OrganizationRequests` | partial |
-| Levels: platform, organization, workspace, project, Admin; path bar and pickers | shell | organization, workspace, project (`screenLevels.ts`) | partial |
+| Levels: platform, organization, workspace, project, Admin; path bar and pickers | shell | organization, workspace, project, Admin (`screenLevels.ts`; Admin's sections from `admin-mfe`) | partial |
 | Level tab bars, with the order a person keeps (`tab-order.ts`, `/me/ui-preferences`) | shell | tabs from `mfe.json`, fixed order | partial |
 | Tabs from the domain model's `shows` relations and hidden tabs per level (ADR-0066) | shell | — | todo |
 | Kit library: Platform › Kits (base kits), Organization › Kits | shell | `kits-mfe` placeholder | todo |
@@ -98,16 +98,16 @@ copy).
 
 | Prototype | Who takes it | Here today | State |
 |---|---|---|---|
-| Organizations | shell | — | todo |
-| People | shell | — | todo |
-| Access | shell | — | todo |
-| Integrations | shell (Sources) | — | todo |
-| Secrets | shell | — | todo |
-| Domain model (model administration, ADR-0066) | shell | — | todo |
-| Objects | shell | — | todo |
-| Views | shell | — | todo |
-| All identities (platform) | shell | — | todo |
-| Project tenants (platform) | shell | — | todo |
+| Organizations | shell | `admin-mfe` Organizations: all organizations (id, workspaces, owners, members, same-name flag; shown to a platform administrator or to someone with more than one), the path bar's organization: rename, logo, managed ↔ self-managed request, delete; access map; conversions waiting on consent; New organization. Not: a table row does not switch the organization (the path bar does), and the path bar's switcher shows a new organization only on its next read | partial |
+| People | shell | `admin-mfe` People: members with role, standing, last seen, how they joined; role change, suspend/resume, remove (the last owner guarded); under a row the description form, addresses, sign-ins (with the directory for a platform administrator) and attributed accounts; add someone with an identity (when the directory answers), invite by e-mail, withdraw an invitation | done |
+| Access | shell | `admin-mfe` Access: access model, roles (privileges from the served catalogue), grants to members or teams on the organization or one workspace, self Owner grant seeded, self-managed notice; `access.ts` moved with its tests. Privilege names stay `access.ts`'s English | done |
+| Integrations | shell (Sources) | — not in `admin-mfe`: the prototype's `ConnectorsView` (categories, health, add/edit, OAuth sign-in, repository browser; ~1 100 lines) was not ported in this pass. The organization's connections are listed by Organization › Connections (`connections-mfe`) | todo |
+| Secrets | shell | `admin-mfe` Secrets: references named by the workspace settings and the connections behind the sources, health probe, rotate (create, else unconditional overwrite), delete. Only the path bar's organization's workspaces, where the prototype listed every organization's at once | partial |
+| Domain model (model administration, ADR-0066) | shell | — not in `admin-mfe`: needs the domain runtime (`domain-runtime`, `domain-live`, the generated model) this app does not have yet | todo |
+| Objects | shell | `admin-mfe` Objects: every graph type with lens filters and counts, the component mark, titles from types-registry | done |
+| Views | shell | — not in `admin-mfe`: the saved views editor needs the domain runtime, the domain query and the model graph (`views-model.ts`, `domain-model-graph.tsx`), which this app does not have yet | todo |
+| All identities (platform) | shell | `admin-mfe` All identities: Keycloak identities, access from Studio's memberships with Keycloak's drift, assign to an organization with a role; offered to everyone, the backend's refusal shown to anybody but a platform administrator | done |
+| Project tenants (platform) | shell | `admin-mfe` Project tenants: every organization's workspace tenants with search, organization, self-managed and sort filters; open (the shell enters the workspace), create, delete; refusal shown to others. Not: Open in Web IDE | partial |
 
 ## Extra pages of the image
 
