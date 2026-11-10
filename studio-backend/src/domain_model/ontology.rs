@@ -102,13 +102,30 @@ mod gear_declarations;
 #[path = "kit_property_layers.rs"]
 mod kit_property_layers;
 
+#[path = "core_layer.rs"]
+mod core_layer;
+pub use core_layer::CoreLayerChange;
+
+impl Ontology {
+    /// The running core this build carries, as [`Self::sync_core_layer`]
+    /// takes it.
+    pub(in crate::domain_model) fn running_core() -> Vec<Value> {
+        studio_types()
+    }
+}
+
 impl Ontology {
     /// Load the embedded ontology. Panics only on a malformed embedded file,
     /// which is a build-time error, not a runtime one.
     pub fn load() -> Self {
-        Self {
+        let mut o = Self {
             doc: studio_model(),
-        }
+        };
+        // A new organization starts on the running core with nothing of its
+        // own: there is no legacy model to migrate.
+        o.sync_core_layer(&studio_types())
+            .expect("Studio's own model composes onto itself");
+        o
     }
 
     /// Add the seed's bucket `id` when this model has none by that id, with
@@ -180,8 +197,14 @@ impl Ontology {
     /// Studio's own model orders it, and give a Studio type the model holds
     /// without a base the one Studio's has. Answers the ids touched.
     pub fn add_studio_types(&mut self) -> Vec<String> {
+        self.add_core_types(&studio_types())
+    }
+
+    /// [`Self::add_studio_types`] from a given core: the running one, or a
+    /// test's version of it.
+    fn add_core_types(&mut self, seed: &[Value]) -> Vec<String> {
         let mut added = Vec::new();
-        for entity in studio_types() {
+        for entity in seed.iter().cloned() {
             let Some(id) = entity.get("id").and_then(Value::as_str).map(str::to_owned) else {
                 continue;
             };

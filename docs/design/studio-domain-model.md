@@ -553,12 +553,10 @@ revert together like any edit.
 `kit_models` answers which kits a model carries. Overlays are **copied** into
 each organization's stored model rather than layered over a shared one,
 because every write path here works on that one stored document. A known gap
-follows from it, and predates kits: once an organization's model is stored,
-Studio's later core changes reach it only additively (`ensure_studio_types`);
-applying a base kit's overlay stores the model of every organization that is
-read, so the gap covers them too. Layering (seed → base kits → the
-organization's kits → its own edits) would close it and needs the stored
-document to become the organization's edits alone.
+followed from it, and predated kits: once an organization's model was stored,
+Studio's later core changes reached it only additively. The core layer (below)
+closes that gap for Studio's own types; kit types still compose as copies with
+their property layers.
 
 ### Gear declarations during the ADR-0070 migration
 
@@ -600,10 +598,46 @@ it cannot be safely inferred from the new overlay. Imports keep trusted source
 metadata while contributing organization edits. History replays and reverts
 both the projection and its sources.
 
-This does **not** complete #1032: the running core is still the compatibility
-seed, entity-level organization changes are still in the stored flat model,
-and a full first-touch migration still needs all pinned sources, an equality
-check, an actionable diagnostic and a non-reversible migration boundary.
+### The running core as a layer
+
+`core_layer` in the model head pins the core source an organization was last
+composed from: each Studio type's own attributes (`entity`) and each of its
+fields (`property:<name>`), without the marks other layers write (`origin`,
+`kit`, `held_by`, `left_by`, `searchable`, lifecycles, declarations). What the
+organization changed is its effective model minus that source, re-derived as
+named overrides (the same `Delta`s as the kit property layers) at each sync.
+When the running Studio's core differs from the pinned source, every key the
+organization did not change takes the new value, a partial edit keeps only the
+keys it changed, a removal stays removed, and a key the core no longer declares
+is left as it is (now the organization's, reported as released). A field a kit
+brought, a field or type a gear holds and a type a kit declared by its id are
+skipped in both directions: their own layers compose them.
+
+The sync runs at start (`StudioTypes` sweep) and when an organization's model is
+prepared; on the same core it is one comparison and writes nothing. A new
+organization starts on the layer (`Ontology::load`).
+
+**Migration.** A stored model without the layer is migrated on that first sync:
+the legacy additive repair runs once (what it read at every start), the
+differences from the running core become its overrides, and the composition
+must equal that model type for type before it is kept. The version that records
+it (`op = "core-layer-migration"`) has no inverse, so a revert past it is
+refused. A legacy model cannot tell an organization's edit from an older core's
+value, so every difference is kept as the organization's and listed in
+`core_layer.legacy`. Before migrating, the stored head's `entity_ids` must all
+have been read (one re-read on a mismatch); otherwise, or when the equality
+check fails, the organization stays on its stored model with the legacy repair,
+and the reason is logged.
+
+Imports keep the trusted core layer; what an upload changes in a Studio type
+becomes the organization's override at the next core change (ADR-0070 §7,
+decision 9).
+
+**Still open in #1032:** kit types are still composed as copies (their
+property/lifecycle layers are pinned, their entity attributes are not), the
+gear and kit layers are not yet read through the same composition, model heads
+are not yet invalidated by install/uninstall/deploy beyond the version check,
+and the migration's difference is logged, not shown to administrators.
 
 
 ## 5. Traceability

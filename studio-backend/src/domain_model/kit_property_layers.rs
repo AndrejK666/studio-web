@@ -10,7 +10,7 @@ use super::Ontology;
 use crate::domain_model::kit_overlay::{self, KitModelChange, KitOverlay};
 
 type Contributions = BTreeMap<String, BTreeMap<String, Value>>;
-type Overrides = BTreeMap<String, BTreeMap<String, Delta>>;
+pub(super) type Overrides = BTreeMap<String, BTreeMap<String, Delta>>;
 const KEY: &str = "kit_property_layers";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -27,7 +27,7 @@ struct Layer {
 /// explicit tombstone, including while a version no longer declares the name.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", content = "value", rename_all = "snake_case")]
-enum Delta {
+pub(super) enum Delta {
     Remove,
     Set(Value),
     Merge(BTreeMap<String, Delta>),
@@ -319,7 +319,7 @@ fn capture_overrides(o: &Ontology, source: &Contributions, overrides: &mut Overr
     overrides.retain(|_, entries| !entries.is_empty());
 }
 
-fn diff(base: Option<&Value>, current: Option<&Value>) -> Option<Delta> {
+pub(super) fn diff(base: Option<&Value>, current: Option<&Value>) -> Option<Delta> {
     if base == current {
         return None;
     }
@@ -339,7 +339,7 @@ fn diff(base: Option<&Value>, current: Option<&Value>) -> Option<Delta> {
     }
 }
 
-fn apply(value: &mut Option<Value>, delta: &Delta) {
+pub(super) fn apply(value: &mut Option<Value>, delta: &Delta) {
     match delta {
         Delta::Remove => *value = None,
         Delta::Set(next) => *value = Some(next.clone()),

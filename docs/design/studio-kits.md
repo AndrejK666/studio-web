@@ -449,15 +449,11 @@ Current implementation (2026-11-10; the layered replacement is required by ADR-0
    refuses it with 400 `failed_precondition` `MODEL_KIT_NOT_FOR_PROJECT`;
    install it for the organization. (Applying it at the organization level
    from a project's install would change every project's model silently.)
-3. **Known gap: core changes after the first store.** An organization's model
-   is the embedded seed until its first edit stores the whole document;
-   after that, Studio's later changes to its core reach it only additively
-   (`ensure_studio_types` adds missing Studio types and fields); a changed or
-   removed core field does not. Copying base-kit overlays means every
-   organization that is read stores its model once a model-bearing base kit
-   applies, so the gap now covers those organizations too. Layering (1) would
-   close it; until then it is recorded here and in
-   `studio-domain-model.md`.
+3. **Core changes after the first store.** Studio's own types now compose as
+   a pinned core layer under the organization's overrides
+   (`studio-domain-model.md`, "The running core as a layer"): a changed core
+   field reaches every organization that did not change it. Kit types still
+   compose as copies with pinned property layers.
 
 **Against ADR-0070** (Studio keeps a core model, each kit brings its types;
 decided after this was built). What already matches: the marks
@@ -476,8 +472,10 @@ ADR-0070's phases:
   named organization overrides/tombstones (`kit_property_layers`). Once the
   source is known, upgrades and reinstalls preserve removals and partial edits.
   Same-version reconciliation adopts a known legacy source; a different unknown
-  historical source is refused rather than inferred. Full core/entity migration
-  with its equality check remains ADR-0070 phase 3 (#1032, with #1000).
+  historical source is refused rather than inferred. Studio's own types have
+  the same treatment at type and field level (`core_layer`), with a one-way
+  migration and its equality check; kit types' entity attributes remain
+  (#1032, with #1000).
 - Dormant is a mark only: the domain model does not yet refuse writes
   (`DOMAIN_TYPE_DORMANT`) or hide a dormant type from members
   (`DOMAIN_TYPE_NOT_INSTALLED`), and screens are not told.

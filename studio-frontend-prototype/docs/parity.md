@@ -167,9 +167,13 @@ and its [type/relationship analysis](../../docs/design/domain-model-split.md).
    object identities or losing custom fields/history. Property slice delivered: pinned kit property/lifecycle sources and named
    organization overrides/tombstones survive upgrade, source gaps, reinstall,
    restart and history replay/revert. Same-version legacy sources are adopted;
-   unknown historical versions are refused with a recovery instruction. Still
-   pending: running-core composition, entity-level overrides, all-source legacy
-   migration with equality diagnostics and a non-reversible boundary.
+   unknown historical versions are refused with a recovery instruction.
+   Core slice delivered: Studio's own types compose as a pinned running-core
+   layer under type- and field-level organization overrides, migrated once per
+   stored model with an equality check, a complete-read guard and an
+   irreversible boundary. Still pending: kit types' entity-level overrides, one
+   composition for gear/kit/core layers, head invalidation on install/deploy and
+   showing a refused migration to administrators.
 4. #1033: installed / dormant / absent states. Uninstall must retain inhabited or
    gear-held definitions and provenance; sync may write dormant records, while
    absent types cannot be queried or written as installed features.

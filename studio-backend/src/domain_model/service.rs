@@ -817,16 +817,167 @@ impl DomainModelService {
         Ok(())
     }
 
+    /// Compose the running core under the organization's model (ADR-0070 §5,
+    /// [`Ontology::sync_core_layer`]). The first sync of a stored model is its
+    /// migration into the layer: one version with no inverse. A migration
+    /// that cannot be shown to keep the model as it reads (its composition
+    /// differs, or the stored model cannot be read completely) leaves the
+    /// stored model as it is, on the legacy additive repair, so nothing
+    /// changes silently. Answers the number of types changed.
     pub async fn ensure_studio_types(&self, ctx: &SecurityContext) -> anyhow::Result<usize> {
+        match self.sync_core_layer(ctx, &Ontology::running_core()).await {
+            Ok(change) => Ok(change.map_or(0, |c| c.updated.len())),
+            Err(e) => {
+                warn!(
+                    tenant = %ctx.subject_tenant_id(),
+                    error = %e,
+                    "studio-domain-model: the core layer was not applied; the organization stays on its stored model"
+                );
+                self.add_legacy_studio_types(ctx).await
+            }
+        }
+    }
+
+    /// The pre-layer repair: add what the stored model lacks of the core,
+    /// nothing else. Only for a model the core layer could not take.
+    async fn add_legacy_studio_types(&self, ctx: &SecurityContext) -> anyhow::Result<usize> {
         let model = self.model_current(ctx).await?;
-        // Asked of a copy first: a model with nothing to add stays unwritten.
-        if (*model).clone().add_studio_types().is_empty() {
+        if model.has_core_layer() || (*model).clone().add_studio_types().is_empty() {
             return Ok(0);
         }
         self.edit_entities(ctx, "studio-types", "take in Studio's own types", |next| {
             Ok(next.add_studio_types())
         })
         .await
+    }
+
+    /// The types the stored model names but this read did not hand back: an
+    /// incomplete projection, or a model moving under it.
+    async fn unread_model_members(
+        &self,
+        ctx: &SecurityContext,
+        model: &Ontology,
+    ) -> anyhow::Result<Vec<String>> {
+        let head = self
+            .store
+            .list_objects(ctx, &[gts::META_MODEL.to_string()], None, Some(1))
+            .await?;
+        let Some(named) = head
+            .first()
+            .and_then(|row| row.value.get("entity_ids"))
+            .and_then(Value::as_array)
+        else {
+            return Ok(Vec::new());
+        };
+        let held: std::collections::HashSet<String> = model.entity_ids().into_iter().collect();
+        Ok(named
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|id| !held.contains(*id))
+            .map(str::to_owned)
+            .take(16)
+            .collect())
+    }
+
+    /// Compose `core` under the caller's organization's model and store the
+    /// result as one version; `None` when it already stands on this core.
+    pub(crate) async fn sync_core_layer(
+        &self,
+        ctx: &SecurityContext,
+        core: &[Value],
+    ) -> anyhow::Result<Option<super::ontology::CoreLayerChange>> {
+        self.ensure_persisted(ctx).await?;
+        for attempt in 0..EDIT_ATTEMPTS {
+            let mut current = self.model_current(ctx).await?;
+            if !current.has_core_layer() {
+                // The migration writes the model's membership. A read that
+                // missed a type would make it the organization's removal, so
+                // it re-reads once and then refuses.
+                let mut unread = self.unread_model_members(ctx, &current).await?;
+                if !unread.is_empty() {
+                    current = self.reload(ctx).await?;
+                    unread = self.unread_model_members(ctx, &current).await?;
+                }
+                anyhow::ensure!(
+                    unread.is_empty(),
+                    "the stored model names types this read did not return ({unread:?}); not migrating it"
+                );
+            }
+            let mut next = (*current).clone();
+            let Some(change) = next.sync_core_layer(core)? else {
+                return Ok(None);
+            };
+            let (op, patch, undo) = if change.adopted {
+                // The boundary: the legacy document is not something a later
+                // revert could rebuild the layers from.
+                ("core-layer-migration", json!([]), json!([]))
+            } else {
+                (
+                    "core",
+                    json!(json_patch::diff(current.document(), next.document())),
+                    json!(json_patch::diff(next.document(), current.document())),
+                )
+            };
+            let summary = if change.adopted {
+                format!(
+                    "move onto the running core: {} type(s) completed, {} organization difference(s) kept",
+                    change.updated.len(),
+                    change.legacy_overrides
+                )
+            } else {
+                format!(
+                    "running core: {} type(s) changed, {} key(s) released",
+                    change.updated.len(),
+                    change.released.len()
+                )
+            };
+            let version_no = self.next_version(ctx)?;
+            let rev = Revision::new(version_no, ctx, op, "", summary).with_patches(patch, undo);
+            if !self.claim_version(ctx, &rev).await? {
+                warn!(
+                    attempt,
+                    version = version_no,
+                    "studio-domain-model: model version taken, retrying the core layer"
+                );
+                self.reload(ctx).await?;
+                continue;
+            }
+            let mut nodes = Vec::new();
+            for e in next.entities() {
+                let Some(id) = e.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if current.entity(id) == Some(e) {
+                    continue;
+                }
+                let node = next
+                    .object_type_node(id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown domain type: {id}"))?;
+                nodes.push(NodeUpsert {
+                    type_id: gts::META_OBJECT_TYPE.to_string(),
+                    node_key: gts::instance_id(gts::META_OBJECT_TYPE, id),
+                    name: Some(node.name.clone()),
+                    payload: node.payload.clone(),
+                    expected_version: None,
+                });
+            }
+            nodes.push(self.model_node(&next, version_no));
+            self.store.upsert_nodes(ctx, &nodes).await?;
+            if let Some(m) = self.tenants_lock()?.get_mut(&ctx.subject_tenant_id()) {
+                m.ontology = Arc::new(next);
+                m.version = version_no;
+                m.registered = false;
+            }
+            info!(
+                tenant = %ctx.subject_tenant_id(),
+                ?change,
+                "studio-domain-model: the running core composed under the organization's model"
+            );
+            return Ok(Some(change));
+        }
+        Err(anyhow::anyhow!(
+            "the model is being edited concurrently: no version could be claimed in {EDIT_ATTEMPTS} attempts"
+        ))
     }
 
     pub async fn import_model(
@@ -848,6 +999,7 @@ impl DomainModelService {
         let current = self.model_current(ctx).await?;
         ontology.keep_held_from(&current);
         ontology.keep_kit_property_sources(&current);
+        ontology.keep_core_layer(&current);
         ontology.add_studio_types();
         let summary = ImportSummary {
             entities: ontology.entities().len() as u64,
@@ -3745,6 +3897,100 @@ mod tests {
             .await
             .expect("not stuck on the abandoned number");
         assert_eq!(version, head + 2);
+    }
+
+    /// Store `service`'s current model as a model written before the core
+    /// layer existed; `extra` names a type the graph does not hold.
+    async fn store_as_legacy(
+        service: &DomainModelService,
+        store: &TenantScopedStore,
+        ctx: &SecurityContext,
+        extra: Option<&str>,
+    ) -> Ontology {
+        let current = service.model_current(ctx).await.unwrap();
+        let mut doc = current.document().clone();
+        doc.as_object_mut().unwrap().remove("core_layer");
+        let legacy = Ontology::from_value(doc).unwrap();
+        let mut node = service.model_node(&legacy, service.cached_version(ctx).unwrap());
+        if let Some(extra) = extra {
+            node.payload["entity_ids"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(extra));
+        }
+        store.upsert_nodes(ctx, &[node]).await.unwrap();
+        legacy
+    }
+
+    #[tokio::test]
+    async fn a_legacy_stored_model_moves_onto_the_core_layer_once_and_cannot_be_reverted_past() {
+        let store = Arc::new(TenantScopedStore::default());
+        let ctx = ctx_for(11);
+        let service = DomainModelService::new(store.clone());
+        service.prepare_model(&ctx).await.unwrap();
+        service
+            .add_field(
+                &ctx,
+                "project",
+                FieldSpec {
+                    name: "cost_center".into(),
+                    type_name: "string".into(),
+                    description: None,
+                    required: false,
+                },
+            )
+            .await
+            .unwrap();
+        let legacy = store_as_legacy(&service, &store, &ctx, None).await;
+        let before = service.cached_version(&ctx).unwrap();
+
+        // A new process finds the legacy model and migrates it.
+        let next = DomainModelService::new(store.clone());
+        next.prepare_model(&ctx).await.unwrap();
+        let migrated = next.model_current(&ctx).await.unwrap();
+        assert!(migrated.has_core_layer());
+        assert_eq!(
+            migrated.entities(),
+            legacy.entities(),
+            "it reads what it read"
+        );
+        let top = next.revisions(&ctx).await.unwrap().remove(0);
+        assert_eq!(top.op, "core-layer-migration");
+        assert!(top.version > before);
+        let refused = next.revert(&ctx, before).await.unwrap_err().to_string();
+        assert!(refused.contains("cannot revert past"), "{refused}");
+
+        // Once on the layer, the same core writes nothing.
+        let head = next.cached_version(&ctx).unwrap();
+        assert_eq!(next.ensure_studio_types(&ctx).await.unwrap(), 0);
+        assert_eq!(next.cached_version(&ctx).unwrap(), head);
+    }
+
+    #[tokio::test]
+    async fn a_legacy_model_read_incompletely_is_not_migrated() {
+        let store = Arc::new(TenantScopedStore::default());
+        let ctx = ctx_for(12);
+        let service = DomainModelService::new(store.clone());
+        service.prepare_model(&ctx).await.unwrap();
+        store_as_legacy(&service, &store, &ctx, Some("ghost-type")).await;
+
+        let next = DomainModelService::new(store.clone());
+        let refused = next
+            .sync_core_layer(&ctx, &Ontology::running_core())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("ghost-type"), "{refused}");
+        // The start-up path keeps it on its stored model rather than failing.
+        next.ensure_studio_types(&ctx).await.unwrap();
+        assert!(!next.model_current(&ctx).await.unwrap().has_core_layer());
+        assert!(
+            next.revisions(&ctx)
+                .await
+                .unwrap()
+                .iter()
+                .all(|r| r.op != "core-layer-migration")
+        );
     }
 
     #[tokio::test]
