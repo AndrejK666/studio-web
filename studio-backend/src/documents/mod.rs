@@ -42,6 +42,7 @@ mod review_guide;
 mod review_store;
 pub mod sdk;
 mod service;
+mod sources_flight;
 mod spec_model;
 mod spec_rows;
 mod stamp;

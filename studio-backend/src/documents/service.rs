@@ -47,6 +47,9 @@ pub struct DocumentsService {
     /// The last requirement trace of each project, for a while
     /// (see [`Self::requirement_trace`]).
     trace_cache: super::spec_model::trace::TraceCache,
+    /// One read of a project's sources shared by the concurrent requests of
+    /// one caller, and kept a few seconds (see [`Self::read_spec_model_sources`]).
+    sources_flight: super::sources_flight::FlightCache<SourcesKey, ReadSources>,
     /// Where uploaded sources keep their bytes: the file-storage gear, when
     /// this deployment configured it (`crate::object_store`).
     objects: Option<Arc<dyn crate::object_store::ObjectStore>>,
@@ -94,6 +97,9 @@ impl DocumentsService {
             account_management,
             sync_analysis: None,
             trace_cache: super::spec_model::trace::TraceCache::default(),
+            sources_flight: super::sources_flight::FlightCache::new(
+                super::sources_flight::SOURCES_KEPT_FOR,
+            ),
             objects: crate::object_store::from_env(),
         }
     }
@@ -1278,6 +1284,7 @@ impl DocumentsService {
             updated_at: now,
         };
         self.data.upsert_doc(ctx, model.clone()).await?;
+        self.sources_changed(workspace_id);
         doc_from_row(model)
     }
 
@@ -1557,6 +1564,7 @@ impl DocumentsService {
             serde_json::to_string(&inferred_for(&row.content, &vocabulary))?;
         row.updated_at = OffsetDateTime::now_utc();
         self.data.upsert_doc(ctx, row.clone()).await?;
+        self.sources_changed(workspace_id);
         doc_from_row(row)
     }
 
@@ -1584,7 +1592,9 @@ impl DocumentsService {
         workspace_id: Uuid,
         id: Uuid,
     ) -> Result<bool> {
-        self.data.delete_doc(ctx, workspace_id, id).await
+        let deleted = self.data.delete_doc(ctx, workspace_id, id).await;
+        self.sources_changed(workspace_id);
+        deleted
     }
 }
 
@@ -2128,7 +2138,8 @@ impl DocumentsService {
         Ok(self
             .read_spec_model_sources(ctx, workspace_id, project_id, reader)
             .await?
-            .sources)
+            .sources
+            .clone())
     }
 
     /// Where each of the project's requirements is cited -- documents, code,
@@ -2156,7 +2167,7 @@ impl DocumentsService {
         let read = self
             .read_spec_model_sources(ctx, workspace_id, project_id, reader)
             .await?;
-        let mut sources = read.sources;
+        let mut sources = read.sources.clone();
         let scope = (workspace_id, project_id);
         let fingerprint = trace::fingerprint(&sources.documents, &sources.tree);
         if let Some(traced) = self.trace_cache.get(scope, fingerprint) {
@@ -2220,7 +2231,40 @@ impl DocumentsService {
         Ok(traced)
     }
 
+    /// The project's sources, read once for every request of the same caller
+    /// that wants them at the same time, and kept for
+    /// [`super::sources_flight::SOURCES_KEPT_FOR`] after (#1041): the Project
+    /// domain model screen asks for them from some eight requests at once.
+    ///
+    /// Keyed by the caller as well as the project, because the reads go
+    /// through the caller's context: one caller's reading is never another's
+    /// answer. A write this process does to bindings, Studio documents or
+    /// uploads forgets the workspace's entries ([`Self::sources_changed`]);
+    /// anything else (a checkout refreshed by another replica, a domain-model
+    /// edit merged upstream) shows once the entry expires.
     async fn read_spec_model_sources(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+    ) -> Result<Arc<ReadSources>> {
+        let key = (workspace_id, project_id, ctx.subject_id());
+        self.sources_flight
+            .get_or_read(key, || {
+                self.read_spec_model_sources_now(ctx, workspace_id, project_id, reader)
+            })
+            .await
+    }
+
+    /// Forget the kept sources of every project under `workspace_id`, after a
+    /// write that changes what they are read from.
+    fn sources_changed(&self, workspace_id: Uuid) {
+        self.sources_flight
+            .forget(|(workspace, _, _)| *workspace == workspace_id);
+    }
+
+    async fn read_spec_model_sources_now(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
@@ -2274,9 +2318,28 @@ impl DocumentsService {
             .collect();
         // The commit and branch each document is read at.
         let mut at = std::collections::BTreeMap::new();
-        let mut by_path = self
-            .checkout_listing_at(ctx, &tenants, reader, Some(&wanted), Some(&mut at))
-            .await;
+        // Under the gateway's deadline: resolving the project's sources asks
+        // account-management, and after a start that can take longer than the
+        // whole request may. Past it every document is unread, and the model
+        // answers what was last read of them (`spec_model::last_read`) rather
+        // than the gateway answering 504.
+        let listing = tokio::time::timeout(
+            CHECKOUT_DEADLINE,
+            self.checkout_listing_at(ctx, &tenants, reader, Some(&wanted), Some(&mut at)),
+        )
+        .await;
+        let (mut by_path, late) = match listing {
+            Ok(by_path) => (by_path, false),
+            Err(_) => {
+                tracing::warn!(
+                    %project_id,
+                    deadline_ms = millis(CHECKOUT_DEADLINE),
+                    "project domain model: the checkout was not listed in time; answering the last read"
+                );
+                at.clear();
+                (std::collections::BTreeMap::new(), true)
+            }
+        };
         let tree = by_path.keys().cloned().collect();
         // Written by Studio but not synced yet: no binding, so no graph node
         // to record a verdict on, but read all the same.
@@ -2311,8 +2374,14 @@ impl DocumentsService {
             .collect();
         let unread_because = if unread.is_empty() {
             None
+        } else if late {
+            Some(CHECKOUT_LATE.to_owned())
         } else {
-            self.clone_failure(ctx, &tenants, reader).await
+            // Bounded the same way: it resolves the sources again.
+            tokio::time::timeout(CHECKOUT_DEADLINE, self.clone_failure(ctx, &tenants, reader))
+                .await
+                .ok()
+                .flatten()
         };
         let documents = documents.into_iter().chain(unbound_domain_doc);
         let mut documents: Vec<super::spec_model::SourceText> = documents.collect();
@@ -3050,6 +3119,7 @@ impl DocumentsService {
             created_at: OffsetDateTime::now_utc(),
         };
         self.data.put_spec_upload(ctx, model.clone()).await?;
+        self.sources_changed(workspace_id);
         if let (Some(store), Some(old)) = (&self.objects, earlier.and_then(|e| e.file_id.as_ref()))
             && let Err(error) = store.delete(old).await
         {
@@ -3074,6 +3144,7 @@ impl DocumentsService {
         self.data
             .delete_spec_upload(ctx, workspace_id, project_id, &found.name)
             .await?;
+        self.sources_changed(workspace_id);
         if let (Some(store), Some(file_id)) = (&self.objects, found.file_id.as_ref())
             && let Err(error) = store.delete(file_id).await
         {
@@ -3568,6 +3639,19 @@ pub struct SpecReviewItem {
     /// For `corrected`: the value to show instead of the one read.
     pub value: Option<String>,
 }
+
+/// How long the project domain model waits for its checkouts to be listed.
+/// Well under the gateway's 30 s, which also covers the request's other
+/// reads (#1041).
+const CHECKOUT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(12);
+
+/// Why the documents are unread when their listing missed
+/// [`CHECKOUT_DEADLINE`]: said to the person, who sees the last read.
+const CHECKOUT_LATE: &str =
+    "the repository checkout took too long to list; showing what was last read, try again shortly";
+
+/// Whose sources were read: the workspace, the project, the caller.
+type SourcesKey = (Uuid, Uuid, Uuid);
 
 #[derive(Default)]
 struct ReadSources {
@@ -4253,6 +4337,7 @@ impl DocumentsService {
         }
 
         self.data.upsert_bindings(ctx, &written).await?;
+        self.sources_changed(workspace_id);
         let bindings = written
             .into_iter()
             .map(binding_from_row)
@@ -4394,6 +4479,7 @@ impl DocumentsService {
         }
         row.updated_at = OffsetDateTime::now_utc();
         self.data.upsert_binding(ctx, row.clone()).await?;
+        self.sources_changed(workspace_id);
         binding_from_row(row)
     }
 
@@ -4403,7 +4489,9 @@ impl DocumentsService {
         workspace_id: Uuid,
         id: Uuid,
     ) -> Result<bool> {
-        self.data.delete_binding(ctx, workspace_id, id).await
+        let deleted = self.data.delete_binding(ctx, workspace_id, id).await;
+        self.sources_changed(workspace_id);
+        deleted
     }
 
     /// Delete the bindings of files a repository no longer has.
@@ -4432,6 +4520,7 @@ impl DocumentsService {
             .map(|node| binding_row_id(workspace_id, project_id, node))
             .collect();
         let deleted = self.data.delete_bindings(ctx, workspace_id, &ids).await?;
+        self.sources_changed(workspace_id);
         Ok(usize::try_from(deleted).unwrap_or(usize::MAX))
     }
 }
