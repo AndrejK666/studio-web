@@ -156,6 +156,19 @@ project.
 | `domain_type_remove_field` | *changes the model:* removes a field from a type |
 | `domain_model_revert` | *changes the model:* restores an earlier version |
 
+**What to decide.** The portal's Issues and Domain model tabs, read from the
+documents Studio holds for the project (studio-documents). The queue, its
+order and what stops a build are computed by the server, so an agent and a
+person see the same rows.
+
+| Tool | What it answers or does |
+| --- | --- |
+| `spec_model_issues` | what to decide before a build, most blocking first, each row with its `group` (`blocks`, `look`, `decided`) and `actions` |
+| `spec_model_readiness` | whether anything stops a build: `open`, `blocking`, `ready` |
+| `spec_model_facts` | the model read from the documents, every fact with its `fact_key` |
+| `spec_model_fact_review` | *changes:* accepts, rejects or puts back facts by `fact_key` |
+| `spec_model_finding_decide` | *changes:* confirms a problem as real or dismisses it, by `fingerprint` |
+
 **The pipeline.** A project goes from its sources to a running product
 without the portal; each step is the REST route the portal calls for it.
 

@@ -42,6 +42,8 @@ use toolkit::{Gear, GearCtx};
 pub fn tools() -> Vec<sdk::Tool> {
     let mut all = Vec::new();
     all.extend(crate::domain_model::mcp_tools());
+    // What the documents describe and what is left to decide before a build.
+    all.extend(crate::documents::mcp_tools());
     all.extend(crate::spec_mapping::mcp_tools());
     all.extend(crate::spec_quality::mcp_tools());
     // The pipeline, in the order a project goes through it: its sources and
