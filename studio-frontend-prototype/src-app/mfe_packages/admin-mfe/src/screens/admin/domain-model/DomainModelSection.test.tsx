@@ -79,6 +79,7 @@ function serve(over: Record<string, unknown> = {}, canEdit = true) {
     }),
     domainTypeCounts: read('domainTypeCounts', { counts: { project: 3, milestone: 1 }, complete: true }),
     addDomainField: write('addDomainField'),
+    addDomainTab: write('addDomainTab'),
     editDomainField: write('editDomainField'),
     removeDomainField: write('removeDomainField'),
     createDomainType: write('createDomainType'),
@@ -127,6 +128,42 @@ describe('Studio domain model', () => {
     expect(document.querySelector('[data-dm-field="id"]')).toBeNull();
     expect(screen.getByText('dm_objects 3')).toBeTruthy();
     expect(document.querySelector('[data-dm-gts]')).toBeTruthy();
+  });
+
+  it('adds a model tab in the administered organization and refuses duplicate or malformed keys', async () => {
+    org.value = { id: 'administered-org', name: 'Other organization' };
+    render(<DomainModelSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'dm_add_tab' }));
+    fireEvent.change(screen.getByLabelText('dm_tab_target'), { target: { value: 'milestone' } });
+    const submit = screen.getByRole('button', { name: 'dm_add_tab' });
+    for (const name of ['stage', 'title', 'Bad key']) {
+      fireEvent.change(screen.getByLabelText('dm_tab_name'), { target: { value: name } });
+      expect(submit).toHaveProperty('disabled', true);
+    }
+    fireEvent.change(screen.getByLabelText('dm_tab_name'), { target: { value: 'delivery-plan' } });
+    fireEvent.change(screen.getByLabelText('dm_tab_label'), { target: { value: 'Delivery plan' } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(calls.find((c) => c.what === 'addDomainTab')).toEqual({
+      what: 'addDomainTab', arg: ['administered-org', 'project'],
+      body: { name: 'delivery-plan', label: 'Delivery plan', target: 'milestone' },
+    }));
+    await waitFor(() => expect(screen.queryByLabelText('dm_tab_name')).toBeNull());
+    expect(calls.filter((c) => c.what === 'domainTypes').length).toBeGreaterThan(1);
+  });
+
+  it('keeps the tab form on a server refusal and hides tab controls from readers', async () => {
+    serve({ addDomainTab: () => ({ fetch: () => Promise.reject(new Error('Model permission denied')) }) });
+    const view = render(<DomainModelSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'dm_add_tab' }));
+    fireEvent.change(screen.getByLabelText('dm_tab_name'), { target: { value: 'delivery-plan' } });
+    fireEvent.change(screen.getByLabelText('dm_tab_target'), { target: { value: 'milestone' } });
+    fireEvent.click(screen.getByRole('button', { name: 'dm_add_tab' }));
+    expect(await screen.findByText('Model permission denied')).toBeTruthy();
+    expect(screen.getByLabelText('dm_tab_name')).toHaveProperty('value', 'delivery-plan');
+    view.unmount(); serve({}, false);
+    render(<DomainModelSection />);
+    await shown('[data-dm-tabs]');
+    expect(screen.queryByRole('button', { name: 'dm_add_tab' })).toBeNull();
   });
 
   it('filters by origin with a count each, and the kits by the kit that brought them', async () => {

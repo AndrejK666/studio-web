@@ -25,6 +25,7 @@ import { FieldDialog, TypeDialog } from './DomainModelDialogs';
 import { GtsIds, Relations } from './DomainModelRelations';
 import { DomainModelTools } from './DomainModelTools';
 import { DomainConformance } from './DomainConformance';
+import { DomainTabs } from './DomainTabs';
 import styles from '../Admin.module.css';
 import own from './DomainModel.module.css';
 
@@ -328,6 +329,10 @@ function DomainModelAdmin({ org }: { org: OrganizationRef }) {
                     {showInherited && <FieldTable fields={inherited} empty="" />}
                   </div>
                 )}
+                <DomainTabs key={entity.id} model={model} id={entity.id} busy={busy}
+                  onAdd={(input) => run(() => api.addDomainTab(org.id, entity.id).fetch(input))}
+                  onRemove={(name) => run(() => api.removeDomainField(org.id, entity.id, name).fetch(undefined))}
+                />
                 <Relations
                   model={model}
                   id={entity.id}

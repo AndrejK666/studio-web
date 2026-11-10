@@ -585,5 +585,16 @@
   "dm_conformance_enum": "Value outside the allowed choices",
   "dm_conformance_undeclared": "Undeclared fields are allowed. Their stored values have been preserved.",
   "dm_conformance_samples": "Example objects",
-  "dm_objects_label": "Objects"
+  "dm_objects_label": "Objects",
+  "dm_tabs": "Model tabs",
+  "dm_tabs_hint": "A tab lists objects of its target type. Removing this relation preserves stored objects. Personal hidden and pinned tabs are managed in settings.",
+  "dm_no_tabs": "This level has no model tabs.",
+  "dm_add_tab": "Add tab",
+  "dm_remove_tab": "Remove tab",
+  "dm_remove_tab_named": "Remove tab {name}",
+  "dm_tab_name": "Tab key",
+  "dm_tab_name_hint": "Use 1–64 lowercase letters, digits, underscores or hyphens. The key must be unique on this type and its bases.",
+  "dm_tab_label": "Label",
+  "dm_tab_target": "Objects to show",
+  "dm_tab_choose_type": "Choose a type"
 }

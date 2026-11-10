@@ -426,6 +426,13 @@ export class AdminApiService extends BaseApiService {
     >('POST', `/studio-domain-model/v1/types?${q({ organization_id: orgId })}`);
   }
 
+  /** A level's model tab: a shows relation to another domain type. */
+  addDomainTab(orgId: string, type: string) {
+    return this.rest.mutation<DomainModelEdit, { name: string; label?: string; target: string }>(
+      'POST', `/studio-domain-model/v1/types/${e(type)}/tabs?${q({ organization_id: orgId })}`
+    );
+  }
+
   /** Add a field to a type; objects written from now on may carry it. */
   addDomainField(orgId: string, type: string) {
     return this.rest.mutation<DomainModelEdit, { name: string; type: string; description?: string; required?: boolean }>(
