@@ -326,6 +326,9 @@ struct TenantModel {
 
 pub struct DomainModelService {
     store: Arc<dyn DomainStore>,
+    /// One expensive registration flight per tenant, independent of other
+    /// tenants. A cold screen can issue dozens of concurrent object reads.
+    registration: Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
     /// Who may read and write objects (ADR-0035). Tenant-only unless a PDP is
     /// wired in, which is what the in-memory build and the tests run.
     policy: Arc<dyn ObjectPolicy>,
@@ -353,6 +356,7 @@ impl DomainModelService {
     pub fn new(store: Arc<dyn DomainStore>) -> Self {
         Self {
             store,
+            registration: Mutex::new(HashMap::new()),
             policy: Arc::new(TenantOnly),
             tenants: Mutex::new(HashMap::new()),
             notify: super::events::Notifier::default(),
@@ -942,9 +946,9 @@ impl DomainModelService {
     /// when a model is imported, which bumps `generation`; adding a field to a
     /// type leaves the set alone (the registered schema is open).
     ///
-    /// Two writers racing a cold tenant may both register — the call is
-    /// idempotent and converges, which is the cheaper trade than holding a lock
-    /// across the await.
+    /// Concurrent callers for the same tenant share one registration flight.
+    /// A migration invalidating the model during that flight cannot mark the
+    /// replacement generation registered; it is registered before proceeding.
     ///
     /// A node type's schema carries the payload paths it is searched and
     /// embedded on, and those are derived from the entity's own fields — so
@@ -957,7 +961,7 @@ impl DomainModelService {
     /// and with it every object creation in the model.
     async fn ensure_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
         let tenant = ctx.subject_tenant_id();
-        let ontology = self.model(ctx).await?;
+        self.model(ctx).await?;
         if self
             .tenants_lock()?
             .get(&tenant)
@@ -965,25 +969,45 @@ impl DomainModelService {
         {
             return Ok(());
         }
-        let (node_types, edge_types) = (ontology.node_types(), ontology.edge_types());
-        let pinned = self
-            .store
-            .register_types(ctx, &node_types, &edge_types)
-            .await?;
-        if !pinned.is_empty() {
-            warn!(
-                %tenant,
-                count = pinned.len(),
-                types = ?pinned,
-                "studio-domain-model: these types keep the schema they were registered with — \
-                 the model declares different search paths, which needs a type migration"
-            );
+        let flight = self
+            .registration
+            .lock()
+            .map_err(|_| anyhow::anyhow!("domain registration mutex poisoned"))?
+            .entry(tenant)
+            .or_default()
+            .clone();
+        let _flight = flight.lock().await;
+        for _ in 0..EDIT_ATTEMPTS {
+            let ontology = self.model(ctx).await?;
+            if self
+                .tenants_lock()?
+                .get(&tenant)
+                .is_some_and(|m| m.registered)
+            {
+                return Ok(());
+            }
+            let (node_types, edge_types) = (ontology.node_types(), ontology.edge_types());
+            let pinned = self
+                .store
+                .register_types(ctx, &node_types, &edge_types)
+                .await?;
+            let mut tenants = self.tenants_lock()?;
+            if let Some(m) = tenants.get_mut(&tenant)
+                && Arc::ptr_eq(&m.ontology, &ontology)
+            {
+                if !pinned.is_empty() {
+                    warn!(%tenant, count = pinned.len(), types = ?pinned,
+                        "studio-domain-model: these types keep the schema they were registered with — \
+                         the model declares different search paths, which needs a type migration");
+                }
+                m.registered = true;
+                m.pinned = pinned;
+                return Ok(());
+            }
         }
-        if let Some(m) = self.tenants_lock()?.get_mut(&tenant) {
-            m.registered = true;
-            m.pinned = pinned;
-        }
-        Ok(())
+        anyhow::bail!(
+            "domain model changed during every type registration attempt; retry the operation"
+        )
     }
 
     /// Create (or upsert) an object of a domain type. `type_ref` may be an
@@ -3232,9 +3256,69 @@ mod tests {
         assert_eq!(service.ontology_document(&ctx).await.unwrap(), before);
     }
 
+    #[tokio::test]
+    async fn concurrent_cold_screen_reads_share_one_type_registration() {
+        use std::sync::atomic::Ordering;
+        let store = Arc::new(TenantScopedStore::default());
+        *store.registration_delay.lock().unwrap() = Some(std::time::Duration::from_millis(25));
+        let service = Arc::new(DomainModelService::new(store.clone()));
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..32 {
+            let service = service.clone();
+            tasks.spawn(async move {
+                service.ensure_types(&ctx_for(1)).await.unwrap();
+            });
+        }
+        while let Some(done) = tasks.join_next().await {
+            done.unwrap();
+        }
+        assert_eq!(store.registrations.load(Ordering::SeqCst), 1);
+        service.ensure_types(&ctx_for(1)).await.unwrap();
+        assert_eq!(store.registrations.load(Ordering::SeqCst), 1);
+        service.ensure_types(&ctx_for(2)).await.unwrap();
+        assert_eq!(store.registrations.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn type_registration_does_not_mark_a_replaced_generation_registered() {
+        use std::sync::atomic::Ordering;
+        let store = Arc::new(TenantScopedStore::default());
+        *store.registration_delay.lock().unwrap() = Some(std::time::Duration::from_millis(25));
+        let service = Arc::new(DomainModelService::new(store.clone()));
+        let ctx = ctx_for(1);
+        service.model(&ctx).await.unwrap();
+        let running = service.clone();
+        let registration = tokio::spawn(async move {
+            running.ensure_types(&ctx_for(1)).await.unwrap();
+        });
+        while store.registrations.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        // An import or gear declaration swaps the Arc while registration awaits.
+        let mut replacement = Ontology::load();
+        replacement
+            .add_entity(EntitySpec {
+                id: "new-generation".into(),
+                name: "New generation".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        service
+            .tenants_lock()
+            .unwrap()
+            .get_mut(&ctx.subject_tenant_id())
+            .unwrap()
+            .ontology = Arc::new(replacement);
+        registration.await.unwrap();
+        assert_eq!(store.registrations.load(Ordering::SeqCst), 2);
+        assert!(service.tenants_lock().unwrap()[&ctx.subject_tenant_id()].registered);
+    }
+
     /// A store that keys everything by tenant, like the real graph does.
     #[derive(Default)]
     struct TenantScopedStore {
+        registrations: std::sync::atomic::AtomicUsize,
+        registration_delay: Mutex<Option<std::time::Duration>>,
         nodes: Mutex<HashMap<(Uuid, String), ObjectNode>>,
     }
 
@@ -3250,6 +3334,12 @@ mod tests {
             _node_types: &[NodeType],
             _edge_types: &[EdgeType],
         ) -> anyhow::Result<Vec<String>> {
+            self.registrations
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let delay = *self.registration_delay.lock().unwrap();
+            if let Some(delay) = delay {
+                tokio::time::sleep(delay).await;
+            }
             Ok(Vec::new())
         }
 
