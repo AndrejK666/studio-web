@@ -8,6 +8,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::bundles::{KitBundles, KitMfeManifest};
 use super::contents::{KitDetail, KitNamed};
 use super::installed::{
     BASE_KIT, InstalledKit, KitInstaller, NOT_A_PROJECT_KIT, ORGANIZATION_KIT, Refusal,
@@ -545,6 +546,53 @@ pub struct InstalledKitsDto {
     pub effective: Vec<InstalledKitDto>,
 }
 
+/// One micro-frontend package of a kit, for the shell to register
+/// (ADR-0068 phase 5).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitMfeManifestDto {
+    pub kit_slug: String,
+    /// The installed version the package was built as.
+    pub version: String,
+    /// The package: the `<package>` of the kit's `mfe/<package>`.
+    pub package: String,
+    /// Where the package's files are served, through the gateway, ending in
+    /// `/`: the `publicPath` its manifest is loaded from. It carries the grant
+    /// that lets the anonymous file route answer.
+    pub base_path: String,
+    /// The package's `mfe-manifest.json` as its build wrote it: the FrontX
+    /// manifest, entries, extensions and schemas. Null when it does not read.
+    pub config: Option<serde_json::Value>,
+    /// Why `config` is null; null otherwise.
+    pub error: Option<String>,
+}
+
+impl From<KitMfeManifest> for KitMfeManifestDto {
+    fn from(value: KitMfeManifest) -> Self {
+        Self {
+            kit_slug: value.kit_slug,
+            version: value.version,
+            package: value.package,
+            base_path: value.base_path,
+            config: value.config,
+            error: value.error,
+        }
+    }
+}
+
+/// The micro-frontends of the kits effective in one scope.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitMfeManifestListDto {
+    /// The organization this is about.
+    pub organization_id: String,
+    /// The project asked about; null for an organization.
+    pub project_id: Option<String>,
+    pub items: Vec<KitMfeManifestDto>,
+    /// Packages in `items`; the list is never paged.
+    pub total: u32,
+}
+
 /// `?project_id=`: the project a project-kit route is about.
 #[derive(Debug, serde::Deserialize)]
 pub struct ProjectKitQuery {
@@ -668,25 +716,35 @@ fn refused(refusal: Refusal) -> CanonicalError {
     }
 }
 
+/// What applies where the query points: a project named wins, and answers
+/// for its organization as well.
+async fn installed_for(
+    ctx: &SecurityContext,
+    access: &OrgAccess,
+    installer: &KitInstaller,
+    query: &InstalledQuery,
+) -> Result<super::installed::Installed, CanonicalError> {
+    match query.project_id {
+        Some(project) => {
+            let ctx = crate::org_scope::resolve(access.0.as_ref(), ctx, Some(project)).await?;
+            installer.installed_in_project(&ctx, project).await
+        }
+        None => {
+            let ctx =
+                crate::org_scope::resolve(access.0.as_ref(), ctx, query.organization_id).await?;
+            installer.installed(&ctx, ctx.subject_tenant_id()).await
+        }
+    }
+    .map_err(refused)
+}
+
 async fn get_installed(
     Extension(ctx): Extension<SecurityContext>,
     Extension(access): Extension<OrgAccess>,
     Extension(installer): Extension<Arc<KitInstaller>>,
     Query(query): Query<InstalledQuery>,
 ) -> ApiResult<JsonBody<InstalledKitsDto>> {
-    // A project named wins: it answers for its organization as well.
-    let installed = match query.project_id {
-        Some(project) => {
-            let ctx = crate::org_scope::resolve(access.0.as_ref(), &ctx, Some(project)).await?;
-            installer.installed_in_project(&ctx, project).await
-        }
-        None => {
-            let ctx =
-                crate::org_scope::resolve(access.0.as_ref(), &ctx, query.organization_id).await?;
-            installer.installed(&ctx, ctx.subject_tenant_id()).await
-        }
-    }
-    .map_err(refused)?;
+    let installed = installed_for(&ctx, &access, &installer, &query).await?;
     // The model follows what is installed: a base kit reaches an
     // organization's model when the organization is first read after it
     // changed (docs/design/studio-kits.md §3.10). What cannot be applied is
@@ -703,6 +761,90 @@ async fn get_installed(
         project: list(installed.project),
         effective: list(installed.effective),
     }))
+}
+
+async fn list_mfe_manifests(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(access): Extension<OrgAccess>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Extension(bundles): Extension<Arc<KitBundles>>,
+    Query(query): Query<InstalledQuery>,
+) -> ApiResult<JsonBody<KitMfeManifestListDto>> {
+    let installed = installed_for(&ctx, &access, &installer, &query).await?;
+    let kits: Vec<(String, String)> = installed
+        .effective
+        .iter()
+        .map(|kit| (kit.kit_slug.clone(), kit.version.clone()))
+        .collect();
+    let items: Vec<KitMfeManifestDto> = bundles
+        .manifests(&kits)
+        .await
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    Ok(Json(KitMfeManifestListDto {
+        organization_id: installed.organization_id.to_string(),
+        project_id: installed.project_id.map(|id| id.to_string()),
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+/// One file of a kit's bundle. Anonymous: the shell's module loader sends no
+/// token. The grant in the path is learned only from `list_mfe_manifests`,
+/// and anything it does not cover answers 404, as a missing file does.
+async fn get_mfe_file(
+    Extension(bundles): Extension<Arc<KitBundles>>,
+    Path((kit_slug, version, grant, package, file)): Path<(String, String, String, String, String)>,
+) -> axum::response::Response {
+    use axum::http::{HeaderValue, header};
+    use axum::response::IntoResponse;
+    match bundles
+        .file(&kit_slug, &version, &grant, &package, &file)
+        .await
+    {
+        Ok(Some((file, bytes))) => {
+            let mut response = bytes.into_response();
+            let headers = response.headers_mut();
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(file.content_type()),
+            );
+            // `assets/` is hashed by the build; the rest (`remoteEntry.js`,
+            // the manifests) names it, so it is asked again every time.
+            headers.insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(if file.is_immutable() {
+                    "private, max-age=31536000, immutable"
+                } else {
+                    "private, no-cache"
+                }),
+            );
+            headers.insert(
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            );
+            // Read by `fetch` and run as a module of the portal: never a page.
+            headers.insert(
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static("default-src 'none'; sandbox"),
+            );
+            headers.insert(
+                "cross-origin-resource-policy",
+                HeaderValue::from_static("same-origin"),
+            );
+            response
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "no such file").into_response(),
+        Err(error) => {
+            tracing::warn!(kit = %kit_slug, %version, %package, "studio-kits: a bundle file could not be read: {error:#}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the file could not be read",
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn upsert_project_kit(
@@ -830,6 +972,73 @@ fn register_installer_routes(mut router: Router, openapi: &dyn OpenApiRegistry) 
         .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-kits/v1/mfe-manifests")
+        .operation_id("studio_kits.list_mfe_manifests")
+        .summary("The micro-frontends of the kits that apply here, for the shell to load")
+        .description(
+            "Any member, for the scope `installed-kits` answers for (`project_id` wins over \
+             `organization_id`; 400 and 404 the same way). One item per micro-frontend package \
+             of each effective kit whose bundle is served at the installed version (ADR-0068 \
+             phase 5): the package's `mfe-manifest.json` as its build wrote it, and \
+             `base_path`, where its files are served. A kit with no bundle, or none at that \
+             version, has no item; a bundle that does not read has one with `config` null and \
+             `error` saying why. The shell registers these beside the screens it was built \
+             with, so a kit's screen needs no portal rebuild.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .query_param_typed(
+            "project_id",
+            false,
+            "A project: its own kits count too",
+            "string",
+        )
+        .handler(list_mfe_manifests)
+        .json_response_with_schema::<KitMfeManifestListDto>(
+            openapi,
+            StatusCode::OK,
+            "The kits' micro-frontend packages",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get(
+        "/studio-kits/v1/kits/{kit_slug}/{version}/mfe/{grant}/{package}/{*file}",
+    )
+    .operation_id("studio_kits.get_mfe_file")
+    .summary("One file of a kit's micro-frontend bundle")
+    .description(
+        "Anonymous, because the shell's module loader fetches a bundle's chunks with no \
+         token: `grant` is learned only from `list_mfe_manifests`, which answers for kits \
+         effective where the caller is a member, and a wrong one answers 404 like a missing \
+         file. Serves only a bundle's own types (scripts, styles, JSON, images, fonts, wasm) \
+         with their content type and `nosniff`; never an HTML page, a hidden file or \
+         anything outside the package. `assets/` is cached as immutable, the rest revalidated.",
+    )
+    .tag("StudioKits")
+    .anonymous()
+    .exposed()
+    .path_param("kit_slug", "Kit slug")
+    .path_param("version", "The installed version")
+    .path_param("grant", "As `base_path` names it")
+    .path_param("package", "The package")
+    .path_param("file", "A file inside the package")
+    .handler(get_mfe_file)
+    .text_response(StatusCode::OK, "The file", "text/javascript")
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
 
     router = OperationBuilder::put("/studio-kits/v1/project-kits/{kit_slug}")
         .operation_id("studio_kits.upsert_project_kit")
@@ -1933,6 +2142,7 @@ pub fn register_routes(
         .error_403(openapi)
         .error_500(openapi)
         .register(router, openapi)
+        .layer(Extension(service.bundles()))
         .layer(Extension(service))
         .layer(Extension(installer))
         .layer(Extension(access))

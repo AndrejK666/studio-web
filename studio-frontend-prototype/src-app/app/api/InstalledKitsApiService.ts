@@ -9,10 +9,30 @@
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
 
+/** One micro-frontend package of a kit, as `GET /studio-kits/v1/mfe-manifests` lists it. */
+export interface KitMfeManifest {
+  kit_slug: string;
+  version: string;
+  package: string;
+  /** Where the package's files are served, through the gateway, ending in `/`. */
+  base_path: string;
+  /** The package's `mfe-manifest.json`; null when it does not read. */
+  config: unknown;
+  /** Why `config` is null. */
+  error?: string | null;
+}
+
 export interface InstalledKitsSummary {
   organization_id: string;
   project_id?: string | null;
-  effective: { kit_slug: string }[];
+  effective: { kit_slug: string; version?: string }[];
+}
+
+export interface KitMfeManifestList {
+  organization_id: string;
+  project_id?: string | null;
+  items: KitMfeManifest[];
+  total: number;
 }
 
 /** An organization, or a project in it: the project's read includes its organization's and the base kits. */
@@ -37,5 +57,10 @@ export class InstalledKitsApiService extends BaseApiService {
 
   readonly installed = this.protocol(RestEndpointProtocol).queryWith<InstalledKitsSummary, InstalledScope>(
     (scope) => `/installed-kits?${scopeQuery(scope)}`
+  );
+
+  /** The micro-frontends of the kits effective in the scope (ADR-0068 phase 5): `mfe/runtimeKits.ts`. */
+  readonly mfeManifests = this.protocol(RestEndpointProtocol).queryWith<KitMfeManifestList, InstalledScope>(
+    (scope) => `/mfe-manifests?${scopeQuery(scope)}`
   );
 }

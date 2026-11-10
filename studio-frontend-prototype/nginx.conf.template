@@ -50,6 +50,15 @@ map $uri $frontend_cache_control {
     ~^/(.*/)?assets/       "public, max-age=31536000, immutable";
 }
 
+# Content Security Policy: none is set here today. One added later must keep
+#   script-src 'self' blob:          every MFE chunk, built-in or a kit's, is
+#                                    fetched and evaluated from a blob: URL
+#   style-src  'self' 'unsafe-inline'  screens put their styles in a shadow root
+#   connect-src 'self'               chunks and APIs come through /cf/ and /mfes/
+# A kit's micro-frontends (ADR-0068 phase 5) are served by the backend under
+# /cf/studio-kits/v1/kits/…, same origin, so a kit needs nothing added to it.
+# See docs/design/studio-kits.md §3.9.
+
 server {
     # 8080: the image is nginxinc/nginx-unprivileged (runs as uid 101,
     # k8s runAsNonRoot-compatible) — non-root can't bind 80.

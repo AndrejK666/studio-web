@@ -9,6 +9,7 @@ vi.mock('@/app/actions/bootstrapActions', () => ({
 }));
 vi.mock('./Header', () => ({ Header: () => <div data-testid="top-bar" /> }));
 vi.mock('./LevelTabs', () => ({ LevelTabs: () => <div data-testid="level-tabs" /> }));
+vi.mock('./RuntimeKits', () => ({ RuntimeKits: () => <div data-testid="runtime-kits" /> }));
 vi.mock('./Popup', () => ({ Popup: () => null }));
 vi.mock('./Overlay', () => ({ Overlay: () => null }));
 vi.mock('./OverlayDialog', () => ({ OverlayDialog: () => null }));

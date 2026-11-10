@@ -88,7 +88,7 @@ const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
  * because a frame package (ADR-0021) has no remote to describe one for — it
  * carries a `publicPath` on each entry instead.
  */
-interface MfeManifestConfig {
+export interface MfeManifestConfig {
   manifest?: MfManifest;
   domains?: ExtensionDomain[];
   entries: Array<MfeEntryMF | MfeEntryFrameConfig>;
@@ -386,7 +386,7 @@ function hostOwnsDomain(registry: MfeRegistry, domainId: string): boolean {
   return registry.getDomain(domainId) !== undefined;
 }
 
-async function registerMfePackage(
+export async function registerMfePackage(
   registry: MfeRegistry,
   config: MfeManifestConfig,
 ): Promise<void> {

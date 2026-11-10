@@ -29,7 +29,10 @@ import {
 // `registerExtension` runs after the type-system register succeeds.
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- a test reaching the check itself, not app code
 import { validateContract } from '@gears-frontx/mfes';
+import { helloKitManifest } from '@frontx-test-utils/helloKitManifest';
 import { SHELL_SCHEMAS } from './schemas';
+import { buildStudioScreenDomain } from './bootstrap';
+import { toManifestConfig } from './runtimeKits';
 import { resolveLevelMenu, type StudioScreenExtension } from './screenLevels';
 import {
   STUDIO_ACTION_ARTIFACT_OPEN,
@@ -484,5 +487,90 @@ describe('generated MFE manifest', () => {
       });
       expect(duplicated).toEqual([]);
     });
+  });
+});
+
+/**
+ * A kit's screens arrive at run time (ADR-0068 phase 5) and are held to the
+ * same contract as the built-in ones above. The demo kit
+ * (`examples/kits/hello-kit`) stands for every kit: its manifest as the shell
+ * turns it into a package config (`toManifestConfig`).
+ */
+describe('a kit manifest registered at run time', () => {
+  const config = toManifestConfig(helloKitManifest(), 'https://studio.example');
+  const kitExtensions = (config.extensions ?? []) as PresentedExtension[];
+  const kitScreens = kitExtensions.filter((ext) => ext.domain === screenDomain.id);
+  const kitEntries = config.entries as MfeEntryMF[];
+
+  it('gives every declaration and every reference a well-formed GTS id', () => {
+    const ids = [
+      config.manifest!.id,
+      ...kitEntries.map((entry) => entry.id),
+      ...kitExtensions.map((ext) => ext.id),
+      ...kitEntries.flatMap((entry) => [
+        ...(entry.requiredProperties ?? []),
+        ...(entry.optionalProperties ?? []),
+        ...(entry.actions ?? []),
+        ...(entry.domainActions ?? []),
+      ]),
+    ];
+    expect(ids.filter((id) => !isWellFormedGtsId(id))).toEqual([]);
+  });
+
+  it('registers with the type system', () => {
+    gtsPlugin.register(config.manifest);
+    for (const entry of kitEntries) gtsPlugin.register(entry);
+    for (const ext of kitExtensions) expect(() => gtsPlugin.register(ext)).not.toThrow();
+  });
+
+  it('declares a level on its screens and chains them through the leveled type', () => {
+    expect(kitScreens.length).toBeGreaterThan(0);
+    for (const ext of kitScreens) {
+      expect(ext.presentation?.level).toBeDefined();
+      expect(ext.id).toContain('constructor_studio.screensets.layout.leveled_screen.v1~');
+      expect(ext.id.startsWith(screenDomain.extensionsTypeId as string)).toBe(true);
+    }
+  });
+
+  it('satisfies the screen domain the shell declares', () => {
+    for (const ext of kitScreens) {
+      const entry = kitEntries.find((e) => e.id === ext.entry)!;
+      const result = validateContract(entry, buildStudioScreenDomain(), gtsPlugin);
+      expect(result.errors ?? []).toEqual([]);
+      expect(result.valid).toBe(true);
+    }
+  });
+
+  it('is gated by its own kit, whatever the bundle says', () => {
+    const lying = helloKitManifest();
+    const raw = lying.config as { extensions: Array<{ presentation: Record<string, unknown> }> };
+    raw.extensions[0].presentation.kit = 'project-tests';
+    const gated = toManifestConfig(lying, 'https://studio.example');
+    expect(gated.extensions?.map((ext) => (ext as { presentation?: { kit?: string } }).presentation?.kit)).toEqual(['hello-kit']);
+  });
+
+  it('takes no route and no GTS package a built-in screen has', () => {
+    const builtInRoutes = new Set(extensions.map((ext) => ext.presentation?.route));
+    expect(kitScreens.filter((ext) => builtInRoutes.has(ext.presentation?.route))).toEqual([]);
+    const pkg = (id: string) => id.split('~').pop()!.split('.').slice(0, 2).join('.');
+    const builtInPackages = new Set(extensions.map((ext) => pkg(ext.id)));
+    expect(kitExtensions.filter((ext) => builtInPackages.has(pkg(ext.id)))).toEqual([]);
+  });
+
+  it('shows its tab among the project tabs, by its order, before Settings', () => {
+    const screens = [...extensions, ...kitScreens].filter((ext) => ext.domain === screenDomain.id);
+    const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'project').map((ext) => ext.presentation.label);
+    expect(tabs).toContain('Hello');
+    expect(tabs[tabs.length - 1]).toBe('Settings');
+  });
+
+  it('refuses a bundle that owns a domain or carries a frame', () => {
+    const withDomain = helloKitManifest();
+    (withDomain.config as Record<string, unknown>).domains = [{ id: 'gts.x.y.z.domain.v1~a.b.c.d.v1' }];
+    expect(() => toManifestConfig(withDomain, 'https://studio.example')).toThrow(/domain/);
+    const framed = helloKitManifest();
+    const entries = (framed.config as { entries: Array<Record<string, unknown>> }).entries;
+    entries[0].id = 'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~example.hello_kit.mfe.main.v1';
+    expect(() => toManifestConfig(framed, 'https://studio.example')).toThrow(/frame/);
   });
 });

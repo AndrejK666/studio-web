@@ -8,6 +8,7 @@ import React, { useEffect } from 'react';
 import { fetchCurrentUser, fetchAppContext } from '@/app/actions/bootstrapActions';
 import { Header } from './Header';
 import { LevelTabs } from './LevelTabs';
+import { RuntimeKits } from './RuntimeKits';
 import { Screen } from './Screen';
 import { Popup } from './Popup';
 import { Overlay } from './Overlay';
@@ -42,6 +43,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* The level's tabs, then the screen they mount. Its name is in the path
           (ContextChain), the prototype's way (ADR-0069). */}
       {!noOrganization && <LevelTabs />}
+      {/* Kits' screens loaded at run time, and a tile for any that did not come up. */}
+      {!noOrganization && <RuntimeKits />}
       <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
 
       {/* Out of the flow, over everything: dialogs and overlays. */}

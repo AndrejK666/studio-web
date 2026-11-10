@@ -172,6 +172,11 @@ pub struct KitRegistryService {
     account_management: Arc<dyn AccountManagementClient>,
     /// `STUDIO_KIT_CATALOGUE`, else [`official_catalogue`]; read once.
     catalogue: Vec<KitDescriptor>,
+    /// The kits a bundle source adds to the library, read once; none takes a
+    /// slug the built-in or official shelf holds.
+    bundle_kits: Vec<KitDescriptor>,
+    /// Kits whose micro-frontends are served at run time (ADR-0068 phase 5).
+    bundles: Arc<super::bundles::KitBundles>,
     #[cfg(feature = "theia-bridge")]
     client_hub: Arc<ClientHub>,
 }
@@ -190,20 +195,43 @@ impl KitRegistryService {
             Some(json) => parse_catalogue(&json).context("STUDIO_KIT_CATALOGUE")?,
             None => official_catalogue(),
         };
+        let bundles = super::bundles::KitBundles::from_env()?;
+        let mut bundle_kits = Vec::new();
+        for kit in bundles.kits() {
+            let taken = builtin_catalogue()
+                .iter()
+                .chain(catalogue.iter())
+                .any(|known| known.slug == kit.slug);
+            if taken {
+                tracing::warn!(kit = %kit.slug, "studio-kits: a bundle kit takes a slug the library holds; left out");
+            } else {
+                bundle_kits.push(kit);
+            }
+        }
         Ok(Self {
             account_management,
             catalogue,
+            bundle_kits,
+            bundles: Arc::new(bundles),
             #[cfg(feature = "theia-bridge")]
             client_hub: _client_hub,
         })
     }
 
     /// Every kit of the library: the built-in kits first, then the official
-    /// ones (`STUDIO_KIT_CATALOGUE`, else [`official_catalogue`]).
+    /// ones (`STUDIO_KIT_CATALOGUE`, else [`official_catalogue`]), then the
+    /// kits whose bundles a source brings (`STUDIO_KIT_BUNDLES_DIR`). A
+    /// bundle kit never takes a slug the library already holds.
     pub fn catalogue(&self) -> Vec<KitDescriptor> {
         let mut all = builtin_catalogue();
         all.extend(self.catalogue.iter().cloned());
+        all.extend(self.bundle_kits.iter().cloned());
         all
+    }
+
+    /// Where kits' micro-frontends are served from.
+    pub fn bundles(&self) -> Arc<super::bundles::KitBundles> {
+        self.bundles.clone()
     }
 
     /// One kit of the library with what it brings (ADR-0068 §4: shown before

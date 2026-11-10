@@ -63,5 +63,8 @@
   "pin_unpin": "Открепить {label}",
   "level_tabs_reorder_hint": "Перетащите, чтобы изменить порядок (Alt+Shift+←/→)",
   "level_tabs_default_order": "Порядок по умолчанию",
-  "level_tabs_default_order_hint": "Вернуть разделам порядок по умолчанию"
+  "level_tabs_default_order_hint": "Вернуть разделам порядок по умолчанию",
+  "runtime_kit_failed": "Не удалось загрузить экраны кита {kit} {version}",
+  "runtime_kit_screen_failed": "Не удалось открыть экран {screen} кита {kit}",
+  "runtime_kit_dismiss": "Скрыть"
 }

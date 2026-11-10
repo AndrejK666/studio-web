@@ -18,6 +18,7 @@ export default [
       'dist/**',
       '**/dist/**',
       'dist-lib/**', // tsup output of the template's own library build
+      'examples/kits/*/mfe/**', // a demo kit's built bundle (examples/kits/hello-kit)
       '**/.__mf__temp/**',
       '**/*.gen.ts', // generated (scripts/gen-domain-client.mjs); its own --check keeps it right
       '**/coverage/**',

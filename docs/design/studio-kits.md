@@ -225,6 +225,8 @@ and never written back in the old shape.
 | `POST` | `/studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materialize` | Install it through the project's running session, into a named repository or the IDE's default | unstable |
 | `POST` | `/studio-kits/v1/projects/{project_id}/installations/{kit_slug}/reconcile` | Materialize wherever the scope says it belongs; idempotent | unstable |
 | `POST` | `/studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materializations` | Record an install a desktop ran itself; 404 when the kit was never requested | unstable |
+| `GET` | `/studio-kits/v1/mfe-manifests` | The micro-frontend packages of the kits effective in a scope (`?organization_id=` or `?project_id=`, as `installed-kits`): each package's `mfe-manifest.json` and its `base_path` (§3.12) | unstable |
+| `GET` | `/studio-kits/v1/kits/{kit_slug}/{version}/mfe/{grant}/{package}/{*file}` | One file of a kit's bundle; anonymous, guarded by the `grant` (§3.12) | unstable |
 
 A project route first resolves the project tenant under the caller's
 `SecurityContext` (`get_tenant`), which delegates hierarchy authorization to
@@ -422,7 +424,7 @@ its model overlay into the organization's Studio domain model. The overlay is
   enforced by `/mutate` (ADR-0067 phase 3 is not built). Project lifecycle's
   function enforces its own (below).
 
-Decisions (2026-11-10):
+Current implementation (2026-11-10; the layered replacement is required by ADR-0070):
 
 1. **Copied, not layered.** A kit's overlay is written into each
    organization's stored model, marked with its origin. A layered effective
@@ -470,6 +472,9 @@ ADR-0070's phases:
   computes the effective model in layers. Every element a kit brought carries
   its marks, so the migration's split (`organization layer = stored model −
   (core ⊕ gears ⊕ base kits)`) can take the copies back out.
+- An organization's removal of a kit field is not yet a persistent top-layer
+  removal: an upgrade can add it back. ADR-0070 phase 3 (#1032, with #1000)
+  must retain these removals across upgrades.
 - Dormant is a mark only: the domain model does not yet refuse writes
   (`DOMAIN_TYPE_DORMANT`) or hide a dormant type from members
   (`DOMAIN_TYPE_NOT_INSTALLED`), and screens are not told.
@@ -526,6 +531,82 @@ source that cannot be read is named in `unread`. MCP: `kits_inbox_sources`;
 Project lifecycle brings one: `phase-waiting`, a project whose
 `phase_owner` is the person and whose phase is not `run` — "*Atlas* waits in
 its *discovery* phase".
+
+Kit bundles (§3.12) are read from `STUDIO_KIT_BUNDLES_DIR` when it is set; a
+deployment with several backend replicas sets `STUDIO_KIT_BUNDLE_KEY` (at
+least 16 characters) so that every replica signs the same grants.
+
+### 3.12 Kit micro-frontends at run time
+
+ADR-0068 phase 5: a kit's screens are FrontX micro-frontends the shell loads
+when the kit applies, so a new kit needs no portal rebuild. The built-in kits
+stay in the portal's build (`generated-mfe-manifests.json`).
+
+**The bundle.** A kit's `kit.gdl` (GDL 1.7) names its bundles,
+`mfe = [path("mfe/<package>")]`, and `levels`. Each `mfe/<package>/` is what
+`vite build` with Module Federation and the `frontxMfGts` plugin writes:
+`mfe-manifest.json` (the FrontX manifest, entries, extensions, schemas — the
+same file the portal's build-time generator reads), `remoteEntry.js`,
+`assets/…` and `shared/…`. The passport is read by the same literal-only
+reader as every `kit.gdl` (`components_catalog/kit_gdl.rs`); `path("…")` reads
+as the string it names.
+
+**Where the bytes come from.** A `BundleSource` (`bundles.rs`). Today:
+`DirSource`, the directory `STUDIO_KIT_BUNDLES_DIR`, each subdirectory with a
+`kit.gdl` that names bundles being one kit at the version it states. Those
+kits join the library on the `organization` shelf with `source = bundle-dir`
+(never the IDE's `official` list, and never a slug the library already holds),
+so they are installed like any other kit. Serving bundles from an organization's
+connected repository at a pinned commit (ADR-0068 phase 7) needs another
+`BundleSource`; this implementation serves directory bundles only. A package is served only at the version its source
+built; an installation at another version lists nothing.
+
+**What the shell is told.** `GET /mfe-manifests` resolves the scope exactly as
+`GET /installed-kits` does and lists, for each effective kit with bundles at
+its installed version, each package: `kit_slug`, `version`, `package`,
+`base_path` = `/cf/studio-kits/v1/kits/{slug}/{version}/mfe/{grant}/{package}/`
+and `config` (its `mfe-manifest.json`), or `config: null` with `error` when it
+does not read (not built, not JSON, not a FrontX build).
+
+**The shell** (`studio-frontend-prototype/src-app/app/mfe/runtimeKits.ts`,
+`layout/RuntimeKits.tsx`) reads the list after the installed kits, and again
+whenever their slugs or versions change, turns each package into the config
+the build-time generator would write (the public path from `base_path`, the
+manifest inlined into each entry) and registers it into the same registry
+through the same `registerMfePackage`: GTS validation, levels, placement,
+order and the `kit` gate apply alike. A runtime package may not own a domain,
+carry a frame entry, reuse an extension id, a route or a GTS package
+(`vendor.package`) a built-in screen has, or redefine a schema the type system
+already knows (its own unchanged schemas survive an upgrade); its extensions' `presentation.kit` is always its own slug. A
+package refused, not readable, or whose screen does not mount is a tile above
+the screen that the person can dismiss; the rest of the shell goes on.
+
+**Security.**
+- The shell's module loader (`MfeHandlerMF`) fetches a bundle's files itself,
+  with no token, so the file route is anonymous (like a person's photo in
+  `studio-user`). Its guard is `grant`: HMAC-SHA-256 over the slug and version,
+  keyed by `STUDIO_KIT_BUNDLE_KEY` or a key drawn at start, learned only from
+  `GET /mfe-manifests`, which answers only a member of the scope and only for
+  kits effective there. A wrong grant is the same 404 as a missing file.
+  Uninstalling removes the kit from the list; a grant already learned stays
+  valid for that version until the key changes, as a cached bundle would.
+- Only a bundle's own types are served (scripts, styles, JSON and source maps,
+  images, fonts, wasm, text), each with its content type,
+  `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy:
+  same-origin` and `Content-Security-Policy: default-src 'none'; sandbox`.
+  Never an HTML page, a hidden file (`.vite/…`), a path with `..` or one whose
+  real location (after links) is outside the package; at most 16 MiB a file.
+- Same origin: the shell loads them through the gateway (`/cf/…`), so neither
+  the portal's nginx nor the browser needs another origin allowed.
+- Content Security Policy: the portal sets none today
+  (`studio-frontend-prototype/nginx.conf.template`). One that is added must
+  keep `script-src 'self' blob:` (the loader evaluates every chunk, built-in
+  or kit, from a `blob:` URL after rewriting its imports), `style-src 'self'
+  'unsafe-inline'` (each screen's styles go into its shadow root) and
+  `connect-src 'self'` (the chunks are fetched). A kit adds nothing to that.
+- A kit's code runs in the portal's origin with the person's session, as a
+  built-in screen does: installing a kit is trusting its publisher. The library
+  shows who that is; signed kits are ADR-0068 phase 9.
 
 ## 4. Additional context
 

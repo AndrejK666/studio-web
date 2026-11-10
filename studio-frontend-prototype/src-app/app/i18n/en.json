@@ -62,5 +62,8 @@
   "pin_unpin": "Unpin {label}",
   "level_tabs_reorder_hint": "Drag to reorder (Alt+Shift+←/→)",
   "level_tabs_default_order": "Default order",
-  "level_tabs_default_order_hint": "Put the sections back in their default order"
+  "level_tabs_default_order_hint": "Put the sections back in their default order",
+  "runtime_kit_failed": "The screens of kit {kit} {version} could not be loaded",
+  "runtime_kit_screen_failed": "The {screen} screen of kit {kit} could not be opened",
+  "runtime_kit_dismiss": "Dismiss"
 }

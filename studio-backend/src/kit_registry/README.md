@@ -136,5 +136,24 @@ This README is what you need to work in the directory.
   whole organization at their installed version; studio-user's
   `GET /me/inbox` runs them as the person. MCP `kits_inbox_sources`.
   Project lifecycle brings `phase-waiting`.
+
+- A kit's micro-frontends at run time (ADR-0068 phase 5), `bundles.rs`:
+  `STUDIO_KIT_BUNDLES_DIR` names a directory whose every subdirectory with a
+  `kit.gdl` naming bundles (`mfe = [path("mfe/<package>")]`, GDL 1.7) is a
+  kit on the `organization` shelf (`source` = `bundle-dir`), at the version
+  its passport states; a slug the library already holds is left out, and so
+  is a kit whose passport does not read (a warning, not a stop). A named
+  directory that cannot be read stops the gear at start.
+  `GET /studio-kits/v1/mfe-manifests?organization_id=|project_id=` (any member,
+  scope as `installed-kits`) lists each package of the effective kits with
+  bundles at their installed version: `mfe-manifest.json` as `config` (null
+  with `error` when it does not read) and `base_path`;
+  `GET /studio-kits/v1/kits/{kit_slug}/{version}/mfe/{grant}/{package}/{*file}`
+  serves the files, anonymous (the shell's loader sends no token) and guarded
+  by `grant`, an HMAC of slug and version under `STUDIO_KIT_BUNDLE_KEY` (else a
+  key drawn at start: set it when there is more than one replica). Only a
+  bundle's own file types, never HTML, hidden files or anything outside the
+  package. The demo is `studio-frontend-prototype/examples/kits/hello-kit`;
+  the design is `docs/design/studio-kits.md` §3.12.
 - The prototype flow and the installer inside the session are in the
   repository-root [`docs/kit-registry-prototype.md`](../../../docs/kit-registry-prototype.md).

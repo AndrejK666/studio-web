@@ -21,6 +21,7 @@ import {
 } from '@/app/mfe/screenLevels';
 import { occupancyOf } from '@/app/mfe/domainOccupancy';
 import { mountScreen } from '@/app/mfe/mountScreen';
+import { runtimeKitsOf } from '@/app/mfe/runtimeKits';
 import { publishStudioContext } from '@/app/mfe/sharedContext';
 import {
   closeContextProject,
@@ -183,6 +184,8 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     if (stuckIn === visit || navigation.currentRoute()?.token !== group.token) return;
     // The runtime keeps the cause to itself, so this names what was asked for.
     const { id, presentation } = group.owner;
+    // A kit's screen loaded at run time (ADR-0068 phase 5) says so on its tile.
+    runtimeKitsOf(registry).mountFailed(id, reason);
     warn(
       `Screen "${group.token}" (${id} at ${presentation.route}) did not mount (${reason}); not trying again until the address changes`
     );
