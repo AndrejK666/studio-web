@@ -472,19 +472,22 @@ ADR-0070's phases:
   computes the effective model in layers. Every element a kit brought carries
   its marks, so the migration's split (`organization layer = stored model −
   (core ⊕ gears ⊕ base kits)`) can take the copies back out.
-- An organization's removal of a kit field is not yet a persistent top-layer
-  removal: an upgrade can add it back. ADR-0070 phase 3 (#1032, with #1000)
-  must retain these removals across upgrades.
+- Kit-contributed properties and lifecycles now have pinned source records and
+  named organization overrides/tombstones (`kit_property_layers`). Once the
+  source is known, upgrades and reinstalls preserve removals and partial edits.
+  Same-version reconciliation adopts a known legacy source; a different unknown
+  historical source is refused rather than inferred. Full core/entity migration
+  with its equality check remains ADR-0070 phase 3 (#1032, with #1000).
 - Dormant is a mark only: the domain model does not yet refuse writes
   (`DOMAIN_TYPE_DORMANT`) or hide a dormant type from members
   (`DOMAIN_TYPE_NOT_INSTALLED`), and screens are not told.
 - A field a kit added to another type, or that an upgrade drops, is taken out
   of the model (its values stay in the objects' payloads) rather than kept
   dormant; only the fields of a kept kit type stay, marked.
-- A gear's `ensure_type` still adds a whole type as `studio` (ADR-0070 §3 makes
-  it a layer of its own); a kit type that a gear also needs is therefore kept
-  dormant on uninstall when the gear holds it, and comes back if the gear
-  re-adds it.
+- A gear's `ensure_type` stores explicit `gear_declarations` separately and
+  projects additive storage needs. A missing type is `origin: gear`, not
+  `studio`, and does not install its owning kit. The held/dormant projection is
+  retained; state-based member visibility is still phase 4.
 
 **Project lifecycle** is the first built-in kit that brings a model: the type
 `project-lifecycle-phase`, the fields `project.phase`

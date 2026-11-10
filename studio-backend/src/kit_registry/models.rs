@@ -149,9 +149,9 @@ impl KitInstaller {
             match self.model_of(org, &descriptor, &kit.version).await? {
                 KitModel::Overlay(overlay) => {
                     keep.push(kit.kit_slug.clone());
-                    if carried.get(&kit.kit_slug) == Some(&kit.version) {
-                        continue;
-                    }
+                    // Same-version sync is idempotent and adopts the known
+                    // legacy property source before any future upgrade.
+                    // It also captures organization tombstones after edits.
                     if let Err(e) = port
                         .sync_kit_model(&ctx, &kit.kit_slug, &kit.version, Some(&overlay))
                         .await

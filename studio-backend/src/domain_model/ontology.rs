@@ -1,8 +1,8 @@
 //! The domain-model ontology: the entities, their fields and their relations.
 //!
-//! The document is embedded from `ontology.core.json` — the full Studio product
-//! core domain model + system bases (11 buckets, 140 entities) held in
-//! `studio-internal/domain-model-ui`. Its shape is the domain-entity schema the
+//! The bootstrap document is embedded from `ontology.studio.json`, Studio
+//! types and their bases. `ontology.core.json` is the larger historical product
+//! model used by import tests. Its shape is the domain-entity schema the
 //! model UI already renders from, so reading it back out of the graph is what
 //! lets the frontend be regenerated from the stored model.
 //!
@@ -98,6 +98,9 @@ pub struct Ontology {
 
 #[path = "gear_declarations.rs"]
 mod gear_declarations;
+
+#[path = "kit_property_layers.rs"]
+mod kit_property_layers;
 
 impl Ontology {
     /// Load the embedded ontology. Panics only on a malformed embedded file,

@@ -548,7 +548,8 @@ organization's model carry exactly one kit version's overlay (`kit_overlay.rs`):
 types, fields, relations, tabs and lifecycles, each marked `origin = "kit"`
 with the kit and its version; a kit type that still has objects is kept on
 uninstall, dormant, marked `meta.left_by = {kit, version, at}` (ADR-0070 §4). One model version (`op = "kit"`) per
-change, its patch only the entities it touched, so it reverts like any edit.
+change, its patch covers the effective document and source metadata, so both
+revert together like any edit.
 `kit_models` answers which kits a model carries. Overlays are **copied** into
 each organization's stored model rather than layered over a shared one,
 because every write path here works on that one stored document. A known gap
@@ -576,8 +577,34 @@ This is ADR-0070 phase 2, not the full layer migration. Existing flat-model
 readers still receive the additive projection, but a newly required definition
 has `origin: gear`, not `origin: studio`. Re-declaring after a kit uninstall
 preserves a retained dormant mark, or recreates only a gear definition; it does
-not install the kit. Shared-core composition, organization tombstones and the
-visibility/write rules for dormant types remain phases 3 and 4.
+not install the kit. Shared-core composition and the visibility/write rules for
+dormant types remain phases 3 and 4.
+
+### Organization overrides of kit properties
+
+The property portion of ADR-0070 phase 3 stores `kit_property_layers` in the
+model head: the pinned overlay, its pristine contributed properties/lifecycles,
+and organization overrides keyed by entity id and contribution name. Removals
+are explicit tombstones; partial edits override only the changed keys. An
+upgrade can therefore add a new field or change its untouched description
+without erasing an organization's label or restoring a deleted field, relation,
+tab or lifecycle. Overrides survive a version that omits the contribution,
+uninstall/reinstall, and a process restart. Dormant inhabited types retain these
+edits too; a gear's protected fields remain protected.
+
+Reconciliation of the same version is idempotent. It also adopts a flat kit's
+property source when that exact pinned version is known, preserving its
+effective properties. A different unknown historical version is refused with
+the old version and an instruction to reconcile its pinned manifest first;
+it cannot be safely inferred from the new overlay. Imports keep trusted source
+metadata while contributing organization edits. History replays and reverts
+both the projection and its sources.
+
+This does **not** complete #1032: the running core is still the compatibility
+seed, entity-level organization changes are still in the stored flat model,
+and a full first-touch migration still needs all pinned sources, an equality
+check, an actionable diagnostic and a non-reversible migration boundary.
+
 
 ## 5. Traceability
 

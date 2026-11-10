@@ -452,6 +452,7 @@ pub fn carried(o: &Ontology) -> BTreeMap<String, String> {
             }
         }
     }
+    out.extend(o.property_layer_versions());
     out
 }
 
@@ -948,6 +949,7 @@ fn entity_kit_or_left(o: &Ontology, id: &str, slug: &str) -> bool {
 /// and its inverse: a changed type replaced where it was, a removed one
 /// taken out (from the end, so the indexes hold), an added one appended.
 /// Small enough to keep in a model version, unlike the whole document.
+#[cfg(test)]
 pub fn entity_patches(current: &[Value], next: &[Value]) -> (Value, Value) {
     let id = |e: &Value| str_of(e, "id").unwrap_or_default().to_owned();
     let mut forward = Vec::new();

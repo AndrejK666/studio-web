@@ -117,7 +117,9 @@ This README is what you need to work in the directory.
   gear's service identity: before an organization install is recorded (a
   conflict is 400 `KIT_MODEL_CONFLICT` and nothing is recorded), after an
   organization uninstall, and for base kits when an organization's installed
-  kits are read (`reconcile_models`). Overlays are copied into each
+  kits are read (`reconcile_models`). Same-version reconciliation is idempotent
+  and captures/adopts known property sources and organization tombstones.
+  Overlays are still projected into each
   organization's stored model, not layered; a kit that brings a model is not
   installed for one project (`MODEL_KIT_NOT_FOR_PROJECT`). Without the domain
   model in the assembly, kits install and the model is left alone.

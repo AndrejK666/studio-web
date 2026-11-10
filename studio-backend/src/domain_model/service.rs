@@ -847,6 +847,7 @@ impl DomainModelService {
         // the types Studio's own screens read.
         let current = self.model_current(ctx).await?;
         ontology.keep_held_from(&current);
+        ontology.keep_kit_property_sources(&current);
         ontology.add_studio_types();
         let summary = ImportSummary {
             entities: ontology.entities().len() as u64,
@@ -1907,15 +1908,14 @@ impl DomainModelService {
                 }
             }
             let mut next = (*current).clone();
-            let change =
-                super::kit_overlay::sync(&mut next, slug, version, overlay, &|id: &str| {
-                    inhabited.iter().any(|i| i == id)
-                })?;
+            let change = next.sync_kit_properties(slug, version, overlay, &|id: &str| {
+                inhabited.iter().any(|i| i == id)
+            })?;
             if change.is_empty() {
                 return Ok(change);
             }
-            let (patch, undo) =
-                super::kit_overlay::entity_patches(current.entities(), next.entities());
+            let patch = json!(json_patch::diff(current.document(), next.document()));
+            let undo = json!(json_patch::diff(next.document(), current.document()));
             let version_no = self.next_version(ctx)?;
             let rev = Revision::new(
                 version_no,
@@ -3254,6 +3254,72 @@ mod tests {
         assert_eq!(replay, after);
         service.revert(&ctx, 0).await.unwrap();
         assert_eq!(service.ontology_document(&ctx).await.unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn kit_property_layers_reload_replay_and_revert_without_resurrecting_org_removals() {
+        let store = Arc::new(TenantScopedStore::default());
+        let service = DomainModelService::new(store.clone());
+        let ctx = ctx_for(1);
+        let overlay = serde_json::from_value(json!({"fields": [
+            {"on": "project", "name": "effort", "type": "integer"}
+        ]}))
+        .unwrap();
+        service
+            .sync_kit_model(&ctx, "effort", "1", Some(&overlay))
+            .await
+            .unwrap();
+        let installed = service.ontology_document(&ctx).await.unwrap();
+        service
+            .edit_entities(&ctx, "test-remove", "remove effort", |o| {
+                o.entities_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|e| e["id"] == "project")
+                    .unwrap()["properties"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|p| p["name"] != "effort");
+                Ok(vec!["project".into()])
+            })
+            .await
+            .unwrap();
+        let before_upgrade = service.ontology_document(&ctx).await.unwrap();
+        let target = service.cached_version(&ctx).unwrap();
+        let restored = DomainModelService::new(store);
+        restored
+            .sync_kit_model(&ctx, "effort", "2", Some(&overlay))
+            .await
+            .unwrap();
+        let upgraded = restored.ontology_document(&ctx).await.unwrap();
+        let project = upgraded["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == "project")
+            .unwrap();
+        assert!(
+            !project["properties"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == "effort")
+        );
+        let revisions = restored.revisions(&ctx).await.unwrap();
+        let mut replay = before_upgrade.clone();
+        json_patch::patch(
+            &mut replay,
+            &serde_json::from_value::<json_patch::Patch>(revisions[0].patch.clone()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(replay, upgraded);
+        restored.revert(&ctx, target).await.unwrap();
+        assert_eq!(
+            restored.ontology_document(&ctx).await.unwrap(),
+            before_upgrade
+        );
+        restored.revert(&ctx, 1).await.unwrap();
+        assert_eq!(restored.ontology_document(&ctx).await.unwrap(), installed);
     }
 
     #[tokio::test]
