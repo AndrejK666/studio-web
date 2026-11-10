@@ -2018,23 +2018,13 @@ impl DomainModelService {
             if touched.is_empty() {
                 return Ok(0);
             }
-            let mut patches = Vec::new();
-            let mut inverse = Vec::new();
-            for entity in &touched {
-                let index = next
-                    .entity_index(entity)
-                    .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity}"))?;
-                patches.push(json!({
-                    "op": "replace",
-                    "path": format!("/entities/{index}"),
-                    "value": next.entity(entity).cloned().unwrap_or(Value::Null),
-                }));
-                inverse.push(json!({
-                    "op": "replace",
-                    "path": format!("/entities/{index}"),
-                    "value": current.entity(entity).cloned().unwrap_or(Value::Null),
-                }));
-            }
+            // This edit can append a type and change its bucket order. An
+            // indexed `replace` cannot add an array element and an inverse
+            // with null would leave a malformed entity after a revert.
+            let patches =
+                serde_json::to_value(json_patch::diff(current.document(), next.document()))?;
+            let inverse =
+                serde_json::to_value(json_patch::diff(next.document(), current.document()))?;
             let version = self.next_version(ctx)?;
             let rev = Revision::new(
                 version,
@@ -2043,7 +2033,7 @@ impl DomainModelService {
                 &touched.join(","),
                 format!("{describe} {}", touched.join(", ")),
             )
-            .with_patches(Value::Array(patches), Value::Array(inverse));
+            .with_patches(patches, inverse);
             if !self.claim_version(ctx, &rev).await? {
                 warn!(
                     attempt,
@@ -3239,6 +3229,37 @@ mod tests {
     use crate::domain_model::ontology::{EdgeType, NodeType};
     use crate::domain_model::store::{EdgeView, ObjectNode};
     use async_trait::async_trait;
+
+    #[tokio::test]
+    async fn a_sweep_that_adds_a_type_has_an_applicable_patch_and_a_complete_inverse() {
+        let service = DomainModelService::new(Arc::new(TenantScopedStore::default()));
+        let ctx = ctx_for(1);
+        let before = service.ontology_document(&ctx).await.unwrap();
+        service
+            .edit_entities(&ctx, "test-sweep", "add a file type", |next| {
+                next.add_entity(EntitySpec {
+                    id: "sweep-file".into(),
+                    name: "Sweep file".into(),
+                    extends: Some("file".into()),
+                    ..Default::default()
+                })?;
+                Ok(vec!["sweep-file".into()])
+            })
+            .await
+            .unwrap();
+        let after = service.ontology_document(&ctx).await.unwrap();
+        let revisions = service.revisions(&ctx).await.unwrap();
+        let revision = &revisions[0];
+        let mut replay = before.clone();
+        json_patch::patch(
+            &mut replay,
+            &serde_json::from_value(revision.patch.clone()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(replay, after);
+        service.revert(&ctx, 0).await.unwrap();
+        assert_eq!(service.ontology_document(&ctx).await.unwrap(), before);
+    }
 
     /// A store that keys everything by tenant, like the real graph does.
     #[derive(Default)]

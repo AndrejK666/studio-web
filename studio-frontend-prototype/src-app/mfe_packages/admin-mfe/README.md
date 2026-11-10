@@ -7,7 +7,9 @@ per section on level `admin`, switched by the `section` property
 
 One extension is on the organization level: Organization › Connections
 (`/connections`, section `connections`) renders the Integrations section, as
-the prototype rendered `ConnectorsView` with the organization for both.
+the prototype rendered `ConnectorsView` with the organization for both. That
+organization extension belongs to `org-connections`; the admin sections stay
+available independently of kit installation.
 
 | Section | From the prototype (00828880) | Gears |
 |---|---|---|
@@ -35,6 +37,12 @@ else.
   (`meta.origin = "kit"`, `meta.kit`, ADR-0067 §6); `domain-runtime.ts` — the pure part
   of the prototype's (no seed, no global loader); `domain-admin.ts` — the screen's
   grouping, counts and form rules, lifted out and tested.
+- `src/screens/admin/domain-model/DomainModelGraph.tsx` — the POC canvas graph,
+  reading the administered organization's type or object graph, with search,
+  inheritance and relation filters, bucket toggles and a selection panel.
+- `DomainModelTools.tsx` — model history, a confirmed revert, JSON export and
+  confirmed import. Readers can view and export; writes follow `can_edit_model`.
+  An import without an inverse blocks reverting through that revision.
 - `src/api/AdminApiService.ts` — every route the sections call.
 
 Not here yet (see `docs/parity.md`): Views.
