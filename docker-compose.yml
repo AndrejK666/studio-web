@@ -452,6 +452,12 @@ services:
       dockerfile: studio-frontend-prototype/Dockerfile.src
     container_name: studio-frontend-prototype
     restart: unless-stopped
+    # The portal (the FrontX app, ADR-0069) signs in from the browser, so it
+    # needs the issuer the browser reaches: docker/10-runtime-env.sh writes
+    # these into env.js at start, as helm does on a cluster.
+    environment:
+      STUDIO_OIDC_ISSUER: ${STUDIO_OIDC_ISSUER_PUBLIC:-https://localhost:8443/realms/studio}
+      STUDIO_OIDC_CLIENT_ID: ${STUDIO_OIDC_PORTAL_CLIENT_ID:-studio-portal}
     ports:
       - "127.0.0.1:8081:8080"   # nginx-unprivileged listens on 8080 inside
     depends_on:
