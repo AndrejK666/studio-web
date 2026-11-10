@@ -26,13 +26,15 @@ pub use super::kit_overlay::{
     KitModelChange, KitModelError, KitOverlay, OverlayType, kit_type_gts,
     validate as validate_kit_overlay,
 };
-use super::ontology::{EntitySpec, FieldSpec};
 use super::service::{DomainModelService, WriteOptions};
 use super::validate::ValidateMode;
 
 /// A type a gear needs in the model, with the fields it writes.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct TypeNeed {
+    /// The linked gear declaring this need, also for types it leaves open.
+    pub declared_by: String,
     pub id: String,
     pub name: String,
     pub description: String,
@@ -334,46 +336,10 @@ impl DomainObjects for Objects {
     }
 
     async fn ensure_type(&self, ctx: &SecurityContext, need: &TypeNeed) -> anyhow::Result<()> {
+        self.0.ensure_gear_type(ctx, need).await?;
         if let Some(gear) = &need.held_by {
             crate::data_places::held(gear, &need.id);
         }
-        if !self.0.knows_type(ctx, &need.id).await? {
-            self.0
-                .add_type(
-                    ctx,
-                    EntitySpec {
-                        id: need.id.clone(),
-                        name: need.name.clone(),
-                        description: Some(need.description.clone()).filter(|d| !d.is_empty()),
-                        bucket: need.bucket.clone(),
-                        extends: need.extends.clone(),
-                        origin: Some("studio".to_string()),
-                    },
-                )
-                .await?;
-        }
-        // Fields, relations and the gear's hold in one model version: a gear
-        // taking in a type of twenty fields is one change, not twenty-two.
-        let fields: Vec<FieldSpec> = need
-            .fields
-            .iter()
-            .map(|(name, type_name, description)| FieldSpec {
-                name: name.clone(),
-                type_name: type_name.clone(),
-                description: Some(description.clone()).filter(|d| !d.is_empty()),
-                required: false,
-            })
-            .collect();
-        let hold = need.held_by.clone().map(|gear| {
-            (
-                gear,
-                need.fields.iter().map(|f| f.0.clone()).collect(),
-                need.searchable,
-            )
-        });
-        self.0
-            .take_in(ctx, &need.id, &fields, &need.relations, hold)
-            .await?;
         Ok(())
     }
 

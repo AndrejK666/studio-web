@@ -28,6 +28,7 @@ fn ctx() -> SecurityContext {
 
 fn need() -> TypeNeed {
     TypeNeed {
+        declared_by: "studio-test".to_owned(),
         id: "test-environment".into(),
         name: "Test Environment".into(),
         description: "A gear's record.".into(),
@@ -38,6 +39,196 @@ fn need() -> TypeNeed {
         held_by: Some("studio-test".into()),
         searchable: false,
     }
+}
+
+#[tokio::test]
+async fn a_gear_declaration_is_persisted_separately_and_repeated_calls_write_nothing() {
+    let store = Arc::new(InMemoryDomainStore::default());
+    let service = Arc::new(DomainModelService::new(store.clone()));
+    let port = Objects(service.clone());
+    port.ensure_type(&ctx(), &need()).await.unwrap();
+    let before = service.ontology_document(&ctx()).await.unwrap();
+    let revisions = service.revisions(&ctx()).await.unwrap().len();
+    port.ensure_type(&ctx(), &need()).await.unwrap();
+    assert_eq!(service.revisions(&ctx()).await.unwrap().len(), revisions);
+    let restored = DomainModelService::new(store)
+        .ontology_document(&ctx())
+        .await
+        .unwrap();
+    assert_eq!(restored, before);
+    assert_eq!(
+        restored["gear_declarations"]["studio-test"]["test-environment"]["held_by"],
+        "studio-test"
+    );
+    let entity = restored["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "test-environment")
+        .unwrap();
+    assert_eq!(entity["meta"]["origin"], "gear");
+}
+
+#[tokio::test]
+async fn declaring_an_existing_open_type_keeps_its_effective_definition() {
+    let service = Arc::new(DomainModelService::new(Arc::new(
+        InMemoryDomainStore::default(),
+    )));
+    let port = Objects(service.clone());
+    let before = service.ontology_document(&ctx()).await.unwrap();
+    let open = TypeNeed {
+        declared_by: "studio-open".into(),
+        id: "project".into(),
+        ..Default::default()
+    };
+    port.ensure_type(&ctx(), &open).await.unwrap();
+    let after = service.ontology_document(&ctx()).await.unwrap();
+    assert_eq!(before["entities"], after["entities"]);
+    assert!(after["gear_declarations"]["studio-open"]["project"]["held_by"].is_null());
+    let revisions = service.revisions(&ctx()).await.unwrap().len();
+    port.ensure_type(&ctx(), &open).await.unwrap();
+    assert_eq!(service.revisions(&ctx()).await.unwrap().len(), revisions);
+}
+
+#[tokio::test]
+async fn a_different_gear_cannot_take_over_the_holder_or_its_fields() {
+    let (service, port, _) = rig().await;
+    let before = service.ontology_document(&ctx()).await.unwrap();
+    let other = TypeNeed {
+        declared_by: "studio-other".into(),
+        held_by: Some("studio-other".into()),
+        ..need()
+    };
+    assert!(
+        port.ensure_type(&ctx(), &other)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("already held")
+    );
+    assert_eq!(service.ontology_document(&ctx()).await.unwrap(), before);
+}
+
+#[tokio::test]
+async fn a_kit_and_gear_keep_separate_declarations_through_uninstall_and_sync() {
+    let (service, port, _) = rig().await;
+    let overlay = serde_json::from_value(
+        json!({"types":[{"name":"environment", "id":"test-environment",
+        "fields":[{"name":"namespace", "type":"string"}]}]}),
+    )
+    .unwrap();
+    service
+        .sync_kit_model(&ctx(), "test-kit", "1", Some(&overlay))
+        .await
+        .unwrap();
+    port.ensure_type(&ctx(), &need()).await.unwrap();
+    service
+        .sync_kit_model(&ctx(), "test-kit", "1", None)
+        .await
+        .unwrap();
+    let before = service.ontology_document(&ctx()).await.unwrap();
+    port.ensure_type(&ctx(), &need()).await.unwrap();
+    let after = service.ontology_document(&ctx()).await.unwrap();
+    assert_eq!(
+        before, after,
+        "a sync does not reinstall or clear the dormant mark"
+    );
+    let entity = after["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "test-environment")
+        .unwrap();
+    assert_eq!(entity["meta"]["left_by"]["kit"], "test-kit");
+    assert_eq!(entity["meta"]["held_by"], "studio-test");
+    port.put_objects(
+        &ctx(),
+        "test-environment",
+        vec![OwnedObject {
+            id: "env-2".into(),
+            scope: String::new(),
+            payload: json!({"namespace":"staging"}),
+        }],
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn an_import_cannot_replace_trusted_gear_requirements() {
+    let (service, _, _) = rig().await;
+    let mut imported = super::ontology::Ontology::load().document().clone();
+    imported["gear_declarations"] = json!({"forged": {"type": {"held_by":"forged"}}});
+    service.import_model(&ctx(), imported).await.unwrap();
+    let after = service.ontology_document(&ctx()).await.unwrap();
+    assert!(after["gear_declarations"].get("forged").is_none());
+    assert_eq!(
+        after["gear_declarations"]["studio-test"]["test-environment"]["held_by"],
+        "studio-test"
+    );
+}
+
+#[tokio::test]
+async fn an_open_gear_type_can_be_written_after_uninstall_without_reinstalling_its_kit() {
+    let service = Arc::new(DomainModelService::new(Arc::new(
+        InMemoryDomainStore::default(),
+    )));
+    let port = Objects(service.clone());
+    let open = TypeNeed {
+        declared_by: "studio-artifact-ingest".into(),
+        id: "work-item".into(),
+        name: "Work Item".into(),
+        extends: Some("managed-object".into()),
+        fields: vec![("sync_marker".into(), "string".into(), String::new())],
+        ..Default::default()
+    };
+    port.ensure_type(&ctx(), &open).await.unwrap();
+    let overlay =
+        serde_json::from_value(json!({"types":[{"name":"work-item", "id":"work-item"}]})).unwrap();
+    service
+        .sync_kit_model(&ctx(), "project-issues", "1", Some(&overlay))
+        .await
+        .unwrap();
+    service
+        .sync_kit_model(&ctx(), "project-issues", "1", None)
+        .await
+        .unwrap();
+    port.ensure_type(&ctx(), &open).await.unwrap();
+    assert!(service.kit_models(&ctx()).await.unwrap().is_empty());
+    let doc = service.ontology_document(&ctx()).await.unwrap();
+    let entity = doc["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "work-item")
+        .unwrap();
+    assert_eq!(entity["meta"]["origin"], "gear");
+    assert_eq!(entity["meta"]["kit"], "project-issues");
+    assert!(entity["meta"].get("held_by").is_none());
+    port.put_objects(
+        &ctx(),
+        "work-item",
+        vec![OwnedObject {
+            id: "source-1".into(),
+            scope: String::new(),
+            payload: json!({"sync_marker":"fresh"}),
+        }],
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_partial_declaration_does_not_erase_previously_declared_relations() {
+    let (service, port, _) = rig().await;
+    let full = TypeNeed {
+        relations: vec![("for_project".into(), "project".into(), "references".into())],
+        ..need()
+    };
+    port.ensure_type(&ctx(), &full).await.unwrap();
+    let before = service.ontology_document(&ctx()).await.unwrap();
+    port.ensure_type(&ctx(), &need()).await.unwrap();
+    assert_eq!(service.ontology_document(&ctx()).await.unwrap(), before);
 }
 
 async fn rig() -> (Arc<DomainModelService>, Objects, String) {

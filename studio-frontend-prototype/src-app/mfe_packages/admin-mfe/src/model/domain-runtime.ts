@@ -39,7 +39,7 @@ export interface ModelEntity {
   /** `held_by`: the gear whose records this type's objects are; `origin`
    *  (`upload`, `organization`, `studio`, `kit`) and `upload`: where it came
    *  from; `kit` and `kit_version`: the kit that brought it (ADR-0067 §6). */
-  meta?: { held_by?: string; origin?: string; upload?: string; kit?: string; kit_version?: string } | null;
+  meta?: { declared_by?: string; held_by?: string; origin?: string; upload?: string; kit?: string; kit_version?: string } | null;
 }
 
 /** A payload field of an entity, own or inherited, with what a screen needs to edit it. */

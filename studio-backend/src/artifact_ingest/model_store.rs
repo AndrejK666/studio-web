@@ -226,6 +226,7 @@ const SHARED_KINDS: [&str; 3] = ["work-item", "comment", "finding"];
 /// The types and relations the model needs before the first write.
 fn needs() -> Vec<TypeNeed> {
     let new_type = |id: &str, name: &str, description: &str| TypeNeed {
+        declared_by: GEAR.to_owned(),
         id: id.to_string(),
         name: name.to_string(),
         description: description.to_string(),
@@ -274,6 +275,7 @@ fn needs() -> Vec<TypeNeed> {
             continue;
         }
         out.push(TypeNeed {
+            declared_by: GEAR.to_owned(),
             id: entity.to_string(),
             fields: common_fields(),
             // What a sync writes is the source's, and the next sync would
@@ -286,6 +288,7 @@ fn needs() -> Vec<TypeNeed> {
         });
     }
     out.push(TypeNeed {
+        declared_by: GEAR.to_owned(),
         id: RELATION_SOURCE.to_string(),
         relations: RELATIONS
             .iter()

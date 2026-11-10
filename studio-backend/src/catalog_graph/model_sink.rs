@@ -241,6 +241,7 @@ impl ModelSink {
         TYPES
             .iter()
             .map(|(type_id, entity, name, description)| TypeNeed {
+                declared_by: self.gear.clone(),
                 id: (*entity).to_owned(),
                 name: (*name).to_owned(),
                 description: (*description).to_owned(),

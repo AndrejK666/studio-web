@@ -559,6 +559,26 @@ read, so the gap covers them too. Layering (seed → base kits → the
 organization's kits → its own edits) would close it and needs the stored
 document to become the organization's edits alone.
 
+### Gear declarations during the ADR-0070 migration
+
+`ensure_type` records each linked gear's `TypeNeed` in the model node's
+`gear_declarations`, keyed by declaring gear and entity id. `declared_by` names
+that gear even when it leaves the type open; `held_by` remains a separate
+restriction on who writes the records and their protected fields.
+
+Declarations are additive and canonical by field/relation name: the catalogue's
+initial node-only declaration cannot erase its later relations. Repetition writes
+no model version. Another gear cannot take over an existing holder. Imports and
+organization reverts retain trusted gear declarations instead of accepting the
+uploaded document's copy of them.
+
+This is ADR-0070 phase 2, not the full layer migration. Existing flat-model
+readers still receive the additive projection, but a newly required definition
+has `origin: gear`, not `origin: studio`. Re-declaring after a kit uninstall
+preserves a retained dormant mark, or recreates only a gear definition; it does
+not install the kit. Shared-core composition, organization tombstones and the
+visibility/write rules for dormant types remain phases 3 and 4.
+
 ## 5. Traceability
 
 - **PRD**: [Constructor Studio](../prd/constructor-studio.md)

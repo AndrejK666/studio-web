@@ -14,6 +14,10 @@ Studio's own model (`studio-backend/src/domain_model/ontology.studio.json`, 63 t
 11 buckets) to the core or to one kit, or drops it. It also lists the relations that would
 cross from the core into a kit type.
 
+The counts below describe the original 63-type audit. The current seed also has
+the storage-independent core `file` base (ADR-0070): 64 types, with 44 in core.
+The ownership of the other types is unchanged.
+
 The owners below include the decisions taken on ADR-0070's open questions on 2026-11-10
 (ADR-0070 §7): `milestone` goes to project-lifecycle, `pull-request` to a new
 `project-git` kit, `policy` stays in project-specs, and `gears` and the numbered
@@ -274,6 +278,15 @@ properties with `extends: edge`):
 | `repository.hosts` | pull-request (project-git) | project-git overlay | no for the model. The shell's readers of pull requests are listed in §7 |
 | `actor.authors` | comment (project-activity) | project-activity overlay | no |
 | `person.authors` | message (assistant) | assistant overlay | no |
+| `kit.introduces_type_22` | finding (project-issues, as the current resolver reads `type: Finding`) | project-issues overlay | preserve current behavior; see the ambiguity below |
+
+The ownership-boundary regression check also includes links, not only edges.
+`kit.introduces_type_22` has `type: Finding` but `relation: security-finding`.
+The current backend resolves the type expression and therefore targets `finding`;
+`security-finding` is absent from the Studio seed. The split must preserve that
+observable behavior. Correcting the ambiguous reference is a separate compatibility
+change, not a silent retarget during the ownership migration. The boundary test
+records this dependency explicitly so it cannot disappear from the migration queue.
 
 **Dropped, not moved** (decided 2026-11-10): the numbered packaging relations on `kit`,
 `kit.packages_2` … `kit.packages_14`. They come from the product team's model and point at

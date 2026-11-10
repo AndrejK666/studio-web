@@ -44,11 +44,13 @@ export function originOf(model: DomainModel, entity: ModelEntity): Origin {
         (meta.held_by ? ` ${meta.held_by} keeps its records.` : ""),
     };
   }
-  if (meta.held_by) {
+  if (meta.held_by || meta.origin === "gear") {
     return {
       key: "gear",
-      label: `gear ${meta.held_by}`,
-      hint: `${meta.held_by} keeps these records: it writes its own fields, people fill in the ones added beside them.`,
+      label: `gear ${meta.held_by ?? meta.declared_by ?? ""}`.trim(),
+      hint: meta.held_by
+        ? `${meta.held_by} keeps these records: it writes its own fields, people fill in the ones added beside them.`
+        : `${meta.declared_by ?? "A gear"} declares the storage requirements of this open type; this does not install its kit.`,
     };
   }
   if (model.studioTypes.has(entity.id) || meta.origin === "studio") {

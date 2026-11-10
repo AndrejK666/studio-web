@@ -1838,46 +1838,17 @@ impl DomainModelService {
         Ok(read.retain(ctx, found).await)
     }
 
-    /// What a gear needs of one type, in one model version: the fields it
-    /// lacks, the relations it does not declare yet, and the gear's hold on
-    /// it and on its fields. Nothing missing writes nothing.
-    pub async fn take_in(
+    /// Record a linked gear's declaration separately from the organization
+    /// layer, and project its additive storage needs for existing readers.
+    pub async fn ensure_gear_type(
         &self,
         ctx: &SecurityContext,
-        entity: &str,
-        fields: &[FieldSpec],
-        relations: &[(String, String, String)],
-        hold: Option<(String, Vec<String>, bool)>,
+        need: &super::port::TypeNeed,
     ) -> anyhow::Result<usize> {
-        self.edit_entities(ctx, "take_in", "take in", |next| {
-            let mut changed = false;
-            let have: Vec<String> = next
-                .effective_properties(entity)
-                .into_iter()
-                .map(|p| p.name)
-                .collect();
-            for f in fields {
-                if !have.contains(&f.name) {
-                    next.add_field(entity, f.clone())
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    changed = true;
-                }
-            }
-            for (name, target, verb) in relations {
-                changed |= next
-                    .add_relation(entity, name, target, verb)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-            }
-            if let Some((gear, names, searchable)) = &hold {
-                changed |= next
-                    .hold(entity, gear, names)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-                changed |= next
-                    .set_searchable(entity, *searchable)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-            }
+        self.edit_entities(ctx, "gear_declaration", "declare gear needs", |next| {
+            let changed = next.declare_gear_type(need)?;
             Ok(if changed {
-                vec![entity.to_owned()]
+                vec![need.id.clone()]
             } else {
                 Vec::new()
             })

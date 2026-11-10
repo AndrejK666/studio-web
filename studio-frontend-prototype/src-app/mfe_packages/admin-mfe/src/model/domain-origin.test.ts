@@ -45,6 +45,13 @@ describe("originOf", () => {
   });
 
 
+  it("keeps an open gear declaration distinct from core ownership and kit installation", () => {
+    const entity: ModelEntity = { id: "work-item", meta: { origin: "gear", declared_by: "studio-artifact-ingest", kit: "project-issues" } };
+    const state = model([entity], ["work-item"]);
+    expect(originOf(state, entity)).toMatchObject({ key: "gear", label: "gear studio-artifact-ingest" });
+    expect(originOf(state, entity).hint).toContain("does not install its kit");
+  });
+
   it("names the kit that brought a type, with its version, before the gear that keeps it", () => {
     const o = (id: string) => originOf(m, m.byId.get(id)!);
     expect(o("milestone")).toMatchObject({ key: "kit", label: "kit · project-lifecycle 0.3.0" });

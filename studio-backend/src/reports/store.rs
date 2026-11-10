@@ -167,6 +167,7 @@ impl ModelStore {
     fn need() -> crate::domain_model::port::TypeNeed {
         let f = |n: &str, t: &str| (n.to_owned(), t.to_owned(), String::new());
         crate::domain_model::port::TypeNeed {
+            declared_by: "studio-reports".to_owned(),
             id: SOURCE_ENTITY.to_owned(),
             name: "Report Source".to_owned(),
             description: "Where an organization's report reads from: its connection, plan file, board, and the plan as last read.".to_owned(),

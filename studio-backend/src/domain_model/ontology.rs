@@ -96,6 +96,9 @@ pub struct Ontology {
     doc: Value,
 }
 
+#[path = "gear_declarations.rs"]
+mod gear_declarations;
+
 impl Ontology {
     /// Load the embedded ontology. Panics only on a malformed embedded file,
     /// which is a build-time error, not a runtime one.
@@ -753,6 +756,12 @@ impl Ontology {
     /// what people defined; it never takes a gear's records out from under it.
     /// Answers what it put back.
     pub fn keep_held_from(&mut self, current: &Ontology) -> Vec<String> {
+        // An import or organization revert cannot replace trusted gear needs.
+        if let Some(declarations) = current.doc.get("gear_declarations") {
+            self.doc["gear_declarations"] = declarations.clone();
+        } else if let Some(doc) = self.doc.as_object_mut() {
+            doc.remove("gear_declarations");
+        }
         let mut kept = Vec::new();
         for held in current
             .entities()
@@ -1656,6 +1665,50 @@ impl std::error::Error for OntologyError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn core_relations_to_kit_types_are_exactly_the_documented_migration_queue() {
+        let model = Ontology::load();
+        let actual: std::collections::BTreeSet<String> = model
+            .declared_relations()
+            .into_iter()
+            .filter(|r| {
+                model
+                    .entity(&r.source)
+                    .is_some_and(|e| e["meta"]["kit"].is_null() && e["meta"]["retired"] != true)
+            })
+            .filter_map(|r| {
+                let target = r.target_entity.as_ref()?;
+                let e = model.entity(target)?;
+                (e["meta"]["kit"].is_string() || e["meta"]["retired"] == true)
+                    .then(|| format!("{}.{} -> {target}", r.source, r.name))
+            })
+            .collect();
+        // ADR-0070 / domain-model-split §5: each incoming relation follows
+        // its target's owner; the numbered package relations are retired.
+        let expected = [
+            "person.authors -> message",
+            "project.scopes -> work-item",
+            "project.documented_by -> document",
+            "project.tracks -> risk",
+            "project.issues -> finding",
+            "project.specs -> document",
+            "project.tests -> check",
+            "organization.reports -> report",
+            "repository.hosts -> pull-request",
+            "actor.authors -> comment",
+            "kit.introduces_type_22 -> finding",
+            "kit.packages_12 -> tool",
+            "kit.packages_9 -> gears",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(
+            actual, expected,
+            "new core-to-kit dependencies must be assigned to their kit"
+        );
+    }
 
     #[test]
     fn every_seed_type_declares_its_owner_and_a_core_base_never_depends_on_a_kit() {
