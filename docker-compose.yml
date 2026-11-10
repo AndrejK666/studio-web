@@ -438,8 +438,11 @@ services:
     # nginx.conf proxies /cf/ to http://studio-backend:8090 — the service's
     # container_name above must stay in sync with it.
 
-  # Prototype portal — the fast-moving UI (Artifacts, Spec Quality, Overview).
-  # Same build pattern as `frontend` (context = repo root); BACKEND_HOST is
+  # Prototype portal: since ADR-0069 the FrontX app in studio-frontend-prototype/
+  # growing to the old prototype's features as kits (the old prototype is the
+  # unbuilt archive studio-frontend-poc/). Same build pattern as `frontend`
+  # (context = repo root; npm ci and the full build: packages, every MFE, the
+  # MFE manifests); BACKEND_HOST is
   # baked into its image, and nginx proxies /cf/ to the backend. Published on
   # 8081 so it can run alongside the main portal on 8080. Part of the compose
   # project now, so `--remove-orphans` no longer deletes it.

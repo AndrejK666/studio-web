@@ -8,8 +8,6 @@
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
 import type { DocType, DocTypeList, SpecQualityCapabilities, UpsertDocTypeBody } from './types';
 
-const ws = (workspaceId: string) => `/studio-documents/v1/workspaces/${encodeURIComponent(workspaceId)}`;
-
 export class DocumentTypesApiService extends BaseApiService {
   constructor() {
     const restProtocol = new RestProtocol({ timeout: 30000 });
@@ -20,7 +18,7 @@ export class DocumentTypesApiService extends BaseApiService {
 
   /** The workspace's effective types: built-in, the organization's, and its own. */
   readonly types = this.protocol(RestEndpointProtocol).queryWith<DocTypeList, { workspaceId: string }>(
-    ({ workspaceId }) => `${ws(workspaceId)}/types`
+    ({ workspaceId }) => `/studio-documents/v1/workspaces/${encodeURIComponent(workspaceId)}/types`
   );
 
   /** The type keys the analyser accepts, asked of the service rather than restated here. */
@@ -30,6 +28,6 @@ export class DocumentTypesApiService extends BaseApiService {
 
   /** Save a type as the workspace's own, overriding one of the same key it inherits. */
   upsertType(workspaceId: string) {
-    return this.protocol(RestEndpointProtocol).mutation<DocType, UpsertDocTypeBody>('POST', `${ws(workspaceId)}/types`);
+    return this.protocol(RestEndpointProtocol).mutation<DocType, UpsertDocTypeBody>('POST', `/studio-documents/v1/workspaces/${encodeURIComponent(workspaceId)}/types`);
   }
 }

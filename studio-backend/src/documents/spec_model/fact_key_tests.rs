@@ -1,6 +1,6 @@
 // The expected keys were computed by the portal's own code
-// (studio-frontend-prototype/src/review-state.ts `factKey` and spec-model.ts
-// `subjectKey` at 00828880, run under Node 24): the reviews members already
+// (the old prototype's src/review-state.ts `factKey` and spec-model.ts
+// `subjectKey` at 00828880, now archived in studio-frontend-poc/, run under Node 24): the reviews members already
 // stored carry those keys, so these must not move.
 
 use super::*;
