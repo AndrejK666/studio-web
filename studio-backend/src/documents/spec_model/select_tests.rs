@@ -91,7 +91,10 @@ fn a_glob_matches_by_segment() {
     assert!(glob_match("docs/**/billing.md", "docs/billing.md"));
     assert!(glob_match("**/billing.md", "docs/design/billing.md"));
     assert!(glob_match("docs/*/b?lling.md", "docs/prd/billing.md"));
-    assert!(!glob_match("docs/*.md", "docs/prd/billing.md"), "* stays in its segment");
+    assert!(
+        !glob_match("docs/*.md", "docs/prd/billing.md"),
+        "* stays in its segment"
+    );
     assert!(glob_match("*.md", "README.md"));
     assert!(!glob_match("*.md", "docs/a.md"));
     assert!(glob_match("upload:*", "upload:notes.csv"));
