@@ -62,8 +62,26 @@ pub struct KitDescriptor {
 
 /// Shipped in Studio's image and versioned with it (ADR-0068 §4). Installed
 /// for every organization as a base kit until a platform administrator
-/// removes it (ADR-0069 §4).
+/// removes it (ADR-0069 §4), except the kits of [`OPT_IN_BUILTIN`].
 pub const SHELF_BUILTIN: &str = "builtin";
+
+/// Built-in kits that are **not** base kits by default (ADR-0068 §7: "installed
+/// only where someone asks for them"). An organization installs one for
+/// itself, or a platform administrator makes it a base kit for every
+/// organization; until then it is in the library and applies nowhere.
+pub const OPT_IN_BUILTIN: &[&str] = &[RESEARCH_INTEGRATION_KIT];
+
+/// The Research Integration kit (`docs/design/studio-kits.md` §3.13): building
+/// a project's product in Constructor Research and running it there as one of
+/// its applications (ADR-0049). studio-environments asks for it before a
+/// Research environment is added or changed, or a build, deploy or rollback
+/// to one starts.
+pub const RESEARCH_INTEGRATION_KIT: &str = "research-integration";
+
+/// Is `slug` a built-in kit only where somebody installs it?
+pub fn is_opt_in_builtin(slug: &str) -> bool {
+    OPT_IN_BUILTIN.contains(&slug)
+}
 /// Constructor's kits in their own repositories, pinned by version.
 pub const SHELF_OFFICIAL: &str = "official";
 /// A kit an organization publishes for itself (ADR-0068 phase 7).
@@ -808,6 +826,14 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "A project's Team tab: who works on it and in which role.",
             &["project"],
         ),
+        // Not a base kit by default (`OPT_IN_BUILTIN`): an organization that
+        // runs its products in Constructor Research installs it.
+        kit(
+            RESEARCH_INTEGRATION_KIT,
+            "Research Integration",
+            "Build a project's product in Constructor Research and run it there as one of its applications: the Research projects, their hardware, and the deploys, rollbacks and addresses of what runs there.",
+            &["organization"],
+        ),
     ]
 }
 
@@ -1151,7 +1177,8 @@ mod tests {
                 "product-releases",
                 "project-domain-model",
                 "org-connections",
-                "project-team"
+                "project-team",
+                "research-integration"
             ]
         );
         for kit in &kits {

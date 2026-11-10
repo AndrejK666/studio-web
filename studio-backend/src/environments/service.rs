@@ -964,6 +964,7 @@ impl EnvironmentService {
                 .await?
             }
             EnvironmentKind::Research => {
+                self.require_research_kit(ctx, org).await?;
                 self.check_research_connection(ctx, project, input.connection_id)
                     .await?
             }
@@ -1123,6 +1124,7 @@ impl EnvironmentService {
                 self.check_connection(ctx, org, input.connection_id).await?
             }
             EnvironmentKind::Research => {
+                self.require_research_kit(ctx, org).await?;
                 self.check_research_connection(ctx, org, input.connection_id)
                     .await?
             }
@@ -2809,6 +2811,32 @@ impl EnvironmentService {
 
     /* ── Constructor Research (ADR-0049) ── */
 
+    /// What Studio does in Constructor Research comes with the Research
+    /// Integration kit (`docs/design/studio-kits.md` §3.13): adding or
+    /// changing a Research environment, listing a connection's Research
+    /// projects and hardware, and a build, deploy or rollback there. What is
+    /// already there stays readable and removable without it -- status, logs,
+    /// an uninstall, removing the environment.
+    ///
+    /// Asked of studio-kits (`KitPresence`); an assembly without studio-kits
+    /// has no kits to install, so nothing is held back there.
+    async fn require_research_kit(&self, ctx: &SecurityContext, org: Uuid) -> Result<()> {
+        use crate::kit_registry::port::{KitPresence, RESEARCH_INTEGRATION_KIT};
+        let Ok(kits) = self.hub.get::<dyn KitPresence>() else {
+            return Ok(());
+        };
+        let applies = kits
+            .applies(ctx, org, RESEARCH_INTEGRATION_KIT)
+            .await
+            .map_err(|e| {
+                Refusal::Unavailable(format!(
+                    "whether the organization has the Research Integration kit could not be \
+                     read: {e:#}"
+                ))
+            })?;
+        research_kit_gate(applies)
+    }
+
     /// The caller's own Research sign-in. A Research environment runs every
     /// build, deploy and read with the sign-in of the member who asks
     /// (ADR-0049 §1): Research's access keys are personal, and a project there
@@ -2876,6 +2904,7 @@ impl EnvironmentService {
         connection_id: Uuid,
     ) -> Result<Vec<crate::connectors::sdk::research::Project>> {
         self.require_manage(ctx, org).await?;
+        self.require_research_kit(ctx, org).await?;
         self.research_api(ctx, org, connection_id)
             .await?
             .projects()
@@ -2894,6 +2923,7 @@ impl EnvironmentService {
         project: &str,
     ) -> Result<Vec<crate::connectors::sdk::research::Hardware>> {
         self.require_manage(ctx, org).await?;
+        self.require_research_kit(ctx, org).await?;
         self.research_api(ctx, org, connection_id)
             .await?
             .hardware(project)
@@ -2918,6 +2948,7 @@ impl EnvironmentService {
         application: String,
         description: Option<crate::product::port::DescriptionRevision>,
     ) -> Result<BuildStarted> {
+        self.require_research_kit(ctx, org).await?;
         let target = env.research.as_ref().ok_or_else(|| {
             Refusal::Precondition(
                 "ENVIRONMENT_RESEARCH_UNUSABLE",
@@ -2991,6 +3022,9 @@ impl EnvironmentService {
         env: &Environment,
         req: DeployRequest,
     ) -> Result<Deployment> {
+        if research_needs_kit(req.action) {
+            self.require_research_kit(ctx, org).await?;
+        }
         let target = env.research.clone().ok_or_else(|| {
             Refusal::Precondition(
                 "ENVIRONMENT_RESEARCH_UNUSABLE",
@@ -3601,9 +3635,52 @@ pub struct BuildLog {
     pub steps: Vec<build::StepLog>,
 }
 
+/// The refusal code for something only a kit that is not installed brings
+/// (ADR-0070 §7, decision 5).
+pub const KIT_NOT_INSTALLED: &str = "KIT_NOT_INSTALLED";
+
+/// Whether a deploy request to a Research environment needs the Research
+/// Integration kit: everything but an uninstall, which takes away what an
+/// organization ran there before it removed the kit.
+fn research_needs_kit(action: DeploymentAction) -> bool {
+    action != DeploymentAction::Uninstall
+}
+
+/// The answer when the organization has, or has not, the Research Integration
+/// kit: a refusal that names the kit and how to get it.
+fn research_kit_gate(applies: bool) -> Result<()> {
+    if applies {
+        return Ok(());
+    }
+    Err(Refusal::Precondition(
+        KIT_NOT_INSTALLED,
+        format!(
+            "building and running a product in Constructor Research comes with the Research \
+             Integration kit (`{}`), which this organization has not installed: an \
+             administrator installs it under Organization › Kits",
+            crate::kit_registry::port::RESEARCH_INTEGRATION_KIT
+        ),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn research_needs_its_kit_except_to_take_away_what_runs() {
+        assert!(research_kit_gate(true).is_ok());
+        let Err(Refusal::Precondition(code, why)) = research_kit_gate(false) else {
+            panic!("refused as a precondition");
+        };
+        assert_eq!(code, KIT_NOT_INSTALLED);
+        assert!(
+            why.contains("research-integration") && why.contains("Kits"),
+            "{why}"
+        );
+        assert!(research_needs_kit(DeploymentAction::Install));
+        assert!(!research_needs_kit(DeploymentAction::Uninstall));
+    }
 
     #[test]
     fn a_description_that_cannot_be_read_is_not_a_product_never_saved() {

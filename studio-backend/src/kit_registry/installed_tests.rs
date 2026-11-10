@@ -591,3 +591,114 @@ async fn only_a_project_level_kit_goes_in_a_project() {
         Err(Refusal::ModelKitNotForProject(slug)) if slug == "project-lifecycle"
     ));
 }
+
+#[tokio::test]
+async fn an_opt_in_builtin_kit_applies_only_where_someone_installs_it() {
+    use crate::kit_registry::service::RESEARCH_INTEGRATION_KIT as RESEARCH;
+    let (installer, store) = installer();
+    let member = caller(MEMBER, ORG);
+    // In the library, built in, and installed nowhere by default.
+    assert!(
+        installer
+            .library()
+            .iter()
+            .any(|k| k.slug == RESEARCH && k.shelf == SHELF_BUILTIN)
+    );
+    let installed = installer.installed(&member, ORG).await.unwrap();
+    assert!(!slugs(&installed.base).contains(&RESEARCH));
+    assert!(!slugs(&installed.effective).contains(&RESEARCH));
+    // Not a base kit, so there is no base kit to remove, and trying leaves no
+    // "removed" mark behind.
+    let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
+    assert!(matches!(
+        installer.uninstall_base(&platform, RESEARCH).await,
+        Err(Refusal::NotFound(..))
+    ));
+    assert!(
+        store
+            .docs
+            .lock()
+            .unwrap()
+            .get(&PLATFORM_TENANT)
+            .is_none_or(|doc| doc.removed_builtin.is_empty())
+    );
+
+    // An organization installs it for itself, at Studio's version, and
+    // removes it again: it is its own, not the platform's.
+    let admin = caller(ORG_ADMIN, ORG);
+    let own = installer
+        .install_for_organization(&admin, ORG, RESEARCH, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        (own.kind, own.version.as_str()),
+        (KIND_ORGANIZATION, BUILTIN_VERSION)
+    );
+    let installed = installer.installed(&member, ORG).await.unwrap();
+    assert!(slugs(&installed.effective).contains(&RESEARCH));
+    installer
+        .uninstall_for_organization(&admin, ORG, RESEARCH)
+        .await
+        .unwrap();
+    let installed = installer.installed(&member, ORG).await.unwrap();
+    assert!(!slugs(&installed.effective).contains(&RESEARCH));
+
+    // A platform administrator makes it a base kit for everyone, and takes
+    // it back.
+    installer
+        .install_base(&platform, RESEARCH, None)
+        .await
+        .unwrap();
+    let installed = installer.installed(&member, ORG).await.unwrap();
+    let base = installed
+        .base
+        .iter()
+        .find(|k| k.kit_slug == RESEARCH)
+        .unwrap();
+    assert!(!base.by_default);
+    installer.uninstall_base(&platform, RESEARCH).await.unwrap();
+    let installed = installer.installed(&member, ORG).await.unwrap();
+    assert!(!slugs(&installed.effective).contains(&RESEARCH));
+    assert!(
+        store.docs.lock().unwrap()[&PLATFORM_TENANT]
+            .removed_builtin
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_gear_asks_whether_a_kit_applies_to_an_organization_or_its_project() {
+    use crate::kit_registry::port::{InstalledKits, KitPresence, RESEARCH_INTEGRATION_KIT};
+    let (installer, _) = installer();
+    let installer = Arc::new(installer);
+    let presence = InstalledKits::new(Arc::clone(&installer));
+    let member = caller(MEMBER, ORG);
+    // A base kit applies by default; the opt-in kit does not, yet.
+    assert!(
+        presence
+            .applies(&member, ORG, "org-infrastructure")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !presence
+            .applies(&member, ORG, RESEARCH_INTEGRATION_KIT)
+            .await
+            .unwrap()
+    );
+    installer
+        .install_for_organization(&caller(ORG_ADMIN, ORG), ORG, RESEARCH_INTEGRATION_KIT, None)
+        .await
+        .unwrap();
+    // The organization's answer is its projects' answer too.
+    for tenant in [ORG, PROJECT] {
+        assert!(
+            presence
+                .applies(&member, tenant, RESEARCH_INTEGRATION_KIT)
+                .await
+                .unwrap(),
+            "{tenant}"
+        );
+    }
+    assert!(!presence.applies(&member, ORG, "no-such-kit").await.unwrap());
+}

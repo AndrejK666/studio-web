@@ -6,7 +6,9 @@
 //! * **Base kits**, installed by a platform administrator for every
 //!   organization. One document on the platform's root tenant. The built-in
 //!   kits are base kits by default: a built-in kit with no record is installed,
-//!   and removing one records it in `removed_builtin` so it stays removed.
+//!   and removing one records it in `removed_builtin` so it stays removed. The
+//!   opt-in built-in kits ([`super::service::OPT_IN_BUILTIN`]) are not: they
+//!   are base kits only once a platform administrator installs one.
 //! * **Organization kits**, installed by an organization administrator (or a
 //!   platform administrator) for that organization only. One document on the
 //!   organization's tenant.
@@ -43,8 +45,8 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::service::{
-    KitDescriptor, SHELF_BUILTIN, SHELF_ORGANIZATION, normalize_slug, normalize_version,
-    now_rfc3339,
+    KitDescriptor, SHELF_BUILTIN, SHELF_ORGANIZATION, is_opt_in_builtin, normalize_slug,
+    normalize_version, now_rfc3339,
 };
 
 /// The installed kits of one tenant: the base kits on the platform root, an
@@ -643,8 +645,14 @@ fn applies(record: &InstalledRecord, catalogue: &[KitDescriptor]) -> bool {
     record.shelf != SHELF_BUILTIN || catalogue.iter().any(|k| k.slug == record.kit_slug)
 }
 
+/// Is `kit` a base kit when the root has no record of it: built in, and not
+/// one of the kits an organization asks for ([`super::service::OPT_IN_BUILTIN`]).
+fn base_by_default(kit: &KitDescriptor) -> bool {
+    kit.shelf == SHELF_BUILTIN && !is_opt_in_builtin(&kit.slug)
+}
+
 /// The base kits: what the root records, and every built-in kit nobody
-/// removed. Sorted by slug.
+/// removed, except the opt-in ones. Sorted by slug.
 pub fn base_kits(root: &InstalledDocument, catalogue: &[KitDescriptor]) -> Vec<InstalledKit> {
     let mut kits: Vec<InstalledKit> = root
         .kits
@@ -652,7 +660,7 @@ pub fn base_kits(root: &InstalledDocument, catalogue: &[KitDescriptor]) -> Vec<I
         .filter(|record| applies(record, catalogue))
         .map(|record| view(record, KIND_BASE, catalogue))
         .collect();
-    for kit in catalogue.iter().filter(|k| k.shelf == SHELF_BUILTIN) {
+    for kit in catalogue.iter().filter(|k| base_by_default(k)) {
         if root.removed_builtin.contains(&kit.slug) || kits.iter().any(|k| k.kit_slug == kit.slug) {
             continue;
         }
@@ -803,9 +811,11 @@ pub fn uninstall_base(
     slug: &str,
     catalogue: &[KitDescriptor],
 ) -> Result<(), Refusal> {
+    // An opt-in built-in kit is a base kit only by its record: removing the
+    // record is all there is, and nothing has to stay removed.
     let builtin = catalogue
         .iter()
-        .any(|k| k.slug == slug && k.shelf == SHELF_BUILTIN);
+        .any(|k| k.slug == slug && base_by_default(k));
     let before = doc.kits.len();
     doc.kits.retain(|k| k.kit_slug != slug);
     let had_record = doc.kits.len() != before;

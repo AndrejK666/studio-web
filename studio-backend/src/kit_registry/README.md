@@ -34,8 +34,12 @@ This README is what you need to work in the directory.
   `project-lifecycle`, `project-issues`, `project-tests`, `project-artifacts`,
   `project-activity`, `project-specs`, `org-costs`, `org-reports`,
   `studio-api-docs` (level `platform`), `components` (platform, organization
-  and project), `org-infrastructure`, `product-releases` and
-  `project-domain-model`. A feature ported into the portal is added here,
+  and project), `org-infrastructure`, `product-releases`,
+  `project-domain-model`, `org-connections`, `project-team` and
+  `research-integration`. Every built-in kit is a base kit by default except
+  those in `OPT_IN_BUILTIN` (`service.rs`): `research-integration` applies only
+  where an organization installs it (or a platform administrator makes it a
+  base kit). A feature ported into the portal is added here,
   with its contents in `contents.rs`: its screens (a route only once the
   portal has one) and, in `permissions`, the routes its screens call — a
   test holds every one to `docs/api-contract.json`.
@@ -123,6 +127,14 @@ This README is what you need to work in the directory.
   organization's stored model, not layered; a kit that brings a model is not
   installed for one project (`MODEL_KIT_NOT_FOR_PROJECT`). Without the domain
   model in the assembly, kits install and the model is left alone.
+- Whether a kit applies, for another gear (`port.rs` `KitPresence`,
+  registered in the ClientHub): the effective kits of the organization a
+  tenant belongs to (base and organization kits), as `GET /installed-kits`
+  answers. studio-environments asks it for `research-integration` before a
+  Research environment is added or changed, its Research projects or hardware
+  are listed, or a build, deploy or rollback to it starts (400
+  `failed_precondition`, `KIT_NOT_INSTALLED`); status, logs, uninstall and
+  removal stay. Design: `docs/design/studio-kits.md` §3.13.
 - `project-lifecycle` is the first built-in kit with a model: the type
   `project-lifecycle-phase`, `project.phase` / `phase_owner` / `phase_since`,
   the tab `project.phases` and the phase lifecycle. Its function is

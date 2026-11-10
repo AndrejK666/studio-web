@@ -564,6 +564,47 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             screens: vec![tab("organization", "Connections", Some("/connections"))],
             ..KitContents::default()
         },
+        // Building and running a product in Constructor Research (ADR-0049,
+        // docs/design/studio-kits.md §3.13). Not a base kit by default
+        // (`OPT_IN_BUILTIN`). Its screen is Organization › Research, an entry
+        // of `infrastructure-mfe`; a project's build, deploy and rollback to
+        // Research stay on its Releases tab (product-releases), and
+        // studio-environments refuses them with `KIT_NOT_INSTALLED` where
+        // this kit is not installed.
+        "research-integration" => KitContents {
+            screens: vec![tab("organization", "Research", Some("/research"))],
+            mcp_tools: vec![
+                KitNamed {
+                    name: "research_projects".to_owned(),
+                    description: Some(
+                        "The Research projects a sign-in may run products in".to_owned(),
+                    ),
+                },
+                KitNamed {
+                    name: "research_hardware".to_owned(),
+                    description: Some(
+                        "The hardware a Research project's services may run on".to_owned(),
+                    ),
+                },
+            ],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-environments/v1/environments",
+                    "POST /studio-environments/v1/environments/{environment_id}/test",
+                    "GET /studio-environments/v1/research/projects",
+                    "GET /studio-environments/v1/research/projects/{project}/hardware",
+                    "GET /studio-environments/v1/deployments",
+                    "GET /studio-environments/v1/deployments/{deployment_id}/status",
+                    "GET /studio-connector/v1/connections",
+                ]),
+                writes: owned(&[
+                    "POST /studio-environments/v1/environments",
+                    "PUT /studio-environments/v1/environments/{environment_id}",
+                ]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
         // The Team section of `projects-mfe`.
         "project-team" => KitContents {
             screens: vec![project_tab("Team", Some("/projects/team"))],

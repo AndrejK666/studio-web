@@ -6,6 +6,10 @@
 //!   created. The same desired-state write `POST
 //!   /studio-kits/v1/projects/{project_id}/installations` makes; materializing
 //!   stays `cfs`'s job.
+//! - [`KitPresence`]: whether a kit applies to an organization -- what a gear
+//!   asks before it does what only a kit brings (ADR-0070 §7, decision 5:
+//!   `KIT_NOT_INSTALLED`). studio-environments asks for the Research
+//!   Integration kit ([`RESEARCH_INTEGRATION_KIT`]).
 
 use std::sync::Arc;
 
@@ -13,7 +17,9 @@ use async_trait::async_trait;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::installed::KitInstaller;
 use super::service::KitRegistryService;
+pub use super::service::RESEARCH_INTEGRATION_KIT;
 
 #[async_trait]
 pub trait ProjectKitRequests: Send + Sync + 'static {
@@ -88,5 +94,52 @@ impl ProjectKitRequests for KitRequests {
             )
             .await
             .map(|_| ())
+    }
+}
+
+/// Whether a kit applies where a gear is asked to act.
+#[async_trait]
+pub trait KitPresence: Send + Sync + 'static {
+    /// Does `kit_slug` apply to the organization `tenant` belongs to (`tenant`
+    /// is the organization or one of its projects)? A base kit or one the
+    /// organization installed for itself; a project's own kits are not asked
+    /// (a kit whose `levels` are `organization` only has none). The caller has
+    /// already been shown to reach `tenant`; the installations are read as
+    /// this gear's service.
+    async fn applies(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        kit_slug: &str,
+    ) -> anyhow::Result<bool>;
+}
+
+/// studio-kits' [`KitPresence`]: the same answer `GET /installed-kits` gives.
+pub struct InstalledKits {
+    installer: Arc<KitInstaller>,
+}
+
+impl InstalledKits {
+    pub(crate) fn new(installer: Arc<KitInstaller>) -> Self {
+        Self { installer }
+    }
+}
+
+#[async_trait]
+impl KitPresence for InstalledKits {
+    async fn applies(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        kit_slug: &str,
+    ) -> anyhow::Result<bool> {
+        let installed = self
+            .installer
+            .installed(ctx, tenant)
+            .await
+            .map_err(|refusal| {
+                anyhow::anyhow!("the installed kits could not be read: {refusal:?}")
+            })?;
+        Ok(installed.effective.iter().any(|k| k.kit_slug == kit_slug))
     }
 }

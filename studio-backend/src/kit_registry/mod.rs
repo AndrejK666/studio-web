@@ -81,6 +81,12 @@ impl Gear for StudioKitsGear {
                 &service,
             )))
                 as Arc<dyn port::ProjectKitRequests>);
+        // Whether a kit applies to an organization, for the gears that act
+        // only where a kit is installed (studio-environments: Research).
+        ctx.client_hub()
+            .register::<dyn port::KitPresence>(Arc::new(port::InstalledKits::new(Arc::clone(
+                &installer,
+            ))) as Arc<dyn port::KitPresence>);
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;

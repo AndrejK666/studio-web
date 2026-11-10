@@ -146,6 +146,27 @@ fn the_builtin_screens_are_today_s_tabs() {
         levels("project-domain-model"),
         [at("project", "Project domain model", Some("/domain-model"))]
     );
+    // Research Integration: one organization tab, and the MCP tools that
+    // make a Research environment.
+    assert_eq!(
+        levels("research-integration"),
+        [at("organization", "Research", Some("/research"))]
+    );
+    let research = describe(
+        builtin_catalogue()
+            .into_iter()
+            .find(|kit| kit.slug == "research-integration")
+            .unwrap(),
+    );
+    let tools: Vec<&str> = research
+        .contents
+        .mcp_tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    assert_eq!(tools, ["research_projects", "research_hardware"]);
+    let mcp: Vec<&str> = crate::mcp::tools().iter().map(|t| t.name).collect();
+    assert!(tools.iter().all(|t| mcp.contains(t)), "{tools:?}");
 }
 
 #[test]
