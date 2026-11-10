@@ -384,6 +384,8 @@ describe('generated MFE manifest', () => {
         // The Tests kit's own screen (ADR-0069), between the shell's sections.
         'Tests',
         'Sources',
+        // The Releases kit's screen (order 36, ADR-0056 §4): right after Sources (35).
+        'Releases',
         'Activity',
         'Timeline',
         'Team',
