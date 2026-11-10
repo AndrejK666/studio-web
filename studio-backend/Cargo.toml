@@ -90,6 +90,9 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The portal's fact keys split a subject on what is not a Unicode letter or number (documents
+# spec_model::fact_key). Already in the lockfile as a transitive dependency.
+regex = "1"
 # RFC-6902 patches: how a model edit records what it did and how to undo it
 # (studio-domain-model). Already in the lockfile as a transitive dependency.
 json-patch = "4"

@@ -23,6 +23,7 @@ mod delivery;
 mod entity;
 pub(crate) mod gts;
 pub(crate) mod intake;
+mod mcp;
 mod migrations;
 pub(crate) mod model;
 mod model_table;
@@ -62,6 +63,8 @@ use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
 use repo::DocumentsRepo;
 use service::{DocumentsService, SyncAnalysis};
+
+pub(crate) use mcp::tools as mcp_tools;
 
 /// `gears.studio-documents.config`.
 #[derive(Debug, Clone, serde::Deserialize)]

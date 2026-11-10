@@ -1513,6 +1513,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/spec-model/issues",
+      "operation_id": "studio_documents.list_spec_model_issues",
+      "tag": "StudioDocuments",
+      "summary": "What a project has to decide before it builds from its documents",
+      "authenticated": true,
+      "responses": [
+        "SpecModelIssueRowListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/spec-model/questions",
       "operation_id": "studio_documents.list_domain_questions",
       "tag": "StudioDocuments",
@@ -1520,6 +1537,23 @@
       "authenticated": true,
       "responses": [
         "DomainQuestionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/spec-model/readiness",
+      "operation_id": "studio_documents.get_spec_model_readiness",
+      "tag": "StudioDocuments",
+      "summary": "Whether anything stops a build from a project's documents",
+      "authenticated": true,
+      "responses": [
+        "SpecModelReadinessDto"
       ],
       "errors": [
         "400",

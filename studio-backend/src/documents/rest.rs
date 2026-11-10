@@ -2954,6 +2954,11 @@ pub struct SpecModelDocumentDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct SpecModelFactDto {
+    /// The key a member's accept or reject on this fact is stored under
+    /// (`POST /spec-model/reviews`): 16 hex digits, the same for the same
+    /// words wherever the passage moves. A hypothesis's evidence is stored
+    /// under `ev:` and this key.
+    pub fact_key: String,
     /// `entity`, `attribute`, `relation`, `requirement`, `constraint`,
     /// `lifecycle` or `decision`.
     pub kind: String,
@@ -3060,6 +3065,7 @@ async fn get_spec_model(
         facts: facts
             .into_iter()
             .map(|f| SpecModelFactDto {
+                fact_key: super::spec_model::fact_key::fact_key(&f),
                 kind: f.kind,
                 subject: f.subject,
                 aspect: f.aspect,
@@ -3736,6 +3742,271 @@ async fn list_spec_requirements(
         items,
         by_basis,
         synced,
+    }))
+}
+
+/// One thing a project has to decide before it builds from its documents:
+/// a row of the portal's Issues tab.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelIssueRowDto {
+    /// `f:<fingerprint>` for a finding, `q:`, `a:` or `n:` and the
+    /// requirement's id for an open question, an assumption or a buildable
+    /// requirement with no basis. An issue opened for the row is recorded
+    /// under `iss:<key>` (`POST /spec-model/reviews`, state `opened`).
+    pub key: String,
+    /// `finding`, `question`, `assumption` or `nobasis`.
+    pub kind: String,
+    /// What the portal calls it: `Problem`, `Possible conflict`, `Open
+    /// question`, `Assumption` or `No basis`.
+    pub label: String,
+    /// `blocks` (stops a build), `look` (worth a look, stops nothing) or
+    /// `decided`.
+    pub group: String,
+    /// `bad` or `warn`.
+    pub tone: String,
+    /// A contradiction the model proposed from facts nobody confirmed: a
+    /// concern until a member says it is a real problem.
+    pub concern: bool,
+    pub title: String,
+    /// What is wrong and what to do about it.
+    pub hint: String,
+    /// The passages it rests on; the first is where it is.
+    pub sides: Vec<SpecModelSideDto>,
+    /// For a finding: its fingerprint (what `confirm` and `dismiss` take).
+    pub fingerprint: Option<String>,
+    /// For a finding: its rule.
+    pub rule: Option<String>,
+    /// For a finding: `confirmed` or `dismissed`.
+    pub decision: Option<String>,
+    /// For a finding whose fix the documents show: the edit `propose_fix`
+    /// opens as a pull request.
+    pub edit: Option<SpecModelEditDto>,
+    /// For a finding with no edit: the choices a person has to make.
+    pub decide: Vec<String>,
+    /// For a requirement: its identifier (what `trace` follows).
+    pub requirement_id: Option<String>,
+    /// The issue opened for it, when one was.
+    pub issue_url: Option<String>,
+    /// What can be done about it: `propose_fix`
+    /// (`POST /spec-model/findings/{fingerprint}/proposals`), `confirm` and
+    /// `dismiss` (`POST /spec-model/findings/{fingerprint}/decision`), `trace`
+    /// (`GET /spec-model/trace`) and `create_issue`
+    /// (`POST /spec-model/issues`, then record `iss:<key>`).
+    pub actions: Vec<String>,
+    /// Decided already; decided rows come last.
+    pub done: bool,
+}
+
+/// A project's queue of things to decide, most blocking first.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelIssueRowListDto {
+    pub items: Vec<SpecModelIssueRowDto>,
+    pub total: u32,
+    /// Rows in each group (`blocks`, `look`, `decided`), before `group`
+    /// filters and paging.
+    pub by_group: std::collections::BTreeMap<String, u32>,
+}
+
+/// Whether a project's documents are ready to build from.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelReadinessDto {
+    /// Requirements the documents define.
+    pub total: u32,
+    /// Of them, those that cite a source.
+    pub cited: u32,
+    /// Those that give a reason and cite nothing.
+    pub reasoned: u32,
+    /// Rows of the queue that wait for somebody.
+    pub open: u32,
+    /// Of them, those that stop a build.
+    pub blocking: u32,
+    /// Nothing stops a build.
+    pub ready: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SpecModelIssuesQuery {
+    pub project_id: String,
+    /// `blocks`, `look` or `decided`: only that group.
+    #[serde(default)]
+    pub group: Option<String>,
+    #[serde(flatten)]
+    pub page: PageQuery,
+}
+
+/// The project's queue, its requirements' count by basis and their total,
+/// and the issue opened for each row key.
+async fn spec_model_queue(
+    ctx: &SecurityContext,
+    service: &Arc<DocumentsService>,
+    quality: &Quality,
+    project_id: Uuid,
+) -> ApiResult<(
+    Vec<super::spec_model::resolve::Item>,
+    std::collections::BTreeMap<String, usize>,
+    usize,
+    std::collections::BTreeMap<String, String>,
+)> {
+    use super::spec_model::resolve;
+    let workspace_id = parent_workspace(service, ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let sources = service
+        .spec_model_sources(ctx, workspace_id, project_id, reader.as_ref())
+        .await
+        .map_err(internal)?;
+    let ((findings, decisions), reviews) = tokio::try_join!(
+        spec_model_findings(ctx, service, workspace_id, project_id, &sources),
+        service.spec_reviews(ctx, workspace_id, project_id),
+    )
+    .map_err(internal)?;
+    let requirements = sources.requirements();
+    let mut by_basis = std::collections::BTreeMap::new();
+    for r in &requirements {
+        *by_basis.entry(r.basis.as_str().to_string()).or_default() += 1;
+    }
+    let decided = findings
+        .into_iter()
+        .map(|f| resolve::Decided {
+            decision: decisions.get(&f.fingerprint).cloned(),
+            finding: f,
+        })
+        .collect();
+    let queue = resolve::queue(decided, &requirements);
+    let issues = reviews
+        .into_iter()
+        .filter(|r| r.state == "opened")
+        .filter_map(|r| {
+            let key = r.fact_key.strip_prefix("iss:")?.to_string();
+            Some((key, r.note.unwrap_or_default()))
+        })
+        .collect();
+    Ok((queue, by_basis, requirements.len(), issues))
+}
+
+fn spec_model_side_dto(s: super::spec_model::finding::Side) -> SpecModelSideDto {
+    SpecModelSideDto {
+        path: s.path,
+        line_start: s.line_start.and_then(|n| u32::try_from(n).ok()),
+        line_end: s.line_end.and_then(|n| u32::try_from(n).ok()),
+        quote: s.quote,
+        binding_id: None,
+    }
+}
+
+fn spec_model_issue_row(
+    item: super::spec_model::resolve::Item,
+    issue_url: Option<String>,
+) -> SpecModelIssueRowDto {
+    let actions = item
+        .actions(issue_url.is_some())
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    let label = item.label().to_string();
+    let group = item.group().to_string();
+    let (fingerprint, rule, decision, edit, decide) = match item.finding {
+        Some(d) => (
+            Some(d.finding.fingerprint),
+            Some(d.finding.rule),
+            d.decision,
+            d.finding.edit.map(|e| SpecModelEditDto {
+                path: e.path,
+                replace: e.replace,
+                with: e.with,
+            }),
+            d.finding.decide,
+        ),
+        None => (None, None, None, None, Vec::new()),
+    };
+    SpecModelIssueRowDto {
+        key: item.key,
+        kind: item.r#type.as_str().to_string(),
+        label,
+        group,
+        tone: item.tone.to_string(),
+        concern: item.concern,
+        title: item.title,
+        hint: item.hint,
+        sides: item.sides.into_iter().map(spec_model_side_dto).collect(),
+        fingerprint,
+        rule,
+        decision,
+        edit,
+        decide,
+        requirement_id: item.requirement.map(|r| r.id),
+        issue_url,
+        actions,
+        done: item.done,
+    }
+}
+
+/// What a project has to decide before it builds from its documents.
+async fn list_spec_model_issues(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecModelIssuesQuery>,
+) -> ApiResult<JsonBody<SpecModelIssueRowListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let group = query
+        .group
+        .as_deref()
+        .map(str::trim)
+        .filter(|g| !g.is_empty());
+    if let Some(g) = group
+        && !matches!(g, "blocks" | "look" | "decided")
+    {
+        return Err(DocumentsError::invalid_argument()
+            .with_field_violation(
+                "group",
+                "must be blocks, look or decided".to_owned(),
+                "INVALID",
+            )
+            .create());
+    }
+    let (queue, _, _, mut issues) = spec_model_queue(&ctx, &service, &quality, project_id).await?;
+    let mut by_group: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    for i in &queue {
+        *by_group.entry(i.group().to_string()).or_default() += 1;
+    }
+    let rows: Vec<SpecModelIssueRowDto> = queue
+        .into_iter()
+        .filter(|i| group.is_none_or(|g| i.group() == g))
+        .map(|i| {
+            let url = issues.remove(&i.key);
+            spec_model_issue_row(i, url)
+        })
+        .collect();
+    let (items, total) = page_of(rows, query.page);
+    Ok(Json(SpecModelIssueRowListDto {
+        items,
+        total,
+        by_group,
+    }))
+}
+
+/// Whether anything stops a build from a project's documents.
+async fn get_spec_model_readiness(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecModelReadinessDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let (queue, by_basis, total, _) =
+        spec_model_queue(&ctx, &service, &quality, project_id).await?;
+    let r = super::spec_model::resolve::readiness(&queue, &by_basis, total);
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    Ok(Json(SpecModelReadinessDto {
+        total: count(r.total),
+        cited: count(r.cited),
+        reasoned: count(r.reasoned),
+        open: count(r.open),
+        blocking: count(r.blocking),
+        ready: r.ready,
     }))
 }
 
@@ -9313,6 +9584,75 @@ pub fn register_routes(
         .error_503(openapi)
         .register(router, openapi);
 
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/issues")
+        .operation_id("studio_documents.list_spec_model_issues")
+        .summary("What a project has to decide before it builds from its documents")
+        .description(
+            "The Issues tab's queue, most blocking first: the documents' problems (the findings \
+             of `GET /spec-model/findings`, undecided first, high severity first), then \
+             requirements left as open questions, requirements resting on an assumption, and \
+             buildable requirements (`fr`, `nfr`, `feature`, `usecase`, `constraint`) that \
+             state no basis; decided findings last. Each row says its `group` — `blocks` (a \
+             problem a rule established, a concern a member confirmed, an unanswered question), \
+             `look` (an assumption, a missing basis, an unconfirmed concern) or `decided` — the \
+             issue opened for it, and the `actions` it offers, each naming the operation that \
+             does it. `by_group` counts every row before `group` and paging. Computed on every \
+             call from the documents as last synced and the decisions recorded; nothing is \
+             stored. `POST /spec-model/issues` opens a host issue for a row.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose documents to read")
+        .query_param(
+            "group",
+            false,
+            "`blocks`, `look` or `decided`: only that group",
+        )
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first row",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .handler(list_spec_model_issues)
+        .json_response_with_schema::<SpecModelIssueRowListDto>(openapi, StatusCode::OK, "The rows")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-model/readiness")
+        .operation_id("studio_documents.get_spec_model_readiness")
+        .summary("Whether anything stops a build from a project's documents")
+        .description(
+            "From the same queue as `GET /spec-model/issues`: `blocking` counts the rows that \
+             stop a build and `ready` is true when there are none; `open` counts every row \
+             still waiting for somebody. `total`, `cited` and `reasoned` count the requirements \
+             the documents define and those that cite a source or give a reason. An assumption \
+             waiting for its check, a requirement that names no source and a concern nobody \
+             looked at do not stop a build.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose documents to read")
+        .handler(get_spec_model_readiness)
+        .json_response_with_schema::<SpecModelReadinessDto>(
+            openapi,
+            StatusCode::OK,
+            "Where it stands",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
     router = OperationBuilder::get("/studio-documents/v1/spec-model/work")
         .operation_id("studio_documents.list_spec_model_work")
         .summary("Which issues, pull requests and commits name what the documents define")
@@ -10336,6 +10676,56 @@ mod tests {
         assert!(!review_state_fits("0123456789abcdef", "scored"));
         assert_eq!(review_note_max("hyp:0123456789abcdef"), 8000);
         assert_eq!(review_note_max("pri:cpt-a"), 2000);
+    }
+
+    #[test]
+    fn a_fact_key_the_server_returns_is_one_the_reviews_take() {
+        let key = super::super::spec_model::fact_key::key_of(
+            "attribute",
+            "Invoice",
+            "number",
+            "An invoice has a **number**.",
+            "",
+        );
+        assert_eq!(key, "28d393bc09e65fe9");
+        assert!(review_state_fits(&key, "accepted"));
+        assert!(review_state_fits(&key, "rejected"));
+        assert!(review_state_fits(&format!("ev:{key}"), "supports"));
+    }
+
+    #[test]
+    fn an_issue_row_carries_its_finding_its_actions_and_the_issue_opened() {
+        use super::super::spec_model::{finding, resolve};
+        let f = finding::Finding {
+            fingerprint: "fp".into(),
+            rule: "reference.dangling".into(),
+            severity: "high".into(),
+            message: "ADR-0040 is cited, but the project has no ADR numbered 40.".into(),
+            sides: vec![finding::Side::at("docs/a.md", 4, "See ADR-0040.")],
+            decide: Vec::new(),
+            edit: None,
+            target: None,
+        };
+        let item = resolve::queue(
+            vec![resolve::Decided {
+                finding: f,
+                decision: None,
+            }],
+            &[],
+        )
+        .remove(0);
+        let row = spec_model_issue_row(item, Some("https://github.com/o/r/issues/7".into()));
+        assert_eq!(row.key, "f:fp");
+        assert_eq!(row.kind, "finding");
+        assert_eq!(row.label, "Problem");
+        assert_eq!(row.group, "blocks");
+        assert_eq!(row.fingerprint.as_deref(), Some("fp"));
+        assert_eq!(row.sides[0].line_start, Some(4));
+        assert_eq!(row.actions, ["confirm", "dismiss"]);
+        assert_eq!(
+            row.title,
+            "ADR-0040 is cited, but there is no ADR numbered 40"
+        );
     }
 
     #[test]

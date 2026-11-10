@@ -2216,6 +2216,7 @@ response	GET /studio-documents/v1/spec-model	documents.revision	String	always
 response	GET /studio-documents/v1/spec-model	documents.state	String	always
 response	GET /studio-documents/v1/spec-model	facts	Vec<{}>	always
 response	GET /studio-documents/v1/spec-model	facts.aspect	String	always
+response	GET /studio-documents/v1/spec-model	facts.fact_key	String	always
 response	GET /studio-documents/v1/spec-model	facts.kind	String	always
 response	GET /studio-documents/v1/spec-model	facts.layer	String	optional
 response	GET /studio-documents/v1/spec-model	facts.source	{}	always
@@ -2318,6 +2319,35 @@ response	GET /studio-documents/v1/spec-model/glossary/document	found.rows.source
 response	GET /studio-documents/v1/spec-model/glossary/document	found.rows.term	String	optional
 response	GET /studio-documents/v1/spec-model/glossary/document	found.whole	bool	optional
 response	GET /studio-documents/v1/spec-model/glossary/document	path	String	always
+response	GET /studio-documents/v1/spec-model/issues	by_group	BTreeMap<String,u32>	always
+response	GET /studio-documents/v1/spec-model/issues	items	Vec<{}>	always
+response	GET /studio-documents/v1/spec-model/issues	items.actions	Vec<String>	always
+response	GET /studio-documents/v1/spec-model/issues	items.concern	bool	always
+response	GET /studio-documents/v1/spec-model/issues	items.decide	Vec<String>	always
+response	GET /studio-documents/v1/spec-model/issues	items.decision	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.done	bool	always
+response	GET /studio-documents/v1/spec-model/issues	items.edit	{}	optional
+response	GET /studio-documents/v1/spec-model/issues	items.edit.path	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.edit.replace	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.edit.with	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.fingerprint	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.group	String	always
+response	GET /studio-documents/v1/spec-model/issues	items.hint	String	always
+response	GET /studio-documents/v1/spec-model/issues	items.issue_url	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.key	String	always
+response	GET /studio-documents/v1/spec-model/issues	items.kind	String	always
+response	GET /studio-documents/v1/spec-model/issues	items.label	String	always
+response	GET /studio-documents/v1/spec-model/issues	items.requirement_id	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.rule	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.sides	Vec<{}>	always
+response	GET /studio-documents/v1/spec-model/issues	items.sides.binding_id	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.sides.line_end	u32	optional
+response	GET /studio-documents/v1/spec-model/issues	items.sides.line_start	u32	optional
+response	GET /studio-documents/v1/spec-model/issues	items.sides.path	String	always
+response	GET /studio-documents/v1/spec-model/issues	items.sides.quote	String	optional
+response	GET /studio-documents/v1/spec-model/issues	items.title	String	always
+response	GET /studio-documents/v1/spec-model/issues	items.tone	String	always
+response	GET /studio-documents/v1/spec-model/issues	total	u32	always
 response	GET /studio-documents/v1/spec-model/questions	built	bool	always
 response	GET /studio-documents/v1/spec-model/questions	items	Vec<{}>	always
 response	GET /studio-documents/v1/spec-model/questions	items.because_of	Vec<String>	always
@@ -2331,6 +2361,12 @@ response	GET /studio-documents/v1/spec-model/questions	items.example.path	String
 response	GET /studio-documents/v1/spec-model/questions	items.example.quote	String	optional
 response	GET /studio-documents/v1/spec-model/questions	items.facts	u32	always
 response	GET /studio-documents/v1/spec-model/questions	total	u32	always
+response	GET /studio-documents/v1/spec-model/readiness	blocking	u32	always
+response	GET /studio-documents/v1/spec-model/readiness	cited	u32	always
+response	GET /studio-documents/v1/spec-model/readiness	open	u32	always
+response	GET /studio-documents/v1/spec-model/readiness	ready	bool	always
+response	GET /studio-documents/v1/spec-model/readiness	reasoned	u32	always
+response	GET /studio-documents/v1/spec-model/readiness	total	u32	always
 response	GET /studio-documents/v1/spec-model/related	items	Vec<{}>	always
 response	GET /studio-documents/v1/spec-model/related	items.defined_in	{}	always
 response	GET /studio-documents/v1/spec-model/related	items.defined_in.binding_id	String	optional
@@ -6726,7 +6762,9 @@ route	GET /studio-documents/v1/spec-model/experts
 route	GET /studio-documents/v1/spec-model/findings
 route	GET /studio-documents/v1/spec-model/glossary
 route	GET /studio-documents/v1/spec-model/glossary/document
+route	GET /studio-documents/v1/spec-model/issues
 route	GET /studio-documents/v1/spec-model/questions
+route	GET /studio-documents/v1/spec-model/readiness
 route	GET /studio-documents/v1/spec-model/related
 route	GET /studio-documents/v1/spec-model/requirements
 route	GET /studio-documents/v1/spec-model/reviews
