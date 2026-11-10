@@ -382,6 +382,9 @@ describe('generated MFE manifest', () => {
         'Overview',
         'Artifacts',
         'Specs',
+        // The Domain model kit's screen (domain-model-mfe, order 31): right
+        // after Specs, as in the prototype — it is made of the specs.
+        'Domain model',
         // The Tests kit's own screen (ADR-0069), between the shell's sections.
         'Tests',
         // The Product kit's two (product-mfe): Product (product-releases) and
