@@ -35,3 +35,23 @@ export function badgeVariant(tone: string): BadgeVariant {
   if (tone === 'info') return 'info';
   return 'secondary';
 }
+
+/** One source of the open items, for the Inbox screen's filter chips. */
+export interface InboxSourceCount {
+  /** `InboxItem.source`: `review-requests`, `pull-requests` or `kit:<slug>/<id>`. */
+  source: string;
+  /** The kit it comes from, for its name; absent for the shell's own sources. */
+  kit: InboxItem['kit'] | null;
+  count: number;
+}
+
+/** The sources of `items` in the order they first appear (the server's), each with its count. */
+export function inboxSources(items: readonly InboxItem[]): InboxSourceCount[] {
+  const out = new Map<string, InboxSourceCount>();
+  for (const item of items) {
+    const seen = out.get(item.source);
+    if (seen) seen.count += 1;
+    else out.set(item.source, { source: item.source, kit: item.kit ?? null, count: 1 });
+  }
+  return [...out.values()];
+}

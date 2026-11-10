@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE } from '@constructor-studio/mfe-shared';
 import type { Inbox, InboxItem } from '../../inbox/types';
 
-const { inbox, mark, requestWorkspace, service } = vi.hoisted(() => {
+const { inbox, mark, requestWorkspace, service, shared } = vi.hoisted(() => {
   const inbox = vi.fn();
   const mark = vi.fn();
   // One instance, as the registry gives: a new one per render would read again on every render.
@@ -10,14 +11,14 @@ const { inbox, mark, requestWorkspace, service } = vi.hoisted(() => {
     inbox: (q: unknown) => ({ fetch: () => inbox(q) }),
     mark: { fetch: (body: unknown) => mark(body) },
   };
-  return { inbox, mark, requestWorkspace: vi.fn(), service };
+  return { inbox, mark, requestWorkspace: vi.fn(), service, shared: { value: {} as Record<string, unknown> } };
 });
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
   useMfeBridge: () => null,
-  useSharedProperty: () => null,
+  useSharedProperty: (id: string) => shared.value[id] ?? null,
 }));
 vi.mock('../../actions/workspaceActions', () => ({ requestWorkspace }));
 
@@ -89,6 +90,63 @@ describe('InboxGroup', () => {
     mark.mockReset();
     requestWorkspace.mockReset();
     mark.mockResolvedValue({});
+    shared.value = {};
+  });
+
+  it("offers no way into a kit's tab where that kit is not installed, and keeps Done and Snooze", async () => {
+    shared.value = {
+      [STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE]: { routes: ['/organization/overview'], kits: ['project-issues'] },
+    };
+    inbox.mockResolvedValue(page([phaseWaiting]));
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
+    expect(await screen.findByText('Atlas waits in its discovery phase')).toBeTruthy();
+    expect(document.querySelector('[data-inbox-kit="project-lifecycle"]')?.getAttribute('data-kit-absent')).toBe('true');
+    expect(screen.queryByRole('button', { name: 'inbox_open_project' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'inbox_done' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'inbox_snooze' })).toBeTruthy();
+  });
+
+  it("opens a kit's item where its kit is installed", async () => {
+    shared.value = {
+      [STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE]: { routes: [], kits: ['project-lifecycle'] },
+    };
+    inbox.mockResolvedValue(page([phaseWaiting]));
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'inbox_open_project' }));
+    expect(requestWorkspace).toHaveBeenCalledWith(null, { id: 'w1', name: 'Main' }, 'o1');
+  });
+
+  it('offers no workspace to open for an item that names none', async () => {
+    inbox.mockResolvedValue(page([{ ...phaseWaiting, workspace_id: '', workspace_name: '' }]));
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
+    await screen.findByText('Atlas waits in its discovery phase');
+    expect(screen.queryByRole('button', { name: 'inbox_open_project' })).toBeNull();
+  });
+
+  it('shows only the source asked for and tells the screen which sources there are', async () => {
+    inbox.mockResolvedValue(page([review, pull, phaseWaiting]));
+    const onSources = vi.fn();
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} only="pull-requests" onSources={onSources} />);
+    expect(await screen.findByText('Fix login')).toBeTruthy();
+    expect(screen.queryByText('Billing spec')).toBeNull();
+    expect(screen.queryByText('Atlas waits in its discovery phase')).toBeNull();
+    expect(onSources).toHaveBeenLastCalledWith([
+      { source: 'review-requests', kit: null, count: 1 },
+      { source: 'pull-requests', kit: null, count: 1 },
+      { source: 'kit:project-lifecycle/phase-waiting', kit: phaseWaiting.kit, count: 1 },
+    ]);
+  });
+
+  it('reads again when the screen asks, and links to the whole Inbox from the Overview', async () => {
+    inbox.mockResolvedValue(page([review]));
+    const onOpenInbox = vi.fn();
+    const view = render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} onOpenInbox={onOpenInbox} />);
+    await screen.findByText('Billing spec');
+    expect(inbox).toHaveBeenCalledTimes(1);
+    view.rerender(<InboxGroup organizationId="o1" workspaces={1} t={t as never} onOpenInbox={onOpenInbox} reloadKey={1} />);
+    await waitFor(() => expect(inbox).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole('button', { name: 'inbox_open_all' }));
+    expect(onOpenInbox).toHaveBeenCalled();
   });
 
   it("shows a kit's item with its title and the kit's name, and marks it like any other", async () => {

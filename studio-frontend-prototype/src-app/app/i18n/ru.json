@@ -103,5 +103,7 @@
   "editor_desktop_you": "{device} (вы)",
   "editor_desktop_missing": "Ничего не открылось? Установите настольное приложение —",
   "editor_desktop_get": "скачайте Constructor Studio и попробуйте снова",
-  "editor_desktop_opened": "Открыто на {device}, где открыт проект."
+  "editor_desktop_opened": "Открыто на {device}, где открыт проект.",
+  "inbox": "Входящие",
+  "inbox_waiting": "Входящие: ждут вас — {count}"
 }

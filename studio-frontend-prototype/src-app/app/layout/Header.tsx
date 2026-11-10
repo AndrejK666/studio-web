@@ -18,6 +18,8 @@ import { UserMenu } from './UserMenu';
 import { ProductMenu } from './ProductMenu';
 import { PinsMenu } from './PinsMenu';
 import { WorkInbox } from './WorkInbox';
+import { useInboxEntry } from './useInboxEntry';
+import { useShellText } from '@/app/i18n/shellTranslations';
 
 export interface HeaderProps {
   children?: React.ReactNode;
@@ -27,14 +29,18 @@ const IconPill: React.FC<{
   icon: string;
   label: string;
   unread?: boolean;
+  /** A number on the pill: how many wait. */
+  count?: number | null;
+  /** The tooltip, when it says more than the label. */
+  title?: string;
   disabled?: boolean;
   onClick?: () => void;
-}> = ({ icon, label, unread = false, disabled = false, onClick }) => (
+}> = ({ icon, label, unread = false, count = null, title, disabled = false, onClick }) => (
   <span className="relative inline-flex">
     <Button
       variant="ghost"
       aria-label={label}
-      title={label}
+      title={title ?? label}
       aria-disabled={disabled || undefined}
       onClick={disabled ? undefined : onClick}
       icon={<Icon icon={icon} />}
@@ -45,6 +51,14 @@ const IconPill: React.FC<{
           : 'hover:[--button-fg:var(--foreground)]'
       )}
     />
+    {!!count && count > 0 && (
+      <span
+        data-inbox-count
+        className="pointer-events-none absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center text-[0.625rem] font-semibold leading-4 text-primary-foreground"
+      >
+        {count}
+      </span>
+    )}
     {unread && (
       <span className="pointer-events-none absolute right-0.5 top-px grid size-2 place-items-center">
         <span className="size-1.5 rounded-full bg-primary ring-1 ring-muted/50" />
@@ -58,8 +72,10 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
 
   const overlayExtensions = useDomainExtensions(overlayDomain.id) as OverlayExtension[];
   const searchExtension = overlayExtensions.find((ext) => ext.presentation?.route === '/search');
-  // TODO: inbox is planned as a full-screen screen-domain MFE, not an overlay
-  const inboxExtension = overlayExtensions.find((ext) => ext.presentation?.route === '/inbox');
+  // The Inbox is a screen (organization-mfe, `/inbox`), opened from here with
+  // how many items wait on the person (the prototype's InboxButton).
+  const inbox = useInboxEntry();
+  const t = useShellText();
 
   const [mounting, setMounting] = useState(false);
 
@@ -108,13 +124,14 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
             searchExtension ? () => void openOverlayExtension(searchExtension.id) : undefined
           }
         />
-          {/*TODO: drive `unread` from the inbox MFE's own state once it exists —
-            a hardcoded dot would claim messages nobody has. */}
+        {/* The count is the server's (GET /me/inbox): nothing shows while it is unknown. */}
         <IconPill
-          icon={inboxExtension?.presentation?.icon ?? 'material-symbols:inbox'}
-          label={inboxExtension?.presentation?.label ?? 'Inbox'}
-          disabled={!inboxExtension}
-          onClick={inboxExtension ? () => void openOverlayExtension(inboxExtension.id) : undefined}
+          icon={inbox.screen?.presentation?.icon ?? 'material-symbols:inbox'}
+          label={t('inbox')}
+          title={inbox.count ? t('inbox_waiting', { count: inbox.count }) : t('inbox')}
+          count={inbox.count}
+          disabled={!inbox.screen}
+          onClick={inbox.screen ? inbox.open : undefined}
         />
         {/* What the person keeps within one click (the prototype's rail pins). */}
         <PinsMenu />

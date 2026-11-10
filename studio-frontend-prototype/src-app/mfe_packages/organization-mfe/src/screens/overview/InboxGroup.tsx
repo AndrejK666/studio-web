@@ -12,6 +12,13 @@
  * reads it again (studio-events, `review_request`). A source the server could
  * not read is named, never shown as nothing waiting.
  *
+ * The same list is the Inbox screen (`screens/inbox/InboxScreen.tsx`, opened
+ * from the top bar): there it is filtered by source (`only`) and read again on
+ * the screen's Refresh (`reloadKey`). An item a kit brings opens only where
+ * that kit is installed (`useScreenAvailability`): from an uninstalled kit it
+ * keeps its title, its kit's name and Done/Snooze, never a button to a tab
+ * that is not there.
+ *
  * Distinct from the header's bell (`src-app/app/layout/WorkInbox.tsx`): that
  * one lists background runs the person started that have finished; this one
  * lists what other people wait on them for.
@@ -20,7 +27,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiRegistry, useMfeBridge } from '@gears-frontx/react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
-import { errorMessage, responseStatus, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
+import {
+  errorMessage,
+  responseStatus,
+  useScreenAvailability,
+  useStudioEventRefresh,
+} from '@constructor-studio/mfe-shared';
 import { InboxApiService } from '../../api/InboxApiService';
 import { requestWorkspace } from '../../actions/workspaceActions';
 import {
@@ -32,7 +44,7 @@ import {
   myEmptyMessage,
   prRef,
 } from '../../inbox/pull-request-waits';
-import { badgeVariant, pullOf, reviewOf, snoozeUntil } from '../../inbox/model';
+import { badgeVariant, inboxSources, pullOf, reviewOf, snoozeUntil, type InboxSourceCount } from '../../inbox/model';
 import type { Inbox, InboxItem, InboxMarkState } from '../../inbox/types';
 import type { useOverviewTranslations } from '../../i18n';
 import styles from './OverviewScreen.module.css';
@@ -49,6 +61,12 @@ export function InboxGroup({
   workspaces,
   t,
   onCount,
+  only = null,
+  reloadKey = 0,
+  onSources,
+  onFailed,
+  heading = true,
+  onOpenInbox,
 }: {
   organizationId: string;
   /** How many workspaces the reader is in: what an empty Inbox says depends on it. */
@@ -56,9 +74,22 @@ export function InboxGroup({
   t: Text;
   /** How many items are open, once read (null until then). */
   onCount?: (n: number | null) => void;
+  /** Only the items of this source (`InboxItem.source`); all when absent. */
+  only?: string | null;
+  /** Changed by the screen to read again (its Refresh, its timer). */
+  reloadKey?: number;
+  /** The sources the open items come from, with their counts, once read. */
+  onSources?: (sources: InboxSourceCount[]) => void;
+  /** Whether the last read failed: the count is then not "nothing waits". */
+  onFailed?: (failed: boolean) => void;
+  /** Draw the "For you" heading (the Overview's group); the Inbox screen has its own. */
+  heading?: boolean;
+  /** Where the whole Inbox opens, offered beside the heading. */
+  onOpenInbox?: () => void;
 }) {
   const bridge = useMfeBridge();
   const api = apiRegistry.getService(InboxApiService);
+  const availability = useScreenAvailability();
   const [open, setOpen] = useState<Inbox | null>(null);
   const [failed, setFailed] = useState<{ status: number | undefined; message: string } | null>(null);
   const [hidden, setHidden] = useState<Inbox | null>(null);
@@ -73,8 +104,9 @@ export function InboxGroup({
     (next: Inbox) => {
       setOpen(next);
       onCount?.(next.total);
+      onSources?.(inboxSources(next.items));
     },
-    [onCount]
+    [onCount, onSources]
   );
 
   useEffect(() => {
@@ -85,17 +117,19 @@ export function InboxGroup({
       .then((page) => {
         if (!live) return;
         setFailed(null);
+        onFailed?.(false);
         shown(page);
       })
       .catch((e: unknown) => {
         if (!live) return;
         setFailed({ status: responseStatus(e), message: errorMessage(e) });
+        onFailed?.(true);
         onCount?.(0);
       });
     return () => {
       live = false;
     };
-  }, [api, tick, shown, onCount]);
+  }, [api, tick, reloadKey, shown, onCount, onFailed]);
 
   useEffect(() => {
     if (!showHidden) return;
@@ -108,7 +142,7 @@ export function InboxGroup({
     return () => {
       live = false;
     };
-  }, [api, showHidden, tick]);
+  }, [api, showHidden, tick, reloadKey]);
 
   /** The next page of open items, after the ones shown. */
   const readMore = async () => {
@@ -163,15 +197,24 @@ export function InboxGroup({
   };
 
   const hiddenCount = open?.other ?? 0;
-  const rows = open ? [...open.items, ...(showHidden ? (hidden?.items ?? []) : [])] : [];
+  const rows = (open ? [...open.items, ...(showHidden ? (hidden?.items ?? []) : [])] : []).filter(
+    (item) => !only || item.source === only
+  );
   const unread = [...(open?.unread ?? []), ...(showHidden ? (hidden?.unread ?? []) : [])];
 
   return (
     <div data-attention-group="you" className={styles.youGroup}>
-      <h3 className={styles.group}>
-        {t('for_you')}
-        {open && open.total > 0 && <span className={styles.count}>{open.total}</span>}
-      </h3>
+      {heading && (
+        <h3 className={styles.group}>
+          {t('for_you')}
+          {open && open.total > 0 && <span className={styles.count}>{open.total}</span>}
+          {onOpenInbox && (
+            <button type="button" className={styles.linklike} data-open-inbox onClick={onOpenInbox}>
+              {t('inbox_open_all')}
+            </button>
+          )}
+        </h3>
+      )}
       {failed ? (
         <p role="alert" className={styles.error} data-inbox-error={failed.status ?? 'network'}>
           {failed.status === 503
@@ -202,6 +245,7 @@ export function InboxGroup({
                 key={item.key}
                 item={item}
                 isHidden={isHidden}
+                kitHere={!item.kit || availability.kit(item.kit.slug)}
                 t={t}
                 onOpenWorkspace={() =>
                   requestWorkspace(bridge, { id: item.workspace_id, name: item.workspace_name }, organizationId)
@@ -245,12 +289,15 @@ export function InboxGroup({
 function InboxRow({
   item,
   isHidden,
+  kitHere,
   t,
   onOpenWorkspace,
   onMark,
 }: {
   item: InboxItem;
   isHidden: boolean;
+  /** Whether the kit the item comes from is installed where the person is. */
+  kitHere: boolean;
   t: Text;
   onOpenWorkspace: () => void;
   onMark: (state: InboxMarkState) => void;
@@ -291,7 +338,12 @@ function InboxRow({
             <b>{item.title}</b>
             {item.workspace_name && <span className={styles.muted}> · {item.workspace_name}</span>}{' '}
             {item.kit && (
-              <Badge variant="secondary" title={t('inbox_from_kit_title')} data-inbox-kit={item.kit.slug}>
+              <Badge
+                variant="secondary"
+                title={kitHere ? t('inbox_from_kit_title') : t('inbox_kit_absent_title')}
+                data-inbox-kit={item.kit.slug}
+                data-kit-absent={kitHere ? undefined : true}
+              >
                 {item.kit.name}
               </Badge>
             )}
@@ -299,15 +351,18 @@ function InboxRow({
         )}
       </span>
       <span className={styles.inboxActions}>
-        {item.url ? (
+        {/* Where an item leads: its own page, else its workspace — never a
+            tab of a kit that is not installed here, nor a workspace it does
+            not name. */}
+        {!kitHere ? null : item.url ? (
           <a className={styles.action} href={item.url} target="_blank" rel="noreferrer">
             {pull ? t('inbox_open_pull') : t('inbox_open')}
           </a>
-        ) : (
+        ) : item.workspace_id ? (
           <button type="button" className={styles.action} onClick={onOpenWorkspace}>
             {t('inbox_open_project')}
           </button>
-        )}
+        ) : null}
         {isHidden ? (
           <Button variant="ghost" size="sm" title={t('inbox_unmark_title')} onClick={() => onMark('open')}>
             {t('inbox_unmark')}

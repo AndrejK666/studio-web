@@ -37,6 +37,9 @@ type Text = ReturnType<typeof useOverviewTranslations>['t'];
 /** Where a row's action leads, among the screens this portal has so far.
  *  Costs and Components are not here yet (parity.md): their
  *  rows say what is wrong and offer no button rather than a dead one. */
+/** The whole Inbox (`screens/inbox`), opened from the top bar too. */
+const INBOX_ROUTE = '/inbox';
+
 const TARGET_ROUTE: Partial<Record<NeedTarget, string>> = {
   connectors: '/connections',
   projects: '/organization/workspaces',
@@ -158,7 +161,13 @@ function OrganizationOverview({
                 <CardTitle>{t('needs_title')}</CardTitle>
               </CardHeader>
               <CardContent>
-                <InboxGroup organizationId={organizationId} workspaces={o.workspaces.length} t={t} onCount={setYou} />
+                <InboxGroup
+                  organizationId={organizationId}
+                  workspaces={o.workspaces.length}
+                  t={t}
+                  onCount={setYou}
+                  onOpenInbox={() => openScreen(bridge, INBOX_ROUTE)}
+                />
                 <h3 className={styles.group}>
                   {t('for_others')}
                   {others.length > 0 && <span className={styles.count}>{others.length}</span>}

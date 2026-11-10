@@ -30,8 +30,11 @@ const searchOverlay = {
   },
 };
 
-const { mockEventBus, mockDispatch, mockRegistry, overlayExtensions, screenExtensions } =
+const { mockEventBus, mockDispatch, mockRegistry, overlayExtensions, screenExtensions, inboxEntry } =
   vi.hoisted(() => ({
+    inboxEntry: {
+      value: { screen: undefined as unknown, count: null as number | null, open: () => undefined as void },
+    },
     mockEventBus: { emit: vi.fn() },
     mockDispatch: vi.fn(),
     mockRegistry: { executeActionsChain: vi.fn() },
@@ -64,6 +67,8 @@ vi.mock('./useInstalledKits', async (importOriginal) => ({
 }));
 // The kits' status slot has its own suite (KitSlot.test.tsx).
 vi.mock('./KitSlot', () => ({ ProjectStatusSlot: () => null }));
+// The Inbox entry's own reads are covered by useInboxEntry.test.tsx.
+vi.mock('./useInboxEntry', () => ({ useInboxEntry: () => inboxEntry.value }));
 vi.mock('./ContextChain', () => ({
   ContextChain: () => <div data-testid="context-chain" />,
 }));
@@ -74,6 +79,7 @@ describe('Header (global top bar)', () => {
   beforeEach(() => {
     overlayExtensions.value = [];
     screenExtensions.value = [peopleScreen];
+    inboxEntry.value = { screen: undefined, count: null, open: vi.fn() };
   });
 
   afterEach(() => {
@@ -142,7 +148,25 @@ describe('Header (global top bar)', () => {
   });
 
   describe('inbox', () => {
-    it('is present but inert: the shell holds the place, the MFE does not exist yet', () => {
+    it('opens the Inbox screen and shows how many wait, as the server counts them', () => {
+      const open = vi.fn();
+      inboxEntry.value = { screen: { id: 'ext.inbox', presentation: { route: '/inbox' } }, count: 3, open };
+      const { container } = render(<Header />);
+      const button = screen.getByLabelText('Inbox');
+      expect(button.getAttribute('aria-disabled')).toBeNull();
+      expect(button.getAttribute('title')).toBe('Inbox: 3 waiting for you');
+      expect(container.querySelector('[data-inbox-count]')?.textContent).toBe('3');
+      fireEvent.click(button);
+      expect(open).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows no number while the count is unknown or nothing waits', () => {
+      inboxEntry.value = { screen: { id: 'ext.inbox', presentation: { route: '/inbox' } }, count: 0, open: vi.fn() };
+      const { container } = render(<Header />);
+      expect(container.querySelector('[data-inbox-count]')).toBeNull();
+    });
+
+    it('is present but inert where no Inbox screen is registered', () => {
       render(<Header />);
       const button = screen.getByLabelText('Inbox');
       expect(button.getAttribute('aria-disabled')).toBe('true');

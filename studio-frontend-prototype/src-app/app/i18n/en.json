@@ -102,5 +102,7 @@
   "editor_desktop_you": "{device} (you)",
   "editor_desktop_missing": "Nothing opened? Install the desktop app —",
   "editor_desktop_get": "get Constructor Studio, then try again",
-  "editor_desktop_opened": "Opened on {device}, where the project is open."
+  "editor_desktop_opened": "Opened on {device}, where the project is open.",
+  "inbox": "Inbox",
+  "inbox_waiting": "Inbox: {count} waiting for you"
 }

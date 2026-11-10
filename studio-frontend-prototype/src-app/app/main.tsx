@@ -14,6 +14,7 @@ import {
 import { IdentityApiService, OrganizationsApiService, StudioSessionApiService } from '@/app/api';
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
 import { PresenceApiService } from '@/app/api/PresenceApiService';
+import { InboxCountApiService } from '@/app/api/InboxCountApiService';
 import { MfeHandlerIframe } from '@/app/mfe/MfeHandlerIframe';
 import './globals.css'; // Global styles with CSS variables
 import '@/app/i18n/shellTranslations'; // The shell's own strings (`shell:`)
@@ -47,6 +48,8 @@ apiRegistry.register(IdentityApiService);
 apiRegistry.register(OrganizationsApiService);
 // Which kits apply to the organization in scope: a kit's tabs show only there.
 apiRegistry.register(InstalledKitsApiService);
+// How many items wait on the person: the top bar's Inbox button.
+apiRegistry.register(InboxCountApiService);
 // The backend's push channel: studio-tasks announces every background run on
 // it, so a view is told instead of polling.
 apiRegistry.register(StudioEventsApiService);

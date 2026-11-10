@@ -11,6 +11,7 @@ import { HomeScreen } from './screens/home/HomeScreen';
 import { WorkspacesScreen } from './screens/workspaces/WorkspacesScreen';
 import { OverviewScreen } from './screens/overview/OverviewScreen';
 import { BackgroundScreen } from './screens/background/BackgroundScreen';
+import { InboxScreen } from './screens/inbox/InboxScreen';
 
 export interface OrganizationRootProps {
   bridge: ChildMfeBridge;
@@ -25,7 +26,13 @@ export const OrganizationRoot: React.FC<OrganizationRootProps> = ({ bridge }) =>
   if (section === 'tasks') return <BackgroundScreen />;
   return (
     <OrganizationProvider>
-      {section === 'workspaces' ? <WorkspacesScreen /> : <OverviewScreen />}
+      {section === 'workspaces' ? (
+        <WorkspacesScreen />
+      ) : section === 'inbox' ? (
+        <InboxScreen />
+      ) : (
+        <OverviewScreen />
+      )}
     </OrganizationProvider>
   );
 };
