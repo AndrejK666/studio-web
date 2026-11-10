@@ -275,3 +275,30 @@ export interface DomainModelEdit {
   version: number;
   migrated?: number | null;
 }
+
+export interface DomainModelRevision {
+  version: number;
+  at: string;
+  by: string;
+  op: string;
+  target: string;
+  summary: string;
+  patch: unknown[];
+  undo: unknown[];
+}
+
+export interface DomainModelHistory {
+  head: number;
+  revisions: DomainModelRevision[];
+}
+
+export interface DomainModelGraph {
+  nodes: { key: string; name: string; payload: Record<string, unknown> }[];
+  edges: { type_id: string; from: string; to: string; payload?: Record<string, unknown> }[];
+}
+
+export interface DomainObjectsGraph {
+  nodes: { instance_id: string; entity: string; bucket: string; name: string; value: Record<string, unknown> }[];
+  edges: DomainModelGraph['edges'];
+  truncated?: boolean;
+}

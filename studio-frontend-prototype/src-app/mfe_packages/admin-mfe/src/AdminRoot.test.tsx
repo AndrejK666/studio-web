@@ -45,11 +45,12 @@ describe('AdminRoot', () => {
     expect(screen.getByText('people')).toBeTruthy();
   });
 
-  it('has one admin-level extension per section, in the prototype order, and no kit', () => {
+  it('has one admin-level extension per section, in the prototype order, with administration always available', () => {
     const all = manifest.extensions.map((e) => e.presentation);
     const shown = all.filter((p) => p.level === 'admin');
     expect(shown.map((p) => p.section)).toEqual([...ADMIN_SECTIONS]);
-    expect(all.every((p) => !('kit' in p))).toBe(true);
+    expect(shown.every((p) => !('kit' in p))).toBe(true);
+    expect(all.find((p) => p.level === 'organization')).toHaveProperty('kit', 'org-connections');
     const orders = shown.map((p) => p.order);
     expect([...orders].sort((a, b) => a - b)).toEqual(orders);
   });

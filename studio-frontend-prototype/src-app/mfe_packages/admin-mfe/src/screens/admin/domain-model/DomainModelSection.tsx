@@ -23,6 +23,7 @@ import { basesOf, countByKit, countByOrigin, fieldEdit, groupTypes, typeLabel } 
 import { ErrorLine, Header, errText, useAdmin } from '../common';
 import { FieldDialog, TypeDialog } from './DomainModelDialogs';
 import { GtsIds, Relations } from './DomainModelRelations';
+import { DomainModelTools } from './DomainModelTools';
 import styles from '../Admin.module.css';
 import own from './DomainModel.module.css';
 
@@ -157,6 +158,7 @@ function DomainModelAdmin({ org }: { org: OrganizationRef }) {
     <>
       {header}
       {loadError && <ErrorLine>{loadError}</ErrorLine>}
+      <DomainModelTools orgId={org.id} canEdit={model.canEdit} onChanged={() => setRevision((n) => n + 1)} />
       <div className={own.layout} data-domain-model>
         <Card className={own.list}>
           <CardContent className={own.listBody}>

@@ -23,6 +23,9 @@ import type {
   ConnectorProvider,
   Conversion,
   DomainModelEdit,
+  DomainModelHistory,
+  DomainModelGraph,
+  DomainObjectsGraph,
   DomainTypeCounts,
   DomainTypesResponse,
   EnvironmentUse,
@@ -381,6 +384,34 @@ export class AdminApiService extends BaseApiService {
   readonly domainTypeCounts = this.protocol(RestEndpointProtocol).queryWith<DomainTypeCounts, { orgId: string }>(
     ({ orgId }) => `/studio-domain-model/v1/type-counts?${q({ organization_id: orgId })}`
   );
+
+  readonly domainHistory = this.rest.queryWith<DomainModelHistory, { orgId: string }>(
+    ({ orgId }) => `/studio-domain-model/v1/model/versions?${q({ organization_id: orgId })}`
+  );
+
+  readonly domainModelGraph = this.rest.queryWith<DomainModelGraph, { orgId: string }>(
+    ({ orgId }) => `/studio-domain-model/v1/model/graph?${q({ organization_id: orgId })}`
+  );
+
+  readonly domainObjectsGraph = this.rest.queryWith<DomainObjectsGraph, { orgId: string }>(
+    ({ orgId }) => `/studio-domain-model/v1/objects/graph?${q({ organization_id: orgId })}`
+  );
+
+  importDomainModel(orgId: string) {
+    return this.rest.mutation<{ entities: number; buckets: number; node_types: number; edge_types: number }, { ontology: unknown }>(
+      'POST', `/studio-domain-model/v1/model/import?${q({ organization_id: orgId })}`
+    );
+  }
+
+  syncDomainModel(orgId: string) {
+    return this.rest.mutation<unknown, void>('POST', `/studio-domain-model/v1/model/sync?${q({ organization_id: orgId })}`);
+  }
+
+  revertDomainModel(orgId: string) {
+    return this.rest.mutation<{ version: number; undone: number[] }, { to: number }>(
+      'POST', `/studio-domain-model/v1/model/revert?${q({ organization_id: orgId })}`
+    );
+  }
 
   /** Add a type to the model: it starts with no fields of its own. */
   createDomainType(orgId: string) {

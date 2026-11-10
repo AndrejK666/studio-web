@@ -52,7 +52,8 @@ export function FieldDialog({
   const [required, setRequired] = useState(initial?.required ?? false);
   const [description, setDescription] = useState(initial?.description ?? '');
   const [choices, setChoices] = useState(() => (type.includes('|') ? type : ''));
-  const custom = !COMMON_TYPES.some((c) => c.type === type) && !type.includes('|');
+  const [kind, setKind] = useState<'common' | 'choice' | 'custom'>(() => type.includes('|') ? 'choice' : COMMON_TYPES.some((c) => c.type === type) ? 'common' : 'custom');
+  const custom = kind === 'custom';
   const valid = validFieldName(name) && type.trim() !== '';
 
   return (
@@ -75,12 +76,12 @@ export function FieldDialog({
           <label className={styles.field}>
             {t('dm_col_kind')}
             <NativeSelect
-              value={type.includes('|') ? '__choice' : custom ? '__custom' : type}
+              value={kind === 'choice' ? '__choice' : custom ? '__custom' : type}
               onChange={(e) => {
                 const v = e.target.value;
-                if (v === '__choice') setType(choices || 'low | medium | high');
-                else if (v === '__custom') setType(type.includes('|') ? 'string' : type);
-                else setType(v);
+                if (v === '__choice') { setKind('choice'); setType(choices || 'low | medium | high'); }
+                else if (v === '__custom') { setKind('custom'); setType(type.includes('|') ? 'string' : type); }
+                else { setKind('common'); setType(v); }
               }}
               data-dm-field-kind
             >
@@ -93,7 +94,7 @@ export function FieldDialog({
               <NativeSelectOption value="__custom">{t('dm_kind_custom')}</NativeSelectOption>
             </NativeSelect>
           </label>
-          {type.includes('|') && (
+          {kind === 'choice' && (
             <label className={styles.field}>
               {t('dm_field_choices')}
               <Input

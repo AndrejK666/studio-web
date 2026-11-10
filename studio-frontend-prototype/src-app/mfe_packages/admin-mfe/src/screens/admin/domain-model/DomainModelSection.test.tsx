@@ -165,6 +165,20 @@ describe('Studio domain model', () => {
     await waitFor(() => expect(calls.filter((c) => c.what === 'domainTypes')).toHaveLength(2));
   });
 
+  it('keeps a custom expression selected while adding a field', async () => {
+    render(<DomainModelSection />);
+    fireEvent.click(await shown('[data-dm-add-field]'));
+    fireEvent.change(await shown('[data-dm-field-name]'), { target: { value: 'attachments' } });
+    fireEvent.change(await shown('[data-dm-field-kind]'), { target: { value: '__custom' } });
+    const expression = await screen.findByPlaceholderText('EntityId');
+    fireEvent.change(expression, { target: { value: 'FileId[]' } });
+    expect((document.querySelector('[data-dm-field-kind]') as HTMLSelectElement).value).toBe('__custom');
+    fireEvent.click(await shown('[data-dm-field-save]'));
+    await waitFor(() => expect(calls.find((c) => c.what === 'addDomainField')?.body).toEqual({
+      name: 'attachments', type: 'FileId[]', required: false, description: '',
+    }));
+  });
+
   it('removes a field the type declares', async () => {
     render(<DomainModelSection />);
     const row = await shown('[data-dm-field="stage"]');
