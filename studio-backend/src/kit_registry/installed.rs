@@ -88,6 +88,13 @@ pub struct InstalledDocument {
     /// default the moment its record was gone.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removed_builtin: Vec<String>,
+    /// The organization's own kits (ADR-0068 phase 7, [`super::shelf`]).
+    /// Only an organization's document has any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shelf: Vec<super::shelf::ShelfKit>,
+    /// Pinned manifests still used by installations after the shelf moves on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shelf_versions: Vec<super::shelf::ShelfKit>,
 }
 
 /// One installation as stored.
@@ -146,6 +153,23 @@ pub enum Refusal {
     /// 400 `failed_precondition`: the kit's `levels` do not name `project`,
     /// so it cannot be installed in one.
     NotAProjectKit(String),
+    /// 400 `failed_precondition`: an organization's kit would shadow a
+    /// built-in or official kit of the same slug.
+    SlugTaken(String),
+    /// 400 `failed_precondition`: the organization has the kit installed, so
+    /// it stays on its shelf.
+    KitInstalled(String),
+    /// 400 `failed_precondition`: the organization's model already has
+    /// part of what the kit's overlay brings, from somebody else.
+    ModelConflict(String),
+    /// 400 `failed_precondition`: the kit brings a model, which is the
+    /// organization's, so it is not installed for one project.
+    ModelKitNotForProject(String),
+    /// 400 `failed_precondition`: the kit a function belongs to does not
+    /// apply where it was asked.
+    KitNotInstalled(String),
+    /// 400 `failed_precondition`: a lifecycle does not declare the move.
+    NoSuchTransition(String),
     Internal(anyhow::Error),
 }
 
@@ -205,6 +229,8 @@ pub struct KitInstaller {
     catalogue: Vec<KitDescriptor>,
     store: Arc<dyn InstalledStore>,
     authority: Arc<dyn KitAuthority>,
+    reader: Arc<dyn super::shelf::KitSourceReader>,
+    models: Option<Arc<dyn super::models::ModelPort>>,
 }
 
 impl KitInstaller {
@@ -217,7 +243,67 @@ impl KitInstaller {
             catalogue,
             store,
             authority,
+            reader: Arc::new(super::shelf::NoReader),
+            models: None,
         }
+    }
+
+    /// Import kits' model overlays through `models` (ADR-0067 §6). Without
+    /// it, installing records the kit and leaves the model alone.
+    pub fn with_models(mut self, models: Arc<dyn super::models::ModelPort>) -> Self {
+        self.models = Some(models);
+        self
+    }
+
+    pub(super) fn models(&self) -> Option<Arc<dyn crate::domain_model::port::DomainObjects>> {
+        self.models.as_ref().and_then(|m| m.get())
+    }
+
+    /// Read organizations' kit sources with `reader`.
+    pub fn with_reader(mut self, reader: Arc<dyn super::shelf::KitSourceReader>) -> Self {
+        self.reader = reader;
+        self
+    }
+
+    pub(super) fn store(&self) -> &dyn InstalledStore {
+        self.store.as_ref()
+    }
+
+    pub(super) fn reader(&self) -> &dyn super::shelf::KitSourceReader {
+        self.reader.as_ref()
+    }
+
+    /// The library every organization shares: built-in and official kits.
+    pub(super) fn library(&self) -> &[KitDescriptor] {
+        &self.catalogue
+    }
+
+    pub(super) async fn require_org_admin_pub(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+    ) -> Result<Uuid, Refusal> {
+        self.require_org_admin(ctx, tenant).await
+    }
+
+    /// Kit `slug` of the library as `org` sees it: the shared library, then
+    /// the organization's own shelf.
+    pub(super) async fn kit_for(&self, org: Uuid, slug: &str) -> Result<KitDescriptor, Refusal> {
+        if let Ok(kit) = self.kit(slug) {
+            return Ok(kit);
+        }
+        if org != PLATFORM_TENANT
+            && let Some(own) = self
+                .store
+                .read(&service_context(org)?, org)
+                .await?
+                .shelf
+                .into_iter()
+                .find(|k| k.kit.slug == slug)
+        {
+            return Ok(own.kit);
+        }
+        self.kit(slug)
     }
 
     /// What applies to the organization `tenant` belongs to. The caller has
@@ -285,12 +371,20 @@ impl KitInstaller {
         version: Option<&str>,
     ) -> Result<InstalledKit, Refusal> {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
-        self.require_project_admin(ctx, project).await?;
-        let kit = self.kit(&slug)?;
+        let org = self.require_project_admin(ctx, project).await?;
+        let kit = self.kit_for(org, &slug).await?;
         if !kit.levels.iter().any(|level| level == LEVEL_PROJECT) {
             return Err(Refusal::NotAProjectKit(slug));
         }
         let record = record_for(&kit, version, ctx, now_rfc3339()?)?;
+        // The model is the organization's (ADR-0067 §6, ADR-0068 §5): a kit
+        // that brings one is installed for the organization, never for one
+        // project.
+        if let super::models::KitModel::Overlay(_) =
+            self.model_of(org, &kit, &record.version).await?
+        {
+            return Err(Refusal::ModelKitNotForProject(slug));
+        }
         let installed = self
             .store
             .update(project, &mut |doc| {
@@ -396,8 +490,11 @@ impl KitInstaller {
     ) -> Result<InstalledKit, Refusal> {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
         let org = self.require_org_admin(ctx, tenant).await?;
-        let kit = self.kit(&slug)?;
+        let kit = self.kit_for(org, &slug).await?;
         let record = record_for(&kit, version, ctx, now_rfc3339()?)?;
+        // The model first: a conflict refuses the install, and nothing is
+        // recorded (ADR-0067 §6).
+        self.apply_model(org, &kit, &record.version).await?;
         let installed = self
             .store
             .update(org, &mut |doc| {
@@ -427,6 +524,9 @@ impl KitInstaller {
                 uninstall_organization(doc, &slug, &base).map(|()| None)
             })
             .await?;
+        // What the kit brought into the model goes, unless it still applies
+        // (a base kit too); a type with objects stays, marked left by it.
+        self.reconcile_models(org).await?;
         Ok(())
     }
 
@@ -498,6 +598,13 @@ fn record_for(
         Some(v) if kit.shelf == SHELF_BUILTIN && v != kit.default_version => {
             return Err(Refusal::Invalid(format!(
                 "`{}` is built into Studio and comes at Studio's version {}, not {v}",
+                kit.slug, kit.default_version
+            )));
+        }
+        Some(v) if kit.shelf == SHELF_ORGANIZATION && v != kit.default_version => {
+            return Err(Refusal::Invalid(format!(
+                "`{}` is on the organization's shelf at commit {}, not {v}: refresh the shelf \
+                 kit to move it",
                 kit.slug, kit.default_version
             )));
         }

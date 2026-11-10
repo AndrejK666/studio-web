@@ -1146,6 +1146,17 @@ async fn upsert_my_inbox_mark(
     Ok(Json(inbox_mark_dto(mark)))
 }
 
+/// The kit an Inbox item comes from.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InboxKitDto {
+    pub slug: String,
+    /// The kit's name, for the person.
+    pub name: String,
+    /// The version installed.
+    pub version: String,
+}
+
 /// One thing waiting on the caller.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -1154,10 +1165,13 @@ pub struct InboxItemDto {
     /// `review:<id>`, or `pr:<id>@<updated_at>` for a pull request, which
     /// comes back after a mark once somebody moves it.
     pub key: String,
-    /// Where it comes from: `review-requests` (studio-documents) or
-    /// `pull-requests` (studio-artifact-ingest). More sources come with kits
-    /// (ADR-0068 §6); a client renders one it does not know by `title`.
+    /// Where it comes from: `review-requests` (studio-documents),
+    /// `pull-requests` (studio-artifact-ingest), or a kit's source,
+    /// `kit:<slug>/<source id>` (ADR-0068 §6); a client renders one it does
+    /// not know by `title`.
     pub source: String,
+    /// The kit an item comes from; null for the shell's own sources.
+    pub kit: Option<InboxKitDto>,
     pub workspace_id: String,
     pub workspace_name: String,
     pub title: String,
@@ -1214,7 +1228,10 @@ async fn get_my_inbox(
                 )
                 .create()
         })?;
-    let (read, marks) = tokio::join!(super::inbox::read(&api), service.inbox_marks(&user_id));
+    // `"$me"` in a kit's source is the caller as the domain model knows
+    // them: their subject (what `phase_owner` and other kit fields record).
+    let me = ctx.subject_id().to_string();
+    let (read, marks) = tokio::join!(super::inbox::read(&api, &me), service.inbox_marks(&user_id));
     let marks: Vec<super::inbox::Mark> = marks
         .map_err(internal)?
         .into_iter()
@@ -1234,7 +1251,12 @@ async fn get_my_inbox(
         .into_iter()
         .map(|i| InboxItemDto {
             key: i.key,
-            source: i.source.to_string(),
+            source: i.source,
+            kit: i.kit.map(|k| InboxKitDto {
+                slug: k.slug,
+                name: k.name,
+                version: k.version,
+            }),
             workspace_id: i.workspace_id,
             workspace_name: i.workspace_name,
             title: i.title,
@@ -2082,8 +2104,11 @@ pub fn register_routes(
         .operation_id("studio_user.get_my_inbox")
         .summary("Everything whose next move is the caller's, across their workspaces")
         .description(
-            "The person's Inbox (ADR-0068 §6): review requests waiting for their verdict and \
-             pull requests whose next step is theirs, read from their facts on every call — \
+            "The person's Inbox (ADR-0068 §6): review requests waiting for their verdict, \
+             pull requests whose next step is theirs, and the items of the Inbox sources the \
+             kits installed for the organization bring (`GET /studio-kits/v1/inbox-sources`, \
+             run as the caller; each item carries its `kit`), read from their facts on every \
+             call — \
              never stored, so an item leaves by itself when the fact changes — with the \
              caller's marks applied. `view=open` (the default) lists what waits, overdue \
              first, then by due date, then reviews before pull requests; `view=hidden` lists \

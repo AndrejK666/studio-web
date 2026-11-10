@@ -542,6 +542,23 @@ migrated; a fresh graph registers the fixed traits from the start.
 §5 record the platform gaps behind the open types and the missing conditional
 update.
 
+**Kits' overlays** (ADR-0067 §6, [studio-kits §3.10](studio-kits.md)). The
+port offers `sync_kit_model(slug, version, overlay?)`, which makes an
+organization's model carry exactly one kit version's overlay (`kit_overlay.rs`):
+types, fields, relations, tabs and lifecycles, each marked `origin = "kit"`
+with the kit and its version; a kit type that still has objects is kept on
+uninstall, dormant, marked `meta.left_by = {kit, version, at}` (ADR-0070 §4). One model version (`op = "kit"`) per
+change, its patch only the entities it touched, so it reverts like any edit.
+`kit_models` answers which kits a model carries. Overlays are **copied** into
+each organization's stored model rather than layered over a shared one,
+because every write path here works on that one stored document. A known gap
+follows from it, and predates kits: once an organization's model is stored,
+Studio's later core changes reach it only additively (`ensure_studio_types`);
+applying a base kit's overlay stores the model of every organization that is
+read, so the gap covers them too. Layering (seed → base kits → the
+organization's kits → its own edits) would close it and needs the stored
+document to become the organization's edits alone.
+
 ## 5. Traceability
 
 - **PRD**: [Constructor Studio](../prd/constructor-studio.md)

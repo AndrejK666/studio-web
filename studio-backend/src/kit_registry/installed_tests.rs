@@ -406,6 +406,8 @@ fn a_stored_builtin_kit_takes_the_version_this_image_ships() {
             },
         ],
         removed_builtin: vec![],
+        shelf: vec![],
+        shelf_versions: vec![],
     };
     let base = base_kits(&doc, &catalogue());
     let issues = base
@@ -578,7 +580,14 @@ async fn only_a_project_level_kit_goes_in_a_project() {
     assert!(store.docs.lock().unwrap().is_empty(), "a refusal wrote");
     // A kit whose levels name `project` does.
     installer
-        .install_for_project(&admin, PROJECT, "project-lifecycle", None)
+        .install_for_project(&admin, PROJECT, "project-tests", None)
         .await
         .unwrap();
+    // Unless it brings a model, which is the organization's (ADR-0067 §6).
+    assert!(matches!(
+        installer
+            .install_for_project(&admin, PROJECT, "project-lifecycle", None)
+            .await,
+        Err(Refusal::ModelKitNotForProject(slug)) if slug == "project-lifecycle"
+    ));
 }

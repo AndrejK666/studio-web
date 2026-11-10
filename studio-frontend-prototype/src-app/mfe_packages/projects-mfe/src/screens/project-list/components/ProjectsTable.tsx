@@ -8,6 +8,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Badge,
 } from '@gears-frontx/ui-kit';
 import { useFormatters } from '@gears-frontx/react';
 import { requestOpenProject } from '../../../actions/projectsActions';
@@ -23,6 +24,8 @@ import styles from '../ProjectListScreen.module.css';
 interface ProjectsTableProps {
   rows: readonly Tenant[];
   empty: React.ReactNode;
+  /** Each project's phase (Project lifecycle), by id; empty where the kit does not apply. */
+  phases?: Record<string, string>;
 }
 
 /**
@@ -30,7 +33,7 @@ interface ProjectsTableProps {
  * tenant type registry puts nothing else under one — so there are no container
  * rows, no chevrons and no indentation left to draw.
  */
-const ProjectRow: React.FC<{ project: Tenant }> = ({ project }) => {
+const ProjectRow: React.FC<{ project: Tenant; phase?: string }> = ({ project, phase }) => {
   const t = useProjectListText();
   const state = useProjectConfig(project.id);
   const { formatRelative } = useFormatters();
@@ -52,6 +55,11 @@ const ProjectRow: React.FC<{ project: Tenant }> = ({ project }) => {
           </span>
           <span className={styles.name}>{project.name}</span>
         </button>
+        {phase && (
+          <Badge variant="info" className={styles.phase} data-project-phase={phase}>
+            {t(`phase_${phase}`)}
+          </Badge>
+        )}
       </TableCell>
       <TableCell className={styles.colStatus}>
         <ProjectStatusInline tenant={project} state={state} />
@@ -79,7 +87,7 @@ ProjectRow.displayName = 'ProjectRow';
  * The mockup's Projects Portfolio table: Project, Status, Issues, 7-day
  * movement, Owner, Updated.
  */
-export const ProjectsTable: React.FC<ProjectsTableProps> = ({ rows, empty }) => {
+export const ProjectsTable: React.FC<ProjectsTableProps> = ({ rows, empty, phases }) => {
   const t = useProjectListText();
 
   return (
@@ -102,7 +110,7 @@ export const ProjectsTable: React.FC<ProjectsTableProps> = ({ rows, empty }) => 
             </TableCell>
           </TableRow>
         ) : (
-          rows.map((project) => <ProjectRow key={project.id} project={project} />)
+          rows.map((project) => <ProjectRow key={project.id} project={project} phase={phases?.[project.id]} />)
         )}
       </TableBody>
     </Table>

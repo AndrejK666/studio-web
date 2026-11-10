@@ -38,6 +38,8 @@ pub fn tools() -> Vec<Tool> {
                 object(
                     json!({
                         "shelf": { "type": "string", "enum": ["builtin", "official", "organization"] },
+                        "organization_id": { "type": "string",
+                            "description": "List this organization's own kits too (its shelf)." },
                         "limit": { "type": "integer" },
                         "offset": { "type": "integer" }
                     }),
@@ -55,8 +57,14 @@ pub fn tools() -> Vec<Tool> {
                 `rules`, `functions`, `services`, `inbox`, `mcp_tools`, `permissions`, the \
                 `material` cfs writes into a checkout, artifact `kinds`, `docs`), and \
                 `manifest`, where that came from (`built-in`, `.cf-studio-kit.toml`, or null \
-                when nothing reliable describes it).",
-            input_schema: || object(json!({ "kit_slug": kit_slug() }), &["kit_slug"]),
+                when nothing reliable describes it). An organization's own kit is described \
+                from the manifest kept at its pinned commit, with `origin`.",
+            input_schema: || {
+                object(
+                    json!({ "kit_slug": kit_slug(), "organization_id": organization_id() }),
+                    &["kit_slug"],
+                )
+            },
             effect: Effect::Read,
             experimental: false,
             run: Run::Get("/studio-kits/v1/catalog/{kit_slug}"),
@@ -184,7 +192,160 @@ pub fn tools() -> Vec<Tool> {
             experimental: true,
             run: Run::Delete("/studio-kits/v1/project-kits/{kit_slug}"),
         },
+        Tool {
+            name: "kits_shelf",
+            description: "The kits an organization added from its own repositories (its \
+                shelf), each described as `kits_describe` does, with `origin`: the connection, \
+                repository, directory and ref it was read from and the commit it is pinned to.",
+            input_schema: || {
+                object(
+                    json!({
+                        "organization_id": organization_id(),
+                        "limit": { "type": "integer" },
+                        "offset": { "type": "integer" }
+                    }),
+                    &[],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-kits/v1/organization-shelf"),
+        },
+        Tool {
+            name: "kit_shelf_preview",
+            description: "Read a kit from a repository the organization's connection reaches \
+                without adding it: what adding it would add. The organization's kit \
+                administrators only.",
+            input_schema: shelf_source_schema,
+            effect: Effect::Read,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-kits/v1/organization-shelf/preview",
+                query: &["organization_id"],
+            },
+        },
+        Tool {
+            name: "kit_shelf_add",
+            description: "Add a kit from a repository to the organization's shelf, pinned to \
+                the newest commit that touched its directory on `ref`. Then install it with \
+                `kit_organization_install` or `kit_project_install`. The organization's kit \
+                administrators only. Ask your person first.",
+            input_schema: shelf_source_schema,
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-kits/v1/organization-shelf",
+                query: &["organization_id"],
+            },
+        },
+        Tool {
+            name: "kit_shelf_refresh",
+            description: "Read a shelf kit's source again at its ref and re-pin it. Those who \
+                installed it keep the commit they installed until they install it again.",
+            input_schema: || {
+                object(
+                    json!({ "organization_id": organization_id(), "kit_slug": kit_slug() }),
+                    &["kit_slug"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-kits/v1/organization-shelf/{kit_slug}/refresh",
+                query: &["organization_id"],
+            },
+        },
+        Tool {
+            name: "kit_shelf_remove",
+            description: "Take a kit off the organization's shelf. Refused with `KIT_INSTALLED` \
+                while the organization has it installed. Ask your person first.",
+            input_schema: || {
+                object(
+                    json!({ "organization_id": organization_id(), "kit_slug": kit_slug() }),
+                    &["kit_slug"],
+                )
+            },
+            effect: Effect::Destructive,
+            experimental: true,
+            run: Run::Delete("/studio-kits/v1/organization-shelf/{kit_slug}"),
+        },
+        Tool {
+            name: "kits_inbox_sources",
+            description: "The Inbox sources of the kits installed for an organization: each \
+                kit's query over its objects that says what waits on whom (`$me` is the person), \
+                how an item is titled, and the kit. `me_inbox` runs them for you.",
+            input_schema: || object(json!({ "organization_id": organization_id() }), &[]),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-kits/v1/inbox-sources"),
+        },
+        Tool {
+            name: "project_phase",
+            description: "A project's phase (the built-in Project lifecycle kit): the phase, who \
+                moves it on and since when, the lifecycle's phases and the moves open from the \
+                current one. `installed` is false where the kit does not apply.",
+            input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-kits/v1/project-phase"),
+        },
+        Tool {
+            name: "project_phase_set",
+            description: "Move a project to a phase along the lifecycle Project lifecycle \
+                declares (idea → discovery → build → run, and back); a move it does not declare \
+                is refused with `NO_SUCH_TRANSITION`. `owner` (a subject id) is who moves it on \
+                from there; the project's current owner, else you, when absent.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "phase": { "type": "string", "enum": ["idea", "discovery", "build", "run"] },
+                        "owner": { "type": "string" }
+                    }),
+                    &["project_id", "phase"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Put {
+                path: "/studio-kits/v1/project-phase",
+                query: &["project_id"],
+            },
+        },
+        Tool {
+            name: "project_phases",
+            description: "Every project of an organization that has a phase (Project \
+                lifecycle), by project id, with its owner and since when.",
+            input_schema: || {
+                object(
+                    json!({
+                        "organization_id": organization_id(),
+                        "limit": { "type": "integer" },
+                        "offset": { "type": "integer" }
+                    }),
+                    &[],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-kits/v1/project-phases"),
+        },
     ]
+}
+
+fn shelf_source_schema() -> Value {
+    object(
+        json!({
+            "organization_id": organization_id(),
+            "connection_id": { "type": "string",
+                "description": "A connection of the organization's own (not personal) that reaches the repository." },
+            "repository": { "type": "string", "description": "`owner/name`." },
+            "path": { "type": "string", "description": "The kit's directory; the root when absent." },
+            "ref": { "type": "string", "description": "A branch, tag or commit; the default branch when absent." },
+            "slug": { "type": "string", "description": "Which kit of a `.cf-studio-kit.toml` that lists several." }
+        }),
+        &["connection_id", "repository"],
+    )
 }
 
 #[cfg(test)]
@@ -248,6 +409,40 @@ mod tests {
         );
         assert_eq!(r.method, Method::Delete);
         assert_eq!(r.path, "/studio-kits/v1/project-kits/sdlc");
+        assert_eq!(r.query, vec![("project_id".to_owned(), "p-1".to_owned())]);
+
+        let r = request_of(
+            &all,
+            "kit_shelf_add",
+            json!({"organization_id": "o-1", "connection_id": "c-1", "repository": "acme/kits",
+                   "path": "ops", "ref": "main"}),
+        );
+        assert_eq!(r.method, Method::Post);
+        assert_eq!(r.path, "/studio-kits/v1/organization-shelf");
+        assert_eq!(
+            r.query,
+            vec![("organization_id".to_owned(), "o-1".to_owned())]
+        );
+        assert_eq!(
+            r.body,
+            json!({"connection_id": "c-1", "repository": "acme/kits", "path": "ops", "ref": "main"})
+        );
+
+        let r = request_of(&all, "kit_shelf_refresh", json!({"kit_slug": "ops"}));
+        assert_eq!(r.path, "/studio-kits/v1/organization-shelf/ops/refresh");
+
+        let r = request_of(&all, "kit_shelf_remove", json!({"kit_slug": "ops"}));
+        assert_eq!(r.method, Method::Delete);
+        assert_eq!(r.path, "/studio-kits/v1/organization-shelf/ops");
+
+        let r = request_of(
+            &all,
+            "project_phase_set",
+            json!({"project_id": "p-1", "phase": "build"}),
+        );
+        assert_eq!(r.method, Method::Put);
+        assert_eq!(r.path, "/studio-kits/v1/project-phase");
+        assert_eq!(r.body, json!({"phase": "build"}));
         assert_eq!(r.query, vec![("project_id".to_owned(), "p-1".to_owned())]);
 
         let r = request_of(&all, "kits_installed", json!({"project_id": "p-1"}));

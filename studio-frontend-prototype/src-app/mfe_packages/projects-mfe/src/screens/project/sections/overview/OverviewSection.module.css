@@ -52,6 +52,16 @@
   color: var(--destructive);
 }
 
+/* Project lifecycle's phase chip and its moves, above the verdict. */
+.phase {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.875rem;
+}
+
 .skeleton {
   height: 2rem;
   width: 20rem;

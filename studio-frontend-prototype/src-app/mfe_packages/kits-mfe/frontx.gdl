@@ -10,8 +10,9 @@ mfe(
     version = "0.2.0-alpha.0",
 
     # The backend gears its screens call, by gear id: the kit library reads
-    # the studio-kits catalogue.
-    requires = ["studio-kits"],
+    # the studio-kits catalogue; an organization picks the connection its own
+    # kit is read through from studio-connector.
+    requires = ["studio-kits", "studio-connector"],
 
     # What it brings, as mfe.json says: the label of its screen, then the
     # route of its extension (presentation.route).

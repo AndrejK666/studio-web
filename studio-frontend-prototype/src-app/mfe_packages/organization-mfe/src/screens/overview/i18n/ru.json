@@ -35,6 +35,7 @@
   "inbox_due": "срок {date}",
   "inbox_overdue": "просрочено",
   "inbox_quiet": "затих",
+  "inbox_from_kit_title": "Кит, из которого это пришло: он говорит, что здесь ждёт вас",
   "inbox_open_pull": "Открыть пул-реквест ↗",
   "inbox_open": "Открыть ↗",
   "inbox_open_project": "Открыть проект",

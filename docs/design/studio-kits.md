@@ -200,8 +200,17 @@ and never written back in the old shape.
 
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
-| `GET` | `/studio-kits/v1/catalog` | Every kit of the library, each with its `shelf` (`builtin`, `official`, `organization`) and `levels`; `?shelf=` filters | unstable |
-| `GET` | `/studio-kits/v1/catalog/{kit_slug}` | One kit and what is inside it (`contents` by the sections of a kit manifest, `manifest` = where that came from); 404 for an unknown slug | unstable |
+| `GET` | `/studio-kits/v1/catalog` | Every kit of the library, each with its `shelf` (`builtin`, `official`, `organization`) and `levels`; `?shelf=` filters; `?organization_id=` adds that organization's own kits | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}` | One kit and what is inside it (`contents` by the sections of a kit manifest, `manifest` = where that came from, `origin` for an organization's own kit); 404 for an unknown slug | unstable |
+| `GET` | `/studio-kits/v1/organization-shelf` | The organization's own kits (`?organization_id=`), each described with its `origin`; any member | unstable |
+| `POST` | `/studio-kits/v1/organization-shelf/preview` | Read a kit from a repository (`{connection_id, repository, path?, ref?, slug?}`) without keeping it; kit administrators | unstable |
+| `POST` | `/studio-kits/v1/organization-shelf` | Read, pin and keep a kit on the shelf; a library slug is 400 `KIT_SLUG_TAKEN` | unstable |
+| `POST` | `/studio-kits/v1/organization-shelf/{kit_slug}/refresh` | Read the kit's source again at its ref and re-pin it | unstable |
+| `DELETE` | `/studio-kits/v1/organization-shelf/{kit_slug}` | Take it off the shelf; an installed kit is 400 `KIT_INSTALLED` | unstable |
+| `GET` | `/studio-kits/v1/project-phase` | Project lifecycle: the project's phase and the moves open (§3.10) | unstable |
+| `PUT` | `/studio-kits/v1/project-phase` | Move it along the declared lifecycle | unstable |
+| `GET` | `/studio-kits/v1/project-phases` | The organization's projects with their phases | unstable |
+| `GET` | `/studio-kits/v1/inbox-sources` | The Inbox sources of the kits installed for the organization (§3.11) | unstable |
 | `GET` | `/studio-kits/v1/installed-kits` | The kits that apply to an organization (`?organization_id=`) or a project (`?project_id=`): `base`, `organization`, `project`, `effective` | unstable |
 | `PUT` | `/studio-kits/v1/base-kits/{kit_slug}` | Install a kit for every organization (`{version?}`); platform administrators | unstable |
 | `DELETE` | `/studio-kits/v1/base-kits/{kit_slug}` | Stop a kit being a base kit; a built-in kit stays removed | unstable |
@@ -291,6 +300,232 @@ In-process in the one `studio-backend` binary: gear `studio-kits`,
 capabilities `[rest]`, deps `account_management`. Materializing needs the
 `theia-bridge` feature, which the release image is built with
 (`--features graph,theia-bridge`).
+
+### 3.9 An organization's own kits
+
+- [x] `p2` - **ID**: `cpt-studio-design-kits-organization-shelf`
+
+ADR-0068 §4 and phase 7: an organization publishes kits for itself from a
+repository it connects. The source is a repository reached through one of the
+organization's **own, shared** connections (studio-connector: held by the
+organization itself, not personal; the same connections the components
+catalogue reads gear repositories through), a directory in it and a ref.
+
+1. Studio pins the source: the newest commit that touched the directory on
+   the ref (`GET …/commits?path=`), else the branch's head. The directory
+   reads the same at that commit as at the ref.
+2. It reads the manifest at that commit: `kit.json` first, else
+   `.cf-studio-kit.toml` (`manifest.rs`).
+3. It checks it: the slug (and that no built-in or official kit has it,
+   `KIT_SLUG_TAKEN`), the name, the levels (`organization`, `workspace`,
+   `project`: `platform` is the base kits'), the screens' kinds and levels,
+   the functions' runtimes, distinct inbox source ids. Unknown keys are
+   refused, so a typo is a diagnostic before anything is added.
+4. It keeps the manifest as it was at the commit on the organization's
+   installed-kits document (`shelf`), so describing the kit reads nothing.
+
+**`kit.json`** is Studio's interim manifest until `kit.gdl` (ADR-0068 §3)
+exists. It declares the kit (`slug`, `name`, `description`, `publisher`,
+`version`, `levels`) and the sections a kit brings, under the names
+`kit.gdl` will take: `screens` (`{kind: tab|section, level, label, route?,
+slot?}`), `model` (the overlay, §3.10), `rules` and `services` and
+`mcp_tools` (`{name, description?}`), `functions` (`{name, runtime:
+wasm|agent, description?}`), `inbox` (§3.11), `permissions` (`{reads,
+writes, listens}`), `material` (`{path, description?}`), `kinds`, `docs`. A
+kit described only by `.cf-studio-kit.toml` brings working material: its
+resources' install paths and its artifact kinds; a manifest that lists
+several kits needs `slug` to say which.
+
+The shelf is visible to that organization only: `GET /catalog` lists it
+only with `organization_id`, and `GET /catalog/{kit_slug}` finds it in the
+caller's (or the named) organization. Adding, refreshing and removing need
+`kit.manage`. A shelf kit installs and uninstalls like any other kit, at its
+pinned commit only (another version is 400: refresh moves the pin). A
+refresh re-pins the shelf; an installation keeps the commit it installed
+until it is installed again. The organization's metadata retains the previous
+manifest while an organization installation uses it, so a shelf refresh does
+not change its model overlay or remove its Inbox sources. A kit the organization has installed stays on
+the shelf (`KIT_INSTALLED`). The IDE's installer does not materialize shelf
+kits (it allow-lists Constructor's kits); their working material is not
+written into checkouts yet.
+
+### 3.10 A kit's model overlay
+
+- [x] `p2` - **ID**: `cpt-studio-design-kits-model-overlay`
+
+ADR-0067 §6, ADR-0068 phase 2: installing a kit for an organization imports
+its model overlay into the organization's Studio domain model. The overlay is
+`model` in the kit's `kit.json` (a built-in kit's is compiled in:
+`kit_registry/builtin/<slug>.kit.json`):
+
+```json
+{
+  "types": [{"name": "phase", "label": "Project phase", "description": "…",
+             "extends": null, "bucket": null,
+             "fields": [{"name": "order", "type": "integer"}]}],
+  "fields": [{"on": "project", "name": "phase", "type": "idea | discovery | build | run"}],
+  "relations": [{"on": "project", "name": "phase_of", "target": "phase", "verb": "references", "label": "in"}],
+  "tabs": [{"level": "project", "name": "phases", "label": "Phases", "target": "phase"}],
+  "lifecycles": [{"on": "project", "field": "phase", "states": ["idea", "discovery", "build", "run"],
+                  "initial": "idea",
+                  "transitions": [{"name": "discover", "from": ["idea"], "to": "discovery"}]}]
+}
+```
+
+- A kit's **type** is the entity `<slug>-<name>`, catalogued as
+  `gts.cf.studio.kit.<slug>.<name>.v1~` (`meta.gts`, and `types[].gts` in the
+  kit's contents). The domain model derives graph types from entity ids, so
+  its objects are stored under `gts.cf.studio.domain.<slug>_<name>.v1~`;
+  registering the kit namespace itself as the graph type is not done.
+- **A kit may declare a type Studio already has**, with `id`:
+  `{"name": "milestone", "id": "milestone", "fields": [...]}`. The type
+  keeps its entity id and its GTS id (`gts.cf.studio.domain.milestone.v1~`),
+  so stored objects keep matching. Where the organization's model already has
+  it from Studio's core, the kit adopts it instead of refusing: its other
+  fields stay, a field the kit declares with the same type is taken over as
+  the kit's (another type is still `KIT_MODEL_CONFLICT`), the earlier origin
+  is kept in `meta.adopted_from`, and a gear's hold (`held_by` on the type and
+  its fields) is kept: a gear keeps holding a type whose declaration a kit
+  brings. Uninstalling removes the kit's fields; the type itself stays,
+  dormant, marked `meta.left_by = {kit, version, at}` (ADR-0070 §4), while it has objects or a gear holds it. Another
+  kit's type is never adopted. This is how the domain-model split (issue
+  #1025) moves a core type into the kit that brings its screens (Milestone,
+  Risk, Work Item, Lifecycle Stage into `project-lifecycle`; Document and
+  Template into `project-specs`; …): the type leaves `ontology.studio.json`,
+  and the kit's `kit.json` declares it with `id`. Nothing in this branch
+  moves a type; the format and the adoption rule are what that change needs.
+  One thing it must also change: `ensure_studio_types` adds Studio's own
+  types back to a stored model, so a moved type has to leave that list in the
+  same change.
+- `on`, `target` and `level` name a type of the model by id, or one of the
+  kit's own by name. A `tab` is a `shows` relation (ADR-0066).
+- Everything is marked `origin = "kit"`, `kit = <slug>`, `kit_version`: on
+  the type's `meta`, on each property, on each `meta.lifecycles[]` entry.
+- The rules of ADR-0067 §6: the format has no way to remove or retype; a
+  field, relation or tab a type already has from anybody else (Studio, a
+  gear, an administrator, another kit) refuses the install with 400
+  `failed_precondition` `KIT_MODEL_CONFLICT`, and nothing is recorded; there
+  is no `held_by` to say (unknown keys are refused), so a kit never holds a
+  type.
+- **Install** applies the overlay before the installation is recorded.
+  **Uninstall** removes what carries the kit's origin; a kit type that still
+  has objects is kept with its fields, dormant, marked `meta.left_by = {kit, version, at}` (ADR-0070 §4), until an
+  administrator removes it, and a later install takes it back. **Upgrade**
+  (installing another version) applies the difference: what the new version
+  no longer has goes, what changed is replaced, what is new is added. Each is
+  one numbered, revertible model version (`op = "kit"`) whose patch names only
+  the types it touched.
+- It goes through the domain model's port
+  (`DomainObjects::sync_kit_model`, `kit_models`), as this gear's service
+  identity in the organization, after the installer checked the caller.
+- Lifecycles are **declared** in the model (`meta.lifecycles`), not yet
+  enforced by `/mutate` (ADR-0067 phase 3 is not built). Project lifecycle's
+  function enforces its own (below).
+
+Decisions (2026-11-10):
+
+1. **Copied, not layered.** A kit's overlay is written into each
+   organization's stored model, marked with its origin. A layered effective
+   model — core seed, then base kits' overlays, then the organization's kits',
+   then its own edits — would keep overlays out of the stored documents, but
+   the domain model stores one whole document per organization and every
+   write path depends on that: field edits address properties by index, a
+   version's patch and its inverse are JSON Patch over that document, revert
+   replays inverses on it, and the read model and graph registration read the
+   document. Layering means keeping an organization's edits as a patch set
+   over a computed base, and re-deriving all of those; that is a change of
+   the domain model's storage, not of the installer. The least copying that
+   works: a **base kit** reaches an organization's model when that
+   organization's installed kits are next read (`GET /installed-kits`, which
+   the shell reads on entering an organization, and the phase routes), not by
+   a sweep over every organization, so an organization nobody opens is not
+   written. Organizations created later get the base kits' overlays on their
+   first read the same way. An organization's own install or uninstall is
+   applied at once.
+2. **A kit that brings a model is not installed for one project.** The model
+   is the organization's (ADR-0067 §6, ADR-0068 §5). `PUT /project-kits/…`
+   refuses it with 400 `failed_precondition` `MODEL_KIT_NOT_FOR_PROJECT`;
+   install it for the organization. (Applying it at the organization level
+   from a project's install would change every project's model silently.)
+3. **Known gap: core changes after the first store.** An organization's model
+   is the embedded seed until its first edit stores the whole document;
+   after that, Studio's later changes to its core reach it only additively
+   (`ensure_studio_types` adds missing Studio types and fields); a changed or
+   removed core field does not. Copying base-kit overlays means every
+   organization that is read stores its model once a model-bearing base kit
+   applies, so the gap now covers those organizations too. Layering (1) would
+   close it; until then it is recorded here and in
+   `studio-domain-model.md`.
+
+**Against ADR-0070** (Studio keeps a core model, each kit brings its types;
+decided after this was built). What already matches: the marks
+(`meta.origin = "kit"`, `meta.kit`, `meta.kit_version`, which Admin › Studio
+domain model reads); the dormant mark `meta.left_by = {kit, version, at}` on a
+type that has objects or that a gear holds, and on its fields; declaring an
+existing type with its own ids; a gear's `held_by` kept under a kit's
+declaration. What this installer does differently, to be changed by
+ADR-0070's phases:
+
+- The overlay is copied into the stored model (decision 1) where ADR-0070 §5
+  computes the effective model in layers. Every element a kit brought carries
+  its marks, so the migration's split (`organization layer = stored model −
+  (core ⊕ gears ⊕ base kits)`) can take the copies back out.
+- Dormant is a mark only: the domain model does not yet refuse writes
+  (`DOMAIN_TYPE_DORMANT`) or hide a dormant type from members
+  (`DOMAIN_TYPE_NOT_INSTALLED`), and screens are not told.
+- A field a kit added to another type, or that an upgrade drops, is taken out
+  of the model (its values stay in the objects' payloads) rather than kept
+  dormant; only the fields of a kept kit type stay, marked.
+- A gear's `ensure_type` still adds a whole type as `studio` (ADR-0070 §3 makes
+  it a layer of its own); a kit type that a gear also needs is therefore kept
+  dormant on uninstall when the gear holds it, and comes back if the gear
+  re-adds it.
+
+**Project lifecycle** is the first built-in kit that brings a model: the type
+`project-lifecycle-phase`, the fields `project.phase`
+(`idea | discovery | build | run`), `project.phase_owner` and
+`project.phase_since`, the tab `project.phases`, and the phase lifecycle
+(idea → discovery → build → run, back from discovery or build to idea and
+from run to build). Until kit functions run in Studio's function runtime
+(ADR-0068 §9), its function is compiled into this gear (`phase.rs`):
+
+| Method | Path | Who |
+| --- | --- | --- |
+| `GET` | `/studio-kits/v1/project-phase` | any member: `{installed, phase, phase_owner, phase_since, states, next[]}` |
+| `PUT` | `/studio-kits/v1/project-phase` | `{phase, owner?}`, only along a declared transition (`NO_SUCH_TRANSITION`); written as the caller, so the PDP's `domain.edit` decides (403 `DOMAIN_EDIT_REQUIRED`); `KIT_NOT_INSTALLED` where the kit does not apply |
+| `GET` | `/studio-kits/v1/project-phases?organization_id=` | any member: the organization's projects with a phase |
+
+MCP: `project_phase`, `project_phase_set`, `project_phases`.
+
+### 3.11 Inbox sources from kits
+
+- [x] `p2` - **ID**: `cpt-studio-design-kits-inbox-sources`
+
+ADR-0068 §6, phase 4: the Inbox holds no items of its own; a kit may declare
+sources. A source in `kit.json` is
+`{id, label, query, title?, workspace_field?}`: `query` is the body
+`POST /studio-domain-model/v1/query` takes, over the kit's objects, with the
+string `"$me"` standing for the person whose Inbox is read; `title` names an
+item (`{field}` is a field of the row, the label when absent);
+`workspace_field` is the row's field holding its workspace.
+
+`GET /studio-kits/v1/inbox-sources?organization_id=` (any member) lists the
+sources of the kits installed for the whole organization (base kits and its
+own; not a project's own: their sources would need the project's PDP scope),
+at the version installed, each with its kit's slug, name and version; the
+kits' models are brought up to date first, so the fields a source queries
+exist. studio-user's `GET /studio-user/v1/me/inbox` reads that list, runs each
+query **as the person** (so the PDP decides what each person sees) with
+`"$me"` their subject id, and adds the rows as items after its own sources:
+`source = kit:<slug>/<id>`, `kit = {slug, name, version}`, the key
+`kit:<slug>/<id>:<object id>@<fingerprint of the row>` (an item marked done
+comes back when its object changes), done and snooze as for any item. A
+source that cannot be read is named in `unread`. MCP: `kits_inbox_sources`;
+`me_inbox` carries the kits' items.
+
+Project lifecycle brings one: `phase-waiting`, a project whose
+`phase_owner` is the person and whose phase is not `run` — "*Atlas* waits in
+its *discovery* phase".
 
 ## 4. Additional context
 

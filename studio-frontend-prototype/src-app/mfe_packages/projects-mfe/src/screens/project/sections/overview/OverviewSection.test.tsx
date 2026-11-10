@@ -2,7 +2,12 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectStatus } from '../../../../model/projectStatus';
 
-const { query, openScreen } = vi.hoisted(() => ({ query: vi.fn(), openScreen: vi.fn() }));
+const { query, openScreen, phaseRead, phaseSet } = vi.hoisted(() => ({
+  query: vi.fn(),
+  openScreen: vi.fn(),
+  phaseRead: vi.fn(),
+  phaseSet: vi.fn(),
+}));
 
 vi.mock('../../../../i18n', () => ({
   useOverviewSectionTranslations: () => ({
@@ -16,7 +21,13 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
 }));
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
-  apiRegistry: { getService: () => ({ status: () => ({}) }) },
+  apiRegistry: {
+    getService: () => ({
+      status: () => ({}),
+      phase: () => ({ fetch: phaseRead }),
+      setPhase: () => ({ fetch: phaseSet }),
+    }),
+  },
   useApiQuery: query,
   useMfeBridge: () => null,
 }));
@@ -60,6 +71,36 @@ describe('OverviewSection', () => {
   beforeEach(() => {
     openScreen.mockReset();
     query.mockReturnValue(ok(blocked));
+    phaseRead.mockReset();
+    phaseSet.mockReset();
+    // Project lifecycle not installed: no phase anywhere.
+    phaseRead.mockResolvedValue({ project_id: 'p1', installed: false, phase: null, phase_owner: null, phase_since: null, states: [], next: [] });
+  });
+
+  it('shows no phase where Project lifecycle does not apply', async () => {
+    render(<OverviewSection projectId="p1" />);
+    await vi.waitFor(() => expect(phaseRead).toHaveBeenCalled());
+    expect(document.querySelector('[data-project-phase]')).toBeNull();
+  });
+
+  it('shows the phase and moves it along the lifecycle where the kit applies', async () => {
+    const at = (phase: string, next: { transition: string; to: string }[]) => ({
+      project_id: 'p1',
+      installed: true,
+      phase,
+      phase_owner: 'u1',
+      phase_since: '2026-11-10T10:00:00Z',
+      states: ['idea', 'discovery', 'build', 'run'],
+      next,
+    });
+    phaseRead.mockResolvedValue(at('idea', [{ transition: 'discover', to: 'discovery' }]));
+    phaseSet.mockResolvedValue(at('discovery', [{ transition: 'build', to: 'build' }]));
+    render(<OverviewSection projectId="p1" />);
+    expect(await screen.findByText('phase_idea')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'phase_move {"phase":"phase_discovery"}' }));
+    expect(await screen.findByText('phase_discovery')).toBeTruthy();
+    expect(phaseSet).toHaveBeenCalledWith({ phase: 'discovery' });
+    expect(document.querySelector('[data-project-phase]')?.getAttribute('data-project-phase')).toBe('discovery');
   });
 
   it('shows the verdict, its reason and how many more', () => {

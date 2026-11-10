@@ -18,5 +18,13 @@
   "nothing_waits": "Nothing waits on you or the team.",
   "nothing_waits_body": "No failing gate, stuck pull request or refused connection.",
   "not_read": "Not read: {sources}.",
-  "not_read_title": "What they hold is unknown, which is not zero."
+  "not_read_title": "What they hold is unknown, which is not zero.",
+  "phase_label": "Phase",
+  "phase_none": "no phase yet",
+  "phase_idea": "Idea",
+  "phase_discovery": "Discovery",
+  "phase_build": "Build",
+  "phase_run": "Run",
+  "phase_since": "since {date}",
+  "phase_move": "Move to {phase}"
 }

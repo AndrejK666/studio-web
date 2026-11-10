@@ -14,6 +14,7 @@ import {
 } from '@constructor-studio/mfe-shared';
 import { KitsApiService, type CatalogKit, type InstalledKits, type KitDetail } from '../../api/KitsApiService';
 import { KitDetailView, contentsSummary } from './KitDetailView';
+import { AddFromRepository } from './AddFromRepository';
 import { useHomeTranslations } from '../../i18n';
 import styles from './HomeScreen.module.css';
 
@@ -94,7 +95,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   const { t, loading } = useHomeTranslations();
   const api = apiRegistry.getService(KitsApiService);
   const catalog = useApiQuery(api.catalog);
-  const kits: CatalogKit[] = catalog.data?.items ?? [];
+  /** The organization's own kits (its shelf), each with where it came from. */
+  const [shelf, setShelf] = useState<KitDetail[]>([]);
+  const [adding, setAdding] = useState(false);
+  const library: CatalogKit[] = catalog.data?.items ?? [];
+  const kits: CatalogKit[] = [
+    ...library,
+    ...shelf.map((d) => d.kit).filter((k) => !library.some((l) => l.slug === k.slug)),
+  ];
   const organization = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION, { bridge }) as
     | { id: string; name: string }
     | null
@@ -109,7 +117,10 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   /** What is inside each kit, read once per catalogue: null = could not be read. */
   const [details, setDetails] = useState<Record<string, KitDetail | null>>({});
   const [selected, setSelected] = useState<string | null>(null);
-  const slugs = kits.map((k) => k.slug).join(',');
+  const slugs = library.map((k) => k.slug).join(',');
+  const detailOf = (slug: string): KitDetail | null =>
+    shelf.find((d) => d.kit.slug === slug) ?? details[slug] ?? null;
+  const onShelf = (slug: string) => shelf.some((d) => d.kit.slug === slug);
 
   useEffect(() => {
     if (!slugs) return;
@@ -144,6 +155,22 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
       alive = false;
     };
   }, [api, orgId, projectId, tick]);
+
+  // The organization's own kits: an organization's or a project's Kits tab.
+  useEffect(() => {
+    if (!orgId || scope === 'platform') return;
+    let alive = true;
+    api
+      .shelf({ organizationId: orgId })
+      .fetch({ staleTime: 0 })
+      .then(
+        (r) => alive && setShelf(r.items ?? []),
+        () => alive && setShelf([])
+      );
+    return () => {
+      alive = false;
+    };
+  }, [api, orgId, scope, tick]);
 
   const act = async (slug: string, run: () => Promise<unknown>) => {
     setBusy(slug);
@@ -212,6 +239,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
       onRemoveProject={() =>
         projectId && void act(kit.slug, () => api.removeFromProject(kit.slug, projectId).fetch(undefined))
       }
+      shelfKit={onShelf(kit.slug)}
+      onRefreshShelf={() => orgId && void act(kit.slug, () => api.refreshShelfKit(kit.slug, orgId).fetch({}))}
+      onRemoveShelf={() => orgId && void act(kit.slug, () => api.removeShelfKit(kit.slug, orgId).fetch(undefined))}
     />
   );
   const open = selected ? kits.find((k) => k.slug === selected) : undefined;
@@ -232,6 +262,26 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     <div ref={containerRef} className={styles.screen} data-theme={toKitTheme(theme)}>
       <h2 className={styles.title}>{t('title')}</h2>
       <p className={styles.description}>{t(`description_${scope}`)}</p>
+      {scope === 'organization' && orgId && !open && (
+        adding ? (
+          <AddFromRepository
+            organizationId={orgId}
+            t={t}
+            onCancel={() => setAdding(false)}
+            onAdded={(kit) => {
+              setAdding(false);
+              setSelected(kit.kit.slug);
+              setTick((n) => n + 1);
+            }}
+          />
+        ) : (
+          <div className={styles.actions}>
+            <Button size="sm" variant="outline" data-add-kit onClick={() => setAdding(true)}>
+              {t('add_open')}
+            </Button>
+          </div>
+        )
+      )}
       {catalog.isLoading ? (
         <Skeleton className={styles.skeletonLine} />
       ) : catalog.isError ? (
@@ -241,8 +291,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
       ) : open ? (
         <KitDetailView
           kit={open}
-          detail={details[open.slug] ?? null}
-          failed={open.slug in details && details[open.slug] === null}
+          detail={detailOf(open.slug)}
+          failed={!onShelf(open.slug) && open.slug in details && details[open.slug] === null}
           controls={controlsFor(open)}
           onBack={() => setSelected(null)}
           t={t}
@@ -283,9 +333,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
                   </>
                 )}
               </dl>
-              {details[kit.slug] && (
+              {detailOf(kit.slug) && (
                 <p className={styles.summary} data-kit-summary>
-                  {contentsSummary(details[kit.slug]!.contents, t) || t('sum_nothing')}
+                  {contentsSummary(detailOf(kit.slug)!.contents, t) || t('sum_nothing')}
                 </p>
               )}
               <button type="button" className={styles.inside} onClick={() => setSelected(kit.slug)}>
@@ -319,6 +369,9 @@ function KitControls({
   onRemove,
   onInstallProject,
   onRemoveProject,
+  shelfKit,
+  onRefreshShelf,
+  onRemoveShelf,
 }: {
   scope: KitScope;
   kit: CatalogKit;
@@ -333,6 +386,10 @@ function KitControls({
   onRemove: (organizationId: string) => void;
   onInstallProject: () => void;
   onRemoveProject: () => void;
+  /** The kit is on the organization's own shelf. */
+  shelfKit: boolean;
+  onRefreshShelf: () => void;
+  onRemoveShelf: () => void;
 }) {
   const base = installed?.base.find((k) => k.kit_slug === kit.slug);
   const own = installed?.organization.find((k) => k.kit_slug === kit.slug);
@@ -384,6 +441,18 @@ function KitControls({
                 {t('install_for', { organization: name })}
               </Button>
             ))}
+          {scope === 'organization' && shelfKit && (
+            <>
+              <Button variant="ghost" size="sm" disabled={busy} data-shelf-refresh onClick={onRefreshShelf}>
+                {t('shelf_refresh')}
+              </Button>
+              {!own && (
+                <Button variant="ghost" size="sm" disabled={busy} data-shelf-remove onClick={onRemoveShelf}>
+                  {t('shelf_remove')}
+                </Button>
+              )}
+            </>
+          )}
           {scope === 'project' &&
             (mine ? (
               <Button variant="ghost" size="sm" disabled={busy} onClick={onRemoveProject}>

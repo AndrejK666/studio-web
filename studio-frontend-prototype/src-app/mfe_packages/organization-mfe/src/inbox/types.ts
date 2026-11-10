@@ -7,7 +7,7 @@
 
 import type { OpenPullRequest } from './api';
 
-/** The sources today; a kit may add one later (ADR-0068 §6), rendered by its `title`. */
+/** The shell's own sources, or a kit's (`kit:<slug>/<id>`, ADR-0068 §6), rendered by its `title`. */
 export type InboxSource = 'review-requests' | 'pull-requests' | (string & {});
 
 /** The part of a review request (studio-documents) a row shows. */
@@ -31,8 +31,17 @@ export interface InboxItem {
   /** RFC 3339. */
   due_at: string | null;
   overdue: boolean;
-  /** The source's own record: a review request, an open pull request. */
+  /** The source's own record: a review request, an open pull request, a kit's row. */
   record: ReviewRecord | OpenPullRequest | Record<string, unknown>;
+  /** The kit a source comes from (`kit:<slug>/<id>`); absent for the shell's own sources. */
+  kit?: InboxKit | null;
+}
+
+/** The kit an Inbox item comes from (ADR-0068 §6). */
+export interface InboxKit {
+  slug: string;
+  name: string;
+  version: string;
 }
 
 export type InboxView = 'open' | 'hidden';

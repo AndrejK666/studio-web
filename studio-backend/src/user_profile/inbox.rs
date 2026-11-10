@@ -25,14 +25,27 @@ use crate::mcp::sdk::Api;
 pub const REVIEW_REQUESTS: &str = "review-requests";
 pub const PULL_REQUESTS: &str = "pull-requests";
 
+/// The kit an item comes from (ADR-0068 §6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ItemKit {
+    pub slug: String,
+    pub name: String,
+    pub version: String,
+}
+
 /// One item waiting on the person.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Item {
     /// What its mark is kept under: `review:<id>`, or `pr:<id>@<updated_at>`
-    /// (a pull request marked done comes back when somebody moves it).
+    /// (a pull request marked done comes back when somebody moves it), or
+    /// `kit:<slug>/<source>:<object id>@<fingerprint>` for a kit's item (it
+    /// comes back when its object changes).
     pub key: String,
-    /// The source it came from.
-    pub source: &'static str,
+    /// The source it came from: `review-requests`, `pull-requests`, or a
+    /// kit's, `kit:<slug>/<source id>`.
+    pub source: String,
+    /// The kit the source is from; `None` for the shell's own sources.
+    pub kit: Option<ItemKit>,
     pub workspace_id: String,
     pub workspace_name: String,
     pub title: String,
@@ -98,7 +111,8 @@ pub fn items_of(
 ) -> Vec<Item> {
     let review = reviews.into_iter().map(|r| Item {
         key: review_key(&r),
-        source: REVIEW_REQUESTS,
+        source: REVIEW_REQUESTS.to_owned(),
+        kit: None,
         workspace_id: workspace_id.to_string(),
         workspace_name: workspace_name.to_string(),
         title: text(&r["title"]).unwrap_or_default(),
@@ -109,7 +123,8 @@ pub fn items_of(
     });
     let pull = pulls_in_order(pulls).into_iter().map(|p| Item {
         key: pull_key(&p),
-        source: PULL_REQUESTS,
+        source: PULL_REQUESTS.to_owned(),
+        kit: None,
         workspace_id: workspace_id.to_string(),
         workspace_name: workspace_name.to_string(),
         title: text(&p["title"]).unwrap_or_default(),
@@ -119,6 +134,111 @@ pub fn items_of(
         record: p,
     });
     review.chain(pull).collect()
+}
+
+/// The string a kit's source query names the person by.
+pub const ME: &str = "$me";
+
+/// `query` with every string `"$me"` in it the person `me`.
+pub fn with_me(query: &Value, me: &str) -> Value {
+    match query {
+        Value::String(s) if s == ME => Value::String(me.to_owned()),
+        Value::Array(items) => Value::Array(items.iter().map(|v| with_me(v, me)).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), with_me(v, me)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// A kit's title template filled from a row: `{field}` is the field's value
+/// (a string as it is, anything else as JSON, nothing for a missing one).
+pub fn fill(template: &str, row: &Value) -> String {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after.find('}') {
+            Some(close) => {
+                let field = &after[..close];
+                match row.get(field) {
+                    Some(Value::String(s)) => out.push_str(s),
+                    Some(Value::Null) | None => {}
+                    Some(v) => out.push_str(&v.to_string()),
+                }
+                rest = &after[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A short, stable fingerprint of a row: a kit's item marked done comes back
+/// when its object changes, as a pull request does when it moves.
+fn fingerprint(v: &Value) -> String {
+    // FNV-1a, 64 bits: deterministic across processes, unlike the std hasher.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in v.to_string().bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// One kit source's rows (`POST /studio-domain-model/v1/query` items:
+/// `{id, value}`) as items. `source` is the source as
+/// `GET /studio-kits/v1/inbox-sources` lists it; `spaces` names the
+/// workspaces, `(id, name)`.
+pub fn kit_items(source: &Value, rows: Vec<Value>, spaces: &[(String, String)]) -> Vec<Item> {
+    let slug = source["kit_slug"].as_str().unwrap_or_default();
+    let id = source["id"].as_str().unwrap_or_default();
+    let label = source["label"].as_str().unwrap_or_default();
+    let template = source["title"].as_str().filter(|t| !t.is_empty());
+    let workspace_field = source["workspace_field"].as_str();
+    let kit = ItemKit {
+        slug: slug.to_owned(),
+        name: source["kit_name"].as_str().unwrap_or(slug).to_owned(),
+        version: source["kit_version"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+    };
+    rows.into_iter()
+        .map(|row| {
+            let value = row.get("value").cloned().unwrap_or(Value::Null);
+            let object = row["id"].as_str().unwrap_or_default();
+            let workspace_id = workspace_field
+                .and_then(|f| value.get(f))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let workspace_name = spaces
+                .iter()
+                .find(|(w, _)| *w == workspace_id)
+                .map(|(_, n)| n.clone())
+                .unwrap_or_default();
+            Item {
+                key: format!("kit:{slug}/{id}:{object}@{}", fingerprint(&value)),
+                source: format!("kit:{slug}/{id}"),
+                kit: Some(kit.clone()),
+                workspace_id,
+                workspace_name,
+                title: template.map_or_else(|| label.to_owned(), |t| fill(t, &value)),
+                url: None,
+                due_at: None,
+                overdue: false,
+                record: row,
+            }
+        })
+        .collect()
 }
 
 /// Whether a mark hides its item now: done, or snoozed until later.
@@ -173,9 +293,52 @@ pub struct Read {
     pub unread: Vec<String>,
 }
 
+/// The sources the kits installed for the caller's organization bring
+/// (`GET /studio-kits/v1/inbox-sources`), each run as the caller with
+/// `"$me"` the caller, as items after the shell's own.
+async fn kit_sources(api: &Api, me: &str, spaces: &[(String, String)]) -> Read {
+    let mut unread = Vec::new();
+    let sources = match api
+        .get(
+            "/studio-kits/v1/inbox-sources",
+            &[("limit".to_string(), "200".to_string())],
+        )
+        .await
+    {
+        Ok(r) => r["items"].as_array().cloned().unwrap_or_default(),
+        Err(e) => {
+            unread.push(format!("kit sources: {}", e.0));
+            Vec::new()
+        }
+    };
+    let answers = futures_util::future::join_all(sources.iter().map(|source| async move {
+        let query = with_me(&source["query"], me);
+        let answer = api.post("/studio-domain-model/v1/query", &[], &query).await;
+        (source, answer)
+    }))
+    .await;
+    let mut items = Vec::new();
+    for (source, answer) in answers {
+        match answer {
+            Ok(page) => items.extend(kit_items(
+                source,
+                page["items"].as_array().cloned().unwrap_or_default(),
+                spaces,
+            )),
+            Err(e) => unread.push(format!(
+                "{} ({}): {}",
+                source["kit_name"].as_str().unwrap_or_default(),
+                source["label"].as_str().unwrap_or_default(),
+                e.0
+            )),
+        }
+    }
+    Read { items, unread }
+}
+
 /// Every source of every workspace of the caller's organization, read as the
-/// caller.
-pub async fn read(api: &Api) -> Read {
+/// caller (`me` is their subject id), the kits' sources among them.
+pub async fn read(api: &Api, me: &str) -> Read {
     let mut unread = Vec::new();
     let spaces = match api.get("/studio-organizations/v1/rollups", &[]).await {
         Ok(r) => workspaces(&r),
@@ -235,6 +398,10 @@ pub async fn read(api: &Api) -> Read {
         pulls_all.extend(items_of(id, name, Vec::new(), pulls));
     }
     reviews_all.extend(pulls_all);
+    // What the installed kits bring (ADR-0068 §6), after the shell's own.
+    let kits = kit_sources(api, me, &spaces).await;
+    reviews_all.extend(kits.items);
+    unread.extend(kits.unread);
     Read {
         items: reviews_all,
         unread,

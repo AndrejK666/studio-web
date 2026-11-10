@@ -12,9 +12,12 @@ use super::contents::{KitDetail, KitNamed};
 use super::installed::{
     BASE_KIT, InstalledKit, KitInstaller, NOT_A_PROJECT_KIT, ORGANIZATION_KIT, Refusal,
 };
+use super::models::{KIT_MODEL_CONFLICT, MODEL_KIT_NOT_FOR_PROJECT};
+use super::phase::{KIT_NOT_INSTALLED, NO_SUCH_TRANSITION};
 use super::service::{
     KitDescriptor, KitInstallation, KitMaterialization, KitRegistryService, ProjectRepository,
 };
+use super::shelf::{KIT_INSTALLED, KIT_SLUG_TAKEN};
 use crate::org_scope::{OrgAccess, OrgCtx};
 use crate::pagination::{PageQuery, page_of};
 
@@ -162,6 +165,59 @@ pub struct KitDetailDto {
     /// (a copy at the pinned version) or `kit.gdl`; null when nothing reliable
     /// describes the kit, and every list is empty.
     pub manifest: Option<String>,
+    /// Where an organization's own kit came from (its shelf entry); null for
+    /// a built-in or official kit.
+    pub origin: Option<KitOriginDto>,
+}
+
+/// Where a kit of an organization's shelf came from: the repository a
+/// connection of the organization reaches, the directory and ref, and the
+/// commit it is pinned to.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitOriginDto {
+    pub connection_id: String,
+    /// The connection's provider (`github`, `gitlab`, ...).
+    pub provider: String,
+    /// `owner/name`.
+    pub repository: String,
+    /// The kit's directory; empty for the repository's root.
+    pub path: String,
+    /// The ref it follows; null is the default branch.
+    pub git_ref: Option<String>,
+    /// The commit it is pinned to.
+    pub commit: String,
+    /// `kit.json` or `.cf-studio-kit.toml`.
+    pub manifest_file: String,
+    pub added_by: String,
+    pub added_at: String,
+    /// When it was last re-pinned.
+    pub refreshed_at: Option<String>,
+}
+
+/// The organization's shelf.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ShelfListDto {
+    pub items: Vec<KitDetailDto>,
+    pub total: u32,
+}
+
+/// Where a kit is: a repository through one of the organization's
+/// connections, a directory and a ref.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ShelfSourceDto {
+    pub connection_id: Uuid,
+    /// `owner/name`.
+    pub repository: String,
+    /// The kit's directory; empty or absent for the repository's root.
+    pub path: Option<String>,
+    /// A branch, a tag or a commit; the default branch when absent.
+    #[serde(rename = "ref")]
+    pub git_ref: Option<String>,
+    /// Which kit of a `.cf-studio-kit.toml` that lists several.
+    pub slug: Option<String>,
 }
 
 #[derive(Debug)]
@@ -353,8 +409,33 @@ impl From<KitDetail> for KitDetailDto {
                 docs: c.docs,
             },
             manifest: value.manifest.map(str::to_owned),
+            origin: None,
         }
     }
+}
+
+impl From<super::shelf::KitOrigin> for KitOriginDto {
+    fn from(o: super::shelf::KitOrigin) -> Self {
+        Self {
+            connection_id: o.connection_id.to_string(),
+            provider: o.provider,
+            repository: o.repository,
+            path: o.path,
+            git_ref: o.git_ref,
+            commit: o.commit,
+            manifest_file: o.manifest_file,
+            added_by: o.added_by,
+            added_at: o.added_at,
+            refreshed_at: o.refreshed_at,
+        }
+    }
+}
+
+/// A shelf kit as the library describes it, with where it came from.
+fn shelf_detail(kit: super::shelf::ShelfKit) -> KitDetailDto {
+    let mut dto: KitDetailDto = super::shelf::detail(&kit).into();
+    dto.origin = Some(kit.origin.into());
+    dto
 }
 
 impl From<ProjectRepository> for ProjectRepositoryDto {
@@ -413,6 +494,9 @@ impl From<KitInstallation> for KitInstallationDto {
 pub struct CatalogueQuery {
     #[serde(default)]
     pub shelf: Option<String>,
+    /// List this organization's own kits too.
+    #[serde(default)]
+    pub organization_id: Option<Uuid>,
     #[serde(flatten)]
     pub page: PageQuery,
 }
@@ -537,6 +621,49 @@ fn refused(refusal: Refusal) -> CanonicalError {
                 NOT_A_PROJECT_KIT,
             )
             .create(),
+        Refusal::SlugTaken(slug) => KitRegistryError::failed_precondition()
+            .with_precondition_violation(
+                "kit",
+                format!(
+                    "`{slug}` is a kit of Studio's own library; an organization's kit takes \
+                     another slug"
+                ),
+                KIT_SLUG_TAKEN,
+            )
+            .create(),
+        Refusal::KitInstalled(slug) => KitRegistryError::failed_precondition()
+            .with_precondition_violation(
+                "kit",
+                format!(
+                    "`{slug}` is installed for the organization; uninstall it before taking it \
+                     off the shelf"
+                ),
+                KIT_INSTALLED,
+            )
+            .create(),
+        Refusal::ModelConflict(detail) => KitRegistryError::failed_precondition()
+            .with_precondition_violation("model", detail, KIT_MODEL_CONFLICT)
+            .create(),
+        Refusal::ModelKitNotForProject(slug) => KitRegistryError::failed_precondition()
+            .with_precondition_violation(
+                "kit",
+                format!(
+                    "`{slug}` brings a model, which is the organization's: install it for the \
+                     organization, not for one project"
+                ),
+                MODEL_KIT_NOT_FOR_PROJECT,
+            )
+            .create(),
+        Refusal::KitNotInstalled(slug) => KitRegistryError::failed_precondition()
+            .with_precondition_violation(
+                "kit",
+                format!("`{slug}` is not installed where this was asked"),
+                KIT_NOT_INSTALLED,
+            )
+            .create(),
+        Refusal::NoSuchTransition(detail) => KitRegistryError::failed_precondition()
+            .with_precondition_violation("phase", detail, NO_SUCH_TRANSITION)
+            .create(),
         Refusal::Internal(error) => internal(error),
     }
 }
@@ -560,6 +687,13 @@ async fn get_installed(
         }
     }
     .map_err(refused)?;
+    // The model follows what is installed: a base kit reaches an
+    // organization's model when the organization is first read after it
+    // changed (docs/design/studio-kits.md §3.10). What cannot be applied is
+    // logged; the read does not fail for it.
+    if let Err(refusal) = installer.reconcile_models(installed.organization_id).await {
+        tracing::warn!(organization_id = %installed.organization_id, ?refusal, "studio-kits: kit models not reconciled");
+    }
     let list = |kits: Vec<InstalledKit>| kits.into_iter().map(Into::into).collect();
     Ok(Json(InstalledKitsDto {
         organization_id: installed.organization_id.to_string(),
@@ -861,13 +995,25 @@ fn internal(error: anyhow::Error) -> CanonicalError {
 }
 
 async fn catalogue(
-    Extension(_ctx): Extension<SecurityContext>,
+    Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<KitRegistryService>>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Extension(access): Extension<OrgAccess>,
     Query(query): Query<CatalogueQuery>,
 ) -> ApiResult<JsonBody<KitListDto>> {
     let page = query.page;
-    let items: Vec<KitDto> = service
-        .catalogue()
+    let mut library = service.catalogue();
+    // An organization's own kits are listed only for it, and only when it is
+    // named: the IDE and other callers see the shared library as before.
+    if let Some(org) = query.organization_id {
+        let ctx = crate::org_scope::resolve(access.0.as_ref(), &ctx, Some(org)).await?;
+        let shelf = installer
+            .shelf(&ctx, ctx.subject_tenant_id())
+            .await
+            .map_err(refused)?;
+        library.extend(shelf.into_iter().map(|k| k.kit));
+    }
+    let items: Vec<KitDto> = library
         .into_iter()
         .filter(|kit| {
             query
@@ -882,16 +1028,544 @@ async fn catalogue(
 }
 
 async fn get_kit(
-    Extension(_ctx): Extension<SecurityContext>,
+    OrgCtx(ctx): OrgCtx,
     Extension(service): Extension<Arc<KitRegistryService>>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
     Path(kit_slug): Path<String>,
 ) -> ApiResult<JsonBody<KitDetailDto>> {
-    let detail = service.kit(&kit_slug).ok_or_else(|| {
-        KitRegistryError::not_found("the kit library does not hold this kit")
-            .with_resource(kit_slug.clone())
-            .create()
-    })?;
-    Ok(Json(detail.into()))
+    if let Some(detail) = service.kit(&kit_slug) {
+        return Ok(Json(detail.into()));
+    }
+    // Not in the shared library: the organization's own shelf.
+    let slug = kit_slug.trim().to_ascii_lowercase();
+    match installer
+        .shelf_kit(&ctx, ctx.subject_tenant_id(), &slug)
+        .await
+        .map_err(refused)?
+    {
+        Some(kit) => Ok(Json(shelf_detail(kit))),
+        None => Err(
+            KitRegistryError::not_found("the kit library does not hold this kit")
+                .with_resource(kit_slug)
+                .create(),
+        ),
+    }
+}
+
+async fn list_shelf(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Query(page): Query<PageQuery>,
+) -> ApiResult<JsonBody<ShelfListDto>> {
+    let shelf = installer
+        .shelf(&ctx, ctx.subject_tenant_id())
+        .await
+        .map_err(refused)?;
+    let items: Vec<KitDetailDto> = shelf.into_iter().map(shelf_detail).collect();
+    let (items, total) = page_of(items, page);
+    Ok(Json(ShelfListDto { items, total }))
+}
+
+fn source_of(body: ShelfSourceDto) -> super::shelf::SourceInput {
+    super::shelf::SourceInput {
+        connection_id: body.connection_id,
+        repository: body.repository,
+        path: body.path.unwrap_or_default(),
+        git_ref: body.git_ref,
+        slug: body.slug,
+    }
+}
+
+async fn preview_shelf_kit(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Json(body): Json<ShelfSourceDto>,
+) -> ApiResult<JsonBody<KitDetailDto>> {
+    let kit = installer
+        .preview_shelf_kit(&ctx, ctx.subject_tenant_id(), source_of(body))
+        .await
+        .map_err(refused)?;
+    Ok(Json(shelf_detail(kit)))
+}
+
+async fn add_shelf_kit(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Json(body): Json<ShelfSourceDto>,
+) -> ApiResult<JsonBody<KitDetailDto>> {
+    let kit = installer
+        .add_shelf_kit(&ctx, ctx.subject_tenant_id(), source_of(body))
+        .await
+        .map_err(refused)?;
+    Ok(Json(shelf_detail(kit)))
+}
+
+async fn refresh_shelf_kit(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Path(kit_slug): Path<String>,
+) -> ApiResult<JsonBody<KitDetailDto>> {
+    let kit = installer
+        .refresh_shelf_kit(&ctx, ctx.subject_tenant_id(), &kit_slug)
+        .await
+        .map_err(refused)?;
+    Ok(Json(shelf_detail(kit)))
+}
+
+async fn remove_shelf_kit(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Path(kit_slug): Path<String>,
+) -> ApiResult<StatusCode> {
+    installer
+        .remove_shelf_kit(&ctx, ctx.subject_tenant_id(), &kit_slug)
+        .await
+        .map_err(refused)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The organization's shelf (ADR-0068 phase 7).
+fn register_shelf_routes(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    router = OperationBuilder::get("/studio-kits/v1/organization-shelf")
+        .operation_id("studio_kits.list_organization_shelf")
+        .summary("The kits an organization added from its own repositories")
+        .description(
+            "Any member. Each kit as `GET /catalog/{kit_slug}` describes it, with `origin`: \
+                 the connection, repository, directory and ref it was read from and the commit \
+                 it is pinned to. Only this organization's catalogue lists them.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first item",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .handler(list_shelf)
+        .json_response_with_schema::<ShelfListDto>(openapi, StatusCode::OK, "The shelf")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-kits/v1/organization-shelf/preview")
+        .operation_id("studio_kits.probe_organization_shelf_kit")
+        .summary("Read a kit from a repository without adding it")
+        .description(
+            "What adding the kit would add: its manifest (`kit.json`, else \
+                 `.cf-studio-kit.toml`) read in `path` of `repository` through the \
+                 organization's connection `connection_id`, at the newest commit that touched \
+                 that directory on `ref`. Nothing is kept. Those who may install kits for the \
+                 organization (403 `KIT_ADMIN_REQUIRED`). A connection that is not the \
+                 organization's own, a repository it cannot read, a directory with no \
+                 manifest or a manifest that does not check is 400; a slug a built-in or \
+                 official kit has is 400 `failed_precondition` (`KIT_SLUG_TAKEN`).",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .json_request::<ShelfSourceDto>(openapi, "Where the kit is")
+        .handler(preview_shelf_kit)
+        .json_response_with_schema::<KitDetailDto>(openapi, StatusCode::OK, "The kit it would add")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-kits/v1/organization-shelf")
+        .operation_id("studio_kits.create_organization_shelf_kit")
+        .summary("Add a kit from a repository to the organization's shelf")
+        .description(
+            "Reads the kit as `POST /organization-shelf/preview` does, pins it, and keeps it \
+                 on the organization's shelf, replacing a kit of the same slug there. It is \
+                 then installed like any kit (`PUT /organization-kits/{kit_slug}`, \
+                 `PUT /project-kits/{kit_slug}`). The same refusals as the preview.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .json_request::<ShelfSourceDto>(openapi, "Where the kit is")
+        .handler(add_shelf_kit)
+        .json_response_with_schema::<KitDetailDto>(openapi, StatusCode::OK, "The kit added")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-kits/v1/organization-shelf/{kit_slug}/refresh")
+        .operation_id("studio_kits.sync_organization_shelf_kit")
+        .summary("Read a shelf kit again at its ref and re-pin it")
+        .description(
+            "Those who may install kits for the organization. The kit's source is read \
+                 again at its ref and pinned to the commit found; an organization or project \
+                 that installed the kit keeps the commit it installed until it installs the kit \
+                 again. A slug not on the shelf is 404; the preview's refusals apply.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .path_param("kit_slug", "Kit slug")
+        .handler(refresh_shelf_kit)
+        .json_response_with_schema::<KitDetailDto>(openapi, StatusCode::OK, "The kit, re-pinned")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    OperationBuilder::delete("/studio-kits/v1/organization-shelf/{kit_slug}")
+        .operation_id("studio_kits.delete_organization_shelf_kit")
+        .summary("Take a kit off the organization's shelf")
+        .description(
+            "Those who may install kits for the organization. A kit the organization has \
+                 installed stays: 400 `failed_precondition` (`KIT_INSTALLED`); uninstall it \
+                 first. A slug not on the shelf is 404.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .path_param("kit_slug", "Kit slug")
+        .handler(remove_shelf_kit)
+        .no_content_response(StatusCode::NO_CONTENT, "Removed from the shelf")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
+}
+
+/// A move a project's phase may make.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct PhaseMoveDto {
+    /// The lifecycle's name for it (`start` when the project has no phase).
+    pub transition: String,
+    pub to: String,
+}
+
+/// A project's phase (Project lifecycle, a built-in kit).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectPhaseDto {
+    pub project_id: String,
+    /// Project lifecycle applies to the project; everything else is empty
+    /// when it does not.
+    pub installed: bool,
+    pub phase: Option<String>,
+    /// Who moves it on: a subject id.
+    pub phase_owner: Option<String>,
+    /// When it entered its phase, RFC 3339.
+    pub phase_since: Option<String>,
+    /// The lifecycle's phases, in order.
+    pub states: Vec<String>,
+    /// The moves open from the current phase.
+    pub next: Vec<PhaseMoveDto>,
+}
+
+/// Move a project to a phase.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SetProjectPhaseDto {
+    pub phase: String,
+    /// Who moves it on from there; the project's current owner, else the
+    /// caller, when absent.
+    pub owner: Option<String>,
+}
+
+/// One project's phase in an organization's list.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectPhaseRowDto {
+    pub project_id: String,
+    pub phase: String,
+    pub phase_owner: Option<String>,
+    pub phase_since: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectPhaseListDto {
+    /// Project lifecycle applies to the organization.
+    pub installed: bool,
+    pub items: Vec<ProjectPhaseRowDto>,
+    pub total: u32,
+}
+
+fn phase_dto(project: Uuid, p: super::phase::Phase) -> ProjectPhaseDto {
+    ProjectPhaseDto {
+        project_id: project.to_string(),
+        installed: p.installed,
+        phase: p.phase,
+        phase_owner: p.owner,
+        phase_since: p.since,
+        states: p.states,
+        next: p
+            .next
+            .into_iter()
+            .map(|(transition, to)| PhaseMoveDto { transition, to })
+            .collect(),
+    }
+}
+
+async fn get_project_phase(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(access): Extension<OrgAccess>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Query(ProjectKitQuery { project_id }): Query<ProjectKitQuery>,
+) -> ApiResult<JsonBody<ProjectPhaseDto>> {
+    let ctx = crate::org_scope::resolve(access.0.as_ref(), &ctx, Some(project_id)).await?;
+    let phase = installer
+        .project_phase(&ctx, project_id)
+        .await
+        .map_err(refused)?;
+    Ok(Json(phase_dto(project_id, phase)))
+}
+
+async fn put_project_phase(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(access): Extension<OrgAccess>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Query(ProjectKitQuery { project_id }): Query<ProjectKitQuery>,
+    Json(body): Json<SetProjectPhaseDto>,
+) -> ApiResult<JsonBody<ProjectPhaseDto>> {
+    let ctx = crate::org_scope::resolve(access.0.as_ref(), &ctx, Some(project_id)).await?;
+    let phase = installer
+        .set_project_phase(&ctx, project_id, &body.phase, body.owner.as_deref())
+        .await
+        .map_err(refused)?;
+    Ok(Json(phase_dto(project_id, phase)))
+}
+
+async fn list_project_phases(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Query(page): Query<PageQuery>,
+) -> ApiResult<JsonBody<ProjectPhaseListDto>> {
+    let (installed, rows) = installer
+        .project_phases(&ctx, ctx.subject_tenant_id())
+        .await
+        .map_err(refused)?;
+    let items: Vec<ProjectPhaseRowDto> = rows
+        .into_iter()
+        .map(
+            |(project_id, phase, phase_owner, phase_since)| ProjectPhaseRowDto {
+                project_id,
+                phase,
+                phase_owner,
+                phase_since,
+            },
+        )
+        .collect();
+    let (items, total) = page_of(items, page);
+    Ok(Json(ProjectPhaseListDto {
+        installed,
+        items,
+        total,
+    }))
+}
+
+/// One Inbox source a kit brings (ADR-0068 §6).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitInboxSourceQueryDto {
+    pub kit_slug: String,
+    /// The kit's name, for the person: an item says which kit it comes from.
+    pub kit_name: String,
+    /// The version installed.
+    pub kit_version: String,
+    pub id: String,
+    pub label: String,
+    /// The body `POST /studio-domain-model/v1/query` takes; the string
+    /// `"$me"` in it is the person whose Inbox is read.
+    pub query: serde_json::Value,
+    /// An item's title; `{field}` is a field of the row.
+    pub title: Option<String>,
+    /// The row's field naming the workspace an item is in.
+    pub workspace_field: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitInboxSourceListDto {
+    pub items: Vec<KitInboxSourceQueryDto>,
+    pub total: u32,
+}
+
+async fn list_inbox_sources(
+    OrgCtx(ctx): OrgCtx,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Query(page): Query<PageQuery>,
+) -> ApiResult<JsonBody<KitInboxSourceListDto>> {
+    let sources = installer
+        .inbox_sources(&ctx, ctx.subject_tenant_id())
+        .await
+        .map_err(refused)?;
+    let items: Vec<KitInboxSourceQueryDto> = sources
+        .into_iter()
+        .map(|s| KitInboxSourceQueryDto {
+            kit_slug: s.kit_slug,
+            kit_name: s.kit_name,
+            kit_version: s.kit_version,
+            id: s.source.id,
+            label: s.source.label,
+            query: s.source.query.unwrap_or_default(),
+            title: s.source.title,
+            workspace_field: s.source.workspace_field,
+        })
+        .collect();
+    let (items, total) = page_of(items, page);
+    Ok(Json(KitInboxSourceListDto { items, total }))
+}
+
+/// Project lifecycle's function: a project's phase (ADR-0068 §7).
+fn register_phase_routes(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+    router = OperationBuilder::get("/studio-kits/v1/inbox-sources")
+        .operation_id("studio_kits.list_inbox_sources")
+        .summary("The Inbox sources of the kits installed for an organization")
+        .description(
+            "Any member. Each source a kit installed for the whole organization (a base kit or \
+             its own) declares (ADR-0068 §6): the query over the kit's objects that says what \
+             waits on whom (`\"$me\"` is the person whose Inbox is read), how an item is titled, \
+             and the kit it comes from. studio-user's Inbox runs them as the person.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first item",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .handler(list_inbox_sources)
+        .json_response_with_schema::<KitInboxSourceListDto>(openapi, StatusCode::OK, "The sources")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-kits/v1/project-phase")
+        .operation_id("studio_kits.get_project_phase")
+        .summary("A project's phase (Project lifecycle)")
+        .description(
+            "Any member who reaches the project. The phase, its owner and since when, read from \
+             the project's object in the organization's model, with the lifecycle's phases and \
+             the moves open from the current one. `installed` is false, and the rest empty, \
+             where Project lifecycle does not apply to the project.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("project_id", true, "The project", "string")
+        .handler(get_project_phase)
+        .json_response_with_schema::<ProjectPhaseDto>(openapi, StatusCode::OK, "The phase")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-kits/v1/project-phase")
+        .operation_id("studio_kits.update_project_phase")
+        .summary("Move a project to a phase (Project lifecycle)")
+        .description(
+            "Only along a transition the kit's lifecycle declares (400 `failed_precondition`, \
+             `NO_SUCH_TRANSITION`); a project with no phase may start in any. Sets `phase`, \
+             `phase_owner` (`owner`, else the project's, else the caller) and `phase_since` on \
+             the project's object, written as the caller: the PDP's `domain.edit` decides (403 \
+             `DOMAIN_EDIT_REQUIRED`). Where Project lifecycle does not apply, 400 \
+             `failed_precondition` (`KIT_NOT_INSTALLED`).",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("project_id", true, "The project", "string")
+        .json_request::<SetProjectPhaseDto>(openapi, "The phase, and optionally its owner")
+        .handler(put_project_phase)
+        .json_response_with_schema::<ProjectPhaseDto>(openapi, StatusCode::OK, "The phase")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    OperationBuilder::get("/studio-kits/v1/project-phases")
+        .operation_id("studio_kits.list_project_phases")
+        .summary("Every project of an organization with its phase (Project lifecycle)")
+        .description(
+            "Any member. The projects whose object carries a phase, by project id. `installed` \
+             is false, and the list empty, where Project lifecycle does not apply to the \
+             organization.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first item",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .handler(list_project_phases)
+        .json_response_with_schema::<ProjectPhaseListDto>(openapi, StatusCode::OK, "The phases")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi)
 }
 
 async fn list_installations(
@@ -1044,17 +1718,26 @@ pub fn register_routes(
     access: OrgAccess,
 ) -> Router {
     router = register_installer_routes(router, openapi);
+    router = register_shelf_routes(router, openapi);
+    router = register_phase_routes(router, openapi);
     router = OperationBuilder::get("/studio-kits/v1/catalog")
         .operation_id("studio_kits.list_catalog")
         .summary("List kits available to Constructor Studio")
         .description(
             "Returns the kits this deployment knows about — name, slug and where \
              the canonical repository is. The kit's files stay in Git; this is \
-             the metadata about them.",
+             the metadata about them. With `organization_id`, that organization's own \
+             kits (the `organization` shelf) are listed too; nobody else's ever are.",
         )
         .tag("StudioKits")
         .authenticated()
         .require_license_features::<License>([])
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            "An organization whose own kits to list as well",
+            "string",
+        )
         .query_param_typed(
             "offset",
             false,
@@ -1086,12 +1769,21 @@ pub fn register_routes(
              (compiled into Studio), `.cf-studio-kit.toml` (a copy of the official kit's \
              manifest at the pinned version; never fetched on request) or null when nothing \
              reliable describes it, such as a kit pinned to another version by the \
-             deployment. A slug the library does not hold is 404.",
+             deployment. A kit of the organization's own shelf (`organization_id`, the \
+             caller's home when absent) is described from the manifest kept at its pinned \
+             commit (`kit.json` or `.cf-studio-kit.toml`), with `origin` saying where it came \
+             from. A slug the library does not hold is 404.",
         )
         .tag("StudioKits")
         .authenticated()
         .require_license_features::<License>([])
         .path_param("kit_slug", "Kit slug")
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
         .handler(get_kit)
         .json_response_with_schema::<KitDetailDto>(
             openapi,

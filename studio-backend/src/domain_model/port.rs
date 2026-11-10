@@ -20,6 +20,12 @@ use async_trait::async_trait;
 use serde_json::Value;
 use toolkit_security::SecurityContext;
 
+/// A kit's model overlay and what applying it changed (ADR-0067 §6): the
+/// format another gear (studio-kits) reads from a kit's manifest.
+pub use super::kit_overlay::{
+    KitModelChange, KitModelError, KitOverlay, OverlayType, kit_type_gts,
+    validate as validate_kit_overlay,
+};
 use super::ontology::{EntitySpec, FieldSpec};
 use super::service::{DomainModelService, WriteOptions};
 use super::validate::ValidateMode;
@@ -187,6 +193,29 @@ pub trait DomainObjects: Send + Sync {
         _names: &[&str],
     ) -> anyhow::Result<Vec<(String, String, String)>> {
         anyhow::bail!("relation reads are not offered here")
+    }
+
+    /// Make the caller's organization's model carry exactly kit `slug`'s
+    /// overlay at `version` (ADR-0067 §6): install or upgrade with an
+    /// overlay, uninstall with `None`. A conflict or a malformed overlay is a
+    /// [`KitModelError`] the error can be downcast to.
+    async fn sync_kit_model(
+        &self,
+        _ctx: &SecurityContext,
+        _slug: &str,
+        _version: &str,
+        _overlay: Option<&KitOverlay>,
+    ) -> anyhow::Result<KitModelChange> {
+        anyhow::bail!("kit models are not offered here")
+    }
+
+    /// The kits the caller's organization's model carries, with the version
+    /// each overlay was applied at.
+    async fn kit_models(
+        &self,
+        _ctx: &SecurityContext,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+        Ok(Default::default())
     }
 
     /// Objects of `entities` the text finds, best first, with their node type.
@@ -416,6 +445,23 @@ impl DomainObjects for Objects {
 
     async fn entity_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<(String, bool)>> {
         self.0.entity_kinds(ctx).await
+    }
+
+    async fn sync_kit_model(
+        &self,
+        ctx: &SecurityContext,
+        slug: &str,
+        version: &str,
+        overlay: Option<&KitOverlay>,
+    ) -> anyhow::Result<KitModelChange> {
+        self.0.sync_kit_model(ctx, slug, version, overlay).await
+    }
+
+    async fn kit_models(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+        self.0.kit_models(ctx).await
     }
 
     async fn claim(

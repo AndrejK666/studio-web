@@ -6,10 +6,15 @@
 //! kit files into a checkout.
 
 mod contents;
+mod inbox;
 pub(crate) mod installed;
+mod manifest;
 mod mcp;
+mod models;
+mod phase;
 mod rest;
 pub(crate) mod service;
+mod shelf;
 
 pub(crate) use installed::KITS_INSTALLED_METADATA_TYPE;
 pub(crate) use mcp::tools as mcp_tools;
@@ -51,11 +56,19 @@ impl Gear for StudioKitsGear {
         )?);
         // Which kits apply to an organization (ADR-0069 §4): plain tenant
         // metadata, written as the gear after it has checked who asks.
-        let installer = Arc::new(KitInstaller::new(
-            service.catalogue(),
-            Arc::new(AmInstalledStore::new(account_management.clone())),
-            Arc::new(HubAuthority::new(ctx.client_hub())),
-        ));
+        let installer = Arc::new(
+            KitInstaller::new(
+                service.catalogue(),
+                Arc::new(AmInstalledStore::new(account_management.clone())),
+                Arc::new(HubAuthority::new(ctx.client_hub())),
+            )
+            // An organization's own kits are read through its connections
+            // (ADR-0068 phase 7).
+            .with_reader(shelf::reader(ctx.client_hub()))
+            // A kit's model overlay goes into the organization's model through
+            // the domain model's port (ADR-0067 §6).
+            .with_models(Arc::new(models::HubModels(ctx.client_hub()))),
+        );
         let access = crate::org_scope::OrgAccess(Arc::new(
             crate::studio_session::sdk::TenantMembership::new(account_management),
         ));

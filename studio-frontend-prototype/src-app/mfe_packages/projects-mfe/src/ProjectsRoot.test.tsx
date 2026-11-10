@@ -35,7 +35,10 @@ vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOrigi
 
 vi.mock('./api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: SilentService }));
 vi.mock('./api/DocumentsApiService', () => ({ DocumentsApiService: SilentService }));
-vi.mock('./api/ProjectStatusApiService', () => ({ ProjectStatusApiService: SilentService }));
+vi.mock('./api/ProjectStatusApiService', () => ({
+  ProjectStatusApiService: SilentService,
+  ProjectPhaseApiService: SilentService,
+}));
 // Both gears' clients live in the shared package now, so one mock covers them.
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),

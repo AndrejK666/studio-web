@@ -15,6 +15,7 @@ import { useMfeBridge } from '@gears-frontx/react';
 import { useProjectListScreenTranslations, useProjectListText } from '../../i18n';
 import { WorkspaceProjectsProvider } from '../../shared/workspaceProjects';
 import { useProjectList } from '../../shared/useProjectList';
+import { useProjectPhases } from '../../shared/useProjectPhases';
 import { DEFAULT_SORT_OPTION, type ProjectSortOption } from '../../model/project';
 import { openProjectWizard } from '../../actions/wizardActions';
 import { SectionHeader } from '../../components/SectionHeader';
@@ -32,6 +33,8 @@ const ProjectList: React.FC = () => {
   const sort: ProjectSortOption = DEFAULT_SORT_OPTION;
 
   const { loading, failed, org, workspace, rows, total } = useProjectList(query, sort);
+  // Project lifecycle's phase per project, where the kit applies.
+  const phases = useProjectPhases(org?.id);
   const busy = (!isLoaded && !translationsFailed) || loading;
 
   const actions = () => (
@@ -78,6 +81,7 @@ const ProjectList: React.FC = () => {
         ) : (
           <ProjectsTable
             rows={rows}
+            phases={phases}
             empty={
               total > 0 ? (
                 <Empty className={styles.empty}>

@@ -239,6 +239,15 @@ ADR-0069 §4); an agent installs one the way a person does.
 | `kit_organization_uninstall` | *changes:* uninstalls the organization's own kit; a base kit is refused |
 | `kit_project_install` | *changes:* installs a kit for one project (the organization's kit administrators); only a kit whose levels include `project` |
 | `kit_project_uninstall` | *changes:* uninstalls the project's own kit; a base or organization kit is refused |
+| `kits_shelf` | the kits an organization added from its own repositories, each with its `origin` (connection, repository, directory, ref, pinned commit) |
+| `kit_shelf_preview` | reads a kit from a repository through the organization's connection without adding it (kit administrators) |
+| `kit_shelf_add` | *changes:* adds a kit from a repository to the organization's shelf, pinned to a commit (kit administrators); a slug Studio's library has is refused (`KIT_SLUG_TAKEN`) |
+| `kit_shelf_refresh` | *changes:* reads a shelf kit again at its ref and re-pins it |
+| `kit_shelf_remove` | *changes:* takes a kit off the shelf; refused while the organization has it installed (`KIT_INSTALLED`) |
+| `project_phase` | a project's phase (Project lifecycle): the phase, its owner, since when, and the moves open |
+| `project_phase_set` | *changes:* moves a project to a phase along the declared lifecycle (`NO_SUCH_TRANSITION` otherwise) |
+| `project_phases` | an organization's projects with their phases |
+| `kits_inbox_sources` | the Inbox sources of the kits installed for an organization: each query over a kit's objects that says what waits on whom |
 
 **The inbox.** Everything that waits for you in one organization, as the
 portal's Inbox lists it, and how to act on each item.
@@ -247,7 +256,7 @@ portal's Inbox lists it, and how to act on each item.
 | --- | --- |
 | `inbox` | deploys awaiting approval, reviews asked of you, pull requests whose next move is yours, your failed background work (an undelivered notification among it); each item's `act` names the tool that answers it |
 | `inbox_mark` | *changes:* marks an item done, snoozes it, or opens it again; the portal shows the same marks |
-| `me_inbox` | the Inbox the server composes (`GET /studio-user/v1/me/inbox`, ADR-0068 §6): review requests and pull requests waiting on you across every workspace, overdue first, each naming its `source`; `view: hidden` for what you marked away |
+| `me_inbox` | the Inbox the server composes (`GET /studio-user/v1/me/inbox`, ADR-0068 §6): review requests, pull requests and the installed kits' items (each with its `kit`) waiting on you across every workspace, overdue first, each naming its `source`; `view: hidden` for what you marked away |
 | `review_requests` | a project's or workspace's review requests; `waiting_on: "me"` for yours |
 | `review_verdict` | *changes:* approves a review request or asks for changes |
 

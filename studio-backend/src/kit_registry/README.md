@@ -28,7 +28,7 @@ This README is what you need to work in the directory.
 - The library has three shelves (`shelf` on each catalogue entry):
   `builtin` (`builtin_catalogue()` in `service.rs`, compiled in, at Studio's
   own version, empty `repository_url`), `official` (the catalogue above) and
-  `organization` (none yet: ADR-0068 phase 7). `?shelf=` filters
+  `organization` (each organization's own, `shelf.rs`: see below). `?shelf=` filters
   `GET /catalog`; the IDE asks for `official` only, the kits `cfs` can install.
   The built-in kits are the portal's features, each arriving as a kit:
   `project-lifecycle`, `project-issues`, `project-tests`, `project-artifacts`,
@@ -92,5 +92,49 @@ This README is what you need to work in the directory.
   `kit_project_install`, `kit_project_uninstall`. The project-scoped
   `/projects/{project_id}/installations` routes (what the IDE materializes)
   are a separate record and unchanged.
+- An organization's own kits (ADR-0068 phase 7), `shelf.rs` and
+  `manifest.rs`: a source is `{connection_id, repository, path, ref, slug?}`
+  through one of the organization's own non-personal connections
+  (studio-connector's `Repository`). It is pinned to the newest commit that
+  touched `path` on `ref`, its manifest read there (`kit.json`, else
+  `.cf-studio-kit.toml`) and checked, and the manifest kept in the
+  organization's installed-kits document under `shelf`. Routes
+  (`?organization_id=`): `GET /organization-shelf` (members),
+  `POST /organization-shelf/preview`, `POST /organization-shelf`,
+  `POST /organization-shelf/{kit_slug}/refresh`,
+  `DELETE /organization-shelf/{kit_slug}` (kit administrators). Refusals:
+  `KIT_SLUG_TAKEN` (a built-in or official slug), `KIT_INSTALLED` (removing an
+  installed kit). `GET /catalog?organization_id=` adds the shelf;
+  `GET /catalog/{kit_slug}` describes a shelf kit with `origin`. MCP:
+  `kits_shelf`, `kit_shelf_preview`, `kit_shelf_add`, `kit_shelf_refresh`,
+  `kit_shelf_remove`. `kit.json` is documented in
+  `docs/design/studio-kits.md` §3.9.
+- A kit's model overlay (ADR-0067 §6), `models.rs`: the overlay is `model` in
+  a `kit.json` (a built-in kit's in `builtin/<slug>.kit.json`, compiled in;
+  format in `docs/design/studio-kits.md` §3.10 and
+  `domain_model/kit_overlay.rs`). It goes into the organization's model
+  through the domain model's port (`sync_kit_model`, `kit_models`) as this
+  gear's service identity: before an organization install is recorded (a
+  conflict is 400 `KIT_MODEL_CONFLICT` and nothing is recorded), after an
+  organization uninstall, and for base kits when an organization's installed
+  kits are read (`reconcile_models`). Overlays are copied into each
+  organization's stored model, not layered; a kit that brings a model is not
+  installed for one project (`MODEL_KIT_NOT_FOR_PROJECT`). Without the domain
+  model in the assembly, kits install and the model is left alone.
+- `project-lifecycle` is the first built-in kit with a model: the type
+  `project-lifecycle-phase`, `project.phase` / `phase_owner` / `phase_since`,
+  the tab `project.phases` and the phase lifecycle. Its function is
+  `phase.rs`: `GET`/`PUT /project-phase?project_id=` (moves only along a
+  declared transition, `NO_SUCH_TRANSITION`; `KIT_NOT_INSTALLED` where it
+  does not apply; written as the caller, `DOMAIN_EDIT_REQUIRED` when the PDP
+  refuses) and `GET /project-phases?organization_id=`. MCP: `project_phase`,
+  `project_phase_set`, `project_phases`.
+- Inbox sources (ADR-0068 §6), `inbox.rs`: a kit's `inbox` in its
+  `kit.json` (`{id, label, query, title?, workspace_field?}`, the query a
+  domain query naming its `type`, `"$me"` the person). `GET /inbox-sources`
+  (`?organization_id=`, members) lists those of the kits installed for the
+  whole organization at their installed version; studio-user's
+  `GET /me/inbox` runs them as the person. MCP `kits_inbox_sources`.
+  Project lifecycle brings `phase-waiting`.
 - The prototype flow and the installer inside the session are in the
   repository-root [`docs/kit-registry-prototype.md`](../../../docs/kit-registry-prototype.md).

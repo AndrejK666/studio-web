@@ -11,7 +11,8 @@ mfe(
 
     # The backend gears its screens call, by gear id (the `<gear>` of a
     # `/cf/<gear>/v1` base URL). Its own services: ArtifactIngestApiService,
-    # DocumentsApiService, SpecQualityApiService, ProjectStatusApiService. Through
+    # DocumentsApiService, SpecQualityApiService, ProjectStatusApiService,
+    # ProjectPhaseApiService (Project lifecycle's phase, studio-kits). Through
     # @constructor-studio/mfe-shared: AccountsApiService (project config),
     # ConnectorsApiService, StudioEventsApiService and StudioTasksApiService.
     requires = [
@@ -20,6 +21,7 @@ mfe(
         "studio-connector",
         "studio-documents",
         "studio-events",
+        "studio-kits",
         "studio-organizations",
         "studio-spec-quality",
         "studio-tasks",

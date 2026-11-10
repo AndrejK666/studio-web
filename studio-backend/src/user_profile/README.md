@@ -34,8 +34,12 @@ README is what you need to work in the directory.
   caller's `me/inbox-marks` applied (`?view=hidden` lists what the marks
   hide). Items are never stored: each is read from its source route as the
   caller on every call (ADR-0068 §6), and each names its `source`
-  (`review-requests`, `pull-requests`) so kits can add sources without the
-  shape changing. MCP tools `inbox` and `inbox_mark` ([`mcp.rs`](mcp.rs)).
+  (`review-requests`, `pull-requests`). Kits add sources: the Inbox reads
+  `GET /studio-kits/v1/inbox-sources` and runs each kit's domain query as the
+  caller (`"$me"` = their subject id) through `POST
+  /studio-domain-model/v1/query`; those items are `kit:<slug>/<id>` with a
+  `kit` (`{slug, name, version}`), after the shell's own
+  (docs/design/studio-kits.md §3.11). MCP tools `inbox` and `inbox_mark` ([`mcp.rs`](mcp.rs)).
   The ordering and the marks are unit tests in `inbox_tests.rs`, ported from
   the portal's.
 

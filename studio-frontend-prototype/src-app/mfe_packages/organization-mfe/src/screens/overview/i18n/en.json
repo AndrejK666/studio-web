@@ -34,6 +34,7 @@
   "inbox_due": "due {date}",
   "inbox_overdue": "overdue",
   "inbox_quiet": "quiet",
+  "inbox_from_kit_title": "The kit this comes from: it says what waits on you here",
   "inbox_open_pull": "Open pull request ↗",
   "inbox_open": "Open ↗",
   "inbox_open_project": "Open project",

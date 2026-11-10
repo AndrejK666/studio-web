@@ -73,7 +73,7 @@ function tenant(id: string, tenantType: string): Tenant {
 
 const PROJECT = tenant('proj', TENANT_TYPES.project);
 
-async function mount(rows: Tenant[]) {
+async function mount(rows: Tenant[], phases?: Record<string, string>) {
   const { mfeApp } = await import('../../../init');
   const { bridge, executeActionsChain } = createMfeBridgeFixture({
     domainId: 'screen',
@@ -89,7 +89,7 @@ async function mount(rows: Tenant[]) {
   render(
     <FrontXProvider app={mfeApp} mfeBridge={mfeContextValue(bridge)}>
       <OrganizationProvider>
-        <ProjectsTable rows={rows} empty={null} />
+        <ProjectsTable rows={rows} empty={null} phases={phases} />
       </OrganizationProvider>
     </FrontXProvider>
   );
@@ -166,6 +166,16 @@ describe('ProjectsTable rows', () => {
 
     expect(screen.getByText(en.status_suspended)).toBeTruthy();
     expect(screen.queryByText(en.status_unset)).toBeNull();
+  });
+
+  it('shows a project\'s phase only where Project lifecycle gives it one', async () => {
+    await mount([PROJECT]);
+    expect(document.querySelector('[data-project-phase]')).toBeNull();
+  });
+
+  it('shows the phase beside the name when the kit applies', async () => {
+    await mount([PROJECT], { proj: 'build' });
+    expect(document.querySelector('[data-project-phase]')?.textContent).toBe(en.phase_build);
   });
 
   it('says so when a healthy project carries no attributes yet', async () => {

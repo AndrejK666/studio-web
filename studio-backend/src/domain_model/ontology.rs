@@ -1361,6 +1361,12 @@ impl Ontology {
         Ok(index)
     }
 
+    /// The entities array, to change in place (a kit's overlay,
+    /// [`super::kit_overlay`]). `None` on a malformed document.
+    pub(crate) fn entities_mut(&mut self) -> Option<&mut Vec<Value>> {
+        self.doc.get_mut("entities").and_then(Value::as_array_mut)
+    }
+
     fn entity_mut(&mut self, entity_id: &str) -> Result<&mut Value, OntologyError> {
         self.doc
             .get_mut("entities")

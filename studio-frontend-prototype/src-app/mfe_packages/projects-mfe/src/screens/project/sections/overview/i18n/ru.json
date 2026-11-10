@@ -18,5 +18,13 @@
   "nothing_waits": "Ничего не ждёт ни вас, ни команду.",
   "nothing_waits_body": "Нет упавших проверок, застрявших пул-реквестов или отклонённых подключений.",
   "not_read": "Не прочитано: {sources}.",
-  "not_read_title": "Что там — неизвестно, а это не ноль."
+  "not_read_title": "Что там — неизвестно, а это не ноль.",
+  "phase_label": "Фаза",
+  "phase_none": "фаза не задана",
+  "phase_idea": "Идея",
+  "phase_discovery": "Исследование",
+  "phase_build": "Разработка",
+  "phase_run": "Эксплуатация",
+  "phase_since": "с {date}",
+  "phase_move": "Перевести в «{phase}»"
 }

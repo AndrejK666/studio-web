@@ -1885,6 +1885,121 @@ impl DomainModelService {
         .await
     }
 
+    /// Make the caller's organization's model carry exactly kit `slug`'s
+    /// overlay at `version` (ADR-0067 §6): install, upgrade, or — with no
+    /// overlay — uninstall, keeping a type that still has objects
+    /// ([`super::kit_overlay::sync`]). One numbered, revertible version whose
+    /// patch names only the types it touched; nothing changed writes nothing.
+    pub async fn sync_kit_model(
+        &self,
+        ctx: &SecurityContext,
+        slug: &str,
+        version: &str,
+        overlay: Option<&super::kit_overlay::KitOverlay>,
+    ) -> anyhow::Result<super::kit_overlay::KitModelChange> {
+        self.ensure_persisted(ctx).await?;
+        for attempt in 0..EDIT_ATTEMPTS {
+            let current = self.model_current(ctx).await?;
+            // Which of the kit's types still have objects: those are kept.
+            let mut inhabited: Vec<String> = Vec::new();
+            for id in super::kit_overlay::own_types(&current, slug) {
+                let objects = self
+                    .store
+                    .list_objects(ctx, &[gts::node_type_id(&id)], None, Some(10))
+                    .await?;
+                if objects.iter().any(|n| super::store::is_live(&n.value)) {
+                    inhabited.push(id);
+                }
+            }
+            let mut next = (*current).clone();
+            let change =
+                super::kit_overlay::sync(&mut next, slug, version, overlay, &|id: &str| {
+                    inhabited.iter().any(|i| i == id)
+                })?;
+            if change.is_empty() {
+                return Ok(change);
+            }
+            let (patch, undo) =
+                super::kit_overlay::entity_patches(current.entities(), next.entities());
+            let version_no = self.next_version(ctx)?;
+            let rev = Revision::new(
+                version_no,
+                ctx,
+                "kit",
+                slug,
+                format!(
+                    "kit {slug} {version}: {} added, {} changed, {} removed, {} kept",
+                    change.added.len(),
+                    change.updated.len(),
+                    change.removed.len(),
+                    change.kept.len()
+                ),
+            )
+            .with_patches(patch, undo);
+            if !self.claim_version(ctx, &rev).await? {
+                warn!(
+                    attempt,
+                    version = version_no,
+                    "studio-domain-model: model version taken, retrying the kit's overlay"
+                );
+                self.reload(ctx).await?;
+                continue;
+            }
+            // Every type that is new or changed is written; a removed one is
+            // simply no longer named by the model node (see `model_node`).
+            let mut nodes = Vec::new();
+            for e in next.entities() {
+                let Some(id) = e.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if current.entity(id) == Some(e) {
+                    continue;
+                }
+                let node = next
+                    .object_type_node(id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown domain type: {id}"))?;
+                nodes.push(NodeUpsert {
+                    type_id: gts::META_OBJECT_TYPE.to_string(),
+                    node_key: gts::instance_id(gts::META_OBJECT_TYPE, id),
+                    name: Some(node.name.clone()),
+                    payload: node.payload.clone(),
+                    expected_version: None,
+                });
+            }
+            nodes.push(self.model_node(&next, version_no));
+            self.store.upsert_nodes(ctx, &nodes).await?;
+            if let Some(m) = self.tenants_lock()?.get_mut(&ctx.subject_tenant_id()) {
+                m.ontology = Arc::new(next);
+                m.version = version_no;
+                // A type may be new: graph-storage must know it before an
+                // object of it is written.
+                m.registered = false;
+            }
+            info!(
+                kit = slug,
+                version,
+                ?change,
+                "studio-domain-model: a kit's overlay applied"
+            );
+            return Ok(change);
+        }
+        Err(anyhow::anyhow!(
+            "the model is being edited concurrently — no version could be claimed in \
+             {EDIT_ATTEMPTS} attempts"
+        ))
+    }
+
+    /// The kits the caller's organization's model carries, with the version
+    /// each overlay was applied at.
+    pub async fn kit_models(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+        Ok(super::kit_overlay::carried(
+            &*self.model_current(ctx).await?,
+        ))
+    }
+
     /// One versioned edit of some entities: `edit` changes a copy of the
     /// model and names the entities it changed; nothing changed writes
     /// nothing. Retried on a version taken concurrently.

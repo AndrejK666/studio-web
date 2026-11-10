@@ -167,6 +167,11 @@ input.search {
   block-size: var(--icon-size-md);
 }
 
+/* Project lifecycle's phase, beside the project's name. */
+.phase {
+  margin-left: var(--space-2, 0.5rem);
+}
+
 .name {
   min-width: 0;
   font-size: var(--text-body-size);

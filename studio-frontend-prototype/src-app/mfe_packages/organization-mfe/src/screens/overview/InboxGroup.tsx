@@ -289,7 +289,12 @@ function InboxRow({
         ) : (
           <>
             <b>{item.title}</b>
-            <span className={styles.muted}> · {item.workspace_name}</span>
+            {item.workspace_name && <span className={styles.muted}> · {item.workspace_name}</span>}{' '}
+            {item.kit && (
+              <Badge variant="secondary" title={t('inbox_from_kit_title')} data-inbox-kit={item.kit.slug}>
+                {item.kit.name}
+              </Badge>
+            )}
           </>
         )}
       </span>

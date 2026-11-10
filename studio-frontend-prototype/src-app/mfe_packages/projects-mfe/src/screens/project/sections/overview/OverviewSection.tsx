@@ -37,6 +37,7 @@ import {
 } from '../../../../model/projectStatus';
 import { useOverviewSectionTranslations } from '../../../../i18n';
 import styles from './OverviewSection.module.css';
+import { PhaseChip } from './PhaseChip';
 
 type Text = ReturnType<typeof useOverviewSectionTranslations>['t'];
 
@@ -74,13 +75,17 @@ export const OverviewSection: React.FC<{ projectId: string }> = ({ projectId }) 
     );
   }
   return (
-    <StatusView
-      status={read.data}
-      t={t}
-      open={open}
-      refreshing={read.isFetching}
-      onRefresh={() => void read.refetch()}
-    />
+    <>
+      {/* Project lifecycle's phase, only where the kit applies. */}
+      <PhaseChip projectId={projectId} t={t} />
+      <StatusView
+        status={read.data}
+        t={t}
+        open={open}
+        refreshing={read.isFetching}
+        onRefresh={() => void read.refetch()}
+      />
+    </>
   );
 };
 

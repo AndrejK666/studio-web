@@ -83,15 +83,74 @@ export interface KitContents {
   docs: string[];
 }
 
+/** Where an organization's own kit came from (`KitOriginDto`). */
+export interface KitOrigin {
+  connection_id: string;
+  provider: string;
+  /** `owner/name`. */
+  repository: string;
+  /** The kit's directory; empty for the repository's root. */
+  path: string;
+  git_ref: string | null;
+  /** The commit it is pinned to. */
+  commit: string;
+  manifest_file: string;
+  added_by: string;
+  added_at: string;
+  refreshed_at: string | null;
+}
+
 /** One kit with what is inside it (GET /studio-kits/v1/catalog/{slug}). */
 export interface KitDetail {
   kit: CatalogKit;
   contents: KitContents;
-  /** Where the description came from: built-in, .cf-studio-kit.toml, kit.gdl — or unknown. */
+  /** Where the description came from: built-in, kit.json, .cf-studio-kit.toml, kit.gdl — or unknown. */
   manifest: string | null;
+  /** Set for a kit of an organization's own shelf. */
+  origin?: KitOrigin | null;
+}
+
+/** Where a kit is, for the organization's shelf (`ShelfSourceDto`). */
+export interface ShelfSource {
+  connection_id: string;
+  repository: string;
+  path?: string;
+  ref?: string;
+  slug?: string;
+}
+
+/** A connection of the organization (studio-connector), as the picker needs it. */
+export interface Connection {
+  id: string;
+  owner_tenant_id: string;
+  provider: string;
+  label: string;
+  account?: string;
+  /** personal | workspace | organization */
+  scope: string;
+}
+
+/** Connections an organization's kit may be read through: its own, shared ones that reach repositories. */
+export function shelfConnections(all: Connection[], organizationId: string): Connection[] {
+  return all.filter(
+    (c) => c.owner_tenant_id === organizationId && c.scope !== 'personal' && ['github', 'gitlab'].includes(c.provider)
+  );
 }
 
 const org = (organizationId: string) => new URLSearchParams({ organization_id: organizationId }).toString();
+
+/** The organization's connections (studio-connector), for the "from a repository" picker. */
+export class ConnectionsApiService extends BaseApiService {
+  constructor() {
+    const restProtocol = new RestProtocol({ timeout: 30000 });
+    const restEndpoints = new RestEndpointProtocol(restProtocol);
+    super({ baseURL: '/cf/studio-connector/v1' }, restProtocol, restEndpoints);
+  }
+
+  readonly connections = this.protocol(RestEndpointProtocol).queryWith<{ items: Connection[] }, { organizationId: string }>(
+    ({ organizationId }) => `/connections?tenant=${encodeURIComponent(organizationId)}`
+  );
+}
 
 export class KitsApiService extends BaseApiService {
   constructor() {
@@ -140,6 +199,39 @@ export class KitsApiService extends BaseApiService {
     return this.protocol(RestEndpointProtocol).mutation<void, void>(
       'DELETE',
       `/project-kits/${encodeURIComponent(slug)}?${new URLSearchParams({ project_id: projectId })}`
+    );
+  }
+
+  /** The organization's own kits, each with its origin. */
+  readonly shelf = this.protocol(RestEndpointProtocol).queryWith<{ items: KitDetail[]; total: number }, { organizationId: string }>(
+    ({ organizationId }) => `/organization-shelf?limit=200&${org(organizationId)}`
+  );
+
+  previewShelfKit(organizationId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<KitDetail, ShelfSource>(
+      'POST',
+      `/organization-shelf/preview?${org(organizationId)}`
+    );
+  }
+
+  addShelfKit(organizationId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<KitDetail, ShelfSource>(
+      'POST',
+      `/organization-shelf?${org(organizationId)}`
+    );
+  }
+
+  refreshShelfKit(slug: string, organizationId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<KitDetail, Record<string, never>>(
+      'POST',
+      `/organization-shelf/${encodeURIComponent(slug)}/refresh?${org(organizationId)}`
+    );
+  }
+
+  removeShelfKit(slug: string, organizationId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<void, void>(
+      'DELETE',
+      `/organization-shelf/${encodeURIComponent(slug)}?${org(organizationId)}`
     );
   }
 

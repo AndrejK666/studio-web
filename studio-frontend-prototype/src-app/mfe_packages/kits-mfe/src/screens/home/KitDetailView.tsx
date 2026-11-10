@@ -113,6 +113,24 @@ export function KitDetailView({
           )}
           <dt>{t('described_by')}</dt>
           <dd>{detail?.manifest ?? (detail ? t('described_unknown') : '…')}</dd>
+          {detail?.origin && (
+            <>
+              <dt>{t('origin_from')}</dt>
+              <dd data-kit-origin>
+                <code>
+                  {detail.origin.repository}
+                  {detail.origin.path ? `/${detail.origin.path}` : ''}
+                </code>{' '}
+                {t('origin_ref', { ref: detail.origin.git_ref ?? t('origin_default_branch') })}
+              </dd>
+              <dt>{t('origin_commit')}</dt>
+              <dd>
+                <code title={detail.origin.commit}>{detail.origin.commit.slice(0, 12)}</code>
+                {' · '}
+                {t('origin_added', { at: (detail.origin.refreshed_at ?? detail.origin.added_at).slice(0, 10) })}
+              </dd>
+            </>
+          )}
         </dl>
         {controls}
       </header>

@@ -104,8 +104,10 @@ pub fn tools() -> Vec<Tool> {
             name: "me_inbox",
             description: "Your Inbox as the server composes it (`GET /studio-user/v1/me/inbox`, \
                 ADR-0068 §6), across every workspace of your organizations, overdue first: \
-                review requests waiting for your verdict and pull requests whose next step is \
-                yours. Each item names its `source` and carries the source's record; `unread` \
+                review requests waiting for your verdict, pull requests whose next step is \
+                yours, and what the installed kits' sources say waits on you (a project waiting \
+                in its phase, from Project lifecycle), each of those with its `kit`. Each item \
+                names its `source` and carries the source's record; `unread` \
                 names a source that could not be read. `view: hidden` lists what you marked \
                 done or snoozed instead. `inbox` lists more kinds of item for one organization.",
             input_schema: || {

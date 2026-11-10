@@ -1,0 +1,72 @@
+{
+  "manifest_version": "1",
+  "slug": "project-lifecycle",
+  "name": "Project lifecycle",
+  "description": "A project's phases, its phase chip, and what waits on its owner.",
+  "publisher": "Constructor Fabric",
+  "levels": ["organization", "workspace", "project"],
+  "model": {
+    "types": [
+      {
+        "name": "phase",
+        "label": "Project phase",
+        "description": "One of the phases a project moves through: idea, discovery, build, run.",
+        "fields": [
+          { "name": "order", "type": "integer", "description": "Where the phase sits in the lifecycle" },
+          { "name": "summary", "type": "string?", "description": "What a project does in this phase" }
+        ]
+      }
+    ],
+    "fields": [
+      { "on": "project", "name": "phase", "type": "idea | discovery | build | run", "description": "The phase the project is in" },
+      { "on": "project", "name": "phase_owner", "type": "string?", "description": "Who moves the project on from its phase (a subject id)" },
+      { "on": "project", "name": "phase_since", "type": "timestamp?", "description": "When the project entered its phase" }
+    ],
+    "tabs": [
+      { "level": "project", "name": "phases", "label": "Phases", "target": "phase" }
+    ],
+    "lifecycles": [
+      {
+        "on": "project",
+        "field": "phase",
+        "states": ["idea", "discovery", "build", "run"],
+        "initial": "idea",
+        "transitions": [
+          { "name": "discover", "from": ["idea"], "to": "discovery" },
+          { "name": "build", "from": ["discovery"], "to": "build" },
+          { "name": "launch", "from": ["build"], "to": "run" },
+          { "name": "rethink", "from": ["discovery", "build"], "to": "idea" },
+          { "name": "rework", "from": ["run"], "to": "build" }
+        ]
+      }
+    ]
+  },
+  "inbox": [
+    {
+      "id": "phase-waiting",
+      "label": "A project waiting in its phase on its owner",
+      "query": {
+        "type": "project",
+        "where": { "_and": [ { "phase_owner": { "_eq": "$me" } }, { "phase": { "_in": ["idea", "discovery", "build"] } } ] },
+        "fields": ["name", "tenant_id", "parent_tenant_id", "phase", "phase_owner", "phase_since"],
+        "order_by": [ { "field": "phase_since" } ],
+        "limit": 200
+      },
+      "title": "{name} waits in its {phase} phase",
+      "workspace_field": "parent_tenant_id"
+    }
+  ],
+  "mcp_tools": [
+    { "name": "project_phase", "description": "A project's phase, its owner and the phases it may move to" },
+    { "name": "project_phase_set", "description": "Move a project to a phase along the declared lifecycle" }
+  ],
+  "permissions": {
+    "reads": [
+      "GET /studio-kits/v1/project-phase",
+      "GET /studio-kits/v1/project-phases"
+    ],
+    "writes": [
+      "PUT /studio-kits/v1/project-phase"
+    ]
+  }
+}

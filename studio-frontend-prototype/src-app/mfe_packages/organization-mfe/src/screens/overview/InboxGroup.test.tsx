@@ -70,12 +70,37 @@ const page = (items: InboxItem[], extra: Partial<Inbox> = {}): Inbox => ({
 
 const status = (code: number) => Object.assign(new Error(`HTTP ${code}`), { response: { status: code } });
 
+const phaseWaiting: InboxItem = {
+  key: 'kit:project-lifecycle/phase-waiting:obj-1@00ff',
+  source: 'kit:project-lifecycle/phase-waiting',
+  workspace_id: 'w1',
+  workspace_name: 'Main',
+  title: 'Atlas waits in its discovery phase',
+  url: null,
+  due_at: null,
+  overdue: false,
+  record: { id: 'obj-1', value: { name: 'Atlas', phase: 'discovery' } },
+  kit: { slug: 'project-lifecycle', name: 'Project lifecycle', version: '0.1.0' },
+};
+
 describe('InboxGroup', () => {
   beforeEach(() => {
     inbox.mockReset();
     mark.mockReset();
     requestWorkspace.mockReset();
     mark.mockResolvedValue({});
+  });
+
+  it("shows a kit's item with its title and the kit's name, and marks it like any other", async () => {
+    inbox.mockResolvedValue(page([phaseWaiting]));
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
+    expect(await screen.findByText('Atlas waits in its discovery phase')).toBeTruthy();
+    const badge = document.querySelector('[data-inbox-kit="project-lifecycle"]');
+    expect(badge?.textContent).toBe('Project lifecycle');
+    fireEvent.click(screen.getByRole('button', { name: 'inbox_done' }));
+    await waitFor(() =>
+      expect(mark).toHaveBeenCalledWith(expect.objectContaining({ item_key: phaseWaiting.key, state: 'done' }))
+    );
   });
 
   it('draws what the server says waits, and counts it', async () => {

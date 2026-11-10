@@ -14,7 +14,8 @@
 //!   request never fetches anything. A deployment that pins another commit
 //!   (`STUDIO_KIT_CATALOGUE`) or another repository gets empty contents and no
 //!   manifest rather than a description of a version it does not install.
-//! - **Organization kits** (ADR-0068 phase 7) are not read yet: empty.
+//! - **Organization kits** (ADR-0068 phase 7) are read from the manifest
+//!   their shelf keeps ([`super::shelf`], [`super::manifest`]).
 
 use super::service::{KitDescriptor, SHELF_BUILTIN, SHELF_OFFICIAL};
 
@@ -22,6 +23,9 @@ use super::service::{KitDescriptor, SHELF_BUILTIN, SHELF_OFFICIAL};
 pub const MANIFEST_BUILTIN: &str = "built-in";
 /// `manifest` of a kit described by its installer manifest.
 pub const MANIFEST_CF_STUDIO_KIT: &str = ".cf-studio-kit.toml";
+/// `manifest` of a kit described by Studio's interim `kit.json` (an
+/// organization's own kit, or a built-in kit that brings a model).
+pub const MANIFEST_KIT_JSON: &str = "kit.json";
 
 /// One kit of the library and what it brings.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,7 +125,26 @@ pub fn find(library: Vec<KitDescriptor>, slug: &str) -> Option<KitDetail> {
 pub fn describe(kit: KitDescriptor) -> KitDetail {
     let (contents, manifest) = match kit.shelf.as_str() {
         SHELF_BUILTIN => match builtin_contents(&kit.slug) {
-            Some(contents) => (contents, Some(MANIFEST_BUILTIN)),
+            Some(mut contents) => {
+                // What its compiled-in `kit.json` adds: a model, Inbox
+                // sources, MCP tools and the routes behind them.
+                if let Some(m) = super::manifest::builtin_manifest(&kit.slug) {
+                    let more = super::manifest::contents_of(&m);
+                    contents.screens.extend(more.screens);
+                    contents.types.extend(more.types);
+                    contents.inbox.extend(more.inbox);
+                    contents.mcp_tools.extend(more.mcp_tools);
+                    contents.rules.extend(more.rules);
+                    contents.functions.extend(more.functions);
+                    contents.permissions.reads.extend(more.permissions.reads);
+                    contents.permissions.writes.extend(more.permissions.writes);
+                    contents
+                        .permissions
+                        .listens
+                        .extend(more.permissions.listens);
+                }
+                (contents, Some(MANIFEST_BUILTIN))
+            }
             None => (KitContents::default(), None),
         },
         SHELF_OFFICIAL => match official_contents(&kit) {
@@ -635,7 +658,7 @@ fn official_contents(kit: &KitDescriptor) -> Option<KitContents> {
 ///
 /// A resource is material at its `install_path`; the kinds are the keys of
 /// `[kits.resources.artifacts.<KIND>]`, in the manifest's order.
-fn read_manifest(body: &str, slug: &str) -> Option<KitContents> {
+pub(super) fn read_manifest(body: &str, slug: &str) -> Option<KitContents> {
     #[derive(PartialEq)]
     enum At {
         Elsewhere,

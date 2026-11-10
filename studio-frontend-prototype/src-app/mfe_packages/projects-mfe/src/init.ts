@@ -32,7 +32,7 @@ import { initDocumentUploadEffects } from './effects/documentUploadEffects';
 import { ArtifactIngestApiService } from './api/ArtifactIngestApiService';
 import { DocumentsApiService } from './api/DocumentsApiService';
 import { SpecQualityApiService } from './api/SpecQualityApiService';
-import { ProjectStatusApiService } from './api/ProjectStatusApiService';
+import { ProjectPhaseApiService, ProjectStatusApiService } from './api/ProjectStatusApiService';
 import {
   ConnectorsApiService,
   StudioEventsApiService,
@@ -53,6 +53,7 @@ apiRegistry.register(ArtifactIngestApiService);
 apiRegistry.register(DocumentsApiService);
 apiRegistry.register(SpecQualityApiService);
 apiRegistry.register(ProjectStatusApiService);
+apiRegistry.register(ProjectPhaseApiService);
 apiRegistry.register(StudioTasksApiService);
 apiRegistry.register(StudioEventsApiService);
 apiRegistry.initialize();
