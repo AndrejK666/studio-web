@@ -1,8 +1,8 @@
 /**
- * Project › Domain model — the prototype's `SpecModelTab` (spec-model-tab.tsx
+ * Project › Project domain model — the prototype's `SpecModelTab` (spec-model-tab.tsx
  * at 00828880) carried over as the `project-domain-model` kit: what the
  * project's documents say the application is, each fact with the passage it
- * comes from, and where they disagree about it (docs/spec-domain-model.md).
+ * comes from, and where they disagree about it (docs/project-domain-model.md).
  *
  * Seven tabs, each one question: Entities (the model map, its diagram and
  * the entity editor), Requirements, Need (Needs, Hypotheses), Rules (Rules,

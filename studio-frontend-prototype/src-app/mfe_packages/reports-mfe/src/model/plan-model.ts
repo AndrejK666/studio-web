@@ -196,7 +196,7 @@ export function linkOf(people: PlanPeople | null, login: string): LinkState {
   return l.member ? { kind: "member", personId: l.person_id } : { kind: "outsider", personId: l.person_id };
 }
 
-/** What mirroring the plan into the domain model did. */
+/** What mirroring the plan into the Studio domain model did. */
 export interface MirrorSummary {
   written: number;
   unchanged: number;
@@ -210,6 +210,6 @@ export interface MirrorSummary {
 export function mirrorText(s: MirrorSummary): string {
   const parts = [`${s.written} written`, `${s.unchanged} unchanged`];
   if (s.retired) parts.push(`${s.retired} retired`);
-  const head = `Domain model: ${parts.join(", ")}.`;
+  const head = `Studio domain model: ${parts.join(", ")}.`;
   return s.skipped.length ? `${head} Skipped: ${s.skipped.join("; ")}.` : head;
 }

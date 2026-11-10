@@ -145,7 +145,7 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
   const [role, setRole] = useState<InventoryRole | null>(null);
   const [desc, setDesc] = useState(false);
   const [page, setPage] = useState(0);
-  /** The Domain model's entities, read when a gear is first asked for: what
+  /** The project domain model's entities, read when a gear is first asked for: what
    *  the new gear keeps. Null while unread; empty when it cannot be read. */
   const [entities, setEntities] = useState<Entity[] | null>(null);
   /** Bumped to read again. */
@@ -434,7 +434,7 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
           )}
         </>
       )}
-      {/* Opened once the Domain model is read, so the draft it starts with is the whole one. */}
+      {/* Opened once the project domain model is read, so the draft it starts with is the whole one. */}
       {scaffold && draft && kept && (
         <ScaffoldDialog
           capability={scaffold.capability}

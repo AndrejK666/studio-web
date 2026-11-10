@@ -1,6 +1,6 @@
 //! What a project has to decide before it can build from its documents, most
 //! blocking first, and whether anything stops a build (the portal's Issues
-//! tab; `docs/spec-domain-model.md`, "To resolve").
+//! tab; `docs/project-domain-model.md`, "To resolve").
 //!
 //! Moved from the portal (`domain-model-views.ts` `resolveQueue`, `blocks`,
 //! `readiness`, and the Issues table's grouping in `domain-model-screens.tsx`)

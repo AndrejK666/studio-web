@@ -277,7 +277,7 @@ describe('ReportsScreen', () => {
     expect(calls).toContainEqual({ what: 'updatePlan', arg: 'units' });
     fireEvent.click(document.querySelector('[data-plan-publish]') as HTMLElement);
     await waitFor(() =>
-      expect(document.querySelector('[data-plan-note]')?.textContent).toBe('Domain model: 3 written, 1 unchanged.')
+      expect(document.querySelector('[data-plan-note]')?.textContent).toBe('Studio domain model: 3 written, 1 unchanged.')
     );
   });
 });

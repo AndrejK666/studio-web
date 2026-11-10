@@ -37,7 +37,7 @@
   "screen_section": "section in {slot}",
   "screen_not_here": "no screen in this portal yet",
   "sec_types": "Types and model",
-  "sec_types_hint": "What it adds to the domain model, under its own namespace.",
+  "sec_types_hint": "What it adds to the Studio domain model, under its own namespace.",
   "sec_handlers": "Rules and functions",
   "sec_handlers_hint": "What reacts to its objects: rules, agent and WebAssembly functions.",
   "rule": "rule",

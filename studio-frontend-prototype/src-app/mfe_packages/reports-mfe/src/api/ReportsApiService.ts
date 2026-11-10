@@ -166,7 +166,7 @@ export class ReportsApiService extends BaseApiService {
       .fetch(sectionBody(section, plan));
   }
 
-  /** Mirror the plan's units, teams, people and memberships into the domain model now. */
+  /** Mirror the plan's units, teams, people and memberships into the Studio domain model now. */
   syncPlan(p: ReportParams) {
     return this.rest.mutation<MirrorSummary, void>('POST', reportPath(p.reportId, '/plan/sync', p.organizationId));
   }

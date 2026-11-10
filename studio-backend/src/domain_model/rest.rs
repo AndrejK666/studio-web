@@ -1,4 +1,6 @@
-//! REST surface for the domain model.
+//! REST surface for the Studio domain model (Studio's own types and objects;
+//! not a project's domain model, which studio-documents serves under
+//! `/project-domain-model`).
 //!
 //! The routes fall into four groups, all under `/studio-domain-model/v1`
 //! (`register_routes` below is the full list):
@@ -356,7 +358,7 @@ pub struct ModelSyncResponse {
     pub skipped_endpoints: u64,
 }
 
-/// Upload a domain model to make it the active ontology.
+/// Upload a Studio domain model to make it the active ontology.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct ImportModelRequest {
@@ -1599,7 +1601,7 @@ pub fn register_routes(
 ) -> Router {
     let router = OperationBuilder::get("/studio-domain-model/v1/types")
         .operation_id("studio_domain_model.list_types")
-        .summary("The stored domain-model ontology")
+        .summary("The stored Studio domain model ontology")
         .description(
             "Returns every domain type with its fields and relations — the \
              domain-entity document the model UI renders from, so the frontend \
@@ -1872,11 +1874,11 @@ pub fn register_routes(
 
     let router = OperationBuilder::post("/studio-domain-model/v1/model/sync")
         .operation_id("studio_domain_model.sync_model")
-        .summary("Sync the domain model into the graph as a graph")
+        .summary("Sync the Studio domain model into the graph as a graph")
         .description(
             "Materializes the model itself: one object-type node per entity, \
              joined by `inherits` (extends) and `declares` (relation) edges, so \
-             the domain model with its relations is queryable in the graph. \
+             the Studio domain model with its relations is queryable in the graph. \
              Idempotent — deterministic keys, so a re-sync converges.",
         )
         .tag("StudioDomainModel")
@@ -1901,7 +1903,7 @@ pub fn register_routes(
 
     let router = OperationBuilder::post("/studio-domain-model/v1/model/import")
         .operation_id("studio_domain_model.import_model")
-        .summary("Upload a domain model to make it the active ontology")
+        .summary("Upload a Studio domain model to make it the active ontology")
         .description(
             "Replaces the active ontology with an uploaded domain-entity \
              document (the shape GET /types returns) and registers its types, \
@@ -1917,7 +1919,7 @@ pub fn register_routes(
             "string",
         )
         .require_license_features::<License>([])
-        .json_request::<ImportModelRequest>(openapi, "The domain model to load")
+        .json_request::<ImportModelRequest>(openapi, "The Studio domain model to load")
         .handler(import_model)
         .json_response_with_schema::<ImportModelResponse>(
             openapi,
@@ -1984,7 +1986,7 @@ pub fn register_routes(
 
     let router = OperationBuilder::post("/studio-domain-model/v1/types")
         .operation_id("studio_domain_model.create_type")
-        .summary("Add a type to the domain model")
+        .summary("Add a type to the Studio domain model")
         .description(
  "Adds an entity type: an id (lower-case words joined by hyphens), a name, a bucket, and the type it extends, whose fields and relations it inherits. It starts with no fields of its own; `POST /types/{id}/fields` adds them. A versioned model edit like a field edit, so `POST /model/revert` undoes it. Needs the authority to change the model (ADR-0035). Answers 201.",
         )

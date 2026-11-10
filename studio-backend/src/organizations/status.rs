@@ -45,7 +45,7 @@ pub struct SpecQueues {
     pub not_scanned: u32,
 }
 
-/// The domain model: documents read out of how many, facts, a build running.
+/// The project domain model: documents read out of how many, facts, a build running.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ModelFacts {
     pub documents: u32,
@@ -253,15 +253,15 @@ fn model(f: &PathFacts) -> Draft {
     let d = |done, status: String| {
         draft(
             "model",
-            "Build the domain model",
+            "Build the project domain model",
             "model",
-            "Open Domain model",
+            "Open Project domain model",
             done,
             status,
         )
     };
     let Some(m) = f.model else {
-        return d(None, "Could not read the domain model.".into());
+        return d(None, "Could not read the project domain model.".into());
     };
     if m.running {
         return d(

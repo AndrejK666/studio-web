@@ -124,7 +124,7 @@ row!(
     spec_decision,
     "finding-decision",
     "Finding Decision",
-    "A member's confirm or dismiss on a spec-model finding.",
+    "A member's confirm or dismiss on a project domain model finding.",
     |r| Some(r.project_id),
     [
         ("project_id", "string"),
@@ -729,7 +729,7 @@ impl DocumentsData {
         Ok(())
     }
 
-    // ── the spec model ──────────────────────────────────────────────────────
+    // ── the project domain model ──────────────────────────────────────────────────────
 
     pub async fn list_extractions(
         &self,

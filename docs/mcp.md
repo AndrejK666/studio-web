@@ -1,6 +1,6 @@
 # Studio over MCP
 
-Studio's domain model, the requirements its specifications state, the
+The Studio domain model, a project's domain model, the requirements its specifications state, the
 spec-quality detectors and a project's pipeline -- sources, product
 description, infra, build, deploy -- as tools in the agent you already work in: Claude
 Code, Codex, Cursor or any other MCP client. It is one more way into Studio,
@@ -11,9 +11,9 @@ Every call acts as you. The server sends each tool's requests to Studio's own
 REST API with your token, so a tool can do exactly what you can do in the
 portal and nothing more.
 
-Most tools read or check. The ones that change something (the domain model,
+Most tools read or check. The ones that change something (the Studio domain model,
 a project's sources, its description, secrets, infra, builds and deploys) are
-marked so your agent asks you first. Every change to the domain model is a
+marked so your agent asks you first. Every change to the Studio domain model is a
 model version `domain_model_revert` undoes.
 
 | | |
@@ -139,7 +139,7 @@ project.
 
 | Tool | What it answers |
 | --- | --- |
-| `domain_model_types` | every type of the domain model, as stored |
+| `domain_model_types` | every type of the Studio domain model (Studio's own objects, not a project's), as stored |
 | `domain_type` | one type with everything it inherits |
 | `domain_type_conformance` | how stored objects measure up against a type |
 | `domain_model_query` | a type's objects: filtered, ordered, with relations |
@@ -156,18 +156,20 @@ project.
 | `domain_type_remove_field` | *changes the model:* removes a field from a type |
 | `domain_model_revert` | *changes the model:* restores an earlier version |
 
-**What to decide.** The portal's Issues and Domain model tabs, read from the
+**What to decide.** The project domain model (what a project's documents say;
+not the Studio domain model above): the portal's Issues and Project domain
+model tabs, read from the
 documents Studio holds for the project (studio-documents). The queue, its
 order and what stops a build are computed by the server, so an agent and a
 person see the same rows.
 
 | Tool | What it answers or does |
 | --- | --- |
-| `spec_model_issues` | what to decide before a build, most blocking first, each row with its `group` (`blocks`, `look`, `decided`) and `actions` |
-| `spec_model_readiness` | whether anything stops a build: `open`, `blocking`, `ready` |
-| `spec_model_facts` | the model read from the documents, every fact with its `fact_key` |
-| `spec_model_fact_review` | *changes:* accepts, rejects or puts back facts by `fact_key` |
-| `spec_model_finding_decide` | *changes:* confirms a problem as real or dismisses it, by `fingerprint` |
+| `project_domain_model_issues` | what to decide before a build, most blocking first, each row with its `group` (`blocks`, `look`, `decided`) and `actions` |
+| `project_domain_model_readiness` | whether anything stops a build: `open`, `blocking`, `ready` |
+| `project_domain_model_facts` | the project domain model read from the documents, every fact with its `fact_key` |
+| `project_domain_model_fact_review` | *changes:* accepts, rejects or puts back facts by `fact_key` |
+| `project_domain_model_finding_decide` | *changes:* confirms a problem as real or dismisses it, by `fingerprint` |
 
 **The project itself.** Where a project stands, as its Overview says it
 (studio-organizations).
@@ -247,7 +249,7 @@ from the picked gears; the kept verdicts are in `product_record`.
 **Changes.** Every tool that changes something (marked *changes* above) is
 annotated for your agent (`readOnlyHint: false`, and `destructiveHint` for one
 that replaces or removes), so it asks you before calling it, and is marked
-experimental. A change to the domain model is a model version with its inverse: `domain_model_versions` shows it
+experimental. A change to the Studio domain model is a model version with its inverse: `domain_model_versions` shows it
 and `domain_model_revert` undoes it. Objects, relations and documents are not
 offered for writing: nothing records a version of them, and a specification
 changes through your own commit, which people review.

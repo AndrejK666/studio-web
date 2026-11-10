@@ -141,7 +141,7 @@ fn the_builtin_screens_are_today_s_tabs() {
     );
     assert_eq!(
         levels("project-domain-model"),
-        [at("project", "Domain model", None)]
+        [at("project", "Project domain model", None)]
     );
 }
 

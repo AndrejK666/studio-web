@@ -183,7 +183,7 @@ export function docQuality(
         key: `oa:${e.key}`,
         type: "onlyadr",
         title: `${e.name} is described only in ${where}`,
-        hint: "No requirement or domain document says it is part of the product. Add it to the domain model, with what it is.",
+        hint: "No requirement or domain document says it is part of the product. Add it to the project domain model, with what it is.",
         sides: sidesOf(facts),
         edit: { ...entityDraft(e), definition: definition?.text.trim() || definitionFrom(e) },
       });

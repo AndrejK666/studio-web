@@ -103,7 +103,7 @@
   "keeps": "Хранит:",
   "keeps_more": "{shown} и ещё {more}",
   "keeps_title": "Сущности домена, которые он хранит: {entities}",
-  "keeps_from_model": "из доменной модели этого проекта",
+  "keeps_from_model": "из доменной модели проекта",
   "not_deployed": "не развёрнут",
   "needs_you": "Требует вашего решения",
   "plugs_into": "Подключается к {host}",

@@ -1,6 +1,6 @@
 {
-  "title": "Domain model",
-  "no_project": "Open a project to see its domain model.",
+  "title": "Project domain model",
+  "no_project": "Open a project to see its project domain model.",
   "info": "What the project's documents say the application is, each fact with the passage it comes from.",
   "views": "Views",
   "loading": "Loading…",

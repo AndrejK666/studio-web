@@ -1,7 +1,7 @@
 /**
  * What is inside one kit, before anyone installs it (ADR-0068 §3, §8): the
  * sections of its manifest, each said once — the screens it puts on which
- * level, the types it adds to the domain model, its rules and functions, the
+ * level, the types it adds to the Studio domain model, its rules and functions, the
  * services it deploys, what it adds to the Inbox, its MCP tools, the
  * permissions an administrator approves, and the files it writes into a
  * project. An empty section says "nothing", so a kit that brings only files

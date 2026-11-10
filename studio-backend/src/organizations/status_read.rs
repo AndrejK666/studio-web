@@ -46,7 +46,7 @@ pub fn spec_queues(rows: &Value) -> SpecQueues {
     }
 }
 
-/// `GET /studio-documents/v1/spec-model`.
+/// `GET /studio-documents/v1/project-domain-model`.
 pub fn model_facts(model: &Value) -> ModelFacts {
     let documents = model["documents"].as_array();
     ModelFacts {
@@ -60,7 +60,7 @@ pub fn model_facts(model: &Value) -> ModelFacts {
     }
 }
 
-/// `GET /studio-documents/v1/spec-model/findings`: those nobody decided.
+/// `GET /studio-documents/v1/project-domain-model/findings`: those nobody decided.
 pub fn finding_facts(findings: &Value) -> FindingFacts {
     let open: Vec<&Value> = findings["items"]
         .as_array()
@@ -248,8 +248,11 @@ pub async fn read(api: &Api, project: &str, repositories: Option<u32>) -> Read {
     let pulls_query = q(&[("project_id", p.clone()), ("limit", PULLS_PAGE.to_string())]);
     let (rows, model, findings, product, runs, deployments, open) = tokio::join!(
         api.get("/studio-documents/v1/spec-rows", &by_project),
-        api.get("/studio-documents/v1/spec-model", &by_project),
-        api.get("/studio-documents/v1/spec-model/findings", &by_project),
+        api.get("/studio-documents/v1/project-domain-model", &by_project),
+        api.get(
+            "/studio-documents/v1/project-domain-model/findings",
+            &by_project
+        ),
         api.get(&product_path, &[]),
         api.get("/studio-artifact-ingest/v1/nodes", &runs_query),
         api.get("/studio-environments/v1/deployments", &deploys_query),

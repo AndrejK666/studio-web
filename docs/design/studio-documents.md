@@ -64,7 +64,7 @@ query.
 | `cpt-studio-fr-document-catalogue` | Types, stages and capabilities are rows keyed `(tenant_id, key)` at organization or workspace level, overlaid on built-ins in that order; a `hidden` row is a tombstone. |
 | `cpt-studio-fr-documents` | Workspace- and project-level documents with create-from-template, questionnaire composition (`intake.rs`), structural validation (`validate.rs`) and per-project stage status. |
 | `cpt-studio-fr-repository-documents` | `classify.rs` decides a file's type from its front matter, then from four scored signals; the verdict is a row in `studio_document_bindings` keyed on the file's graph node. |
-| `cpt-studio-fr-spec-domain-model` | Planned, in `documents/spec_model/`: a project's facts extracted per document revision on the caller's key, merged into one model with every fact's passage and status ([spec-domain-model.md](../spec-domain-model.md)). |
+| `cpt-studio-fr-spec-domain-model` | Planned, in `documents/spec_model/`: a project's facts extracted per document revision on the caller's key, merged into one model with every fact's passage and status ([project-domain-model.md](../project-domain-model.md)). |
 | `cpt-studio-fr-spec-contradictions` | Planned, in `documents/spec_model/`: deterministic rules over the merged model propose, a model call confirms, and the findings are recorded as `spec_finding` nodes beside the detectors'. |
 | `cpt-studio-fr-spec-quality` | Detector verdicts are recorded per document in `studio_document_analyses`; a stage can gate on them. Analysis of a project's documents is queued as a `spec_quality.analyze_batch` run. |
 
@@ -332,9 +332,10 @@ before that are swept by each repository sync of the project.
 | `POST` | `/review-requests/{request_id}/approvals` | A reviewer's verdict, recorded and never edited | unstable |
 | `POST` | `/review-requests/{request_id}/cancel` | Withdraw a request you asked for | unstable |
 | `GET` | `/review-requests/reviewer-suggestions?project_id=&subject_id=&type_key=` | Whom to ask, from who was asked before | unstable |
-| `GET` | `/spec-model/requirements?project_id=` | The requirements the documents define and the basis each states ([spec-domain-model.md](../spec-domain-model.md#requirements-and-their-basis)) | unstable |
-| `GET` | `/spec-model/decisions?project_id=` | Every ✓/✗ on the project's findings, the model's and Spec Quality's | unstable |
-| `GET` | `/spec-model/related`, `/spec-model/trace`, `/spec-model/questions`, `/spec-model/term-drift`, `/spec-model/experts` | Requirements of other projects alike or opposite; requirement → documents, code, tests; what a document leaves out of the domain and whom to ask ([spec-domain-model.md](../spec-domain-model.md)) | unstable |
+| `GET` | `/project-domain-model/requirements?project_id=` | The requirements the documents define and the basis each states ([project-domain-model.md](../project-domain-model.md#requirements-and-their-basis)) | unstable |
+| `GET` | `/project-domain-model/decisions?project_id=` | Every ✓/✗ on the project's findings, the model's and Spec Quality's | unstable |
+| `GET` | `/project-domain-model/related`, `/project-domain-model/trace`, `/project-domain-model/questions`, `/project-domain-model/term-drift`, `/project-domain-model/experts` | Requirements of other projects alike or opposite; requirement → documents, code, tests; what a document leaves out of the domain and whom to ask ([project-domain-model.md](../project-domain-model.md)) | unstable |
+| any | `/spec-model…` | Deprecated aliases of every `/project-domain-model…` route above, same handlers and old `operation_id`s, kept for the old prototype and the desktop until 2027-03-31 | deprecated |
 | `POST` | `/review-brief` | A brief of one document for its reviewers | unstable |
 | `GET` `POST` | `/remarks`, `/remarks/replies` | Review threads on a document from its pull requests; a reply to one | unstable |
 | `GET` `POST` | `/decisions` | Decisions recorded on requirements | unstable |
@@ -426,7 +427,7 @@ that pass on it now); the list adds `open`, `overdue` and `stale` counts.
 `base`, the newest earlier approved request on the same document, for a
 Before / Proposed diff. A domain-model finding's sides carry `binding_id`, and a
 reference to something missing names it as `target`. A decision takes an
-optional `note` and keeps the finding as it stood; `/spec-model/decisions`
+optional `note` and keeps the finding as it stood; `/project-domain-model/decisions`
 answers `present: false` for a decided finding the documents no longer show
 (resolved), with its rule, message and sides.
 
@@ -825,7 +826,7 @@ capabilities `[db, rest]`, config section `gears.studio-documents`.
 [`docs/documents-from-a-repository.md`](../documents-from-a-repository.md)
 explains why a binding is kept instead of a copy of the file, and
 [`docs/spec-findings.md`](../spec-findings.md) how the findings a sync records
-reach the editor. [`docs/spec-domain-model.md`](../spec-domain-model.md) is the
+reach the editor. [`docs/project-domain-model.md`](../project-domain-model.md) is the
 planned domain model read from a project's documents and the disagreements
 found in it.
 

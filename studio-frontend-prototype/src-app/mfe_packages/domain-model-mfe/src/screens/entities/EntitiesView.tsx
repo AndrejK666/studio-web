@@ -1,5 +1,5 @@
 /**
- * Domain model › Entities (the prototype's `ModelMapView` in
+ * Project domain model › Entities (the prototype's `ModelMapView` in
  * domain-model-screens.tsx): what the application is, in three layers
  * (Domain, System, Deployment), as a table or as a diagram of entity cards
  * and the relations the documents declare. The panel beside it shows the

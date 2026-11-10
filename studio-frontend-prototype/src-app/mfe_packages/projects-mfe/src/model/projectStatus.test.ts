@@ -17,7 +17,7 @@ describe('project status', () => {
     expect(routeFor('releases')).toBe('/releases');
     expect(routeFor('components')).toBe('/product');
     expect(routeFor('ide')).toBe('/space');
-    expect(routeFor('model')).toBeNull();
+    expect(routeFor('model')).toBe('/domain-model');
     expect(routeFor('pulls')).toBeNull();
     // Findings are decided on Issues.
     expect(routeFor('model', 'findings')).toBe('/issues');

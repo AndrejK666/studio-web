@@ -16,7 +16,7 @@
  *      named ("Not read: …"), never counted as nothing wrong.
  *
  * Actions open other screens through the shell (`openScreen`). A tab this
- * portal does not have yet (the Domain model, the pull requests list) gets no
+ * portal does not have yet (the pull requests list) gets no
  * button rather than a dead one (`routeFor`). A 503 is the server saying
  * studio-mcp is down: shown as an error, not as an empty project.
  */

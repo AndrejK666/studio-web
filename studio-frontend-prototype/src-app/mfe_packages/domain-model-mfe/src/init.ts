@@ -1,5 +1,5 @@
 /**
- * The Domain model kit's app: its API service, the framework's i18n and the
+ * The Project domain model kit's app: its API service, the framework's i18n and the
  * shared query cache. No slices — the screen keeps what it read in its own
  * state, as the prototype's tab did.
  */

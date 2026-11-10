@@ -47,13 +47,16 @@ export interface ProjectStatus {
 /**
  * Where a prototype project tab is in this portal, by route. A tab with no
  * screen here yet has none, and its rows offer no button rather than a dead
- * one: the Domain model (`model`) and the in-place pull request list
- * (`pulls`) are not ported. Findings are decided on the Issues kit's screen,
- * so the `findings` step and signal open it.
+ * one: the in-place pull request list (`pulls`) is not ported. The `model`
+ * step is the Project domain model tab (kit `project-domain-model`, what the
+ * project's documents say; not the Studio domain model). Findings are
+ * decided on the Issues kit's screen, so the `findings` step and signal open
+ * it.
  */
 const TAB_ROUTE: Record<string, string> = {
   sources: '/projects/sources',
   specs: '/projects/specs',
+  model: '/domain-model',
   components: '/product',
   releases: '/releases',
   activity: '/projects/activity',

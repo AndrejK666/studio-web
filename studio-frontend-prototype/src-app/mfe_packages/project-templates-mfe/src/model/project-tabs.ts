@@ -28,7 +28,7 @@ export type ProjTab =
   | 'connections'
   | 'activity'
   | 'people'
-  /** A tab the domain model adds (level-tabs.ts). */
+  /** A tab the Studio domain model adds (level-tabs.ts). */
   | `type:${string}`;
 
 /** Where the project's code starts: a repository created now, one attached
@@ -59,7 +59,7 @@ export const PROJECT_TABS: readonly { id: ProjTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'issues', label: 'Issues' },
   { id: 'specs', label: 'Specs' },
-  { id: 'model', label: 'Domain model' },
+  { id: 'model', label: 'Project domain model' },
   { id: 'components', label: 'Product' },
   { id: 'parts', label: 'Components' },
   { id: 'releases', label: 'Releases' },

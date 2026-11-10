@@ -32,4 +32,4 @@ else.
   prototype kept inside its screens, lifted out and tested.
 - `src/api/AdminApiService.ts` — every route the sections call.
 
-Not here yet (see `docs/parity.md`): Domain model, Views.
+Not here yet (see `docs/parity.md`): Studio domain model (Admin › Domain model), Views.

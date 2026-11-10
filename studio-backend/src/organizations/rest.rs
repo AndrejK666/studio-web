@@ -1230,7 +1230,7 @@ async fn get_project_status(
     for (name, missing) in [
         ("repositories", read.path.repositories.is_none()),
         ("specs", read.path.specs.is_none()),
-        ("domain model", read.path.model.is_none()),
+        ("project domain model", read.path.model.is_none()),
         ("findings", read.path.findings.is_none()),
         ("product", read.path.product.is_none()),
         ("builds", read.path.build.is_none()),

@@ -162,7 +162,7 @@ describe("what the PRD says", () => {
     ).toBe("It keeps Invoice (number, total) and Invoice line. The requirements it answers: “Payments are matched to invoices every night”.");
   });
 
-  it("is empty when the Domain model says nothing about the capability", () => {
+  it("is empty when the project domain model says nothing about the capability", () => {
     expect(keptSentences({ entities: [], requirements: [] })).toBe("");
   });
 });

@@ -1,5 +1,5 @@
 /**
- * The prototype's client calls the Domain model tab made (src/api.ts at
+ * The prototype's client calls the Project domain model tab made (src/api.ts at
  * 00828880), with its names and arguments minus the bearer (it travels with
  * `authShared()`), over `DomainModelApiService`. Every read asks the server
  * again: the tab reads after each write, as the prototype's did.

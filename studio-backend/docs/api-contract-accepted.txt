@@ -412,6 +412,55 @@ request	POST /studio-documents/v1/organizations/{}/types	sections.key	String	req
 request	POST /studio-documents/v1/organizations/{}/types	sections.min_words	i64	optional
 request	POST /studio-documents/v1/organizations/{}/types	sections.required	bool	required
 request	POST /studio-documents/v1/organizations/{}/types	sections.title	String	required
+request	POST /studio-documents/v1/project-domain-model/builds	path	String	optional
+request	POST /studio-documents/v1/project-domain-model/builds	project_id	String	required
+request	POST /studio-documents/v1/project-domain-model/entities	definition	String	optional
+request	POST /studio-documents/v1/project-domain-model/entities	fields	Vec<{}>	optional
+request	POST /studio-documents/v1/project-domain-model/entities	fields.meaning	String	optional
+request	POST /studio-documents/v1/project-domain-model/entities	fields.name	String	optional
+request	POST /studio-documents/v1/project-domain-model/entities	name	String	required
+request	POST /studio-documents/v1/project-domain-model/entities	relations	Vec<{}>	optional
+request	POST /studio-documents/v1/project-domain-model/entities	relations.target	String	optional
+request	POST /studio-documents/v1/project-domain-model/entities	relations.verb	String	optional
+request	POST /studio-documents/v1/project-domain-model/files/proposals	content	String	required
+request	POST /studio-documents/v1/project-domain-model/files/proposals	path	String	required
+request	POST /studio-documents/v1/project-domain-model/files/proposals	project_id	String	required
+request	POST /studio-documents/v1/project-domain-model/files/proposals	title	String	required
+request	POST /studio-documents/v1/project-domain-model/findings/{}/decision	decision	String	required
+request	POST /studio-documents/v1/project-domain-model/findings/{}/decision	note	String	optional
+request	POST /studio-documents/v1/project-domain-model/findings/{}/decision	project_id	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/decisions	alias_of	String	optional
+request	POST /studio-documents/v1/project-domain-model/glossary/decisions	key	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/decisions	name	String	optional
+request	POST /studio-documents/v1/project-domain-model/glossary/decisions	project_id	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/distinct	a	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/distinct	b	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/distinct	project_id	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	project_id	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	rows	Vec<{}>	required
+request	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	rows.aliases	Vec<String>	optional
+request	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	rows.definition	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	rows.not_same_as	Vec<String>	optional
+request	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	rows.source	String	optional
+request	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	rows.term	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/proposals	from	String	required
+request	POST /studio-documents/v1/project-domain-model/glossary/proposals	to	String	required
+request	POST /studio-documents/v1/project-domain-model/issues	assignees	Vec<String>	optional
+request	POST /studio-documents/v1/project-domain-model/issues	body	String	required
+request	POST /studio-documents/v1/project-domain-model/issues	project_id	String	required
+request	POST /studio-documents/v1/project-domain-model/issues	title	String	required
+request	POST /studio-documents/v1/project-domain-model/reviews	items	Vec<{}>	required
+request	POST /studio-documents/v1/project-domain-model/reviews	items.fact_key	String	required
+request	POST /studio-documents/v1/project-domain-model/reviews	items.note	String	optional
+request	POST /studio-documents/v1/project-domain-model/reviews	items.path	String	optional
+request	POST /studio-documents/v1/project-domain-model/reviews	items.revision	String	optional
+request	POST /studio-documents/v1/project-domain-model/reviews	items.state	String	required
+request	POST /studio-documents/v1/project-domain-model/reviews	project_id	String	required
+request	POST /studio-documents/v1/project-domain-model/sentences/proposals	line	u32	required
+request	POST /studio-documents/v1/project-domain-model/sentences/proposals	path	String	required
+request	POST /studio-documents/v1/project-domain-model/sentences/proposals	revision	String	required
+request	POST /studio-documents/v1/project-domain-model/sentences/proposals	sentence	String	required
+request	POST /studio-documents/v1/project-domain-model/sentences/proposals	why	String	optional
 request	POST /studio-documents/v1/pull-request-checks	project_id	String	required
 request	POST /studio-documents/v1/pull-request-checks	publish	bool	optional
 request	POST /studio-documents/v1/remarks/replies	body	String	required
@@ -2095,6 +2144,291 @@ response	GET /studio-documents/v1/organizations/{}/types	items.sections.key	Stri
 response	GET /studio-documents/v1/organizations/{}/types	items.sections.min_words	i64	optional
 response	GET /studio-documents/v1/organizations/{}/types	items.sections.required	bool	always
 response	GET /studio-documents/v1/organizations/{}/types	items.sections.title	String	always
+response	GET /studio-documents/v1/project-domain-model	build	{}	always
+response	GET /studio-documents/v1/project-domain-model	build.candidates	u32	always
+response	GET /studio-documents/v1/project-domain-model	build.current	String	optional
+response	GET /studio-documents/v1/project-domain-model	build.documents	u32	always
+response	GET /studio-documents/v1/project-domain-model	build.done	u32	always
+response	GET /studio-documents/v1/project-domain-model	build.error	String	optional
+response	GET /studio-documents/v1/project-domain-model	build.estimated_seconds	u64	optional
+response	GET /studio-documents/v1/project-domain-model	build.finished_at	String	optional
+response	GET /studio-documents/v1/project-domain-model	build.judged	u32	always
+response	GET /studio-documents/v1/project-domain-model	build.path	String	optional
+response	GET /studio-documents/v1/project-domain-model	build.running	bool	always
+response	GET /studio-documents/v1/project-domain-model	build.started_at	String	optional
+response	GET /studio-documents/v1/project-domain-model	documents	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model	documents.dropped	u32	always
+response	GET /studio-documents/v1/project-domain-model	documents.error	String	optional
+response	GET /studio-documents/v1/project-domain-model	documents.facts	u32	always
+response	GET /studio-documents/v1/project-domain-model	documents.path	String	always
+response	GET /studio-documents/v1/project-domain-model	documents.revision	String	always
+response	GET /studio-documents/v1/project-domain-model	documents.state	String	always
+response	GET /studio-documents/v1/project-domain-model	facts	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model	facts.aspect	String	always
+response	GET /studio-documents/v1/project-domain-model	facts.fact_key	String	always
+response	GET /studio-documents/v1/project-domain-model	facts.kind	String	always
+response	GET /studio-documents/v1/project-domain-model	facts.layer	String	optional
+response	GET /studio-documents/v1/project-domain-model	facts.source	{}	always
+response	GET /studio-documents/v1/project-domain-model	facts.source.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model	facts.source.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model	facts.source.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model	facts.source.path	String	always
+response	GET /studio-documents/v1/project-domain-model	facts.source.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model	facts.status	String	always
+response	GET /studio-documents/v1/project-domain-model	facts.status_because	String	always
+response	GET /studio-documents/v1/project-domain-model	facts.subject	String	always
+response	GET /studio-documents/v1/project-domain-model	facts.text	String	always
+response	GET /studio-documents/v1/project-domain-model	facts.value	String	always
+response	GET /studio-documents/v1/project-domain-model	unread_because	String	optional
+response	GET /studio-documents/v1/project-domain-model	unread_documents	u32	always
+response	GET /studio-documents/v1/project-domain-model/build-estimate	characters	u64	always
+response	GET /studio-documents/v1/project-domain-model/build-estimate	documents	u32	always
+response	GET /studio-documents/v1/project-domain-model/build-estimate	input_tokens	u64	always
+response	GET /studio-documents/v1/project-domain-model/build-estimate	measured	bool	always
+response	GET /studio-documents/v1/project-domain-model/build-estimate	parallel	u32	always
+response	GET /studio-documents/v1/project-domain-model/build-estimate	seconds	u64	always
+response	GET /studio-documents/v1/project-domain-model/build-estimate	seconds_per_document	f64	always
+response	GET /studio-documents/v1/project-domain-model/build-estimate	total_documents	u32	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	items.action	String	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	items.applies_to	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	items.id	String	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	items.inputs	String	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	items.kit	String	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	items.label	String	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	items.limits	String	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	items.uncertainty	String	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/check-methods	unread	BTreeMap<String,String>	always
+response	GET /studio-documents/v1/project-domain-model/decisions	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/decisions	items.decided_at	String	always
+response	GET /studio-documents/v1/project-domain-model/decisions	items.decided_by	String	always
+response	GET /studio-documents/v1/project-domain-model/decisions	items.decision	String	always
+response	GET /studio-documents/v1/project-domain-model/decisions	items.fingerprint	String	always
+response	GET /studio-documents/v1/project-domain-model/decisions	items.message	String	optional
+response	GET /studio-documents/v1/project-domain-model/decisions	items.note	String	optional
+response	GET /studio-documents/v1/project-domain-model/decisions	items.present	bool	optional
+response	GET /studio-documents/v1/project-domain-model/decisions	items.rule	String	optional
+response	GET /studio-documents/v1/project-domain-model/decisions	items.sides	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/decisions	items.sides.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/decisions	items.sides.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/decisions	items.sides.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/decisions	items.sides.path	String	always
+response	GET /studio-documents/v1/project-domain-model/decisions	items.sides.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/decisions	items.target	String	optional
+response	GET /studio-documents/v1/project-domain-model/decisions	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/experts	documents_read	u32	always
+response	GET /studio-documents/v1/project-domain-model/experts	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/experts	items.commits	u32	always
+response	GET /studio-documents/v1/project-domain-model/experts	items.documents	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/experts	items.last_change	String	optional
+response	GET /studio-documents/v1/project-domain-model/experts	items.person	String	always
+response	GET /studio-documents/v1/project-domain-model/experts	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/findings	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/findings	items.decide	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/findings	items.decision	String	optional
+response	GET /studio-documents/v1/project-domain-model/findings	items.edit	{}	optional
+response	GET /studio-documents/v1/project-domain-model/findings	items.edit.path	String	optional
+response	GET /studio-documents/v1/project-domain-model/findings	items.edit.replace	String	optional
+response	GET /studio-documents/v1/project-domain-model/findings	items.edit.with	String	optional
+response	GET /studio-documents/v1/project-domain-model/findings	items.fingerprint	String	always
+response	GET /studio-documents/v1/project-domain-model/findings	items.message	String	always
+response	GET /studio-documents/v1/project-domain-model/findings	items.rule	String	always
+response	GET /studio-documents/v1/project-domain-model/findings	items.severity	String	always
+response	GET /studio-documents/v1/project-domain-model/findings	items.sides	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/findings	items.sides.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/findings	items.sides.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/findings	items.sides.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/findings	items.sides.path	String	always
+response	GET /studio-documents/v1/project-domain-model/findings	items.sides.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/findings	items.target	String	optional
+response	GET /studio-documents/v1/project-domain-model/findings	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.aliases	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.aliases.key	String	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.aliases.name	String	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.chosen	bool	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.distinct_from	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.documents	u32	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.facts	u32	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.key	String	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.name	String	always
+response	GET /studio-documents/v1/project-domain-model/glossary	items.spellings	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/glossary	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found	{}	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.heading	String	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.path	String	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.rows	Vec<{}>	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.rows.aliases	Vec<String>	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.rows.definition	String	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.rows.not_same_as	Vec<String>	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.rows.source	String	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.rows.term	String	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	found.whole	bool	optional
+response	GET /studio-documents/v1/project-domain-model/glossary/document	path	String	always
+response	GET /studio-documents/v1/project-domain-model/issues	by_group	BTreeMap<String,u32>	always
+response	GET /studio-documents/v1/project-domain-model/issues	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.actions	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.concern	bool	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.decide	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.decision	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.done	bool	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.edit	{}	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.edit.path	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.edit.replace	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.edit.with	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.fingerprint	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.group	String	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.hint	String	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.issue_url	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.key	String	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.kind	String	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.label	String	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.requirement_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.rule	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.sides	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.sides.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.sides.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.sides.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.sides.path	String	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.sides.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/issues	items.title	String	always
+response	GET /studio-documents/v1/project-domain-model/issues	items.tone	String	always
+response	GET /studio-documents/v1/project-domain-model/issues	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/questions	built	bool	always
+response	GET /studio-documents/v1/project-domain-model/questions	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/questions	items.because_of	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/questions	items.documents	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/questions	items.entity	String	always
+response	GET /studio-documents/v1/project-domain-model/questions	items.example	{}	optional
+response	GET /studio-documents/v1/project-domain-model/questions	items.example.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/questions	items.example.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/questions	items.example.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/questions	items.example.path	String	optional
+response	GET /studio-documents/v1/project-domain-model/questions	items.example.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/questions	items.facts	u32	always
+response	GET /studio-documents/v1/project-domain-model/questions	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/readiness	blocking	u32	always
+response	GET /studio-documents/v1/project-domain-model/readiness	cited	u32	always
+response	GET /studio-documents/v1/project-domain-model/readiness	open	u32	always
+response	GET /studio-documents/v1/project-domain-model/readiness	ready	bool	always
+response	GET /studio-documents/v1/project-domain-model/readiness	reasoned	u32	always
+response	GET /studio-documents/v1/project-domain-model/readiness	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/related	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/related	items.defined_in	{}	always
+response	GET /studio-documents/v1/project-domain-model/related	items.defined_in.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/related	items.defined_in.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/related	items.defined_in.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/related	items.defined_in.path	String	always
+response	GET /studio-documents/v1/project-domain-model/related	items.defined_in.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/related	items.id	String	always
+response	GET /studio-documents/v1/project-domain-model/related	items.other_defined_in	{}	always
+response	GET /studio-documents/v1/project-domain-model/related	items.other_defined_in.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/related	items.other_defined_in.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/related	items.other_defined_in.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/related	items.other_defined_in.path	String	always
+response	GET /studio-documents/v1/project-domain-model/related	items.other_defined_in.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/related	items.other_id	String	always
+response	GET /studio-documents/v1/project-domain-model/related	items.other_project_id	String	always
+response	GET /studio-documents/v1/project-domain-model/related	items.other_project_name	String	always
+response	GET /studio-documents/v1/project-domain-model/related	items.other_text	String	always
+response	GET /studio-documents/v1/project-domain-model/related	items.other_workspace_name	String	always
+response	GET /studio-documents/v1/project-domain-model/related	items.relation	String	always
+response	GET /studio-documents/v1/project-domain-model/related	items.score	f64	always
+response	GET /studio-documents/v1/project-domain-model/related	items.shared	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/related	items.text	String	always
+response	GET /studio-documents/v1/project-domain-model/related	projects	u32	always
+response	GET /studio-documents/v1/project-domain-model/related	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/related	truncated	bool	always
+response	GET /studio-documents/v1/project-domain-model/requirements	by_basis	BTreeMap<String,u32>	always
+response	GET /studio-documents/v1/project-domain-model/requirements	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/requirements	items.basis	String	always
+response	GET /studio-documents/v1/project-domain-model/requirements	items.because	String	optional
+response	GET /studio-documents/v1/project-domain-model/requirements	items.cites	Vec<String>	always
+response	GET /studio-documents/v1/project-domain-model/requirements	items.defined_in	{}	always
+response	GET /studio-documents/v1/project-domain-model/requirements	items.defined_in.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/requirements	items.defined_in.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/requirements	items.defined_in.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/requirements	items.defined_in.path	String	always
+response	GET /studio-documents/v1/project-domain-model/requirements	items.defined_in.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/requirements	items.done	bool	optional
+response	GET /studio-documents/v1/project-domain-model/requirements	items.id	String	always
+response	GET /studio-documents/v1/project-domain-model/requirements	items.kind	String	optional
+response	GET /studio-documents/v1/project-domain-model/requirements	items.priority	String	optional
+response	GET /studio-documents/v1/project-domain-model/requirements	items.text	String	always
+response	GET /studio-documents/v1/project-domain-model/requirements	items.title	String	optional
+response	GET /studio-documents/v1/project-domain-model/requirements	items.work	u32	always
+response	GET /studio-documents/v1/project-domain-model/requirements	synced	bool	always
+response	GET /studio-documents/v1/project-domain-model/requirements	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/reviews	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/reviews	items.decided_at	String	always
+response	GET /studio-documents/v1/project-domain-model/reviews	items.decided_by	String	always
+response	GET /studio-documents/v1/project-domain-model/reviews	items.fact_key	String	always
+response	GET /studio-documents/v1/project-domain-model/reviews	items.note	String	optional
+response	GET /studio-documents/v1/project-domain-model/reviews	items.path	String	always
+response	GET /studio-documents/v1/project-domain-model/reviews	items.revision	String	always
+response	GET /studio-documents/v1/project-domain-model/reviews	items.state	String	always
+response	GET /studio-documents/v1/project-domain-model/reviews	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/term-drift	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/term-drift	items.line	u32	always
+response	GET /studio-documents/v1/project-domain-model/term-drift	items.project_name	String	always
+response	GET /studio-documents/v1/project-domain-model/term-drift	items.used	String	always
+response	GET /studio-documents/v1/project-domain-model/term-drift	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/trace	files	u32	always
+response	GET /studio-documents/v1/project-domain-model/trace	implemented	u32	always
+response	GET /studio-documents/v1/project-domain-model/trace	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.code	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.code.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.code.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.code.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.code.path	String	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.code.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.defined_in	{}	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.defined_in.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.defined_in.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.defined_in.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.defined_in.path	String	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.defined_in.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.documents	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.documents.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.documents.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.documents.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.documents.path	String	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.documents.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.id	String	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.tests	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.tests.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.tests.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.tests.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.tests.path	String	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.tests.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/trace	items.text	String	always
+response	GET /studio-documents/v1/project-domain-model/trace	items.title	String	optional
+response	GET /studio-documents/v1/project-domain-model/trace	tested	u32	always
+response	GET /studio-documents/v1/project-domain-model/trace	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/work	identifiers	u32	always
+response	GET /studio-documents/v1/project-domain-model/work	items	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/work	items.defined_in	{}	always
+response	GET /studio-documents/v1/project-domain-model/work	items.defined_in.binding_id	String	optional
+response	GET /studio-documents/v1/project-domain-model/work	items.defined_in.line_end	u32	optional
+response	GET /studio-documents/v1/project-domain-model/work	items.defined_in.line_start	u32	optional
+response	GET /studio-documents/v1/project-domain-model/work	items.defined_in.path	String	always
+response	GET /studio-documents/v1/project-domain-model/work	items.defined_in.quote	String	optional
+response	GET /studio-documents/v1/project-domain-model/work	items.id	String	always
+response	GET /studio-documents/v1/project-domain-model/work	items.work	Vec<{}>	always
+response	GET /studio-documents/v1/project-domain-model/work	items.work.kind	String	always
+response	GET /studio-documents/v1/project-domain-model/work	items.work.merged	bool	always
+response	GET /studio-documents/v1/project-domain-model/work	items.work.number	i64	optional
+response	GET /studio-documents/v1/project-domain-model/work	items.work.sha	String	optional
+response	GET /studio-documents/v1/project-domain-model/work	items.work.state	String	optional
+response	GET /studio-documents/v1/project-domain-model/work	items.work.title	String	always
+response	GET /studio-documents/v1/project-domain-model/work	items.work.url	String	optional
+response	GET /studio-documents/v1/project-domain-model/work	synced	bool	always
+response	GET /studio-documents/v1/project-domain-model/work	total	u32	always
+response	GET /studio-documents/v1/project-domain-model/work	unlinked	u32	always
+response	GET /studio-documents/v1/project-domain-model/work	work	u32	always
 response	GET /studio-documents/v1/remarks	items	Vec<{}>	always
 response	GET /studio-documents/v1/remarks	items.comments	Vec<{}>	always
 response	GET /studio-documents/v1/remarks	items.comments.author	String	optional
@@ -4984,6 +5318,73 @@ response	POST /studio-documents/v1/organizations/{}/types	sections.key	String	al
 response	POST /studio-documents/v1/organizations/{}/types	sections.min_words	i64	optional
 response	POST /studio-documents/v1/organizations/{}/types	sections.required	bool	always
 response	POST /studio-documents/v1/organizations/{}/types	sections.title	String	always
+response	POST /studio-documents/v1/project-domain-model/builds	candidates	u32	always
+response	POST /studio-documents/v1/project-domain-model/builds	current	String	optional
+response	POST /studio-documents/v1/project-domain-model/builds	documents	u32	always
+response	POST /studio-documents/v1/project-domain-model/builds	done	u32	always
+response	POST /studio-documents/v1/project-domain-model/builds	error	String	optional
+response	POST /studio-documents/v1/project-domain-model/builds	estimated_seconds	u64	optional
+response	POST /studio-documents/v1/project-domain-model/builds	finished_at	String	optional
+response	POST /studio-documents/v1/project-domain-model/builds	judged	u32	always
+response	POST /studio-documents/v1/project-domain-model/builds	path	String	optional
+response	POST /studio-documents/v1/project-domain-model/builds	running	bool	always
+response	POST /studio-documents/v1/project-domain-model/builds	started_at	String	optional
+response	POST /studio-documents/v1/project-domain-model/entities	branch	String	always
+response	POST /studio-documents/v1/project-domain-model/entities	commit_sha	String	always
+response	POST /studio-documents/v1/project-domain-model/entities	path	String	always
+response	POST /studio-documents/v1/project-domain-model/entities	pr_url	String	optional
+response	POST /studio-documents/v1/project-domain-model/files/proposals	branch	String	always
+response	POST /studio-documents/v1/project-domain-model/files/proposals	commit_sha	String	always
+response	POST /studio-documents/v1/project-domain-model/files/proposals	path	String	always
+response	POST /studio-documents/v1/project-domain-model/files/proposals	pr_url	String	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	decided_at	String	always
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	decided_by	String	always
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	decision	String	always
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	fingerprint	String	always
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	message	String	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	note	String	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	present	bool	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	rule	String	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	sides	Vec<{}>	always
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	sides.binding_id	String	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	sides.line_end	u32	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	sides.line_start	u32	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	sides.path	String	always
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	sides.quote	String	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/decision	target	String	optional
+response	POST /studio-documents/v1/project-domain-model/findings/{}/proposals	branch	String	always
+response	POST /studio-documents/v1/project-domain-model/findings/{}/proposals	commit_sha	String	always
+response	POST /studio-documents/v1/project-domain-model/findings/{}/proposals	path	String	always
+response	POST /studio-documents/v1/project-domain-model/findings/{}/proposals	pr_url	String	optional
+response	POST /studio-documents/v1/project-domain-model/glossary/decisions	alias_of	String	optional
+response	POST /studio-documents/v1/project-domain-model/glossary/decisions	decided_at	String	always
+response	POST /studio-documents/v1/project-domain-model/glossary/decisions	decided_by	String	always
+response	POST /studio-documents/v1/project-domain-model/glossary/decisions	key	String	always
+response	POST /studio-documents/v1/project-domain-model/glossary/decisions	name	String	optional
+response	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	branch	String	always
+response	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	commit_sha	String	always
+response	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	path	String	always
+response	POST /studio-documents/v1/project-domain-model/glossary/document/proposals	pr_url	String	optional
+response	POST /studio-documents/v1/project-domain-model/glossary/proposals	branch	String	always
+response	POST /studio-documents/v1/project-domain-model/glossary/proposals	commit_sha	String	always
+response	POST /studio-documents/v1/project-domain-model/glossary/proposals	files	Vec<String>	always
+response	POST /studio-documents/v1/project-domain-model/glossary/proposals	pr_url	String	optional
+response	POST /studio-documents/v1/project-domain-model/glossary/proposals	renamed	u32	always
+response	POST /studio-documents/v1/project-domain-model/issues	number	i64	always
+response	POST /studio-documents/v1/project-domain-model/issues	url	String	optional
+response	POST /studio-documents/v1/project-domain-model/reviews	items	Vec<{}>	always
+response	POST /studio-documents/v1/project-domain-model/reviews	items.decided_at	String	always
+response	POST /studio-documents/v1/project-domain-model/reviews	items.decided_by	String	always
+response	POST /studio-documents/v1/project-domain-model/reviews	items.fact_key	String	always
+response	POST /studio-documents/v1/project-domain-model/reviews	items.note	String	optional
+response	POST /studio-documents/v1/project-domain-model/reviews	items.path	String	always
+response	POST /studio-documents/v1/project-domain-model/reviews	items.revision	String	always
+response	POST /studio-documents/v1/project-domain-model/reviews	items.state	String	always
+response	POST /studio-documents/v1/project-domain-model/reviews	total	u32	always
+response	POST /studio-documents/v1/project-domain-model/sentences/proposals	branch	String	always
+response	POST /studio-documents/v1/project-domain-model/sentences/proposals	commit_sha	String	always
+response	POST /studio-documents/v1/project-domain-model/sentences/proposals	path	String	always
+response	POST /studio-documents/v1/project-domain-model/sentences/proposals	pr_url	String	optional
 response	POST /studio-documents/v1/pull-request-checks	items	Vec<{}>	always
 response	POST /studio-documents/v1/pull-request-checks	items.description	String	always
 response	POST /studio-documents/v1/pull-request-checks	items.files	Vec<{}>	always
@@ -6785,6 +7186,23 @@ route	GET /studio-documents/v1/document-bindings/{}/text
 route	GET /studio-documents/v1/organizations/{}/capabilities
 route	GET /studio-documents/v1/organizations/{}/stages
 route	GET /studio-documents/v1/organizations/{}/types
+route	GET /studio-documents/v1/project-domain-model
+route	GET /studio-documents/v1/project-domain-model/build-estimate
+route	GET /studio-documents/v1/project-domain-model/check-methods
+route	GET /studio-documents/v1/project-domain-model/decisions
+route	GET /studio-documents/v1/project-domain-model/experts
+route	GET /studio-documents/v1/project-domain-model/findings
+route	GET /studio-documents/v1/project-domain-model/glossary
+route	GET /studio-documents/v1/project-domain-model/glossary/document
+route	GET /studio-documents/v1/project-domain-model/issues
+route	GET /studio-documents/v1/project-domain-model/questions
+route	GET /studio-documents/v1/project-domain-model/readiness
+route	GET /studio-documents/v1/project-domain-model/related
+route	GET /studio-documents/v1/project-domain-model/requirements
+route	GET /studio-documents/v1/project-domain-model/reviews
+route	GET /studio-documents/v1/project-domain-model/term-drift
+route	GET /studio-documents/v1/project-domain-model/trace
+route	GET /studio-documents/v1/project-domain-model/work
 route	GET /studio-documents/v1/remarks
 route	GET /studio-documents/v1/review-criteria
 route	GET /studio-documents/v1/review-requests
@@ -6986,6 +7404,18 @@ route	POST /studio-documents/v1/delivery-scopes/{}/limits
 route	POST /studio-documents/v1/organizations/{}/capabilities
 route	POST /studio-documents/v1/organizations/{}/stages
 route	POST /studio-documents/v1/organizations/{}/types
+route	POST /studio-documents/v1/project-domain-model/builds
+route	POST /studio-documents/v1/project-domain-model/entities
+route	POST /studio-documents/v1/project-domain-model/files/proposals
+route	POST /studio-documents/v1/project-domain-model/findings/{}/decision
+route	POST /studio-documents/v1/project-domain-model/findings/{}/proposals
+route	POST /studio-documents/v1/project-domain-model/glossary/decisions
+route	POST /studio-documents/v1/project-domain-model/glossary/distinct
+route	POST /studio-documents/v1/project-domain-model/glossary/document/proposals
+route	POST /studio-documents/v1/project-domain-model/glossary/proposals
+route	POST /studio-documents/v1/project-domain-model/issues
+route	POST /studio-documents/v1/project-domain-model/reviews
+route	POST /studio-documents/v1/project-domain-model/sentences/proposals
 route	POST /studio-documents/v1/pull-request-checks
 route	POST /studio-documents/v1/remarks/replies
 route	POST /studio-documents/v1/review-brief

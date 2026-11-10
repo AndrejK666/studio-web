@@ -4,7 +4,7 @@
  * skeleton is generated server-side: the dialog asks for it with `dry_run` to
  * show it and say which repository it would go to, then asks again to write
  * it. The name, what it is for and its subsystem can be changed before the
- * push: a draft from the Domain model is a proposal, not a decision.
+ * push: a draft from the project domain model is a proposal, not a decision.
  */
 
 import { useEffect, useState, type RefObject } from 'react';
