@@ -744,6 +744,30 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "The backend's API reference, grouped by the gear that serves it, opened from the product menu.",
             &["platform"],
         ),
+        kit(
+            "components",
+            "Components",
+            "The platform's and the organization's component catalogue and registry, their gear repositories and publication requests.",
+            &["platform", "organization", "project"],
+        ),
+        kit(
+            "org-infrastructure",
+            "Infrastructure",
+            "The places an organization holds, the environments it defines on them, and what runs where.",
+            &["organization"],
+        ),
+        kit(
+            "product-releases",
+            "Product & Releases",
+            "A project's product (its map, configurator and frontend), its builds and its deploys up the environment ladder.",
+            &["project"],
+        ),
+        kit(
+            "project-domain-model",
+            "Domain model",
+            "What a project's specs say the application is, and the issues they leave to decide.",
+            &["project"],
+        ),
     ]
 }
 
@@ -1081,7 +1105,11 @@ mod tests {
                 "org-costs",
                 "org-reports",
                 "project-specs",
-                "studio-api-docs"
+                "studio-api-docs",
+                "components",
+                "org-infrastructure",
+                "product-releases",
+                "project-domain-model"
             ]
         );
         for kit in &kits {
