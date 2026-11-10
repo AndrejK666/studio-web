@@ -15,7 +15,7 @@
 // the editor's problems are message keys with their values, so they read in
 // the person's language.
 
-import { fieldsOfModel, relationsOfModel, type DomainFieldKind, type DomainModel } from './domain-runtime';
+import { fieldsOfModel, includableRelations, type DomainFieldKind, type DomainModel } from './domain-runtime';
 import type { RawEdge, RawObj } from '../screens/admin/domain-model/DomainModelGraph';
 
 /** The model's entity a saved view is stored as. */
@@ -162,7 +162,7 @@ export function fieldsOf(model: DomainModel, type: string): { readonly [field: s
 
 /** The entity's own relations (forwards). */
 function forwardOf(model: DomainModel, type: string): { readonly [relation: string]: string } {
-  return memo(model, `forward:${type}`, () => relationsOfModel(model, type));
+  return memo(model, `forward:${type}`, () => includableRelations(model, type));
 }
 
 /** The relations other entities declare towards `type`, each named for the
