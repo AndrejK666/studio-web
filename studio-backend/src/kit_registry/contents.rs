@@ -256,7 +256,10 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         },
         // A section of `projects-mfe` today, which reads nothing yet.
         "project-activity" => KitContents {
-            screens: vec![project_tab("Activity", Some("/projects/activity"))],
+            screens: vec![
+                project_tab("Activity", Some("/projects/activity")),
+                project_tab("Timeline", Some("/projects/timeline")),
+            ],
             ..KitContents::default()
         },
         // `costs-mfe`: the organization's costs, its price list and budgets
@@ -306,15 +309,15 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         // `publication-requests`, `project-components-view`).
         "components" => KitContents {
             screens: vec![
-                tab("platform", "Components", Some("/platform-components")),
-                tab("platform", "Repositories", Some("/platform-repositories")),
+                tab("platform", "Components", Some("/platform/components")),
+                tab("platform", "Repositories", Some("/platform/repositories")),
                 tab(
                     "platform",
                     "Publication requests",
-                    Some("/publication-requests"),
+                    Some("/platform/publication-requests"),
                 ),
                 tab("organization", "Components", Some("/components")),
-                project_tab("Components", None),
+                project_tab("Components", Some("/project-components")),
             ],
             permissions: KitPermissions {
                 reads: owned(&[
@@ -435,7 +438,10 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         // part), `releases-tab`, `builds-tab`, `deploy-actions`,
         // `project-images` and `ProjectEnvironments` call.
         "product-releases" => KitContents {
-            screens: vec![project_tab("Product", None), project_tab("Releases", None)],
+            screens: vec![
+                project_tab("Product", Some("/product")),
+                project_tab("Releases", Some("/releases")),
+            ],
             permissions: KitPermissions {
                 reads: owned(&[
                     "GET /studio-product/v1/projects/{project_id}/product",
@@ -520,8 +526,19 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         // issues they leave to decide, the glossary, traces to work. The
         // portal's screen is `domain-model-mfe`; the routes are the ones the
         // old prototype's `spec-model-tab` called, under their new path.
+        // `admin-mfe`'s Integrations section, shown for the organization in
+        // scope. Admin › Integrations stays the platform administrator's.
+        "org-connections" => KitContents {
+            screens: vec![tab("organization", "Connections", Some("/connections"))],
+            ..KitContents::default()
+        },
+        // The Team section of `projects-mfe`.
+        "project-team" => KitContents {
+            screens: vec![project_tab("Team", Some("/projects/team"))],
+            ..KitContents::default()
+        },
         "project-domain-model" => KitContents {
-            screens: vec![project_tab("Project domain model", None)],
+            screens: vec![project_tab("Project domain model", Some("/domain-model"))],
             permissions: KitPermissions {
                 reads: owned(&[
                     "GET /studio-documents/v1/project-domain-model",

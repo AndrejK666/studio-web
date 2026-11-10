@@ -424,11 +424,18 @@ describe('generated MFE manifest', () => {
       // (ADR-0069) is a screen of its own, never the shell's entry; a kit with
       // several tabs on one entry (product-mfe: Product and Components)
       // switches on sections of its own.
-      const sections = project.filter((ext) => ext.presentation?.section && !ext.presentation?.kit);
-      expect(new Set(sections.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
-      expect(sections.length).toBeGreaterThan(1);
-      const kitTabs = project.filter((ext) => ext.presentation?.kit || !ext.presentation?.section);
-      for (const tab of kitTabs) expect(tab.entry).not.toBe(workspaceEntry);
+      // Some of the shell entry's sections belong to a kit (Artifacts, Specs,
+      // Activity, Timeline): still sections of that entry, shown only where
+      // their kit is installed.
+      const shellSections = project.filter((ext) => ext.presentation?.section && !ext.presentation?.kit);
+      expect(new Set(shellSections.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
+      expect(shellSections.length).toBeGreaterThan(1);
+      // A section elsewhere is a kit's own (it switches on sections of its own).
+      for (const ext of project.filter((e) => e.presentation?.section && e.entry !== workspaceEntry)) {
+        expect(ext.presentation?.kit).toBeTruthy();
+      }
+      // A tab with no section is a screen of its own, never the shell's entry.
+      for (const tab of project.filter((e) => !e.presentation?.section)) expect(tab.entry).not.toBe(workspaceEntry);
     });
 
     it('gives every item sharing an entry with another of its level a section of its own', () => {

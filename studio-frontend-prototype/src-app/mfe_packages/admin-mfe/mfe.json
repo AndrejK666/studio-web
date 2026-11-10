@@ -135,7 +135,8 @@
         "route": "/connections",
         "order": 40,
         "level": "organization",
-        "section": "connections"
+        "section": "connections",
+        "kit": "org-connections"
       }
     }
   ]

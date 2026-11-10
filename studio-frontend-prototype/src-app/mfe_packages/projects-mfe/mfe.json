@@ -138,7 +138,8 @@
         "route": "/projects/artifacts",
         "order": 20,
         "level": "project",
-        "section": "artifacts"
+        "section": "artifacts",
+        "kit": "project-artifacts"
       }
     },
     {
@@ -151,7 +152,8 @@
         "route": "/projects/specs",
         "order": 30,
         "level": "project",
-        "section": "specs"
+        "section": "specs",
+        "kit": "project-specs"
       }
     },
     {
@@ -177,7 +179,8 @@
         "route": "/projects/activity",
         "order": 40,
         "level": "project",
-        "section": "activity"
+        "section": "activity",
+        "kit": "project-activity"
       }
     },
     {
@@ -190,7 +193,8 @@
         "route": "/projects/timeline",
         "order": 50,
         "level": "project",
-        "section": "timeline"
+        "section": "timeline",
+        "kit": "project-activity"
       }
     },
     {
@@ -203,7 +207,8 @@
         "route": "/projects/team",
         "order": 60,
         "level": "project",
-        "section": "team"
+        "section": "team",
+        "kit": "project-team"
       }
     },
     {

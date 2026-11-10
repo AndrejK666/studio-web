@@ -47,7 +47,10 @@ fn the_builtin_screens_are_today_s_tabs() {
     );
     assert_eq!(
         screens("project-activity"),
-        [("Activity".to_owned(), Some("/projects/activity".to_owned()))]
+        [
+            ("Activity".to_owned(), Some("/projects/activity".to_owned())),
+            ("Timeline".to_owned(), Some("/projects/timeline".to_owned()))
+        ]
     );
     assert_eq!(
         screens("project-issues"),
@@ -113,15 +116,15 @@ fn the_builtin_screens_are_today_s_tabs() {
     assert_eq!(
         levels("components"),
         [
-            at("platform", "Components", Some("/platform-components")),
-            at("platform", "Repositories", Some("/platform-repositories")),
+            at("platform", "Components", Some("/platform/components")),
+            at("platform", "Repositories", Some("/platform/repositories")),
             at(
                 "platform",
                 "Publication requests",
-                Some("/publication-requests")
+                Some("/platform/publication-requests")
             ),
             at("organization", "Components", Some("/components")),
-            at("project", "Components", None),
+            at("project", "Components", Some("/project-components")),
         ]
     );
     assert_eq!(
@@ -135,13 +138,13 @@ fn the_builtin_screens_are_today_s_tabs() {
     assert_eq!(
         levels("product-releases"),
         [
-            at("project", "Product", None),
-            at("project", "Releases", None)
+            at("project", "Product", Some("/product")),
+            at("project", "Releases", Some("/releases"))
         ]
     );
     assert_eq!(
         levels("project-domain-model"),
-        [at("project", "Project domain model", None)]
+        [at("project", "Project domain model", Some("/domain-model"))]
     );
 }
 

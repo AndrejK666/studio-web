@@ -235,7 +235,17 @@ const MenuSlot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isC
         )}
         <DropdownMenuRadioGroup value={slot.current?.id ?? ''} onValueChange={onPick}>
           {slot.options.map((option) => (
-            <DropdownMenuRadioItem key={option.id} value={option.id} closeOnClick>
+            <DropdownMenuRadioItem
+              key={option.id}
+              value={option.id}
+              closeOnClick
+              // The radio group reports no change for the item already picked,
+              // so from another level (the platform, Admin) picking it would
+              // move nothing: it goes to that level here.
+              onClick={
+                !isCurrent && option.id === slot.current?.id ? () => requestLevel(slot.level) : undefined
+              }
+            >
               <slot.Icon aria-hidden="true" />
               {option.name}
             </DropdownMenuRadioItem>

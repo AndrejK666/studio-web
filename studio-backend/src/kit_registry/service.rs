@@ -768,6 +768,18 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "What a project's documents say the application is, and the issues they leave to decide (not the Studio domain model).",
             &["project"],
         ),
+        kit(
+            "org-connections",
+            "Connections",
+            "An organization's connections to Git hosts, clusters, registries and model providers, and Admin's view of all of them.",
+            &["organization"],
+        ),
+        kit(
+            "project-team",
+            "Team",
+            "A project's Team tab: who works on it and in which role.",
+            &["project"],
+        ),
     ]
 }
 
@@ -1109,7 +1121,9 @@ mod tests {
                 "components",
                 "org-infrastructure",
                 "product-releases",
-                "project-domain-model"
+                "project-domain-model",
+                "org-connections",
+                "project-team"
             ]
         );
         for kit in &kits {

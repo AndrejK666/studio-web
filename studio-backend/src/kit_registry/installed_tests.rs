@@ -122,6 +122,7 @@ async fn every_builtin_kit_is_a_base_kit_until_the_platform_removes_it() {
         slugs(&installed.base),
         [
             "components",
+            "org-connections",
             "org-costs",
             "org-infrastructure",
             "org-reports",
@@ -132,6 +133,7 @@ async fn every_builtin_kit_is_a_base_kit_until_the_platform_removes_it() {
             "project-issues",
             "project-lifecycle",
             "project-specs",
+            "project-team",
             "project-tests",
             "studio-api-docs"
         ]
