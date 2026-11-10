@@ -3644,6 +3644,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-user/v1/me/inbox",
+      "operation_id": "studio_user.get_my_inbox",
+      "tag": "StudioUser",
+      "summary": "Everything whose next move is the caller's, across their workspaces",
+      "authenticated": true,
+      "responses": [
+        "InboxDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-user/v1/me/inbox-marks",
       "operation_id": "studio_user.list_my_inbox_marks",
       "tag": "StudioUser",

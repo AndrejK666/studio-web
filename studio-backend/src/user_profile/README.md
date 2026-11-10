@@ -28,6 +28,17 @@ README is what you need to work in the directory.
   [`../identity_directory`](../identity_directory); without it, brokered
   logins confirm nothing and invitations cannot be accepted.
 
+- The person's Inbox ([`inbox.rs`](inbox.rs)): `GET /studio-user/v1/me/inbox`
+  — review requests waiting for the caller's verdict and pull requests whose
+  next step is theirs, across their workspaces, overdue first, with the
+  caller's `me/inbox-marks` applied (`?view=hidden` lists what the marks
+  hide). Items are never stored: each is read from its source route as the
+  caller on every call (ADR-0068 §6), and each names its `source`
+  (`review-requests`, `pull-requests`) so kits can add sources without the
+  shape changing. MCP tools `inbox` and `inbox_mark` ([`mcp.rs`](mcp.rs)).
+  The ordering and the marks are unit tests in `inbox_tests.rs`, ported from
+  the portal's.
+
 ## Working here
 
 - The rules live in `alias_policy.rs`, `invitations.rs` and `leaving.rs`, with

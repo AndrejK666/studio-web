@@ -1146,6 +1146,113 @@ async fn upsert_my_inbox_mark(
     Ok(Json(inbox_mark_dto(mark)))
 }
 
+/// One thing waiting on the caller.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InboxItemDto {
+    /// What a mark on it is kept under (`PUT /me/inbox-marks`):
+    /// `review:<id>`, or `pr:<id>@<updated_at>` for a pull request, which
+    /// comes back after a mark once somebody moves it.
+    pub key: String,
+    /// Where it comes from: `review-requests` (studio-documents) or
+    /// `pull-requests` (studio-artifact-ingest). More sources come with kits
+    /// (ADR-0068 §6); a client renders one it does not know by `title`.
+    pub source: String,
+    pub workspace_id: String,
+    pub workspace_name: String,
+    pub title: String,
+    pub url: Option<String>,
+    /// When it is due, RFC 3339.
+    pub due_at: Option<String>,
+    pub overdue: bool,
+    /// The source's own record, as its route answers it: a review request,
+    /// an open pull request.
+    pub record: serde_json::Value,
+}
+
+/// The caller's Inbox, one view of it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InboxDto {
+    pub items: Vec<InboxItemDto>,
+    pub total: u32,
+    /// How many items the other view holds: hidden ones on `open`, open ones
+    /// on `hidden`.
+    pub other: u32,
+    /// The sources that could not be read, each with why: what they hold
+    /// is not known, never nothing.
+    pub unread: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct InboxQuery {
+    /// `open` (default) or `hidden` (done, or snoozed until later).
+    #[serde(default)]
+    pub view: Option<String>,
+    #[serde(flatten)]
+    pub page: crate::pagination::PageQuery,
+}
+
+async fn get_my_inbox(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<InboxQuery>,
+) -> ApiResult<JsonBody<InboxDto>> {
+    let service = configured(service)?;
+    let hidden_view = match query.view.as_deref().map(str::trim) {
+        None | Some("" | "open") => false,
+        Some("hidden") => true,
+        Some(_) => return Err(invalid(anyhow::anyhow!("`view` must be open or hidden"))),
+    };
+    let user_id = caller_user_id(&ctx, &service).await?;
+    let api = crate::mcp::api_as(headers.get(axum::http::header::AUTHORIZATION).cloned())
+        .ok_or_else(|| {
+            CanonicalError::service_unavailable()
+                .with_detail(
+                    "studio-mcp is not running here, so the Inbox's sources cannot be read",
+                )
+                .create()
+        })?;
+    let (read, marks) = tokio::join!(super::inbox::read(&api), service.inbox_marks(&user_id));
+    let marks: Vec<super::inbox::Mark> = marks
+        .map_err(internal)?
+        .into_iter()
+        .map(|m| super::inbox::Mark {
+            item_key: m.item_key,
+            state: m.state,
+            until: m.until,
+        })
+        .collect();
+    let (open, hidden) = super::inbox::inbox(read.items, &marks, time::OffsetDateTime::now_utc());
+    let (shown, other) = if hidden_view {
+        (hidden, open.len())
+    } else {
+        (open, hidden.len())
+    };
+    let rows: Vec<InboxItemDto> = shown
+        .into_iter()
+        .map(|i| InboxItemDto {
+            key: i.key,
+            source: i.source.to_string(),
+            workspace_id: i.workspace_id,
+            workspace_name: i.workspace_name,
+            title: i.title,
+            url: i.url,
+            due_at: i.due_at,
+            overdue: i.overdue,
+            record: i.record,
+        })
+        .collect();
+    let (items, total) = crate::pagination::page_of(rows, query.page);
+    Ok(Json(InboxDto {
+        items,
+        total,
+        other: u32::try_from(other).unwrap_or(u32::MAX),
+        unread: read.unread,
+    }))
+}
+
 async fn get_my_ui_preferences(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
@@ -1968,6 +2075,41 @@ pub fn register_routes(
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::get("/studio-user/v1/me/inbox")
+        .operation_id("studio_user.get_my_inbox")
+        .summary("Everything whose next move is the caller's, across their workspaces")
+        .description(
+            "The person's Inbox (ADR-0068 §6): review requests waiting for their verdict and \
+             pull requests whose next step is theirs, read from their facts on every call — \
+             never stored, so an item leaves by itself when the fact changes — with the \
+             caller's marks applied. `view=open` (the default) lists what waits, overdue \
+             first, then by due date, then reviews before pull requests; `view=hidden` lists \
+             what a mark hides (done, or snoozed until later), and `other` counts the view \
+             not shown. Each item names its `source` (`review-requests`, `pull-requests`; \
+             kits add more) and carries the source's own record, and its `key` is what \
+             `PUT /me/inbox-marks` takes. Sources that could not be read are in `unread`: \
+             what they hold is not known, never nothing.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("view", false, "`open` (default) or `hidden`")
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first item",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .handler(get_my_inbox)
+        .json_response_with_schema::<InboxDto>(openapi, StatusCode::OK, "The inbox")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi)
         .layer(Extension(service.clone()));
 

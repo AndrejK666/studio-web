@@ -47,6 +47,8 @@ pub fn tools() -> Vec<sdk::Tool> {
     all.extend(crate::spec_mapping::mcp_tools());
     // Where a project stands.
     all.extend(crate::organizations::mcp_tools());
+    // What waits on the person.
+    all.extend(crate::user_profile::mcp_tools());
     all.extend(crate::spec_quality::mcp_tools());
     // The pipeline, in the order a project goes through it: its sources and
     // the connections they are read through, the product's description,

@@ -207,9 +207,23 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             },
             ..KitContents::default()
         },
-        // The Issues tab has no screen in the new portal yet.
+        // The Issues tab: what a project has to decide before it builds from
+        // its documents, computed by studio-documents.
         "project-issues" => KitContents {
-            screens: vec![project_tab("Issues", None)],
+            screens: vec![project_tab("Issues", Some("/issues"))],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-documents/v1/spec-model/issues",
+                    "GET /studio-documents/v1/spec-model/readiness",
+                    "GET /studio-documents/v1/spec-model",
+                ]),
+                writes: owned(&[
+                    "POST /studio-documents/v1/spec-model/reviews",
+                    "POST /studio-documents/v1/spec-model/findings/{fingerprint}/decision",
+                    "POST /studio-documents/v1/spec-model/issues",
+                ]),
+                ..KitPermissions::default()
+            },
             ..KitContents::default()
         },
         // `tests-mfe`: CI runs, the repositories and their open pull

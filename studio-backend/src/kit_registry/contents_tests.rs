@@ -49,8 +49,10 @@ fn the_builtin_screens_are_today_s_tabs() {
         screens("project-activity"),
         [("Activity".to_owned(), Some("/projects/activity".to_owned()))]
     );
-    // No screen in the portal yet.
-    assert_eq!(screens("project-issues"), [("Issues".to_owned(), None)]);
+    assert_eq!(
+        screens("project-issues"),
+        [("Issues".to_owned(), Some("/issues".to_owned()))]
+    );
     assert_eq!(
         screens("project-lifecycle"),
         [(
