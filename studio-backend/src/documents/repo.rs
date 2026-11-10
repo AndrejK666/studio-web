@@ -495,6 +495,7 @@ impl DocumentsRepo {
                     spec_review::Column::Path,
                     spec_review::Column::Revision,
                     spec_review::Column::Note,
+                    spec_review::Column::Value,
                     spec_review::Column::DecidedBy,
                     spec_review::Column::DecidedAt,
                 ])?;

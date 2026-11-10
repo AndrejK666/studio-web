@@ -2919,17 +2919,26 @@ impl DocumentsService {
             .await
     }
 
-    /// Record a member's review of each fact: `accepted`, `rejected`, or
-    /// `proposed` to withdraw an earlier one. One call for a whole selection.
+    /// Record a member's review of each fact: `accepted`, `rejected`,
+    /// `corrected` with the value to show instead, or `proposed` to withdraw
+    /// an earlier one. One call for a whole selection.
     pub async fn put_spec_reviews(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
-        items: Vec<(String, String, String, String, Option<String>)>,
+        items: Vec<SpecReviewItem>,
     ) -> Result<Vec<super::entity::spec_review::Model>> {
         let mut saved = Vec::new();
-        for (fact_key, state, path, revision, note) in items {
+        for SpecReviewItem {
+            fact_key,
+            state,
+            path,
+            revision,
+            note,
+            value,
+        } in items
+        {
             if state == "proposed" {
                 self.data
                     .delete_spec_review(ctx, workspace_id, project_id, &fact_key)
@@ -2945,6 +2954,7 @@ impl DocumentsService {
                 path,
                 revision,
                 note,
+                value,
                 decided_by: ctx.subject_id(),
                 decided_at: OffsetDateTime::now_utc(),
             };
@@ -3391,6 +3401,18 @@ impl DocumentsService {
 /// The project domain model's sources as one read found them, with what a second read
 /// of the same checkouts needs: the tenants tried, and the paths whose text
 /// the first one already took as documents.
+/// One review of a fact (or of a prefixed key) as a member gives it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpecReviewItem {
+    pub fact_key: String,
+    pub state: String,
+    pub path: String,
+    pub revision: String,
+    pub note: Option<String>,
+    /// For `corrected`: the value to show instead of the one read.
+    pub value: Option<String>,
+}
+
 #[derive(Default)]
 struct ReadSources {
     sources: super::spec_model::Sources,

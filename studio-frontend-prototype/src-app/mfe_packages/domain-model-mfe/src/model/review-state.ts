@@ -19,6 +19,8 @@ export interface SpecModelReview {
   path: string;
   revision: string;
   note?: string | null;
+  /** For `corrected`: the value a member gave in place of the one read. */
+  value?: string | null;
   decided_by: string;
   decided_at: string;
 }
@@ -30,6 +32,13 @@ export interface ReviewWrite {
   path: string;
   revision: string;
   note?: string | null;
+  value?: string | null;
+}
+
+/** A member's correction of a fact's value: shown by the server in place of
+ *  the value read, which it keeps as `extracted_value`. */
+export function correctionWrite(factKey: string, path: string, revision: string, value: string): ReviewWrite {
+  return { fact_key: factKey, state: "corrected", path, revision, value: value.trim() };
 }
 
 /** 64-bit FNV-1a as 16 hex digits: short, stable, the same everywhere. */
@@ -58,9 +67,14 @@ export function factKey(f: Pick<SpecModelFact, "kind" | "subject" | "aspect" | "
   return fnv64(`${f.kind}\u001f${subjectKey(f.subject)}\u001f${words(f.aspect)}\u001f${words(f.source.quote || f.text)}`);
 }
 
-/** Each fact's review by its key. */
+/** Each fact's review by its key. A corrected reading is the project's
+ *  reading, as an accepted one is. */
 export function reviewIndex(reviews: SpecModelReview[]): Map<string, ReviewState> {
-  return new Map(reviews.filter((r) => r.state === "accepted" || r.state === "rejected").map((r) => [r.fact_key, r.state as ReviewState]));
+  return new Map(
+    reviews
+      .filter((r) => r.state === "accepted" || r.state === "rejected" || r.state === "corrected")
+      .map((r) => [r.fact_key, (r.state === "rejected" ? "rejected" : "accepted") as ReviewState])
+  );
 }
 
 /** A hypothesis's evidence is stored beside its fact's review, under this
@@ -100,6 +114,8 @@ export interface FactReview {
   reviewedEarlier?: (f: SpecModelFact) => boolean;
   rejectedOf: (keys: string[]) => SpecModelFact[];
   review: (facts: SpecModelFact[], state: ReviewState | "proposed") => Promise<void>;
+  /** Give the fact's value as it should read; absent where nobody may. */
+  correct?: (fact: SpecModelFact, value: string) => Promise<void>;
 }
 
 export const FactReviewContext = createContext<FactReview | null>(null);

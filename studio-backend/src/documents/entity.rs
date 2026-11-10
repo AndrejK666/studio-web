@@ -392,13 +392,17 @@ pub mod spec_review {
         /// folded and hashed, so a reading keeps its review while its passage
         /// says the same.
         pub fact_key: String,
-        /// `accepted` or `rejected`.
+        /// `accepted`, `rejected` or `corrected`, or a prefixed key's state.
         pub state: String,
         /// Where the fact was read, and at which revision, when reviewed.
         pub path: String,
         pub revision: String,
         /// Why, in the member's words: the reason an obligation is excluded.
         pub note: Option<String>,
+        /// For `corrected`: the value the member gave in place of the one
+        /// the model read (`m0029`).
+        #[serde(default)]
+        pub value: Option<String>,
         pub decided_by: Uuid,
         #[serde(with = "crate::documents::stamp")]
         pub decided_at: OffsetDateTime,

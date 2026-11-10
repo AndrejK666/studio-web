@@ -56,6 +56,12 @@ export interface SpecModelFact {
    *  were recorded. Absent from an older server. */
   source_commit?: string | null;
   source_ref?: string | null;
+  /** `stated` when its passage has every word of its subject and value,
+   *  `interpreted` when the model brought words the passage lacks. */
+  basis?: "stated" | "interpreted";
+  /** Set when a member corrected the value: the value the model read
+   *  (`value` is then the member's). */
+  extracted_value?: string | null;
   /** Saved from this screen and not read by a build yet (saved-entities.ts):
    *  shown at once so a person sees the edit, replaced on the next build. */
   provisional?: boolean;

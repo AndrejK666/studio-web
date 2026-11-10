@@ -118,11 +118,14 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "project_domain_model_fact_review",
-            description: "Accept or reject facts the model read, or put them back as proposed: \
-                an accepted fact is the project's reading, a rejected one leaves the model and \
-                is not proposed again while its passage says the same. Each item is a \
-                `fact_key` from `project_domain_model_facts`, a `state`, and the fact's `path` and \
-                document `revision`. Shared by the whole project: say what you decide first.",
+            description: "Accept, reject or correct facts the model read, or put them back as \
+                proposed: an accepted fact is the project's reading, a rejected one leaves the \
+                model and is not proposed again while its passage says the same, and a \
+                `corrected` one (with the new `value`) is shown with your value in place of the \
+                one read, which `project_domain_model_facts` keeps as `extracted_value`. Each \
+                item is a `fact_key` from `project_domain_model_facts`, a `state`, and the fact's \
+                `path` and document `revision`. Shared by the whole project: say what you decide \
+                first.",
             input_schema: || {
                 object(
                     json!({
@@ -132,10 +135,12 @@ pub fn tools() -> Vec<Tool> {
                                 "properties": {
                                     "fact_key": { "type": "string" },
                                     "state": { "type": "string",
-                                        "enum": ["accepted", "rejected", "proposed"] },
+                                        "enum": ["accepted", "rejected", "corrected", "proposed"] },
                                     "path": { "type": "string" },
                                     "revision": { "type": "string" },
-                                    "note": { "type": "string" }
+                                    "note": { "type": "string" },
+                                    "value": { "type": "string", "maxLength": 2000,
+                                        "description": "With `corrected`: the fact's value as it should read." }
                                 },
                                 "required": ["fact_key", "state"] } }
                     }),
@@ -284,6 +289,32 @@ mod tests {
             json!({ "project_id": "p", "paths": ["docs/a.md"], "glob": "docs/prd/**" }),
             "a selection travels in the body"
         );
+    }
+
+    #[test]
+    fn a_correction_is_a_review_with_the_new_value() {
+        let all = tools();
+        let review = all
+            .iter()
+            .find(|t| t.name == "project_domain_model_fact_review")
+            .expect("the review tool");
+        let schema = (review.input_schema)();
+        let item = &schema["properties"]["items"]["items"]["properties"];
+        assert!(
+            item["state"]["enum"]
+                .as_array()
+                .is_some_and(|e| e.contains(&json!("corrected")))
+        );
+        assert_eq!(item["value"]["type"], "string");
+        let r = request_of(
+            &all,
+            "project_domain_model_fact_review",
+            json!({ "project_id": "p", "items": [
+                { "fact_key": "k", "state": "corrected", "value": "90 days" }
+            ] }),
+        );
+        assert_eq!(r.path, "/studio-documents/v1/project-domain-model/reviews");
+        assert_eq!(r.body["items"][0]["value"], "90 days");
     }
 
     #[test]

@@ -5,7 +5,7 @@
  * its row when the tab provides the review (`FactReviewContext`).
  */
 
-import { useContext } from 'react';
+import { useContext, useState } from 'react';
 import { FactReviewContext } from '../../model/review-state';
 import { PROVISIONAL_NOTE } from '../../model/saved-entities';
 import { codeSpans, readAtLabel, sideLabel, type SpecModelFact, type SpecModelSide } from '../../model/spec-model';
@@ -60,6 +60,8 @@ export function FactRow({ fact, onOpenFile }: { fact: SpecModelFact; onOpenFile?
   const inactive = fact.status !== 'active';
   const review = useContext(FactReviewContext);
   const state = review?.stateOf(fact);
+  /** The value being typed in place of the one read; `null` while closed. */
+  const [correcting, setCorrecting] = useState<string | null>(null);
   const cls = [
     styles.fact,
     inactive ? styles.factInactive : '',
@@ -82,11 +84,31 @@ export function FactRow({ fact, onOpenFile }: { fact: SpecModelFact; onOpenFile?
           <button type="button" title={t('reject_reading')} onClick={() => void review.review([fact], 'rejected')}>
             ✗
           </button>
+          {review.correct && (
+            <button
+              type="button"
+              title={t('correct_reading')}
+              aria-expanded={correcting !== null}
+              onClick={() => setCorrecting(correcting === null ? fact.value : null)}
+            >
+              ✎
+            </button>
+          )}
         </span>
       )}
       <div>
         {fact.aspect && <span className={styles.aspect}>{fact.aspect}: </span>}
         {fact.value ? <strong>{fact.value}</strong> : fact.text}
+        {fact.basis === 'interpreted' && (
+          <span className={styles.status} data-basis="interpreted" title={t('interpreted_title')}>
+            {t('interpreted')}
+          </span>
+        )}
+        {fact.extracted_value != null && (
+          <span className={styles.status} data-corrected="true" title={t('corrected_title', { value: fact.extracted_value || '—' })}>
+            {t('corrected', { value: fact.extracted_value || '—' })}
+          </span>
+        )}
         {inactive && (
           <span className={styles.status} title={fact.status_because}>
             {fact.status}
@@ -100,6 +122,27 @@ export function FactRow({ fact, onOpenFile }: { fact: SpecModelFact; onOpenFile?
         )}
       </div>
       {fact.value && fact.text && <div className={styles.hint}>{fact.text}</div>}
+      {correcting !== null && review?.correct && (
+        <form
+          className={styles.correct}
+          onSubmit={(e) => {
+            e.preventDefault();
+            const value = correcting.trim();
+            if (!value) return;
+            void review.correct?.(fact, value).then(() => setCorrecting(null));
+          }}
+        >
+          <input
+            aria-label={t('correct_value')}
+            value={correcting}
+            maxLength={2000}
+            onChange={(e) => setCorrecting(e.target.value)}
+          />
+          <button type="submit" disabled={!correcting.trim()}>
+            {t('correct_save')}
+          </button>
+        </form>
+      )}
       <SideLink side={fact.source} onOpenFile={onOpenFile} readAt={fact} />
     </div>
   );

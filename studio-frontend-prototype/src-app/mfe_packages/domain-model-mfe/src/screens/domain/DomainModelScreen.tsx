@@ -26,12 +26,13 @@ import { checkIndex, checkWrite, hypothesesFor, methodCatalogue, type Check, typ
 import { hypothesesOf, materialDocument, type EvidenceState, type Hypothesis } from '../../model/need-view';
 import { indexCatalogue, type CatalogueIndex } from '../../model/product-configurator';
 import {
+  correctionWrite,
   decisionIndex,
   EVIDENCE_PREFIX,
   evidenceIndex,
   FactReviewContext,
+  reviewIndex,
   type FactReview,
-  type ReviewState,
   type SpecModelReview,
 } from '../../model/review-state';
 import { readRule } from '../../model/rule-checks';
@@ -282,13 +283,9 @@ export function DomainModelScreen() {
 
   const rereadReviews = async () => setReviews((await dmApi.specModelReviews(projectId)).items);
 
+  // A corrected reading is the project's reading, as an accepted one is.
   const reviewByKey = useMemo(
-    () =>
-      new Map(
-        reviews
-          .filter((r) => r.state === 'accepted' || r.state === 'rejected')
-          .map((r) => [r.fact_key, r.state as ReviewState])
-      ),
+    () => reviewIndex(reviews),
     [reviews]
   );
   const evidence = useMemo(() => evidenceIndex(reviews), [reviews]);
@@ -390,10 +387,21 @@ export function DomainModelScreen() {
           setError(errText(e));
         }
       },
+      correct: async (f, value) => {
+        try {
+          await dmApi.reviewSpecModelFacts(projectId, [
+            correctionWrite(keyOf(f), f.source.path, revisionOf(f.source.path), value),
+          ]);
+          // The server shows a correction in place of the value read: read the model again.
+          await load();
+        } catch (e) {
+          setError(errText(e));
+        }
+      },
     }),
     // rereadReviews is recreated each render; it only reads projectId.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [reviewByKey, reviews, allFacts, model, projectId, revisionOf]
+    [reviewByKey, reviews, allFacts, model, projectId, revisionOf, load]
   );
   const writes = useMemo(() => savedWrites(saved), [saved]);
   const hypotheses = useMemo(() => hypothesesOf(facts), [facts]);

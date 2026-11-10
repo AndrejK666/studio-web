@@ -3,7 +3,7 @@
 // reading keeps its review across line moves and loses it when its words change.
 import { describe, expect, it } from "vitest";
 
-import { factKey, reviewCounts, reviewIndex, withoutRejected } from "./review-state";
+import { correctionWrite, factKey, reviewCounts, reviewIndex, withoutRejected } from "./review-state";
 import type { SpecModelFact } from "./spec-model";
 
 const fact = (text: string, extra: Partial<SpecModelFact> = {}): SpecModelFact => ({
@@ -46,5 +46,21 @@ describe("reviews over the model", () => {
 
   it("counts what is accepted, rejected and still proposed", () => {
     expect(reviewCounts([a, b, c], index)).toEqual({ accepted: 1, rejected: 1, proposed: 1 });
+  });
+});
+
+describe("a correction", () => {
+  it("is written as a review with the new value, and counts as the project's reading", () => {
+    expect(correctionWrite("k1", "docs/a.md", "r1", " 90 days ")).toEqual({
+      fact_key: "k1",
+      state: "corrected",
+      path: "docs/a.md",
+      revision: "r1",
+      value: "90 days",
+    });
+    const index = reviewIndex([
+      { fact_key: "k1", state: "corrected", path: "", revision: "", value: "90 days", decided_by: "u", decided_at: "t" },
+    ]);
+    expect(index.get("k1")).toBe("accepted");
   });
 });

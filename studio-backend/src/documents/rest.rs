@@ -2600,11 +2600,13 @@ pub struct GlossaryDecisionRequest {
 pub struct SpecModelReviewDto {
     /// The fact as the tab keys it.
     pub fact_key: String,
-    /// `accepted` or `rejected`.
+    /// `accepted`, `rejected` or `corrected`; a prefixed key's own state.
     pub state: String,
     pub path: String,
     pub revision: String,
     pub note: Option<String>,
+    /// For `corrected`: the value given in place of the one read.
+    pub value: Option<String>,
     pub decided_by: String,
     pub decided_at: String,
 }
@@ -2671,6 +2673,11 @@ pub struct SpecModelReviewInput {
     /// Why, when it needs saying: an excluded obligation's reason.
     #[serde(default)]
     pub note: Option<String>,
+    /// With `state: corrected` (a fact's key only): the value a member gives
+    /// in place of the one the model read, at most 2000 bytes. The model
+    /// answers it as the fact's `value`, the read one as `extracted_value`.
+    #[serde(default)]
+    pub value: Option<String>,
 }
 
 /// An issue to open in the project's repository from something to decide.
@@ -3007,6 +3014,14 @@ pub struct SpecModelFactDto {
     pub source_commit: Option<String>,
     /// The branch it was read on.
     pub source_ref: Option<String>,
+    /// `stated` when every word of its subject and value is in its quote,
+    /// `interpreted` when the model brought words the passage does not have
+    /// (an implicit entity, an inferred value). Derived, never asked.
+    pub basis: String,
+    /// When a member corrected the value (`POST /project-domain-model/reviews`,
+    /// state `corrected`): the value the model read. `value` is then the
+    /// member's.
+    pub extracted_value: Option<String>,
 }
 
 /// The project domain model as read so far.
@@ -3137,7 +3152,15 @@ async fn get_spec_model(
     let (sources, facts, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    let facts = spec_model_fact_dtos(facts, &coverage);
+    let corrections: std::collections::BTreeMap<String, String> = service
+        .spec_reviews(&ctx, workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .filter(|r| r.state == "corrected")
+        .filter_map(|r| Some((r.fact_key, r.value?)))
+        .collect();
+    let facts = spec_model_fact_dtos(facts, &coverage, &corrections);
     Ok(Json(SpecModelDto {
         unread_documents: count(sources.unread.len()),
         unread_because: sources.unread_because,
@@ -3148,10 +3171,12 @@ async fn get_spec_model(
 }
 
 /// Every fact as the model answers it, with the commit and branch its
-/// document's reading was taken at.
+/// document's reading was taken at, whether its passage states it, and a
+/// member's correction of its value (by `fact_key`) in place of the one read.
 fn spec_model_fact_dtos(
     facts: Vec<super::spec_model::extract::Fact>,
     coverage: &[super::spec_model::Coverage],
+    corrections: &std::collections::BTreeMap<String, String>,
 ) -> Vec<SpecModelFactDto> {
     let at: std::collections::BTreeMap<&str, &super::spec_model::GitRevision> = coverage
         .iter()
@@ -3161,14 +3186,22 @@ fn spec_model_fact_dtos(
         .into_iter()
         .map(|f| {
             let read_at = at.get(f.path.as_str()).copied();
+            let fact_key = super::spec_model::fact_key::fact_key(&f);
+            let basis = super::spec_model::basis::basis(&f).to_owned();
+            let (value, extracted_value) = match corrections.get(&fact_key) {
+                Some(corrected) => (corrected.clone(), Some(f.value)),
+                None => (f.value, None),
+            };
             SpecModelFactDto {
-                fact_key: super::spec_model::fact_key::fact_key(&f),
+                fact_key,
                 source_commit: read_at.map(|a| a.commit.clone()),
                 source_ref: read_at.and_then(|a| a.git_ref.clone()),
+                basis,
+                extracted_value,
                 kind: f.kind,
                 subject: f.subject,
                 aspect: f.aspect,
-                value: f.value,
+                value,
                 text: f.text,
                 status: f.status,
                 status_because: f.status_because,
@@ -6014,6 +6047,7 @@ fn spec_review_dto(r: super::entity::spec_review::Model) -> SpecModelReviewDto {
         path: r.path,
         revision: r.revision,
         note: r.note,
+        value: r.value,
         decided_by: r.decided_by.to_string(),
         decided_at: rfc3339(r.decided_at),
     }
@@ -6107,7 +6141,7 @@ fn review_state_fits(key: &str, state: &str) -> bool {
     } else if key.starts_with("iss:") {
         state == "opened"
     } else {
-        matches!(state, "accepted" | "rejected")
+        matches!(state, "accepted" | "rejected" | "corrected")
     }
 }
 
@@ -6449,7 +6483,7 @@ async fn review_spec_model_facts(
         if !review_state_fits(key, &i.state) {
             return Err(invalid(
                 "state",
-                "must be accepted, rejected or proposed; for a hypothesis's evidence (ev:) supports, \
+                "must be accepted, rejected, corrected or proposed; for a hypothesis's evidence (ev:) supports, \
                  contradicts or insufficient; for its check (hyp:) check; for an obligation (ob:) \
                  excluded; for a match across projects (rel:) reuse, coordinate, separate or \
                  unrelated; for a prioritised item (pri:) scored; for a confirmed order (prc:) \
@@ -6468,7 +6502,29 @@ async fn review_spec_model_facts(
         if i.path.len() > 1024 || i.revision.len() > 128 {
             return Err(invalid("path", "must be a document path and its revision"));
         }
-        items.push((key.to_owned(), i.state, i.path, i.revision, i.note));
+        let value = match (i.state.as_str(), i.value) {
+            ("corrected", Some(v)) if !v.trim().is_empty() && v.len() <= 2000 => {
+                Some(v.trim().to_owned())
+            }
+            ("corrected", _) => {
+                return Err(invalid(
+                    "value",
+                    "a correction gives the fact's new value, at most 2000 bytes",
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(invalid("value", "only a correction (corrected) takes a value"));
+            }
+            (_, None) => None,
+        };
+        items.push(super::service::SpecReviewItem {
+            fact_key: key.to_owned(),
+            state: i.state,
+            path: i.path,
+            revision: i.revision,
+            note: i.note,
+            value,
+        });
     }
     let saved: Vec<SpecModelReviewDto> = service
         .put_spec_reviews(&ctx, workspace_id, project_id, items)
@@ -9498,9 +9554,10 @@ pub fn register_routes(
 
     router = OperationBuilder::post("/studio-documents/v1/project-domain-model/reviews")
         .operation_id("studio_documents.decide_project_domain_model_fact_reviews")
-        .summary("Accept, reject or put back a selection of facts in one action")
+        .summary("Accept, reject, correct or put back a selection of facts in one action")
         .description(
-            "Each item is a fact's key with `accepted`, `rejected`, or `proposed` to withdraw an \
+            "Each item is a fact's key with `accepted`, `rejected`, `corrected` (with the \
+             `value` to show in place of the one read), or `proposed` to withdraw an \
              earlier review, and where it was read. Prefixed keys carry the project's other \
              decisions under the same rule: a hypothesis's evidence (`ev:`) and its check \
              (`hyp:`, a note of up to 8000 bytes), an excluded obligation (`ob:`), a match \
@@ -11835,12 +11892,33 @@ mod tests {
                 git_ref: Some("main".into()),
             }),
         }];
-        let dtos = spec_model_fact_dtos(vec![fact("docs/a.md"), fact("studio:1")], &coverage);
+        let dtos = spec_model_fact_dtos(
+            vec![fact("docs/a.md"), fact("studio:1")],
+            &coverage,
+            &std::collections::BTreeMap::new(),
+        );
         assert_eq!(dtos[0].source_commit.as_deref(), Some("abc123"));
         assert_eq!(dtos[0].source_ref.as_deref(), Some("main"));
         assert_eq!(dtos[1].source_commit, None, "not a repository file");
         let doc = spec_model_document_dto(coverage[0].clone());
         assert_eq!(doc.source_commit.as_deref(), Some("abc123"));
+        assert_eq!(dtos[0].basis, "stated", "its words are in the quote");
+        assert_eq!(dtos[0].extracted_value, None);
+
+        // A member's correction is shown instead of the value read.
+        let mut read = fact("docs/a.md");
+        read.kind = "attribute".into();
+        read.aspect = "retention".into();
+        read.value = "30 days".into();
+        read.quote = "An invoice is kept 30 days".into();
+        let key = super::super::spec_model::fact_key::fact_key(&read);
+        let corrections = std::collections::BTreeMap::from([(key, "90 days".to_owned())]);
+        let dtos = spec_model_fact_dtos(vec![read], &coverage, &corrections);
+        assert_eq!(dtos[0].value, "90 days");
+        assert_eq!(dtos[0].extracted_value.as_deref(), Some("30 days"));
+        assert_eq!(dtos[0].basis, "stated", "the basis is the reading's");
+        assert!(review_state_fits(&dtos[0].fact_key, "corrected"));
+        assert!(!review_state_fits("ev:abc", "corrected"));
     }
 
     #[test]

@@ -355,7 +355,7 @@ and `project_domain_model_coverage` read the two routes above.
 | `POST` | `/project-domain-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
 | `GET` | `/project-domain-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
 | `GET` | `/project-domain-model/reviews?project_id=` | Every accept or reject members gave on the facts the model read, by the key the tab gives a fact (kind, subject, aspect and the folded quote, hashed) |
-| `POST` | `/project-domain-model/reviews` | Accept, reject, or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same. Prefixed keys carry the project's other decisions: `ev:` evidence, `hyp:` a hypothesis's check, `ob:` an excluded obligation, `rel:` a match across projects, `iss:` an opened issue, `pri:` an item being prioritised, `prc:` a confirmed order |
+| `POST` | `/project-domain-model/reviews` | Accept, reject, correct (`corrected` with the new `value`), or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same. Prefixed keys carry the project's other decisions: `ev:` evidence, `hyp:` a hypothesis's check, `ob:` an excluded obligation, `rel:` a match across projects, `iss:` an opened issue, `pri:` an item being prioritised, `prc:` a confirmed order |
 | `POST` | `/project-domain-model/files/proposals` | A whole Markdown document under `docs/` as a pull request: the need a member accepted (`docs/discovery.md`), a confirmed prioritisation (`docs/priorities.md`), the hypotheses and their checks (`docs/hypotheses.md`); `201` with the pull request |
 | `GET` | `/project-domain-model/check-methods?project_id=&kits=` | The hypothesis check methods the named kits add, each read from `.cf-studio/config/kits/<kit>/check-methods.json`; a kit whose file is out of shape is listed in `unread` with the reason |
 | `POST` | `/project-domain-model/glossary/distinct` | Two entries are different things: kept on both as `distinct_from`, so they are not offered as one thing again; `204` |
@@ -368,6 +368,39 @@ and `project_domain_model_coverage` read the two routes above.
 
 Every list answers `{items, total}`. A project the caller cannot reach answers
 404.
+
+## Stated or interpreted, and corrections
+
+Every fact answers `basis`: `stated` when its passage says it, `interpreted`
+when the model inferred it. **Decided: derived, not asked.** `basis.rs` checks
+the fact against its own quote the way extraction checks the quote against the
+text: a fact is `stated` when every word that carries its subject and its value
+(letters and digits, case, markup, a plural `s` and common words aside; the
+aspect is the model's name for the slot and does not count) is in the quote,
+and `interpreted` when the model brought a word the passage does not have — an
+implicit entity, a value read from context, a paraphrase. Asking the extractor
+would have been the model's word about itself, a new extractor version (every
+document read again, on people's keys), and no mark at all on the readings
+kept before; this is deterministic, costs nothing and marks every fact already
+kept. It is not the requirements' `cited`/`reasoned` below, which says where a
+requirement says it comes from, not whether a fact is in its passage.
+
+A reviewer **corrects** a fact's value with a review: `state: corrected` and
+the new `value` (at most 2000 bytes) on `POST /project-domain-model/reviews`,
+or `project_domain_model_fact_review` over MCP, keyed by the fact's
+`fact_key` like an accept or a reject. It is kept with the reviews
+(`studio_spec_model_reviews.value`, `m0029`). `GET /project-domain-model`
+then answers the member's value as `value` and the one read as
+`extracted_value`; the basis stays the reading's. A corrected reading is the
+project's reading, as an accepted one is, and `proposed` withdraws the
+correction. In the tab, ✎ on a fact's row opens the correction, and the row
+shows `interpreted` and `corrected (read: …)` beside the value.
+
+**Open decision from the story** (whether corrections feed later terminology
+checks): for now they do not. A correction changes a value, not a subject's
+name; the glossary and `term-drift` are fed by the glossary decisions, which
+already persist, and the rules and the judge keep reading the documents as
+written, so a correction never hides a contradiction the text still holds.
 
 ## Requirements and their basis
 
@@ -451,9 +484,10 @@ the most facts about it, from the repository history, bots left out.
   null), `distinct_from` (the keys of entries a member said are different
   things, as a JSON array), `decided_by`, `decided_at`; unique on the first
   two.
-- `studio_spec_model_reviews`: `project_id`, `fact_key`, `state` (`accepted`
-  or `rejected`), `path` and `revision` where it was read, `decided_by`,
-  `decided_at`; unique on the first two.
+- `studio_spec_model_reviews`: `project_id`, `fact_key`, `state` (`accepted`,
+  `rejected`, or `corrected` with the member's `value`, `m0029`), `path` and
+  `revision` where it was read, `decided_by`, `decided_at`; unique on the
+  first two.
 
 The assembled model is not stored: it is computed from the extractions of the
 documents' current revisions, which is cheap and never stale. Members' reviews

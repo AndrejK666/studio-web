@@ -14,5 +14,12 @@
   "page_of": "{from}–{to} of {total}",
   "previous": "Previous",
   "next": "Next",
-  "read_at_title": "Read from the repository at commit {commit}"
+  "read_at_title": "Read from the repository at commit {commit}",
+  "interpreted": "interpreted",
+  "interpreted_title": "The model inferred this: its passage does not have every word of it. Check it against the passage before relying on it",
+  "corrected": "corrected (read: {value})",
+  "corrected_title": "A member corrected this value; the model read {value}",
+  "correct_reading": "Correct this value",
+  "correct_value": "The value as it should read",
+  "correct_save": "Save the correction"
 }

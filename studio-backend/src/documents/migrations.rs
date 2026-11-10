@@ -47,6 +47,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0026::Migration),
             Box::new(m0027::Migration),
             Box::new(m0028::Migration),
+            Box::new(m0029::Migration),
         ]
     }
 }
@@ -1752,6 +1753,50 @@ mod m0028 {
             ] {
                 manager.get_connection().execute_unprepared(sql).await?;
             }
+            Ok(())
+        }
+    }
+}
+
+/// A member's correction of a fact's value, kept with the reviews
+/// (`state = 'corrected'`).
+mod m0029 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0029_spec_model_review_value"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_spec_model_reviews ADD COLUMN IF NOT EXISTS value TEXT;",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("ALTER TABLE studio_spec_model_reviews DROP COLUMN IF EXISTS value;")
+                .await?;
             Ok(())
         }
     }

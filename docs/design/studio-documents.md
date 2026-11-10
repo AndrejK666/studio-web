@@ -338,6 +338,7 @@ before that are swept by each repository sync of the project.
 | any | `/spec-model…` | Deprecated aliases of every `/project-domain-model…` route above, same handlers and old `operation_id`s, kept for the old prototype and the desktop until 2027-03-31 | deprecated |
 | `GET` | `/project-domain-model/build?project_id=` | The running or last build: documents, done, current, error, started and finished. Added after the rename, so it has no `/spec-model…` alias | unstable |
 | `GET` | `/project-domain-model/coverage?project_id=` | Per document `extracted`/`failed`/`stale`/`pending`/`kept` with the error, facts and dropped, and the repository commit and branch it was read at (`source_commit`, `source_ref`); the documents not read and why; the open questions. No alias | unstable |
+| `POST` | `/project-domain-model/reviews` (state `corrected`) | A reviewer's correction of a fact's `value`, kept with the reviews and answered as the fact's `value`, the value read as `extracted_value`; every fact also answers `basis` (`stated`/`interpreted`, derived from its quote) ([project-domain-model.md](../project-domain-model.md#stated-or-interpreted-and-corrections)) | unstable |
 | `POST` | `/review-brief` | A brief of one document for its reviewers | unstable |
 | `GET` `POST` | `/remarks`, `/remarks/replies` | Review threads on a document from its pull requests; a reply to one | unstable |
 | `GET` `POST` | `/decisions` | Decisions recorded on requirements | unstable |

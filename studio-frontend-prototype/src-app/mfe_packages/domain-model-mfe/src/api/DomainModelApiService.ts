@@ -59,6 +59,8 @@ export interface ReviewItem {
   path: string;
   revision: string;
   note?: string | null;
+  /** With `state: corrected`: the fact's value as it should read. */
+  value?: string | null;
 }
 
 export class DomainModelApiService extends BaseApiService {

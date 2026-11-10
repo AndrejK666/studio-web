@@ -151,6 +151,7 @@ row!(
         ("path", "string"),
         ("revision", "string"),
         ("note", "string?"),
+        ("value", "string?"),
         ("decided_by", "string"),
         ("decided_at", "timestamp"),
     ]
@@ -900,6 +901,7 @@ impl DocumentsData {
                 "path",
                 "revision",
                 "note",
+                "value",
                 "decided_by",
                 "decided_at",
             ];

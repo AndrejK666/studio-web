@@ -171,7 +171,7 @@ person see the same rows.
 | `project_domain_model_build` | *changes:* starts reading the documents into the model, on your own model key; or reads again the ones `path`, `paths` or `glob` select |
 | `project_domain_model_build_status` | the running or last build: `documents`, `done`, `current`, `error`, when it started and finished |
 | `project_domain_model_coverage` | what is missing to interpret the model: each document's state with its error, facts and dropped facts, the documents not read and why, the open questions |
-| `project_domain_model_fact_review` | *changes:* accepts, rejects or puts back facts by `fact_key` |
+| `project_domain_model_fact_review` | *changes:* accepts, rejects, corrects (`corrected` with the new `value`) or puts back facts by `fact_key` |
 | `project_domain_model_finding_decide` | *changes:* confirms a problem as real or dismisses it, by `fingerprint` |
 
 **The project itself.** Where a project stands, as its Overview says it
