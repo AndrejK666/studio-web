@@ -18,6 +18,7 @@ import { announceSection } from '../../actions/projectsActions';
 import { SectionHeader } from '../../components/SectionHeader';
 import { PlaceholderSection } from './sections/PlaceholderSection';
 import { ArtifactsSection } from './sections/ArtifactsSection';
+import { OverviewSection } from './sections/overview/OverviewSection';
 import { SpecsSection } from './sections/specs/SpecsSection';
 import { SourcesSection } from './sections/sources/SourcesSection';
 import { SourcesActions } from './sections/sources/SourcesActions';
@@ -128,6 +129,8 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
     }
 
     switch (section) {
+      case 'overview':
+        return <OverviewSection projectId={projectId} />;
       case 'artifacts':
         return <ArtifactsSection projectId={projectId} projectName={project.name} />;
       case 'specs':

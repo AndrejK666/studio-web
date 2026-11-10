@@ -51,6 +51,7 @@ vi.mock('./sections/specs/SpecsActions', () => ({
 }));
 vi.mock('./sections/sources/SourcesSection', () => ({ SourcesSection: () => null }));
 vi.mock('./sections/PlaceholderSection', () => ({ PlaceholderSection: () => null }));
+vi.mock('./sections/overview/OverviewSection', () => ({ OverviewSection: () => null }));
 vi.mock('./upload/UploadDocumentsButton', () => ({
   UploadDocumentsButton: ({ projectId }: { projectId: string }) => (
     <button type="button">{`upload ${projectId}`}</button>

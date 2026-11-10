@@ -142,3 +142,48 @@
 .action:hover {
   background: var(--accent);
 }
+
+/* For you: the person's Inbox (InboxGroup.tsx), above For others. */
+.youGroup {
+  margin-bottom: var(--space-4);
+}
+
+.inboxRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.inboxText {
+  flex: 1;
+  min-width: 0;
+}
+
+.inboxActions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.inboxActions .action {
+  float: none;
+  margin-left: 0;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.linklike {
+  margin-left: 0.5rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.linklike:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

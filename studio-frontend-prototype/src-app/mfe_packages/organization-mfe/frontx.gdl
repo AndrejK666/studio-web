@@ -13,7 +13,7 @@ mfe(
     # `/cf/<gear>/v1` base URL), its own and those it calls through
     # @constructor-studio/mfe-shared: AccountsApiService. Its _BlankApiService
     # (`/api/blank`) is the scaffold's mock, not a gear's.
-    requires = ["account-management", "studio-organizations", "studio-tasks", "studio-scheduler"],
+    requires = ["account-management", "studio-organizations", "studio-tasks", "studio-scheduler", "studio-user"],
 
     # What it brings, as mfe.json says: the labels of its screens, then the
     # route of each extension (presentation.route), in mfe.json's order.
