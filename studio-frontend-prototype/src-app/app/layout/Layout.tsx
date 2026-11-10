@@ -9,6 +9,7 @@ import { fetchCurrentUser, fetchAppContext } from '@/app/actions/bootstrapAction
 import { Header } from './Header';
 import { LevelTabs } from './LevelTabs';
 import { RuntimeKits } from './RuntimeKits';
+import { AvailableScreens } from './AvailableScreens';
 import { Screen } from './Screen';
 import { KitDock } from './KitDock';
 import { Popup } from './Popup';
@@ -49,6 +50,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       {!noOrganization && <LevelTabs />}
       {/* Kits' screens loaded at run time, and a tile for any that did not come up. */}
       {!noOrganization && <RuntimeKits />}
+      {/* Which screens a row inside a screen may lead to (kits installed here). */}
+      {!noOrganization && <AvailableScreens />}
       {/* The screen, and beside it what a kit docks there (Studio AI). */}
       <div className="flex min-h-0 flex-1">
         <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>

@@ -11,6 +11,7 @@ vi.mock('@/app/live/useLiveChannel', () => ({
   useLiveChannelOpen: () => undefined,
   useLiveChannelFollowsOrganization: () => undefined,
 }));
+vi.mock('./AvailableScreens', () => ({ AvailableScreens: () => null }));
 vi.mock('./Header', () => ({ Header: () => <div data-testid="top-bar" /> }));
 vi.mock('./LevelTabs', () => ({ LevelTabs: () => <div data-testid="level-tabs" /> }));
 vi.mock('./RuntimeKits', () => ({ RuntimeKits: () => <div data-testid="runtime-kits" /> }));

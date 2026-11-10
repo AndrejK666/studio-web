@@ -12,6 +12,8 @@ import {
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
   STUDIO_SHARED_PROPERTY_LIVE_EVENT,
+  STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
+  type AvailableScreens,
   type StudioEvent,
 } from '@constructor-studio/mfe-shared';
 import { readAppContext } from '@/app/slices/appContextSlice';
@@ -90,4 +92,12 @@ export function publishStudioContext(app: FrontXApp): void {
   publishSelectedSection(app);
   publishSelectedArtifact(app);
   publishSessionProfile(app);
+}
+
+/**
+ * Which screens the micro-frontends may send the person to now
+ * (`app/layout/AvailableScreens.tsx`), or `null` before the shell knows.
+ */
+export function publishAvailableScreens(app: FrontXApp, available: AvailableScreens | null): void {
+  publish(app, STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE, available);
 }

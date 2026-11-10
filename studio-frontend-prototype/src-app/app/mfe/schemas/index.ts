@@ -27,6 +27,7 @@ import sharedPropertyContextSectionSchemaJson from './shared_property_context_se
 import sharedPropertySessionProfileSchemaJson from './shared_property_session_user_profile.v1.json';
 import sharedPropertySpaceFrameUrlSchemaJson from './shared_property_space_frame_url.v1.json';
 import sharedPropertyLiveStudioEventSchemaJson from './shared_property_live_studio_event.v1.json';
+import sharedPropertyScreensAvailableSchemaJson from './shared_property_screens_available.v1.json';
 import entryIframeSchemaJson from './entry_iframe.v1.json';
 
 export const SHELL_SCHEMAS: readonly JSONSchema[] = [
@@ -93,6 +94,9 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   // The shell's live channel: the last studio-events frame, relayed to every
   // screen that asks for it (app/live/liveChannel.ts).
   sharedPropertyLiveStudioEventSchemaJson as JSONSchema,
+  // Which screens a row may send the person to: a kit's only where it is
+  // installed (app/layout/AvailableScreens.tsx).
+  sharedPropertyScreensAvailableSchemaJson as JSONSchema,
   // A frame is an entry the host loads into an iframe. Registered before any
   // package declaring one: GTS refuses to register an instance whose type has
   // no schema, and the refusal takes bootstrapMFE down with it.

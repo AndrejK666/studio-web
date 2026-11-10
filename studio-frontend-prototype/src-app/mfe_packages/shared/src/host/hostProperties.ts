@@ -48,3 +48,12 @@ export const STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL =
  */
 export const STUDIO_SHARED_PROPERTY_LIVE_EVENT =
   'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.live.studio_events.last_event.v1~';
+
+/**
+ * Which screens a micro-frontend may send the person to right now
+ * (`AvailableScreens`), or `null` before the shell knows: a kit's screen only
+ * where its kit is installed (ADR-0068 §5), so a row's button never leads to a
+ * tab that is not there. Read with `useScreenAvailability`.
+ */
+export const STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE =
+  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.screens.available.v1~';

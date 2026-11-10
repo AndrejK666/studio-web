@@ -60,6 +60,7 @@ import {
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
   STUDIO_SHARED_PROPERTY_LIVE_EVENT,
+  STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
   prewarmShadowStyles,
 } from '@constructor-studio/mfe-shared';
 import {
@@ -73,7 +74,12 @@ import { createScreenOpenHandler } from '@/app/mfe/screenOpenAction';
 import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { occupancyOf } from '@/app/mfe/domainOccupancy';
 import { outcomesOf } from '@/app/mfe/shellOutcomes';
-import { publishFrameUrl, publishLiveEvent, publishStudioContext } from '@/app/mfe/sharedContext';
+import {
+  publishAvailableScreens,
+  publishFrameUrl,
+  publishLiveEvent,
+  publishStudioContext,
+} from '@/app/mfe/sharedContext';
 import { KIT_SLOT_EXTENSION_TYPE, SHELL_SLOTS, orderOf, type ShellSlot, type SlotContribution } from '@/app/mfe/slots';
 
 const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
@@ -543,6 +549,7 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
       STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
       STUDIO_SHARED_PROPERTY_LIVE_EVENT,
+      STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
     ],
   });
 }
@@ -649,6 +656,8 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
   // Nothing heard yet: the live channel (app/live) relays its frames once the
   // person is signed in. `null` for the same reason as the frame address.
   publishLiveEvent(app, null);
+  // Not known before the screens are registered (app/layout/AvailableScreens.tsx).
+  publishAvailableScreens(app, null);
 
   console.info(`[MFE Bootstrap] Fetching MFE manifests from ${MFE_MANIFESTS_URL}`);
   const response = await fetch(MFE_MANIFESTS_URL);

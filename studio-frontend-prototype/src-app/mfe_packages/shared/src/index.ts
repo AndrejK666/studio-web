@@ -13,7 +13,16 @@ export {
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
   STUDIO_SHARED_PROPERTY_LIVE_EVENT,
+  STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
 } from './host/hostProperties';
+export {
+  isAvailableScreens,
+  kitAvailable,
+  routeAvailable,
+  useScreenAvailability,
+  type AvailableScreens,
+  type ScreenAvailability,
+} from './host/screens';
 export { STUDIO_MFE_ENTRY_IFRAME } from './host/hostTypes';
 export {
   STUDIO_ACTION_CONTEXT_PUBLISH,
