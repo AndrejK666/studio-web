@@ -13,16 +13,21 @@
 
 mod creation;
 pub mod logo;
+mod mcp;
 mod metrics;
 mod overview;
 pub mod project_types;
 /// The logo document only this gear writes, for the PDP's gear-held list.
 pub use logo::LOGO_METADATA_TYPE;
+/// The project status tool (`crate::mcp`).
+pub(crate) use mcp::tools as mcp_tools;
 pub mod port;
 mod rest;
 pub mod rollups;
 pub mod sdk;
 mod service;
+mod status;
+mod status_read;
 
 use std::sync::{Arc, OnceLock};
 

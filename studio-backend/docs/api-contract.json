@@ -2765,6 +2765,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/project-status",
+      "operation_id": "studio_organizations.get_project_status",
+      "tag": "StudioOrganizations",
+      "summary": "Where a project stands: one verdict, its reasons, and the path to a build",
+      "authenticated": true,
+      "responses": [
+        "ProjectStatusDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/project-types",
       "operation_id": "studio_organizations.get_project_types",
       "tag": "StudioOrganizations",

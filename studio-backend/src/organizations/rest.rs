@@ -1071,6 +1071,235 @@ async fn get_organization_overview(
     Ok(Json(answer))
 }
 
+// ── a project's status ───────────────────────────────────────────────────────
+
+/// Where a signal's action goes.
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectSignalActionDto {
+    /// What the button says: "Open Releases".
+    pub label: String,
+    /// A project tab (`sources`, `specs`, `model`, `components`, `releases`,
+    /// `activity`), `pulls` (the project's pull requests) or `ide`.
+    pub target: String,
+}
+
+/// One reason behind the verdict.
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectSignalDto {
+    /// `refused`, `product`, `build`, `deploy`, `findings`, `specs`, `stuck`,
+    /// `nobody`, `threads`, `quiet`.
+    pub key: String,
+    /// `blocked`, `risk` or `info`; `info` does not move the verdict.
+    pub level: String,
+    /// The reason in a few words.
+    pub phrase: String,
+    pub detail: Option<String>,
+    pub action: ProjectSignalActionDto,
+}
+
+/// One step of the project's path.
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectPathStepDto {
+    /// `repos`, `types`, `model`, `findings`, `product` or `build`.
+    pub step: String,
+    pub title: String,
+    /// `done`, `current`, `todo`, or `unknown` when its read failed.
+    pub state: String,
+    /// The state as the path strip draws it: `failed` for a failed build or
+    /// a product that does not resolve, `warn` for open high findings,
+    /// `later` for unknown, the state otherwise.
+    pub flow: String,
+    /// One line from the data, e.g. "74 of 75 documents typed."
+    pub status: String,
+    /// The project tab where it is done, and its button.
+    pub tab: String,
+    pub action: String,
+}
+
+/// A project's status: one verdict, the signals behind it, its path.
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectStatusDto {
+    pub project_id: String,
+    /// `blocked`, `at_risk` or `on_track`.
+    pub verdict: String,
+    /// "Blocked", "At risk", "On track".
+    pub label: String,
+    /// The main reason: the worst signal's phrase, or on track the next step
+    /// ("next: compose the product") or "path complete".
+    pub reason: String,
+    /// How many more blocking or at-risk signals there are.
+    pub more: u32,
+    /// Worst first.
+    pub signals: Vec<ProjectSignalDto>,
+    pub path: Vec<ProjectPathStepDto>,
+    /// The step to do next; absent when the path is done or unknown.
+    pub next: Option<String>,
+    /// The sources that could not be read: their part is not known, and
+    /// never counted as nothing wrong or nothing done.
+    pub unread: Vec<String>,
+}
+
+/// `?project_id=`: the project whose status to read.
+#[derive(Debug, serde::Deserialize)]
+pub struct ProjectStatusQuery {
+    pub project_id: String,
+}
+
+async fn get_project_status(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(sources): Extension<Option<Arc<super::rollups::Sources>>>,
+    Extension(overview): Extension<Option<Arc<super::overview::Overview>>>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<ProjectStatusQuery>,
+) -> ApiResult<JsonBody<ProjectStatusDto>> {
+    let project_id = query.project_id;
+    use super::status;
+    let unavailable = || {
+        CanonicalError::service_unavailable()
+            .with_detail("account-management is not available, so nothing can be read")
+            .create()
+    };
+    let sources = sources.ok_or_else(unavailable)?;
+    let id = Uuid::parse_str(project_id.trim()).map_err(|_| {
+        OrganizationError::invalid_argument()
+            .with_constraint("project_id must be a uuid")
+            .create()
+    })?;
+    // The project as the caller sees it, as its rollup row: a project they
+    // do not reach, or a tenant that is not a project, is not there.
+    let not_found = || {
+        OrganizationError::not_found(format!("there is no project {id} for this caller"))
+            .with_resource(id.to_string())
+            .create()
+    };
+    let tenant = sources
+        .am
+        .get_tenant(&ctx, id)
+        .await
+        .map_err(|_| not_found())?;
+    if tenant.tenant_type.as_deref() != Some(super::sdk::PROJECT_TENANT_TYPE) {
+        return Err(not_found());
+    }
+    let org = match tenant.parent_id {
+        Some(ws) => sources
+            .am
+            .get_tenant(&ctx, ws.0)
+            .await
+            .ok()
+            .and_then(|w| w.parent_id.map(|p| p.0)),
+        None => None,
+    };
+    let rollup = sources.one_project(&ctx, id).await.ok_or_else(not_found)?;
+    let api = crate::mcp::api_as(headers.get(axum::http::header::AUTHORIZATION).cloned())
+        .ok_or_else(|| {
+            CanonicalError::service_unavailable()
+                .with_detail("studio-mcp is not running here, so the other gears cannot be read")
+                .create()
+        })?;
+    let health = async {
+        let overview = overview.as_ref()?;
+        let answer = overview
+            .answer(&ctx, org?, time::OffsetDateTime::now_utc())
+            .await
+            .ok()?;
+        let line = answer
+            .workspaces
+            .into_iter()
+            .flat_map(|w| w.projects)
+            .find(|p| p.id == id.to_string())?;
+        Some(status::Health {
+            refused: line.reasons.iter().any(|r| r.kind == "refused"),
+            quiet_days: line.reasons.iter().find(|r| r.kind == "quiet").map(|r| {
+                r.value
+                    .map_or(line.quiet_days.unwrap_or(0), |v| v.round() as u32)
+            }),
+            specs_failing: line.specs_failing,
+            stuck: line.stuck,
+        })
+    };
+    let project = id.to_string();
+    let (read, health) = tokio::join!(
+        super::status_read::read(&api, &project, rollup.repos),
+        health
+    );
+    let mut unread = Vec::new();
+    for (name, missing) in [
+        ("repositories", read.path.repositories.is_none()),
+        ("specs", read.path.specs.is_none()),
+        ("domain model", read.path.model.is_none()),
+        ("findings", read.path.findings.is_none()),
+        ("product", read.path.product.is_none()),
+        ("builds", read.path.build.is_none()),
+        ("pull requests", read.pulls.is_none()),
+        ("deployments", read.deployments.is_none()),
+        ("organization health", health.is_none()),
+    ] {
+        if missing {
+            unread.push(name.to_string());
+        }
+    }
+    let facts = status::Facts {
+        specs: rollup.specs.as_ref().map(|s| s.specs),
+        specs_failing: rollup.specs.as_ref().map(|s| s.failing),
+        open_comments: rollup.signals.as_ref().and_then(|s| s.open_comments),
+        pulls: read.pulls,
+        deployments: read.deployments,
+        health,
+        // Comment threads waiting on the caller are read in the IDE's
+        // sessions, which the server does not walk; the rollup's unanswered
+        // threads stand in for them.
+        waiting_on_me: None,
+        path: Some(read.path),
+    };
+    let path = facts
+        .path
+        .as_ref()
+        .map(status::project_path)
+        .unwrap_or_default();
+    let signals = status::project_signals(&facts);
+    let verdict = status::project_verdict(&signals, Some(&path));
+    let next = status::next_step(&path).map(|s| s.id.to_string());
+    let path_facts = facts.path.clone().unwrap_or_default();
+    Ok(Json(ProjectStatusDto {
+        project_id: id.to_string(),
+        verdict: verdict.state.to_string(),
+        label: verdict.label.to_string(),
+        reason: verdict.reason,
+        more: verdict.more,
+        signals: signals
+            .into_iter()
+            .map(|s| ProjectSignalDto {
+                key: s.key.to_string(),
+                level: s.level.as_str().to_string(),
+                phrase: s.phrase,
+                detail: s.detail,
+                action: ProjectSignalActionDto {
+                    label: s.action_label.to_string(),
+                    target: s.action_target.to_string(),
+                },
+            })
+            .collect(),
+        path: path
+            .iter()
+            .map(|s| ProjectPathStepDto {
+                step: s.id.to_string(),
+                title: s.title.to_string(),
+                state: s.state.as_str().to_string(),
+                flow: status::flow_state(s, &path_facts).to_string(),
+                status: s.status.clone(),
+                tab: s.tab.to_string(),
+                action: s.action.to_string(),
+            })
+            .collect(),
+        next,
+        unread,
+    }))
+}
+
 /// `?range=` and the narrower scope, if any.
 #[derive(Debug, serde::Deserialize)]
 pub struct MetricsQuery {
@@ -1542,6 +1771,34 @@ Labels are deliberately              absent: what a privilege is called belongs 
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-organizations/v1/project-status")
+        .operation_id("studio_organizations.get_project_status")
+        .summary("Where a project stands: one verdict, its reasons, and the path to a build")
+        .description(
+            "The project's Overview as one answer: a `verdict` — `blocked` (a refused \
+             repository connection, a product that does not resolve, a failed last build or \
+             deploy, an open high finding), `at_risk` (failing specs, pull requests stuck over \
+             a week or with no reviewer asked) or `on_track`, with the worst signal as its \
+             reason — the `signals` behind it worst first, each with where to act on it, and \
+             the `path` from connecting a repository to a passing build, with the step to do \
+             next. Computed from the same reads the portal made, as the caller, so it shows no \
+             more than those routes would; a source that could not be read is named in \
+             `unread` and never counted as nothing wrong or nothing done. 404 when the \
+             project is not the caller's to see.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project's tenant id")
+        .handler(get_project_status)
+        .json_response_with_schema::<ProjectStatusDto>(openapi, StatusCode::OK, "The status")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     let router = router
