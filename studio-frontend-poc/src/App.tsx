@@ -7876,9 +7876,14 @@ function ConnectorsView({
   const own = listed?.filter((c) => c.owner_tenant_id === ws.id) ?? null;
   const shown = owner === "project" && ownOnly ? own : listed;
   // A cluster or a registry is the organization's, never a person's (see
-  // CATEGORIES): a profile neither offers nor asks for one.
+  // CATEGORIES): a profile neither offers nor asks for one. An account one
+  // signs in to (Constructor Research) is the person's own (ADR-0049 §5):
+  // only a profile offers it, and a shared page says where it is made.
   const offered = useMemo(
-    () => (owner === "personal" ? (providers ?? []).filter((p) => !ORG_ONLY_PROVIDER(p)) : (providers ?? [])),
+    () =>
+      owner === "personal"
+        ? (providers ?? []).filter((p) => !ORG_ONLY_PROVIDER(p))
+        : (providers ?? []).filter((p) => !p.sign_in),
     [providers, owner],
   );
 
@@ -8057,8 +8062,10 @@ function AddConnector({
             (p) => p.category === key && (!q || `${p.display_name} ${p.provider} ${title}`.toLowerCase().includes(q)),
           );
           // Research's tile stays in sight while this Studio cannot offer it
-          // yet, saying what it waits for (ADR-0049 §1).
-          const researchPending = key === "compute" && !providers.some((p) => p.provider === "research") && !q;
+          // yet, saying what it waits for (ADR-0049 §1) -- in a profile, where
+          // a sign-in is made.
+          const researchPending =
+            only === "personal" && key === "compute" && !providers.some((p) => p.provider === "research") && !q;
           if (group.length === 0 && !researchPending) return null;
           return (
             <section key={key} className="conn-picker-group">
@@ -8112,6 +8119,22 @@ function AddConnector({
             </section>
           );
         })}
+        {only !== "personal" && (
+          <p className="hint" data-personal-sign-ins>
+            An account you sign in to -- Constructor Research -- is yours, not the organization&apos;s: connect it in{" "}
+            <a
+              href={`/profile${window.location.search}`}
+              onClick={(e) => {
+                e.preventDefault();
+                window.history.pushState(null, "", `/profile${window.location.search}`);
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }}
+            >
+              your profile › My connections
+            </a>
+            .
+          </p>
+        )}
       </div>
     );
   }
