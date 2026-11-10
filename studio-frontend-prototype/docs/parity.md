@@ -109,9 +109,9 @@ copy).
 | Access | shell | `admin-mfe` Access: access model, roles (privileges from the served catalogue), grants to members or teams on the organization or one workspace, self Owner grant seeded, self-managed notice; `access.ts` moved with its tests. Privilege names stay `access.ts`'s English | done |
 | Integrations | shell (Sources) | `admin-mfe` Integrations (`/admin/integrations`, between Access and Secrets): the prototype's `ConnectorsView` for the organization. The shared connections (a person's own are left to the profile) as a table: logo, health dot, label, provider and a non-default address; kind; the answer to a test with "checked … ago" (asked once on show, kept 5 minutes across visits, Test again forces it); Used by (environments per cluster or registry, Components › Repositories for a gear repository); scope with "shared" for an inherited row; search, kind chips, provider filter, sort by connection or kind; a 503 says no driver is registered. Add: the provider picker by kind with a search and the Research tile while Research is not set up; the credential form (organization or only me; a cluster or registry starts organization-wide; label, instance URL with the provider's default, webhook note, credential with show/hide, a kubeconfig file or paste filling the API server), Test connection, Test & save; "Not connected yet" opens the picker on that kind. Sign-in (Constructor Research, ADR-0049): `oauth/start`, then the shell's callback page at `/connections/oauth/callback` (`ConnectionSignInCallback`, `AuthGate` leaves that page's `code` alone) finishes it and returns. Edit (label, address, new token; only what changed; the id kept; re-tested), Remove with the shared-row warning. Browse repositories of a source-code connection: search, tick, how changes are shared (pull request on GitHub only), Add to the organization's project config `sources[]` and a catalogue sync (what the prototype did on this page). Not yet: the list's search and filters kept in the address (`DataTable` `list`/`urlPrefix`, the shell's list state); the project's own connections with the "own / with the organization's" switch (a project's Sources) and the personal ones (Profile) — other rows; sign-in round trip unchecked against a real identity provider (the backend's registered `redirect_uris` must include this portal's origin, and a portal session that expired during the round trip loses the code) | partial |
 | Secrets | shell | `admin-mfe` Secrets: references named by the workspace settings and the connections behind the sources, health probe, rotate (create, else unconditional overwrite), delete. Only the path bar's organization's workspaces, where the prototype listed every organization's at once | partial |
-| Studio domain model (Admin › Studio domain model, the prototype's Admin › Domain model: model administration, ADR-0066/0067; not the project tab "Project domain model" above, which is the `project-domain-model` kit) | shell | `admin-mfe` Studio domain model (`/admin/domain-model`, between Secrets and Objects as in the prototype), the prototype's `DomainModelAdmin` (`domain-model-admin.tsx`) for the path bar's organization (`?organization_id=`, as its `orgScoped` named the organization on screen): the types by bucket with search; the origin filter with a count per origin (Studio core, Kits, Gears, Uploaded, Added here, Earlier built-in — only those present) and a dot per type; with Kits chosen, one more filter by the kit that brought them, with a count each (new, for issue #1025); objects per type (asked again every 2 s while the read model fills); a type's card: name, id, the origin chip with its hint (from `meta.origin`; a kit type reads "kit · <slug> <version>" from `meta.kit`/`meta.kit_version`, ADR-0067 §6 — the backend does not mark kit types yet, #1004/#1025), objects, the bases it extends, description, the GTS ids of the type and its edge kinds; own fields (kind, required, description; a gear-held field locked) with Edit and Remove, the inherited fields behind a toggle; Relations: the map (what it points at right, what points at it left, inherited dashed, nodes coloured by origin, a node opens its type) and the two lists. Add field (common kinds, one of a list, any type expression), edit a field (only what changed), New type (extends, group, description). Who may change it is the server's `can_edit_model` (`domain.model`), as in the prototype: everyone else reads, with the prototype's note; the menu offers it to everyone. A load error shows the gear's words with Try again; an empty model and no match say so. The model is read again on `domain.model_changed` from the shell's live channel (`useStudioEventRefresh`; that channel follows the person's home tenant, not the organization in scope — see the studio-events row). `domain-origin.ts` moved with its tests (plus the kit origin), the pure part of `domain-runtime.ts` (no seed, no global loader) and the screen's grouping into `src/model/`; not shared with `domain-model-mfe` (it holds neither). Not carried (the prototype's Admin did not have them): versions and revert (`/model/versions`, `/model/revert`), tabs (`/types/{id}/tabs`), lifecycles, examples, conformance (`/types/{id}/conformance`) — the backend has these routes, no prototype screen drew them; the model upload, Sync to graph, Regenerate frontend, Check scopes and the whole-model canvas graph (`domain-model-graph.tsx`) were the prototype's System screen, not this one. Remove asks no confirmation, as in the prototype. The origin labels and hints are composed in `domain-origin.ts` and stay English | done |
+| Studio domain model (Admin › Studio domain model, the prototype's Admin › Domain model: model administration, ADR-0066/0067; not the project tab "Project domain model" above, which is the `project-domain-model` kit) | shell | `admin-mfe` Studio domain model (`/admin/domain-model`, between Secrets and Objects as in the prototype), the prototype's `DomainModelAdmin` (`domain-model-admin.tsx`) for the path bar's organization (`?organization_id=`, as its `orgScoped` named the organization on screen): the types by bucket with search; the origin filter with a count per origin (Studio core, Kits, Gears, Uploaded, Added here, Earlier built-in — only those present) and a dot per type; with Kits chosen, one more filter by the kit that brought them, with a count each (new, for issue #1025); objects per type (asked again every 2 s while the read model fills); a type's card: name, id, the origin chip with its hint (from `meta.origin`; a kit type reads "kit · <slug> <version>" from `meta.kit`/`meta.kit_version`, ADR-0067 §6), objects, the bases it extends, description, the GTS ids of the type and its edge kinds; own fields (kind, required, description; a gear-held field locked) with Edit and Remove, the inherited fields behind a toggle; Relations: the map (what it points at right, what points at it left, inherited dashed, nodes coloured by origin, a node opens its type) and the two lists. Add field (common kinds, one of a list, any type expression), edit a field (only what changed), New type (extends, group, description). Who may change it is the server's `can_edit_model` (`domain.model`), as in the prototype: everyone else reads, with the prototype's note; the menu offers it to everyone. A load error shows the gear's words with Try again; an empty model and no match say so. The model is read again on `domain.model_changed` from the shell's live channel (`useStudioEventRefresh`; that channel follows the person's home tenant, not the organization in scope — see the studio-events row). `domain-origin.ts` moved with its tests (plus the kit origin), the pure part of `domain-runtime.ts` (no seed, no global loader) and the screen's grouping into `src/model/`; not shared with `domain-model-mfe` (it holds neither). Also carried from the POC System screen: the interactive whole-model and object canvas graph (search, inheritance/declares filters, bucket toggles and focus), Sync to graph, version history with change details and confirmed revert (blocked across an import without an inverse), JSON export and confirmed model import. All use the administered organization's scope; readers can inspect and export, writes require `can_edit_model`. Not carried: tabs (`/types/{id}/tabs`), lifecycles, examples, conformance (`/types/{id}/conformance`), Regenerate frontend and Check scopes. Remove asks no confirmation, as in the prototype. The origin labels and hints are composed in `domain-origin.ts` and stay English | done |
 | Objects | shell | `admin-mfe` Objects: every graph type with lens filters and counts, the component mark, titles from types-registry | done |
-| Views (of the Studio domain model) | shell | — not in `admin-mfe`: the saved views editor needs the domain runtime, the domain query and the model graph (`views-model.ts`, `domain-model-graph.tsx`), which this app does not have yet | todo |
+| Views (of the Studio domain model) | shell | — not in `admin-mfe`: the saved views editor needs the domain runtime, the domain query and saved-view persistence (`views-model.ts`); the model graph now exists in admin-mfe | todo |
 | All identities (platform) | shell | `admin-mfe` All identities: Keycloak identities, access from Studio's memberships with Keycloak's drift, assign to an organization with a role; offered to everyone, the backend's refusal shown to anybody but a platform administrator | done |
 | Project tenants (platform) | shell | `admin-mfe` Project tenants: every organization's workspace tenants with search, organization, self-managed and sort filters; open (the shell enters the workspace), create, delete; refusal shown to others. Not: Open in Web IDE | partial |
 
@@ -121,3 +121,84 @@ copy).
 |---|---|---|---|
 | `/api-docs/` (the backend's API reference) | `studio-api-docs` kit (`api-docs-mfe`, product menu) | Scalar over `/cf/openapi.json`, grouped by gear | done |
 | `/architecture/` (how the running backend is built) | open (ADR-0069, open question 2) | — | todo |
+
+
+## Continuation plan after PR #999
+
+This is the saved backlog from the POC-to-FrontX session and its continuation.
+It distinguishes delivered behavior from the target architecture; marking the PR
+ready does not mark the ADR-0070 migration complete. The `todo` and `partial` rows
+above remain the detailed parity inventory.
+
+### What the continuation includes
+
+- Backend/MCP tracks: resumable project creation and status (#1011); product
+  infrastructure, kind and description operations (#1012); documentation-quality
+  proposals shared by the Issues screen and MCP (#1013); model builds and status,
+  selected sources, coverage, commit/branch provenance, stated/interpreted facts,
+  reviewer corrections and uploaded CSV/JSON/text sources (#1029).
+- Organization kit shelf and pinned manifests, model overlay installation,
+  lifecycle phases, kit Inbox sources and loading external MFE bundles
+  (#1003–#1006). These are implemented slices with the limitations below.
+- Administration's model graph, history, revert and import/export; a concrete core
+  `file` base that repository files and kit-introduced file types can extend.
+- The original worker worktrees and saved provider transcript stay historical
+  references. Continue from this branch and the repository state, not by resuming
+  those workers.
+
+### Next: the layered domain model
+
+The authoritative decisions and dependencies are in
+[ADR-0070](../../docs/adr/0070-studio-keeps-a-core-model-and-each-kit-brings-the-types-its-screens-show.md)
+and its [type/relationship analysis](../../docs/design/domain-model-split.md).
+
+1. Finish #1030's ownership boundary checks. Seed ownership annotations and
+   generation from `ontology.studio.json` are present; do not confuse `meta.kit`
+   ownership with `meta.origin = "kit"` installation. Core now also has `file`.
+2. #1031: collect gear type/field requirements as declarations, separate from
+   organization edits; preserve each gear's field ownership and write restrictions.
+3. #1032: compose shared core, gear requirements, installed kit declarations and
+   organization overrides; migrate existing stored flat models without rewriting
+   object identities or losing custom fields/history. Organization removals need
+   durable tombstones so reinstall/sync cannot resurrect them.
+4. #1033: installed / dormant / absent states. Uninstall must retain inhabited or
+   gear-held definitions and provenance; sync may write dormant records, while
+   absent types cannot be queried or written as installed features.
+5. #1034–#1038: move feature definitions and their incoming relations/tabs into
+   their owners, then lifecycle, Git and Assistant; retire `gears` and numbered
+   package relations. Keep existing graph type ids and registry schemas stable.
+6. #1039: complete Inbox and status ownership, including the permission-aware
+   behavior of MCP tools for uninstalled kits (`KIT_NOT_INSTALLED`).
+
+Required evidence for that migration: old-tenant upgrade, repeated upgrade,
+organization edits/deletions surviving kit upgrade/reinstall, two organizations
+with different kits, uninstall with and without objects, inherited file fields,
+replay/revert, and matching graph/PostgreSQL reads. Current installed overlays
+are still copied into organization models; this work is not complete.
+
+### Runtime kits and remaining portal work
+
+- #1006: repository-backed bundle retrieval in addition to directory bundles;
+  coordinate cold deep links with runtime registration; define unloading/remounting
+  an already loaded remote; mount a kit's contributions in another screen's slots.
+- Materialize organization shelf kits into IDE checkouts; the IDE installer still
+  allow-lists Constructor kits. Retain commit/version pinning throughout.
+- Carry saved Views and the remaining model administration controls listed above.
+- Complete the `partial` portal rows, especially Inbox entry/triage, project
+  overview destinations and panels, and the remaining source/connector workflows;
+  preserve the reference behavior and refusal states. Then address the remaining
+  architecture/desktop/other extra-page entries. Recheck descriptions against code
+  when taking a row: an MFE may exist while a particular action is still unwired.
+- Localize server-composed product/status/documentation sentences and origin
+  hints that currently remain English, and finish live refresh scoped to the
+  organization being administered rather than only the person's home tenant.
+
+### Delivery follow-through
+
+Audit the exact PR tree against the saved worker changes, run backend/MCP and
+portal checks, update compatible API/GTS snapshots, clear DCO, and mark #999
+ready. Publish/deploy an immutable full-SHA snapshot to dev through **Studio
+Delivery** (no direct cluster mutations), then verify service versions, health,
+OIDC, portal assets and available MCP smoke checks. Record the resulting run and
+SHA in the PR; keep this backlog linked from it. A deployment does not imply
+that the `partial` parity rows or the layered-model migration are finished.

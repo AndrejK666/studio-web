@@ -10078,7 +10078,7 @@ pub fn register_routes(
         .register(router, openapi);
 
     router = OperationBuilder::post("/studio-documents/v1/project-domain-model/uploads")
-        .operation_id("studio_documents.upload_project_domain_model_source")
+        .operation_id("studio_documents.create_project_domain_model_source")
         .summary("Upload a CSV, JSON or plain-text source for a project's model to read")
         .description(
             "Kept without committing it to the repository: the bytes in the file-storage gear \
