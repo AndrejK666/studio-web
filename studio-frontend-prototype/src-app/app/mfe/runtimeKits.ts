@@ -24,7 +24,7 @@
  *   kit is not installed.
  *
  * A package that fails any of this, or does not read, is a failure on the
- * error tile (`layout/KitLoadErrors.tsx`) and is not registered; the rest of
+ * error tile (`layout/RuntimeKits.tsx`) and is not registered; the rest of
  * the shell goes on. So is a runtime screen that does not mount.
  */
 

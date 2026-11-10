@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 252,
+  "open_violations": 253,
   "operations": [
     {
       "method": "DELETE",
@@ -307,6 +307,21 @@
       "operation_id": "studio_kits.delete_organization_kit",
       "tag": "StudioKits",
       "summary": "Uninstall a kit the organization installed for itself",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-kits/v1/organization-shelf/{kit_slug}",
+      "operation_id": "studio_kits.delete_organization_shelf_kit",
+      "tag": "StudioKits",
+      "summary": "Take a kit off the organization's shelf",
       "authenticated": true,
       "errors": [
         "400",
@@ -2876,6 +2891,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-kits/v1/inbox-sources",
+      "operation_id": "studio_kits.list_inbox_sources",
+      "tag": "StudioKits",
+      "summary": "The Inbox sources of the kits installed for an organization",
+      "authenticated": true,
+      "responses": [
+        "KitInboxSourceListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-kits/v1/installed-kits",
       "operation_id": "studio_kits.get_installed_kits",
       "tag": "StudioKits",
@@ -2886,6 +2917,84 @@
       ],
       "errors": [
         "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/kits/{kit_slug}/{version}/mfe/{grant}/{package}/{*file}",
+      "operation_id": "studio_kits.get_mfe_file",
+      "tag": "StudioKits",
+      "summary": "One file of a kit's micro-frontend bundle",
+      "authenticated": false,
+      "errors": [
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/mfe-manifests",
+      "operation_id": "studio_kits.list_mfe_manifests",
+      "tag": "StudioKits",
+      "summary": "The micro-frontends of the kits that apply here, for the shell to load",
+      "authenticated": true,
+      "responses": [
+        "KitMfeManifestListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/organization-shelf",
+      "operation_id": "studio_kits.list_organization_shelf",
+      "tag": "StudioKits",
+      "summary": "The kits an organization added from its own repositories",
+      "authenticated": true,
+      "responses": [
+        "ShelfListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/project-phase",
+      "operation_id": "studio_kits.get_project_phase",
+      "tag": "StudioKits",
+      "summary": "A project's phase (Project lifecycle)",
+      "authenticated": true,
+      "responses": [
+        "ProjectPhaseDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/project-phases",
+      "operation_id": "studio_kits.list_project_phases",
+      "tag": "StudioKits",
+      "summary": "Every project of an organization with its phase (Project lifecycle)",
+      "authenticated": true,
+      "responses": [
+        "ProjectPhaseListDto"
+      ],
+      "errors": [
         "401",
         "404",
         "500"
@@ -6144,6 +6253,62 @@
     },
     {
       "method": "POST",
+      "path": "/studio-kits/v1/organization-shelf",
+      "operation_id": "studio_kits.create_organization_shelf_kit",
+      "tag": "StudioKits",
+      "summary": "Add a kit from a repository to the organization's shelf",
+      "authenticated": true,
+      "request": "ShelfSourceDto",
+      "responses": [
+        "KitDetailDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-kits/v1/organization-shelf/preview",
+      "operation_id": "studio_kits.probe_organization_shelf_kit",
+      "tag": "StudioKits",
+      "summary": "Read a kit from a repository without adding it",
+      "authenticated": true,
+      "request": "ShelfSourceDto",
+      "responses": [
+        "KitDetailDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-kits/v1/organization-shelf/{kit_slug}/refresh",
+      "operation_id": "studio_kits.sync_organization_shelf_kit",
+      "tag": "StudioKits",
+      "summary": "Read a shelf kit again at its ref and re-pin it",
+      "authenticated": true,
+      "responses": [
+        "KitDetailDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-kits/v1/projects/{project_id}/installations",
       "operation_id": "studio_kits.request_installation",
       "tag": "StudioKits",
@@ -7608,6 +7773,25 @@
       "request": "InstallKitDto",
       "responses": [
         "InstalledKitDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-kits/v1/project-phase",
+      "operation_id": "studio_kits.update_project_phase",
+      "tag": "StudioKits",
+      "summary": "Move a project to a phase (Project lifecycle)",
+      "authenticated": true,
+      "request": "SetProjectPhaseDto",
+      "responses": [
+        "ProjectPhaseDto"
       ],
       "errors": [
         "400",

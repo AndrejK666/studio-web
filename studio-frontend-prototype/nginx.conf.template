@@ -57,7 +57,7 @@ map $uri $frontend_cache_control {
 #   connect-src 'self'               chunks and APIs come through /cf/ and /mfes/
 # A kit's micro-frontends (ADR-0068 phase 5) are served by the backend under
 # /cf/studio-kits/v1/kits/…, same origin, so a kit needs nothing added to it.
-# See docs/design/studio-kits.md §3.9.
+# See docs/design/studio-kits.md §3.12.
 
 server {
     # 8080: the image is nginxinc/nginx-unprivileged (runs as uid 101,

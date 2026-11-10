@@ -23,6 +23,7 @@ interface DeclaredMfeJson {
 /** `hello-kit` at 0.1.0, as the backend would list it. */
 export function helloKitManifest(): KitMfeManifest {
   const declared = JSON.parse(readFileSync(path.join(HELLO_KIT, 'mfe.json'), 'utf8')) as DeclaredMfeJson;
+  const manifestPath = `/cf/studio-kits/v1/kits/${HELLO_KIT_SLUG}/0.1.0/mfe/${'0'.repeat(32)}/hello/mfe-manifest.json`;
   const config = {
     manifest: {
       id: declared.manifest.id,
@@ -50,7 +51,7 @@ export function helloKitManifest(): KitMfeManifest {
     kit_slug: HELLO_KIT_SLUG,
     version: '0.1.0',
     package: 'hello',
-    base_path: `/cf/studio-kits/v1/kits/${HELLO_KIT_SLUG}/0.1.0/mfe/${'0'.repeat(32)}/hello/`,
+    base_path: manifestPath.slice(0, manifestPath.lastIndexOf('/') + 1),
     config,
     error: null,
   };
