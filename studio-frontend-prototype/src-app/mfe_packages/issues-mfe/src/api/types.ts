@@ -1,0 +1,138 @@
+/**
+ * What the Issues kit reads and writes, as the backend answers it. The
+ * request shapes the moved model modules take (`SpecModelEntityEdit`,
+ * `SpecModelSentence`, `SpecModelWrite`, `GlossaryDocRow`) are the
+ * prototype's (`src/api.ts` at 00828880), unchanged; the queue's row and the
+ * readiness are the server's own (studio-documents, `GET /spec-model/issues`
+ * and `GET /spec-model/readiness`).
+ */
+
+import type { SpecModel, SpecModelFact, SpecModelSide } from '../model/spec-model';
+
+/** One entity of the domain model as a person edited it: its section of docs/domain-model.md. */
+export interface SpecModelEntityEdit {
+  name: string;
+  definition?: string | null;
+  fields: { name: string; meaning: string }[];
+  relations: { verb: string; target: string }[];
+}
+
+/** A sentence proposed for one of the project's documents, after the passage at `line`. */
+export interface SpecModelSentence {
+  path: string;
+  revision: string;
+  line: number;
+  sentence: string;
+  /** What it makes better: the pull request's title. */
+  why?: string | null;
+}
+
+/** Where a save or a proposal went: the branch, and the pull request when one was opened. */
+export interface SpecModelWrite {
+  path: string;
+  branch: string;
+  commit_sha: string;
+  pr_url?: string | null;
+}
+
+/** A row of the glossary document (glossary-view.ts plans them). */
+export interface GlossaryDocRow {
+  term: string;
+  definition: string;
+  aliases: string[];
+  not_same_as: string[];
+  source?: string | null;
+}
+
+/** A fact as the server returns it: with the key its review is stored under. */
+export type ServedFact = SpecModelFact & { fact_key: string };
+
+/** `GET /studio-documents/v1/spec-model`. */
+export type ServedSpecModel = Omit<SpecModel, 'facts'> & { facts: ServedFact[] };
+
+export type IssueGroup = 'blocks' | 'look' | 'decided';
+
+export type IssueAction = 'propose_fix' | 'confirm' | 'dismiss' | 'trace' | 'create_issue';
+
+/** One thing a project has to decide before it builds from its documents. */
+export interface SpecModelIssueRow {
+  /** `f:<fingerprint>`, or `q:`, `a:`, `n:` and a requirement's id. */
+  key: string;
+  kind: 'finding' | 'question' | 'assumption' | 'nobasis';
+  /** `Problem`, `Possible conflict`, `Open question`, `Assumption` or `No basis`. */
+  label: string;
+  group: IssueGroup;
+  tone: 'bad' | 'warn';
+  concern: boolean;
+  title: string;
+  hint: string;
+  sides: SpecModelSide[];
+  fingerprint?: string | null;
+  rule?: string | null;
+  decision?: 'confirmed' | 'dismissed' | null;
+  edit?: { path: string; replace: string; with: string } | null;
+  decide: string[];
+  requirement_id?: string | null;
+  issue_url?: string | null;
+  actions: IssueAction[];
+  done: boolean;
+}
+
+export interface SpecModelIssueRowList {
+  items: SpecModelIssueRow[];
+  total: number;
+  by_group: Partial<Record<IssueGroup, number>>;
+}
+
+/** `GET /studio-documents/v1/spec-model/readiness`. */
+export interface SpecModelReadiness {
+  total: number;
+  cited: number;
+  reasoned: number;
+  open: number;
+  blocking: number;
+  ready: boolean;
+}
+
+/** A member's word on a fact, or a decision kept by key (`iss:<row key>` for an opened issue). */
+export interface SpecModelReview {
+  fact_key: string;
+  state: string;
+  path: string;
+  revision: string;
+  note?: string | null;
+  decided_by: string;
+  decided_at: string;
+}
+
+export interface ReviewWrite {
+  fact_key: string;
+  state: string;
+  path: string;
+  revision: string;
+  note?: string | null;
+}
+
+export interface OrgMember {
+  user_id: string;
+  display_name?: string | null;
+  email?: string | null;
+}
+
+export interface PersonAlias {
+  kind: string;
+  external_id: string;
+  /** suggested | claimed | confirmed */
+  confidence: string;
+}
+
+export interface MemberIdentities {
+  user_id: string;
+  aliases: PersonAlias[];
+}
+
+export interface NewIssue {
+  title: string;
+  body: string;
+  assignees: string[];
+}
