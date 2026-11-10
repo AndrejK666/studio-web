@@ -176,6 +176,14 @@ person see the same rows.
 | --- | --- |
 | `project_status` | one verdict (`blocked`, `at_risk`, `on_track`) with its reason, the signals behind it worst first, and the path to a build with the next step; `unread` names what could not be read |
 
+**The person.** What waits on them across their organization's workspaces,
+and the marks they keep (studio-user, ADR-0068 §6).
+
+| Tool | What it answers or does |
+| --- | --- |
+| `inbox` | review requests and pull requests waiting on you, overdue first, each naming its `source`; `view: hidden` for what you marked away |
+| `inbox_mark` | *changes:* marks an item done, snoozes it until a time, or opens it again |
+
 **The pipeline.** A project goes from its sources to a running product
 without the portal; each step is the REST route the portal calls for it.
 

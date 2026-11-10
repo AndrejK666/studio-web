@@ -4285,6 +4285,19 @@ response	GET /studio-user/v1/me/colleagues	items.org_id	String	always
 response	GET /studio-user/v1/me/colleagues	items.role	String	always
 response	GET /studio-user/v1/me/colleagues	items.user_id	String	always
 response	GET /studio-user/v1/me/colleagues	total	u32	always
+response	GET /studio-user/v1/me/inbox	items	Vec<{}>	always
+response	GET /studio-user/v1/me/inbox	items.due_at	String	optional
+response	GET /studio-user/v1/me/inbox	items.key	String	always
+response	GET /studio-user/v1/me/inbox	items.overdue	bool	always
+response	GET /studio-user/v1/me/inbox	items.record	Value	always
+response	GET /studio-user/v1/me/inbox	items.source	String	always
+response	GET /studio-user/v1/me/inbox	items.title	String	always
+response	GET /studio-user/v1/me/inbox	items.url	String	optional
+response	GET /studio-user/v1/me/inbox	items.workspace_id	String	always
+response	GET /studio-user/v1/me/inbox	items.workspace_name	String	always
+response	GET /studio-user/v1/me/inbox	other	u32	always
+response	GET /studio-user/v1/me/inbox	total	u32	always
+response	GET /studio-user/v1/me/inbox	unread	Vec<String>	always
 response	GET /studio-user/v1/me/inbox-marks	items	Vec<{}>	always
 response	GET /studio-user/v1/me/inbox-marks	items.item_key	String	always
 response	GET /studio-user/v1/me/inbox-marks	items.state	String	always
@@ -6920,6 +6933,7 @@ route	GET /studio-user/v1/capacity
 route	GET /studio-user/v1/me
 route	GET /studio-user/v1/me/aliases
 route	GET /studio-user/v1/me/colleagues
+route	GET /studio-user/v1/me/inbox
 route	GET /studio-user/v1/me/inbox-marks
 route	GET /studio-user/v1/me/invitations
 route	GET /studio-user/v1/me/logins
