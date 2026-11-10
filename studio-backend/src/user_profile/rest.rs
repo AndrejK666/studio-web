@@ -1974,7 +1974,7 @@ pub fn register_routes(
             "Each person's available hours in the week and their hours per project, with what \
              is left (`free_hours`, negative when over-allocated). Availability someone set \
              wins (`source: set`); otherwise the roadmap plan's power × 40 h \
-             (`source: plan`), as the reports gear mirrors the plan into the domain model. \
+             (`source: plan`), as the reports gear mirrors the plan into the Studio domain model. \
              `week` is any day of it (this week by default); `project_id` keeps the people \
              allocated to that project. For members of the organization (issue #785).",
         )

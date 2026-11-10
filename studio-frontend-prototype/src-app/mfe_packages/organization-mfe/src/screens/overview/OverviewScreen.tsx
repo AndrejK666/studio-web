@@ -5,16 +5,17 @@
  *
  *   - the header: the organization, and how much needs attention;
  *   - four tiles: spend, delivery, specs, people;
+ *   - "Needs attention › For you": the person's Inbox (InboxGroup.tsx; the
+ *     server's `GET /studio-user/v1/me/inbox`), where the prototype had it;
  *   - "Needs attention › For others": refused connections, spend, who the
  *     stuck pull requests wait on, components to decide, idle people;
  *   - the workspaces, each with its worst project and why.
  *
  * Not yet here: the metrics board (charts over 7/30/90 days, Constructor
- * Insight's figures) and "For you" — what waits on the reader is the shell's
- * Inbox (ADR-0068 §6), not this screen's to compute.
+ * Insight's figures).
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   apiRegistry,
   useApiQuery,
@@ -28,6 +29,7 @@ import { OverviewApiService } from '../../api/OverviewApiService';
 import { attentionStatus, growthText, othersAttention, workspaceLine, type NeedTarget } from '../../overview/model';
 import type { OrgOverview } from '../../overview/types';
 import { useOverviewTranslations } from '../../i18n';
+import { InboxGroup } from './InboxGroup';
 import styles from './OverviewScreen.module.css';
 
 type Text = ReturnType<typeof useOverviewTranslations>['t'];
@@ -79,6 +81,8 @@ function OrganizationOverview({
   const o: OrgOverview | undefined = read.data;
   const cash = (n: number) => money(n, o?.spend?.currency || 'USD', language);
   const others = o ? othersAttention(o, cash) : [];
+  // What waits on the reader, once their Inbox is read: the header counts both.
+  const [you, setYou] = useState<number | null>(null);
 
   return (
     <div className={styles.screen} data-org-overview>
@@ -88,7 +92,7 @@ function OrganizationOverview({
         </h2>
         {o ? (
           <Badge variant={others.length > 0 ? 'warning' : 'success'} dot data-attention-status>
-            {attentionStatus(0, others.length)}
+            {attentionStatus(you, others.length)}
           </Badge>
         ) : read.isError ? (
           <Badge variant="danger">{t('unreadable')}</Badge>
@@ -154,6 +158,7 @@ function OrganizationOverview({
                 <CardTitle>{t('needs_title')}</CardTitle>
               </CardHeader>
               <CardContent>
+                <InboxGroup organizationId={organizationId} workspaces={o.workspaces.length} t={t} onCount={setYou} />
                 <h3 className={styles.group}>
                   {t('for_others')}
                   {others.length > 0 && <span className={styles.count}>{others.length}</span>}

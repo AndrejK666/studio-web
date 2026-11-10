@@ -33,6 +33,10 @@ vi.mock('./api/DocumentsApiService', () => ({
   DocumentsApiService: class DocumentsApiService {},
 }));
 
+vi.mock('./api/ProjectStatusApiService', () => ({
+  ProjectStatusApiService: class ProjectStatusApiService {},
+}));
+
 vi.mock('./api/SpecQualityApiService', () => ({
   SpecQualityApiService: class SpecQualityApiService {},
 }));
@@ -129,12 +133,13 @@ describe('projects-mfe init', () => {
     const { initSpecsCheckEffects } = await import('./effects/specsCheckEffects');
     const module = await import('./init');
 
-    // Seven gears: account-management, studio-connector, studio-artifact-ingest,
+    // Eight gears: account-management, studio-connector, studio-artifact-ingest,
     // studio-tasks (the run each repository's sync is), studio-events (the
     // stream those runs are announced on), studio-documents (the journey-stage
-    // catalogue the create wizard reads, and the project's specs) and
-    // studio-spec-quality (whether those specs can be checked).
-    expect(register).toHaveBeenCalledTimes(7);
+    // catalogue the create wizard reads, and the project's specs),
+    // studio-spec-quality (whether those specs can be checked) and
+    // studio-organizations (the project status Overview draws).
+    expect(register).toHaveBeenCalledTimes(8);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);
