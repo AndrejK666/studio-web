@@ -65,7 +65,10 @@ impl Unknown {
 /// The documents `selection` names, in the model's order, each once. `Err`
 /// names every path that is not one of `documents` and a glob that matches
 /// none of them: a build reads all of what it was asked or nothing.
-pub fn select(documents: &[SourceText], selection: Selection<'_>) -> Result<Vec<SourceText>, Unknown> {
+pub fn select(
+    documents: &[SourceText],
+    selection: Selection<'_>,
+) -> Result<Vec<SourceText>, Unknown> {
     let known: BTreeSet<&str> = documents.iter().map(|d| d.path.as_str()).collect();
     let mut wanted: BTreeSet<String> = BTreeSet::new();
     let mut unknown = Unknown::default();
