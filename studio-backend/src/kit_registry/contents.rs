@@ -159,7 +159,9 @@ fn owned(items: &[&str]) -> Vec<String> {
 /// `None` for a slug that is not a built-in kit.
 ///
 /// `permissions.reads` names the gears' routes the kit's screen calls, as
-/// `METHOD /path`, and only routes it calls today.
+/// `METHOD /path`, and only routes it calls today; a `POST` that only
+/// computes an answer (a plan, a preview, a check, a test of a connection) is
+/// a read. `permissions.writes` names the routes that change something.
 fn builtin_contents(slug: &str) -> Option<KitContents> {
     let contents = match slug {
         // Project status and phases, which have no screen of their own yet;
@@ -276,6 +278,269 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             }],
             permissions: KitPermissions {
                 reads: owned(&["GET /openapi.json"]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
+        // `components-mfe` (ADR-0042, ADR-0046): the platform's catalogue,
+        // its gear repositories and the publication requests it answers;
+        // the organization's catalogue and registry; and a project's
+        // inventory, which has no screen in the new portal yet. The routes
+        // are the ones the old prototype's screens call
+        // (`components-catalog`, `component-registry`,
+        // `catalogue-levels-view`, `platform-sources`,
+        // `publication-requests`, `project-components-view`).
+        "components" => KitContents {
+            screens: vec![
+                tab("platform", "Components", Some("/platform-components")),
+                tab("platform", "Repositories", Some("/platform-repositories")),
+                tab(
+                    "platform",
+                    "Publication requests",
+                    Some("/publication-requests"),
+                ),
+                tab("organization", "Components", Some("/components")),
+                project_tab("Components", None),
+            ],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-components-catalog/v1/components",
+                    "GET /studio-components-catalog/v1/components/{name}/docs",
+                    "GET /studio-components-catalog/v1/profiles",
+                    "GET /studio-components-catalog/v1/versions",
+                    "GET /studio-components-catalog/v1/component-values",
+                    "GET /studio-components-catalog/v1/component-history",
+                    "GET /studio-components-catalog/v1/field-schemas",
+                    "GET /studio-components-catalog/v1/sources",
+                    "GET /studio-components-catalog/v1/platform/sources",
+                    "GET /studio-components-catalog/v1/platform/pins",
+                    "GET /studio-components-catalog/v1/platform/publication-requests",
+                    "GET /studio-components-catalog/v1/platform/curators",
+                    "GET /studio-components-catalog/v1/publications",
+                    "GET /studio-components-catalog/v1/registry",
+                    "GET /studio-components-catalog/v1/registry/{name}",
+                    "GET /studio-components-catalog/v1/registry/{name}/readiness",
+                    "POST /studio-components-catalog/v1/registry/{name}/suggest",
+                    "GET /studio-components-catalog/v1/registry/projects",
+                    "GET /studio-components-catalog/v1/registry/excluded-projects",
+                    "GET /studio-components-catalog/v1/registry/gear-repository",
+                    "GET /studio-components-catalog/v1/project-components",
+                    "GET /studio-tasks/v1/runs/{id}",
+                    "GET /studio-kits/v1/catalog",
+                    "GET /studio-product/v1/gearbox",
+                    "GET /studio-product/v1/projects/{project_id}/product",
+                    "GET /studio-connector/v1/connections",
+                    "POST /studio-connector/v1/connections/{id}/test",
+                    "GET /studio-user/v1/me",
+                    "GET /studio-user/v1/me/colleagues",
+                    "GET /studio-user/v1/organizations/{org_id}/members",
+                    "GET /studio-documents/v1/workspaces/{workspace_id}/capabilities",
+                    "GET /studio-documents/v1/spec-model",
+                    "GET /studio-documents/v1/spec-model/glossary",
+                    "GET /studio-spec-mapping/v1/plan",
+                    "GET /studio-spec-mapping/v1/capabilities",
+                    "POST /studio-spec-mapping/v1/conformance",
+                ]),
+                writes: owned(&[
+                    "POST /studio-components-catalog/v1/sync",
+                    "POST /studio-components-catalog/v1/platform/sync",
+                    "POST /studio-components-catalog/v1/project-catalogue/sync",
+                    "PUT /studio-components-catalog/v1/sources",
+                    "PUT /studio-components-catalog/v1/platform/sources",
+                    "PUT /studio-components-catalog/v1/platform/pins",
+                    "PUT /studio-components-catalog/v1/platform/curators",
+                    "POST /studio-components-catalog/v1/platform/publication-requests/{name}/decisions",
+                    "POST /studio-components-catalog/v1/publications",
+                    "POST /studio-components-catalog/v1/publications/{id}/decisions",
+                    "POST /studio-components-catalog/v1/components/{name}/profile",
+                    "POST /studio-components-catalog/v1/registry/{name}/decisions",
+                    "POST /studio-components-catalog/v1/registry/{name}/declare",
+                    "PUT /studio-components-catalog/v1/registry/excluded-projects",
+                    "PUT /studio-components-catalog/v1/registry/gear-repository",
+                    "DELETE /studio-components-catalog/v1/registry/gear-repository",
+                    "POST /studio-components-catalog/v1/registry/gear-repository/create",
+                    "POST /studio-components-catalog/v1/registry/scaffold",
+                    "POST /studio-connector/v1/connections",
+                    "PATCH /studio-connector/v1/connections/{id}",
+                    "DELETE /studio-connector/v1/connections/{id}",
+                ]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
+        // `infrastructure-mfe` (ADR-0056 §2): the places an organization
+        // holds, the environments on them, their namespaces, registries and
+        // image retention, and the deploys waiting on a decision. The routes
+        // are the ones the old prototype's `OrgInfrastructure` calls
+        // (`environments-screen`, `namespace-assignments-view`,
+        // `registry-browser-view`).
+        "org-infrastructure" => KitContents {
+            screens: vec![tab(
+                "organization",
+                "Infrastructure",
+                Some("/infrastructure"),
+            )],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-environments/v1/environments",
+                    "GET /studio-environments/v1/environments/{environment_id}/readiness",
+                    "POST /studio-environments/v1/environments/{environment_id}/test",
+                    "GET /studio-environments/v1/deployments",
+                    "GET /studio-environments/v1/deployments/{deployment_id}/status",
+                    "GET /studio-environments/v1/deployments/{deployment_id}/logs",
+                    "GET /studio-environments/v1/research/projects",
+                    "GET /studio-environments/v1/research/projects/{project}/hardware",
+                    "GET /studio-environments/v1/namespace-assignments",
+                    "GET /studio-environments/v1/image-retention",
+                    "GET /studio-environments/v1/registries",
+                    "GET /studio-environments/v1/registries/{connection_id}/repositories",
+                    "GET /studio-environments/v1/registries/{connection_id}/repositories/{repository}/tags",
+                    "GET /studio-environments/v1/registries/{connection_id}/orphans",
+                    "GET /studio-connector/v1/connections",
+                    "POST /studio-connector/v1/connections/{id}/test",
+                ]),
+                writes: owned(&[
+                    "POST /studio-environments/v1/environments",
+                    "PUT /studio-environments/v1/environments/{environment_id}",
+                    "DELETE /studio-environments/v1/environments/{environment_id}",
+                    "PUT /studio-environments/v1/open-clusters",
+                    "POST /studio-environments/v1/deployments/{deployment_id}/decisions",
+                    "PUT /studio-environments/v1/namespace-assignments",
+                    "PUT /studio-environments/v1/image-retention",
+                    "DELETE /studio-environments/v1/registries/{connection_id}/repositories/{repository}/versions/{digest}",
+                ]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
+        // A project's Product (ADR-0043, ADR-0045, ADR-0056) — its map,
+        // configurator, frontend and description — and its Releases: builds,
+        // images, its own environments and deploys. Neither has a screen in
+        // the new portal yet. The routes are the ones the old prototype's
+        // `product-*-view`, `frontend-constructor-view`, `kits` (its product
+        // part), `releases-tab`, `builds-tab`, `deploy-actions`,
+        // `project-images` and `ProjectEnvironments` call.
+        "product-releases" => KitContents {
+            screens: vec![project_tab("Product", None), project_tab("Releases", None)],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-product/v1/projects/{project_id}/product",
+                    "POST /studio-product/v1/projects/{project_id}/product/preview",
+                    "GET /studio-product/v1/projects/{project_id}/gear-repo",
+                    "GET /studio-product/v1/product-description",
+                    "GET /studio-product/v1/product-description-revisions",
+                    "GET /studio-product/v1/product-description-revisions/{revision}",
+                    "GET /studio-product/v1/product-description-branches",
+                    "GET /studio-product/v1/gdl-file",
+                    "GET /studio-product/v1/gearbox",
+                    "GET /studio-product/v1/gearbox/catalogue",
+                    "POST /studio-product/v1/gearbox/complete",
+                    "POST /studio-product/v1/gearbox/brings",
+                    "POST /studio-product/v1/gearbox/config-schema",
+                    "GET /studio-product/v1/gear-explanations",
+                    "GET /studio-components-catalog/v1/components",
+                    "GET /studio-components-catalog/v1/profiles",
+                    "GET /studio-components-catalog/v1/sources",
+                    "GET /studio-components-catalog/v1/screen-previews",
+                    "GET /studio-components-catalog/v1/project-components",
+                    "GET /studio-environments/v1/targets",
+                    "GET /studio-environments/v1/environments",
+                    "GET /studio-environments/v1/environments/{environment_id}/infra-plan",
+                    "GET /studio-environments/v1/project-environments",
+                    "GET /studio-environments/v1/infra-services",
+                    "GET /studio-environments/v1/project-build",
+                    "POST /studio-environments/v1/builds/plan",
+                    "GET /studio-environments/v1/builds/{build_id}/log",
+                    "GET /studio-environments/v1/deployments",
+                    "GET /studio-environments/v1/deployments/{deployment_id}/status",
+                    "GET /studio-environments/v1/deployments/{deployment_id}/logs",
+                    "GET /studio-environments/v1/images",
+                    "GET /studio-environments/v1/images/{image_id}",
+                    "GET /studio-environments/v1/image-retention",
+                    "GET /studio-artifact-ingest/v1/nodes",
+                    "GET /studio-tasks/v1/runs/{id}",
+                    "GET /studio-connector/v1/connections",
+                    "GET /studio-documents/v1/workspaces/{workspace_id}/capabilities",
+                    "GET /studio-documents/v1/spec-model",
+                    "GET /studio-documents/v1/spec-model/glossary",
+                    "GET /studio-spec-mapping/v1/plan",
+                    "GET /studio-spec-mapping/v1/capabilities",
+                    "GET /studio-spec-mapping/v1/requirements",
+                    "POST /studio-spec-mapping/v1/conformance",
+                ]),
+                writes: owned(&[
+                    "PUT /studio-product/v1/projects/{project_id}/product",
+                    "POST /studio-product/v1/product-description-revisions",
+                    "PUT /studio-product/v1/gear-explanations/{gear_id}",
+                    "POST /studio-product/v1/gear-explanations/{gear_id}/generations",
+                    "POST /studio-spec-mapping/v1/decisions",
+                    "POST /studio-components-catalog/v1/sync",
+                    "PUT /studio-components-catalog/v1/sources",
+                    "PUT /studio-environments/v1/bindings",
+                    "PUT /studio-environments/v1/infra-services",
+                    "PUT /studio-environments/v1/project-build",
+                    "POST /studio-environments/v1/project-environments",
+                    "PUT /studio-environments/v1/project-environments/{environment_id}",
+                    "DELETE /studio-environments/v1/project-environments/{environment_id}",
+                    "POST /studio-environments/v1/builds",
+                    "POST /studio-environments/v1/build-workflows",
+                    "POST /studio-artifact-ingest/v1/builds/dispatch",
+                    "POST /studio-environments/v1/deployments",
+                    "POST /studio-environments/v1/deployments/{deployment_id}/decisions",
+                    "DELETE /studio-environments/v1/previews/{deployment_id}",
+                    "PUT /studio-environments/v1/config-secrets/{key}",
+                    "DELETE /studio-environments/v1/config-secrets/{key}",
+                    "POST /studio-environments/v1/images/imports",
+                    "POST /studio-environments/v1/images/{image_id}/promotions",
+                    "PUT /studio-environments/v1/images/{image_id}/pin",
+                    "DELETE /studio-environments/v1/images/{image_id}/pin",
+                    "DELETE /studio-environments/v1/images/{image_id}",
+                    "PUT /studio-environments/v1/image-retention",
+                ]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
+        // The project's Domain model (ADR-0066, ADR-0067): the model its
+        // specs make, the findings and issues they leave to decide, the
+        // glossary, traces to work. No screen in the new portal yet. The
+        // routes are the ones the old prototype's `spec-model-tab` calls.
+        "project-domain-model" => KitContents {
+            screens: vec![project_tab("Domain model", None)],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-documents/v1/spec-model",
+                    "GET /studio-documents/v1/spec-model/build-estimate",
+                    "GET /studio-documents/v1/spec-model/findings",
+                    "GET /studio-documents/v1/spec-model/reviews",
+                    "GET /studio-documents/v1/spec-model/requirements",
+                    "GET /studio-documents/v1/spec-model/related",
+                    "GET /studio-documents/v1/spec-model/trace",
+                    "GET /studio-documents/v1/spec-model/work",
+                    "GET /studio-documents/v1/spec-model/check-methods",
+                    "GET /studio-documents/v1/spec-model/glossary",
+                    "GET /studio-documents/v1/spec-model/glossary/document",
+                    "GET /studio-spec-mapping/v1/findings",
+                    "GET /studio-spec-mapping/v1/plan",
+                    "GET /studio-kits/v1/projects/{project_id}/installations",
+                    "GET /studio-user/v1/organizations/{org_id}/members",
+                    "GET /studio-user/v1/organizations/{org_id}/members/{user_id}/identities",
+                ]),
+                writes: owned(&[
+                    "POST /studio-documents/v1/spec-model/builds",
+                    "POST /studio-documents/v1/spec-model/entities",
+                    "POST /studio-documents/v1/spec-model/reviews",
+                    "POST /studio-documents/v1/spec-model/issues",
+                    "POST /studio-documents/v1/spec-model/findings/{fingerprint}/decision",
+                    "POST /studio-documents/v1/spec-model/findings/{fingerprint}/proposals",
+                    "POST /studio-documents/v1/spec-model/files/proposals",
+                    "POST /studio-documents/v1/spec-model/sentences/proposals",
+                    "POST /studio-documents/v1/spec-model/glossary/decisions",
+                    "POST /studio-documents/v1/spec-model/glossary/distinct",
+                    "POST /studio-documents/v1/spec-model/glossary/proposals",
+                    "POST /studio-documents/v1/spec-model/glossary/document/proposals",
+                    "POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents",
+                ]),
                 ..KitPermissions::default()
             },
             ..KitContents::default()

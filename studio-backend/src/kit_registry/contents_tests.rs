@@ -90,6 +90,106 @@ fn the_builtin_screens_are_today_s_tabs() {
     );
     assert_eq!(screen.route.as_deref(), Some("/api-docs"));
     assert_eq!(docs.contents.permissions.reads, ["GET /openapi.json"]);
+
+    // Screens still being ported: the tabs are named, a route only where
+    // the new portal has one.
+    let levels = |slug: &str| {
+        let kit = builtin_catalogue()
+            .into_iter()
+            .find(|kit| kit.slug == slug)
+            .unwrap();
+        describe(kit)
+            .contents
+            .screens
+            .into_iter()
+            .map(|s| (s.level, s.label, s.route))
+            .collect::<Vec<_>>()
+    };
+    let at = |level: &str, label: &str, route: Option<&str>| {
+        (level.to_owned(), label.to_owned(), route.map(str::to_owned))
+    };
+    assert_eq!(
+        levels("components"),
+        [
+            at("platform", "Components", Some("/platform-components")),
+            at("platform", "Repositories", Some("/platform-repositories")),
+            at(
+                "platform",
+                "Publication requests",
+                Some("/publication-requests")
+            ),
+            at("organization", "Components", Some("/components")),
+            at("project", "Components", None),
+        ]
+    );
+    assert_eq!(
+        levels("org-infrastructure"),
+        [at(
+            "organization",
+            "Infrastructure",
+            Some("/infrastructure")
+        )]
+    );
+    assert_eq!(
+        levels("product-releases"),
+        [
+            at("project", "Product", None),
+            at("project", "Releases", None)
+        ]
+    );
+    assert_eq!(
+        levels("project-domain-model"),
+        [at("project", "Domain model", None)]
+    );
+}
+
+#[test]
+fn a_builtin_kit_names_only_routes_the_backend_serves() {
+    // The gateway's own document is not a gear's operation.
+    const GATEWAY: &[&str] = &["GET /openapi.json"];
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../docs/api-contract.json")).unwrap();
+    let served: std::collections::BTreeSet<String> = contract["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|op| {
+            format!(
+                "{} {}",
+                op["method"].as_str().unwrap(),
+                op["path"].as_str().unwrap()
+            )
+        })
+        .collect();
+    for kit in builtin_catalogue() {
+        let slug = kit.slug.clone();
+        let permissions = describe(kit).contents.permissions;
+        for route in permissions.reads.iter().chain(&permissions.writes) {
+            assert!(
+                served.contains(route) || GATEWAY.contains(&route.as_str()),
+                "{slug}: {route} is not a route of the backend"
+            );
+        }
+        // A read never changes anything, so it is never a PUT, PATCH or DELETE.
+        for route in &permissions.reads {
+            assert!(
+                route.starts_with("GET ") || route.starts_with("POST "),
+                "{slug}: {route}"
+            );
+        }
+        for route in &permissions.writes {
+            assert!(!route.starts_with("GET "), "{slug}: {route}");
+        }
+        let mut all: Vec<&String> = permissions
+            .reads
+            .iter()
+            .chain(&permissions.writes)
+            .collect();
+        let total = all.len();
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), total, "{slug}: a route named twice");
+    }
 }
 
 #[test]

@@ -32,9 +32,13 @@ This README is what you need to work in the directory.
   `GET /catalog`; the IDE asks for `official` only, the kits `cfs` can install.
   The built-in kits are the portal's features, each arriving as a kit:
   `project-lifecycle`, `project-issues`, `project-tests`, `project-artifacts`,
-  `project-activity`, `project-specs`, `org-costs`, `org-reports` and
-  `studio-api-docs` (level `platform`). A feature ported into the portal is
-  added here, with its contents in `contents.rs`.
+  `project-activity`, `project-specs`, `org-costs`, `org-reports`,
+  `studio-api-docs` (level `platform`), `components` (platform, organization
+  and project), `org-infrastructure`, `product-releases` and
+  `project-domain-model`. A feature ported into the portal is added here,
+  with its contents in `contents.rs`: its screens (a route only once the
+  portal has one) and, in `permissions`, the routes its screens call — a
+  test holds every one to `docs/api-contract.json`.
 - What is inside a kit before anyone installs it (ADR-0068 §4), `contents.rs`:
   `GET /studio-kits/v1/catalog/{kit_slug}` (any signed-in user; 404 for a
   slug the library does not hold) answers `{kit, contents, manifest}`;
