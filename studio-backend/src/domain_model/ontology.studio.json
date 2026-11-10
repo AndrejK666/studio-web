@@ -83,6 +83,7 @@
         "document",
         "commit",
         "text-content",
+        "file",
         "repository-file",
         "template",
         "branch"
@@ -186,7 +187,8 @@
         "profiles": [
           "Arch",
           "Dev"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -218,7 +220,8 @@
         "profiles": [
           "Arch",
           "Dev"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -249,7 +252,8 @@
         "profiles": [
           "Arch",
           "Dev"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -302,7 +306,8 @@
         "profiles": [
           "Arch",
           "Dev"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -363,7 +368,8 @@
         "profiles": [
           "Arch",
           "Dev"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -402,7 +408,8 @@
         "profiles": [
           "Arch",
           "Dev"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -451,7 +458,8 @@
           "StudioAdmin",
           "Sec",
           "Arch"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -602,7 +610,8 @@
           "HR",
           "StudioAdmin",
           "Sec"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -758,7 +767,8 @@
           "StudioAdmin",
           "Sec",
           "Arch"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -982,7 +992,8 @@
           "StudioAdmin",
           "Sec",
           "Arch"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -1095,7 +1106,8 @@
           "StudioAdmin",
           "Sec",
           "Arch"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -1234,7 +1246,8 @@
           "StudioAdmin",
           "Sec",
           "Arch"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -1350,7 +1363,8 @@
           "StudioAdmin",
           "Sec",
           "Arch"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -1455,7 +1469,8 @@
           "Sec",
           "StudioAdmin",
           "DBA"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -1690,7 +1705,8 @@
           "Arch",
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -2304,7 +2320,8 @@
         "profiles": [
           "CTO",
           "PdM"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -2431,7 +2448,8 @@
         "profiles": [
           "CTO",
           "PdM"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -2515,7 +2533,8 @@
           "Arch",
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": "project-lifecycle"
       },
       "properties": [
         {
@@ -2628,7 +2647,8 @@
           "Arch",
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": "project-lifecycle"
       },
       "properties": [
         {
@@ -2781,7 +2801,8 @@
           "Arch",
           "PdM",
           "Dev"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -3305,7 +3326,8 @@
           "Arch",
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": "project-issues"
       },
       "properties": [
         {
@@ -3492,7 +3514,8 @@
           "QA",
           "Sec",
           "Arch"
-        ]
+        ],
+        "kit": "project-git"
       },
       "properties": [
         {
@@ -3742,7 +3765,8 @@
           "Arch",
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": "project-activity"
       },
       "properties": [
         {
@@ -3968,7 +3992,8 @@
           "Dev",
           "Arch",
           "Sec"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -4167,7 +4192,8 @@
         "profiles": [
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -4274,7 +4300,8 @@
           "Dev",
           "QA",
           "Sec"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -4422,70 +4449,16 @@
       "extends": "managed-object"
     },
     {
-      "id": "repository-file",
+      "id": "file",
       "bucket": "content",
-      "name": "Repository File",
+      "name": "File",
       "kind": "artifact",
-      "description": "A path-addressed file at a specific repository revision; mutations create new revisions rather than changing history.",
+      "description": "A file independent of its storage: repositories, uploads and kit-specific sources extend this type.",
       "meta": {
-        "relationship": "knowledge",
-        "priority": "P2",
-        "level": 3,
-        "badge": "",
-        "note": "",
-        "badge-style": "neutral",
-        "profiles": [
-          "PdM",
-          "Arch",
-          "Dev",
-          "QA",
-          "Researcher"
-        ]
+        "origin": "studio",
+        "kit": null
       },
       "properties": [
-        {
-          "name": "id",
-          "type": "ArtifactId",
-          "required": true,
-          "description": "",
-          "relationLabel": "",
-          "override": true
-        },
-        {
-          "name": "repository_ref",
-          "type": "EntityId",
-          "required": true,
-          "description": "",
-          "relationLabel": ""
-        },
-        {
-          "name": "revision",
-          "type": "SHA",
-          "required": true,
-          "description": "",
-          "relationLabel": ""
-        },
-        {
-          "name": "source_system",
-          "type": "SourceId",
-          "required": true,
-          "description": "",
-          "relationLabel": ""
-        },
-        {
-          "name": "external_id",
-          "type": "string",
-          "required": true,
-          "description": "",
-          "relationLabel": ""
-        },
-        {
-          "name": "path",
-          "type": "string",
-          "required": true,
-          "description": "",
-          "relationLabel": ""
-        },
         {
           "name": "name",
           "type": "string",
@@ -4535,6 +4508,78 @@
         {
           "name": "updated_at",
           "type": "timestamp?",
+          "description": "",
+          "relationLabel": ""
+        }
+      ],
+      "methods": [],
+      "layer": "core",
+      "abstract": false,
+      "extends": "managed-object"
+    },
+    {
+      "id": "repository-file",
+      "bucket": "content",
+      "name": "Repository File",
+      "kind": "artifact",
+      "description": "A path-addressed file at a specific repository revision; mutations create new revisions rather than changing history.",
+      "meta": {
+        "relationship": "knowledge",
+        "priority": "P2",
+        "level": 3,
+        "badge": "",
+        "note": "",
+        "badge-style": "neutral",
+        "profiles": [
+          "PdM",
+          "Arch",
+          "Dev",
+          "QA",
+          "Researcher"
+        ],
+        "kit": null
+      },
+      "properties": [
+        {
+          "name": "id",
+          "type": "ArtifactId",
+          "required": true,
+          "description": "",
+          "relationLabel": "",
+          "override": true
+        },
+        {
+          "name": "repository_ref",
+          "type": "EntityId",
+          "required": true,
+          "description": "",
+          "relationLabel": ""
+        },
+        {
+          "name": "revision",
+          "type": "SHA",
+          "required": true,
+          "description": "",
+          "relationLabel": ""
+        },
+        {
+          "name": "source_system",
+          "type": "SourceId",
+          "required": true,
+          "description": "",
+          "relationLabel": ""
+        },
+        {
+          "name": "external_id",
+          "type": "string",
+          "required": true,
+          "description": "",
+          "relationLabel": ""
+        },
+        {
+          "name": "path",
+          "type": "string",
+          "required": true,
           "description": "",
           "relationLabel": ""
         },
@@ -4618,7 +4663,7 @@
       ],
       "layer": "product",
       "abstract": false,
-      "extends": "managed-object"
+      "extends": "file"
     },
     {
       "id": "document",
@@ -4639,7 +4684,8 @@
           "Dev",
           "QA",
           "Researcher"
-        ]
+        ],
+        "kit": "project-specs"
       },
       "properties": [
         {
@@ -4824,7 +4870,8 @@
           "Dev",
           "QA",
           "Researcher"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -4965,7 +5012,8 @@
           "Dev",
           "QA",
           "Researcher"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -5109,7 +5157,8 @@
           "Arch",
           "Sec",
           "GRC"
-        ]
+        ],
+        "kit": "project-specs"
       },
       "properties": [
         {
@@ -5249,7 +5298,8 @@
           "Arch",
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -5406,7 +5456,8 @@
           "QA",
           "Sec",
           "StudioAdmin"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -5508,7 +5559,8 @@
           "QA",
           "Sec",
           "StudioAdmin"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -5628,7 +5680,8 @@
           "QA",
           "Sec",
           "StudioAdmin"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -5792,7 +5845,8 @@
           "QA",
           "Sec",
           "StudioAdmin"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -5954,7 +6008,8 @@
             "target": "governance-evidence",
             "note": "Name collision flagged in model.md §6.1"
           }
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -6093,7 +6148,8 @@
           "GRC",
           "Arch"
         ],
-        "note": "Rewritten from a generic Studio rule into the organization document §9 asks for. · model.md §9"
+        "note": "Rewritten from a generic Studio rule into the organization document §9 asks for. · model.md §9",
+        "kit": "project-specs"
       },
       "properties": [
         {
@@ -6227,7 +6283,8 @@
           "Arch",
           "Dev",
           "Researcher"
-        ]
+        ],
+        "kit": "assistant"
       },
       "properties": [
         {
@@ -6338,7 +6395,8 @@
           "Arch",
           "Dev",
           "Researcher"
-        ]
+        ],
+        "kit": "assistant"
       },
       "properties": [
         {
@@ -6459,7 +6517,8 @@
           "Arch",
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": "assistant"
       },
       "properties": [
         {
@@ -6592,7 +6651,8 @@
           "Arch",
           "Dev",
           "Researcher"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -6779,7 +6839,8 @@
           "StudioAdmin",
           "Sec",
           "Arch"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -6936,7 +6997,8 @@
           "Sec",
           "StudioAdmin",
           "Arch"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -7002,7 +7064,8 @@
           "Arch",
           "Dev",
           "Researcher"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -7207,7 +7270,8 @@
           "Arch",
           "Dev",
           "Researcher"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -7376,7 +7440,8 @@
           "Arch",
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -7481,7 +7546,8 @@
           "Sec",
           "StudioAdmin",
           "DBA"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -7572,7 +7638,8 @@
           "Sec",
           "StudioAdmin",
           "DBA"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -7670,7 +7737,8 @@
           "QA",
           "Sec",
           "StudioAdmin"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -7792,7 +7860,8 @@
             "target": "security-finding",
             "note": "Kit specialization of the generic Finding; renamed to Security Finding to clear the name collision"
           }
-        ]
+        ],
+        "kit": "project-issues"
       },
       "properties": [
         {
@@ -7924,7 +7993,8 @@
           "Dev",
           "QA",
           "Sec"
-        ]
+        ],
+        "kit": "project-tests"
       },
       "properties": [
         {
@@ -8045,7 +8115,8 @@
           "QA",
           "Sec",
           "StudioAdmin"
-        ]
+        ],
+        "kit": "org-reports"
       },
       "properties": [
         {
@@ -8198,7 +8269,8 @@
           "QA",
           "Sec",
           "StudioAdmin"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -8382,7 +8454,8 @@
           "Arch",
           "Dev",
           "QA"
-        ]
+        ],
+        "kit": "project-specs"
       },
       "properties": [
         {
@@ -8506,7 +8579,8 @@
           "Arch",
           "Sec",
           "GRC"
-        ]
+        ],
+        "kit": "components"
       },
       "properties": [
         {
@@ -8629,7 +8703,8 @@
           "Arch",
           "PdM",
           "Dev"
-        ]
+        ],
+        "kit": "project-lifecycle"
       },
       "properties": [
         {
@@ -8727,7 +8802,8 @@
           "QA",
           "Sec",
           "StudioAdmin"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {
@@ -8833,7 +8909,9 @@
           "Arch",
           "PdM",
           "Dev"
-        ]
+        ],
+        "kit": null,
+        "retired": true
       },
       "properties": [
         {
@@ -8912,7 +8990,8 @@
           "Dev",
           "CTO",
           "QA"
-        ]
+        ],
+        "kit": "project-lifecycle"
       },
       "properties": [
         {
@@ -9039,7 +9118,8 @@
           "QA",
           "Arch",
           "HR"
-        ]
+        ],
+        "kit": "project-team"
       },
       "properties": [
         {
@@ -9164,7 +9244,8 @@
           "Arch",
           "Dev",
           "StudioAdmin"
-        ]
+        ],
+        "kit": null
       },
       "properties": [],
       "methods": [],
@@ -9194,7 +9275,8 @@
           "Arch",
           "Dev",
           "StudioAdmin"
-        ]
+        ],
+        "kit": null
       },
       "properties": [
         {

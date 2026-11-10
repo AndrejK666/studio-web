@@ -3,6 +3,29 @@ use serde_json::{Value, json};
 use super::*;
 
 #[test]
+fn kits_extend_files_and_leave_the_core_file_when_uninstalled() {
+    let mut model = Ontology::load();
+    let files = overlay(json!({"types": [{"name": "design-file", "extends": "file",
+        "fields": [{"name": "design_tool", "type": "string"}]}]}));
+    sync(&mut model, "design", "1", Some(&files), &|_| false).unwrap();
+    assert!(
+        model
+            .ancestors("design-design-file")
+            .contains(&"file".to_owned())
+    );
+    let fields = model.effective_properties("design-design-file");
+    assert!(
+        fields
+            .iter()
+            .any(|p| p.name == "media_type" && p.declared_by == "file")
+    );
+    assert!(fields.iter().any(|p| p.name == "design_tool"));
+    sync(&mut model, "design", "1", None, &|_| false).unwrap();
+    assert!(model.has_entity("file"));
+    assert!(!model.has_entity("design-design-file"));
+}
+
+#[test]
 fn a_kit_declares_a_type_studio_already_has_and_keeps_its_ids_and_holds() {
     // Issue #1025: a core type moves into the kit that brings its screens.
     let mut o = Ontology::load();

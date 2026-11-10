@@ -120,7 +120,7 @@ Applied to the 63 types, with the decisions of §7, this gives **43 core types, 
 
 | Owner | Types |
 |---|---|
-| core (43) | bases and meta-model: system-object, entity, node, edge, record, link, managed-object, relation, object-type, metric · identity and levels: organization-entity, tenant, org-unit, team, membership, person, role, permission, role-assignment, ownership, project, organization, workspace · sources: connector, sync-state, conflict, repository, branch, commit, repository-file, text-content · shell: kit, view, activity, notification, event, actor · engine and shared targets: workflow, action, worker, transition, evidence, template |
+| core (44, including the storage-independent file base) | bases and meta-model: system-object, entity, node, edge, record, link, managed-object, relation, object-type, metric · identity and levels: organization-entity, tenant, org-unit, team, membership, person, role, permission, role-assignment, ownership, project, organization, workspace · sources: connector, sync-state, conflict, repository, branch, commit, file, repository-file, text-content · shell: kit, view, activity, notification, event, actor · engine and shared targets: workflow, action, worker, transition, evidence, template |
 | project-specs | document, policy, review-request, approval |
 | project-lifecycle | risk, dependency, lifecycle-stage, milestone |
 | assistant (**new built-in kit**, ADR-0068 §7's "Assistant") | model, tool, message |
@@ -145,6 +145,11 @@ Where the code argues against the issue's first proposal, the code wins. The ana
 
 The first draft also kept `pull-request` in the core and gave `milestone` to
 project-activity. §7 changes both.
+
+The core also has a concrete, storage-independent `file` base. `repository-file`
+extends it without changing its entity or graph type id; a kit can introduce another
+file subtype with its own source-specific fields. Existing organization fields and
+explicit custom bases survive the migration.
 
 ### 2. What it means that a kit brings a type
 

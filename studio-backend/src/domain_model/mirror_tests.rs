@@ -207,6 +207,21 @@ async fn seeded(tenant: u128) -> Pair {
 }
 
 #[tokio::test]
+async fn files_and_their_subtypes_share_fields_in_both_readers() {
+    let p = Pair::new(Uuid::new_v4()).await;
+    p.write(json!([
+        {"op":"upsert", "type":"file", "key":"uploaded", "value":{"name":"interview.txt", "media_type":"text/plain"}},
+        {"op":"upsert", "type":"repository-file", "key":"readme", "value":{"name":"README.md", "media_type":"text/markdown", "revision":"abc"}}
+    ])).await;
+    p.fill().await;
+    for ty in ["file", "repository-file"] {
+        let result = p.same(ty, json!({"fields":["name", "media_type"], "order_by":[{"field":"name", "direction":"asc"}]})).await;
+        assert_eq!(result["total"], 1);
+        assert!(result["items"][0]["value"]["media_type"].is_string());
+    }
+}
+
+#[tokio::test]
 async fn filters_answer_the_same_from_postgres_as_from_the_graph() {
     let p = seeded(0xd001).await;
     for w in [

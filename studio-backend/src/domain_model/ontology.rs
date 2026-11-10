@@ -180,6 +180,23 @@ impl Ontology {
                 continue;
             };
             if self.has_entity(&id) {
+                // The original repository-file was the only file type. Keep
+                // its graph identity and custom fields while joining it to
+                // the storage-independent base. An organization-defined base
+                // is intentional and is never replaced by this migration.
+                if id == "repository-file"
+                    && let Ok(mine) = self.entity_mut(&id)
+                    && mine.get("extends").and_then(Value::as_str) == Some("managed-object")
+                    && mine.get("name").and_then(Value::as_str) == Some("Repository File")
+                    && mine
+                        .get("meta")
+                        .and_then(|m| m.get("origin"))
+                        .and_then(Value::as_str)
+                        .is_none_or(|origin| origin == "studio")
+                {
+                    mine["extends"] = json!("file");
+                    added.push(id.clone());
+                }
                 // A type Studio added before it named its base gets the base
                 // now, and with it the fields every object carries
                 // (`tenant_id`, scope, ...). One the model defined itself with
@@ -1639,6 +1656,84 @@ impl std::error::Error for OntologyError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_seed_type_declares_its_owner_and_a_core_base_never_depends_on_a_kit() {
+        let model = Ontology::load();
+        let mut core = 0;
+        let mut kit = 0;
+        let mut retired = 0;
+        for e in model.entities() {
+            let meta = &e["meta"];
+            assert!(meta.get("kit").is_some(), "owner missing: {}", e["id"]);
+            if meta["retired"] == true {
+                retired += 1;
+            } else if meta["kit"].is_string() {
+                kit += 1;
+            } else {
+                core += 1;
+                for base in model.ancestors(e["id"].as_str().unwrap()) {
+                    assert!(
+                        model.entity(&base).unwrap()["meta"]["kit"].is_null(),
+                        "core {} extends kit type {base}",
+                        e["id"]
+                    );
+                }
+            }
+        }
+        assert_eq!((core, kit, retired), (44, 19, 1));
+    }
+
+    #[test]
+    fn files_are_a_storage_independent_base_and_old_repository_files_keep_their_identity() {
+        let seed = Ontology::load();
+        assert!(
+            seed.ancestors("repository-file")
+                .contains(&"file".to_owned())
+        );
+        let fields = seed.effective_properties("repository-file");
+        assert!(
+            fields
+                .iter()
+                .any(|p| p.name == "media_type" && p.declared_by == "file")
+        );
+        let before_id =
+            seed.object_type_node("repository-file").unwrap().payload["node_type_id"].clone();
+        let mut old = seed.document().clone();
+        old["entities"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|e| e["id"] != "file");
+        let repo = old["entities"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|e| e["id"] == "repository-file")
+            .unwrap();
+        repo["extends"] = json!("managed-object");
+        repo["properties"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"name":"cost_center", "type":"string"}));
+        let mut migrated = Ontology::from_value(old).unwrap();
+        let changed = migrated.add_studio_types();
+        assert!(changed.contains(&"file".to_owned()));
+        assert!(changed.contains(&"repository-file".to_owned()));
+        assert_eq!(
+            migrated
+                .object_type_node("repository-file")
+                .unwrap()
+                .payload["node_type_id"],
+            before_id
+        );
+        assert!(
+            migrated
+                .effective_properties("repository-file")
+                .iter()
+                .any(|p| p.name == "cost_center")
+        );
+        assert!(migrated.add_studio_types().is_empty());
+    }
 
     #[test]
     fn studio_s_own_types_join_a_model_that_lacks_them_once() {
