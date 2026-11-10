@@ -220,3 +220,39 @@ async fn switching_back_returns_the_catalogue_to_the_graph_store() {
         .unwrap();
     assert!(left.is_empty(), "the model keeps no copy");
 }
+
+#[tokio::test]
+async fn every_catalogue_component_type_survives_the_model_storage_boundary() {
+    // SERVICE_TYPE used to be absent from ModelSink's mapping. Reads sent its
+    // graph GTS id to the domain query as an unknown type; writes dropped it.
+    let org = Uuid::new_v4();
+    let (sink, _, _) = rig();
+    let nodes: Vec<_> = cgts::ALL_NODE_TYPES
+        .into_iter()
+        .enumerate()
+        .map(|(at, type_id)| GtsNode {
+            type_id,
+            instance_id: format!("catalog-boundary-{at}"),
+            value: json!({"name": format!("Component {at}")}),
+        })
+        .collect();
+    sink.upsert(&ctx(org), &nodes, &[]).await.unwrap();
+    let graph_types: Vec<_> = cgts::ALL_NODE_TYPES
+        .into_iter()
+        .map(cgts::graph_type_id)
+        .collect();
+    let (rows, truncated) = sink
+        .list_of_types(&ctx(org), &graph_types, 100)
+        .await
+        .unwrap();
+    assert!(!truncated);
+    assert_eq!(rows.len(), nodes.len());
+    for node in nodes {
+        let found = rows
+            .iter()
+            .find(|r| r.instance_id == node.instance_id)
+            .unwrap();
+        assert_eq!(found.type_id, node.type_id);
+        assert_eq!(found.value, node.value);
+    }
+}

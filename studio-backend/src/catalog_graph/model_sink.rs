@@ -34,7 +34,7 @@ use super::sink::{CatalogNodeView, CatalogSink, GraphNodeType};
 use crate::domain_model::port::{DomainObjects, OwnedObject, TypeNeed};
 
 /// Each catalogue node type, the model type it becomes, and how it is named.
-const TYPES: [(&str, &str, &str, &str); 16] = [
+const TYPES: [(&str, &str, &str, &str); 17] = [
     (
         cgts::GEAR_TYPE,
         "gear",
@@ -76,6 +76,12 @@ const TYPES: [(&str, &str, &str, &str); 16] = [
         "frontx-package",
         "FrontX Package",
         "A FrontX micro-frontend package.",
+    ),
+    (
+        cgts::SERVICE_TYPE,
+        "catalog-service",
+        "Catalog Service",
+        "A service image and its service.gdl declaration, distinct from a gear crate.",
     ),
     (
         cgts::FIELD_SCHEMA_TYPE,
@@ -265,7 +271,12 @@ impl ModelSink {
                 held_by: self.owns(type_id).then(|| self.gear.clone()),
                 searchable: matches!(
                     *entity,
-                    "gear" | "catalog-kit" | "frontx-package" | "registry-entry" | "roadmap-item"
+                    "gear"
+                        | "catalog-kit"
+                        | "frontx-package"
+                        | "catalog-service"
+                        | "registry-entry"
+                        | "roadmap-item"
                 ),
             })
             .collect()
