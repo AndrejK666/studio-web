@@ -252,11 +252,27 @@ piece once more, keeps a piece that fails twice as the document's `error` (read
 again on the next build), and stops when the caller has no key. Kept in
 `studio_spec_model_extractions` (`m0015`). Up to four documents are read at
 once (`PARALLEL_READS`); each extraction is kept on its own, so the order they
-finish in changes nothing. `POST /project-domain-model/builds` starts it (with `path`, it
-reads that one document again and replaces only its facts), and
+finish in changes nothing. `POST /project-domain-model/builds` starts it, and
 `GET /project-domain-model/build-estimate?project_id=` says beforehand how many documents
 it would read, their approximate input tokens, and how long it should take at
 the pace of the earlier builds;
+
+**Selecting what a build reads** (`select.rs`). With nothing named, a build
+reads every document not read at its revision. A person, or an agent through
+`project_domain_model_build`, can instead name the specifications to read:
+one `path`, a list of `paths`, a `glob` (`*` within a directory, `**` across
+directories, `?` one character), or any of them together. The selected
+documents are read again whatever their state, their facts replace those
+documents' facts only, and the rest of the model stays as it was. Every name
+is checked against the model's own documents (the typed documents of the
+project's repository, its Studio documents and its uploaded sources): a path
+that is not one of them, or a glob that matches none, refuses the whole build
+with `400` naming them, so nothing is read on a typo. A single `path` alone
+still answers `404`, as it did before the list existed. The estimate takes
+the same selection (`paths` comma-separated, `glob`) and refuses it the same
+way. The build's state lists what it reads again as `paths`.
+
+The rest of the build:
 `GET /project-domain-model` answers the facts of the current revisions, each document's
 state, and the build's progress as the replica answering knows it.
 
@@ -317,10 +333,10 @@ and `project_domain_model_coverage` read the two routes above.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/project-domain-model/builds` | Build a project's model on the caller's key: `202` with the `task_run` to follow |
+| `POST` | `/project-domain-model/builds` | Build a project's model on the caller's key: `202` with the build's state; `path`, `paths` and `glob` select the documents to read again, `400` naming any the model does not have |
 | `GET` | `/project-domain-model/build?project_id=` | The running or last build as the replica answering knows it: `documents`, `done`, `current`, `error`, `started_at`, `finished_at` |
 | `GET` | `/project-domain-model/coverage?project_id=` | What is missing to interpret the model: every document's state (`extracted`, `failed` with its `error`, `stale`, `pending`, `kept`) with its facts and dropped facts; the typed documents not read (`unread_paths`) and why (`unread_because`); the requirements left as `open_questions`, and how many rest on an assumption |
-| `GET` | `/project-domain-model/build-estimate?project_id=` | What a build would read now (or with `path`, one document), its approximate input tokens and seconds |
+| `GET` | `/project-domain-model/build-estimate?project_id=` | What a build would read now (or the documents `path`, `paths` comma-separated and `glob` select), its approximate input tokens and seconds |
 | `GET` | `/project-domain-model?project_id=` | The assembled model: entities with their facts and sources, requirements, constraints, decisions; whether it is stale and which documents are not extracted yet |
 | `GET` | `/project-domain-model/findings?project_id=` | The findings with their sides, fix and decision, filterable by `rule` and `status` |
 | `POST` | `/project-domain-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |

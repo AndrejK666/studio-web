@@ -80,6 +80,9 @@ export interface SpecModelBuild {
   estimated_seconds?: number | null;
   /** The one document this build reads again, when it was asked for one. */
   path?: string | null;
+  /** Every document this build reads again, when some were named (`path`,
+   *  `paths`, `glob`); absent from an older server. */
+  paths?: string[];
 }
 
 export interface SpecModel {

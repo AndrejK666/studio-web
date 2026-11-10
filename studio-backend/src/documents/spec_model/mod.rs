@@ -26,6 +26,7 @@ pub(crate) mod rename;
 pub(crate) mod requirements;
 pub(crate) mod resolve;
 pub(crate) mod rules;
+pub(crate) mod select;
 pub(crate) mod trace;
 pub(crate) mod work;
 

@@ -48,6 +48,8 @@ pub struct BuildState {
     pub estimated_seconds: Option<u64>,
     /// The one document this build reads again, when it was asked for one.
     pub path: Option<String>,
+    /// Every document this build reads again, when some were named.
+    pub paths: Vec<String>,
 }
 
 /// Most documents read at once. Each is a model call on the caller's key, so

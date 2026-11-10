@@ -65,8 +65,10 @@ pub fn tools() -> Vec<Tool> {
             name: "project_domain_model_build",
             description: "Start reading a project's documents into its project domain model, on \
                 your own model key (a build calls a model and costs tokens): every document not \
-                read at its revision, or only the one `path` names, which is read again \
-                whatever its state and whose facts replace only its own. Answers at once with the build's state; follow it with \
+                read at its revision, or only the documents `path`, `paths` or `glob` select, \
+                which are read again whatever their state and whose facts replace only theirs; \
+                a path that is not a document of the model, or a glob matching none, refuses \
+                the build and is named. Answers at once with the build's state; follow it with \
                 `project_domain_model_build_status`. A build already running is answered, not \
                 started twice. Say what you will read first.",
             input_schema: || {
@@ -74,7 +76,11 @@ pub fn tools() -> Vec<Tool> {
                     json!({
                         "project_id": project_id(),
                         "path": { "type": "string",
-                            "description": "One document to read again, as `project_domain_model_coverage` lists it." }
+                            "description": "One document to read again, as `project_domain_model_coverage` lists it." },
+                        "paths": { "type": "array", "items": { "type": "string" }, "maxItems": 500,
+                            "description": "Documents to read again, as `project_domain_model_coverage` lists them." },
+                        "glob": { "type": "string",
+                            "description": "Documents to read again by pattern: `*` within a directory, `**` across, `?` one character (`docs/prd/**`)." }
                     }),
                     &["project_id"],
                 )
@@ -268,6 +274,16 @@ mod tests {
         assert_eq!(r.method, Method::Post);
         assert_eq!(r.path, "/studio-documents/v1/project-domain-model/builds");
         assert_eq!(r.body, json!({ "project_id": "p", "path": "docs/a.md" }));
+        let r = request_of(
+            &all,
+            "project_domain_model_build",
+            json!({ "project_id": "p", "paths": ["docs/a.md"], "glob": "docs/prd/**" }),
+        );
+        assert_eq!(
+            r.body,
+            json!({ "project_id": "p", "paths": ["docs/a.md"], "glob": "docs/prd/**" }),
+            "a selection travels in the body"
+        );
     }
 
     #[test]

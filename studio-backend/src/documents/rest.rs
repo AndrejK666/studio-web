@@ -2852,6 +2852,15 @@ pub struct SpecModelBuildRequest {
     /// that document's facts only, and the rest of the model stays as it is.
     /// Without it, every document not read at its revision is read.
     pub path: Option<String>,
+    /// Documents to read again, as `GET /project-domain-model/coverage`
+    /// lists them (at most 500), beside `path` and `glob`: each is read
+    /// whatever its state, its facts replace that document's only, and a
+    /// path that is not a document of the model refuses the whole build.
+    pub paths: Option<Vec<String>>,
+    /// Documents to read again by pattern: `*` within a directory, `**`
+    /// across directories, `?` one character (`docs/prd/**`). A pattern that
+    /// matches no document refuses the build.
+    pub glob: Option<String>,
 }
 
 /// What a build would read, and about how long it would take.
@@ -2885,6 +2894,13 @@ pub struct SpecBuildEstimateQuery {
     /// with a `path` would.
     #[serde(default)]
     pub path: Option<String>,
+    /// Documents to estimate reading again, comma-separated, as the build's
+    /// `paths`.
+    #[serde(default)]
+    pub paths: Option<String>,
+    /// Documents to estimate reading again by pattern, as the build's `glob`.
+    #[serde(default)]
+    pub glob: Option<String>,
 }
 
 /// A project's build, as the process serving it knows it.
@@ -2909,6 +2925,9 @@ pub struct SpecModelBuildDto {
     pub estimated_seconds: Option<u64>,
     /// The one document this build reads again, when it was asked for one.
     pub path: Option<String>,
+    /// Every document this build reads again, when it was asked for some
+    /// (`path`, `paths`, `glob`); empty when it reads what is not read yet.
+    pub paths: Vec<String>,
 }
 
 impl From<super::spec_model::build::BuildState> for SpecModelBuildDto {
@@ -2931,6 +2950,7 @@ impl From<super::spec_model::build::BuildState> for SpecModelBuildDto {
             finished_at: at(s.finished_at),
             estimated_seconds: s.estimated_seconds,
             path: s.path,
+            paths: s.paths,
         }
     }
 }
@@ -3230,14 +3250,26 @@ async fn start_spec_model_build(
     let models = quality.models()?;
     let (sources, _, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
-    let pending = spec_model_pending(&sources, &coverage, body.path.as_deref())?;
+    let paths = body.paths.clone().unwrap_or_default();
+    let selection = super::spec_model::select::Selection {
+        path: body.path.as_deref(),
+        paths: &paths,
+        glob: body.glob.as_deref(),
+    };
+    let pending = spec_model_pending(&sources, &coverage, selection)?;
     let estimate = spec_model_estimate(&ctx, &service, workspace_id, project_id, &pending).await?;
     if !build::begin(project_id, pending.len()) {
         return Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())));
     }
+    let selected: Vec<String> = if selection.is_empty() {
+        Vec::new()
+    } else {
+        pending.iter().map(|d| d.path.clone()).collect()
+    };
     build::update(project_id, |s| {
         s.estimated_seconds = Some(estimate.seconds);
         s.path.clone_from(&body.path);
+        s.paths = selected;
     });
     let findings_writer = quality.findings();
     let sources_for_record = super::spec_model::Sources {
@@ -3299,25 +3331,45 @@ async fn start_spec_model_build(
 }
 
 /// The documents a build reads: every one not read at its revision, or the
-/// one named by `path` whatever its state (404 when it is not one of the
-/// model's documents).
+/// ones the selection names whatever their state. One `path` alone that is
+/// not one of the model's documents is 404, as it always was; any other
+/// selection naming something the model does not have is 400, naming it.
 fn spec_model_pending(
     sources: &super::spec_model::Sources,
     coverage: &[super::spec_model::Coverage],
-    path: Option<&str>,
+    selection: super::spec_model::select::Selection<'_>,
 ) -> ApiResult<Vec<super::spec_model::SourceText>> {
-    if let Some(path) = path {
-        let doc = sources
-            .documents
-            .iter()
-            .find(|d| d.path == path)
-            .cloned()
-            .ok_or_else(|| {
+    use super::spec_model::select;
+    if !selection.is_empty() {
+        let invalid = |field: &str, why: String| {
+            DocumentsError::invalid_argument()
+                .with_field_violation(field, why, "INVALID")
+                .create()
+        };
+        if selection.paths.len() > select::PATHS_MAX {
+            return Err(invalid(
+                "paths",
+                format!("at most {} paths in one build", select::PATHS_MAX),
+            ));
+        }
+        if selection.glob.is_some_and(|g| g.len() > select::GLOB_MAX) {
+            return Err(invalid(
+                "glob",
+                format!("at most {} characters", select::GLOB_MAX),
+            ));
+        }
+        let only_path = selection.paths.iter().all(|p| p.trim().is_empty())
+            && selection.glob.is_none_or(|g| g.trim().is_empty());
+        return select::select(&sources.documents, selection).map_err(|unknown| {
+            if only_path {
                 DocumentsError::not_found("no such document in the project's model")
                     .with_resource("document")
                     .create()
-            })?;
-        return Ok(vec![doc]);
+            } else {
+                let field = if unknown.paths.is_empty() { "glob" } else { "paths" };
+                invalid(field, unknown.message())
+            }
+        });
     }
     let wanted: std::collections::BTreeSet<&str> =
         super::spec_model::to_read(coverage).into_iter().collect();
@@ -3361,7 +3413,21 @@ async fn get_spec_model_build_estimate(
     let reader = quality.reader()?;
     let (sources, _, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
-    let pending = spec_model_pending(&sources, &coverage, query.path.as_deref())?;
+    let paths: Vec<String> = query
+        .paths
+        .as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let selection = super::spec_model::select::Selection {
+        path: query.path.as_deref(),
+        paths: &paths,
+        glob: query.glob.as_deref(),
+    };
+    let pending = spec_model_pending(&sources, &coverage, selection)?;
     let e = spec_model_estimate(&ctx, &service, workspace_id, project_id, &pending).await?;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     Ok(Json(SpecModelBuildEstimateDto {
@@ -8654,14 +8720,16 @@ pub fn register_routes(
              part-way resumes where it stopped. Up to four documents are read at once. With \
              `path`, only that document is read again, whatever its state: its facts replace \
              its own and the rest of the model stays (404 when it is not one of the model's \
-             documents).",
+             documents). `paths` (a list) and `glob` (`*`, `**`, `?`) select more the same \
+             way, together with `path` or alone; a path that is not a document of the model, \
+             or a glob that matches none, is 400 and names them, and nothing is read.",
         )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
         .json_request::<SpecModelBuildRequest>(
             openapi,
-            "The project, and one document to read again",
+            "The project, and the documents to read again",
         )
         .handler(start_spec_model_build)
         .json_response_with_schema::<SpecModelBuildDto>(openapi, StatusCode::ACCEPTED, "The build")
@@ -8752,16 +8820,20 @@ pub fn register_routes(
         .summary("What a build of a project's model would read, and about how long it would take")
         .description(
             "The documents `POST /project-domain-model/builds` would read now (changed or never read, or \
-             the one `path` names), their size in characters and approximate input tokens \
-             (characters over four), and the seconds reading them should take: at the pace of \
-             the project's earlier builds when there were any (`measured`), else a default. \
-             The judge's stage after the reading is not counted. No model is called.",
+             the ones `path`, `paths` and `glob` select), their size in characters and \
+             approximate input tokens (characters over four), and the seconds reading them \
+             should take: at the pace of the project's earlier builds when there were any \
+             (`measured`), else a default. The judge's stage after the reading is not counted. \
+             No model is called. A selection naming what the model does not have is refused, \
+             as the build refuses it.",
         )
         .tag("StudioDocuments")
         .authenticated()
         .require_license_features::<License>([])
         .query_param("project_id", true, "The project whose build to estimate")
         .query_param("path", false, "One document to estimate reading again")
+        .query_param("paths", false, "Documents to estimate reading again, comma-separated")
+        .query_param("glob", false, "Documents to estimate reading again, by pattern (`docs/prd/**`)")
         .handler(get_spec_model_build_estimate)
         .json_response_with_schema::<SpecModelBuildEstimateDto>(
             openapi,
@@ -8791,6 +8863,8 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .query_param("project_id", true, "The project whose build to estimate")
         .query_param("path", false, "One document to estimate reading again")
+        .query_param("paths", false, "Documents to estimate reading again, comma-separated")
+        .query_param("glob", false, "Documents to estimate reading again, by pattern (`docs/prd/**`)")
         .handler(get_spec_model_build_estimate)
         .json_response_with_schema::<SpecModelBuildEstimateDto>(
             openapi,
@@ -11692,6 +11766,73 @@ mod tests {
         assert_eq!(dto.assumptions, 1);
         assert!(dto.build.running);
         assert_eq!((dto.build.documents, dto.build.done), (3, 1));
+    }
+
+    #[test]
+    fn a_selected_build_reads_what_it_names_whatever_its_state() {
+        use super::super::spec_model::{Coverage, SourceText, Sources, select::Selection};
+        let doc = |path: &str| SourceText {
+            path: path.into(),
+            text: "x".into(),
+            doc_type: None,
+            node: String::new(),
+            binding: None,
+        };
+        let sources = Sources {
+            documents: vec![doc("docs/a.md"), doc("docs/b.md"), doc("notes/c.md")],
+            ..Sources::default()
+        };
+        let coverage: Vec<Coverage> = ["docs/a.md", "docs/b.md", "notes/c.md"]
+            .into_iter()
+            .map(|p| Coverage {
+                path: p.into(),
+                revision: "r".into(),
+                state: if p == "notes/c.md" { "pending" } else { "extracted" },
+                facts: 0,
+                dropped: 0,
+                error: None,
+            })
+            .collect();
+        let all = spec_model_pending(&sources, &coverage, Selection::default())
+            .map(|d| d.len())
+            .ok();
+        assert_eq!(all, Some(1), "only what is not read");
+        let named = ["notes/c.md".to_owned()];
+        let picked = spec_model_pending(
+            &sources,
+            &coverage,
+            Selection {
+                paths: &named,
+                glob: Some("docs/*"),
+                ..Selection::default()
+            },
+        )
+        .map(|d| d.len())
+        .ok();
+        assert_eq!(picked, Some(3), "extracted ones too, when named");
+        let unknown = ["docs/zzz.md".to_owned()];
+        assert!(
+            spec_model_pending(
+                &sources,
+                &coverage,
+                Selection {
+                    paths: &unknown,
+                    ..Selection::default()
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            spec_model_pending(
+                &sources,
+                &coverage,
+                Selection {
+                    path: Some("docs/zzz.md"),
+                    ..Selection::default()
+                }
+            )
+            .is_err()
+        );
     }
 
     #[test]
