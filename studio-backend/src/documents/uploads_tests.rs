@@ -2,7 +2,10 @@ use super::*;
 
 #[test]
 fn csv_json_and_plain_text_are_read_and_nothing_else() {
-    assert_eq!(accept("survey.csv", "a,b\n1,2\n").map(|a| a.kind), Ok("csv"));
+    assert_eq!(
+        accept("survey.csv", "a,b\n1,2\n").map(|a| a.kind),
+        Ok("csv")
+    );
     assert_eq!(accept("Survey.TSV", "a\tb\n").map(|a| a.kind), Ok("csv"));
     assert_eq!(accept("notes.txt", "Hello").map(|a| a.kind), Ok("text"));
     assert_eq!(accept("events.json", "[1]").map(|a| a.kind), Ok("json"));
@@ -24,7 +27,10 @@ fn a_name_cannot_leave_its_project_or_hide() {
     assert!(accept("dir/x.csv", "a").is_err());
     assert!(accept(".x.csv", "a").is_err());
     assert!(accept("  interviews (march).csv ", "a").is_ok());
-    assert_eq!(accept(" a.csv ", "a").map(|a| a.name), Ok("a.csv".to_owned()));
+    assert_eq!(
+        accept(" a.csv ", "a").map(|a| a.name),
+        Ok("a.csv".to_owned())
+    );
 }
 
 #[test]

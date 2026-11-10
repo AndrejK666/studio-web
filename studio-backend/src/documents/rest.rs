@@ -3433,7 +3433,11 @@ fn spec_model_pending(
                     .with_resource("document")
                     .create()
             } else {
-                let field = if unknown.paths.is_empty() { "glob" } else { "paths" };
+                let field = if unknown.paths.is_empty() {
+                    "glob"
+                } else {
+                    "paths"
+                };
                 invalid(field, unknown.message())
             }
         });
@@ -6513,7 +6517,10 @@ async fn review_spec_model_facts(
                 ));
             }
             (_, Some(_)) => {
-                return Err(invalid("value", "only a correction (corrected) takes a value"));
+                return Err(invalid(
+                    "value",
+                    "only a correction (corrected) takes a value",
+                ));
             }
             (_, None) => None,
         };
@@ -9016,11 +9023,7 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .query_param("project_id", true, "The project")
         .handler(get_spec_model_coverage)
-        .json_response_with_schema::<SpecModelCoverageDto>(
-            openapi,
-            StatusCode::OK,
-            "The coverage",
-        )
+        .json_response_with_schema::<SpecModelCoverageDto>(openapi, StatusCode::OK, "The coverage")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -9076,8 +9079,16 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .query_param("project_id", true, "The project whose build to estimate")
         .query_param("path", false, "One document to estimate reading again")
-        .query_param("paths", false, "Documents to estimate reading again, comma-separated")
-        .query_param("glob", false, "Documents to estimate reading again, by pattern (`docs/prd/**`)")
+        .query_param(
+            "paths",
+            false,
+            "Documents to estimate reading again, comma-separated",
+        )
+        .query_param(
+            "glob",
+            false,
+            "Documents to estimate reading again, by pattern (`docs/prd/**`)",
+        )
         .handler(get_spec_model_build_estimate)
         .json_response_with_schema::<SpecModelBuildEstimateDto>(
             openapi,
@@ -9741,11 +9752,7 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .query_param("project_id", true, "The project")
         .handler(list_spec_model_uploads)
-        .json_response_with_schema::<SpecModelUploadListDto>(
-            openapi,
-            StatusCode::OK,
-            "The uploads",
-        )
+        .json_response_with_schema::<SpecModelUploadListDto>(openapi, StatusCode::OK, "The uploads")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -9768,37 +9775,32 @@ pub fn register_routes(
         .require_license_features::<License>([])
         .json_request::<SpecModelUploadRequest>(openapi, "The project, the name and the text")
         .handler(upload_spec_model_source)
-        .json_response_with_schema::<SpecModelUploadDto>(
-            openapi,
-            StatusCode::CREATED,
-            "The upload",
-        )
+        .json_response_with_schema::<SpecModelUploadDto>(openapi, StatusCode::CREATED, "The upload")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::delete(
-        "/studio-documents/v1/project-domain-model/uploads/{upload_id}",
-    )
-    .operation_id("studio_documents.delete_project_domain_model_upload")
-    .summary("Remove an uploaded source from a project's model")
-    .description(
-        "Forgets the upload and removes its file; its facts leave the model with it.",
-    )
-    .tag("StudioDocuments")
-    .authenticated()
-    .require_license_features::<License>([])
-    .path_param("upload_id", "The upload's `id`")
-    .query_param("project_id", true, "The project")
-    .handler(delete_spec_model_upload)
-    .no_content_response(StatusCode::NO_CONTENT, "Removed")
-    .error_400(openapi)
-    .error_401(openapi)
-    .error_404(openapi)
-    .error_500(openapi)
-    .register(router, openapi);
+    router =
+        OperationBuilder::delete("/studio-documents/v1/project-domain-model/uploads/{upload_id}")
+            .operation_id("studio_documents.delete_project_domain_model_upload")
+            .summary("Remove an uploaded source from a project's model")
+            .description(
+                "Forgets the upload and removes its file; its facts leave the model with it.",
+            )
+            .tag("StudioDocuments")
+            .authenticated()
+            .require_license_features::<License>([])
+            .path_param("upload_id", "The upload's `id`")
+            .query_param("project_id", true, "The project")
+            .handler(delete_spec_model_upload)
+            .no_content_response(StatusCode::NO_CONTENT, "Removed")
+            .error_400(openapi)
+            .error_401(openapi)
+            .error_404(openapi)
+            .error_500(openapi)
+            .register(router, openapi);
 
     router = OperationBuilder::post("/studio-documents/v1/project-domain-model/glossary/distinct")
         .operation_id("studio_documents.decide_project_domain_model_glossary_distinct")
@@ -12162,7 +12164,11 @@ mod tests {
             .map(|p| Coverage {
                 path: p.into(),
                 revision: "r".into(),
-                state: if p == "notes/c.md" { "pending" } else { "extracted" },
+                state: if p == "notes/c.md" {
+                    "pending"
+                } else {
+                    "extracted"
+                },
                 facts: 0,
                 dropped: 0,
                 error: None,

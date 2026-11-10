@@ -1796,7 +1796,9 @@ mod m0029 {
             }
             manager
                 .get_connection()
-                .execute_unprepared("ALTER TABLE studio_spec_model_reviews DROP COLUMN IF EXISTS value;")
+                .execute_unprepared(
+                    "ALTER TABLE studio_spec_model_reviews DROP COLUMN IF EXISTS value;",
+                )
                 .await?;
             Ok(())
         }

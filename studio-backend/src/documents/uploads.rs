@@ -87,8 +87,8 @@ pub fn accept(name: &str, content: &str) -> Result<Accepted, String> {
         return Err("the file is not text".to_owned());
     }
     let content = if kind == "json" {
-        let value: serde_json::Value = serde_json::from_str(content)
-            .map_err(|e| format!("the file is not JSON: {e}"))?;
+        let value: serde_json::Value =
+            serde_json::from_str(content).map_err(|e| format!("the file is not JSON: {e}"))?;
         serde_json::to_string_pretty(&value).map_err(|e| e.to_string())? + "\n"
     } else {
         content.replace("\r\n", "\n")

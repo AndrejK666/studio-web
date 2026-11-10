@@ -2249,9 +2249,7 @@ impl DocumentsService {
         if rows.is_empty() {
             // No typed repository document yet; uploaded sources are read
             // all the same, so a project can start from them.
-            let (documents, unread) = self
-                .upload_sources(ctx, workspace_id, project_id)
-                .await?;
+            let (documents, unread) = self.upload_sources(ctx, workspace_id, project_id).await?;
             return Ok(ReadSources {
                 sources: super::spec_model::Sources {
                     documents,
@@ -2319,9 +2317,7 @@ impl DocumentsService {
         let documents = documents.into_iter().chain(unbound_domain_doc);
         let mut documents: Vec<super::spec_model::SourceText> = documents.collect();
         documents.extend(self.studio_sources(ctx, workspace_id, project_id).await?);
-        let (uploaded, uploads_unread) = self
-            .upload_sources(ctx, workspace_id, project_id)
-            .await?;
+        let (uploaded, uploads_unread) = self.upload_sources(ctx, workspace_id, project_id).await?;
         documents.extend(uploaded);
         unread.extend(uploads_unread);
         Ok(ReadSources {

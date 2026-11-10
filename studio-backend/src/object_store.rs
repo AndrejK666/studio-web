@@ -288,7 +288,10 @@ impl ObjectStore for FileStorageStore {
             version_id: ticket.version_id,
             name: name.to_string(),
             mime: mime.to_string(),
-            size: u64::try_from(version.size).ok().filter(|s| *s > 0).unwrap_or(size),
+            size: u64::try_from(version.size)
+                .ok()
+                .filter(|s| *s > 0)
+                .unwrap_or(size),
             checksum,
         })
     }

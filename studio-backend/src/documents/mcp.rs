@@ -391,7 +391,10 @@ mod tests {
             json!({ "project_id": "p", "upload_id": "u1" }),
         );
         assert_eq!(r.method, Method::Delete);
-        assert_eq!(r.path, "/studio-documents/v1/project-domain-model/uploads/u1");
+        assert_eq!(
+            r.path,
+            "/studio-documents/v1/project-domain-model/uploads/u1"
+        );
         assert_eq!(r.query, vec![("project_id".to_owned(), "p".to_owned())]);
         let remove = all
             .iter()
