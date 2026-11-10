@@ -3253,7 +3253,7 @@ mod tests {
         let mut replay = before.clone();
         json_patch::patch(
             &mut replay,
-            &serde_json::from_value(revision.patch.clone()).unwrap(),
+            &serde_json::from_value::<json_patch::Patch>(revision.patch.clone()).unwrap(),
         )
         .unwrap();
         assert_eq!(replay, after);

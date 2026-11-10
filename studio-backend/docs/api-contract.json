@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 253,
+  "open_violations": 254,
   "operations": [
     {
       "method": "DELETE",
@@ -94,6 +94,20 @@
       "errors": [
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-documents/v1/project-domain-model/uploads/{upload_id}",
+      "operation_id": "studio_documents.delete_project_domain_model_upload",
+      "tag": "StudioDocuments",
+      "summary": "Remove an uploaded source from a project's model",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -1324,6 +1338,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/build",
+      "operation_id": "studio_documents.get_project_domain_model_build",
+      "tag": "StudioDocuments",
+      "summary": "A project's running or last build of its model",
+      "authenticated": true,
+      "responses": [
+        "SpecModelBuildDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/project-domain-model/build-estimate",
       "operation_id": "studio_documents.get_project_domain_model_build_estimate",
       "tag": "StudioDocuments",
@@ -1358,6 +1389,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/coverage",
+      "operation_id": "studio_documents.get_project_domain_model_coverage",
+      "tag": "StudioDocuments",
+      "summary": "What a project's model has read, what it has not and why",
+      "authenticated": true,
+      "responses": [
+        "SpecModelCoverageDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/project-domain-model/decisions",
       "operation_id": "studio_documents.list_project_domain_model_decisions",
       "tag": "StudioDocuments",
@@ -1365,6 +1413,23 @@
       "authenticated": true,
       "responses": [
         "SpecModelDecisionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/doc-quality",
+      "operation_id": "studio_documents.list_project_domain_model_doc_quality",
+      "tag": "StudioDocuments",
+      "summary": "What would make a project's documentation better, each change ready to save",
+      "authenticated": true,
+      "responses": [
+        "DocQualityRowListDto"
       ],
       "errors": [
         "400",
@@ -1569,6 +1634,23 @@
       "authenticated": true,
       "responses": [
         "RequirementTraceListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/uploads",
+      "operation_id": "studio_documents.list_project_domain_model_uploads",
+      "tag": "StudioDocuments",
+      "summary": "The sources uploaded to a project's model",
+      "authenticated": true,
+      "responses": [
+        "SpecModelUploadListDto"
       ],
       "errors": [
         "400",
@@ -3229,6 +3311,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/project-creations/{run_id}",
+      "operation_id": "studio_organizations.get_project_creation",
+      "tag": "StudioOrganizations",
+      "summary": "Where a project's creation stands",
+      "authenticated": true,
+      "responses": [
+        "ProjectCreationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/project-status",
       "operation_id": "studio_organizations.get_project_status",
       "tag": "StudioOrganizations",
@@ -3474,6 +3573,38 @@
       "errors": [
         "401",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/product-infra",
+      "operation_id": "studio_product.get_product_infra",
+      "tag": "StudioProduct",
+      "summary": "A product's infra services, as its description says them",
+      "authenticated": true,
+      "responses": [
+        "ProductInfraDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/product-kind",
+      "operation_id": "studio_product.get_product_kind",
+      "tag": "StudioProduct",
+      "summary": "What the product is: Studio's proposal from the specs, and the choice",
+      "authenticated": true,
+      "responses": [
+        "ProductKindDto"
+      ],
+      "errors": [
+        "401",
         "500"
       ]
     },
@@ -5193,7 +5324,7 @@
       "path": "/studio-documents/v1/project-domain-model/reviews",
       "operation_id": "studio_documents.decide_project_domain_model_fact_reviews",
       "tag": "StudioDocuments",
-      "summary": "Accept, reject or put back a selection of facts in one action",
+      "summary": "Accept, reject, correct or put back a selection of facts in one action",
       "authenticated": true,
       "request": "SpecModelReviewRequest",
       "responses": [
@@ -5216,6 +5347,24 @@
       "request": "SpecModelSentenceRequest",
       "responses": [
         "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/uploads",
+      "operation_id": "studio_documents.upload_project_domain_model_source",
+      "tag": "StudioDocuments",
+      "summary": "Upload a CSV, JSON or plain-text source for a project's model to read",
+      "authenticated": true,
+      "request": "SpecModelUploadRequest",
+      "responses": [
+        "SpecModelUploadDto"
       ],
       "errors": [
         "400",
@@ -6538,6 +6687,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-organizations/v1/project-creations",
+      "operation_id": "studio_organizations.create_project",
+      "tag": "StudioOrganizations",
+      "summary": "Create a project, as one background run",
+      "authenticated": true,
+      "request": "CreateProjectRequest",
+      "responses": [
+        "ProjectCreationDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-presence/v1/me",
       "operation_id": "studio_presence.update_my_presence",
       "tag": "StudioPresence",
@@ -6688,6 +6855,41 @@
       "request": "ProductDescriptionCheckRequest",
       "responses": [
         "ProductDescriptionCheckDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/product-description-edits",
+      "operation_id": "studio_product.create_product_description_edit",
+      "tag": "StudioProduct",
+      "summary": "Edit a product's description by operation and save the next revision",
+      "authenticated": true,
+      "request": "DescriptionEditsRequest",
+      "responses": [
+        "DescriptionEditsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/product-description-outlines",
+      "operation_id": "studio_product.analyze_product_description",
+      "tag": "StudioProduct",
+      "summary": "What a product description says: infra, profiles, and which lines say what",
+      "authenticated": true,
+      "request": "DescriptionOutlineRequest",
+      "responses": [
+        "DescriptionOutlineDto"
       ],
       "errors": [
         "400",
@@ -7854,6 +8056,40 @@
         "401",
         "403",
         "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/product-infra",
+      "operation_id": "studio_product.update_product_infra",
+      "tag": "StudioProduct",
+      "summary": "Save a product's infra services: the description, and the project's list",
+      "authenticated": true,
+      "request": "PutProductInfraRequest",
+      "responses": [
+        "ProductInfraDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/product-kind",
+      "operation_id": "studio_product.confirm_product_kind",
+      "tag": "StudioProduct",
+      "summary": "Confirm what the product is",
+      "authenticated": true,
+      "request": "PutProductKindRequest",
+      "responses": [
+        "ProductKindDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "500"
       ]
     },
