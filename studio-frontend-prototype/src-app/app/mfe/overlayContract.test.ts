@@ -68,6 +68,7 @@ type PresentedExtension = Extension & {
     placement?: string;
     section?: string;
     parentSection?: string;
+    kit?: string;
   };
 };
 
@@ -383,6 +384,10 @@ describe('generated MFE manifest', () => {
         'Specs',
         // The Tests kit's own screen (ADR-0069), between the shell's sections.
         'Tests',
+        // The Product kit's two (product-mfe): Product (product-releases) and
+        // the project's Components (components), after Tests as in the prototype.
+        'Product',
+        'Components',
         'Sources',
         // The Releases kit's screen (order 36, ADR-0056 §4): right after Sources (35).
         'Releases',
@@ -407,11 +412,13 @@ describe('generated MFE manifest', () => {
 
       // The project's own sections share one entry: that is what lets the
       // shell relay a section instead of mounting eight screens. A kit's tab
-      // (ADR-0069) is a screen of its own, with no section to relay.
-      const sections = project.filter((ext) => ext.presentation?.section);
+      // (ADR-0069) is a screen of its own, never the shell's entry; a kit with
+      // several tabs on one entry (product-mfe: Product and Components)
+      // switches on sections of its own.
+      const sections = project.filter((ext) => ext.presentation?.section && !ext.presentation?.kit);
       expect(new Set(sections.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
       expect(sections.length).toBeGreaterThan(1);
-      const kitTabs = project.filter((ext) => !ext.presentation?.section);
+      const kitTabs = project.filter((ext) => ext.presentation?.kit || !ext.presentation?.section);
       for (const tab of kitTabs) expect(tab.entry).not.toBe(workspaceEntry);
     });
 
