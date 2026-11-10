@@ -409,6 +409,24 @@ describe('generated MFE manifest', () => {
       ]);
     });
 
+    it("draws Admin's sections in the prototype's order", () => {
+      const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'admin');
+      expect(tabs.map((ext) => ext.presentation.label)).toEqual([
+        'Organizations',
+        'People',
+        'Access',
+        'Integrations',
+        'Secrets',
+        // The Studio domain model (admin-mfe, order 60, ADR-0066): before
+        // Objects, where the prototype's Admin had "Domain model". Not the
+        // project's "Project domain model" kit tab.
+        'Studio domain model',
+        'Objects',
+        'All identities',
+        'Project tenants',
+      ]);
+    });
+
     it('declares the project sections on the entry they are sections of', () => {
       // The editor is a project-level screen too, but hidden: no tab.
       const project = screens.filter(

@@ -5,8 +5,9 @@
  * people (`studio-user`), the identity directory (`studio-identity`), teams
  * (`resource-group`), the access catalogue and the logo
  * (`studio-organizations`), secrets (`credstore`), connections
- * (`studio-connector`) and the type catalogue (`studio-components-catalog`,
- * `types-registry`). Each route names its gear behind the gateway prefix.
+ * (`studio-connector`), the type catalogue (`studio-components-catalog`,
+ * `types-registry`) and the Studio domain model (`studio-domain-model`). Each
+ * route names its gear behind the gateway prefix.
  *
  * Reads the shared `AccountsApiService` already has (me, a tenant, children,
  * tenant metadata) are taken from there, not repeated here.
@@ -21,6 +22,9 @@ import type {
   ConnectorIdentity,
   ConnectorProvider,
   Conversion,
+  DomainModelEdit,
+  DomainTypeCounts,
+  DomainTypesResponse,
   EnvironmentUse,
   GtsEntityPage,
   Group,
@@ -360,4 +364,53 @@ export class AdminApiService extends BaseApiService {
   }
 
   readonly gtsTypeTitles = this.protocol(RestEndpointProtocol).query<GtsEntityPage>('/types-registry/v1/entities');
+
+  /*
+   * ── studio-domain-model: the Studio domain model (ADR-0066) ──
+   * Per organization: the prototype named the organization on screen
+   * (`?organization_id=`, its `orgScoped`), since a platform administrator's
+   * home tenant is the platform root, whose model is not the organization's.
+   */
+
+  /** The organization's model, and whether the caller may change it. */
+  readonly domainTypes = this.protocol(RestEndpointProtocol).queryWith<DomainTypesResponse, { orgId: string }>(
+    ({ orgId }) => `/studio-domain-model/v1/types?${q({ organization_id: orgId })}`
+  );
+
+  /** How many objects of each type the organization holds. */
+  readonly domainTypeCounts = this.protocol(RestEndpointProtocol).queryWith<DomainTypeCounts, { orgId: string }>(
+    ({ orgId }) => `/studio-domain-model/v1/type-counts?${q({ organization_id: orgId })}`
+  );
+
+  /** Add a type to the model: it starts with no fields of its own. */
+  createDomainType(orgId: string) {
+    return this.rest.mutation<
+      DomainModelEdit,
+      { id: string; name?: string; description?: string; bucket?: string; extends?: string }
+    >('POST', `/studio-domain-model/v1/types?${q({ organization_id: orgId })}`);
+  }
+
+  /** Add a field to a type; objects written from now on may carry it. */
+  addDomainField(orgId: string, type: string) {
+    return this.rest.mutation<DomainModelEdit, { name: string; type: string; description?: string; required?: boolean }>(
+      'POST',
+      `/studio-domain-model/v1/types/${e(type)}/fields?${q({ organization_id: orgId })}`
+    );
+  }
+
+  /** Rename, retype, require or describe a field the type itself declares. */
+  editDomainField(orgId: string, type: string, name: string) {
+    return this.rest.mutation<
+      DomainModelEdit,
+      { rename_to?: string; type?: string; required?: boolean; description?: string }
+    >('PATCH', `/studio-domain-model/v1/types/${e(type)}/fields/${e(name)}?${q({ organization_id: orgId })}`);
+  }
+
+  /** Drop a field the type itself declares. Stored values stay in the objects. */
+  removeDomainField(orgId: string, type: string, name: string) {
+    return this.rest.mutation<unknown, void>(
+      'DELETE',
+      `/studio-domain-model/v1/types/${e(type)}/fields/${e(name)}?${q({ organization_id: orgId })}`
+    );
+  }
 }

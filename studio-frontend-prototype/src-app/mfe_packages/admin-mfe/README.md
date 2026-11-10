@@ -16,6 +16,7 @@ the prototype rendered `ConnectorsView` with the organization for both.
 | Access | `AccessView` (`App.tsx`), `access.ts` | account-management (metadata), studio-organizations (catalogue), studio-user, resource-group |
 | Integrations (and Organization › Connections) | `ConnectorsView`, `AddConnector`, `ConnectionList`, `EditConnection`, `RepoBrowser` (`App.tsx`), `connector-logos.tsx`, `kubeconfig-field.tsx` | studio-connector, studio-environments, account-management (project config), studio-components-catalog (sync) |
 | Secrets | `SecretsView` (`App.tsx`) | credstore, account-management, studio-connector |
+| Studio domain model | `DomainModelAdmin` (`domain-model-admin.tsx`), `domain-origin.ts`, the pure part of `domain-runtime.ts` (studio-frontend-poc/) | studio-domain-model |
 | Objects | `ObjectTypes` (`object-types.tsx`) | studio-components-catalog, types-registry |
 | All identities | `IdentityDirectory` (`identity-directory.tsx`) | studio-identity, account-management |
 | Project tenants | `WorkspacesView` (`App.tsx`) | account-management |
@@ -30,6 +31,10 @@ else.
   pure parts of `project-sources.ts` and `environments.ts`, with tests.
 - `src/model/members.ts`, `secrets.ts`, `objects.ts` — the pure helpers the
   prototype kept inside its screens, lifted out and tested.
+- `src/model/domain-origin.ts` — the prototype's, with its tests, plus the `kit` origin
+  (`meta.origin = "kit"`, `meta.kit`, ADR-0067 §6); `domain-runtime.ts` — the pure part
+  of the prototype's (no seed, no global loader); `domain-admin.ts` — the screen's
+  grouping, counts and form rules, lifted out and tested.
 - `src/api/AdminApiService.ts` — every route the sections call.
 
-Not here yet (see `docs/parity.md`): Studio domain model (Admin › Domain model), Views.
+Not here yet (see `docs/parity.md`): Views.
