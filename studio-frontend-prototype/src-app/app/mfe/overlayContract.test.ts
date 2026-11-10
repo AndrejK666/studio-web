@@ -291,13 +291,15 @@ describe('generated MFE manifest', () => {
         value,
       } as never);
 
-    it('is declared as a domain action by projects-mfe, and by no other entry', () => {
-      // #319: the MFE asks; the answer below is the shell's (#320).
+    it('is declared as a domain action by projects-mfe and issues-mfe, and by no other entry', () => {
+      // #319: the MFE asks; the answer below is the shell's (#320). The Issues
+      // kit opens a passage's document in the editor, as the prototype's tab did.
       const entries = manifests.flatMap((config) => config.entries);
       const declaring = entries.filter((entry) =>
         (entry.domainActions ?? []).includes(STUDIO_ACTION_ARTIFACT_OPEN)
       );
-      expect(declaring.map((entry) => entry.id)).toEqual([
+      expect(declaring.map((entry) => entry.id).sort()).toEqual([
+        expect.stringContaining('constructor_studio.issues.mfe.main'),
         expect.stringContaining('constructor_studio.projects.mfe.main'),
       ]);
     });
@@ -380,6 +382,9 @@ describe('generated MFE manifest', () => {
       const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'project');
       expect(tabs.map((ext) => ext.presentation.label)).toEqual([
         'Overview',
+        // The Issues kit's screen (issues-mfe, order 15): right after Overview,
+        // where the prototype put it — what to decide comes before the work.
+        'Issues',
         'Artifacts',
         'Specs',
         // The Tests kit's own screen (ADR-0069), between the shell's sections.
