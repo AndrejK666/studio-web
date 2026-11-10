@@ -96,16 +96,20 @@ function setUp({
   environments = [env({}), env({ id: 'e-prod', name: 'prod', protected: true, promote_from: 'e-dev' })],
   deployments = [deployment({}), deployment({ id: 'd0', environment_id: 'e-dev', environment_name: 'dev', state: 'succeeded', chart_version: '1.1.0' })],
   environmentsError,
+  kits = ['org-infrastructure', 'research-integration'],
 }: {
   mayManage?: boolean;
   environments?: DeployEnvironment[];
   deployments?: Deployment[];
   environmentsError?: Error;
+  /** The kits that apply to the organization. */
+  kits?: string[];
 } = {}) {
   calls.length = 0;
   for (const k of Object.keys(service)) delete service[k];
   const list: EnvironmentList = { items: environments, total: environments.length, may_manage: mayManage, open_clusters: { connection_ids: [] } };
   Object.assign(service, {
+    installedKits: read('installedKits', { effective: kits.map((kit_slug) => ({ kit_slug, version: '1' })) }),
     environments: read('environments', environmentsError ?? list),
     connections: read('connections', {
       items: [conn({}), conn({ id: 'c-reg', provider: 'registry', label: 'ghcr', base_url: 'https://ghcr.io' })],
@@ -287,6 +291,17 @@ describe('Organization › Infrastructure', () => {
     fireEvent.click(await screen.findByText('add_place'));
     fireEvent.click(await screen.findByText('add_place_research'));
     expect(openScreen).toHaveBeenCalledWith(null, '/connections');
+  });
+
+  it('sends an organization without the Research Integration kit to its kits', async () => {
+    openScreen.mockReset();
+    setUp({ kits: ['org-infrastructure'] });
+    renderScreen();
+    await waitFor(() => expect(calls.some((c) => c.name === 'installedKits')).toBe(true));
+    fireEvent.click(await screen.findByText('add_place'));
+    fireEvent.click(await screen.findByText('add_place_research_kit'));
+    expect(openScreen).toHaveBeenCalledWith(null, '/organization-kits');
+    expect(openScreen).not.toHaveBeenCalledWith(null, '/connections');
   });
 
   it('offers no changes and no administrator tabs to a member who may not manage', async () => {

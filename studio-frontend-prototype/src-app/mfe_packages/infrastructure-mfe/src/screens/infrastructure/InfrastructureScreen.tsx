@@ -59,6 +59,7 @@ import {
   type ClusterCard,
 } from '../../model/environments';
 import { databaseWord, ladderOrder, whatRunsWhere } from '../../model/releases';
+import { researchKitApplies } from '../../model/research';
 import { useInfrastructureTranslations } from '../../i18n';
 import { AddCluster, AddRegistry } from './AddPlace';
 import { EnvironmentForm, type ProjectRef } from './EnvironmentForm';
@@ -94,7 +95,11 @@ export const InfrastructureScreen: React.FC<{ bridge: ChildMfeBridge | null }> =
       ) : (
         <InfraProvider value={{ t, language, org, container: containerRef }}>
           {/* Keyed by the organization: another organization is another read, from nothing. */}
-          <OrgInfrastructure key={org.id} onOpenConnections={() => openScreen(bridge, '/connections')} />
+          <OrgInfrastructure
+            key={org.id}
+            onOpenConnections={() => openScreen(bridge, '/connections')}
+            onOpenKits={() => openScreen(bridge, '/organization-kits')}
+          />
         </InfraProvider>
       )}
     </div>
@@ -123,8 +128,10 @@ interface Health {
 
 type Tab = 'ladder' | 'where' | 'namespaces' | 'retention';
 
-/** "Add a place ▾": the one way a place is added, whatever its kind. */
-function AddPlaceMenu({ onPick }: { onPick: (kind: PlaceKind) => void }) {
+/** "Add a place ▾": the one way a place is added, whatever its kind. A
+ *  Research project comes with the Research Integration kit: without it the
+ *  entry says so and opens the organization's kits. */
+function AddPlaceMenu({ onPick, researchKit }: { onPick: (kind: PlaceKind) => void; researchKit: boolean }) {
   const { t, container } = useInfra();
   const item = (kind: PlaceKind, sub: string) => (
     <DropdownMenuItem key={kind} onClick={() => onPick(kind)} data-add-place={kind}>
@@ -147,7 +154,7 @@ function AddPlaceMenu({ onPick }: { onPick: (kind: PlaceKind) => void }) {
       />
       <DropdownMenuContent align="end" container={container}>
         {item('cluster', t('add_place_cluster'))}
-        {item('research', t('add_place_research'))}
+        {item('research', researchKit ? t('add_place_research') : t('add_place_research_kit'))}
         {item('registry', t('add_place_registry'))}
       </DropdownMenuContent>
     </DropdownMenu>
@@ -196,7 +203,7 @@ function EnvironmentMenu({
 }
 
 /** The organization's projects: those under its workspaces and under it. */
-function useProjects(orgId: string): { projects: ProjectRef[]; workspaceIds: string[] } {
+export function useProjects(orgId: string): { projects: ProjectRef[]; workspaceIds: string[] } {
   const [read, setRead] = useState<{ projects: ProjectRef[]; workspaceIds: string[] }>({ projects: [], workspaceIds: [] });
   useEffect(() => {
     let live = true;
@@ -227,7 +234,7 @@ function useProjects(orgId: string): { projects: ProjectRef[]; workspaceIds: str
   return read;
 }
 
-function OrgInfrastructure({ onOpenConnections }: { onOpenConnections: () => void }) {
+function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnections: () => void; onOpenKits: () => void }) {
   const { t, org } = useInfra();
   const api = useApi();
   const [environments, setEnvironments] = useState<DeployEnvironment[] | null>(null);
@@ -254,6 +261,20 @@ function OrgInfrastructure({ onOpenConnections }: { onOpenConnections: () => voi
   const load = useCallback(() => setRound((n) => n + 1), []);
   const { projects, workspaceIds } = useProjects(org.id);
   const people = usePeople([org.id, ...workspaceIds]);
+  /** Whether the organization has the Research Integration kit; null until
+   *  read, or when studio-kits does not answer (then nothing is held back). */
+  const [researchKit, setResearchKit] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .installedKits({ organizationId: org.id })
+      .fetch({ staleTime: 0 })
+      .then((kits) => live && setResearchKit(researchKitApplies(kits)))
+      .catch(() => live && setResearchKit(null));
+    return () => {
+      live = false;
+    };
+  }, [api, org.id]);
 
   useEffect(() => {
     let live = true;
@@ -427,7 +448,8 @@ function OrgInfrastructure({ onOpenConnections }: { onOpenConnections: () => voi
         ? t.count('projects_count', e.projects.length)
         : t('projects_every');
   const opened = places.find((p) => p.id === panel) ?? null;
-  const pickPlace = (kind: PlaceKind) => (kind === 'research' ? onOpenConnections() : setAdding(kind));
+  const pickPlace = (kind: PlaceKind) =>
+    kind === 'research' ? (researchKit === false ? onOpenKits() : onOpenConnections()) : setAdding(kind);
   const closePanel = () => {
     setPanel(null);
     setEditing(null);
@@ -496,7 +518,7 @@ function OrgInfrastructure({ onOpenConnections }: { onOpenConnections: () => voi
         </div>
         {mayManage && (
           <div className={styles.headerAction}>
-            <AddPlaceMenu onPick={pickPlace} />
+            <AddPlaceMenu onPick={pickPlace} researchKit={researchKit !== false} />
           </div>
         )}
       </header>
@@ -663,7 +685,7 @@ function OrgInfrastructure({ onOpenConnections }: { onOpenConnections: () => voi
           </EmptyHeader>
           {mayManage && (
             <EmptyActions>
-              <AddPlaceMenu onPick={pickPlace} />
+              <AddPlaceMenu onPick={pickPlace} researchKit={researchKit !== false} />
             </EmptyActions>
           )}
         </Empty>

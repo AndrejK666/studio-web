@@ -25,6 +25,7 @@
   "add_place": "Добавить площадку",
   "add_place_cluster": "кластер Kubernetes, по его kubeconfig",
   "add_place_research": "ваш вход в проект Research",
+  "add_place_research_kit": "приходит с китом Research Integration: поставьте его в разделе «Киты»",
   "add_place_registry": "куда публикуются образы и чарты",
   "kind_cluster": "Кластер",
   "kind_research": "Constructor Research",

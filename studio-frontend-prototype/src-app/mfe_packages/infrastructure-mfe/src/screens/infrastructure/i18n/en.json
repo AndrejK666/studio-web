@@ -21,6 +21,7 @@
   "add_place": "Add a place",
   "add_place_cluster": "a Kubernetes cluster, by its kubeconfig",
   "add_place_research": "your sign-in to a Research project",
+  "add_place_research_kit": "comes with the Research Integration kit: install it under Kits",
   "add_place_registry": "where images and charts are pushed",
   "kind_cluster": "Cluster",
   "kind_research": "Constructor Research",

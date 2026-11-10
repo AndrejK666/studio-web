@@ -29,6 +29,9 @@ export default defineConfig({
       filename: 'remoteEntry.js',
       exposes: {
         './lifecycle': './src/lifecycle.tsx',
+        // Second entry: Organization › Research, the research-integration
+        // kit's screen (its own lifecycle: one singleton holds one root).
+        './researchLifecycle': './src/researchLifecycle.tsx',
       },
       // Empty shared config — MF 2.0's shared dep mechanism is bypassed.
       // Shared deps are externalized via rollupOptions.external and provided
@@ -37,6 +40,9 @@ export default defineConfig({
       // mf-manifest.json must be generated alongside remoteEntry.js so that
       // MfeHandlerMF can discover expose chunk paths without regex-parsing the bundle.
       manifest: true,
+      // The one stylesheet goes to every entry, as in projects-mfe: the
+      // Research screen is built mostly from Infrastructure's parts.
+      bundleAllCSS: true,
     }),
     frontxMfGts(),
   ],
@@ -45,7 +51,12 @@ export default defineConfig({
     modulePreload: false,
     /** Default Vite prod behavior; MfeHandlerMF integration test asserts compatibility. */
     minify: true,
-    cssCodeSplit: true,
+    /*
+     * OFF with two exposes, as in projects-mfe: Rollup would lift the parts
+     * both screens share into a common chunk whose CSS `mf-manifest.json`
+     * credits to neither expose, and the handler would never inject it.
+     */
+    cssCodeSplit: false,
     rollupOptions: {
       // Preserve bare specifiers for shared deps in the output chunks.
       // The handler rewrites these to blob URLs at runtime.

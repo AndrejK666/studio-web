@@ -442,6 +442,8 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     "GET /studio-environments/v1/registries/{connection_id}/orphans",
                     "GET /studio-connector/v1/connections",
                     "POST /studio-connector/v1/connections/{id}/test",
+                    // Whether a Research place may be added (research-integration).
+                    "GET /studio-kits/v1/installed-kits",
                 ]),
                 writes: owned(&[
                     "POST /studio-environments/v1/environments",
@@ -595,6 +597,7 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     "GET /studio-environments/v1/research/projects/{project}/hardware",
                     "GET /studio-environments/v1/deployments",
                     "GET /studio-environments/v1/deployments/{deployment_id}/status",
+                    "GET /studio-environments/v1/deployments/{deployment_id}/logs",
                     "GET /studio-connector/v1/connections",
                 ]),
                 writes: owned(&[

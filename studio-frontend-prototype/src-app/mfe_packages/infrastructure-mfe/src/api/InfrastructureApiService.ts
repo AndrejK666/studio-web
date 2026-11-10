@@ -27,6 +27,7 @@ import type {
   EnvironmentList,
   EnvironmentReadiness,
   ImageRetention,
+  InstalledKits,
   Items,
   NamespaceAssignment,
   OrgRegistry,
@@ -83,6 +84,14 @@ export class InfrastructureApiService extends BaseApiService {
   private get rest() {
     return this.protocol(RestEndpointProtocol);
   }
+
+  /* ── studio-kits ── */
+
+  /** The kits that apply to the organization (ADR-0069 §4): Research places
+   *  come with the Research Integration kit (docs/design/studio-kits.md §3.13). */
+  readonly installedKits = this.protocol(RestEndpointProtocol).queryWith<InstalledKits, OrgParams>(
+    ({ organizationId }) => `/studio-kits/v1/installed-kits?${org(organizationId)}`
+  );
 
   /* ── studio-environments ── */
 

@@ -570,6 +570,12 @@ export interface Items<T> {
   items: T[];
 }
 
+/** studio-kits' `GET /installed-kits`, the part this kit reads: what applies
+ *  to the organization, base kits and its own (ADR-0069 §4). */
+export interface InstalledKits {
+  effective: { kit_slug: string; version: string }[];
+}
+
 export interface DeploymentList {
   items: Deployment[];
   total: number;

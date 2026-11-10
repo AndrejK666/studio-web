@@ -8,21 +8,26 @@
 # Infrastructure (ADR-0056 §2): the places the organization holds, the
 # environments it defines on them and what runs where, carried over from the
 # prototype (ADR-0069 §5).
+#
+# Its second screen, Organization › Research, is the Research Integration
+# kit's, `research-integration`: a built-in kit that is not a base kit by
+# default (docs/design/studio-kits.md §3.13), shown only where an
+# organization installed it.
 gdl_version = "1.5"
 
 mfe(
     name = "@constructor-studio/infrastructure-mfe",
     version = "0.2.0-alpha.0",
 
-    # The backend gears its screen calls, by gear id.
-    requires = ["studio-environments", "studio-connector", "account-management"],
+    # The backend gears its screens call, by gear id.
+    requires = ["studio-environments", "studio-connector", "studio-kits", "account-management"],
 
-    screens = ["Infrastructure"],
-    mounts = ["/infrastructure"],
+    screens = ["Infrastructure", "Research"],
+    mounts = ["/infrastructure", "/research"],
 
     frontx = "0.2.0-alpha.15",
 
     roles = [],
 
-    preview = ["/infrastructure"],
+    preview = ["/infrastructure", "/research"],
 )

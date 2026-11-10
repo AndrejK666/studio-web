@@ -5,6 +5,15 @@ Organization › Infrastructure (ADR-0056 §2), carried over from the prototype'
 The built-in kit `org-infrastructure` (ADR-0068 §7) and, until a platform
 administrator removes it, a base kit (ADR-0069 §4).
 
+Its second entry, `./researchLifecycle` (`src/researchLifecycle.tsx`,
+`src/screens/research/`, `src/model/research.ts`), is Organization › Research,
+the screen of the `research-integration` kit: an opt-in built-in kit, shown
+only where the organization installed it (`docs/design/studio-kits.md`
+§3.13). It reuses this package's environment form, deploy line and status
+parts, and reads `studio-kits`' `GET /installed-kits` so that Infrastructure's
+"Add a place › Constructor Research" sends an organization without the kit to
+its Kits.
+
 - `src/model/` — the prototype's pure models, unchanged, with their test
   suites: `environments.ts` (form rules, places, readiness, deploy states),
   `releases.ts` (the ladder, what runs where) with what it imports
