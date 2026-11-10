@@ -3538,6 +3538,29 @@ response	GET /studio-organizations/v1/overview	workspaces.score	u32	always
 response	GET /studio-organizations/v1/overview	workspaces.specs_failing	u32	always
 response	GET /studio-organizations/v1/overview	workspaces.spend	f64	optional
 response	GET /studio-organizations/v1/overview	workspaces.stuck	u32	always
+response	GET /studio-organizations/v1/project-status	label	String	always
+response	GET /studio-organizations/v1/project-status	more	u32	always
+response	GET /studio-organizations/v1/project-status	next	String	optional
+response	GET /studio-organizations/v1/project-status	path	Vec<{}>	always
+response	GET /studio-organizations/v1/project-status	path.action	String	always
+response	GET /studio-organizations/v1/project-status	path.flow	String	always
+response	GET /studio-organizations/v1/project-status	path.state	String	always
+response	GET /studio-organizations/v1/project-status	path.status	String	always
+response	GET /studio-organizations/v1/project-status	path.step	String	always
+response	GET /studio-organizations/v1/project-status	path.tab	String	always
+response	GET /studio-organizations/v1/project-status	path.title	String	always
+response	GET /studio-organizations/v1/project-status	project_id	String	always
+response	GET /studio-organizations/v1/project-status	reason	String	always
+response	GET /studio-organizations/v1/project-status	signals	Vec<{}>	always
+response	GET /studio-organizations/v1/project-status	signals.action	{}	always
+response	GET /studio-organizations/v1/project-status	signals.action.label	String	always
+response	GET /studio-organizations/v1/project-status	signals.action.target	String	always
+response	GET /studio-organizations/v1/project-status	signals.detail	String	optional
+response	GET /studio-organizations/v1/project-status	signals.key	String	always
+response	GET /studio-organizations/v1/project-status	signals.level	String	always
+response	GET /studio-organizations/v1/project-status	signals.phrase	String	always
+response	GET /studio-organizations/v1/project-status	unread	Vec<String>	always
+response	GET /studio-organizations/v1/project-status	verdict	String	always
 response	GET /studio-organizations/v1/project-types	own	{}	optional
 response	GET /studio-organizations/v1/project-types	own.types	Vec<Value>	optional
 response	GET /studio-organizations/v1/project-types	resolved	{}	optional
@@ -6840,6 +6863,7 @@ route	GET /studio-organizations/v1/logo
 route	GET /studio-organizations/v1/metrics
 route	GET /studio-organizations/v1/organization-requests
 route	GET /studio-organizations/v1/overview
+route	GET /studio-organizations/v1/project-status
 route	GET /studio-organizations/v1/project-types
 route	GET /studio-organizations/v1/rollups
 route	GET /studio-presence/v1/online

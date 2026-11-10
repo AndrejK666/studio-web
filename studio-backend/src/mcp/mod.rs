@@ -45,6 +45,8 @@ pub fn tools() -> Vec<sdk::Tool> {
     // What the documents describe and what is left to decide before a build.
     all.extend(crate::documents::mcp_tools());
     all.extend(crate::spec_mapping::mcp_tools());
+    // Where a project stands.
+    all.extend(crate::organizations::mcp_tools());
     all.extend(crate::spec_quality::mcp_tools());
     // The pipeline, in the order a project goes through it: its sources and
     // the connections they are read through, the product's description,
@@ -58,6 +60,21 @@ pub fn tools() -> Vec<sdk::Tool> {
     // The kit library, and installing kits for everyone or one organization.
     all.extend(crate::kit_registry::mcp_tools());
     all
+}
+
+/// The client and the gateway URL the tools use, once the gear has started.
+static SELF_API: OnceLock<(reqwest::Client, String)> = OnceLock::new();
+
+/// This backend's REST API as the caller of a request, for a gear that
+/// composes an answer from other gears' routes the way the portal composed
+/// it (a project's status, a person's Inbox): the caller's own
+/// `Authorization` header is sent on, so every route's checks apply as they
+/// would to the portal and the composed answer shows no more than they do.
+/// `None` while studio-mcp has not started (it holds the gateway's address)
+/// or the request came without the header.
+pub fn api_as(authorization: Option<axum::http::HeaderValue>) -> Option<sdk::Api> {
+    let (client, url) = SELF_API.get()?;
+    Some(sdk::Api::new(client.clone(), url, Some(authorization?)))
 }
 
 /// `gears.studio-mcp.config`. Every setting has a default that works in every
@@ -162,6 +179,7 @@ impl Gear for McpGear {
             authn,
             limits: Arc::new(sdk::Limits::new([("spec_check", cfg.spec_checks_per_hour)])),
         });
+        let _ = SELF_API.set((state.client.clone(), state.api_url.clone()));
         tracing::info!(
             api_url = %state.api_url,
             authorization_server = %state.authorization_server,

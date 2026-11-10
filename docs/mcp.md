@@ -169,6 +169,13 @@ person see the same rows.
 | `spec_model_fact_review` | *changes:* accepts, rejects or puts back facts by `fact_key` |
 | `spec_model_finding_decide` | *changes:* confirms a problem as real or dismisses it, by `fingerprint` |
 
+**The project itself.** Where a project stands, as its Overview says it
+(studio-organizations).
+
+| Tool | What it answers |
+| --- | --- |
+| `project_status` | one verdict (`blocked`, `at_risk`, `on_track`) with its reason, the signals behind it worst first, and the path to a build with the next step; `unread` names what could not be read |
+
 **The pipeline.** A project goes from its sources to a running product
 without the portal; each step is the REST route the portal calls for it.
 
