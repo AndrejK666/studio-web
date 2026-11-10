@@ -48,6 +48,7 @@ import {
   type RequirementTraces,
   type SpecModel,
   type SpecModelFact,
+  type SpecModelUploads,
   type SpecRequirements,
   type WorkLinks,
 } from '../../model/spec-model';
@@ -58,7 +59,7 @@ import { EntitiesView } from '../entities/EntitiesView';
 import { GlossaryScreen } from '../glossary/GlossaryScreen';
 import { PrioritiesScreen } from '../priorities/PrioritiesScreen';
 import { RequirementsView } from '../requirements/RequirementsView';
-import { AgainstTheCode, Coverage, Elsewhere, relatedKey, Work, type ProductRead } from '../sources/SourcesViews';
+import { AgainstTheCode, Coverage, Elsewhere, relatedKey, Uploads, Work, type ProductRead } from '../sources/SourcesViews';
 import { ErrorLine, errText, Hint, keyOf, Loading, PageHeader, Segmented, StatusChip, useScope } from '../common/ui';
 import common from '../common/common.module.css';
 import styles from './domain.module.css';
@@ -282,6 +283,20 @@ export function DomainModelScreen() {
   };
 
   const rereadReviews = async () => setReviews((await dmApi.specModelReviews(projectId)).items);
+
+  /** The sources uploaded to the model, read when Sources › Documents opens. */
+  const [uploads, setUploads] = useState<SpecModelUploads | { error: string } | null>(null);
+  const rereadUploads = useCallback(
+    () =>
+      dmApi.specModelUploads(projectId).then(
+        (u) => setUploads(u),
+        (e: unknown) => setUploads({ error: errText(e) })
+      ),
+    [projectId]
+  );
+  useEffect(() => {
+    if (view === 'coverage') void rereadUploads();
+  }, [view, rereadUploads]);
 
   // A corrected reading is the project's reading, as an accepted one is.
   const reviewByKey = useMemo(
@@ -656,6 +671,25 @@ export function DomainModelScreen() {
         {view === 'work' && <Work read={work} onOpenFile={onOpenFile} />}
         {view === 'product' && (
           <AgainstTheCode read={product} onOpenFile={onOpenFile} onOpenProduct={() => openScreen(bridge, PRODUCT_ROUTE)} />
+        )}
+        {view === 'coverage' && (
+          <Uploads
+            read={uploads}
+            onUpload={async (name, content) => {
+              await dmApi.uploadSpecModelSource(projectId, name, content);
+              await rereadUploads();
+              await load();
+            }}
+            onRemove={async (u) => {
+              try {
+                await dmApi.removeSpecModelUpload(projectId, u.id);
+                await rereadUploads();
+                await load();
+              } catch (e) {
+                setError(errText(e));
+              }
+            }}
+          />
         )}
         {model && view === 'coverage' && (
           <Coverage model={model} busy={running || starting} onRebuild={(path) => void startBuild(path)} />

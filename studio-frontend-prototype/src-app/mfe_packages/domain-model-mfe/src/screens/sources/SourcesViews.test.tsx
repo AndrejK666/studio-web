@@ -1,10 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { RelatedRequirement } from '../../model/spec-model';
+import type { RelatedRequirement, SpecModelUpload } from '../../model/spec-model';
 
 vi.mock('../../i18n', async () => (await import('../common/testText')).i18nMock());
 
-import { AgainstTheCode, Elsewhere, relatedKey, Work } from './SourcesViews';
+import { AgainstTheCode, Elsewhere, relatedKey, Uploads, Work } from './SourcesViews';
 
 const pair: RelatedRequirement = {
   id: 'cpt-fr-order',
@@ -53,5 +53,38 @@ describe('Sources views', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'decision_reuse' }));
     expect(onDecide).toHaveBeenLastCalledWith(pair, 'proposed');
+  });
+});
+
+describe('Uploads', () => {
+  const upload: SpecModelUpload = {
+    id: 'u1',
+    name: 'survey.csv',
+    path: 'upload:survey.csv',
+    kind: 'csv',
+    revision: 'abcdef123456',
+    size: 2048,
+    storage: 'file-storage',
+    created_by: 'me',
+    created_at: '2026-11-10T00:00:00Z',
+  };
+
+  it('says nothing is uploaded, and lists what is under the path a build reads', () => {
+    const noop = () => Promise.resolve();
+    const { rerender } = render(<Uploads read={{ items: [], total: 0 }} onUpload={noop} onRemove={noop} />);
+    expect(screen.getByText('no_uploads_title')).toBeTruthy();
+    rerender(<Uploads read={{ items: [upload], total: 1 }} onUpload={noop} onRemove={noop} />);
+    expect(screen.getByText('upload:survey.csv')).toBeTruthy();
+  });
+
+  it('uploads the text of a picked file and refuses a type the server does not read', async () => {
+    const onUpload = vi.fn(() => Promise.resolve());
+    render(<Uploads read={{ items: [], total: 0 }} onUpload={onUpload} onRemove={() => Promise.resolve()} />);
+    const input = screen.getByLabelText('upload_pick');
+    fireEvent.change(input, { target: { files: [new File(['%PDF'], 'deck.pdf', { type: 'application/pdf' })] } });
+    expect(screen.getByText('upload_wrong_type {"name":"deck.pdf"}')).toBeTruthy();
+    expect(onUpload).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { files: [new File(['a,b\n1,2\n'], 'survey.csv', { type: 'text/csv' })] } });
+    await waitFor(() => expect(onUpload).toHaveBeenCalledWith('survey.csv', 'a,b\n1,2\n'));
   });
 });

@@ -27,6 +27,8 @@ import type {
   RequirementTraces,
   SpecModel,
   SpecModelBuild,
+  SpecModelUpload,
+  SpecModelUploads,
   SpecRequirements,
   WorkLinks,
 } from '../model/spec-model';
@@ -89,6 +91,23 @@ export class DomainModelApiService extends BaseApiService {
 
   startBuild() {
     return this.rest.mutation<SpecModelBuild, { project_id: string; path?: string }>('POST', `${PROJECT_MODEL}/builds`);
+  }
+
+  /* ── uploaded sources: CSV, JSON and plain text kept out of the repository ── */
+
+  readonly uploads = this.protocol(RestEndpointProtocol).queryWith<SpecModelUploads, { projectId: string }>(
+    ({ projectId }) => `${PROJECT_MODEL}/uploads?${project(projectId)}`
+  );
+
+  upload() {
+    return this.rest.mutation<SpecModelUpload, { project_id: string; name: string; content: string }>(
+      'POST',
+      `${PROJECT_MODEL}/uploads`
+    );
+  }
+
+  removeUpload(projectId: string, uploadId: string) {
+    return this.rest.mutation<void, void>('DELETE', `${PROJECT_MODEL}/uploads/${enc(uploadId)}?${project(projectId)}`);
   }
 
   /* ── reviews: accept, reject, evidence, decisions kept by key ── */

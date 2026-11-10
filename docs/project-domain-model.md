@@ -356,6 +356,8 @@ and `project_domain_model_coverage` read the two routes above.
 | `GET` | `/project-domain-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
 | `GET` | `/project-domain-model/reviews?project_id=` | Every accept or reject members gave on the facts the model read, by the key the tab gives a fact (kind, subject, aspect and the folded quote, hashed) |
 | `POST` | `/project-domain-model/reviews` | Accept, reject, correct (`corrected` with the new `value`), or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same. Prefixed keys carry the project's other decisions: `ev:` evidence, `hyp:` a hypothesis's check, `ob:` an excluded obligation, `rel:` a match across projects, `iss:` an opened issue, `pri:` an item being prioritised, `prc:` a confirmed order |
+| `GET` `POST` | `/project-domain-model/uploads` | The CSV, JSON and plain-text sources uploaded to the model ([below](#uploaded-sources)); upload one (`{project_id, name, content}`, `201`), read under `upload:<name>` |
+| `DELETE` | `/project-domain-model/uploads/{upload_id}?project_id=` | Remove an upload, its file and its facts; `204` |
 | `POST` | `/project-domain-model/files/proposals` | A whole Markdown document under `docs/` as a pull request: the need a member accepted (`docs/discovery.md`), a confirmed prioritisation (`docs/priorities.md`), the hypotheses and their checks (`docs/hypotheses.md`); `201` with the pull request |
 | `GET` | `/project-domain-model/check-methods?project_id=&kits=` | The hypothesis check methods the named kits add, each read from `.cf-studio/config/kits/<kit>/check-methods.json`; a kit whose file is out of shape is listed in `unread` with the reason |
 | `POST` | `/project-domain-model/glossary/distinct` | Two entries are different things: kept on both as `distinct_from`, so they are not offered as one thing again; `204` |
@@ -368,6 +370,38 @@ and `project_domain_model_coverage` read the two routes above.
 
 Every list answers `{items, total}`. A project the caller cannot reach answers
 404.
+
+## Uploaded sources
+
+A product manager often has knowledge that does not belong in the repository:
+a survey export, an interview transcript, a list of requests. `uploads.rs`
+takes it as an **uploaded source**, a source kind of its own beside the
+repository's documents and the Studio documents: a CSV (`.csv`, `.tsv`), JSON
+(`.json`) or plain-text (`.txt`, `.text`) file of at most 512 KiB, at most 50
+per project. A JSON file is laid out one value per line before it is kept, so
+a passage can be quoted by line like any other; one that does not parse, an
+empty file, binary content or any other type is refused with the reason.
+Uploading the same name again replaces it.
+
+The bytes are stored through the file-storage gear (`crate::object_store`:
+create, signed upload, bind; signed download to read back; delete) when the
+deployment configures it (`STUDIO_FILE_STORAGE_BASE_URL`, `_TOKEN`); a
+deployment without file storage keeps the text with the record instead, and
+the record says which (`storage`). The record is scoped to the project
+(`studio_spec_model_uploads`, `m0030`, or the `spec-upload` model type).
+
+The model reads an upload under `upload:<name>`: its revision is the hash of
+its content, as for any document; a build reads it when it is not read at
+that revision, and selection takes its path (`paths: ["upload:survey.csv"]`,
+`glob: "upload:*"`). Its facts carry no commit. An upload whose bytes cannot
+be read back is listed with the documents not read and keeps its last
+reading; removing an upload removes its facts with it.
+
+`GET /project-domain-model/uploads`, `POST /project-domain-model/uploads`
+(`{project_id, name, content}`) and `DELETE /project-domain-model/uploads/{upload_id}`;
+over MCP `project_domain_model_uploads`, `project_domain_model_upload` and
+`project_domain_model_upload_remove`. In the tab, Sources › Documents has the
+upload above the documents' table.
 
 ## Stated or interpreted, and corrections
 
@@ -484,6 +518,10 @@ the most facts about it, from the repository history, bots left out.
   null), `distinct_from` (the keys of entries a member said are different
   things, as a JSON array), `decided_by`, `decided_at`; unique on the first
   two.
+- `studio_spec_model_uploads`: `project_id`, `name` (unique per project),
+  `kind` (`csv`, `json`, `text`), `revision` (the content hash), `size`,
+  `storage` (`file-storage` or `studio-documents`), `file_id` or `content`,
+  `created_by`, `created_at` (`m0030`).
 - `studio_spec_model_reviews`: `project_id`, `fact_key`, `state` (`accepted`,
   `rejected`, or `corrected` with the member's `value`, `m0029`), `path` and
   `revision` where it was read, `decided_by`, `decided_at`; unique on the

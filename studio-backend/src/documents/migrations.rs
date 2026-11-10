@@ -48,6 +48,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0027::Migration),
             Box::new(m0028::Migration),
             Box::new(m0029::Migration),
+            Box::new(m0030::Migration),
         ]
     }
 }
@@ -1796,6 +1797,67 @@ mod m0029 {
             manager
                 .get_connection()
                 .execute_unprepared("ALTER TABLE studio_spec_model_reviews DROP COLUMN IF EXISTS value;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Sources a member uploads for the project domain model to read (CSV,
+/// JSON, plain text), kept out of the repository: the bytes in file-storage
+/// when the deployment has it, here otherwise.
+mod m0030 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0030_spec_model_uploads"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                r"
+CREATE TABLE IF NOT EXISTS studio_spec_model_uploads (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('csv', 'json', 'text')),
+    revision TEXT NOT NULL,
+    size BIGINT NOT NULL DEFAULT 0,
+    storage TEXT NOT NULL,
+    file_id TEXT,
+    content TEXT,
+    created_by UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (project_id, name)
+);",
+                r"CREATE INDEX IF NOT EXISTS idx_studio_spec_model_uploads_project
+    ON studio_spec_model_uploads (tenant_id, project_id);",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_spec_model_uploads;")
                 .await?;
             Ok(())
         }

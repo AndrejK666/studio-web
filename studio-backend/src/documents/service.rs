@@ -47,6 +47,9 @@ pub struct DocumentsService {
     /// The last requirement trace of each project, for a while
     /// (see [`Self::requirement_trace`]).
     trace_cache: super::spec_model::trace::TraceCache,
+    /// Where uploaded sources keep their bytes: the file-storage gear, when
+    /// this deployment configured it (`crate::object_store`).
+    objects: Option<Arc<dyn crate::object_store::ObjectStore>>,
 }
 
 /// Spec Quality analysis a source sync starts for the documents it changed.
@@ -91,6 +94,7 @@ impl DocumentsService {
             account_management,
             sync_analysis: None,
             trace_cache: super::spec_model::trace::TraceCache::default(),
+            objects: crate::object_store::from_env(),
         }
     }
 
@@ -2243,7 +2247,19 @@ impl DocumentsService {
             })
             .collect();
         if rows.is_empty() {
-            return Ok(ReadSources::default());
+            // No typed repository document yet; uploaded sources are read
+            // all the same, so a project can start from them.
+            let (documents, unread) = self
+                .upload_sources(ctx, workspace_id, project_id)
+                .await?;
+            return Ok(ReadSources {
+                sources: super::spec_model::Sources {
+                    documents,
+                    unread,
+                    ..super::spec_model::Sources::default()
+                },
+                ..ReadSources::default()
+            });
         }
         let tenants = checkout_tenants(
             rows.iter().map(|r| r.project_id),
@@ -2303,6 +2319,11 @@ impl DocumentsService {
         let documents = documents.into_iter().chain(unbound_domain_doc);
         let mut documents: Vec<super::spec_model::SourceText> = documents.collect();
         documents.extend(self.studio_sources(ctx, workspace_id, project_id).await?);
+        let (uploaded, uploads_unread) = self
+            .upload_sources(ctx, workspace_id, project_id)
+            .await?;
+        documents.extend(uploaded);
+        unread.extend(uploads_unread);
         Ok(ReadSources {
             sources: super::spec_model::Sources {
                 documents,
@@ -2962,6 +2983,145 @@ impl DocumentsService {
             saved.push(model);
         }
         Ok(saved)
+    }
+
+    /// Every source uploaded to the project's model, by name.
+    pub async fn spec_uploads(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<super::entity::spec_upload::Model>> {
+        let mut rows = self
+            .data
+            .list_spec_uploads(ctx, workspace_id, project_id)
+            .await?;
+        rows.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(rows)
+    }
+
+    /// Keep an uploaded source for the project's model to read: its bytes in
+    /// the file-storage gear when this deployment has one, in the row
+    /// otherwise. One of the same name is replaced (its earlier file
+    /// removed). `Err` from [`super::uploads::accept`] is the caller's
+    /// mistake; the message says which.
+    pub async fn put_spec_upload(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        name: &str,
+        content: &str,
+    ) -> Result<std::result::Result<super::entity::spec_upload::Model, String>> {
+        let accepted = match super::uploads::accept(name, content) {
+            Ok(a) => a,
+            Err(why) => return Ok(Err(why)),
+        };
+        let existing = self.spec_uploads(ctx, workspace_id, project_id).await?;
+        let earlier = existing.iter().find(|u| u.name == accepted.name);
+        if earlier.is_none() && existing.len() >= super::uploads::MAX_PER_PROJECT {
+            return Ok(Err(format!(
+                "a project keeps at most {} uploaded sources: remove one first",
+                super::uploads::MAX_PER_PROJECT
+            )));
+        }
+        let revision = super::spec_model::extract::revision(&accepted.content);
+        let (storage, file_id, kept) = match &self.objects {
+            Some(store) => {
+                let stored = store
+                    .put(
+                        &accepted.name,
+                        super::uploads::mime(accepted.kind),
+                        accepted.content.clone().into_bytes(),
+                    )
+                    .await?;
+                ("file-storage", Some(stored.file_id), None)
+            }
+            None => ("studio-documents", None, Some(accepted.content.clone())),
+        };
+        let model = super::entity::spec_upload::Model {
+            id: super::repo::spec_upload_id(project_id, &accepted.name),
+            tenant_id: workspace_id,
+            project_id,
+            name: accepted.name.clone(),
+            kind: accepted.kind.to_owned(),
+            revision,
+            size: i64::try_from(accepted.content.len()).unwrap_or(i64::MAX),
+            storage: storage.to_owned(),
+            file_id,
+            content: kept,
+            created_by: ctx.subject_id(),
+            created_at: OffsetDateTime::now_utc(),
+        };
+        self.data.put_spec_upload(ctx, model.clone()).await?;
+        if let (Some(store), Some(old)) = (&self.objects, earlier.and_then(|e| e.file_id.as_ref()))
+            && let Err(error) = store.delete(old).await
+        {
+            tracing::warn!(%error, "studio-documents: a replaced upload's file could not be removed");
+        }
+        Ok(Ok(model))
+    }
+
+    /// Forget an uploaded source and remove its file. `false` when the
+    /// project has no such upload.
+    pub async fn delete_spec_upload(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        upload_id: Uuid,
+    ) -> Result<bool> {
+        let existing = self.spec_uploads(ctx, workspace_id, project_id).await?;
+        let Some(found) = existing.into_iter().find(|u| u.id == upload_id) else {
+            return Ok(false);
+        };
+        self.data
+            .delete_spec_upload(ctx, workspace_id, project_id, &found.name)
+            .await?;
+        if let (Some(store), Some(file_id)) = (&self.objects, found.file_id.as_ref())
+            && let Err(error) = store.delete(file_id).await
+        {
+            tracing::warn!(%error, "studio-documents: a removed upload's file could not be removed");
+        }
+        Ok(true)
+    }
+
+    /// The uploaded sources as the model reads them, under `upload:<name>`;
+    /// and the ones whose bytes could not be read back, by path.
+    async fn upload_sources(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<(Vec<super::spec_model::SourceText>, Vec<String>)> {
+        let mut documents = Vec::new();
+        let mut unread = Vec::new();
+        for u in self.spec_uploads(ctx, workspace_id, project_id).await? {
+            let path = super::uploads::path_of(&u.name);
+            let text = match (&u.content, &u.file_id, &self.objects) {
+                (Some(text), _, _) => Some(text.clone()),
+                (None, Some(file_id), Some(store)) => match store.get(file_id).await {
+                    Ok(bytes) => String::from_utf8(bytes).ok(),
+                    Err(error) => {
+                        tracing::warn!(%error, %path, "studio-documents: an uploaded source could not be read back");
+                        None
+                    }
+                },
+                _ => None,
+            };
+            match text {
+                Some(text) => documents.push(super::spec_model::SourceText {
+                    path,
+                    text,
+                    doc_type: Some(format!("uploaded {}", u.kind)),
+                    node: String::new(),
+                    binding: None,
+                    at: None,
+                }),
+                None => unread.push(path),
+            }
+        }
+        Ok((documents, unread))
     }
 
     /// Record that two glossary entries are different things, on both: the

@@ -80,6 +80,40 @@ export interface SpecModelDocument {
   source_ref?: string | null;
 }
 
+/** A CSV, JSON or plain-text source uploaded to the model, kept out of the
+ *  repository and read under `path` (`upload:<name>`). */
+export interface SpecModelUpload {
+  id: string;
+  name: string;
+  path: string;
+  kind: "csv" | "json" | "text";
+  /** The hash of its content. */
+  revision: string;
+  size: number;
+  /** `file-storage`, or `studio-documents` where the bytes stay with the record. */
+  storage: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface SpecModelUploads {
+  items: SpecModelUpload[];
+  total: number;
+}
+
+/** The file types an upload may be, as the server reads them. */
+export const UPLOAD_ACCEPT = ".csv,.tsv,.json,.txt,.text,text/csv,application/json,text/plain";
+
+/** The largest upload the server takes, in bytes. */
+export const UPLOAD_MAX_BYTES = 512 * 1024;
+
+/** Why a picked file cannot be uploaded, or `null` when it can. */
+export function uploadRefusal(name: string, size: number): "type" | "size" | null {
+  if (!/\.(csv|tsv|json|txt|text)$/i.test(name)) return "type";
+  if (size > UPLOAD_MAX_BYTES) return "size";
+  return null;
+}
+
 /** Where in the repository's history a passage was read: `main @ 4fbc802`,
  *  the commit alone on a detached checkout, `null` when not recorded. */
 export function readAtLabel(at: { source_commit?: string | null; source_ref?: string | null }): string | null {

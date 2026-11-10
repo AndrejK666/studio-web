@@ -18,7 +18,7 @@ use uuid::Uuid;
 use super::entity::{
     analysis, application_part, approval, capability, decision, delivery_history, delivery_limit,
     delivery_scope, doc_type, document, document_binding, review_request, spec_decision,
-    spec_extraction, spec_judgement, spec_review, spec_term, stage,
+    spec_extraction, spec_judgement, spec_review, spec_term, spec_upload, stage,
 };
 
 /// UUIDv5 namespace for a document type's deterministic id — makes `(tenant,
@@ -86,6 +86,16 @@ pub fn spec_review_id(project_id: Uuid, fact_key: &str) -> Uuid {
     Uuid::new_v5(
         &SPEC_REVIEW_NS,
         format!("{project_id}\u{1f}{fact_key}").as_bytes(),
+    )
+}
+
+const SPEC_UPLOAD_NS: Uuid = Uuid::from_u128(0x3a71_c9e2_58d4_4f06_9b1e_d27a_64c3_0e85);
+
+/// Deterministic id for an uploaded source: one per name in a project.
+pub fn spec_upload_id(project_id: Uuid, name: &str) -> Uuid {
+    Uuid::new_v5(
+        &SPEC_UPLOAD_NS,
+        format!("{project_id}\u{1f}{name}").as_bytes(),
     )
 }
 
@@ -518,6 +528,58 @@ impl DocumentsRepo {
         let conn = self.db.conn()?;
         spec_review::Entity::delete_many()
             .filter(spec_review::Column::Id.eq(spec_review_id(project_id, fact_key)))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Every source uploaded to a project's model.
+    pub async fn list_spec_uploads(
+        &self,
+        workspace_id: Uuid,
+        project_id: Uuid,
+    ) -> Result<Vec<spec_upload::Model>> {
+        let conn = self.db.conn()?;
+        Ok(spec_upload::Entity::find()
+            .filter(spec_upload::Column::ProjectId.eq(project_id))
+            .secure()
+            .scope_with(&AccessScope::for_tenant(workspace_id))
+            .all(&conn)
+            .await?)
+    }
+
+    /// Keep an uploaded source; one of the same name is replaced.
+    pub async fn put_spec_upload(&self, model: spec_upload::Model) -> Result<()> {
+        let conn = self.db.conn()?;
+        let workspace_id = model.tenant_id;
+        let on_conflict =
+            SecureOnConflict::<spec_upload::Entity>::columns([spec_upload::Column::Id])
+                .update_columns([
+                    spec_upload::Column::Kind,
+                    spec_upload::Column::Revision,
+                    spec_upload::Column::Size,
+                    spec_upload::Column::Storage,
+                    spec_upload::Column::FileId,
+                    spec_upload::Column::Content,
+                    spec_upload::Column::CreatedBy,
+                    spec_upload::Column::CreatedAt,
+                ])?;
+        spec_upload::Entity::insert(model.into_active_model())
+            .secure()
+            .scope_unchecked(&AccessScope::for_tenant(workspace_id))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// Forget an uploaded source.
+    pub async fn delete_spec_upload(&self, workspace_id: Uuid, id: Uuid) -> Result<()> {
+        let conn = self.db.conn()?;
+        spec_upload::Entity::delete_many()
+            .filter(spec_upload::Column::Id.eq(id))
             .secure()
             .scope_with(&AccessScope::for_tenant(workspace_id))
             .exec(&conn)
@@ -1299,6 +1361,7 @@ owner_rows! {
     all_spec_decisions => spec_decision,
     all_spec_reviews => spec_review,
     all_spec_terms => spec_term,
+    all_spec_uploads => spec_upload,
     all_docs => document,
     all_bindings => document_binding,
     all_parts => application_part,
@@ -1338,6 +1401,7 @@ owner_purge!(purge_documents => [
     spec_decision,
     spec_review,
     spec_term,
+    spec_upload,
     application_part,
     delivery_history,
     delivery_limit,
@@ -1388,6 +1452,7 @@ rows_restore! {
     restore_judgements => spec_judgement,
     restore_spec_decisions => spec_decision,
     restore_spec_reviews => spec_review,
+    restore_spec_uploads => spec_upload,
     restore_spec_terms => spec_term,
     restore_parts => application_part,
     restore_scopes => delivery_scope,

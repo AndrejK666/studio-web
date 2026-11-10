@@ -364,6 +364,60 @@ pub mod spec_decision {
 }
 
 /// A member's accept or reject on one fact the model read.
+/// A source a member uploaded for the project domain model to read — CSV,
+/// JSON or plain text — kept out of the repository
+/// (`docs/project-domain-model.md`, "Uploaded sources").
+pub mod spec_upload {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(
+        Clone,
+        Debug,
+        PartialEq,
+        Eq,
+        DeriveEntityModel,
+        Scopable,
+        serde::Serialize,
+        serde::Deserialize,
+    )]
+    #[sea_orm(table_name = "studio_spec_model_uploads")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// Deterministic v5 UUID of `(project, name)`: uploading the same
+        /// name again replaces it, and its readings follow its path.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub project_id: Uuid,
+        /// The file's name, as uploaded; the model reads it as `upload:<name>`.
+        pub name: String,
+        /// `csv`, `json` or `text`.
+        pub kind: String,
+        /// The content's hash (`extract::revision`), as for any document.
+        pub revision: String,
+        /// Bytes of the content kept.
+        pub size: i64,
+        /// `file-storage` when the bytes are there, `studio-documents` when
+        /// this deployment has no file storage and the row keeps them.
+        pub storage: String,
+        /// The file-storage file, when `storage` is `file-storage`.
+        pub file_id: Option<String>,
+        /// The content, when `storage` is `studio-documents`.
+        pub content: Option<String>,
+        pub created_by: Uuid,
+        #[serde(with = "crate::documents::stamp")]
+        pub created_at: OffsetDateTime,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 pub mod spec_review {
     use sea_orm::entity::prelude::*;
     use time::OffsetDateTime;

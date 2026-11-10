@@ -62,5 +62,16 @@
   "col_read_at": "Read at",
   "col_dropped": "Dropped",
   "kept_title": "The repository copy is missing on the server: the last reading is shown",
-  "rebuild_from": "Rebuild from this document"
+  "rebuild_from": "Rebuild from this document",
+  "uploads_hint": "CSV, JSON and plain-text files read into the model without committing them to the repository. Each is read under upload:<name> on the next build, like a document of the repository; its revision is the hash of its content. Uploading the same name again replaces it.",
+  "upload_pick": "Upload a CSV, JSON or text file",
+  "uploading": "Uploading…",
+  "upload_wrong_type": "{name} is not CSV (.csv, .tsv), JSON (.json) or plain text (.txt)",
+  "upload_too_large": "{name} is larger than 512 KiB",
+  "no_uploads_title": "Nothing uploaded.",
+  "no_uploads_body": "Upload an export, a survey or an interview transcript for the model to read beside the repository.",
+  "col_kind": "Kind",
+  "col_size": "Size",
+  "col_revision": "Revision",
+  "upload_remove": "Remove this upload"
 }

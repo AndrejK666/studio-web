@@ -47,6 +47,7 @@ mod spec_rows;
 mod stamp;
 #[cfg(test)]
 mod sync_analysis_tests;
+mod uploads;
 mod validate;
 
 use std::sync::{Arc, OnceLock};

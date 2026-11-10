@@ -6539,6 +6539,127 @@ async fn review_spec_model_facts(
     }))
 }
 
+/// A CSV, JSON or plain-text file to read into the project domain model,
+/// without committing it to the repository.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecModelUploadRequest {
+    pub project_id: String,
+    /// The file's name: `.csv`, `.tsv`, `.json`, `.txt` or `.text`, at most
+    /// 120 characters. The same name again replaces the earlier upload.
+    pub name: String,
+    /// The file's text, at most 512 KiB. A JSON file is laid out one value
+    /// per line before it is kept, so its passages can be quoted by line.
+    pub content: String,
+}
+
+/// An uploaded source of the project domain model.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelUploadDto {
+    pub id: String,
+    pub name: String,
+    /// The path the model reads it under (`upload:<name>`): what a build's
+    /// `paths` and the coverage name.
+    pub path: String,
+    /// `csv`, `json` or `text`.
+    pub kind: String,
+    /// The hash of its content: its revision, as for any document.
+    pub revision: String,
+    pub size: u64,
+    /// `file-storage`, or `studio-documents` where the deployment has no
+    /// file storage and the bytes are kept with the record.
+    pub storage: String,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+/// A project's uploaded sources, by name.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelUploadListDto {
+    pub items: Vec<SpecModelUploadDto>,
+    pub total: u32,
+}
+
+fn spec_upload_dto(u: super::entity::spec_upload::Model) -> SpecModelUploadDto {
+    SpecModelUploadDto {
+        id: u.id.to_string(),
+        path: super::uploads::path_of(&u.name),
+        name: u.name,
+        kind: u.kind,
+        revision: u.revision,
+        size: u64::try_from(u.size).unwrap_or(0),
+        storage: u.storage,
+        created_by: u.created_by.to_string(),
+        created_at: rfc3339(u.created_at),
+    }
+}
+
+/// Every source uploaded to the project's model.
+async fn list_spec_model_uploads(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecModelUploadListDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let items: Vec<SpecModelUploadDto> = service
+        .spec_uploads(&ctx, workspace_id, project_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(spec_upload_dto)
+        .collect();
+    Ok(Json(SpecModelUploadListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
+/// Keep an uploaded source for the model to read on its next build.
+async fn upload_spec_model_source(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Json(body): Json<SpecModelUploadRequest>,
+) -> ApiResult<(StatusCode, JsonBody<SpecModelUploadDto>)> {
+    let project_id = parse_project_id(&body.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    match service
+        .put_spec_upload(&ctx, workspace_id, project_id, &body.name, &body.content)
+        .await
+        .map_err(internal)?
+    {
+        Ok(saved) => Ok((StatusCode::CREATED, Json(spec_upload_dto(saved)))),
+        Err(why) => Err(DocumentsError::invalid_argument()
+            .with_field_violation("content", why, "INVALID")
+            .create()),
+    }
+}
+
+/// Forget an uploaded source: its facts leave the model with it.
+async fn delete_spec_model_upload(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path(upload_id): Path<String>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<StatusCode> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let id = parse_uuid_field("upload_id", &upload_id)?;
+    if service
+        .delete_spec_upload(&ctx, workspace_id, project_id, id)
+        .await
+        .map_err(internal)?
+    {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(DocumentsError::not_found("no such upload in the project")
+            .with_resource("upload")
+            .create())
+    }
+}
+
 /// Record that two glossary entries are different things, so the pair is not
 /// offered as one thing again.
 async fn decide_glossary_distinct(
@@ -9606,6 +9727,79 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    router = OperationBuilder::get("/studio-documents/v1/project-domain-model/uploads")
+        .operation_id("studio_documents.list_project_domain_model_uploads")
+        .summary("The sources uploaded to a project's model")
+        .description(
+            "CSV, JSON and plain-text files members uploaded for the project domain model to \
+             read, kept out of the repository. Each is read under `upload:<name>` beside the \
+             repository's documents, takes part in builds and selection like them, and its \
+             revision is the hash of its content.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .handler(list_spec_model_uploads)
+        .json_response_with_schema::<SpecModelUploadListDto>(
+            openapi,
+            StatusCode::OK,
+            "The uploads",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/project-domain-model/uploads")
+        .operation_id("studio_documents.upload_project_domain_model_source")
+        .summary("Upload a CSV, JSON or plain-text source for a project's model to read")
+        .description(
+            "Kept without committing it to the repository: the bytes in the file-storage gear \
+             where the deployment has it, with the record otherwise. The same name again \
+             replaces the earlier upload; a project keeps at most 50. Read on the next build, \
+             or select it with `paths: [\"upload:<name>\"]`. 400 names what is wrong: a type \
+             other than .csv, .tsv, .json, .txt or .text, JSON that does not parse, an empty \
+             file, more than 512 KiB.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<SpecModelUploadRequest>(openapi, "The project, the name and the text")
+        .handler(upload_spec_model_source)
+        .json_response_with_schema::<SpecModelUploadDto>(
+            openapi,
+            StatusCode::CREATED,
+            "The upload",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::delete(
+        "/studio-documents/v1/project-domain-model/uploads/{upload_id}",
+    )
+    .operation_id("studio_documents.delete_project_domain_model_upload")
+    .summary("Remove an uploaded source from a project's model")
+    .description(
+        "Forgets the upload and removes its file; its facts leave the model with it.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("upload_id", "The upload's `id`")
+    .query_param("project_id", true, "The project")
+    .handler(delete_spec_model_upload)
+    .no_content_response(StatusCode::NO_CONTENT, "Removed")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
     router = OperationBuilder::post("/studio-documents/v1/project-domain-model/glossary/distinct")
         .operation_id("studio_documents.decide_project_domain_model_glossary_distinct")
         .summary("Say two glossary entries are different things")
@@ -11919,6 +12113,33 @@ mod tests {
         assert_eq!(dtos[0].basis, "stated", "the basis is the reading's");
         assert!(review_state_fits(&dtos[0].fact_key, "corrected"));
         assert!(!review_state_fits("ev:abc", "corrected"));
+    }
+
+    #[test]
+    fn an_upload_answers_the_path_a_build_selects_it_by() {
+        let id = super::super::repo::spec_upload_id(Uuid::from_u128(1), "survey.csv");
+        let dto = spec_upload_dto(super::super::entity::spec_upload::Model {
+            id,
+            tenant_id: Uuid::from_u128(2),
+            project_id: Uuid::from_u128(1),
+            name: "survey.csv".into(),
+            kind: "csv".into(),
+            revision: "abc".into(),
+            size: 12,
+            storage: "studio-documents".into(),
+            file_id: None,
+            content: Some("a,b\n1,2\n".into()),
+            created_by: Uuid::from_u128(3),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+        });
+        assert_eq!(dto.path, "upload:survey.csv");
+        assert_eq!(dto.id, id.to_string());
+        assert_eq!(dto.size, 12);
+        assert_eq!(
+            id,
+            super::super::repo::spec_upload_id(Uuid::from_u128(1), "survey.csv"),
+            "the same name is the same upload"
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@
  */
 
 import { Button } from '@gears-frontx/ui-kit';
+import { useState } from 'react';
 import {
   coverageCounts,
   orderRelated,
@@ -18,7 +19,11 @@ import {
   type RelatedRequirement,
   type RelatedRequirements,
   type SpecModel,
+  type SpecModelUpload,
+  type SpecModelUploads,
   type WorkLinks,
+  UPLOAD_ACCEPT,
+  uploadRefusal,
 } from '../../model/spec-model';
 import { useSourcesTranslations } from '../../i18n';
 import { DataTable } from '../common/DataTable';
@@ -334,6 +339,88 @@ export function Elsewhere({
           )}
         />
       </div>
+    </div>
+  );
+}
+
+/** CSV, JSON and plain-text sources uploaded for the model to read, kept
+ *  out of the repository: upload one, see each, remove one. */
+export function Uploads({
+  read,
+  onUpload,
+  onRemove,
+}: {
+  read: SpecModelUploads | { error: string } | null;
+  /** Keep the file's text as an upload; rejects with the server's reason. */
+  onUpload: (name: string, content: string) => Promise<void>;
+  onRemove: (upload: SpecModelUpload) => Promise<void>;
+}) {
+  const { t } = useSourcesTranslations();
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    const refused = uploadRefusal(file.name, file.size);
+    if (refused) {
+      setProblem(t(refused === 'type' ? 'upload_wrong_type' : 'upload_too_large', { name: file.name }));
+      return;
+    }
+    setBusy(true);
+    setProblem(null);
+    try {
+      await onUpload(file.name, await file.text());
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={common.stack}>
+      <Hint>{t('uploads_hint')}</Hint>
+      <div className={common.actions}>
+        <label className={styles.uploadPick}>
+          <input
+            type="file"
+            accept={UPLOAD_ACCEPT}
+            disabled={busy}
+            aria-label={t('upload_pick')}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              void pick(file);
+            }}
+          />
+          <span>{busy ? t('uploading') : t('upload_pick')}</span>
+        </label>
+      </div>
+      {problem && <ErrorLine>{problem}</ErrorLine>}
+      {read === null ? (
+        <Loading>{t('loading')}</Loading>
+      ) : 'error' in read ? (
+        <ErrorLine>{read.error}</ErrorLine>
+      ) : read.items.length === 0 ? (
+        <EmptyState title={t('no_uploads_title')} body={t('no_uploads_body')} />
+      ) : (
+        <div className={common.card}>
+          <DataTable<SpecModelUpload>
+            list="dm-uploads"
+            urlPrefix="up."
+            rows={read.items}
+            rowKey={(u) => u.id}
+            rowLabel={(u) => u.name}
+            pageSize={20}
+            empty={{ title: t('nothing_matches') }}
+            columns={[
+              { id: 'name', header: t('col_document'), cell: (u) => <code className={common.code}>{u.path}</code> },
+              { id: 'kind', header: t('col_kind'), cell: (u) => u.kind },
+              { id: 'size', header: t('col_size'), num: true, cell: (u) => `${Math.max(1, Math.round(u.size / 1024))} KiB` },
+              { id: 'revision', header: t('col_revision'), cell: (u) => <code className={common.code}>{u.revision.slice(0, 7)}</code> },
+            ]}
+            actions={(u) => [{ label: t('upload_remove'), disabled: busy, onSelect: () => void onRemove(u) }]}
+          />
+        </div>
+      )}
     </div>
   );
 }

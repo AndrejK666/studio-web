@@ -16,6 +16,7 @@ import {
   relatedEntities,
   requirementKinds,
   traceGaps,
+  uploadRefusal,
   ruleLabel,
   sideLabel,
   subjectKey,
@@ -370,5 +371,15 @@ describe("readAtLabel", () => {
     expect(readAtLabel({ source_commit: "4fbc8023aa11", source_ref: null })).toBe("4fbc802");
     expect(readAtLabel({ source_commit: null, source_ref: "main" })).toBeNull();
     expect(readAtLabel({})).toBeNull();
+  });
+});
+
+describe("uploadRefusal", () => {
+  it("takes CSV, JSON and plain text up to 512 KiB", () => {
+    expect(uploadRefusal("a.csv", 10)).toBeNull();
+    expect(uploadRefusal("A.JSON", 10)).toBeNull();
+    expect(uploadRefusal("a.txt", 512 * 1024)).toBeNull();
+    expect(uploadRefusal("a.pdf", 10)).toBe("type");
+    expect(uploadRefusal("a.txt", 512 * 1024 + 1)).toBe("size");
   });
 });

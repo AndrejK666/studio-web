@@ -117,6 +117,60 @@ pub fn tools() -> Vec<Tool> {
             run: Run::Get("/studio-documents/v1/project-domain-model/coverage"),
         },
         Tool {
+            name: "project_domain_model_uploads",
+            description: "The CSV, JSON and plain-text sources uploaded to a project's domain \
+                model, kept out of its repository: each with the `path` the model reads it under \
+                (`upload:<name>`, what `project_domain_model_build` takes in `paths`), its \
+                `kind`, and its `revision` (the hash of its content).",
+            input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-documents/v1/project-domain-model/uploads"),
+        },
+        Tool {
+            name: "project_domain_model_upload",
+            description: "Upload a CSV, JSON or plain-text source (a survey export, an \
+                interview transcript, a list of requests) for a project's domain model to read, \
+                without committing it to the repository. `name` ends in .csv, .tsv, .json, .txt \
+                or .text; `content` is the text, at most 512 KiB. The same name replaces the \
+                earlier upload. It is read on the next `project_domain_model_build`. Shared by \
+                the whole project: say what you upload first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "name": { "type": "string", "maxLength": 120 },
+                        "content": { "type": "string" }
+                    }),
+                    &["project_id", "name", "content"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-documents/v1/project-domain-model/uploads",
+                query: &[],
+            },
+        },
+        Tool {
+            name: "project_domain_model_upload_remove",
+            description: "Remove a source uploaded to a project's domain model, by the `id` \
+                `project_domain_model_uploads` lists: its file is deleted and its facts leave the \
+                model. Ask your person first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "upload_id": { "type": "string" }
+                    }),
+                    &["project_id", "upload_id"],
+                )
+            },
+            effect: Effect::Destructive,
+            experimental: true,
+            run: Run::Delete("/studio-documents/v1/project-domain-model/uploads/{upload_id}"),
+        },
+        Tool {
             name: "project_domain_model_fact_review",
             description: "Accept, reject or correct facts the model read, or put them back as \
                 proposed: an accepted fact is the project's reading, a rejected one leaves the \
@@ -252,6 +306,9 @@ mod tests {
                 "project_domain_model_build",
                 "project_domain_model_build_status",
                 "project_domain_model_coverage",
+                "project_domain_model_uploads",
+                "project_domain_model_upload",
+                "project_domain_model_upload_remove",
                 "project_domain_model_fact_review",
                 "project_domain_model_finding_decide"
             ]
@@ -315,6 +372,32 @@ mod tests {
         );
         assert_eq!(r.path, "/studio-documents/v1/project-domain-model/reviews");
         assert_eq!(r.body["items"][0]["value"], "90 days");
+    }
+
+    #[test]
+    fn an_upload_is_written_and_removed_through_the_routes() {
+        let all = tools();
+        let r = request_of(
+            &all,
+            "project_domain_model_upload",
+            json!({ "project_id": "p", "name": "a.csv", "content": "a,b" }),
+        );
+        assert_eq!(r.method, Method::Post);
+        assert_eq!(r.path, "/studio-documents/v1/project-domain-model/uploads");
+        assert_eq!(r.body["name"], "a.csv");
+        let r = request_of(
+            &all,
+            "project_domain_model_upload_remove",
+            json!({ "project_id": "p", "upload_id": "u1" }),
+        );
+        assert_eq!(r.method, Method::Delete);
+        assert_eq!(r.path, "/studio-documents/v1/project-domain-model/uploads/u1");
+        assert_eq!(r.query, vec![("project_id".to_owned(), "p".to_owned())]);
+        let remove = all
+            .iter()
+            .find(|t| t.name == "project_domain_model_upload_remove")
+            .expect("remove");
+        assert_eq!(remove.effect, Effect::Destructive);
     }
 
     #[test]

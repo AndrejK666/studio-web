@@ -27,6 +27,11 @@ export const dmApi = {
       .fetch(path ? { project_id: projectId, path } : { project_id: projectId }),
   specModelBuildEstimate: (projectId: string, path?: string) => svc().buildEstimate({ projectId, path }).fetch(FRESH),
 
+  specModelUploads: (projectId: string) => svc().uploads({ projectId }).fetch(FRESH),
+  uploadSpecModelSource: (projectId: string, name: string, content: string) =>
+    svc().upload().fetch({ project_id: projectId, name, content }),
+  removeSpecModelUpload: (projectId: string, uploadId: string) => svc().removeUpload(projectId, uploadId).fetch(undefined),
+
   specModelReviews: (projectId: string) => svc().reviews({ projectId }).fetch(FRESH),
   reviewSpecModelFacts: (projectId: string, items: ReviewItem[]) =>
     svc().review().fetch({ project_id: projectId, items }),

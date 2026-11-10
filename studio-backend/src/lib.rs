@@ -37,6 +37,7 @@ mod model_sweep; // moves every tenant's records into (or back out of) the domai
 mod llm_proxy; // studio-llm-proxy: Studio's one way out to a model provider (ADR-0039); always linked
 mod mcp; // studio-mcp: Studio's functions as MCP tools for a developer's own agent (docs/mcp.md)
 mod notify; // studio-notify: durable delivery queue for notifications (toolkit-db outbox)
+mod object_store; // the file-storage gear over REST: the bytes there, a reference here
 mod org_scope; // `?organization_id=`: a request acts in the organization it names, once the caller reaches it
 mod organizations; // studio-organizations: a person creates an organization and owns it (ADR-0018)
 mod outbox_repair; // bring pre-0.16 toolkit-db outboxes up to the schema 0.16 expects (gears-rust#5044)
