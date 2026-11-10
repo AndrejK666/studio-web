@@ -23,6 +23,7 @@ Status: **proposed** · Date: 2026-11-10 · Builds on ADR-0066 (Studio's own mod
   - [4. Uninstalling a kit: installed, dormant, absent](#4-uninstalling-a-kit-installed-dormant-absent)
   - [5. How existing organizations move](#5-how-existing-organizations-move)
   - [6. When a type is absent](#6-when-a-type-is-absent)
+  - [7. Decisions on the first draft's open questions (2026-11-10)](#7-decisions-on-the-first-drafts-open-questions-2026-11-10)
 - [Phases](#phases)
 - [Consequences](#consequences)
 - [Confirmation](#confirmation)
@@ -108,22 +109,26 @@ stand on. The rules, in order:
 3. a type that a core type must reference;
 4. a type that every gear's storage needs;
 5. otherwise, the kit whose screen shows the type;
-6. failing that, the kit whose concept the type belongs to.
+6. failing that, the kit whose concept the type belongs to;
+7. a type that duplicates another, with no reader and no writer, is dropped.
 
-Applied to the 63 types, this gives **44 core types and 19 types in 9 kits**:
+Applied to the 63 types, with the decisions of §7, this gives **43 core types, 19 types in
+10 kits, and 1 type dropped**:
 
 | Owner | Types |
 |---|---|
-| core (44) | bases and meta-model: system-object, entity, node, edge, record, link, managed-object, relation, object-type, metric · identity and levels: organization-entity, tenant, org-unit, team, membership, person, role, permission, role-assignment, ownership, project, organization, workspace · sources: connector, sync-state, conflict, repository, branch, commit, repository-file, text-content, pull-request · shell: kit, view, activity, notification, event, actor · engine and shared targets: workflow, action, worker, transition, evidence, template |
+| core (43) | bases and meta-model: system-object, entity, node, edge, record, link, managed-object, relation, object-type, metric · identity and levels: organization-entity, tenant, org-unit, team, membership, person, role, permission, role-assignment, ownership, project, organization, workspace · sources: connector, sync-state, conflict, repository, branch, commit, repository-file, text-content · shell: kit, view, activity, notification, event, actor · engine and shared targets: workflow, action, worker, transition, evidence, template |
 | project-specs | document, policy, review-request, approval |
-| project-lifecycle | risk, dependency, lifecycle-stage |
+| project-lifecycle | risk, dependency, lifecycle-stage, milestone |
 | assistant (**new built-in kit**, ADR-0068 §7's "Assistant") | model, tool, message |
 | project-issues | work-item, finding |
-| project-activity | milestone, comment |
-| components | gears, approval-request |
+| project-git (**new built-in kit**, §7) | pull-request |
+| project-activity | comment |
+| components | approval-request |
 | project-tests | check |
 | org-reports | report |
 | project-team | assignment |
+| dropped | gears (and the numbered `kit.packages_*` relations) |
 
 Six kits bring no type of their own, only tabs: project-artifacts, org-connections,
 project-domain-model, org-costs, org-infrastructure and product-releases. Their screens
@@ -132,9 +137,11 @@ show core types or gear-held types outside the 63 (analysis §8).
 Where the code argues against the issue's first proposal, the code wins. The analysis
 (§2) gives the reasons:
 
-- `template`, `metric`, `evidence` and `pull-request` stay core.
+- `template`, `metric` and `evidence` stay core.
 - `review-request` and `approval` go to project-specs rather than a new collaboration kit.
-- `milestone` goes to project-activity, which owns the Timeline section today.
+
+The first draft also kept `pull-request` in the core and gave `milestone` to
+project-activity. §7 changes both.
 
 ### 2. What it means that a kit brings a type
 
@@ -155,9 +162,8 @@ relations, its tabs, and later its lifecycle and events.
   `meta.kit_version`. The model editor and `domain_model_types` show where it came from.
 - **Relations follow their target.** A relation from a core type to a kit type is
   declared by the kit that brings the target. Examples: `project.scopes → work-item` is
-  project-issues', and `pull-request.requests_reviews → review-request` is
-  project-specs'. A kit may add relations to Studio's types (ADR-0067 §6). The core never
-  names a kit type.
+  project-issues', and `repository.hosts → pull-request` is project-git's. A kit may add
+  relations to Studio's types (ADR-0067 §6). The core never names a kit type.
 - **Tabs follow their kit.** Every `shows` relation whose tab a kit contributes moves to
   that kit's overlay, even when its target stays core. For example, `project.artifacts →
   repository-file` is project-artifacts'. The shell keeps only its own tabs: Overview,
@@ -168,6 +174,15 @@ relations, its tabs, and later its lifecycle and events.
   declared dependency. Inheritance is different: a type that extends another kit's type
   needs that kit (ADR-0068 open question 2). The only case today, `policy` extends
   `document`, is inside one kit.
+- **A section that needs another kit's type.** A screen or section can show a type that
+  another kit brings. One example is project-activity's Timeline, which shows
+  project-lifecycle's milestones. The section declares the type it needs in its kit's
+  manifest, next to the section, as a GTS id:
+  `kit_section(..., needs = ["gts.cf.studio.domain.milestone.v1~"])`. The type also appears
+  in the kit's `permissions.reads`. The shell mounts the section only where every type it
+  needs is installed, and hides it where any is absent or dormant. The kit itself installs
+  without the other kit. This is a dependency of one section on one type, not of one kit on
+  another, so ADR-0068 open question 2 (declared kit dependencies) is not needed for it.
 
 ### 3. A gear's need is a declaration of its own
 
@@ -201,7 +216,7 @@ in each organization:
 
 - A dormant type keeps `meta.left_by = {kit, version, at}`. Its objects stay in the graph
   and in the read model as they were. A gear that holds it keeps writing, because the
-  gear's sync is not the kit's (open question 7).
+  gear's sync is not the kit's, and no data is lost (§7, decision 7).
 - **Fields and relations a kit added to a core type** go dormant with the kit. Cards,
   forms and filters do not show them, and their values stay in the objects' open payloads.
 - **Removing a dormant type** is an administrator's act. It marks the objects deleted and
@@ -211,9 +226,10 @@ in each organization:
 - **Reinstalling** brings the kit's layer back. The dormant mark goes, and the objects show
   under the same ids, with nothing copied. An **upgrade** applies the difference between
   two overlays under the same rules. A field the new version drops goes dormant if objects
-  carry it.
+  carry it. A field the organization removed stays removed (§7, decision 6).
 - A **base kit** uninstalled by a platform administrator (ADR-0069 §4) applies these rules
-  in every organization. Removing what it left is still each organization's decision.
+  in every organization. The platform removes what it left, in one action (§7,
+  decision 8).
 
 ### 5. How existing organizations move
 
@@ -250,7 +266,7 @@ core seed of the running Studio
   - a field added to `risk` is a change over project-lifecycle's `risk`, and it goes
     dormant with it;
   - a type it uploaded that has the id of a kit's type extends that type, as an upload of
-    a Studio type does today (open question 9).
+    a Studio type does today (§7, decision 9).
 
 ### 6. When a type is absent
 
@@ -287,14 +303,71 @@ unknown type or field. A client can then tell "not installed here" from "wrong n
 - `domain_type`, `domain_model_query` and `domain_type_add_field` on an absent type answer
   `DOMAIN_TYPE_NOT_INSTALLED` with the kit, so an agent can call `kits_describe` and
   `kit_organization_install`.
-- A kit's own MCP tools (ADR-0068 §2) answer `KIT_NOT_INSTALLED` in an organization
-  without the kit (open question 5).
+- A kit's own MCP tools (ADR-0068 §2) stay listed. Calling one in an organization
+  without the kit answers `KIT_NOT_INSTALLED` with the kit (§7, decision 5).
 
 **Shell code that reads kit types** carries the kit it serves and drops out without it:
 
-- The Inbox source `review-requests` becomes project-specs' `inbox-source` (ADR-0068
-  phase 4).
-- The project status signals that open Issues, Specs or Activity name their kit.
+- The Inbox source `review-requests` becomes project-specs' `inbox-source`, and
+  `pull-requests` becomes project-git's (ADR-0068 phase 4, #1005).
+- The project status signals that open Issues, Specs or Activity name their kit. So does
+  the "pull requests waited a week" signal, which names project-git.
+- The organization Overview's pull-request block and the Tests tab's open pull requests
+  need the `pull-request` type, as Timeline needs `milestone` (§2). Without project-git
+  they are left out, and the rest of each screen stays.
+
+### 7. Decisions on the first draft's open questions (2026-11-10)
+
+1. **`milestone` goes to project-lifecycle.** Milestones are the plan, and the Timeline
+   only shows them. The Timeline section stays in project-activity and declares that it
+   needs `milestone` (§2, "A section that needs another kit's type"). Where
+   project-lifecycle is not installed, Activity shows without its Timeline.
+   `milestone.tracks_2 → work-item` becomes a relation from project-lifecycle to
+   project-issues.
+2. **`pull-request` goes to a new built-in kit, `project-git`.**
+   - **Why the name.** The kit is about a project's work on its Git host: pull requests,
+     what waits on whom in them, and later branch protection and merge settings. The name
+     says that. A name like `project-reviews` would be confused with project-specs'
+     document reviews (`review-request`, `approval`). A name like `project-pull-requests`
+     would be too narrow for what the kit will hold.
+   - **Levels:** organization and project. Its Inbox source is installed on the
+     organization (ADR-0068 §5). It is a base kit by default, so every organization reads
+     the same model as today (§5).
+   - **What it takes:** `pull-request`, the relation `repository.hosts`, and the
+     `pull-requests` Inbox source.
+   - **What the core keeps:** repository, branch, commit, repository-file and
+     text-content.
+   - **`comment` does not go with it.** Comments hang off pull requests, issues and
+     documents (`comment.subject_kind`; the artifact sync writes all three). The screen
+     that shows them all is Activity. `pull-request.has_comments` becomes a relation from
+     project-git to project-activity.
+   - **The shell's uses of pull requests** now depend on the kit or degrade (§6; analysis
+     §7):
+     - the Inbox source moves into the kit;
+     - the project status signal names the kit;
+     - the organization Overview's pull-request block needs the type;
+     - the Tests tab's open pull requests need the type.
+3. **`policy` stays in project-specs** until a governance kit exists. That kit will have to
+   depend on project-specs, because `policy` extends `document`.
+4. **`gears` and the numbered `kit.packages_*` relations are dropped**, not moved:
+   `kit.packages_2` … `kit.packages_14`, including `→ gears` and `→ tool`.
+   `kit.packages → object-type` and `kit.introduces_type → template` stay. An organization
+   whose members created `gears` objects keeps them as a dormant type (§4), left by
+   Studio rather than by a kit.
+5. **MCP tools stay listed.** The tool list is per connection, not per organization.
+   Calling a tool of a kit that is not installed in the caller's organization answers
+   `KIT_NOT_INSTALLED`, naming the kit.
+6. **The organization's layer is on top.** A field the organization removed from a kit's
+   type stays removed when the kit is upgraded. An upgrade changes only the kit's layer.
+7. **The sync keeps writing types that nothing shows.** A gear-held type whose kit is
+   uninstalled is dormant (§4). The gear goes on writing it, and no data is lost. A
+   reinstall finds it current.
+8. **The platform removes what a base kit left**, in every organization, in one action: a
+   platform administrator's "Remove what *kit* left", run as one `studio-tasks` run across
+   the organizations. An organization still removes, on its own, what its own kits left.
+9. **An uploaded model that declares a kit's type extends that type** as the
+   organization's layer. It does not install the kit. Without the kit, the type is dormant
+   or absent like any other.
 
 ## Phases
 
@@ -306,11 +379,13 @@ unchanged until phase 5.
 | 1 | The owner of every seed type as `meta.kit` in `ontology.studio.json`, an annotation with no behaviour. A test: every type has an owner, and no core type relates to a kit type except the crossings the analysis lists. `gen-domain-client.mjs` reads `ontology.studio.json` | — |
 | 2 | The gear layer: `ensure_type` records the gear's need as its own layer (§3); the merged model is unchanged | 1 |
 | 3 | The layered effective model, and the migration with its equality check (§5) | 2, #1004 (overlay installer), #1000 |
-| 4 | Absence: installed / dormant / absent (§4), `DOMAIN_TYPE_NOT_INSTALLED` and `DOMAIN_TYPE_DORMANT`, the MCP fields, the generic screens' rules, the split generated client (§6) | 3 |
-| 5 | Types move into their kits' overlays, **kits whose screens exist first**, one kit per change: org-reports (`report`); project-tests (`check`); project-issues (`finding`, `work-item`); project-specs (`document`, `policy`, `review-request`, `approval`, the Document types tab); components (`approval-request`, `gears`); project-team (`assignment`); project-activity (`comment`, `milestone`); then the tab-only kits (project-artifacts, org-connections, project-domain-model, org-costs, org-infrastructure, product-releases), each taking its `shows` relations | 4 |
-| 6 | project-lifecycle's `risk`, `dependency` and `lifecycle-stage` join the overlay that #1004 gives project-lifecycle first | 4, #1004 |
-| 7 | The `assistant` built-in kit, with `model`, `tool` and `message` | 4 |
-| 8 | The Inbox's `review-requests` source and the status signals carry their kit (§6) | 5, ADR-0068 phase 4 |
+| 4 | Absence: installed / dormant / absent (§4), `DOMAIN_TYPE_NOT_INSTALLED` and `DOMAIN_TYPE_DORMANT`, `KIT_NOT_INSTALLED` for a kit's MCP tools, the MCP fields, the generic screens' rules, sections that need a type (§2), the split generated client (§6), the platform's "Remove what a base kit left" (§7) | 3 |
+| 5 | Types move into their kits' overlays, **kits whose screens exist first**, one kit per change: org-reports (`report`); project-tests (`check`); project-issues (`finding`, `work-item`); project-specs (`document`, `policy`, `review-request`, `approval`, the Document types tab); components (`approval-request`); project-team (`assignment`); project-activity (`comment`; Timeline needs `milestone`); then the tab-only kits (project-artifacts, org-connections, project-domain-model, org-costs, org-infrastructure, product-releases), each taking its `shows` relations | 4 |
+| 6 | project-lifecycle's `risk`, `dependency`, `lifecycle-stage` and `milestone` join the overlay that #1004 gives project-lifecycle first | 4, #1004 |
+| 7 | The `project-git` built-in kit: `pull-request`, `repository.hosts`, the `pull-requests` Inbox source; the project status signal, the organization Overview's pull-request block and the Tests tab's open pull requests depend on it or degrade | 4, #1005 |
+| 8 | The `assistant` built-in kit, with `model`, `tool` and `message` | 4 |
+| 9 | `gears` and the numbered `kit.packages_*` relations leave the seed; existing `gears` objects go dormant | 4 |
+| 10 | The Inbox's `review-requests` source and the remaining status signals carry their kit (§6) | 5, #1005 |
 
 ## Consequences
 
@@ -326,7 +401,7 @@ unchanged until phase 5.
 - Bad, because a gear can hold data that no installed screen shows (a dormant held type).
   The data is the gear's, and it is visible to administrators, but it costs storage and
   sync time.
-- Bad, because the core is 44 types, not a handful. Most of it is vocabulary nothing
+- Bad, because the core is 43 types, not a handful. Most of it is vocabulary nothing
   writes yet. Moving it later is cheap once phases 1–4 exist, so the count is not
   defended here.
 
@@ -352,39 +427,19 @@ unchanged until phase 5.
   test).
 - `gen-domain-client.mjs --check` passes with the core and per-kit files, and no kit's
   generated file names another kit's type as a required relation.
+- Without project-lifecycle, a project's Activity tab shows and its Timeline section does
+  not. Without project-git, the Inbox has no pull-request items, the project status and
+  the organization Overview leave pull requests out, and the Tests tab shows its CI runs
+  without the open pull requests.
+- An upgrade of a kit does not bring back a field the organization removed from one of
+  its types.
 
 ## Open questions
 
-1. **`milestone`**: project-activity, because the Timeline section is that kit's in
-   `projects-mfe/mfe.json`, or project-lifecycle, as the issue proposed? The type follows
-   the Timeline. If Timeline moves to project-lifecycle, so does the type.
-2. **`pull-request` in the core.** The shell reads it today (the Inbox, the project status,
-   the organization Overview). If ADR-0068 §6 moves the pull-request Inbox source into a
-   kit, a review kit (`project-reviews`) could take `pull-request` with `comment`,
-   `review-request` and `approval`, and the core would keep only repositories, branches,
-   commits and files.
-3. **`policy`**: in project-specs because it extends `document`, or in a governance kit
-   that depends on project-specs, together with `control` and `governance-evidence` from
-   the product team's model.
-4. **`gears` and the `kit.packages_*` relations** come from the product team's model.
-   `gears` duplicates the catalogue's gear-held `gear`. `kit.packages_9 → gears` and
-   `kit.packages_12 → tool` say what `kit.packages → object-type` already says. Should they
-   be dropped instead of moved?
-5. **MCP tools per organization.** The MCP tool list is per connection, not per
-   organization. Hiding a kit's tools needs the organization in the listing. Until then
-   they answer `KIT_NOT_INSTALLED`.
-6. **Removals in an organization's layer.** How does an organization's removal of a field
-   that a kit declares survive the kit's upgrade? Does the upgrade bring the field back, or
-   does the removal stand?
-7. **A gear syncing for a dormant type.** Should the artifact sync stop writing work items
-   and findings when project-issues is uninstalled everywhere they would show, or keep them
-   so that a reinstall finds them current?
-8. **Who removes what a base kit left.** A platform administrator uninstalls the kit for
-   every organization. Removing the dormant objects is each organization's decision, or
-   the platform's.
-9. **An upload that declares a kit's type** (the product team's model declares `document`,
-   `check`, `report`, ...). Proposed: it extends the kit's type as the organization's
-   layer. It does not install the kit, and without the kit it goes dormant.
+The first draft's nine questions were settled on 2026-11-10 (§7). None remain open in
+this record. The governance kit that would take `policy` (§7, decision 3), and declared
+dependencies between kits (ADR-0068 open question 2), are left to the records that
+introduce them.
 
 ## More Information
 
@@ -396,4 +451,4 @@ unchanged until phase 5.
   `contents.rs`; the portal's kit sections: `studio-frontend-prototype/src-app/mfe_packages/*/mfe.json`.
 - The domain client: `scripts/gen-domain-client.mjs`.
 - Issues: #1025 (this), #1000 (layered model), #1002 (core updates), #1004 (overlay
-  installer), all part of #998.
+  installer), #1005 (inbox sources from kits), all part of #998.
