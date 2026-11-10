@@ -609,6 +609,64 @@ the screen that the person can dismiss; the rest of the shell goes on.
   built-in screen does: installing a kit is trusting its publisher. The library
   shows who that is; signed kits are ADR-0068 phase 9.
 
+### 3.13 The Research Integration kit
+
+- [ ] `p2` - **ID**: `cpt-studio-design-kits-research-integration`
+
+A kit an organization installs to build its projects' products in
+Constructor Research and run each as one of Research's applications
+(`cpt-studio-adr-research-environments`, ADR-0049). The machinery is
+studio-environments' and studio-connector's and stays there: the `research`
+connection and its sign-in (ADR-0049 §1), `kind: research` environments on a
+Research project (§2), the build Studio prepares and Research compiles (§3),
+the deploy as an application of services, status, logs, rollback and
+uninstall (§4). The kit is what switches it on for an organization and the
+screen that walks it there (ADR-0068 §1: a feature that only some
+organizations need is a kit's).
+
+**Where it sits.** Slug `research-integration`, shelf `builtin`, level
+`organization`. It is the first **opt-in built-in kit**
+(`OPT_IN_BUILTIN` in `service.rs`): compiled in like every built-in kit, but
+not a base kit by default (ADR-0068 §7, "installed only where someone asks
+for them"). An organization's administrator installs it under Organization ›
+Kits; a platform administrator may make it a base kit for everyone, and
+removing that record leaves nothing marked removed. It needs no other kit;
+its screen's links into Infrastructure and Releases simply lead nowhere when
+those base kits are removed.
+
+**What it brings** (`GET /studio-kits/v1/catalog/research-integration`):
+
+| Part | What | Where |
+|---|---|---|
+| tab | Organization › Research (`/research`): the member's own sign-in, the steps sign in → connect a Research project → build and deploy from Releases, and each Research project with its hardware, Test, Change and what each project runs there (status, logs, address) | `infrastructure-mfe`, second entry `./researchLifecycle` |
+| function | the gate: studio-environments asks studio-kits (`KitPresence`) before it adds or changes a Research environment (the organization's or a project's own), lists a connection's Research projects or hardware, or starts a build, deploy or rollback to Research; without the kit, 400 `failed_precondition` `KIT_NOT_INSTALLED` naming the kit | `environments/service.rs` `require_research_kit` |
+| mcp-tool | `research_projects`, `research_hardware`; the build and deploy themselves are `build_start` and `deploy_request` on a Research environment | `environments/mcp.rs` |
+| permissions | the routes its screen calls (`contents.rs`) | |
+
+No types: a Research environment, a build and a deploy are
+studio-environments' records, not domain objects (ADR-0070 §1, a kit that
+brings only screens).
+
+**Uninstalling** removes the tab and closes the gate. Nothing stored moves:
+Research environments stay in the organization's list (Infrastructure and
+Releases still show them), and status, logs, an uninstall of what runs there
+and removing the environment stay possible, so an organization can take its
+applications out of Research after it removed the kit. Reinstalling opens the
+gate on the same environments.
+
+**Not yet**, each for its own change:
+
+- An Inbox source (ADR-0068 §6) for a failed Research deploy or a Research
+  sign-in about to expire (the access key lasts 90 days, ADR-0049 §1): a kit's
+  source is a domain query, and deploys are not domain objects.
+- The Research parts of Infrastructure (the Research place, its form fields)
+  and of Releases (a Research rung's sign-in and limits) as sections of this
+  kit in those screens' slots: sections in another screen's slot are not
+  built yet (§3.12). Until then Infrastructure reads `GET /installed-kits` and
+  its "Add a place › Constructor Research" opens Organization › Kits where the
+  kit is missing.
+- A project-level installation: the gate asks the organization's kits only.
+
 ## 4. Additional context
 
 [`docs/kit-registry-prototype.md`](../kit-registry-prototype.md) is the
