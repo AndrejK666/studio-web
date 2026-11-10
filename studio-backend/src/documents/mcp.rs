@@ -1,8 +1,9 @@
-//! A project's domain model as its documents describe it, and what it has to
-//! decide before it builds from them, as MCP tools (`crate::mcp`).
+//! The project domain model (what a project's documents say; not the Studio
+//! domain model), and what the project has to decide before it builds from
+//! them, as MCP tools (`crate::mcp`).
 //!
-//! The same reads and writes the portal's Issues and Domain model tabs use:
-//! an agent sees the queue a person sees, and accepts or rejects a fact by
+//! The same reads and writes the portal's Issues and Project domain model tabs
+//! use: an agent sees the queue a person sees, and accepts or rejects a fact by
 //! the `fact_key` the model returns, without hashing anything itself.
 
 use serde_json::json;
@@ -12,13 +13,13 @@ use crate::mcp::sdk::{Effect, Run, Tool, object, project_id};
 pub fn tools() -> Vec<Tool> {
     vec![
         Tool {
-            name: "spec_model_issues",
-            description: "What a project has to decide before it builds from its documents, \
-                most blocking first: problems in the documents (dangling references, \
+            name: "project_domain_model_issues",
+            description: "What a project has to decide before it builds from its documents \
+                (its project domain model, not the Studio domain model), most blocking first: problems in the documents (dangling references, \
                 contradictions), requirements left as open questions, assumptions, and buildable \
                 requirements with no stated basis. Each row has its `group` (`blocks`, `look`, \
                 `decided`), the passages it rests on, and the `actions` it offers: `confirm` / \
-                `dismiss` are `spec_model_finding_decide` with the row's `fingerprint`.",
+                `dismiss` are `project_domain_model_finding_decide` with the row's `fingerprint`.",
             input_schema: || {
                 object(
                     json!({
@@ -34,35 +35,36 @@ pub fn tools() -> Vec<Tool> {
             },
             effect: Effect::Read,
             experimental: false,
-            run: Run::Get("/studio-documents/v1/spec-model/issues"),
+            run: Run::Get("/studio-documents/v1/project-domain-model/issues"),
         },
         Tool {
-            name: "spec_model_readiness",
+            name: "project_domain_model_readiness",
             description: "Whether anything stops a build from a project's documents: how many \
                 things wait for somebody (`open`), how many of them stop a build (`blocking`), \
                 `ready` when none do, and how many requirements cite a source.",
             input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
             effect: Effect::Read,
             experimental: false,
-            run: Run::Get("/studio-documents/v1/spec-model/readiness"),
+            run: Run::Get("/studio-documents/v1/project-domain-model/readiness"),
         },
         Tool {
-            name: "spec_model_facts",
-            description: "A project's domain model as read from its documents so far: every \
-                fact (entity, attribute, relation, requirement, constraint, lifecycle, \
-                decision) with the passage it rests on and its `fact_key`, and where each \
-                document stands. The `fact_key` is what `spec_model_fact_review` takes.",
+            name: "project_domain_model_facts",
+            description: "The project domain model (what its documents say; not the Studio \
+                domain model), as read from the documents so far: every fact (entity, \
+                attribute, relation, requirement, constraint, lifecycle, decision) with the \
+                passage it rests on and its `fact_key`, and where each document stands. The \
+                `fact_key` is what `project_domain_model_fact_review` takes.",
             input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
             effect: Effect::Read,
             experimental: false,
-            run: Run::Get("/studio-documents/v1/spec-model"),
+            run: Run::Get("/studio-documents/v1/project-domain-model"),
         },
         Tool {
-            name: "spec_model_fact_review",
+            name: "project_domain_model_fact_review",
             description: "Accept or reject facts the model read, or put them back as proposed: \
                 an accepted fact is the project's reading, a rejected one leaves the model and \
                 is not proposed again while its passage says the same. Each item is a \
-                `fact_key` from `spec_model_facts`, a `state`, and the fact's `path` and \
+                `fact_key` from `project_domain_model_facts`, a `state`, and the fact's `path` and \
                 document `revision`. Shared by the whole project: say what you decide first.",
             input_schema: || {
                 object(
@@ -86,13 +88,13 @@ pub fn tools() -> Vec<Tool> {
             effect: Effect::Write,
             experimental: true,
             run: Run::Post {
-                path: "/studio-documents/v1/spec-model/reviews",
+                path: "/studio-documents/v1/project-domain-model/reviews",
                 query: &[],
             },
         },
         Tool {
-            name: "spec_model_finding_decide",
-            description: "Say whether a problem `spec_model_issues` lists is real: `confirmed` \
+            name: "project_domain_model_finding_decide",
+            description: "Say whether a problem `project_domain_model_issues` lists is real: `confirmed` \
                 keeps it as a real problem (a confirmed contradiction stops a build), \
                 `dismissed` takes it off the list. Takes the row's `fingerprint`. Shared by \
                 the whole project: say what you decide first.",
@@ -110,7 +112,7 @@ pub fn tools() -> Vec<Tool> {
             effect: Effect::Write,
             experimental: true,
             run: Run::Post {
-                path: "/studio-documents/v1/spec-model/findings/{fingerprint}/decision",
+                path: "/studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
                 query: &[],
             },
         },
@@ -128,11 +130,11 @@ mod tests {
         assert_eq!(
             names,
             [
-                "spec_model_issues",
-                "spec_model_readiness",
-                "spec_model_facts",
-                "spec_model_fact_review",
-                "spec_model_finding_decide"
+                "project_domain_model_issues",
+                "project_domain_model_readiness",
+                "project_domain_model_facts",
+                "project_domain_model_fact_review",
+                "project_domain_model_finding_decide"
             ]
         );
         for t in &all {

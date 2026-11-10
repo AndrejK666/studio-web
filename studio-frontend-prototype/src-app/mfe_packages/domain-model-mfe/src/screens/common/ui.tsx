@@ -1,5 +1,5 @@
 /**
- * What every part of the Domain model tab shares: where it is mounted, the
+ * What every part of the Project domain model tab shares: where it is mounted, the
  * gear's own words for a refusal, and the prototype's small UI pieces
  * (`ui-standard.tsx`: StatusChip, PageHeader, EmptyState, InfoPopover,
  * KpiTile) drawn with the UI kit.
@@ -46,7 +46,7 @@ export const ScopeContext = createContext<Scope | null>(null);
 
 export function useScope(): Scope {
   const scope = useContext(ScopeContext);
-  if (!scope) throw new Error('useScope outside the Domain model kit');
+  if (!scope) throw new Error('useScope outside the Project domain model kit');
   return scope;
 }
 

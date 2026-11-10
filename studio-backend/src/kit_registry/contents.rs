@@ -213,14 +213,14 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             screens: vec![project_tab("Issues", Some("/issues"))],
             permissions: KitPermissions {
                 reads: owned(&[
-                    "GET /studio-documents/v1/spec-model/issues",
-                    "GET /studio-documents/v1/spec-model/readiness",
-                    "GET /studio-documents/v1/spec-model",
+                    "GET /studio-documents/v1/project-domain-model/issues",
+                    "GET /studio-documents/v1/project-domain-model/readiness",
+                    "GET /studio-documents/v1/project-domain-model",
                 ]),
                 writes: owned(&[
-                    "POST /studio-documents/v1/spec-model/reviews",
-                    "POST /studio-documents/v1/spec-model/findings/{fingerprint}/decision",
-                    "POST /studio-documents/v1/spec-model/issues",
+                    "POST /studio-documents/v1/project-domain-model/reviews",
+                    "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
+                    "POST /studio-documents/v1/project-domain-model/issues",
                 ]),
                 ..KitPermissions::default()
             },
@@ -349,8 +349,8 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     "GET /studio-user/v1/me/colleagues",
                     "GET /studio-user/v1/organizations/{org_id}/members",
                     "GET /studio-documents/v1/workspaces/{workspace_id}/capabilities",
-                    "GET /studio-documents/v1/spec-model",
-                    "GET /studio-documents/v1/spec-model/glossary",
+                    "GET /studio-documents/v1/project-domain-model",
+                    "GET /studio-documents/v1/project-domain-model/glossary",
                     "GET /studio-spec-mapping/v1/plan",
                     "GET /studio-spec-mapping/v1/capabilities",
                     "POST /studio-spec-mapping/v1/conformance",
@@ -475,8 +475,8 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     "GET /studio-tasks/v1/runs/{id}",
                     "GET /studio-connector/v1/connections",
                     "GET /studio-documents/v1/workspaces/{workspace_id}/capabilities",
-                    "GET /studio-documents/v1/spec-model",
-                    "GET /studio-documents/v1/spec-model/glossary",
+                    "GET /studio-documents/v1/project-domain-model",
+                    "GET /studio-documents/v1/project-domain-model/glossary",
                     "GET /studio-spec-mapping/v1/plan",
                     "GET /studio-spec-mapping/v1/capabilities",
                     "GET /studio-spec-mapping/v1/requirements",
@@ -515,25 +515,26 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             },
             ..KitContents::default()
         },
-        // The project's Domain model (ADR-0066, ADR-0067): the model its
-        // specs make, the findings and issues they leave to decide, the
-        // glossary, traces to work. No screen in the new portal yet. The
-        // routes are the ones the old prototype's `spec-model-tab` calls.
+        // The Project domain model (ADR-0066, ADR-0067; not the Studio domain
+        // model): the model a project's documents make, the findings and
+        // issues they leave to decide, the glossary, traces to work. The
+        // portal's screen is `domain-model-mfe`; the routes are the ones the
+        // old prototype's `spec-model-tab` called, under their new path.
         "project-domain-model" => KitContents {
-            screens: vec![project_tab("Domain model", None)],
+            screens: vec![project_tab("Project domain model", None)],
             permissions: KitPermissions {
                 reads: owned(&[
-                    "GET /studio-documents/v1/spec-model",
-                    "GET /studio-documents/v1/spec-model/build-estimate",
-                    "GET /studio-documents/v1/spec-model/findings",
-                    "GET /studio-documents/v1/spec-model/reviews",
-                    "GET /studio-documents/v1/spec-model/requirements",
-                    "GET /studio-documents/v1/spec-model/related",
-                    "GET /studio-documents/v1/spec-model/trace",
-                    "GET /studio-documents/v1/spec-model/work",
-                    "GET /studio-documents/v1/spec-model/check-methods",
-                    "GET /studio-documents/v1/spec-model/glossary",
-                    "GET /studio-documents/v1/spec-model/glossary/document",
+                    "GET /studio-documents/v1/project-domain-model",
+                    "GET /studio-documents/v1/project-domain-model/build-estimate",
+                    "GET /studio-documents/v1/project-domain-model/findings",
+                    "GET /studio-documents/v1/project-domain-model/reviews",
+                    "GET /studio-documents/v1/project-domain-model/requirements",
+                    "GET /studio-documents/v1/project-domain-model/related",
+                    "GET /studio-documents/v1/project-domain-model/trace",
+                    "GET /studio-documents/v1/project-domain-model/work",
+                    "GET /studio-documents/v1/project-domain-model/check-methods",
+                    "GET /studio-documents/v1/project-domain-model/glossary",
+                    "GET /studio-documents/v1/project-domain-model/glossary/document",
                     "GET /studio-spec-mapping/v1/findings",
                     "GET /studio-spec-mapping/v1/plan",
                     "GET /studio-kits/v1/projects/{project_id}/installations",
@@ -541,18 +542,18 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     "GET /studio-user/v1/organizations/{org_id}/members/{user_id}/identities",
                 ]),
                 writes: owned(&[
-                    "POST /studio-documents/v1/spec-model/builds",
-                    "POST /studio-documents/v1/spec-model/entities",
-                    "POST /studio-documents/v1/spec-model/reviews",
-                    "POST /studio-documents/v1/spec-model/issues",
-                    "POST /studio-documents/v1/spec-model/findings/{fingerprint}/decision",
-                    "POST /studio-documents/v1/spec-model/findings/{fingerprint}/proposals",
-                    "POST /studio-documents/v1/spec-model/files/proposals",
-                    "POST /studio-documents/v1/spec-model/sentences/proposals",
-                    "POST /studio-documents/v1/spec-model/glossary/decisions",
-                    "POST /studio-documents/v1/spec-model/glossary/distinct",
-                    "POST /studio-documents/v1/spec-model/glossary/proposals",
-                    "POST /studio-documents/v1/spec-model/glossary/document/proposals",
+                    "POST /studio-documents/v1/project-domain-model/builds",
+                    "POST /studio-documents/v1/project-domain-model/entities",
+                    "POST /studio-documents/v1/project-domain-model/reviews",
+                    "POST /studio-documents/v1/project-domain-model/issues",
+                    "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
+                    "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/proposals",
+                    "POST /studio-documents/v1/project-domain-model/files/proposals",
+                    "POST /studio-documents/v1/project-domain-model/sentences/proposals",
+                    "POST /studio-documents/v1/project-domain-model/glossary/decisions",
+                    "POST /studio-documents/v1/project-domain-model/glossary/distinct",
+                    "POST /studio-documents/v1/project-domain-model/glossary/proposals",
+                    "POST /studio-documents/v1/project-domain-model/glossary/document/proposals",
                     "POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents",
                 ]),
                 ..KitPermissions::default()

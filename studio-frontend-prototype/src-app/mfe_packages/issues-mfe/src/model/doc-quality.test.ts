@@ -94,7 +94,7 @@ describe("one-sided relation", () => {
 
 describe("only in an ADR or a feature", () => {
   const adr = { source: { path: "docs/adr/0007-billing.md" } };
-  it("proposes adding a thing only a decision or a feature describes to the domain model", () => {
+  it("proposes adding a thing only a decision or a feature describes to the project domain model", () => {
     const facts = [fact("Invoice", "entity", { ...adr, text: "An invoice is what we bill." }), attr("Invoice", "total", { source: { path: "docs/features/billing.md" } })];
     const items = docQuality(entitiesOf(facts));
     expect(items.map((i) => i.type)).toEqual(["onlyadr"]);
@@ -102,7 +102,7 @@ describe("only in an ADR or a feature", () => {
     expect(items[0].edit?.definition).toBe("An invoice is what we bill.");
   });
 
-  it("is not asked once a requirement or the domain model describes it", () => {
+  it("is not asked once a requirement or the project domain model describes it", () => {
     expect(types([fact("Invoice", "entity", adr), attr("Invoice", "total")])).toEqual([]);
     expect(types([fact("Invoice", "entity", adr), attr("Invoice", "total", { source: { path: "docs/domain-model.md" } })])).toEqual([]);
   });

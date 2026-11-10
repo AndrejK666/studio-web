@@ -28,15 +28,20 @@ This README is what you need to work in the directory.
 - The built-in templates are in [`templates/`](templates/) and the vendored
   review criteria in [`review/`](review/README.md) — refresh those from their
   source, do not edit them here.
-- The domain model's Issues queue and readiness
-  (`GET /spec-model/issues`, `GET /spec-model/readiness`) are computed in
+- The project domain model (what a project's documents say; not the Studio
+  domain model, [`../domain_model`](../domain_model)) is served under
+  `/studio-documents/v1/project-domain-model*`. The same routes under
+  `/studio-documents/v1/spec-model*` are deprecated aliases, kept for the old
+  prototype until 2027-03-31. Its Issues queue and readiness
+  (`GET /project-domain-model/issues`, `GET /project-domain-model/readiness`) are computed in
   [`spec_model/resolve.rs`](spec_model/resolve.rs), and every fact the model
   returns carries its review key from
   [`spec_model/fact_key.rs`](spec_model/fact_key.rs). Both moved from the
   portal; the fact key must stay bit-for-bit the browser's, because stored
   reviews carry it — its tests pin keys the old browser code computed.
 - The MCP tools over those routes are in [`mcp.rs`](mcp.rs)
-  (`spec_model_issues`, `spec_model_readiness`, `spec_model_facts`,
-  `spec_model_fact_review`, `spec_model_finding_decide`; `docs/mcp.md`).
+  (`project_domain_model_issues`, `project_domain_model_readiness`,
+  `project_domain_model_facts`, `project_domain_model_fact_review`,
+  `project_domain_model_finding_decide`; `docs/mcp.md`).
 - `repo_tests.rs` runs against the shared test PostgreSQL (`test_pg.rs`);
   `sync_analysis_tests.rs` covers what a sync queues.

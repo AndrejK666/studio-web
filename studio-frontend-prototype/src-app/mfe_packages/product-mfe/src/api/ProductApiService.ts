@@ -442,10 +442,10 @@ export class ProductApiService extends BaseApiService {
   readonly glossary = this.protocol(RestEndpointProtocol).queryWith<
     { items: GlossaryEntry[]; total: number },
     { projectId: string }
-  >(({ projectId }) => `/studio-documents/v1/spec-model/glossary?${project(projectId)}`);
+  >(({ projectId }) => `/studio-documents/v1/project-domain-model/glossary?${project(projectId)}`);
 
   readonly specModel = this.protocol(RestEndpointProtocol).queryWith<SpecModel, { projectId: string }>(
-    ({ projectId }) => `/studio-documents/v1/spec-model?${project(projectId)}`
+    ({ projectId }) => `/studio-documents/v1/project-domain-model?${project(projectId)}`
   );
 
   /** One `studio-tasks` run, read in the tenant it was queued in. */

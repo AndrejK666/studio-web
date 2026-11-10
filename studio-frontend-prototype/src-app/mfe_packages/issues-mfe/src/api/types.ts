@@ -3,13 +3,13 @@
  * request shapes the moved model modules take (`SpecModelEntityEdit`,
  * `SpecModelSentence`, `SpecModelWrite`, `GlossaryDocRow`) are the
  * prototype's (`src/api.ts` at 00828880), unchanged; the queue's row and the
- * readiness are the server's own (studio-documents, `GET /spec-model/issues`
- * and `GET /spec-model/readiness`).
+ * readiness are the server's own (studio-documents, `GET /project-domain-model/issues`
+ * and `GET /project-domain-model/readiness`).
  */
 
 import type { SpecModel, SpecModelFact, SpecModelSide } from '../model/spec-model';
 
-/** One entity of the domain model as a person edited it: its section of docs/domain-model.md. */
+/** One entity of the project domain model as a person edited it: its section of docs/domain-model.md. */
 export interface SpecModelEntityEdit {
   name: string;
   definition?: string | null;
@@ -47,7 +47,7 @@ export interface GlossaryDocRow {
 /** A fact as the server returns it: with the key its review is stored under. */
 export type ServedFact = SpecModelFact & { fact_key: string };
 
-/** `GET /studio-documents/v1/spec-model`. */
+/** `GET /studio-documents/v1/project-domain-model`. */
 export type ServedSpecModel = Omit<SpecModel, 'facts'> & { facts: ServedFact[] };
 
 export type IssueGroup = 'blocks' | 'look' | 'decided';
@@ -84,7 +84,7 @@ export interface SpecModelIssueRowList {
   by_group: Partial<Record<IssueGroup, number>>;
 }
 
-/** `GET /studio-documents/v1/spec-model/readiness`. */
+/** `GET /studio-documents/v1/project-domain-model/readiness`. */
 export interface SpecModelReadiness {
   total: number;
   cited: number;

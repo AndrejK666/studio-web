@@ -7,8 +7,8 @@
  * decided — with a verdict line over it and the model's build in the header.
  *
  * The queue, its groups and the actions each row offers come from the server
- * (`GET /spec-model/issues`), and so does whether anything stops a build
- * (`GET /spec-model/readiness`); the prototype computed both in the browser.
+ * (`GET /project-domain-model/issues`), and so does whether anything stops a build
+ * (`GET /project-domain-model/readiness`); the prototype computed both in the browser.
  * The documentation's thin places are still read off the model here
  * (doc-quality.ts), over the facts members did not reject (by the server's
  * `fact_key`) and the entities saved on this screen until a build reads them.

@@ -1,5 +1,5 @@
 //! A project's domain model, read from its documents, and the places they
-//! disagree about it (`docs/spec-domain-model.md`).
+//! disagree about it (`docs/project-domain-model.md`).
 //!
 //! Built in stages: the reference index and its rules (`index.rs`), which
 //! need no model; the facts of each document revision, read by a model on the

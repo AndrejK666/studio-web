@@ -1,8 +1,12 @@
-# A project's domain model, read from its documents
+# The project domain model, read from its documents
 
 What Studio reads out of a project's documentation about the application it
 describes, how it finds where the documents disagree about it, and where that
 lives in the code.
+
+Not to be confused with the **Studio domain model** (`studio-domain-model`,
+ADR-0066): Studio's own model of its objects. See the
+[glossary](glossary.md).
 
 Status: proposal, 2026-10-12. It is part of
 [studio-documents](design/studio-documents.md), the gear that already owns the
@@ -177,11 +181,11 @@ where this one stopped. Its stages:
 
 ```mermaid
 sequenceDiagram
-    participant P as Portal (Domain model tab)
+    participant P as Portal (Project domain model tab)
     participant D as studio-documents (spec_model/)
     participant L as studio-llm-proxy
     participant G as studio-artifact-ingest
-    P->>D: POST /spec-model/builds {project_id}
+    P->>D: POST /project-domain-model/builds {project_id}
     D-->>P: 202 the build's state
     D->>D: index, reference rules
     loop each document with no extraction for its revision, four at once
@@ -193,8 +197,8 @@ sequenceDiagram
         D->>L: complete: both passages in context
     end
     D->>G: SpecFindingWriter: spec_finding nodes (detector model)
-    P->>D: GET /spec-model, GET /spec-model/findings
-    P->>D: POST /spec-model/findings/{fingerprint}/decision
+    P->>D: GET /project-domain-model, GET /project-domain-model/findings
+    P->>D: POST /project-domain-model/findings/{fingerprint}/decision
 ```
 
 In the code, under `studio-backend/src/documents/spec_model/`: `index.rs`,
@@ -215,9 +219,9 @@ when the text it replaces is in the document it names. A judgement is kept per
 (fingerprint, the sides' revisions, judge version) in
 `studio_spec_model_judgements` (`m0016`), so a candidate is judged once until
 one of its documents changes. A finding the judge worded is fingerprinted by
-its passages alone. `POST /spec-model/findings/{fingerprint}/decision` keeps a
+its passages alone. `POST /project-domain-model/findings/{fingerprint}/decision` keeps a
 member's `confirmed` or `dismissed` in `studio_spec_model_decisions`, and
-`GET /spec-model/findings` answers it with each finding.
+`GET /project-domain-model/findings` answers it with each finding.
 
 **The last two rules and the record.** `contradiction.decision` is proposed
 where a pair of values has a decision on one side (the decision is side B,
@@ -248,16 +252,16 @@ piece once more, keeps a piece that fails twice as the document's `error` (read
 again on the next build), and stops when the caller has no key. Kept in
 `studio_spec_model_extractions` (`m0015`). Up to four documents are read at
 once (`PARALLEL_READS`); each extraction is kept on its own, so the order they
-finish in changes nothing. `POST /spec-model/builds` starts it (with `path`, it
+finish in changes nothing. `POST /project-domain-model/builds` starts it (with `path`, it
 reads that one document again and replaces only its facts), and
-`GET /spec-model/build-estimate?project_id=` says beforehand how many documents
+`GET /project-domain-model/build-estimate?project_id=` says beforehand how many documents
 it would read, their approximate input tokens, and how long it should take at
 the pace of the earlier builds;
-`GET /spec-model` answers the facts of the current revisions, each document's
+`GET /project-domain-model` answers the facts of the current revisions, each document's
 state, and the build's progress as the replica answering knows it.
 
 **Stage 1.** `index.rs` and `finding.rs`, served by
-`GET /spec-model/findings?project_id=`, computed on read (it is cheap and needs
+`GET /project-domain-model/findings?project_id=`, computed on read (it is cheap and needs
 no key). The reference rules, as built:
 - an identifier is checked only in a family (the first two segments, as in `cpt-…`) the project defines
   at least five of, with the kit's defining labels `**ID**:` and `**Contract**:`;
@@ -299,35 +303,39 @@ Calibrated on real documentation ([calibration](#calibration)). **Run:**
 
 ## REST
 
-Under `/studio-documents/v1`, beside the gear's other routes:
+Under `/studio-documents/v1`, beside the gear's other routes. Every route below
+is also served under its old path, `/spec-model…` in place of
+`/project-domain-model…`, as a deprecated alias (same handler, the old
+`operation_id`) for callers written before the rename; the aliases are removed
+after 2027-03-31.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/spec-model/builds` | Build a project's model on the caller's key: `202` with the `task_run` to follow |
-| `GET` | `/spec-model/build-estimate?project_id=` | What a build would read now (or with `path`, one document), its approximate input tokens and seconds |
-| `GET` | `/spec-model?project_id=` | The assembled model: entities with their facts and sources, requirements, constraints, decisions; whether it is stale and which documents are not extracted yet |
-| `GET` | `/spec-model/findings?project_id=` | The findings with their sides, fix and decision, filterable by `rule` and `status` |
-| `POST` | `/spec-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
-| `GET` | `/spec-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
-| `GET` | `/spec-model/reviews?project_id=` | Every accept or reject members gave on the facts the model read, by the key the tab gives a fact (kind, subject, aspect and the folded quote, hashed) |
-| `POST` | `/spec-model/reviews` | Accept, reject, or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same. Prefixed keys carry the project's other decisions: `ev:` evidence, `hyp:` a hypothesis's check, `ob:` an excluded obligation, `rel:` a match across projects, `iss:` an opened issue, `pri:` an item being prioritised, `prc:` a confirmed order |
-| `POST` | `/spec-model/files/proposals` | A whole Markdown document under `docs/` as a pull request: the need a member accepted (`docs/discovery.md`), a confirmed prioritisation (`docs/priorities.md`), the hypotheses and their checks (`docs/hypotheses.md`); `201` with the pull request |
-| `GET` | `/spec-model/check-methods?project_id=&kits=` | The hypothesis check methods the named kits add, each read from `.cf-studio/config/kits/<kit>/check-methods.json`; a kit whose file is out of shape is listed in `unread` with the reason |
-| `POST` | `/spec-model/glossary/distinct` | Two entries are different things: kept on both as `distinct_from`, so they are not offered as one thing again; `204` |
-| `POST` | `/spec-model/glossary/decisions` | Name an entry, or make it an alias of another; `201` with the decision |
-| `POST` | `/spec-model/glossary/proposals?project_id=` | Rename `from` to `to` in the documents' prose (whole words, first letter's case kept; code, links and front matter untouched) as one pull request; `201` with the files and the pull request, `400` when no document uses `from` |
-| `POST` | `/spec-model/sentences/proposals?project_id=` | Add one sentence to one of the project's documents, as a paragraph after the block line `line` is in, on the `revision` the model read, as a pull request: how the Domain model tab states a relation no document states and how the Glossary tells two words apart; `201` with the pull request, `400` when the file is not documentation, changed since it was read, or the line is blank or code |
-| `GET` | `/spec-model/work?project_id=` | The identifiers the documents define with a label, with the synced issues, pull requests and commits that name them ([the links](project-and-product.md#the-links)) |
-| `GET` | `/spec-model/requirements?project_id=` | Every labelled requirement with its statement and the basis its block states ([below](#requirements-and-their-basis)) |
-| `GET` | `/spec-model/decisions?project_id=` | Every ✓/✗ recorded on the project's findings, the model's and the Spec Quality detectors' alike |
+| `POST` | `/project-domain-model/builds` | Build a project's model on the caller's key: `202` with the `task_run` to follow |
+| `GET` | `/project-domain-model/build-estimate?project_id=` | What a build would read now (or with `path`, one document), its approximate input tokens and seconds |
+| `GET` | `/project-domain-model?project_id=` | The assembled model: entities with their facts and sources, requirements, constraints, decisions; whether it is stale and which documents are not extracted yet |
+| `GET` | `/project-domain-model/findings?project_id=` | The findings with their sides, fix and decision, filterable by `rule` and `status` |
+| `POST` | `/project-domain-model/findings/{fingerprint}/decision` | ✓ or ✗ on a finding; `201` with the decision |
+| `GET` | `/project-domain-model/glossary?project_id=` | The project's glossary: one entry per subject, its name and its aliases ([the project's words](project-and-product.md#the-projects-words)) |
+| `GET` | `/project-domain-model/reviews?project_id=` | Every accept or reject members gave on the facts the model read, by the key the tab gives a fact (kind, subject, aspect and the folded quote, hashed) |
+| `POST` | `/project-domain-model/reviews` | Accept, reject, or put back as `proposed`, a selection of up to 500 facts in one action. A rejected reading leaves the model and is not proposed again while its passage says the same. Prefixed keys carry the project's other decisions: `ev:` evidence, `hyp:` a hypothesis's check, `ob:` an excluded obligation, `rel:` a match across projects, `iss:` an opened issue, `pri:` an item being prioritised, `prc:` a confirmed order |
+| `POST` | `/project-domain-model/files/proposals` | A whole Markdown document under `docs/` as a pull request: the need a member accepted (`docs/discovery.md`), a confirmed prioritisation (`docs/priorities.md`), the hypotheses and their checks (`docs/hypotheses.md`); `201` with the pull request |
+| `GET` | `/project-domain-model/check-methods?project_id=&kits=` | The hypothesis check methods the named kits add, each read from `.cf-studio/config/kits/<kit>/check-methods.json`; a kit whose file is out of shape is listed in `unread` with the reason |
+| `POST` | `/project-domain-model/glossary/distinct` | Two entries are different things: kept on both as `distinct_from`, so they are not offered as one thing again; `204` |
+| `POST` | `/project-domain-model/glossary/decisions` | Name an entry, or make it an alias of another; `201` with the decision |
+| `POST` | `/project-domain-model/glossary/proposals?project_id=` | Rename `from` to `to` in the documents' prose (whole words, first letter's case kept; code, links and front matter untouched) as one pull request; `201` with the files and the pull request, `400` when no document uses `from` |
+| `POST` | `/project-domain-model/sentences/proposals?project_id=` | Add one sentence to one of the project's documents, as a paragraph after the block line `line` is in, on the `revision` the model read, as a pull request: how the Project domain model tab states a relation no document states and how the Glossary tells two words apart; `201` with the pull request, `400` when the file is not documentation, changed since it was read, or the line is blank or code |
+| `GET` | `/project-domain-model/work?project_id=` | The identifiers the documents define with a label, with the synced issues, pull requests and commits that name them ([the links](project-and-product.md#the-links)) |
+| `GET` | `/project-domain-model/requirements?project_id=` | Every labelled requirement with its statement and the basis its block states ([below](#requirements-and-their-basis)) |
+| `GET` | `/project-domain-model/decisions?project_id=` | Every ✓/✗ recorded on the project's findings, the model's and the Spec Quality detectors' alike |
 
 Every list answers `{items, total}`. A project the caller cannot reach answers
 404.
 
 ## Requirements and their basis
 
-`requirements.rs`, served by `GET /spec-model/requirements` and shown in the
-Domain model tab's Requirements view. Asked for by the September 2026
+`requirements.rs`, served by `GET /project-domain-model/requirements` and shown in the
+Project domain model tab's Requirements view. Asked for by the September 2026
 interviews (problem 1.4: "the model invents content", raised by ten people in
 five companies, High at all three scored companies): a reader wants to see
 which requirements rest on something and which do not.
@@ -355,7 +363,7 @@ identifier, so "defined and never worked on" is one filter away.
 
 ## Across projects
 
-`related.rs`, served by `GET /spec-model/related` (issue #733; interview
+`related.rs`, served by `GET /project-domain-model/related` (issue #733; interview
 problem 1.2, eighteen people in six companies). The rules above find
 disagreements inside one project. This compares every requirement of the
 project with those of the organization's other projects the caller can read
@@ -368,18 +376,18 @@ judge is future work, the same as for the rules that need a model key.
 
 ## From requirement to code and test
 
-`trace.rs`, served by `GET /spec-model/trace` (issue #738). For every
+`trace.rs`, served by `GET /project-domain-model/trace` (issue #738). For every
 requirement: the other documents that refer to it, and the code and test files
 of the project's checkouts that name its identifier as a whole token, a test
 told from code by its path (`tests/`, `_test.go`, `.spec.ts`, …). What is not
 named is not traced; the view's filters are the gaps: not in code, not in a
-test, named nowhere. Read with `GET /spec-model/work` (issues, pull requests,
+test, named nowhere. Read with `GET /project-domain-model/work` (issues, pull requests,
 commits), it is the impact of changing a requirement.
 
 ## Questions while writing
 
-`questions.rs`, served by `GET /spec-model/questions?path=`,
-`GET /spec-model/term-drift?path=` and `GET /spec-model/experts?subject=`
+`questions.rs`, served by `GET /project-domain-model/questions?path=`,
+`GET /project-domain-model/term-drift?path=` and `GET /project-domain-model/experts?subject=`
 (issue #737; interview problem 1.3). For one
 document: the glossary entries the project's other documents relate to an
 entry this document names (a fact about one whose value or passage names the
@@ -425,7 +433,7 @@ citation says where a requirement comes from, not that it is proven. A trace
 from a requirement to the code or a test is a name found there, never a claim
 that it is covered.
 
-## The Domain model tab
+## The Project domain model tab
 
 A project tab beside Specs and Components in the prototype
 (`studio-frontend-prototype`), with three views:

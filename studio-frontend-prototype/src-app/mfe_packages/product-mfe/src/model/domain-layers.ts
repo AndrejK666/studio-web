@@ -1,4 +1,6 @@
 // Ported unchanged from the prototype (src/domain-layers.ts at 00828880); only the import paths changed.
+// About the project domain model (what a project's documents say), not the Studio domain model;
+// the module keeps its prototype name.
 // The model map in layers: what the specification is about (Domain), what
 // serves it (System) and where that runs (Deployment), each drawn as a
 // diagram of entity cards and the relations the documents declare.

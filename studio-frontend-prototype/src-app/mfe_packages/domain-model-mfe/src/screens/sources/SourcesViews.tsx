@@ -1,5 +1,5 @@
 /**
- * Domain model › Sources (the prototype's `Coverage`, `Work`, `AgainstTheCode`
+ * Project domain model › Sources (the prototype's `Coverage`, `Work`, `AgainstTheCode`
  * and `Elsewhere` in spec-model-tab.tsx): which documents were read, the
  * work that names what they define, the documents against the code, and
  * what other projects of the organization require alike.

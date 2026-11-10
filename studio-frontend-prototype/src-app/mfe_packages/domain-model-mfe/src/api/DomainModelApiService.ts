@@ -1,10 +1,10 @@
 /**
- * What Project › Domain model reads and writes, ported from the prototype's
+ * What Project › Project domain model reads and writes, ported from the prototype's
  * client (src/api.ts at 00828880, ADR-0069 §5) — the calls its
  * `spec-model-tab.tsx` made. Each gear keeps its own path under the gateway
  * prefix:
  *
- * - `studio-documents` — the spec model, its builds, reviews, requirements,
+ * - `studio-documents` — the project domain model, its builds, reviews, requirements,
  *   traces, work links, related requirements, the glossary, check methods,
  *   the proposals it writes to the repository, a pasted material;
  * - `studio-spec-mapping` — the documents against the code, the plan (the
@@ -50,7 +50,7 @@ export function orgScoped(path: string, org: string | null = organization): stri
 
 const enc = encodeURIComponent;
 const project = (id: string) => `project_id=${enc(id)}`;
-const SPEC = '/studio-documents/v1/spec-model';
+const PROJECT_MODEL = '/studio-documents/v1/project-domain-model';
 
 /** A fact review as it is written. */
 export interface ReviewItem {
@@ -77,16 +77,16 @@ export class DomainModelApiService extends BaseApiService {
   /* ── the model and its builds ── */
 
   readonly specModel = this.protocol(RestEndpointProtocol).queryWith<SpecModel, { projectId: string }>(
-    ({ projectId }) => `${SPEC}?${project(projectId)}`
+    ({ projectId }) => `${PROJECT_MODEL}?${project(projectId)}`
   );
 
   readonly buildEstimate = this.protocol(RestEndpointProtocol).queryWith<
     SpecModelBuildEstimate,
     { projectId: string; path?: string }
-  >(({ projectId, path }) => `${SPEC}/build-estimate?${project(projectId)}${path ? `&path=${enc(path)}` : ''}`);
+  >(({ projectId, path }) => `${PROJECT_MODEL}/build-estimate?${project(projectId)}${path ? `&path=${enc(path)}` : ''}`);
 
   startBuild() {
-    return this.rest.mutation<SpecModelBuild, { project_id: string; path?: string }>('POST', `${SPEC}/builds`);
+    return this.rest.mutation<SpecModelBuild, { project_id: string; path?: string }>('POST', `${PROJECT_MODEL}/builds`);
   }
 
   /* ── reviews: accept, reject, evidence, decisions kept by key ── */
@@ -94,42 +94,42 @@ export class DomainModelApiService extends BaseApiService {
   readonly reviews = this.protocol(RestEndpointProtocol).queryWith<
     { items: SpecModelReview[]; total: number },
     { projectId: string }
-  >(({ projectId }) => `${SPEC}/reviews?${project(projectId)}`);
+  >(({ projectId }) => `${PROJECT_MODEL}/reviews?${project(projectId)}`);
 
   review() {
     return this.rest.mutation<{ items: SpecModelReview[]; total: number }, { project_id: string; items: ReviewItem[] }>(
       'POST',
-      `${SPEC}/reviews`
+      `${PROJECT_MODEL}/reviews`
     );
   }
 
   /* ── what the documents define ── */
 
   readonly requirements = this.protocol(RestEndpointProtocol).queryWith<SpecRequirements, { projectId: string }>(
-    ({ projectId }) => `${SPEC}/requirements?${project(projectId)}`
+    ({ projectId }) => `${PROJECT_MODEL}/requirements?${project(projectId)}`
   );
 
   readonly trace = this.protocol(RestEndpointProtocol).queryWith<RequirementTraces, { projectId: string }>(
-    ({ projectId }) => `${SPEC}/trace?${project(projectId)}`
+    ({ projectId }) => `${PROJECT_MODEL}/trace?${project(projectId)}`
   );
 
   readonly related = this.protocol(RestEndpointProtocol).queryWith<RelatedRequirements, { projectId: string }>(
-    ({ projectId }) => `${SPEC}/related?${project(projectId)}`
+    ({ projectId }) => `${PROJECT_MODEL}/related?${project(projectId)}`
   );
 
   readonly work = this.protocol(RestEndpointProtocol).queryWith<WorkLinks, { projectId: string }>(
-    ({ projectId }) => `${SPEC}/work?${project(projectId)}`
+    ({ projectId }) => `${PROJECT_MODEL}/work?${project(projectId)}`
   );
 
   readonly checkMethods = this.protocol(RestEndpointProtocol).queryWith<
     { items: KitCheckMethod[]; total: number; unread: Record<string, string> },
     { projectId: string; kits: string[] }
-  >(({ projectId, kits }) => `${SPEC}/check-methods?${project(projectId)}&kits=${enc(kits.join(','))}`);
+  >(({ projectId, kits }) => `${PROJECT_MODEL}/check-methods?${project(projectId)}&kits=${enc(kits.join(','))}`);
 
   /* ── the entities as a person edits them ── */
 
   saveEntity(projectId: string) {
-    return this.rest.mutation<SpecModelWrite, SpecModelEntityEdit>('POST', `${SPEC}/entities?${project(projectId)}`);
+    return this.rest.mutation<SpecModelWrite, SpecModelEntityEdit>('POST', `${PROJECT_MODEL}/entities?${project(projectId)}`);
   }
 
   /* ── the glossary ── */
@@ -137,47 +137,47 @@ export class DomainModelApiService extends BaseApiService {
   readonly glossary = this.protocol(RestEndpointProtocol).queryWith<
     { items: GlossaryEntry[]; total: number },
     { projectId: string }
-  >(({ projectId }) => `${SPEC}/glossary?${project(projectId)}`);
+  >(({ projectId }) => `${PROJECT_MODEL}/glossary?${project(projectId)}`);
 
   readonly glossaryDocument = this.protocol(RestEndpointProtocol).queryWith<GlossaryDoc, { projectId: string }>(
-    ({ projectId }) => `${SPEC}/glossary/document?${project(projectId)}`
+    ({ projectId }) => `${PROJECT_MODEL}/glossary/document?${project(projectId)}`
   );
 
   decideGlossaryEntry() {
     return this.rest.mutation<
       { key: string; name: string | null; alias_of: string | null },
       { project_id: string; key: string; name: string | null; alias_of: string | null }
-    >('POST', `${SPEC}/glossary/decisions`);
+    >('POST', `${PROJECT_MODEL}/glossary/decisions`);
   }
 
   decideGlossaryDistinct() {
-    return this.rest.mutation<void, { project_id: string; a: string; b: string }>('POST', `${SPEC}/glossary/distinct`);
+    return this.rest.mutation<void, { project_id: string; a: string; b: string }>('POST', `${PROJECT_MODEL}/glossary/distinct`);
   }
 
   proposeGlossaryRename(projectId: string) {
     return this.rest.mutation<GlossaryRenameProposal, { from: string; to: string }>(
       'POST',
-      `${SPEC}/glossary/proposals?${project(projectId)}`
+      `${PROJECT_MODEL}/glossary/proposals?${project(projectId)}`
     );
   }
 
   proposeGlossaryDocument() {
     return this.rest.mutation<SpecModelWrite, { project_id: string; rows: GlossaryDocRow[] }>(
       'POST',
-      `${SPEC}/glossary/document/proposals`
+      `${PROJECT_MODEL}/glossary/document/proposals`
     );
   }
 
   /* ── proposals to the repository ── */
 
   proposeSentence(projectId: string) {
-    return this.rest.mutation<SpecModelWrite, SpecModelSentence>('POST', `${SPEC}/sentences/proposals?${project(projectId)}`);
+    return this.rest.mutation<SpecModelWrite, SpecModelSentence>('POST', `${PROJECT_MODEL}/sentences/proposals?${project(projectId)}`);
   }
 
   proposeFile() {
     return this.rest.mutation<SpecModelWrite, { project_id: string; path: string; content: string; title: string }>(
       'POST',
-      `${SPEC}/files/proposals`
+      `${PROJECT_MODEL}/files/proposals`
     );
   }
 

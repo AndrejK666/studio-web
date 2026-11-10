@@ -937,7 +937,7 @@ ALTER TABLE studio_document_bindings DROP COLUMN IF EXISTS inferred_capabilities
 }
 
 /// What a model read out of each document revision of a project
-/// (`docs/spec-domain-model.md`). One row per (project, path, revision,
+/// (`docs/project-domain-model.md`). One row per (project, path, revision,
 /// extractor version): an unchanged document is never asked about twice, and
 /// a new prompt asks again.
 mod m0015 {
@@ -998,9 +998,9 @@ CREATE TABLE IF NOT EXISTS studio_spec_model_extractions (
     }
 }
 
-/// What the judge said about each candidate of a project's spec model, per
+/// What the judge said about each candidate of the project domain model, per
 /// revision of the documents on its sides, and what members decided about
-/// the findings (`docs/spec-domain-model.md`).
+/// the findings (`docs/project-domain-model.md`).
 mod m0016 {
     use toolkit_db::sea_orm_migration::prelude::*;
     use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;

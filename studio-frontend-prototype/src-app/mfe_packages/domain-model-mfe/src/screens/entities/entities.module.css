@@ -1,4 +1,4 @@
-/* Domain model › Entities (the prototype's .dm-layers, .dm-map2, .dm-diagram, .dm-card, .dm-ego, .dm-editor). */
+/* Project domain model › Entities (the prototype's .dm-layers, .dm-map2, .dm-diagram, .dm-card, .dm-ego, .dm-editor). */
 
 .layers {
   display: grid;

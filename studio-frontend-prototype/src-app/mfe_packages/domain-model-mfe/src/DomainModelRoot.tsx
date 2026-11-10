@@ -1,5 +1,5 @@
 /**
- * The Domain model kit (ADR-0068 §7): the prototype's project Domain model
+ * The Project domain model kit (ADR-0068 §7): the prototype's Project domain model
  * tab carried over (ADR-0069 §5). Reads the project, its workspace and
  * organization from the shell's shared properties and keys the screen by
  * them: another project is another read, from nothing.

@@ -39,7 +39,7 @@ pub struct DocumentsService {
     process: Arc<super::process_store::ProcessStore>,
     /// Where review requests, verdicts and decisions live (ADR-0066).
     reviews: Arc<super::review_store::ReviewStore>,
-    /// Where documents, bindings, verdicts, the spec model, parts and
+    /// Where documents, bindings, verdicts, the project domain model, parts and
     /// delivery scopes live (ADR-0066 §8a).
     data: Arc<super::data::DocumentsData>,
     account_management: Arc<dyn AccountManagementClient>,
@@ -2106,12 +2106,12 @@ impl DocumentsService {
         Ok(quality::docs_for(&wanted, &by_path))
     }
 
-    /// The project's documents as the spec model reads them, and every path
+    /// The project's documents as the project domain model reads them, and every path
     /// of its checkouts to resolve references against.
     ///
     /// The documents are the project's documentation: the bindings whose type
     /// a person settled in the Specs tab (its Bound queue), read as written
-    /// (`docs/spec-domain-model.md`). A file a detector only guessed at --
+    /// (`docs/project-domain-model.md`). A file a detector only guessed at --
     /// an agent's prompt, a tool's reference page -- is not read until
     /// somebody types it there.
     pub async fn spec_model_sources(
@@ -2159,7 +2159,7 @@ impl DocumentsService {
             tracing::info!(
                 %project_id,
                 elapsed_ms = millis(started.elapsed()),
-                "spec-model trace: answered from the cache"
+                "project domain model trace: answered from the cache"
             );
             return Ok(traced);
         }
@@ -2211,7 +2211,7 @@ impl DocumentsService {
             bytes_read,
             trace_ms = millis(tracing_started.elapsed()),
             total_ms = millis(started.elapsed()),
-            "spec-model trace: computed"
+            "project domain model trace: computed"
         );
         Ok(traced)
     }
@@ -2981,7 +2981,7 @@ impl DocumentsService {
         Ok(())
     }
 
-    /// Every member decision on the project's spec-model findings.
+    /// Every member decision on the project domain model's findings.
     pub async fn spec_decisions(
         &self,
         ctx: &SecurityContext,
@@ -3336,7 +3336,7 @@ impl DocumentsService {
     }
 }
 
-/// The spec model's sources as one read found them, with what a second read
+/// The project domain model's sources as one read found them, with what a second read
 /// of the same checkouts needs: the tenants tried, and the paths whose text
 /// the first one already took as documents.
 #[derive(Default)]

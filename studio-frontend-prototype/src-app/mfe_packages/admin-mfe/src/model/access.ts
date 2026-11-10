@@ -78,9 +78,9 @@ const PRIVILEGE_LABELS: Record<string, { group: string; label: string }> = {
 
   "session.open": { group: "Sessions", label: "Open a workspace in the IDE" },
 
-  "domain.view": { group: "Domain model", label: "View domain objects" },
-  "domain.edit": { group: "Domain model", label: "Create and edit domain objects" },
-  "domain.model": { group: "Domain model", label: "Change the domain model" },
+  "domain.view": { group: "Studio domain model", label: "View domain objects" },
+  "domain.edit": { group: "Studio domain model", label: "Create and edit domain objects" },
+  "domain.model": { group: "Studio domain model", label: "Change the Studio domain model" },
 
   "component.registry": { group: "Components", label: "Decide about the component registry" },
 

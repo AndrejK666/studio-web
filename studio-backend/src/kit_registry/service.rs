@@ -764,8 +764,8 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
         ),
         kit(
             "project-domain-model",
-            "Domain model",
-            "What a project's specs say the application is, and the issues they leave to decide.",
+            "Project domain model",
+            "What a project's documents say the application is, and the issues they leave to decide (not the Studio domain model).",
             &["project"],
         ),
     ]

@@ -1,6 +1,6 @@
 // Ported unchanged from the prototype: the "Model map" section of src/domain-model-views.ts at 00828880,
 // which domain-layers.ts (and through it doc-quality.ts) builds on. The file's "To resolve" section (the
-// queue and readiness) is the server's now (GET /spec-model/issues and /spec-model/readiness), and its
+// queue and readiness) is the server's now (GET /project-domain-model/issues and /project-domain-model/readiness), and its
 // "Requirements" section belongs to the Domain model screen; neither is carried here.
 
 import { relatedEntities, type Entity } from "./spec-model";

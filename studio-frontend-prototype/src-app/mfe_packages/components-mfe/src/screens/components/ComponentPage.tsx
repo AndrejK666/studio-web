@@ -6,7 +6,7 @@
  * opened), Empty (every field a question) and Sources (where each field is
  * read from). Then the published versions and the Studio-owned profile.
  *
- * Not carried over yet: the domain model's fields on the gear (ModelFields),
+ * Not carried over yet: the Studio domain model's fields on the gear (ModelFields),
  * delivery activity from Constructor Insight, the architecture diagram and
  * the UML blocks (mermaid).
  */

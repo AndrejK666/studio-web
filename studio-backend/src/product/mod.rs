@@ -171,7 +171,7 @@ impl RestApiCapability for StudioProductGear {
             Arc::clone(&service) as Arc<dyn port::ProjectProducts>
         );
         // Writing into a project's repository the way it takes changes, for
-        // the documents gear's domain model (docs/spec-domain-model.md).
+        // the documents gear's domain model (docs/project-domain-model.md).
         ctx.client_hub()
             .register::<dyn port::ProjectFiles>(
                 Arc::new(port::Files::new(Arc::clone(&service))) as Arc<dyn port::ProjectFiles>

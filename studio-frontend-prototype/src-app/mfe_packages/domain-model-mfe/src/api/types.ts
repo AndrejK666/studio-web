@@ -3,7 +3,7 @@
  * (src/api.ts at 00828880). The product and plan types are the same subset
  * product-mfe's `api/types.ts` carries, for the models moved with it
  * (`entity-gears.ts` → `product-configurator.ts` → `product.ts`).
- * The spec model's own types live in `model/spec-model.ts`, as they did.
+ * The project domain model's own types live in `model/spec-model.ts`, as they did.
  */
 /** A capability a project's documents declare, and the documents that do. */
 export interface DeclaredCapability {
@@ -380,7 +380,7 @@ export interface ProductPreview {
   unreadable?: UnreadableSource[];
 }
 
-/** An entity of the domain model as a person edits it on the tab. */
+/** An entity of the project domain model as a person edits it on the tab. */
 export interface SpecModelEntityEdit {
   name: string;
   definition?: string | null;

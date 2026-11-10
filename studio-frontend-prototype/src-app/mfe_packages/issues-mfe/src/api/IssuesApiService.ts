@@ -1,9 +1,9 @@
 /**
  * What the Issues kit reads and writes (the prototype's Issues tab,
  * ADR-0069). The queue, its groups and its actions, and whether anything
- * stops a build, are the server's (`GET /spec-model/issues`,
- * `GET /spec-model/readiness`); so is every fact's review key (`fact_key` on
- * `GET /spec-model`). The documentation-quality rows are still read off the
+ * stops a build, are the server's (`GET /project-domain-model/issues`,
+ * `GET /project-domain-model/readiness`); so is every fact's review key (`fact_key` on
+ * `GET /project-domain-model`). The documentation-quality rows are still read off the
  * model here (doc-quality.ts), so the model, the glossary and the reviews are
  * read too. The organization's members (studio-user) are whom an issue can go to.
  */
@@ -27,7 +27,7 @@ import type {
 
 const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
 const e = encodeURIComponent;
-const DOCS = '/studio-documents/v1/spec-model';
+const DOCS = '/studio-documents/v1/project-domain-model';
 
 /** The largest page the issues route and the members route answer. */
 export const MAX_PAGE = 200;

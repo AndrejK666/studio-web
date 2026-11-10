@@ -89,7 +89,7 @@ pub struct StorageConfig {
     pub process: process_store::ProcessStorage,
     /// Review requests, the verdicts on them, and decisions.
     pub reviews: review_store::ReviewStorage,
-    /// Documents, bindings, verdicts, the spec model, parts, delivery scopes.
+    /// Documents, bindings, verdicts, the project domain model, parts, delivery scopes.
     pub documents: model_table::TableStorage,
 }
 

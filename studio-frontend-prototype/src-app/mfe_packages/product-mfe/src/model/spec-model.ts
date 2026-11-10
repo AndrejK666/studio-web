@@ -1,10 +1,12 @@
 // Ported unchanged from the prototype (src/spec-model.ts at 00828880); only the import paths changed.
+// About the project domain model (what a project's documents say), not the Studio domain model;
+// the module keeps its prototype name.
 // The Domain model tab's arithmetic: a project's facts folded into entities,
 // its findings put in the order a person works through them, and where its
 // documents stand. Pure, so the screen only draws.
 //
-// The facts come from `GET /studio-documents/v1/spec-model`
-// (docs/spec-domain-model.md); the folding here matches the backend's
+// The facts come from `GET /studio-documents/v1/project-domain-model`
+// (docs/project-domain-model.md); the folding here matches the backend's
 // `rules::subject_key`, so the entity a person opens holds the same facts the
 // rules compared.
 
@@ -99,7 +101,7 @@ export function unreadNote(model: SpecModel): string | null {
   const unread = model.unread_documents ?? 0;
   if (unread === 0) {
     return model.documents.length === 0
-      ? "The domain model is read from the project's documentation: the documents whose type was settled in the Specs tab (its Bound list). None are yet. Type the documents there first, then build the model."
+      ? "The project domain model is read from the project's documentation: the documents whose type was settled in the Specs tab (its Bound list). None are yet. Type the documents there first, then build the model."
       : null;
   }
   const n = `${unread} typed document${unread === 1 ? "" : "s"}`;
@@ -166,7 +168,7 @@ export interface WorkLinks {
 }
 
 /** What a requirement's own block states it rests on, strongest doubt first
- *  (docs/spec-domain-model.md, "Requirements and their basis"). */
+ *  (docs/project-domain-model.md, "Requirements and their basis"). */
 export type RequirementBasis = "open_question" | "assumption" | "cited" | "reasoned" | "stated";
 
 export const BASIS_ORDER: RequirementBasis[] = ["open_question", "assumption", "stated", "reasoned", "cited"];
@@ -245,7 +247,7 @@ export function basisSummary(read: SpecRequirements): string {
   return parts.join("; ") + ".";
 }
 
-/** One requirement and every place that names it (docs/spec-domain-model.md,
+/** One requirement and every place that names it (docs/project-domain-model.md,
  *  "From requirement to code and test"). */
 export interface RequirementTrace {
   id: string;
@@ -282,7 +284,7 @@ export function traceGaps(items: RequirementTrace[], gap: TraceGap): Requirement
 }
 
 /** A requirement of another project that reads like one of this project's
- *  (docs/spec-domain-model.md, "Across projects"). */
+ *  (docs/project-domain-model.md, "Across projects"). */
 export interface RelatedRequirement {
   id: string;
   defined_in: SpecModelSide;

@@ -1,5 +1,5 @@
 /*
- * The Domain model kit over ui-kit semantic tokens (see theme.css in
+ * The Project domain model kit over ui-kit semantic tokens (see theme.css in
  * @gears-frontx/ui-kit). No Tailwind: inside the shadow root the re-anchored
  * kit tokens shadow the shell's HSL triplets. Shared by every part of the
  * tab; a part with more of its own keeps its own module beside it.

@@ -96,7 +96,7 @@
   "keeps": "Keeps:",
   "keeps_more": "{shown} and {more} more",
   "keeps_title": "Domain entities it keeps: {entities}",
-  "keeps_from_model": "from this project's domain model",
+  "keeps_from_model": "from the project domain model",
   "not_deployed": "not deployed",
   "needs_you": "Needs something from you",
   "plugs_into": "Plugs into {host}",

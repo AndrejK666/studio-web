@@ -1,5 +1,5 @@
 //! A fact's review key: what a member's accept or reject on a fact is stored
-//! under (`POST /studio-documents/v1/spec-model/reviews`).
+//! under (`POST /studio-documents/v1/project-domain-model/reviews`).
 //!
 //! The portal computed it in the browser until the server returned it on
 //! every fact. The reviews already stored carry the browser's keys, so this is

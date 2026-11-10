@@ -85,13 +85,13 @@ describe("a person's link to Studio", () => {
   });
 });
 
-describe("a publish into the domain model", () => {
+describe("a publish into the Studio domain model", () => {
   it("says what it did in one line, and what it skipped", () => {
     expect(mirrorText({ written: 3, unchanged: 5, retired: 0, skipped: [] })).toBe(
-      "Domain model: 3 written, 5 unchanged.",
+      "Studio domain model: 3 written, 5 unchanged.",
     );
     expect(mirrorText({ written: 0, unchanged: 8, retired: 2, skipped: ["x: there is no team `t`"] })).toBe(
-      "Domain model: 0 written, 8 unchanged, 2 retired. Skipped: x: there is no team `t`.",
+      "Studio domain model: 0 written, 8 unchanged, 2 retired. Skipped: x: there is no team `t`.",
     );
   });
 });

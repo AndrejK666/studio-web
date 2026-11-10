@@ -310,7 +310,7 @@ pub mod spec_judgement {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-/// A member's ✓ or ✗ on a spec-model finding.
+/// A member's ✓ or ✗ on a project domain model finding.
 pub mod spec_decision {
     use sea_orm::entity::prelude::*;
     use time::OffsetDateTime;

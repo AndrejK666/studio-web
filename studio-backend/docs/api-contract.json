@@ -1292,6 +1292,295 @@
     },
     {
       "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model",
+      "operation_id": "studio_documents.get_project_domain_model",
+      "tag": "StudioDocuments",
+      "summary": "The project domain model: what a project's documents say, read so far",
+      "authenticated": true,
+      "responses": [
+        "SpecModelDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/build-estimate",
+      "operation_id": "studio_documents.get_project_domain_model_build_estimate",
+      "tag": "StudioDocuments",
+      "summary": "What a build of a project's model would read, and about how long it would take",
+      "authenticated": true,
+      "responses": [
+        "SpecModelBuildEstimateDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/check-methods",
+      "operation_id": "studio_documents.list_project_domain_model_check_methods",
+      "tag": "StudioDocuments",
+      "summary": "The hypothesis check methods the project's kits add",
+      "authenticated": true,
+      "responses": [
+        "KitCheckMethodListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/decisions",
+      "operation_id": "studio_documents.list_project_domain_model_decisions",
+      "tag": "StudioDocuments",
+      "summary": "Every ✓ and ✗ members gave on a project's findings",
+      "authenticated": true,
+      "responses": [
+        "SpecModelDecisionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/experts",
+      "operation_id": "studio_documents.list_project_domain_model_experts",
+      "tag": "StudioDocuments",
+      "summary": "Whom to ask about an entity: who changed the documents that describe it",
+      "authenticated": true,
+      "responses": [
+        "DomainExpertListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/findings",
+      "operation_id": "studio_documents.list_project_domain_model_findings",
+      "tag": "StudioDocuments",
+      "summary": "Where a project's documents disagree, or refer to what is not there",
+      "authenticated": true,
+      "responses": [
+        "SpecModelFindingListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/glossary",
+      "operation_id": "studio_documents.get_project_domain_model_glossary",
+      "tag": "StudioDocuments",
+      "summary": "The project's glossary: what its documents name, and by which names",
+      "authenticated": true,
+      "responses": [
+        "GlossaryListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/glossary/document",
+      "operation_id": "studio_documents.get_project_domain_model_glossary_document",
+      "tag": "StudioDocuments",
+      "summary": "The glossary the project's documents keep, read as written",
+      "authenticated": true,
+      "responses": [
+        "GlossaryDocDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/issues",
+      "operation_id": "studio_documents.list_project_domain_model_issues",
+      "tag": "StudioDocuments",
+      "summary": "What a project has to decide before it builds from its documents",
+      "authenticated": true,
+      "responses": [
+        "SpecModelIssueRowListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/questions",
+      "operation_id": "studio_documents.list_project_domain_model_questions",
+      "tag": "StudioDocuments",
+      "summary": "What a document leaves out of the project's domain, and words it uses otherwise",
+      "authenticated": true,
+      "responses": [
+        "DomainQuestionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/readiness",
+      "operation_id": "studio_documents.get_project_domain_model_readiness",
+      "tag": "StudioDocuments",
+      "summary": "Whether anything stops a build from a project's documents",
+      "authenticated": true,
+      "responses": [
+        "SpecModelReadinessDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/related",
+      "operation_id": "studio_documents.list_project_domain_model_related",
+      "tag": "StudioDocuments",
+      "summary": "Requirements of other projects that say the same as this project's, or the opposite",
+      "authenticated": true,
+      "responses": [
+        "RelatedRequirementListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/requirements",
+      "operation_id": "studio_documents.list_project_domain_model_requirements",
+      "tag": "StudioDocuments",
+      "summary": "The requirements a project's documents define, and what each rests on",
+      "authenticated": true,
+      "responses": [
+        "SpecRequirementListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/reviews",
+      "operation_id": "studio_documents.list_project_domain_model_reviews",
+      "tag": "StudioDocuments",
+      "summary": "Every accept or reject members gave on the facts the model read",
+      "authenticated": true,
+      "responses": [
+        "SpecModelReviewListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/term-drift",
+      "operation_id": "studio_documents.list_project_domain_model_term_drift",
+      "tag": "StudioDocuments",
+      "summary": "The words a document uses for things the project named otherwise",
+      "authenticated": true,
+      "responses": [
+        "TermDriftListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/trace",
+      "operation_id": "studio_documents.list_project_domain_model_trace",
+      "tag": "StudioDocuments",
+      "summary": "Where each requirement is named: other documents, code, tests",
+      "authenticated": true,
+      "responses": [
+        "RequirementTraceListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-documents/v1/project-domain-model/work",
+      "operation_id": "studio_documents.list_project_domain_model_work",
+      "tag": "StudioDocuments",
+      "summary": "Which issues, pull requests and commits name what the documents define",
+      "authenticated": true,
+      "responses": [
+        "WorkLinkListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-documents/v1/remarks",
       "operation_id": "studio_documents.list_remarks",
       "tag": "StudioDocuments",
@@ -1380,7 +1669,7 @@
       "path": "/studio-documents/v1/spec-model",
       "operation_id": "studio_documents.get_spec_model",
       "tag": "StudioDocuments",
-      "summary": "A project's domain model, as read from its documents so far",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model`",
       "authenticated": true,
       "responses": [
         "SpecModelDto"
@@ -1397,7 +1686,7 @@
       "path": "/studio-documents/v1/spec-model/build-estimate",
       "operation_id": "studio_documents.get_spec_model_build_estimate",
       "tag": "StudioDocuments",
-      "summary": "What a build of a project's model would read, and about how long it would take",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/build-estimate`",
       "authenticated": true,
       "responses": [
         "SpecModelBuildEstimateDto"
@@ -1414,7 +1703,7 @@
       "path": "/studio-documents/v1/spec-model/check-methods",
       "operation_id": "studio_documents.list_spec_model_check_methods",
       "tag": "StudioDocuments",
-      "summary": "The hypothesis check methods the project's kits add",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/check-methods`",
       "authenticated": true,
       "responses": [
         "KitCheckMethodListDto"
@@ -1431,7 +1720,7 @@
       "path": "/studio-documents/v1/spec-model/decisions",
       "operation_id": "studio_documents.list_spec_model_decisions",
       "tag": "StudioDocuments",
-      "summary": "Every ✓ and ✗ members gave on a project's findings",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/decisions`",
       "authenticated": true,
       "responses": [
         "SpecModelDecisionListDto"
@@ -1448,7 +1737,7 @@
       "path": "/studio-documents/v1/spec-model/experts",
       "operation_id": "studio_documents.list_domain_experts",
       "tag": "StudioDocuments",
-      "summary": "Whom to ask about an entity: who changed the documents that describe it",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/experts`",
       "authenticated": true,
       "responses": [
         "DomainExpertListDto"
@@ -1465,7 +1754,7 @@
       "path": "/studio-documents/v1/spec-model/findings",
       "operation_id": "studio_documents.list_spec_model_findings",
       "tag": "StudioDocuments",
-      "summary": "Where a project's documents disagree, or refer to what is not there",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/findings`",
       "authenticated": true,
       "responses": [
         "SpecModelFindingListDto"
@@ -1482,7 +1771,7 @@
       "path": "/studio-documents/v1/spec-model/glossary",
       "operation_id": "studio_documents.get_spec_model_glossary",
       "tag": "StudioDocuments",
-      "summary": "The project's glossary: what its documents name, and by which names",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/glossary`",
       "authenticated": true,
       "responses": [
         "GlossaryListDto"
@@ -1499,7 +1788,7 @@
       "path": "/studio-documents/v1/spec-model/glossary/document",
       "operation_id": "studio_documents.get_spec_model_glossary_document",
       "tag": "StudioDocuments",
-      "summary": "The glossary the project's documents keep, read as written",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/glossary/document`",
       "authenticated": true,
       "responses": [
         "GlossaryDocDto"
@@ -1516,7 +1805,7 @@
       "path": "/studio-documents/v1/spec-model/issues",
       "operation_id": "studio_documents.list_spec_model_issues",
       "tag": "StudioDocuments",
-      "summary": "What a project has to decide before it builds from its documents",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/issues`",
       "authenticated": true,
       "responses": [
         "SpecModelIssueRowListDto"
@@ -1533,7 +1822,7 @@
       "path": "/studio-documents/v1/spec-model/questions",
       "operation_id": "studio_documents.list_domain_questions",
       "tag": "StudioDocuments",
-      "summary": "What a document leaves out of the project's domain, and words it uses otherwise",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/questions`",
       "authenticated": true,
       "responses": [
         "DomainQuestionListDto"
@@ -1550,7 +1839,7 @@
       "path": "/studio-documents/v1/spec-model/readiness",
       "operation_id": "studio_documents.get_spec_model_readiness",
       "tag": "StudioDocuments",
-      "summary": "Whether anything stops a build from a project's documents",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/readiness`",
       "authenticated": true,
       "responses": [
         "SpecModelReadinessDto"
@@ -1567,7 +1856,7 @@
       "path": "/studio-documents/v1/spec-model/related",
       "operation_id": "studio_documents.list_related_requirements",
       "tag": "StudioDocuments",
-      "summary": "Requirements of other projects that say the same as this project's, or the opposite",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/related`",
       "authenticated": true,
       "responses": [
         "RelatedRequirementListDto"
@@ -1584,7 +1873,7 @@
       "path": "/studio-documents/v1/spec-model/requirements",
       "operation_id": "studio_documents.list_spec_model_requirements",
       "tag": "StudioDocuments",
-      "summary": "The requirements a project's documents define, and what each rests on",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/requirements`",
       "authenticated": true,
       "responses": [
         "SpecRequirementListDto"
@@ -1601,7 +1890,7 @@
       "path": "/studio-documents/v1/spec-model/reviews",
       "operation_id": "studio_documents.list_spec_model_reviews",
       "tag": "StudioDocuments",
-      "summary": "Every accept or reject members gave on the facts the model read",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/reviews`",
       "authenticated": true,
       "responses": [
         "SpecModelReviewListDto"
@@ -1618,7 +1907,7 @@
       "path": "/studio-documents/v1/spec-model/term-drift",
       "operation_id": "studio_documents.list_term_drift",
       "tag": "StudioDocuments",
-      "summary": "The words a document uses for things the project named otherwise",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/term-drift`",
       "authenticated": true,
       "responses": [
         "TermDriftListDto"
@@ -1635,7 +1924,7 @@
       "path": "/studio-documents/v1/spec-model/trace",
       "operation_id": "studio_documents.list_requirement_trace",
       "tag": "StudioDocuments",
-      "summary": "Where each requirement is named: other documents, code, tests",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/trace`",
       "authenticated": true,
       "responses": [
         "RequirementTraceListDto"
@@ -1652,7 +1941,7 @@
       "path": "/studio-documents/v1/spec-model/work",
       "operation_id": "studio_documents.list_spec_model_work",
       "tag": "StudioDocuments",
-      "summary": "Which issues, pull requests and commits name what the documents define",
+      "summary": "Deprecated alias of `GET /studio-documents/v1/project-domain-model/work`",
       "authenticated": true,
       "responses": [
         "WorkLinkListDto"
@@ -1989,7 +2278,7 @@
       "path": "/studio-domain-model/v1/types",
       "operation_id": "studio_domain_model.list_types",
       "tag": "StudioDomainModel",
-      "summary": "The stored domain-model ontology",
+      "summary": "The stored Studio domain model ontology",
       "authenticated": true,
       "responses": [
         "TypesResponse"
@@ -4550,6 +4839,218 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/builds",
+      "operation_id": "studio_documents.start_project_domain_model_build",
+      "tag": "StudioDocuments",
+      "summary": "Read a project's documents into its project domain model, on your model key",
+      "authenticated": true,
+      "request": "SpecModelBuildRequest",
+      "responses": [
+        "SpecModelBuildDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/entities",
+      "operation_id": "studio_documents.upsert_project_domain_model_entity",
+      "tag": "StudioDocuments",
+      "summary": "Save an entity of the project domain model to the project's documentation",
+      "authenticated": true,
+      "request": "SpecModelEntityRequest",
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/files/proposals",
+      "operation_id": "studio_documents.create_project_domain_model_file_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a whole document for the project's repository as a pull request",
+      "authenticated": true,
+      "request": "SpecModelFileProposalRequest",
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
+      "operation_id": "studio_documents.decide_project_domain_model_finding",
+      "tag": "StudioDocuments",
+      "summary": "Mark a finding a real problem, or not one",
+      "authenticated": true,
+      "request": "SpecModelDecisionRequest",
+      "responses": [
+        "SpecModelDecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/findings/{fingerprint}/proposals",
+      "operation_id": "studio_documents.create_project_domain_model_finding_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a finding's fix as a pull request on its document",
+      "authenticated": true,
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/glossary/decisions",
+      "operation_id": "studio_documents.decide_project_domain_model_glossary_entry",
+      "tag": "StudioDocuments",
+      "summary": "Name a glossary entry, or make it another name of one",
+      "authenticated": true,
+      "request": "GlossaryDecisionRequest",
+      "responses": [
+        "GlossaryDecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/glossary/distinct",
+      "operation_id": "studio_documents.decide_project_domain_model_glossary_distinct",
+      "tag": "StudioDocuments",
+      "summary": "Say two glossary entries are different things",
+      "authenticated": true,
+      "request": "GlossaryDistinctRequest",
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/glossary/document/proposals",
+      "operation_id": "studio_documents.create_project_domain_model_glossary_document_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose the project's glossary as docs/glossary.md",
+      "authenticated": true,
+      "request": "GlossaryDocRequest",
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/glossary/proposals",
+      "operation_id": "studio_documents.create_project_domain_model_glossary_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a glossary rename in the documents as one pull request",
+      "authenticated": true,
+      "request": "GlossaryRenameRequest",
+      "responses": [
+        "GlossaryRenameProposalDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/issues",
+      "operation_id": "studio_documents.create_project_domain_model_issue",
+      "tag": "StudioDocuments",
+      "summary": "Open an issue in the project's repository for something to decide",
+      "authenticated": true,
+      "request": "SpecModelIssueRequest",
+      "responses": [
+        "SpecModelIssueDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/reviews",
+      "operation_id": "studio_documents.decide_project_domain_model_fact_reviews",
+      "tag": "StudioDocuments",
+      "summary": "Accept, reject or put back a selection of facts in one action",
+      "authenticated": true,
+      "request": "SpecModelReviewRequest",
+      "responses": [
+        "SpecModelReviewListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-documents/v1/project-domain-model/sentences/proposals",
+      "operation_id": "studio_documents.create_project_domain_model_sentence_proposal",
+      "tag": "StudioDocuments",
+      "summary": "Propose a sentence for one of the project's documents as a pull request",
+      "authenticated": true,
+      "request": "SpecModelSentenceRequest",
+      "responses": [
+        "SpecModelWriteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/pull-request-checks",
       "operation_id": "studio_documents.run_pull_request_checks",
       "tag": "StudioDocuments",
@@ -4661,7 +5162,7 @@
       "path": "/studio-documents/v1/spec-model/builds",
       "operation_id": "studio_documents.start_spec_model_build",
       "tag": "StudioDocuments",
-      "summary": "Read a project's documents into its domain model, on your model key",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/builds`",
       "authenticated": true,
       "request": "SpecModelBuildRequest",
       "responses": [
@@ -4679,7 +5180,7 @@
       "path": "/studio-documents/v1/spec-model/entities",
       "operation_id": "studio_documents.upsert_spec_model_entity",
       "tag": "StudioDocuments",
-      "summary": "Save an entity of the domain model to the project's documentation",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/entities`",
       "authenticated": true,
       "request": "SpecModelEntityRequest",
       "responses": [
@@ -4697,7 +5198,7 @@
       "path": "/studio-documents/v1/spec-model/files/proposals",
       "operation_id": "studio_documents.create_spec_model_file_proposal",
       "tag": "StudioDocuments",
-      "summary": "Propose a whole document for the project's repository as a pull request",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/files/proposals`",
       "authenticated": true,
       "request": "SpecModelFileProposalRequest",
       "responses": [
@@ -4715,7 +5216,7 @@
       "path": "/studio-documents/v1/spec-model/findings/{fingerprint}/decision",
       "operation_id": "studio_documents.decide_spec_model_finding",
       "tag": "StudioDocuments",
-      "summary": "Mark a finding a real problem, or not one",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision`",
       "authenticated": true,
       "request": "SpecModelDecisionRequest",
       "responses": [
@@ -4733,7 +5234,7 @@
       "path": "/studio-documents/v1/spec-model/findings/{fingerprint}/proposals",
       "operation_id": "studio_documents.create_spec_model_finding_proposal",
       "tag": "StudioDocuments",
-      "summary": "Propose a finding's fix as a pull request on its document",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/proposals`",
       "authenticated": true,
       "responses": [
         "SpecModelWriteDto"
@@ -4750,7 +5251,7 @@
       "path": "/studio-documents/v1/spec-model/glossary/decisions",
       "operation_id": "studio_documents.decide_spec_model_glossary_entry",
       "tag": "StudioDocuments",
-      "summary": "Name a glossary entry, or make it another name of one",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/glossary/decisions`",
       "authenticated": true,
       "request": "GlossaryDecisionRequest",
       "responses": [
@@ -4768,7 +5269,7 @@
       "path": "/studio-documents/v1/spec-model/glossary/distinct",
       "operation_id": "studio_documents.decide_spec_model_glossary_distinct",
       "tag": "StudioDocuments",
-      "summary": "Say two glossary entries are different things",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/glossary/distinct`",
       "authenticated": true,
       "request": "GlossaryDistinctRequest",
       "errors": [
@@ -4783,7 +5284,7 @@
       "path": "/studio-documents/v1/spec-model/glossary/document/proposals",
       "operation_id": "studio_documents.create_spec_model_glossary_document_proposal",
       "tag": "StudioDocuments",
-      "summary": "Propose the project's glossary as docs/glossary.md",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/glossary/document/proposals`",
       "authenticated": true,
       "request": "GlossaryDocRequest",
       "responses": [
@@ -4801,7 +5302,7 @@
       "path": "/studio-documents/v1/spec-model/glossary/proposals",
       "operation_id": "studio_documents.create_spec_model_glossary_proposal",
       "tag": "StudioDocuments",
-      "summary": "Propose a glossary rename in the documents as one pull request",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/glossary/proposals`",
       "authenticated": true,
       "request": "GlossaryRenameRequest",
       "responses": [
@@ -4819,7 +5320,7 @@
       "path": "/studio-documents/v1/spec-model/issues",
       "operation_id": "studio_documents.create_spec_model_issue",
       "tag": "StudioDocuments",
-      "summary": "Open an issue in the project's repository for something to decide",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/issues`",
       "authenticated": true,
       "request": "SpecModelIssueRequest",
       "responses": [
@@ -4837,7 +5338,7 @@
       "path": "/studio-documents/v1/spec-model/reviews",
       "operation_id": "studio_documents.decide_spec_model_fact_reviews",
       "tag": "StudioDocuments",
-      "summary": "Accept, reject or put back a selection of facts in one action",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/reviews`",
       "authenticated": true,
       "request": "SpecModelReviewRequest",
       "responses": [
@@ -4855,7 +5356,7 @@
       "path": "/studio-documents/v1/spec-model/sentences/proposals",
       "operation_id": "studio_documents.create_spec_model_sentence_proposal",
       "tag": "StudioDocuments",
-      "summary": "Propose a sentence for one of the project's documents as a pull request",
+      "summary": "Deprecated alias of `POST /studio-documents/v1/project-domain-model/sentences/proposals`",
       "authenticated": true,
       "request": "SpecModelSentenceRequest",
       "responses": [
@@ -5034,7 +5535,7 @@
       "path": "/studio-domain-model/v1/model/import",
       "operation_id": "studio_domain_model.import_model",
       "tag": "StudioDomainModel",
-      "summary": "Upload a domain model to make it the active ontology",
+      "summary": "Upload a Studio domain model to make it the active ontology",
       "authenticated": true,
       "request": "ImportModelRequest",
       "responses": [
@@ -5070,7 +5571,7 @@
       "path": "/studio-domain-model/v1/model/sync",
       "operation_id": "studio_domain_model.sync_model",
       "tag": "StudioDomainModel",
-      "summary": "Sync the domain model into the graph as a graph",
+      "summary": "Sync the Studio domain model into the graph as a graph",
       "authenticated": true,
       "responses": [
         "ModelSyncResponse"
@@ -5158,7 +5659,7 @@
       "path": "/studio-domain-model/v1/types",
       "operation_id": "studio_domain_model.create_type",
       "tag": "StudioDomainModel",
-      "summary": "Add a type to the domain model",
+      "summary": "Add a type to the Studio domain model",
       "authenticated": true,
       "request": "CreateTypeRequest",
       "responses": [

@@ -1,7 +1,7 @@
 /*
  * Members' reviews laid over the model, keyed the server's way. The prototype
  * keyed a fact in the browser (`review-state.ts`, `factKey`); the server
- * returns that key on every fact now (`fact_key` on GET /spec-model), so only
+ * returns that key on every fact now (`fact_key` on GET /project-domain-model), so only
  * the lookups are left here. A fact saved on this screen and not read by a
  * build yet (saved-entities.ts) has no key: nobody can have rejected it.
  */

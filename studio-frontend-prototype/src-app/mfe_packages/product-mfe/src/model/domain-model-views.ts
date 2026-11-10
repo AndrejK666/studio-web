@@ -1,4 +1,6 @@
 // Ported unchanged from the prototype (src/domain-model-views.ts at 00828880); only the import paths changed.
+// About the project domain model (what a project's documents say), not the Studio domain model;
+// the module keeps its prototype name.
 // The Domain model tab's three views, each one person's question:
 //
 // - To resolve: can we build from these documents? A queue of what has to be

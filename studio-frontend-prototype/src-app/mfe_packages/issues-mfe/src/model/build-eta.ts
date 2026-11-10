@@ -1,7 +1,7 @@
 // Ported unchanged from the prototype (src/build-eta.ts at 00828880); only the import paths changed.
 // How long a domain-model build should take, before and while it runs.
 // The backend reads up to four documents at once and says beforehand what a
-// build would read (GET /spec-model/build-estimate); while it runs, its state
+// build would read (GET /project-domain-model/build-estimate); while it runs, its state
 // carries started_at and done/total, which give the ETA here.
 
 import type { SpecModelBuild } from "./spec-model";

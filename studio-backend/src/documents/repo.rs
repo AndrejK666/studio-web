@@ -352,7 +352,7 @@ impl DocumentsRepo {
         Ok(())
     }
 
-    // ── the spec model's extractions ────────────────────────────────────────
+    // ── the project domain model's extractions ────────────────────────────────────────
 
     /// Every extraction kept for a project, of any revision; the caller picks
     /// the ones of the documents' current revisions.
@@ -538,7 +538,7 @@ impl DocumentsRepo {
         Ok(())
     }
 
-    /// Every decision on a project's spec-model findings.
+    /// Every decision on the project domain model's findings.
     pub async fn list_spec_decisions(
         &self,
         workspace_id: Uuid,

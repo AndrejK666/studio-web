@@ -1,5 +1,5 @@
 /**
- * Domain model › Requirements (the prototype's `RequirementsView` in
+ * Project domain model › Requirements (the prototype's `RequirementsView` in
  * domain-model-screens.tsx): every requirement the documents define, by type,
  * and the one picked followed from the passage that states it, through the
  * documents and work that name it, to the code and tests that name it.

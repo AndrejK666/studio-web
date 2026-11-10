@@ -7,9 +7,9 @@ how the documentation could be better, what was decided. A built-in kit
 it, a base kit (ADR-0069 §4).
 
 - The queue, its groups (`blocks`, `look`, `decided`), each row's passages and
-  the actions it offers are the server's (`GET /studio-documents/v1/spec-model/issues`),
-  and so is the verdict (`GET /spec-model/readiness`) and every fact's review
-  key (`fact_key` on `GET /spec-model`). The prototype computed all three in
+  the actions it offers are the server's (`GET /studio-documents/v1/project-domain-model/issues`),
+  and so is the verdict (`GET /project-domain-model/readiness`) and every fact's review
+  key (`fact_key` on `GET /project-domain-model`). The prototype computed all three in
   the browser; none of that is carried here.
 - `src/model/doc-quality.ts` — the documentation's thin places (the table's
   "Improve the docs" rows), still read off the model in the browser, moved

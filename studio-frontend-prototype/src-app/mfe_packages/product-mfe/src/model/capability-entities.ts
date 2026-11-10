@@ -1,5 +1,5 @@
 // Ported unchanged from the prototype (src/capability-entities.ts at 00828880); only the import paths changed.
-// What a gear made for a capability keeps, read from the Domain model: the
+// What a gear made for a capability keeps, read from the project domain model: the
 // domain entities the capability is about, and the requirements about them
 // that ask for it. A gear answers a capability and an entity lives inside one
 // (so "Create a gear" starts from the capability, never from an entity); this
@@ -157,7 +157,7 @@ function listed(parts: string[]): string {
 /** What the PRD adds to the capability's opening sentence: the entities the
  *  gear keeps and the requirements it answers. The scaffold has no field for
  *  either, so they are said in words: the session agent that fills the
- *  skeleton reads them there. Empty when the Domain model says nothing. */
+ *  skeleton reads them there. Empty when the project domain model says nothing. */
 export function keptSentences(found: { entities: readonly KeptEntity[]; requirements: readonly KeptRequirement[] }): string {
   const parts: string[] = [];
   if (found.entities.length)
