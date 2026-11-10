@@ -81,6 +81,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0067](0067-a-domain-object-says-what-happened-to-it-and-kits-bring-the-rest.md) | A domain object says what happened to it, workflows react to that, and a kit brings the rest | proposed | 2026-10-27 |
 | [0068](0068-studio-is-a-shell-and-everything-inside-it-comes-from-kits.md) | Studio is a shell, and everything inside it comes from kits | proposed | 2026-11-06 |
 | [0069](0069-the-portal-shell-is-the-frontx-app-grown-to-the-prototypes-features-as-kits.md) | The portal's shell is the FrontX app, grown to the prototype's features as kits | proposed | 2026-11-06 |
+| [0070](0070-studio-keeps-a-core-model-and-each-kit-brings-the-types-its-screens-show.md) | Studio keeps a core model, and each kit brings the types its screens show | proposed | 2026-11-10 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
