@@ -3,7 +3,10 @@
 What more than one MFE of this repository needs, in one place: the host plumbing
 (theme, language, the organization in scope), the studio-connector client, the
 `studio-tasks` and `studio-events` clients with the run follower built on them,
-and the parser for the gears' RFC 7807 refusals.
+the parser for the gears' RFC 7807 refusals, and a list's state in the address
+(`lists/listState.ts`, the prototype's `list-state.ts`: search, filters, sort
+and page under a per-list prefix, the shell's own query entry kept byte for
+byte, and the list's part taken out when it leaves the screen).
 
 **This is source, not a built package.** `exports` points at `src/index.ts` and
 there is no `dist`: both consumers are bundlers (`moduleResolution: "bundler"`

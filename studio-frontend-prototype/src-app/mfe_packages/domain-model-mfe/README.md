@@ -11,8 +11,7 @@ platform administrator removes it, a base kit (ADR-0069 §4).
   `saved-entities`), the build's estimate (`build-eta`), needs, hypotheses,
   rules and behaviour (`need-view`, `hypothesis-check`, `rule-checks`,
   `behaviour`), requirement types, the glossary (`glossary-view`,
-  `doc-quality`), priorities (`prioritise`, `priority-store`), the list
-  pipeline (`list-state`), and who keeps an entity (`entity-gears` with
+  `doc-quality`), priorities (`prioritise`, `priority-store`), and who keeps an entity (`entity-gears` with
   `product-configurator`, `product`, `infra-gdl`, as product-mfe moved them).
 - `src/api/` — `DomainModelApiService` (studio-documents, studio-spec-mapping,
   studio-product's catalogue, studio-kits) and `dmApi`, the prototype's calls

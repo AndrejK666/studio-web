@@ -3,12 +3,13 @@
  * this tab draws: search, filter chips or a select with their counts,
  * sorting headers, a pager, a ▸ that expands a row, row click (open) and
  * hover (peek), and the row's actions. Search, filters and sort run through
- * the prototype's `applyClient` (model/list-state.ts), unchanged.
+ * the prototype's `applyClient`, and the list's search, filters, sort and page
+ * are kept in the address under `urlPrefix` (`useListState`, both shared from
+ * mfe-shared's `lists/listState.ts`): a reload, a shared link or Back puts the
+ * list back as it was.
  *
- * Not carried: the list's state in the address (`urlPrefix`; the shell owns
- * the address here), the tiles view, and server-paged lists (`load`) — the
- * tab never used them. `list` and `urlPrefix` are accepted so the call sites
- * read as the prototype's did.
+ * Not carried: the tiles view, the page size as a preference, and
+ * server-paged lists (`load`) — the tab never used them.
  */
 
 import React, { Fragment, useMemo, useState, type ReactNode } from 'react';
@@ -24,7 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from '@gears-frontx/ui-kit';
-import { applyClient, EMPTY_LIST_STATE, nextSort, type ListState } from '../../model/list-state';
+import { applyClient, useListState } from '@constructor-studio/mfe-shared';
 import { useCommonTranslations } from '../../i18n';
 import { EmptyState } from './ui';
 import styles from './common.module.css';
@@ -56,8 +57,9 @@ export interface RowAction {
 }
 
 export interface DataTableProps<T> {
-  /** The prototype's list name and address prefix: accepted, not used. */
+  /** The prototype's list name: the address prefix when `urlPrefix` is absent. */
   list?: string;
+  /** Where this list's state sits in the address (`ent.` → `?ent.q=`); one per list on a screen. */
   urlPrefix?: string;
   rows: T[];
   columns: Column<T>[];
@@ -83,6 +85,8 @@ export interface DataTableProps<T> {
 }
 
 export function DataTable<T>({
+  list,
+  urlPrefix,
   rows,
   columns,
   rowKey,
@@ -102,7 +106,7 @@ export function DataTable<T>({
   pageSize = 20,
 }: DataTableProps<T>) {
   const { t } = useCommonTranslations();
-  const [state, setState] = useState<ListState>(EMPTY_LIST_STATE);
+  const [state, listCtl] = useListState(urlPrefix ?? `${list ?? 'list'}.`);
   const [open, setOpen] = useState<Set<string>>(new Set());
 
   const comparators = useMemo(
@@ -118,13 +122,7 @@ export function DataTable<T>({
   const shown = matched.slice(page * pageSize, (page + 1) * pageSize);
   const narrowed = state.q.trim() !== '' || Object.keys(state.filters).length > 0;
 
-  const setFilter = (id: string, value: string | null) =>
-    setState((s) => {
-      const next = { ...s.filters };
-      if (value) next[id] = value;
-      else delete next[id];
-      return { ...s, filters: next, page: 0 };
-    });
+  const setFilter = listCtl.setFilter;
   const toggle = (key: string) =>
     setOpen((o) => {
       const next = new Set(o);
@@ -146,7 +144,7 @@ export function DataTable<T>({
               placeholder={search.placeholder}
               aria-label={search.placeholder}
               value={state.q}
-              onChange={(e) => setState((s) => ({ ...s, q: e.target.value, page: 0 }))}
+              onChange={(e) => listCtl.setQ(e.target.value)}
             />
           )}
           {filters.map((f) =>
@@ -201,7 +199,7 @@ export function DataTable<T>({
           title={t('nothing_matches')}
           action={
             narrowed ? (
-              <Button type="button" size="sm" variant="outline" onClick={() => setState((s) => ({ ...s, q: '', filters: {}, page: 0 }))}>
+              <Button type="button" size="sm" variant="outline" onClick={listCtl.clearFilters}>
                 {t('clear_filters')}
               </Button>
             ) : undefined
@@ -219,7 +217,7 @@ export function DataTable<T>({
                       <button
                         type="button"
                         className={styles.dtSort}
-                        onClick={() => setState((s) => ({ ...s, sort: nextSort(s.sort, c.id), page: 0 }))}
+                        onClick={() => listCtl.toggleSort(c.id)}
                         aria-sort={
                           state.sort?.key === c.id ? (state.sort.dir === 'asc' ? 'ascending' : 'descending') : undefined
                         }
@@ -317,7 +315,7 @@ export function DataTable<T>({
           {pages > 1 && (
             <div className={styles.dtPager}>
               <span>{t('page_of', { from: page * pageSize + 1, to: page * pageSize + shown.length, total: matched.length })}</span>
-              <Button type="button" size="sm" variant="ghost" disabled={page === 0} onClick={() => setState((s) => ({ ...s, page: page - 1 }))}>
+              <Button type="button" size="sm" variant="ghost" disabled={page === 0} onClick={() => listCtl.setPage(page - 1)}>
                 {t('previous')}
               </Button>
               <Button
@@ -325,7 +323,7 @@ export function DataTable<T>({
                 size="sm"
                 variant="ghost"
                 disabled={page >= pages - 1}
-                onClick={() => setState((s) => ({ ...s, page: page + 1 }))}
+                onClick={() => listCtl.setPage(page + 1)}
               >
                 {t('next')}
               </Button>
