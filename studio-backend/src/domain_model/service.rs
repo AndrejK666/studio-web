@@ -329,6 +329,10 @@ pub struct DomainModelService {
     /// One expensive registration flight per tenant, independent of other
     /// tenants. A cold screen can issue dozens of concurrent object reads.
     registration: Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
+    /// One gear declaration written at a time per tenant. Cold reads after a
+    /// start declare the same need together; racing they each claimed the
+    /// same version, and all but one re-read the model and tried again.
+    declaring: Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
     /// Who may read and write objects (ADR-0035). Tenant-only unless a PDP is
     /// wired in, which is what the in-memory build and the tests run.
     policy: Arc<dyn ObjectPolicy>,
@@ -357,6 +361,7 @@ impl DomainModelService {
         Self {
             store,
             registration: Mutex::new(HashMap::new()),
+            declaring: Mutex::new(HashMap::new()),
             policy: Arc::new(TenantOnly),
             tenants: Mutex::new(HashMap::new()),
             notify: super::events::Notifier::default(),
@@ -2022,6 +2027,27 @@ impl DomainModelService {
         ctx: &SecurityContext,
         need: &super::port::TypeNeed,
     ) -> anyhow::Result<usize> {
+        // Nearly every call declares what the model already says: a gear
+        // asks again after each start, often from a read. Answered from the
+        // cached model, that is no head read, no version claim and no write;
+        // only a declaration that changes something takes the edit path.
+        let cached = self.model(ctx).await?;
+        if !(*cached).clone().declare_gear_type(need)? {
+            return Ok(0);
+        }
+        let flight = self
+            .declaring
+            .lock()
+            .map_err(|_| anyhow::anyhow!("declaration lock poisoned"))?
+            .entry(ctx.subject_tenant_id())
+            .or_default()
+            .clone();
+        let _flight = flight.lock().await;
+        // Whoever held the flight may have written this very declaration.
+        let cached = self.model(ctx).await?;
+        if !(*cached).clone().declare_gear_type(need)? {
+            return Ok(0);
+        }
         self.edit_entities(ctx, "gear_declaration", "declare gear needs", |next| {
             let changed = next.declare_gear_type(need)?;
             Ok(if changed {

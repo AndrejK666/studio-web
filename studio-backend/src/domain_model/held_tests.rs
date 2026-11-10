@@ -381,3 +381,28 @@ async fn a_revert_never_takes_a_gears_type_away() {
         "still held: {e}"
     );
 }
+
+#[tokio::test]
+async fn concurrent_cold_declarations_write_one_version() {
+    // What one declaration writes, for comparison.
+    let alone = Arc::new(DomainModelService::new(Arc::new(
+        InMemoryDomainStore::default(),
+    )));
+    Objects(alone.clone())
+        .ensure_type(&ctx(), &need())
+        .await
+        .unwrap();
+    let expected = alone.revisions(&ctx()).await.unwrap().len();
+
+    let service = Arc::new(DomainModelService::new(Arc::new(
+        InMemoryDomainStore::default(),
+    )));
+    let calls = (0..16).map(|_| {
+        let port = Objects(service.clone());
+        async move { port.ensure_type(&ctx(), &need()).await }
+    });
+    for result in futures_util::future::join_all(calls).await {
+        result.unwrap();
+    }
+    assert_eq!(service.revisions(&ctx()).await.unwrap().len(), expected);
+}

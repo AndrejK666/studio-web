@@ -24,6 +24,8 @@ struct Model {
     objects: Mutex<HashMap<String, (String, String, Value)>>,
     links: Mutex<Vec<(String, String, String)>>,
     types: Mutex<Vec<String>>,
+    /// Every query fails, as one does behind a saturated pool.
+    failing: std::sync::atomic::AtomicBool,
 }
 
 fn matches(w: &Value, id: &str, v: &Value) -> bool {
@@ -107,6 +109,9 @@ impl DomainObjects for Model {
         _: &SecurityContext,
         body: Value,
     ) -> anyhow::Result<(Vec<StoredObject>, usize)> {
+        if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
+            anyhow::bail!("pool timed out while waiting for an open connection");
+        }
         let ty = body["type"].as_str().unwrap();
         let w = body.get("where").cloned().unwrap_or(Value::Null);
         let rows: Vec<StoredObject> = self
@@ -295,4 +300,47 @@ async fn after_the_move_only_the_model_is_written() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn a_marker_that_cannot_be_read_does_not_start_the_move() {
+    let (legacy, model, store) = setup();
+    let ctx = ctx();
+    legacy
+        .upsert_nodes(
+            &ctx,
+            &[node(
+                gts::REPO_TYPE,
+                "r1",
+                json!({"full_path": "acme/web", "workspace_id": WS}),
+            )],
+        )
+        .await
+        .unwrap();
+    model
+        .failing
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    for _ in 0..3 {
+        assert!(!store.0.ready(&ctx).await, "reads stay on the old store");
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        model.objects.lock().unwrap().is_empty(),
+        "nothing was moved"
+    );
+    assert!(
+        model.types.lock().unwrap().is_empty(),
+        "no type was declared"
+    );
+    assert_eq!(
+        legacy.list(&ctx, Some(gts::REPO_TYPE)).await.unwrap().len(),
+        1
+    );
+
+    // Once the marker reads again, the move runs as before.
+    model
+        .failing
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    moved(&store, &ctx).await;
+    assert!(!model.objects.lock().unwrap().is_empty());
 }

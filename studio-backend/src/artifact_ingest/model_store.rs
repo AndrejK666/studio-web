@@ -374,8 +374,19 @@ impl ModelGraphStore {
                 rows.first().is_some_and(|o| {
                     o.payload.get("status").and_then(Value::as_str) != Some("returned")
                 })
-            })
-            .unwrap_or(false);
+            });
+        // A marker that could not be read is not a marker that is absent.
+        // Taking a busy pool's timeout for "never moved" started the whole
+        // move (every artifact listed off the graph and written again) under
+        // exactly the load that made the read fail. This read answers from
+        // the old store; the next one asks again.
+        let marked = match marked {
+            Ok(marked) => marked,
+            Err(e) => {
+                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the move marker could not be read; this read stays on the old store");
+                return false;
+            }
+        };
         if marked {
             if let Ok(mut m) = self.moved.lock() {
                 m.insert(tenant);

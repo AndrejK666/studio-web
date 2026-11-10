@@ -799,7 +799,7 @@ gears:
       server: "pg_main"
       dbname: "studio_domain_model"
       pool:
-        max_conns: 2
+        max_conns: 6
         min_conns: 0
         acquire_timeout: "10s"
         idle_timeout: "5m"

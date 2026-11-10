@@ -602,3 +602,38 @@ async fn a_project_grant_narrows_the_sql_root_its_total_and_its_relations() {
         .unwrap();
     assert_eq!(out.rows.items[0].relations["delivers"].total, 1);
 }
+
+/// The SQL reader counts only when its page cannot say how many match: the
+/// total must be the graph's at every page shape, including past the end.
+#[tokio::test]
+async fn totals_match_at_every_page_shape() {
+    let p = seeded(0xd0c7).await;
+    let order = json!([{"field": "title", "direction": "asc"}]);
+    for (limit, offset) in [
+        (1, 0),
+        (3, 0),
+        (7, 0),
+        (8, 0),
+        (200, 0),
+        (3, 3),
+        (3, 6),
+        (3, 7),
+        (3, 9),
+        (200, 5),
+    ] {
+        let page = p
+            .same(
+                "risk",
+                json!({"limit": limit, "offset": offset, "order_by": order}),
+            )
+            .await;
+        assert_eq!(page["total"], json!(7), "limit {limit} offset {offset}");
+    }
+    let narrowed = p
+        .same(
+            "risk",
+            json!({"where": {"impact": {"_eq": "high"}}, "limit": 2, "offset": 2}),
+        )
+        .await;
+    assert_eq!(narrowed["total"], json!(3));
+}
