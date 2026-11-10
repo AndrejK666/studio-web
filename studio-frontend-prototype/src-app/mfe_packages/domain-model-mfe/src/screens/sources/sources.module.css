@@ -1,0 +1,14 @@
+/* Domain model › Sources (the prototype's .sm-sides.sm-two, .sm-rel-pair, .sm-work-items). */
+
+.two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.workItems {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: grid;
+  gap: var(--space-1);
+}

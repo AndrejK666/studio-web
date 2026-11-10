@@ -1,0 +1,17 @@
+{
+  "open_in_editor": "Open in the editor",
+  "review_group": "Review this reading",
+  "accept_reading": "Accept this reading",
+  "accepted_put_back": "Accepted — click to put it back as proposed",
+  "reject_reading": "Reject this reading: it leaves the model and is not proposed again",
+  "reviewed_earlier_title": "Its document changed since: the words are the same, the text around them may not be",
+  "accepted_earlier": "accepted at an earlier revision",
+  "rejected_earlier": "rejected at an earlier revision",
+  "nothing_matches": "Nothing matches.",
+  "clear_filters": "Clear the search and filters",
+  "expand": "Show {name}",
+  "collapse": "Hide {name}",
+  "page_of": "{from}–{to} of {total}",
+  "previous": "Previous",
+  "next": "Next"
+}
