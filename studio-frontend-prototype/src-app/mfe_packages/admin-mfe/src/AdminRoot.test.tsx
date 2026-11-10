@@ -22,11 +22,12 @@ vi.mock('./screens/admin/OrganizationsSection', () => ({ OrganizationsSection: (
 vi.mock('./screens/admin/PeopleSection', () => ({ PeopleSection: () => 'people' }));
 vi.mock('./screens/admin/AccessSection', () => ({ AccessSection: () => 'access' }));
 vi.mock('./screens/admin/SecretsSection', () => ({ SecretsSection: () => 'secrets' }));
+vi.mock('./screens/admin/integrations/IntegrationsSection', () => ({ IntegrationsSection: () => 'integrations' }));
 vi.mock('./screens/admin/ObjectsSection', () => ({ ObjectsSection: () => 'objects' }));
 vi.mock('./screens/admin/IdentitiesSection', () => ({ IdentitiesSection: () => 'identities' }));
 vi.mock('./screens/admin/TenantsSection', () => ({ TenantsSection: () => 'tenants' }));
 
-import { ADMIN_SECTIONS, AdminRoot } from './AdminRoot';
+import { ADMIN_SECTIONS, AdminRoot, ORGANIZATION_SECTIONS } from './AdminRoot';
 
 const bridge = {} as ChildMfeBridge;
 
@@ -44,10 +45,23 @@ describe('AdminRoot', () => {
   });
 
   it('has one admin-level extension per section, in the prototype order, and no kit', () => {
-    const shown = manifest.extensions.map((e) => e.presentation);
+    const all = manifest.extensions.map((e) => e.presentation);
+    const shown = all.filter((p) => p.level === 'admin');
     expect(shown.map((p) => p.section)).toEqual([...ADMIN_SECTIONS]);
-    expect(shown.every((p) => p.level === 'admin' && !('kit' in p))).toBe(true);
+    expect(all.every((p) => !('kit' in p))).toBe(true);
     const orders = shown.map((p) => p.order);
     expect([...orders].sort((a, b) => a - b)).toEqual(orders);
+  });
+
+  // The one extension on another level: Organization › Connections is the
+  // Integrations screen (the prototype rendered `ConnectorsView` for both).
+  it('answers Organization › Connections with the Integrations section', () => {
+    const others = manifest.extensions.map((e) => e.presentation).filter((p) => p.level !== 'admin');
+    expect(others.map((p) => [p.level, p.route, p.section])).toEqual(
+      ORGANIZATION_SECTIONS.map((s) => ['organization', `/${s}`, s])
+    );
+    section.value = 'connections';
+    render(<AdminRoot bridge={bridge} />);
+    expect(screen.getByText('integrations')).toBeTruthy();
   });
 });

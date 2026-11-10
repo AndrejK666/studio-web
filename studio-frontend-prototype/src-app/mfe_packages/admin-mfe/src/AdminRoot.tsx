@@ -17,6 +17,7 @@ import { AdminContext } from './screens/admin/common';
 import { OrganizationsSection } from './screens/admin/OrganizationsSection';
 import { PeopleSection } from './screens/admin/PeopleSection';
 import { AccessSection } from './screens/admin/AccessSection';
+import { IntegrationsSection } from './screens/admin/integrations/IntegrationsSection';
 import { SecretsSection } from './screens/admin/SecretsSection';
 import { ObjectsSection } from './screens/admin/ObjectsSection';
 import { IdentitiesSection } from './screens/admin/IdentitiesSection';
@@ -27,16 +28,26 @@ export const ADMIN_SECTIONS = [
   'organizations',
   'people',
   'access',
+  'integrations',
   'secrets',
   'objects',
   'identities',
   'tenants',
 ] as const;
 
-export type AdminSection = (typeof ADMIN_SECTIONS)[number];
+/**
+ * What this entry answers on the organization level: Organization › Connections
+ * is the same screen as Admin › Integrations, as the prototype rendered both
+ * (`ConnectorsView` with the organization as its tenant).
+ */
+export const ORGANIZATION_SECTIONS = ['connections'] as const;
+
+export type AdminSection = (typeof ADMIN_SECTIONS)[number] | (typeof ORGANIZATION_SECTIONS)[number];
+
+const KNOWN_SECTIONS: readonly unknown[] = [...ADMIN_SECTIONS, ...ORGANIZATION_SECTIONS];
 
 function sectionOf(value: unknown): AdminSection {
-  return (ADMIN_SECTIONS as readonly unknown[]).includes(value) ? (value as AdminSection) : 'people';
+  return KNOWN_SECTIONS.includes(value) ? (value as AdminSection) : 'people';
 }
 
 export interface AdminRootProps {
@@ -71,6 +82,9 @@ function Section({ section }: { section: AdminSection }) {
       return <OrganizationsSection />;
     case 'access':
       return <AccessSection />;
+    case 'integrations':
+    case 'connections':
+      return <IntegrationsSection />;
     case 'secrets':
       return <SecretsSection />;
     case 'objects':

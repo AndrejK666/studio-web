@@ -182,3 +182,72 @@ export interface CatalogType {
 export interface GtsEntityPage {
   entities?: { gts_id: string; content?: { title?: string } }[];
 }
+
+/* ── studio-connector: Integrations (the prototype's `api.ts` at 00828880) ── */
+
+/** A provider this deployment can serve: one whose driver plugin is linked. */
+export interface ConnectorProvider {
+  provider: string;
+  display_name: string;
+  default_base_url: string;
+  /** GTS instance id of the driver plugin. */
+  instance_id: string;
+  /** `source_code` | `ai` | `notification` | `cluster` | `registry` | `compute`. */
+  category: string;
+  /** Label for the credential field, e.g. "API Key" vs "Personal Access Token (PAT)". */
+  credential_label: string;
+  /** Placeholder hinting at the credential's shape, e.g. "sk-ant-…". */
+  credential_hint: string;
+  /** `notification` only: the credential fixes the channel (an incoming webhook). */
+  fixed_target?: boolean;
+  /** A connection may be stored without a credential: a public gear repository. */
+  token_optional?: boolean;
+  /** Made by signing in to the provider's identity provider (ADR-0049). */
+  sign_in?: boolean;
+}
+
+/** A connection as Integrations lists it. */
+export interface StoredConnection {
+  id: string;
+  /** Tenant holding it: the organization, or an ancestor when inherited. */
+  owner_tenant_id: string;
+  provider: string;
+  label: string;
+  /** Account the credential belongs to, captured when it was verified. */
+  account: string;
+  base_url: string;
+  /** personal | workspace | organization */
+  scope: string;
+  secret_ref: string;
+  created_at_epoch_secs: number;
+  options?: Record<string, string>;
+  /** Whether the caller created it. */
+  mine?: boolean;
+}
+
+export interface ConnectorIdentity {
+  account: string;
+  display_name?: string | null;
+}
+
+/** The answer to a create, a patch and a test. */
+export interface ConnectionTest extends ConnectorIdentity {
+  connection: StoredConnection;
+}
+
+export interface RemoteRepo {
+  id: string;
+  name: string;
+  full_path: string;
+  clone_url: string;
+  default_branch?: string | null;
+  description?: string | null;
+  visibility?: string | null;
+}
+
+/** What Integrations reads of studio-environments: the cluster and registry each environment uses. */
+export interface EnvironmentUse {
+  name: string;
+  connection_id: string;
+  registry_connection_id?: string | null;
+}

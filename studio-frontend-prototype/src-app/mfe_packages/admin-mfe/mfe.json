@@ -61,6 +61,19 @@
       }
     },
     {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.admin.screens.integrations.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.admin.mfe.main.v1",
+      "presentation": {
+        "label": "Integrations",
+        "icon": "lucide:plug",
+        "route": "/admin/integrations",
+        "order": 40,
+        "level": "admin",
+        "section": "integrations"
+      }
+    },
+    {
       "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.admin.screens.secrets.v1",
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.admin.mfe.main.v1",
@@ -110,6 +123,19 @@
         "order": 95,
         "level": "admin",
         "section": "tenants"
+      }
+    },
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.admin.screens.connections.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.admin.mfe.main.v1",
+      "presentation": {
+        "label": "Connections",
+        "icon": "lucide:network",
+        "route": "/connections",
+        "order": 40,
+        "level": "organization",
+        "section": "connections"
       }
     }
   ]

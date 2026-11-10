@@ -81,6 +81,13 @@ export {
   type SendMessageParams,
   type TargetsParams,
 } from './connector/ConnectorsApiService';
+export {
+  SIGN_IN_CALLBACK_PATH,
+  callbackParams,
+  rememberSignInReturn,
+  takeSignInReturn,
+  type CallbackParams,
+} from './connector/connectionSignIn';
 export type {
   ConnectionDto,
   ConnectionListDto,

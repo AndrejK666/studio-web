@@ -20,21 +20,36 @@ mfe(
         "studio-organizations",
         "credstore",
         "studio-connector",
+        "studio-environments",
         "studio-components-catalog",
         "types-registry",
     ],
 
     # What it brings, as mfe.json says: the labels of its screens, then the
-    # route of each extension (presentation.route), in mfe.json's order.
-    screens = ["Organizations", "People", "Access", "Secrets", "Objects", "All identities", "Project tenants"],
+    # route of each extension (presentation.route), in mfe.json's order. The
+    # last is Organization › Connections: the Integrations screen again, on the
+    # organization level, as the prototype had it.
+    screens = [
+        "Organizations",
+        "People",
+        "Access",
+        "Integrations",
+        "Secrets",
+        "Objects",
+        "All identities",
+        "Project tenants",
+        "Connections",
+    ],
     mounts = [
         "/admin/organizations",
         "/admin/people",
         "/admin/access",
+        "/admin/integrations",
         "/admin/secrets",
         "/admin/objects",
         "/admin/identities",
         "/admin/tenants",
+        "/connections",
     ],
 
     frontx = "0.2.0-alpha.15",

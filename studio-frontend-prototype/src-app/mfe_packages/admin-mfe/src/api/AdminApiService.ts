@@ -17,7 +17,11 @@ import type {
   CatalogType,
   Colleague,
   Connection,
+  ConnectionTest,
+  ConnectorIdentity,
+  ConnectorProvider,
   Conversion,
+  EnvironmentUse,
   GtsEntityPage,
   Group,
   MemberDirectory,
@@ -28,6 +32,8 @@ import type {
   OrgMember,
   OrganizationLogo,
   PlatformIdentity,
+  RemoteRepo,
+  StoredConnection,
   StudioProfile,
   TypeCount,
 } from './types';
@@ -260,6 +266,80 @@ export class AdminApiService extends BaseApiService {
   readonly connections = this.protocol(RestEndpointProtocol).queryWith<{ items: Connection[] }, { tenant: string }>(
     ({ tenant }) => `/studio-connector/v1/connections?${q({ tenant })}`
   );
+
+  /* ── studio-connector: Integrations ── */
+
+  readonly connectorProviders = this.protocol(RestEndpointProtocol).query<{ items: ConnectorProvider[] }>(
+    '/studio-connector/v1/providers'
+  );
+
+  /** Connections visible from `tenant`: its own, or inherited from an ancestor. */
+  readonly storedConnections = this.protocol(RestEndpointProtocol).queryWith<
+    { items: StoredConnection[] },
+    { tenant: string }
+  >(({ tenant }) => `/studio-connector/v1/connections?${q({ tenant })}`);
+
+  /** Verify a credential without storing it ("Test connection"). */
+  readonly probeConnection = this.protocol(RestEndpointProtocol).mutation<
+    ConnectorIdentity,
+    { provider: string; base_url?: string; token: string }
+  >('POST', '/studio-connector/v1/probe');
+
+  /** Verifies, then stores ("Test & save"). The token never comes back out. */
+  readonly createConnection = this.protocol(RestEndpointProtocol).mutation<
+    ConnectionTest,
+    { provider: string; label: string; base_url?: string; token: string; scope: string; owner_tenant_id: string }
+  >('POST', '/studio-connector/v1/connections');
+
+  /** Relabel, move to another installation, or rotate the credential; the id survives. */
+  patchConnection(id: string, tenant: string) {
+    return this.rest.mutation<ConnectionTest, { label?: string; base_url?: string; token?: string }>(
+      'PATCH',
+      `/studio-connector/v1/connections/${e(id)}?${q({ tenant })}`
+    );
+  }
+
+  testConnection(id: string, tenant: string) {
+    return this.rest.mutation<ConnectionTest, void>(
+      'POST',
+      `/studio-connector/v1/connections/${e(id)}/test?${q({ tenant })}`
+    );
+  }
+
+  /** Removes the row from the connection's owning tenant. */
+  deleteConnection(id: string, tenant: string) {
+    return this.rest.mutation<void, void>('DELETE', `/studio-connector/v1/connections/${e(id)}?${q({ tenant })}`);
+  }
+
+  readonly connectionRepositories = this.protocol(RestEndpointProtocol).queryWith<
+    { items: RemoteRepo[] },
+    { id: string; tenant: string; search: string }
+  >(({ id, tenant, search }) => {
+    const params: Record<string, string> = { tenant };
+    if (search.trim()) params.search = search.trim();
+    return `/studio-connector/v1/connections/${e(id)}/repositories?${q(params)}`;
+  });
+
+  /** First half of a connection made by signing in: where to send the person. */
+  readonly startSignIn = this.protocol(RestEndpointProtocol).mutation<
+    { authorize_url: string },
+    { provider: string; label: string; scope: string; owner_tenant_id: string; redirect_uri: string }
+  >('POST', '/studio-connector/v1/oauth/start');
+
+  /* ── studio-environments, studio-components-catalog: what Integrations reads beside ── */
+
+  /** The organization's environments, for the clusters' and registries' Used by. */
+  readonly environments = this.protocol(RestEndpointProtocol).queryWith<{ items: EnvironmentUse[] }, { orgId: string }>(
+    ({ orgId }) => `/studio-environments/v1/environments?${q({ organization_id: orgId })}`
+  );
+
+  /** Read a tenant's repositories into its own catalogue now. */
+  syncProjectCatalogue(projectId: string) {
+    return this.rest.mutation<unknown, void>(
+      'POST',
+      `/studio-components-catalog/v1/project-catalogue/sync?${q({ project_id: projectId })}`
+    );
+  }
 
   /* ── studio-components-catalog, types-registry ── */
 

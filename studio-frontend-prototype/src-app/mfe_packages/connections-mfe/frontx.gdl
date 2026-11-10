@@ -16,8 +16,10 @@ mfe(
 
     # What it brings, as mfe.json says: the labels of its screen and overlay,
     # then the route of each extension (presentation.route), in mfe.json's order.
-    screens = ["Connections", "Connect source"],
-    mounts = ["/connections", "/connections/new"],
+    # Organization › Connections is admin-mfe's now (the prototype's screen,
+    # shared with Admin › Integrations); only the overlay is mounted from here.
+    screens = ["Connect source"],
+    mounts = ["/connections/new"],
 
     # The FrontX it is written against: its @gears-frontx/react pin. A shell
     # mounting it gives it the shell's own version, whatever this says.
@@ -26,6 +28,6 @@ mfe(
     # No `roles`: the permissions studio-connector checks are not written
     # down on this side yet.
 
-    # Routes worth a screenshot: its screen; the overlay opens over it.
+    # Routes worth a screenshot: the screen the overlay opens over.
     preview = ["/connections"],
 )

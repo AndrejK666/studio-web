@@ -113,6 +113,16 @@ export class ConnectorsApiService extends BaseApiService {
   >('POST', '/connections');
 
   /**
+   * The second half of a connection made by signing in (ADR-0049): what the
+   * identity provider sent back to the callback page becomes a stored, verified
+   * connection. Only the person who started the sign-in can finish it.
+   */
+  readonly completeSignIn = this.protocol(RestEndpointProtocol).mutation<
+    ConnectionTestDto,
+    { state: string; code: string }
+  >('POST', '/oauth/complete');
+
+  /**
    * Post through a notification connection. A mutation per connection rather
    * than one taking the id in its body, because the gear puts it in the path.
    */
