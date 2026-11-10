@@ -10,7 +10,8 @@
         "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.theme.v1~",
         "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.language.v1~",
         "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project_section.selected.v1~",
-        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.organization.selected.v1~"
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.organization.selected.v1~",
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.live.studio_events.last_event.v1~"
       ],
       "actions": [],
       "domainActions": [
@@ -84,6 +85,19 @@
         "order": 50,
         "level": "admin",
         "section": "secrets"
+      }
+    },
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.admin.screens.domain_model.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.admin.mfe.main.v1",
+      "presentation": {
+        "label": "Studio domain model",
+        "icon": "lucide:layers",
+        "route": "/admin/domain-model",
+        "order": 60,
+        "level": "admin",
+        "section": "domain-model"
       }
     },
     {

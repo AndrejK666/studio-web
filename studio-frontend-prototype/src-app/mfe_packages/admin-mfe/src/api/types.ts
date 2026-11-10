@@ -3,6 +3,8 @@
  * (`00828880:studio-frontend-prototype/src/api.ts`) declared them.
  */
 
+import type { GtsCatalog } from '../model/domain-runtime';
+
 /** The roles a membership may carry (studio-user `MEMBERSHIP_ROLES`). */
 export type MembershipRole = 'owner' | 'admin' | 'member';
 
@@ -250,4 +252,26 @@ export interface EnvironmentUse {
   name: string;
   connection_id: string;
   registry_connection_id?: string | null;
+}
+
+/** `GET /studio-domain-model/v1/types`: the organization's Studio domain model (ADR-0066). */
+export interface DomainTypesResponse {
+  ontology: { entities?: unknown[]; buckets?: unknown[] };
+  /** Whether this caller may change the model (`domain.model`, ADR-0035). */
+  can_edit_model: boolean;
+  /** The GTS ids each type and relation kind is registered under. */
+  gts?: GtsCatalog;
+}
+
+/** `GET /studio-domain-model/v1/type-counts`: objects per type; `complete: false` while the read model fills. */
+export interface DomainTypeCounts {
+  counts: Record<string, number>;
+  complete: boolean;
+}
+
+/** A model edit's answer: the type as it is now and the model's new version. */
+export interface DomainModelEdit {
+  entity: unknown;
+  version: number;
+  migrated?: number | null;
 }

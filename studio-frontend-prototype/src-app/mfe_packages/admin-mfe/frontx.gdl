@@ -23,6 +23,7 @@ mfe(
         "studio-environments",
         "studio-components-catalog",
         "types-registry",
+        "studio-domain-model",
     ],
 
     # What it brings, as mfe.json says: the labels of its screens, then the
@@ -35,6 +36,7 @@ mfe(
         "Access",
         "Integrations",
         "Secrets",
+        "Studio domain model",
         "Objects",
         "All identities",
         "Project tenants",
@@ -46,6 +48,7 @@ mfe(
         "/admin/access",
         "/admin/integrations",
         "/admin/secrets",
+        "/admin/domain-model",
         "/admin/objects",
         "/admin/identities",
         "/admin/tenants",
