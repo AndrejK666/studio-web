@@ -566,6 +566,20 @@ jobs:
             echo "claim-owner rendered with no claim to hand over" >&2
             exit 1
           fi
+          # `never` (a class whose fsType lets fsGroup through) drops it (#1040);
+          # an unknown mode fails the render.
+          if helm template guard "$chart" -f deploy/helm/values-dev.example.yaml \
+               --set backend.image.tag=t --set frontend.image.tag=t --set backend.claimOwner=never \
+               --show-only templates/backend/deployment.yaml | grep -q 'name: claim-owner'; then
+            echo "claim-owner rendered with backend.claimOwner=never" >&2
+            exit 1
+          fi
+          if helm template guard "$chart" -f deploy/helm/values-dev.example.yaml \
+               --set backend.image.tag=t --set frontend.image.tag=t --set backend.claimOwner=sometimes \
+               >/dev/null 2>&1; then
+            echo "Chart rendered with backend.claimOwner=sometimes" >&2
+            exit 1
+          fi
   test-complete:
     # This is an aggregate gate and therefore appears after the individual
     # component test jobs in GitHub's graph.
@@ -1820,8 +1834,11 @@ jobs:
           # other name, server-side apply keeps every field helm owns, so a
           # volume that changes type (emptyDir → claim) renders with both and
           # is rejected, although the upgrade would pass.
+          # --dry-run=server lets the chart's `lookup` see the cluster, so it
+          # renders what the upgrade will: `claim-owner` only for a claim that
+          # does not exist yet (backend.claimOwner, #1040).
           helm template studio deploy/helm/studio-web \
-            -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
+            -n "$NAMESPACE" --no-hooks --dry-run=server "${common_args[@]}" \
             | kubectl apply --server-side --force-conflicts --dry-run=server \
                 --field-manager=helm \
                 -n "$NAMESPACE" -f - >/dev/null
@@ -2149,8 +2166,9 @@ jobs:
             --set-string "keycloak.image.tag=$INFRA_TAG"
           )
           helm lint deploy/helm/studio-web "${common_args[@]}"
+          # --dry-run=server: the chart's `lookup` sees the cluster (#1040).
           helm template studio deploy/helm/studio-web \
-            -n "$NAMESPACE" --no-hooks "${common_args[@]}" \
+            -n "$NAMESPACE" --no-hooks --dry-run=server "${common_args[@]}" \
             | kubectl apply --server-side --force-conflicts --dry-run=server \
                 --field-manager=helm \
                 -n "$NAMESPACE" -f - >/dev/null
