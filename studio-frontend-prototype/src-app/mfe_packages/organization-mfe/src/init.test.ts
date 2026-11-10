@@ -82,9 +82,9 @@ describe('organization-mfe init', () => {
     const { initHomeEffects } = await import('./effects/homeEffects');
     const module = await import('./init');
 
-    // Two services now: the scaffold's and the accounts client this MFE reads
-    // the organization's workspaces with.
-    expect(register).toHaveBeenCalledTimes(4);
+    // The scaffold's, the accounts client, the overview, background work and
+    // the person's Inbox.
+    expect(register).toHaveBeenCalledTimes(5);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);

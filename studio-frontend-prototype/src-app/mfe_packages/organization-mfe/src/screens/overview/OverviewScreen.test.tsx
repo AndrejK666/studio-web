@@ -4,12 +4,21 @@ import type { OrgOverview } from '../../overview/types';
 
 const { query } = vi.hoisted(() => ({ query: vi.fn() }));
 
-vi.mock('../../i18n', () => ({
-  useOverviewTranslations: () => ({
-    t: (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key),
-    loading: false,
-  }),
-}));
+vi.mock('../../i18n', () => {
+  const t = (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key);
+  t.count = (key: string, count: number) => `${key} ${count}`;
+  return { useOverviewTranslations: () => ({ t, loading: false }) };
+});
+// The Inbox has its own test (InboxGroup.test.tsx): here it reports one item waiting on the reader.
+vi.mock('./InboxGroup', async () => {
+  const { useEffect } = await import('react');
+  return {
+    InboxGroup: ({ onCount }: { onCount?: (n: number) => void }) => {
+      useEffect(() => onCount?.(1), [onCount]);
+      return <div data-attention-group="you" />;
+    },
+  };
+});
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
   useOrganization: () => ({ org: { id: 'o1', name: 'Acme' }, loading: false, failed: false }),
@@ -57,7 +66,9 @@ describe('OverviewScreen', () => {
     expect(screen.getByText('A github connection is refused (401)')).toBeTruthy();
     expect(screen.getByText(/"merged":"12"/)).toBeTruthy();
     expect(screen.getByText('Main')).toBeTruthy();
-    expect(screen.getByText('1 thing needs attention')).toBeTruthy();
+    // The refused connection for others, and one item for the reader.
+    expect(screen.getByText('2 things need attention')).toBeTruthy();
+    expect(document.querySelector('[data-attention-group="you"]')).toBeTruthy();
     // A refused connection is fixed on Connections, which this portal has.
     expect(screen.getByRole('button', { name: 'Fix the connection' })).toBeTruthy();
   });

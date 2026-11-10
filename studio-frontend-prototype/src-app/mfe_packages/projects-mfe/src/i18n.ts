@@ -10,7 +10,12 @@ import {
   useScreenTranslations,
   type UseScreenTranslationsReturn,
 } from '@gears-frontx/react';
-import { createText, loadScreenTranslations, type TranslationModules } from '@constructor-studio/mfe-shared';
+import {
+  createScreenTranslations,
+  createText,
+  loadScreenTranslations,
+  type TranslationModules,
+} from '@constructor-studio/mfe-shared';
 
 
 const SCREENSET = 'projects';
@@ -99,6 +104,16 @@ export function useSourcesConnectScreenTranslations(): UseScreenTranslationsRetu
 export function useUploadTranslations(): UseScreenTranslationsReturn {
   return useScreenTranslations(SCREENSET, UPLOAD_SCREEN, loadUploadTranslations);
 }
+
+const overviewModules = import.meta.glob('./screens/project/sections/overview/i18n/*.json') as ModuleMap;
+
+/** Overview's dictionary (English and Russian only) and its text function in one call. */
+export const useOverviewSectionTranslations = createScreenTranslations(
+  SCREENSET,
+  'overview',
+  overviewModules,
+  './screens/project/sections/overview/i18n'
+);
 
 export const useProjectListText = createText(PROJECT_LIST_NAMESPACE);
 export const useProjectText = createText(PROJECT_NAMESPACE);
