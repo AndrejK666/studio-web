@@ -27,6 +27,7 @@ import { Layout } from '@/app/layout';
 import { StudioOverlay } from '@gears-frontx/studio';
 import { MfeScreenContainer } from '@/app/mfe/MfeScreenContainer';
 import { AuthGate } from '@/app/auth/AuthGate';
+import { ConnectionSignInCallback, isConnectionSignInCallback } from '@/app/auth/ConnectionSignInCallback';
 
 function App() {
   return (
@@ -34,9 +35,15 @@ function App() {
       {/* The authenticated app mounts only behind the gate; the dev overlay
           stays outside so theme/mock toggles work on the login screen too. */}
       <AuthGate>
-        <Layout>
-          <MfeScreenContainer />
-        </Layout>
+        {/* A connection made by signing in comes back to its own page, in
+            place of the layout: the router never reads that address. */}
+        {isConnectionSignInCallback() ? (
+          <ConnectionSignInCallback />
+        ) : (
+          <Layout>
+            <MfeScreenContainer />
+          </Layout>
+        )}
       </AuthGate>
       <StudioOverlay />
     </>

@@ -83,6 +83,17 @@ describe('AuthGate', () => {
     expect(window.location.search).toBe('?screen=people;org=o1');
   });
 
+  it('leaves a connection sign-in’s code and state to its own callback page', async () => {
+    window.history.replaceState({}, '', '/connections/oauth/callback?code=abc&state=xyz');
+    mockAuth.checkAuth.mockResolvedValue({ authenticated: true, session: { kind: 'bearer', token: 't' } });
+
+    render(<AuthGate>app-content</AuthGate>);
+
+    expect(await screen.findByText('app-content')).toBeTruthy();
+    expect(mockAuth.handleCallback).not.toHaveBeenCalled();
+    expect(window.location.search).toBe('?code=abc&state=xyz');
+  });
+
   it('lands on the login screen when checkAuth rejects — never stuck on restoring', async () => {
     mockAuth.checkAuth.mockRejectedValue(new Error('token endpoint returned a non-JSON response'));
     render(<AuthGate>app-content</AuthGate>);

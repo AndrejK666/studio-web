@@ -19,6 +19,7 @@ import { useFrontX } from '@gears-frontx/react';
 import type { StudioAuthStateEvent } from './keycloakOidcProvider';
 import { LoginScreen } from './LoginScreen';
 import { takeReturnTo, withoutCallbackParams } from './returnTo';
+import { isConnectionSignInCallback } from './ConnectionSignInCallback';
 
 const OIDC_CALLBACK_PARAMS = ['code', 'state', 'session_state', 'iss', 'error', 'error_description'];
 
@@ -56,7 +57,9 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     }
     let cancelled = false;
     void (async () => {
-      const params = new URLSearchParams(window.location.search);
+      // A connection's sign-in comes back with its own `code` and `state`
+      // (ConnectionSignInCallback): not the portal's, so neither taken nor scrubbed here.
+      const params = new URLSearchParams(isConnectionSignInCallback() ? '' : window.location.search);
       let bootError: string | undefined;
       if (params.has('error')) {
         // The IdP redirected back with an OIDC error (declined consent,

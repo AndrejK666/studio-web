@@ -31,18 +31,6 @@
   ],
   "extensions": [
     {
-      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.connections.screens.main.v1",
-      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
-      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.connections.mfe.main.v1",
-      "presentation": {
-        "label": "Connections",
-        "icon": "lucide:network",
-        "route": "/connections",
-        "order": 40,
-        "level": "organization"
-      }
-    },
-    {
       "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.overlay.v1~constructor_studio.overlays.connect_source.main.v1",
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.overlay.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.connections.mfe.connect_source.v1",

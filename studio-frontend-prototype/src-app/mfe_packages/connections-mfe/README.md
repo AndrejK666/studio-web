@@ -6,6 +6,13 @@ the form that adds one.
 **Feature**: [`docs/feature/connection-create.md`](../../../../docs/feature/connection-create.md)
 **Design**: Figma `Constructor Studio mockups`, node `40001018:15055`
 
+> **Organization › Connections is no longer mounted from here.** The tab at
+> `/connections` is `admin-mfe`'s `connections` section: the prototype's
+> `ConnectorsView` (00828880), the same screen as Admin › Integrations, as the
+> prototype rendered both. `mfe.json` declares only the overlay now; the
+> `./lifecycle` entry and the list below stay, unmounted, until they are
+> removed (`docs/parity.md`, Organization › Connections).
+
 ## Two roots, not one
 
 This MFE exposes two entries, and they do not share anything a bundler can see.
