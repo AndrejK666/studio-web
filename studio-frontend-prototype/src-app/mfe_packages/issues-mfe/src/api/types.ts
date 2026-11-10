@@ -1,10 +1,11 @@
 /**
  * What the Issues kit reads and writes, as the backend answers it. The
  * request shapes the moved model modules take (`SpecModelEntityEdit`,
- * `SpecModelSentence`, `SpecModelWrite`, `GlossaryDocRow`) are the
+ * `SpecModelSentence`, `SpecModelWrite`) are the
  * prototype's (`src/api.ts` at 00828880), unchanged; the queue's row and the
  * readiness are the server's own (studio-documents, `GET /project-domain-model/issues`
- * and `GET /project-domain-model/readiness`).
+ * and `GET /project-domain-model/readiness`), and so are the documentation's
+ * thin places (`GET /project-domain-model/doc-quality`).
  */
 
 import type { SpecModel, SpecModelFact, SpecModelSide } from '../model/spec-model';
@@ -35,14 +36,6 @@ export interface SpecModelWrite {
   pr_url?: string | null;
 }
 
-/** A row of the glossary document (glossary-view.ts plans them). */
-export interface GlossaryDocRow {
-  term: string;
-  definition: string;
-  aliases: string[];
-  not_same_as: string[];
-  source?: string | null;
-}
 
 /** A fact as the server returns it: with the key its review is stored under. */
 export type ServedFact = SpecModelFact & { fact_key: string };
@@ -82,6 +75,46 @@ export interface SpecModelIssueRowList {
   items: SpecModelIssueRow[];
   total: number;
   by_group: Partial<Record<IssueGroup, number>>;
+}
+
+export type DocQualityKind = 'onlyadr' | 'nodefinition' | 'onesided' | 'norelation' | 'twonames';
+
+export type DocQualityAction = 'save_entity' | 'same_thing' | 'propose_sentence' | 'create_issue';
+
+/** One side of a "two names" row: a glossary entry. */
+export interface DocQualityTerm {
+  key: string;
+  name: string;
+  facts: number;
+}
+
+/** One way to make the documentation better, ready to save
+ *  (`GET /studio-documents/v1/project-domain-model/doc-quality`). */
+export interface DocQualityRow {
+  /** `oa:`, `nd:`, `os:`, `nr:` or `tn:` and what it is about. */
+  key: string;
+  kind: DocQualityKind;
+  /** The server's English name for the kind. */
+  label: string;
+  title: string;
+  hint: string;
+  sides: SpecModelSide[];
+  /** The entity's section as it would be saved. */
+  edit?: SpecModelEntityEdit | null;
+  /** The key of the entity `edit` saves. */
+  entity?: string | null;
+  /** For two names: the second is to be read as the first. */
+  pair?: { a: DocQualityTerm; b: DocQualityTerm; why: string; suffix?: string | null; level?: string | null } | null;
+  /** For no relation: the sentence for the document, and the relation it states. */
+  sentence?: (SpecModelSentence & { why: string; name: string; verb: string; target: string }) | null;
+  issue_url?: string | null;
+  actions: DocQualityAction[];
+}
+
+export interface DocQualityRowList {
+  items: DocQualityRow[];
+  total: number;
+  by_kind: Partial<Record<DocQualityKind, number>>;
 }
 
 /** `GET /studio-documents/v1/project-domain-model/readiness`. */

@@ -212,6 +212,10 @@ impl toolkit::Gear for StudioDocumentsGear {
         // registry to bound a model's suggestion by.
         ctx.client_hub()
             .register::<dyn port::CapabilityVocabulary>(service.clone());
+        // A new project's first document, for its creation run
+        // (studio-organizations).
+        ctx.client_hub()
+            .register::<dyn port::ProjectDocuments>(service.clone());
 
         self.service
             .set(service)

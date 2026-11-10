@@ -70,6 +70,7 @@ describe('DomainModelScreen', () => {
   beforeEach(() => {
     Object.assign(dmApi, {
       specModel: vi.fn().mockResolvedValue(model()),
+      specModelUploads: vi.fn().mockResolvedValue({ items: [], total: 0 }),
       specModelReviews: vi.fn().mockResolvedValue({ items: [], total: 0 }),
       glossary: vi.fn().mockResolvedValue({ items: [], total: 0 }),
       productFindings: vi.fn().mockResolvedValue({ repo: null, items: [], total: 0 }),

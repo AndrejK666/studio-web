@@ -238,12 +238,16 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 reads: owned(&[
                     "GET /studio-documents/v1/project-domain-model/issues",
                     "GET /studio-documents/v1/project-domain-model/readiness",
+                    "GET /studio-documents/v1/project-domain-model/doc-quality",
                     "GET /studio-documents/v1/project-domain-model",
                 ]),
                 writes: owned(&[
                     "POST /studio-documents/v1/project-domain-model/reviews",
                     "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
                     "POST /studio-documents/v1/project-domain-model/issues",
+                    "POST /studio-documents/v1/project-domain-model/entities",
+                    "POST /studio-documents/v1/project-domain-model/sentences/proposals",
+                    "POST /studio-documents/v1/project-domain-model/glossary/decisions",
                 ]),
                 ..KitPermissions::default()
             },
@@ -474,6 +478,9 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     "GET /studio-product/v1/product-description-revisions",
                     "GET /studio-product/v1/product-description-revisions/{revision}",
                     "GET /studio-product/v1/product-description-branches",
+                    "POST /studio-product/v1/product-description-outlines",
+                    "GET /studio-product/v1/product-infra",
+                    "GET /studio-product/v1/product-kind",
                     "GET /studio-product/v1/gdl-file",
                     "GET /studio-product/v1/gearbox",
                     "GET /studio-product/v1/gearbox/catalogue",
@@ -514,6 +521,8 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 writes: owned(&[
                     "PUT /studio-product/v1/projects/{project_id}/product",
                     "POST /studio-product/v1/product-description-revisions",
+                    "PUT /studio-product/v1/product-infra",
+                    "PUT /studio-product/v1/product-kind",
                     "PUT /studio-product/v1/gear-explanations/{gear_id}",
                     "POST /studio-product/v1/gear-explanations/{gear_id}/generations",
                     "POST /studio-spec-mapping/v1/decisions",

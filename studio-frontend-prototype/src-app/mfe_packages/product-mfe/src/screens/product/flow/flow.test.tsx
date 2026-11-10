@@ -16,7 +16,7 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   openScreen,
 }));
 
-import { api, type ProductPreview, type ProjectProduct } from '../../../api/client';
+import { api, type ProductKindAnswer, type ProductPreview, type ProjectProduct } from '../../../api/client';
 import { ScopeContext, type Scope } from '../../common';
 import { ProductFlow } from './ProductFlow';
 import { ProductKindStep } from './ProductKindStep';
@@ -91,26 +91,41 @@ describe('ProductFlow', () => {
 });
 
 describe('ProductKindStep', () => {
-  beforeEach(() => {
-    vi.spyOn(api, 'declaredCapabilities').mockResolvedValue({ items: [], total: 0 });
-    vi.spyOn(api, 'declaredRequirements').mockResolvedValue({ items: [], total: 0 });
-    vi.spyOn(api, 'listComponents').mockResolvedValue({ nodes: [] });
+  const kinds = [
+    { id: 'gear_product', title: 'Full product on gears', what: 'w', builds: 'b' },
+    { id: 'gear_service', title: 'Gear service', what: 'w', builds: 'b' },
+    { id: 'frontx_app', title: 'FrontX app', what: 'w', builds: 'b' },
+    { id: 'source_built', title: 'Built from its own source', what: 'w', builds: 'b' },
+  ] as ProductKindAnswer['kinds'];
+  const answer = (choice: ProductKindAnswer['choice']): ProductKindAnswer => ({
+    proposed: 'gear_product',
+    reasons: ['The specs say too little yet to tell.'],
+    basis: 'none',
+    alternatives: ['gear_service', 'frontx_app', 'source_built'],
+    choice,
+    decided: !!choice,
+    status: choice ? 'Full product on gears, confirmed.' : 'Not decided yet.',
+    kinds,
+    experimental: true,
   });
 
-  it('proposes a kind, open while undecided, and keeps the confirmed one in the configuration', async () => {
-    const put = vi.spyOn(api, 'putProjectConfig').mockResolvedValue(undefined);
+  it("shows the server's proposal, open while undecided, and confirms it through the server", async () => {
+    vi.spyOn(api, 'productKind').mockResolvedValue(answer(null));
+    const put = vi
+      .spyOn(api, 'confirmProductKind')
+      .mockResolvedValue(answer({ kind: 'gear_product', proposed: 'gear_product', confirmed_at: '2026-11-10T00:00:00Z' }));
     wrap(<ProductKindStep />);
     const confirm = await screen.findByText(/^confirm /);
     expect(document.querySelector('[data-product-kind="undecided"]')).not.toBeNull();
+    expect(screen.getByText('The specs say too little yet to tell.')).toBeTruthy();
     fireEvent.click(confirm);
-    await waitFor(() => expect(put).toHaveBeenCalled());
-    expect(put.mock.calls[0][1]).toBe('p1');
-    expect(put.mock.calls[0][2]).toHaveProperty('product_kind');
+    await waitFor(() => expect(put).toHaveBeenCalledWith('', 'p1', 'gear_product'));
+    await waitFor(() => expect(document.querySelector('[data-product-kind="gear_product"]')).not.toBeNull());
   });
 
-  it('still proposes for a project with no configuration', async () => {
-    vi.spyOn(api, 'projectConfig').mockResolvedValue(null);
+  it('says why the kind could not be read', async () => {
+    vi.spyOn(api, 'productKind').mockRejectedValue(new Error('503 studio-mcp is not running'));
     wrap(<ProductKindStep />);
-    await waitFor(() => expect(document.querySelector('[data-product-kind]')).not.toBeNull());
+    expect(await screen.findByText(/kind_read_failed/)).toBeTruthy();
   });
 });

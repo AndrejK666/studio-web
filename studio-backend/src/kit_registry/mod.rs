@@ -13,6 +13,7 @@ mod manifest;
 mod mcp;
 mod models;
 mod phase;
+pub mod port;
 mod rest;
 pub(crate) mod service;
 mod shelf;
@@ -73,6 +74,13 @@ impl Gear for StudioKitsGear {
         let access = crate::org_scope::OrgAccess(Arc::new(
             crate::studio_session::sdk::TenantMembership::new(account_management),
         ));
+        // The kits a new project asked for, for its creation run
+        // (studio-organizations, `organizations.project_create`).
+        ctx.client_hub()
+            .register::<dyn port::ProjectKitRequests>(Arc::new(port::KitRequests::new(Arc::clone(
+                &service,
+            )))
+                as Arc<dyn port::ProjectKitRequests>);
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;

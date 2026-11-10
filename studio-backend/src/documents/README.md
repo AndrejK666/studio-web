@@ -43,5 +43,13 @@ This README is what you need to work in the directory.
   (`project_domain_model_issues`, `project_domain_model_readiness`,
   `project_domain_model_facts`, `project_domain_model_fact_review`,
   `project_domain_model_finding_decide`; `docs/mcp.md`).
+- What would make the documentation better (`GET
+  /project-domain-model/doc-quality`, the Issues table's "improves the docs"
+  rows) is [`spec_model/doc_quality.rs`](spec_model/doc_quality.rs): the
+  portal's entity folding (`entitiesOf`), layers, drafts and similar glossary
+  pairs, moved with their tests. It folds names as the browser did
+  (`fact_key::subject_key`), over the facts members did not reject. MCP tools
+  `project_domain_model_doc_quality`, `project_domain_model_entity_save`,
+  `project_domain_model_sentence_propose`.
 - `repo_tests.rs` runs against the shared test PostgreSQL (`test_pg.rs`);
   `sync_analysis_tests.rs` covers what a sync queues.

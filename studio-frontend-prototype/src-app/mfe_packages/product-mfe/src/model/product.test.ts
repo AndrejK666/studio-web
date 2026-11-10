@@ -271,21 +271,16 @@ describe("productPathOf", () => {
 });
 
 describe("the profiles the saved description declares", () => {
-  const text = `gdl_version = "1.5"
-product(
-    id = "shop",
-    # profiles = [kubernetes(id = "commented")],
-    profiles = [
-        embedded(id = "dev", development = True, database = postgres(host = "127.0.0.1")),
-        kubernetes(id = "stage", discovery = "static", namespace = "shop-stage"),
-        kubernetes(id = "prod", discovery = "static", namespace = "shop"),
-        self_hosted(id = "lab", host = "lab"),
-    ],
-    gears = [use_gear("api-gateway", source = "gears-rust")],
-)`;
+  // As the server reads them off product.gdl (studio-product infra_gdl.rs `read_profiles`).
+  const read = [
+    { id: "dev", kind: "embedded" },
+    { id: "stage", kind: "kubernetes" },
+    { id: "prod", kind: "kubernetes" },
+    { id: "lab", kind: "self_hosted" },
+  ];
 
-  it("are read with their kinds, and only kubernetes ones can be bound", () => {
-    const declared = declaredProfiles(text);
+  it("are shown with their kinds, and only kubernetes ones can be bound", () => {
+    const declared = declaredProfiles(read);
     expect(declared.map((p) => [p.id, p.kind])).toEqual([
       ["dev", "embedded"],
       ["stage", "kubernetes"],
@@ -298,7 +293,7 @@ product(
   });
 
   it("fall back to the three a new description starts with", () => {
-    for (const none of [null, "", "# no product here", "product(id = \"x\", profiles = PROFILES)"]) {
+    for (const none of [null, undefined, []]) {
       expect(deployableProfiles(declaredProfiles(none)).map((p) => p.id)).toEqual(["prod"]);
     }
   });

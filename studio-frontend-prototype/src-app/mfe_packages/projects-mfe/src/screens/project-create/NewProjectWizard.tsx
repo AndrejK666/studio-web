@@ -33,6 +33,7 @@ import { DetailsStep } from './steps/DetailsStep';
 import { RepositoriesStep } from './steps/RepositoriesStep';
 import { RepositoriesFooterNote } from './steps/RepositoriesFooterNote';
 import frame from '../../components/OverlayFrame.module.css';
+import styles from './NewProjectWizard.module.css';
 
 /** One entry per step key. Adding a step touches this map and `WIZARD_STEPS`. */
 const STEP_BODIES: Record<WizardStepKey, React.FC> = {
@@ -55,6 +56,7 @@ const WizardBody: React.FC = () => {
   const draft = useAppSelector((state) => state[CREATE_SLICE_KEY].draft);
   const submitting = useAppSelector((state) => state[CREATE_SLICE_KEY].submitting);
   const error = useAppSelector((state) => state[CREATE_SLICE_KEY].error);
+  const progress = useAppSelector((state) => state[CREATE_SLICE_KEY].progress);
   const providerId = useAppSelector((state) => state[CREATE_SLICE_KEY].providerId);
   const { loading: orgLoading } = useOrganization();
   const { workspace, loading: workspaceLoading } = useWorkspace();
@@ -120,7 +122,25 @@ const WizardBody: React.FC = () => {
       )}
 
       <div className={frame.body}>
-        {showSkeleton ? <Skeleton className={frame.bodySkeleton} /> : <Body />}
+        {showSkeleton ? (
+          <Skeleton className={frame.bodySkeleton} />
+        ) : progress ? (
+          // The server's run, step by step: the dialog follows it until it ends.
+          <section aria-live="polite" className={styles.progress} data-create-run={progress.state}>
+            <h3 className={styles.progressTitle}>{t('progress_title')}</h3>
+            <ol className={styles.progressSteps}>
+              {progress.steps.map((s) => (
+                <li key={s.key} data-create-step={s.key} data-state={s.state} title={s.detail ?? undefined}>
+                  <span>{t(`step_${s.key}`)}</span>
+                  <span className={styles.progressState}>{t(`step_${s.state}`)}</span>
+                </li>
+              ))}
+            </ol>
+            {!submitting && progress.state !== 'succeeded' && <p className={styles.progressHint}>{t('retry_hint')}</p>}
+          </section>
+        ) : (
+          <Body />
+        )}
       </div>
 
       {(translationsFailed || error || (final && !workspaceId && !workspaceLoading)) && (

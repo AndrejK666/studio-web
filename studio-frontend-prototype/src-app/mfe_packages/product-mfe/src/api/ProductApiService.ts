@@ -28,6 +28,7 @@ import type {
   DeclaredCapability,
   DeclaredRequirement,
   Deployment,
+  DescriptionOutline,
   GearboxStatus,
   GearConfig,
   GearConfigSchema,
@@ -38,6 +39,8 @@ import type {
   ProductChange,
   ProductDescription,
   ProductDescriptionRevision,
+  ProductInfra,
+  ProductKindAnswer,
   ProductPreview,
   ProfileAdvice,
   ProjectConfig,
@@ -189,6 +192,39 @@ export class ProductApiService extends BaseApiService {
   >(({ projectId, revision }) =>
     orgScoped(`/studio-product/v1/product-description-revisions/${revision}?${project(projectId)}`)
   );
+
+  /** The infra services as the description says them, merged with the catalogue's passports and the project's records. */
+  readonly productInfra = this.protocol(RestEndpointProtocol).queryWith<ProductInfra, { projectId: string }>(
+    ({ projectId }) => orgScoped(`/studio-product/v1/product-infra?${project(projectId)}`)
+  );
+
+  /** Save the whole list: the description's `infra` (a new revision when it changes) and the project's records. */
+  putProductInfra(projectId: string) {
+    return this.rest.mutation<ProductInfra, { base_revision?: number | null; items: InfraService[] }>(
+      'PUT',
+      orgScoped(`/studio-product/v1/product-infra?${project(projectId)}`)
+    );
+  }
+
+  /** What a product.gdl says (a text, a revision, or the latest): infra, profiles, which lines say which part. */
+  outlineProductDescription(projectId: string) {
+    return this.rest.mutation<DescriptionOutline, { text?: string; revision?: number }>(
+      'POST',
+      orgScoped(`/studio-product/v1/product-description-outlines?${project(projectId)}`)
+    );
+  }
+
+  /** What the product is: Studio's proposal from the specs, and the member's choice. */
+  readonly productKind = this.protocol(RestEndpointProtocol).queryWith<ProductKindAnswer, { projectId: string }>(
+    ({ projectId }) => orgScoped(`/studio-product/v1/product-kind?${project(projectId)}`)
+  );
+
+  confirmProductKind(projectId: string) {
+    return this.rest.mutation<ProductKindAnswer, { kind: string }>(
+      'PUT',
+      orgScoped(`/studio-product/v1/product-kind?${project(projectId)}`)
+    );
+  }
 
   saveProductDescription(projectId: string) {
     return this.rest.mutation<

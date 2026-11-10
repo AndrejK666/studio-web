@@ -1,14 +1,14 @@
 /*
  * The Issues table's rows: the server's queue (what stops a build, what to
- * look at, what was decided) and the documentation's thin places
- * (doc-quality.ts, still read off the model here), one row each — the
+ * look at, what was decided) and the documentation's thin places (the
+ * server's `GET /project-domain-model/doc-quality`), one row each — the
  * prototype's `IssueRow` and `issueBody` (domain-model-screens.tsx at
- * 00828880) over the server's row instead of the browser's queue item.
+ * 00828880) over the server's rows instead of the browser's.
  */
 
-import type { SpecModelIssueRow } from '../api/types';
-import { DOC_QUALITY_LABEL, type DocQualityItem } from './doc-quality';
-import type { SpecModelSide } from './spec-model';
+import type { DocQualityRow, SpecModelIssueRow } from '../api/types';
+import { subjectKey, type SpecModelSide } from './spec-model';
+import type { SavedEdit } from './saved-entities';
 
 export type RowGroup = 'blocks' | 'look' | 'improve' | 'decided';
 
@@ -24,7 +24,7 @@ export const GROUP_LABEL: Record<RowGroup, string> = {
 
 export interface IssueRow {
   key: string;
-  /** What the row is, in English: the server's label or doc-quality's. */
+  /** What the row is, in English: the server's label. */
   label: string;
   /** The kind's translation key (`kind_<id>`). */
   kindId: string;
@@ -33,7 +33,7 @@ export interface IssueRow {
   side: SpecModelSide | null;
   tone: 'bad' | 'warn';
   queue?: SpecModelIssueRow;
-  doc?: DocQualityItem;
+  doc?: DocQualityRow;
 }
 
 /** The kind a server row is, as a translation id. */
@@ -43,7 +43,7 @@ export function queueKindId(r: Pick<SpecModelIssueRow, 'kind' | 'concern'>): str
 }
 
 /** Every row, the queue's first in the server's order, then the documentation's. */
-export function issueRows(queue: SpecModelIssueRow[], better: DocQualityItem[]): IssueRow[] {
+export function issueRows(queue: SpecModelIssueRow[], better: DocQualityRow[]): IssueRow[] {
   return [
     ...queue.map((q) => ({
       key: q.key,
@@ -57,8 +57,8 @@ export function issueRows(queue: SpecModelIssueRow[], better: DocQualityItem[]):
     })),
     ...better.map((d) => ({
       key: d.key,
-      label: DOC_QUALITY_LABEL[d.type],
-      kindId: d.type,
+      label: d.label,
+      kindId: d.kind,
       group: 'improve' as const,
       title: d.title,
       side: d.sides[0] ?? null,
@@ -66,6 +66,23 @@ export function issueRows(queue: SpecModelIssueRow[], better: DocQualityItem[]):
       doc: d,
     })),
   ];
+}
+
+/** The documentation rows without those whose entity was saved on this
+ *  screen: the save is in the repository, and the model reads it on its next
+ *  build (the saved edits are pruned once a build finished after them). */
+export function withoutSaved(rows: DocQualityRow[], saved: SavedEdit[]): DocQualityRow[] {
+  if (saved.length === 0) return rows;
+  const keys = new Set(saved.map((s) => subjectKey(s.edit.name)));
+  return rows.filter((r) => !r.entity || !keys.has(r.entity));
+}
+
+/** The sentence that states a relation, as a document would — redrawn as a
+ *  person edits the verb of a proposed one: "Connection health belongs to
+ *  **Connection**." The server proposes the same. */
+export function relationSentence(name: string, verb: string, target: string): string {
+  const subject = name.charAt(0).toUpperCase() + name.slice(1);
+  return `${subject} ${verb.trim()} **${target}**.`;
 }
 
 /** An issue's text from a row: what is wrong, where, and what to do. */

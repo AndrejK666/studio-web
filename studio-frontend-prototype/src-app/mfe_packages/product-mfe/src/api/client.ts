@@ -104,6 +104,14 @@ export const api = {
     svc().productDescriptionRevisions({ projectId }).fetch(FRESH),
   productDescriptionRevision: (_token: string, projectId: string, revision: number) =>
     svc().productDescriptionRevision({ projectId, revision }).fetch(FRESH),
+  productInfra: (_token: string, projectId: string) => svc().productInfra({ projectId }).fetch(FRESH),
+  putProductInfra: (_token: string, projectId: string, body: { base_revision?: number | null; items: InfraService[] }) =>
+    svc().putProductInfra(projectId).fetch(body),
+  outlineProductDescription: (_token: string, projectId: string, body: { text?: string; revision?: number }) =>
+    svc().outlineProductDescription(projectId).fetch(body),
+  productKind: (_token: string, projectId: string) => svc().productKind({ projectId }).fetch(FRESH),
+  confirmProductKind: (_token: string, projectId: string, kind: string) =>
+    svc().confirmProductKind(projectId).fetch({ kind }),
   saveProductDescription: (
     _token: string,
     projectId: string,

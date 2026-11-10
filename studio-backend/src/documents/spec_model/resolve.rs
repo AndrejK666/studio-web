@@ -8,10 +8,9 @@
 //! findings, their decisions, the requirements and the opened issues, and
 //! this orders them.
 //!
-//! The portal's second half of the table — ways to make the documentation
-//! better (`doc-quality.ts`: no definition, two names, one-sided relation) —
-//! is not here yet: it needs the entity folding and the layers the browser
-//! still does.
+//! The table's second half — ways to make the documentation better (no
+//! definition, two names, one-sided relation) — is `doc_quality.rs`, served
+//! by `GET /project-domain-model/doc-quality`.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;

@@ -15,6 +15,13 @@ import {
 import { FIRST_STEP_KEY, type WizardStepKey } from '../model/wizardSteps';
 import { pickerReducers, toggled } from './pickerReducers';
 
+/** The server's run creating the project, as last read. */
+export interface CreateProgress {
+  runId: string;
+  state: string;
+  steps: { key: string; state: string; detail?: string | null }[];
+}
+
 export interface CreateState {
   stepKey: WizardStepKey;
   draft: ProjectDraft;
@@ -23,6 +30,8 @@ export interface CreateState {
   search: string;
   submitting: boolean;
   error: Refusal | null;
+  /** The creation's run once the server took it; its steps show in the dialog. */
+  progress: CreateProgress | null;
 }
 
 const SLICE_KEY = 'projects/create' as const;
@@ -35,6 +44,7 @@ const initialState: CreateState = {
   search: '',
   submitting: false,
   error: null,
+  progress: null,
 };
 
 const {
@@ -49,6 +59,7 @@ const {
   searchRepos,
   submitStarted,
   submitFailed,
+  submitProgress,
 } = createSlice({
   name: SLICE_KEY,
   initialState,
@@ -62,6 +73,7 @@ const {
       state.search = '';
       state.submitting = false;
       state.error = null;
+      state.progress = null;
     },
     // @cpt-end:cpt-studiofrontend-dod-project-create-reset:p1:inst-1
     goToStep: (state: CreateState, action: ReducerPayload<WizardStepKey>) => {
@@ -83,10 +95,15 @@ const {
     submitStarted: (state: CreateState) => {
       state.submitting = true;
       state.error = null;
+      state.progress = null;
     },
     submitFailed: (state: CreateState, action: ReducerPayload<Refusal>) => {
       state.submitting = false;
       state.error = action.payload;
+    },
+    /** The run as last read: kept after a failure, so the dialog says which step stopped. */
+    submitProgress: (state: CreateState, action: ReducerPayload<CreateProgress>) => {
+      state.progress = action.payload;
     },
   },
 });
@@ -103,6 +120,7 @@ export {
   searchRepos,
   submitStarted,
   submitFailed,
+  submitProgress,
 };
 export const CREATE_SLICE_KEY = SLICE_KEY;
 

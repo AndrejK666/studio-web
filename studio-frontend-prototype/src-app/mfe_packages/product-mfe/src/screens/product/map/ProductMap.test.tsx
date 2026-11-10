@@ -47,7 +47,8 @@ describe('ProductMap', () => {
     vi.spyOn(api, 'listComponentProfiles').mockResolvedValue({ nodes: [] });
     vi.spyOn(api, 'projectConfig').mockResolvedValue(null);
     vi.spyOn(api, 'productDescription').mockResolvedValue({ latest: null });
-    vi.spyOn(api, 'infraServices').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(api, 'productInfra').mockResolvedValue({ items: [], source: 'project-list', revision: null, services: [] });
+    vi.spyOn(api, 'outlineProductDescription').mockResolvedValue({ nodes: [{ id: 'gear:orders', lines: [2] }], lines: [{ line: 2, nodes: ['gear:orders'] }] });
     vi.spyOn(api, 'gearboxCatalogue').mockRejectedValue(new Error('no engine'));
     vi.spyOn(api, 'gearConfigSchemas').mockResolvedValue({ items: [], total: 0 });
     vi.spyOn(api, 'previewProduct').mockResolvedValue({
@@ -89,5 +90,10 @@ describe('ProductMap', () => {
     await waitFor(() => expect(container.querySelector('[data-pmap-gdl="draft"]')).not.toBeNull(), WAIT);
     expect(screen.getByText('use_gear("cf-gears-orders"),', { exact: false })).toBeTruthy();
     expect(api.previewProduct).toHaveBeenCalledWith('', 'p1', expect.objectContaining({ product_id: 'shop', gears: ['cf-gears-orders'] }));
+    // The server reads which line is which node: the gear's line is tied to it.
+    expect(api.outlineProductDescription).toHaveBeenCalledWith('', 'p1', {
+      text: 'product(\n  use_gear("cf-gears-orders"),\n)\n',
+    });
+    await waitFor(() => expect(container.querySelector('[data-gdl-line="2"]')?.className).toMatch(/owned/), WAIT);
   });
 });

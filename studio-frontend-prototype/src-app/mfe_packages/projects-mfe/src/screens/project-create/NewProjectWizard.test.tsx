@@ -124,3 +124,44 @@ describe('the repositories step', () => {
     expect(screen.getByText('details step')).toBeTruthy();
   });
 });
+
+describe('NewProjectWizard: the server creating the project', () => {
+  it("shows the run's steps in place of the form, and which one stopped", async () => {
+    const { app } = await mountWizard();
+    const { submitFailed, submitProgress, submitStarted } = await import('../../slices/createSlice');
+    act(() => {
+      app.store.dispatch(submitStarted());
+      app.store.dispatch(
+        submitProgress({
+          runId: 'r1',
+          state: 'running',
+          steps: [
+            { key: 'tenant', state: 'done' },
+            { key: 'config', state: 'pending' },
+          ],
+        })
+      );
+    });
+    expect(screen.getByText('progress_title')).toBeTruthy();
+    expect(screen.queryByText('details step')).toBeNull();
+    expect(document.querySelector('[data-create-step="tenant"]')?.getAttribute('data-state')).toBe('done');
+    expect(screen.queryByText('retry_hint')).toBeNull();
+
+    act(() => {
+      app.store.dispatch(
+        submitProgress({
+          runId: 'r1',
+          state: 'failed',
+          steps: [
+            { key: 'tenant', state: 'done' },
+            { key: 'config', state: 'failed', detail: 'account-management down' },
+          ],
+        })
+      );
+      app.store.dispatch(submitFailed({ kind: 'provider', text: 'account-management down' }));
+    });
+    expect(screen.getByRole('alert').textContent).toContain('account-management down');
+    expect(screen.getByText('step_failed')).toBeTruthy();
+    expect(screen.getByText('retry_hint')).toBeTruthy();
+  });
+});

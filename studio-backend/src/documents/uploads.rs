@@ -36,11 +36,6 @@ pub fn path_of(name: &str) -> String {
     format!("{PREFIX}{name}")
 }
 
-/// The upload a model path names, when it names one.
-pub fn name_of(path: &str) -> Option<&str> {
-    path.strip_prefix(PREFIX)
-}
-
 /// The MIME type an upload is stored as.
 pub fn mime(kind: &str) -> &'static str {
     match kind {

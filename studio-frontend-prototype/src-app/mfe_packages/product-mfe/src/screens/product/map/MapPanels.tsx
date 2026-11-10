@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Button, Input } from '@gears-frontx/ui-kit';
 import { productApi } from '../../../api/client';
-import type { GearConfigSchema, ProjectProduct } from '../../../api/types';
+import type { DescriptionOutline, GearConfigSchema, ProjectProduct } from '../../../api/types';
 import type { Mfe } from '../../../model/frontend-constructor';
 import { offers } from '../../../model/product-configurator';
 import { lineDiff } from '../../../model/product-flow';
@@ -457,8 +457,9 @@ type Draft = { text: string; source: 'draft' | 'kept'; ok?: boolean; note?: stri
 /**
  * What the next save would write: composed by the engine from the product
  * as it is (a check, which writes no revision), against the kept revision,
- * line by line. The lines are tied to the map's nodes by `productGdlLines`,
- * which reads the text in the browser as the prototype did.
+ * line by line. Which lines say which node is the server's reading of the
+ * text (`POST product-description-outlines`); `productGdlLines` keeps the
+ * map's nodes of it. The prototype read the text in the browser.
  */
 export function GdlView({
   product,
@@ -531,7 +532,20 @@ function GdlText({
     // `t` is stable for the language; the draft follows the inputs.
   }, [projectId, inputs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const lines = useMemo(() => (draft ? productGdlLines(draft.text, nodeIds) : null), [draft, nodeIds]);
+  // The server says which lines are which node; until it answers, no line is tied.
+  const [outline, setOutline] = useState<DescriptionOutline['lines'] | null>(null);
+  useEffect(() => {
+    if (!draft?.text) return;
+    let live = true;
+    productApi
+      .outlineProductDescription(projectId, { text: draft.text })
+      .then((o) => live && setOutline(o.lines))
+      .catch(() => live && setOutline([]));
+    return () => {
+      live = false;
+    };
+  }, [projectId, draft]);
+  const lines = useMemo(() => (outline ? productGdlLines(outline, nodeIds) : null), [outline, nodeIds]);
   const rows = useMemo(() => {
     if (!draft) return [];
     const diff =

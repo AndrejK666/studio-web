@@ -9,9 +9,15 @@
 import { useState } from 'react';
 import { Badge, Button, Input, NativeSelect, NativeSelectOption, Textarea } from '@gears-frontx/ui-kit';
 import type { ScreenText } from '@constructor-studio/mfe-shared';
-import type { NewIssue, SpecModelEntityEdit, SpecModelIssueRow, SpecModelSentence, SpecModelWrite } from '../../api/types';
-import { relationSentence, type DocQualityItem } from '../../model/doc-quality';
-import { issueBody, type IssueRow } from '../../model/issue-rows';
+import type {
+  DocQualityRow,
+  NewIssue,
+  SpecModelEntityEdit,
+  SpecModelIssueRow,
+  SpecModelSentence,
+  SpecModelWrite,
+} from '../../api/types';
+import { issueBody, relationSentence, type IssueRow } from '../../model/issue-rows';
 import { codeSpans, sideLabel, type SpecModelSide } from '../../model/spec-model';
 import styles from './IssuesScreen.module.css';
 
@@ -185,7 +191,7 @@ export function DocItem({
   onOpenFile,
   t,
 }: {
-  item: DocQualityItem;
+  item: DocQualityRow;
   kindLabel: string;
   onSave: (edit: SpecModelEntityEdit) => Promise<SpecModelWrite>;
   onSameThing: (alias: string, of: string) => Promise<void>;
@@ -206,7 +212,7 @@ export function DocItem({
     }
   };
   // The relation a one-sided item adds is the last of the draft's.
-  const added = item.type === 'onesided' && edit ? edit.relations[edit.relations.length - 1] : null;
+  const added = item.kind === 'onesided' && edit ? edit.relations[edit.relations.length - 1] : null;
   const pair = item.pair;
   const sentence = item.sentence;
   return (
@@ -270,9 +276,9 @@ export function DocItem({
           >
             {state.busy
               ? t('saving')
-              : item.type === 'nodefinition'
+              : item.kind === 'nodefinition'
                 ? t('save_definition')
-                : item.type === 'onesided'
+                : item.kind === 'onesided'
                   ? t('add_other_side')
                   : t('add_to_model')}
           </Button>

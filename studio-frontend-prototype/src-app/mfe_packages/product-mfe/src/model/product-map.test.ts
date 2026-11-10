@@ -283,34 +283,20 @@ describe("what an add writes", () => {
 });
 
 describe("product.gdl as the map's other view", () => {
-  const gdl = `gdl_version = "1.5"
-
-product(
-    id = "web",
-    profiles = [
-        embedded(id = "dev", development = True,
-                 database = postgres(host = "127.0.0.1")),
-        kubernetes(id = "prod", discovery = "static", namespace = "web",
-                   database = postgres(host = "postgres")),
-    ],
-    # The product's screens (GDL 1.5)
-    frontend = frontx_product(
-        source = "frontx-web",
-        shell = path("web"),
-        mfes = [
-            frontx_mfe(package = path("web/mfe/people"), source = "frontx-web", requires = ["account-management"]),
-        ],
-    ),
-    gears = [
-        use_gear("account-management", source = "gears-rust", plugins = [plugin("static-idp-plugin")]),
-        use_gear("studio-documents", source = "studio"),
-    ],
-)
-`;
+  // The server's reading of a description (studio-product infra_gdl.rs node_lines,
+  // which carries the prototype's line tests): each line with the parts it says.
+  const lines = [
+    { line: 7, nodes: ["infra:postgres"] },
+    { line: 9, nodes: ["infra:postgres"] },
+    { line: 14, nodes: ["shell"] },
+    { line: 16, nodes: ["mfe:web/mfe/people"] },
+    { line: 20, nodes: ["gear:account-management", "gear:static-idp-plugin"] },
+    { line: 21, nodes: ["gear:studio-documents"] },
+  ];
   const ids = ["shell", "mfe:web/mfe/people", "gear:account-management", "gear:static-idp-plugin", "gear:studio-documents", "infra:postgres"];
 
   it("finds each node's lines", () => {
-    const { byNode } = productGdlLines(gdl, ids);
+    const { byNode } = productGdlLines(lines, ids);
     expect(Object.fromEntries(byNode)).toEqual({
       "infra:postgres": [7, 9],
       shell: [14],
@@ -322,13 +308,13 @@ product(
   });
 
   it("gives a line to the gear before the plugins written on it", () => {
-    expect(productGdlLines(gdl, ids).byLine.get(20)).toBe("gear:account-management");
+    expect(productGdlLines(lines, ids).byLine.get(20)).toBe("gear:account-management");
   });
 
-  it("finds no frontend lines in a description without one, and ignores nodes the map lacks", () => {
-    const plain = gdl.replace(/ {4}frontend = frontx_product\([\s\S]*?\n {4}\),\n/, "");
-    const { byNode } = productGdlLines(plain, ["shell", "gear:studio-documents"]);
-    expect([...byNode.keys()]).toEqual(["gear:studio-documents"]);
+  it("ignores nodes the map lacks", () => {
+    const { byNode, byLine } = productGdlLines(lines, ["gear:static-idp-plugin", "gear:studio-documents"]);
+    expect([...byNode.keys()]).toEqual(["gear:static-idp-plugin", "gear:studio-documents"]);
+    expect(byLine.get(20)).toBe("gear:static-idp-plugin");
   });
 });
 

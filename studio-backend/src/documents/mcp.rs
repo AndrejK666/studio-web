@@ -50,6 +50,90 @@ pub fn tools() -> Vec<Tool> {
             run: Run::Get("/studio-documents/v1/project-domain-model/readiness"),
         },
         Tool {
+            name: "project_domain_model_doc_quality",
+            description: "What would make a project's documentation better, each change ready \
+                to make: things only an ADR or a feature describes (`onlyadr`), things described \
+                but never defined (`nodefinition`), relations only one side writes down \
+                (`onesided`), things related to nothing their name implies (`norelation`), and \
+                two glossary names that are probably one thing (`twonames`). A row's `edit` is \
+                the entity section to save, its `sentence` the sentence to propose after a \
+                passage, its `pair` the two names; `actions` says which. None stops a build.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "kind": { "type": "string",
+                            "enum": ["onlyadr", "nodefinition", "onesided", "norelation", "twonames"],
+                            "description": "Only that kind." },
+                        "offset": { "type": "integer", "minimum": 0 },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 200,
+                            "description": "Rows per page. Default 50." }
+                    }),
+                    &["project_id"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-documents/v1/project-domain-model/doc-quality"),
+        },
+        Tool {
+            name: "project_domain_model_entity_save",
+            description: "Write one entity's section of the project's docs/domain-model.md: \
+                what it is, what it holds, how it relates. Takes a `doc_quality` row's `edit` \
+                as it is or corrected. The model reads it on its next build. Changes the \
+                project's repository: say what you write first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "name": { "type": "string" },
+                        "definition": { "type": "string" },
+                        "fields": { "type": "array", "items": { "type": "object",
+                            "properties": { "name": { "type": "string" },
+                                "meaning": { "type": "string" } },
+                            "required": ["name"] } },
+                        "relations": { "type": "array", "items": { "type": "object",
+                            "properties": { "verb": { "type": "string" },
+                                "target": { "type": "string" } },
+                            "required": ["verb", "target"] } }
+                    }),
+                    &["project_id", "name"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-documents/v1/project-domain-model/entities",
+                query: &["project_id"],
+            },
+        },
+        Tool {
+            name: "project_domain_model_sentence_propose",
+            description: "Propose a sentence for one of the project's documents, after the \
+                passage at `line` of the revision the model read, as a pull request: a \
+                `doc_quality` row's `sentence` (its verb may be changed). Changes the project's \
+                repository: say what you propose first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "path": { "type": "string" },
+                        "revision": { "type": "string" },
+                        "line": { "type": "integer", "minimum": 1 },
+                        "sentence": { "type": "string" },
+                        "why": { "type": "string" }
+                    }),
+                    &["project_id", "path", "revision", "line", "sentence"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-documents/v1/project-domain-model/sentences/proposals",
+                query: &["project_id"],
+            },
+        },
+        Tool {
             name: "project_domain_model_facts",
             description: "The project domain model (what its documents say; not the Studio \
                 domain model), as read from the documents so far: every fact (entity, \
@@ -302,6 +386,9 @@ mod tests {
             [
                 "project_domain_model_issues",
                 "project_domain_model_readiness",
+                "project_domain_model_doc_quality",
+                "project_domain_model_entity_save",
+                "project_domain_model_sentence_propose",
                 "project_domain_model_facts",
                 "project_domain_model_build",
                 "project_domain_model_build_status",

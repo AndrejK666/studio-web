@@ -5579,6 +5579,59 @@ impl crate::documents::port::CapabilityVocabulary for DocumentsService {
 }
 
 #[async_trait::async_trait]
+impl crate::documents::port::ProjectDocuments for DocumentsService {
+    async fn has_document(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        type_key: &str,
+    ) -> anyhow::Result<bool> {
+        let page = PageQuery {
+            offset: Some(0),
+            limit: Some(crate::pagination::MAX_LIMIT),
+        };
+        let (documents, _) = self
+            .list_documents(ctx, workspace_id, Some(project_id), page)
+            .await?;
+        Ok(documents.iter().any(|d| d.type_key == type_key))
+    }
+
+    async fn create_answered(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        type_key: &str,
+        title: &str,
+        answers: &[(String, String)],
+        created_by: &str,
+    ) -> anyhow::Result<Uuid> {
+        let answers = answers
+            .iter()
+            .map(|(question_id, text)| Answer {
+                question_id: question_id.clone(),
+                text: Some(text.clone()),
+                ..Answer::default()
+            })
+            .collect();
+        let made = self
+            .create_document(
+                ctx,
+                workspace_id,
+                Some(project_id),
+                type_key,
+                title,
+                None,
+                Some(answers),
+                created_by.to_string(),
+            )
+            .await?;
+        Ok(made.id)
+    }
+}
+
+#[async_trait::async_trait]
 impl crate::documents::port::SpecNeeds for DocumentsService {
     async fn project_workspace(
         &self,

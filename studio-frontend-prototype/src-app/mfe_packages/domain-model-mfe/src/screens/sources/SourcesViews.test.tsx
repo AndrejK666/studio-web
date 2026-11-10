@@ -84,7 +84,9 @@ describe('Uploads', () => {
     fireEvent.change(input, { target: { files: [new File(['%PDF'], 'deck.pdf', { type: 'application/pdf' })] } });
     expect(screen.getByText('upload_wrong_type {"name":"deck.pdf"}')).toBeTruthy();
     expect(onUpload).not.toHaveBeenCalled();
-    fireEvent.change(input, { target: { files: [new File(['a,b\n1,2\n'], 'survey.csv', { type: 'text/csv' })] } });
+    const csv = new File(['a,b\n1,2\n'], 'survey.csv', { type: 'text/csv' });
+    Object.defineProperty(csv, 'text', { value: async () => 'a,b\n1,2\n' });
+    fireEvent.change(input, { target: { files: [csv] } });
     await waitFor(() => expect(onUpload).toHaveBeenCalledWith('survey.csv', 'a,b\n1,2\n'));
   });
 });

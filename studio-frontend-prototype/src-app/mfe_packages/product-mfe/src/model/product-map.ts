@@ -32,8 +32,10 @@
  * not have (a red link to a "missing" gear), a gear keeps data where an
  * environment gives no database (red), a gear no screen uses (grey).
  *
- * The same product is also its product.gdl: `productGdlLines` says which
- * lines of the description each node is, so the two views select together.
+ * The same product is also its product.gdl: the server reads which lines of
+ * the description each node is (`POST product-description-outlines`), and
+ * `productGdlLines` keeps the map's nodes of it, so the two views select
+ * together.
  *
  * Every node has its parameters (`NodeParam`): a screen its package and
  * requirements, an infra service its passport, a database its name and
@@ -737,47 +739,28 @@ export function withRequires(
 
 /* ── The map's other view: product.gdl ────────────────────────────────────── */
 
-/** Which lines (1-based) of a product.gdl each node is: a gear its
- *  `use_gear("<id>"` line, a plugin its `plugin("<id>"` (on its host's line),
- *  a micro-frontend its `frontx_mfe(package = path("<path>")` line, the shell
- *  the `shell = path(` line inside `frontend = frontx_product(`, Postgres the
- *  profiles' `database = postgres(` lines. `byLine` names the node a line is
- *  first: the gear before the plugins written on its line. A description
- *  without a frontend block simply has no lines for the frontend. */
+/** Which lines (1-based) of a product.gdl each of the map's nodes is, from
+ *  the server's reading of the text (`lines` of `POST
+ *  product-description-outlines`: a gear its `use_gear` line, a plugin its
+ *  host's line, a micro-frontend its `frontx_mfe` line, the shell its
+ *  `shell = path(` line, Postgres the profiles' `database = postgres(`
+ *  lines). Only the nodes the map draws are kept. `byLine` names the node a
+ *  line is first: the gear before the plugins written on its line. */
 export function productGdlLines(
-  text: string,
+  lines: readonly { line: number; nodes: readonly string[] }[],
   nodeIds: readonly string[],
 ): { byNode: Map<string, number[]>; byLine: Map<number, string> } {
   const ids = new Set(nodeIds);
   const byNode = new Map<string, number[]>();
   const byLine = new Map<number, string>();
-  const claim = (id: string, line: number) => {
-    if (!ids.has(id)) return;
-    const at = byNode.get(id) ?? [];
-    if (!at.includes(line)) byNode.set(id, [...at, line]);
-    if (!byLine.has(line)) byLine.set(line, id);
-  };
-  let inFrontend = false;
-  let depth = 0;
-  text.replace(/\r\n/g, "\n").split("\n").forEach((line, i) => {
-    const n = i + 1;
-    const code = line.replace(/#.*$/, "");
-    if (/\bfrontend\s*=\s*frontx_product\(/.test(code)) {
-      inFrontend = true;
-      depth = 0;
+  for (const { line, nodes } of lines) {
+    for (const id of nodes) {
+      if (!ids.has(id)) continue;
+      const at = byNode.get(id) ?? [];
+      if (!at.includes(line)) byNode.set(id, [...at, line]);
+      if (!byLine.has(line)) byLine.set(line, id);
     }
-    if (inFrontend) {
-      if (/^\s*shell\s*=\s*path\(/.test(code)) claim(SHELL_NODE, n);
-      for (const ch of code) depth += ch === "(" || ch === "[" ? 1 : ch === ")" || ch === "]" ? -1 : 0;
-      if (depth <= 0 && !/frontx_product\($/.test(code.trim())) inFrontend = false;
-    }
-    const mfe = /\bfrontx_mfe\(\s*package\s*=\s*path\(\s*"([^"]+)"/.exec(code);
-    if (mfe) claim(mfeNode(mfe[1]), n);
-    const gear = /\buse_gear\(\s*"([^"]+)"/.exec(code);
-    if (gear) claim(gearNode(gear[1]), n);
-    for (const p of code.matchAll(/\bplugin\(\s*"([^"]+)"/g)) claim(gearNode(p[1]), n);
-    if (/\bdatabase\s*=\s*postgres\(/.test(code)) claim(techNode("postgres"), n);
-  });
+  }
   return { byNode, byLine };
 }
 

@@ -9,7 +9,6 @@
 
 import type { EnvironmentBinding, GearboxDiagnostic, GearboxStatus, ProductCheck, ProjectProduct, RepoEntry } from "../api/types";
 import type { Candidate, PlanRow } from "../api/types";
-import { readProfiles } from "./infra-gdl";
 
 /** The shape a profile deploys the product in, as `product.gdl` spells its
  *  constructor. */
@@ -44,11 +43,11 @@ export interface DeclaredProfile {
   label: string;
 }
 
-/** The profiles the saved description declares (its latest revision's
- *  text), each with its kind; the three a new description starts with when
- *  there is no text or it declares none Studio can read. */
-export function declaredProfiles(text: string | null | undefined): DeclaredProfile[] {
-  const read = text ? readProfiles(text) : null;
+/** The profiles the saved description declares, each with its kind, as the
+ *  server reads its text (`profiles` of `POST product-description-outlines`;
+ *  the prototype read the text here); the three a new description starts
+ *  with when there is none or it declares none the server can read. */
+export function declaredProfiles(read: readonly { id: string; kind: string }[] | null | undefined): DeclaredProfile[] {
   if (!read || read.length === 0) return PRODUCT_PROFILES.map((p) => ({ ...p }));
   return read.map((p) => ({ id: p.id, kind: p.kind, label: `${KIND_LABEL[p.kind] ?? p.kind} · ${p.id}` }));
 }

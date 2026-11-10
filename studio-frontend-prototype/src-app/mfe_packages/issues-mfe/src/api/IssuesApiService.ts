@@ -3,15 +3,17 @@
  * ADR-0069). The queue, its groups and its actions, and whether anything
  * stops a build, are the server's (`GET /project-domain-model/issues`,
  * `GET /project-domain-model/readiness`); so is every fact's review key (`fact_key` on
- * `GET /project-domain-model`). The documentation-quality rows are still read off the
- * model here (doc-quality.ts), so the model, the glossary and the reviews are
- * read too. The organization's members (studio-user) are whom an issue can go to.
+ * `GET /project-domain-model`), and so are the documentation's thin places with
+ * the change each one proposes (`GET /project-domain-model/doc-quality`). The
+ * model is read for its build and its documents. The organization's members
+ * (studio-user) are whom an issue can go to.
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
 import type { SpecModelBuildEstimate } from '../model/build-eta';
-import type { GlossaryEntry, SpecModelBuild } from '../model/spec-model';
+import type { SpecModelBuild } from '../model/spec-model';
 import type {
+  DocQualityRowList,
   MemberIdentities,
   NewIssue,
   OrgMember,
@@ -71,15 +73,25 @@ export class IssuesApiService extends BaseApiService {
     ({ projectId }) => `${DOCS}/readiness?${q({ project_id: projectId })}`
   );
 
-  readonly glossary = this.protocol(RestEndpointProtocol).queryWith<
-    { items: GlossaryEntry[]; total: number },
-    { projectId: string }
-  >(({ projectId }) => `${DOCS}/glossary?${q({ project_id: projectId })}`);
+  readonly docQualityPage = this.protocol(RestEndpointProtocol).queryWith<
+    DocQualityRowList,
+    { projectId: string; offset: number }
+  >(
+    ({ projectId, offset }) =>
+      `${DOCS}/doc-quality?${q({ project_id: projectId, offset: String(offset), limit: String(MAX_PAGE) })}`
+  );
 
-  readonly reviews = this.protocol(RestEndpointProtocol).queryWith<
-    { items: SpecModelReview[]; total: number },
-    { projectId: string }
-  >(({ projectId }) => `${DOCS}/reviews?${q({ project_id: projectId })}`);
+  /** Every way to make the documentation better: the screen searches them with the queue as one table. */
+  async docQuality(projectId: string): Promise<DocQualityRowList> {
+    const first = await this.docQualityPage({ projectId, offset: 0 }).fetch({ staleTime: 0 });
+    const items = [...first.items];
+    while (items.length < first.total) {
+      const page = await this.docQualityPage({ projectId, offset: items.length }).fetch({ staleTime: 0 });
+      if (page.items.length === 0) break;
+      items.push(...page.items);
+    }
+    return { ...first, items };
+  }
 
   readonly buildEstimate = this.protocol(RestEndpointProtocol).queryWith<SpecModelBuildEstimate, { projectId: string }>(
     ({ projectId }) => `${DOCS}/build-estimate?${q({ project_id: projectId })}`

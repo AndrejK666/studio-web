@@ -8,10 +8,11 @@
  *
  * The queue, its groups and the actions each row offers come from the server
  * (`GET /project-domain-model/issues`), and so does whether anything stops a build
- * (`GET /project-domain-model/readiness`); the prototype computed both in the browser.
- * The documentation's thin places are still read off the model here
- * (doc-quality.ts), over the facts members did not reject (by the server's
- * `fact_key`) and the entities saved on this screen until a build reads them.
+ * (`GET /project-domain-model/readiness`), and so do the documentation's thin
+ * places with the change each proposes (`GET /project-domain-model/doc-quality`,
+ * over the facts members did not reject); the prototype computed all three in
+ * the browser. A row whose entity was saved on this screen is hidden until a
+ * build reads the document again.
  */
 
 import React, { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
@@ -49,20 +50,18 @@ import {
 } from '@constructor-studio/mfe-shared';
 import { IssuesApiService } from '../../api/IssuesApiService';
 import type {
+  DocQualityRow,
   NewIssue,
   SpecModelEntityEdit,
   SpecModelIssueRow,
   SpecModelIssueRowList,
   SpecModelReadiness,
-  SpecModelReview,
   ServedSpecModel,
 } from '../../api/types';
 import { estimateLabel, etaLabel, readFraction, tokensLabel, type SpecModelBuildEstimate } from '../../model/build-eta';
-import { docQuality } from '../../model/doc-quality';
-import { GROUP_ORDER, issueRows, type IssueRow, type RowGroup } from '../../model/issue-rows';
-import { openedIssue, reviewIndex, withoutRejected } from '../../model/reviews';
-import { overlaySaved, pruneSaved, withSaved, type SavedEdit } from '../../model/saved-entities';
-import { buildLine, entitiesOf, unreadNote, type GlossaryEntry } from '../../model/spec-model';
+import { GROUP_ORDER, issueRows, withoutSaved, type IssueRow, type RowGroup } from '../../model/issue-rows';
+import { pruneSaved, withSaved, type SavedEdit } from '../../model/saved-entities';
+import { buildLine, unreadNote } from '../../model/spec-model';
 import { useIssuesTranslations } from '../../i18n';
 import { DocItem, IssueForm, Prose, QueueItem, type Text } from './IssueItems';
 import styles from './IssuesScreen.module.css';
@@ -126,7 +125,12 @@ interface Read {
   model: ServedSpecModel;
   queue: SpecModelIssueRowList;
   readiness: SpecModelReadiness;
+  /** The documentation's thin places; empty from a backend before the route. */
+  better: DocQualityRow[];
 }
+
+/** A backend from before the doc-quality route answers 404: the queue still shows. */
+const noRows = { items: [] as DocQualityRow[], total: 0, by_kind: {} };
 
 type SortBy = { column: 'kind' | 'group'; desc: boolean } | null;
 
@@ -144,9 +148,7 @@ function ProjectIssues({
   const api = useMemo(() => apiRegistry.getService(IssuesApiService), []);
   const [read, setRead] = useState<Read | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [glossary, setGlossary] = useState<GlossaryEntry[]>([]);
-  const [reviews, setReviews] = useState<SpecModelReview[]>([]);
-  /** Entities saved this visit, laid over the model until a build reads them. */
+  /** Entities saved this visit: their rows stay hidden until a build reads them. */
   const [saved, setSaved] = useState<SavedEdit[]>([]);
   const [estimate, setEstimate] = useState<SpecModelBuildEstimate | null>(null);
   const [starting, setStarting] = useState(false);
@@ -154,39 +156,22 @@ function ProjectIssues({
   /** When the screen last read: the build's ETA is counted from it, never from render. */
   const [now, setNow] = useState(0);
 
-  const loadReviews = useCallback(
-    () =>
-      // A backend from before fact reviews answers 404: nothing is reviewed.
-      api
-        .reviews({ projectId })
-        .fetch({ staleTime: 0 })
-        .then((r) => setReviews(r.items))
-        .catch(() => setReviews([])),
-    [api, projectId]
-  );
-
   const load = useCallback(async () => {
-    void loadReviews();
     try {
-      const [model, queue, readiness, g] = await Promise.all([
+      const [model, queue, readiness, better] = await Promise.all([
         api.model({ projectId }).fetch({ staleTime: 0 }),
         api.issues(projectId),
         api.readiness({ projectId }).fetch({ staleTime: 0 }),
-        // A backend from before the glossary answers 404: the queue still shows.
-        api
-          .glossary({ projectId })
-          .fetch({ staleTime: 0 })
-          .catch(() => ({ items: [] as GlossaryEntry[], total: 0 })),
+        api.docQuality(projectId).catch(() => noRows),
       ]);
-      setRead({ model, queue, readiness });
+      setRead({ model, queue, readiness, better: better.items });
       setSaved((s) => pruneSaved(s, model.build));
-      setGlossary(g.items);
       setNow(Date.now());
       setError(null);
     } catch (e) {
       setError(message(e));
     }
-  }, [api, projectId, loadReviews]);
+  }, [api, projectId]);
 
   // The first read starts after the effect: every state it sets comes from its answers.
   useEffect(() => {
@@ -257,13 +242,14 @@ function ProjectIssues({
     }
   };
 
-  /** The queue and the verdict again: a decision or an opened issue changes both on the server. */
+  /** The rows and the verdict again: a decision or an opened issue changes them on the server. */
   const reloadQueue = async () => {
-    const [queue, readiness] = await Promise.all([
+    const [queue, readiness, better] = await Promise.all([
       api.issues(projectId),
       api.readiness({ projectId }).fetch({ staleTime: 0 }),
+      api.docQuality(projectId).catch(() => noRows),
     ]);
-    setRead((r) => (r ? { ...r, queue, readiness } : r));
+    setRead((r) => (r ? { ...r, queue, readiness, better: better.items } : r));
   };
 
   const decide = async (item: SpecModelIssueRow, decision: 'confirmed' | 'dismissed') => {
@@ -285,7 +271,7 @@ function ProjectIssues({
   const sameThing = async (alias: string, of: string) => {
     try {
       await api.decideGlossaryEntry.fetch({ project_id: projectId, key: alias, name: null, alias_of: of });
-      setGlossary((await api.glossary({ projectId }).fetch({ staleTime: 0 })).items);
+      await reloadQueue();
     } catch (e) {
       setError(message(e));
     }
@@ -299,7 +285,7 @@ function ProjectIssues({
           project_id: projectId,
           items: [{ fact_key: `iss:${key}`, state: 'opened', path: '', revision: '', note: made.url }],
         });
-        await Promise.all([loadReviews(), reloadQueue()]);
+        await reloadQueue();
       } catch (e) {
         setError(message(e));
       }
@@ -307,23 +293,11 @@ function ProjectIssues({
     return made;
   };
 
-  const reviewByKey = useMemo(() => reviewIndex(reviews), [reviews]);
   const model = read?.model ?? null;
-  const facts = useMemo(
-    () => withoutRejected(overlaySaved(model?.facts ?? [], saved), reviewByKey),
-    [model, saved, reviewByKey]
-  );
-  const entities = useMemo(() => entitiesOf(facts, glossary), [facts, glossary]);
-  // The lines a fact names are the repository's lines only for a document
-  // read at its current revision: a sentence is proposed only there.
-  const revisions = useMemo(
-    () => new Map((model?.documents ?? []).filter((d) => d.state === 'extracted').map((d) => [d.path, d.revision])),
-    [model]
-  );
   // Kept apart from the readiness: a thin passage does not stop a build.
-  const better = useMemo(() => docQuality(entities, glossary, revisions), [entities, glossary, revisions]);
+  const better = useMemo(() => withoutSaved(read?.better ?? [], saved), [read, saved]);
   const rows = useMemo(() => issueRows(read?.queue.items ?? [], better), [read, better]);
-  const issueOf = (r: IssueRow): string | null => r.queue?.issue_url ?? openedIssue(reviews, r.key);
+  const issueOf = (r: IssueRow): string | null => r.queue?.issue_url ?? r.doc?.issue_url ?? null;
 
   const line = model ? buildLine(model.build) : '';
   const note = model ? unreadNote(model) : null;

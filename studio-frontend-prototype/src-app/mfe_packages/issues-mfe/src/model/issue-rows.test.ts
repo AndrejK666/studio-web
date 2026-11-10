@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SpecModelIssueRow } from '../api/types';
-import type { DocQualityItem } from './doc-quality';
-import { issueBody, issueRows, queueKindId } from './issue-rows';
+import type { DocQualityRow, SpecModelIssueRow } from '../api/types';
+import { issueBody, issueRows, queueKindId, relationSentence, withoutSaved } from './issue-rows';
 
 const row = (extra: Partial<SpecModelIssueRow> = {}): SpecModelIssueRow => ({
   key: 'f:fp',
@@ -26,12 +25,16 @@ const row = (extra: Partial<SpecModelIssueRow> = {}): SpecModelIssueRow => ({
   ...extra,
 });
 
-const doc: DocQualityItem = {
-  key: 'def:invoice',
-  type: 'nodefinition',
+const doc: DocQualityRow = {
+  key: 'nd:invoice',
+  kind: 'nodefinition',
+  label: 'No definition',
   title: 'Invoice has no definition',
   hint: 'Say what it is.',
   sides: [{ path: 'docs/b.md', line_start: 2 }],
+  edit: { name: 'Invoice', definition: 'An Invoice holds total.', fields: [], relations: [] },
+  entity: 'invoice',
+  actions: ['save_entity', 'create_issue'],
 };
 
 describe('the Issues table', () => {
@@ -40,10 +43,22 @@ describe('the Issues table', () => {
     expect(rows.map((r) => [r.key, r.group, r.kindId])).toEqual([
       ['f:fp', 'blocks', 'problem'],
       ['q:FR-1', 'blocks', 'question'],
-      ['def:invoice', 'improve', 'nodefinition'],
+      ['nd:invoice', 'improve', 'nodefinition'],
     ]);
     expect(rows[2].label).toBe('No definition');
     expect(rows[0].side?.path).toBe('docs/a.md');
+  });
+
+  it('hides a documentation row whose entity was saved here until a build reads it', () => {
+    const write = { path: 'docs/domain-model.md', branch: 'b', commit_sha: 'c' };
+    const other: DocQualityRow = { ...doc, key: 'tn:a|b', kind: 'twonames', entity: null };
+    expect(withoutSaved([doc, other], []).map((r) => r.key)).toEqual(['nd:invoice', 'tn:a|b']);
+    const saved = [{ edit: { name: 'Invoices', fields: [], relations: [] }, write, at: 1 }];
+    expect(withoutSaved([doc, other], saved).map((r) => r.key)).toEqual(['tn:a|b']);
+  });
+
+  it('redraws a proposed sentence as its verb is edited', () => {
+    expect(relationSentence('role grant', ' grants ', 'Role')).toBe('Role grant grants **Role**.');
   });
 
   it('names a judged contradiction a possible conflict', () => {

@@ -43,7 +43,5 @@ fn empty_binary_or_too_large_is_refused() {
 #[test]
 fn an_upload_is_read_under_its_own_prefix() {
     assert_eq!(path_of("a.csv"), "upload:a.csv");
-    assert_eq!(name_of("upload:a.csv"), Some("a.csv"));
-    assert_eq!(name_of("docs/a.csv"), None);
     assert_eq!(mime("json"), "application/json");
 }

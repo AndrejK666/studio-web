@@ -26,6 +26,14 @@ Layout:
   dictionary; `src/screens/components/` — the inventory.
 
 Not carried over: the Backend slot's IDE kits journey (`ProjectKits` from
-`kits.tsx`). `product.gdl` text is still edited in the browser
-(`infra-gdl.ts`, `infra-store.ts`, `product-map.ts#productGdlLines`); those
-belong behind server routes that do not exist yet. See `docs/parity.md`.
+`kits.tsx`). See `docs/parity.md`.
+
+On the server, not here: `product.gdl` is read and edited by studio-product
+(`GET`/`PUT /studio-product/v1/product-infra` for the infra services,
+`POST /product-description-edits` for structured edits,
+`POST /product-description-outlines` for which lines say which node and the
+declared profiles), and so is the product-kind proposal
+(`GET`/`PUT /studio-product/v1/product-kind`). The prototype's `infra-gdl.ts`
+and the rules of `product-kind.ts` moved there with their tests;
+`infra-store.ts`, `product-kind.ts` and `product-map.ts#productGdlLines` here
+only call those routes or draw what they answer.

@@ -60,9 +60,9 @@ describe('Product › Infrastructure', () => {
       environments: [],
       bindings: [],
     } as ProjectTargets);
-    // No description yet: the store keeps the project's list (infra-store.ts).
+    // No description yet: the server answers the project's list (GET product-infra).
+    vi.spyOn(api, 'productInfra').mockResolvedValue({ items: [keycloak], source: 'project-list', revision: null, services: [] });
     vi.spyOn(api, 'productDescription').mockResolvedValue({ latest: null });
-    vi.spyOn(api, 'infraServices').mockResolvedValue({ items: [keycloak], total: 1 });
     vi.spyOn(api, 'listComponents').mockResolvedValue({ nodes: [] });
     vi.spyOn(api, 'projectImages').mockResolvedValue({ items: [], total: 0 });
   });
@@ -87,26 +87,33 @@ describe('Product › Infrastructure', () => {
   });
 
   it('removes a service after asking, writing the whole list', async () => {
-    const put = vi.spyOn(api, 'putInfraServices').mockResolvedValue({ items: [], total: 0 });
+    const put = vi
+      .spyOn(api, 'putProductInfra')
+      .mockResolvedValue({ items: [], source: 'project-list', revision: null, services: [] });
     draw();
     fireEvent.click(await screen.findByText('remove', { selector: '[data-infra-remove] , [data-infra-remove] *' }));
     fireEvent.click(await screen.findByText('remove', { selector: '[data-confirm], [data-confirm] *' }));
-    await waitFor(() => expect(put).toHaveBeenCalledWith('', 'p1', []));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('', 'p1', { base_revision: null, items: [] }));
+    // The list is read again after the save, while the reads are still stubbed.
+    await waitFor(() => expect(api.productInfra).toHaveBeenCalledTimes(2));
   });
 
   it('edits a service image and saves it through the store', async () => {
-    const put = vi.spyOn(api, 'putInfraServices').mockResolvedValue({ items: [keycloak], total: 1 });
+    const put = vi
+      .spyOn(api, 'putProductInfra')
+      .mockResolvedValue({ items: [keycloak], source: 'project-list', revision: null, services: [] });
     draw();
     fireEvent.click(await screen.findByText('change_image'));
     fireEvent.change(screen.getByLabelText('publisher_image'), { target: { value: 'quay.io/keycloak/keycloak:26.1.0' } });
     fireEvent.click(screen.getByText('save'));
     await waitFor(() => expect(put).toHaveBeenCalled());
-    const saved = put.mock.calls[0][2];
+    const saved = put.mock.calls[0][2].items;
+    await waitFor(() => expect(api.productInfra).toHaveBeenCalledTimes(2));
     expect(saved[0].passport).toMatchObject({ image: 'quay.io/keycloak/keycloak:26.1.0', version: '26.1.0' });
   });
 
   it('says why the services could not be read', async () => {
-    vi.spyOn(api, 'infraServices').mockRejectedValue(new Error('boom'));
+    vi.spyOn(api, 'productInfra').mockRejectedValue(new Error('boom'));
     draw();
     expect(await screen.findByText(/read_failed/)).toBeTruthy();
   });

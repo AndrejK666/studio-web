@@ -4284,6 +4284,324 @@ async fn get_spec_model_readiness(
     }))
 }
 
+/// One field of an entity's section, as a documentation row proposes it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocQualityFieldDto {
+    pub name: String,
+    pub meaning: String,
+}
+
+/// One relation of an entity's section, as a documentation row proposes it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocQualityRelationDto {
+    pub verb: String,
+    pub target: String,
+}
+
+/// An entity's section of `docs/domain-model.md` as a row would save it:
+/// the body `POST /project-domain-model/entities` takes.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocQualityEntityEditDto {
+    pub name: String,
+    pub definition: Option<String>,
+    pub fields: Vec<DocQualityFieldDto>,
+    pub relations: Vec<DocQualityRelationDto>,
+}
+
+/// One side of a "two names" row: a glossary entry.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocQualityTermDto {
+    pub key: String,
+    pub name: String,
+    pub facts: u32,
+}
+
+/// Two glossary entries that are probably one thing.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocQualityPairDto {
+    /// The busier entry: the name kept.
+    pub a: DocQualityTermDto,
+    /// The entry to read as `a` (`POST /project-domain-model/glossary/decisions` with
+    /// `key` = `b.key`, `alias_of` = `a.key`).
+    pub b: DocQualityTermDto,
+    pub why: String,
+    /// `ship`, `s` or `ing` when one is the other with that ending.
+    pub suffix: Option<String>,
+    /// `organization`, `workspace`, `project` or `platform` when one is the
+    /// other with its level in front.
+    pub level: Option<String>,
+}
+
+/// A sentence for the document that describes a thing, after the passage at
+/// `line`: the body `POST /project-domain-model/sentences/proposals` takes, and the
+/// relation it states (`name` `verb` `target`), its verb editable.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocQualitySentenceDto {
+    pub path: String,
+    pub revision: String,
+    pub line: u32,
+    pub sentence: String,
+    pub why: String,
+    pub name: String,
+    pub verb: String,
+    pub target: String,
+}
+
+/// One way to make a project's documentation better, ready to save.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocQualityRowDto {
+    /// `oa:`, `nd:`, `os:`, `nr:` or `tn:` and what it is about. An issue
+    /// opened for the row is recorded under `iss:<key>`.
+    pub key: String,
+    /// `onlyadr`, `nodefinition`, `onesided`, `norelation` or `twonames`.
+    pub kind: String,
+    /// What the portal calls it: `Only in an ADR or a feature`, `No
+    /// definition`, `One-sided relation`, `No relation`, `Two names for one
+    /// thing`.
+    pub label: String,
+    pub title: String,
+    /// What is thin, and what saving does.
+    pub hint: String,
+    /// The passages it rests on, at most three.
+    pub sides: Vec<SpecModelSideDto>,
+    /// The entity's section as it would be saved (`onlyadr`,
+    /// `nodefinition`, `onesided`).
+    pub edit: Option<DocQualityEntityEditDto>,
+    /// The key of the entity `edit` saves: once saved, the row goes when a
+    /// build reads `docs/domain-model.md` again.
+    pub entity: Option<String>,
+    /// For `twonames`.
+    pub pair: Option<DocQualityPairDto>,
+    /// For `norelation`.
+    pub sentence: Option<DocQualitySentenceDto>,
+    /// The issue opened for it, when one was.
+    pub issue_url: Option<String>,
+    /// `save_entity` (`POST /project-domain-model/entities` with `edit`),
+    /// `same_thing` (`POST /project-domain-model/glossary/decisions`), `propose_sentence`
+    /// (`POST /project-domain-model/sentences/proposals` with `sentence`) and
+    /// `create_issue` on a row with no issue yet.
+    pub actions: Vec<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct DocQualityRowListDto {
+    pub items: Vec<DocQualityRowDto>,
+    pub total: u32,
+    /// Rows of each kind, before `kind` filters and paging.
+    pub by_kind: std::collections::BTreeMap<String, u32>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct DocQualityQuery {
+    pub project_id: String,
+    /// Only rows of this kind.
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(flatten)]
+    pub page: PageQuery,
+}
+
+fn doc_quality_row(
+    item: super::spec_model::doc_quality::Item,
+    issue_url: Option<String>,
+) -> DocQualityRowDto {
+    use super::spec_model::doc_quality::{Alike, Kind};
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let entity = item.entity();
+    let mut actions: Vec<String> = Vec::new();
+    match item.kind {
+        Kind::TwoNames => actions.push("same_thing".into()),
+        Kind::NoRelation => actions.push("propose_sentence".into()),
+        _ => actions.push("save_entity".into()),
+    }
+    if issue_url.is_none() {
+        actions.push("create_issue".into());
+    }
+    let term = |t: super::spec_model::doc_quality::Term| DocQualityTermDto {
+        key: t.key,
+        name: t.name,
+        facts: count(t.facts),
+    };
+    DocQualityRowDto {
+        key: item.key,
+        kind: item.kind.as_str().to_string(),
+        label: item.kind.label().to_string(),
+        title: item.title,
+        hint: item.hint,
+        sides: item
+            .sides
+            .into_iter()
+            .map(|s| SpecModelSideDto {
+                path: s.path,
+                line_start: s.line_start.and_then(|n| u32::try_from(n).ok()),
+                line_end: s.line_end.and_then(|n| u32::try_from(n).ok()),
+                quote: s.quote,
+                binding_id: None,
+            })
+            .collect(),
+        edit: item.edit.map(|e| DocQualityEntityEditDto {
+            name: e.name,
+            definition: e.definition,
+            fields: e
+                .fields
+                .into_iter()
+                .map(|f| DocQualityFieldDto {
+                    name: f.name,
+                    meaning: f.meaning,
+                })
+                .collect(),
+            relations: e
+                .relations
+                .into_iter()
+                .map(|r| DocQualityRelationDto {
+                    verb: r.verb,
+                    target: r.target,
+                })
+                .collect(),
+        }),
+        entity,
+        pair: item.pair.map(|p| {
+            let (suffix, level) = match p.how {
+                Alike::Suffix(s) => (Some(s.to_string()), None),
+                Alike::Level(l) => (None, Some(l)),
+            };
+            DocQualityPairDto {
+                a: term(p.a),
+                b: term(p.b),
+                why: p.why,
+                suffix,
+                level,
+            }
+        }),
+        sentence: item.sentence.map(|s| DocQualitySentenceDto {
+            path: s.path,
+            revision: s.revision,
+            line: count(s.line),
+            sentence: s.sentence,
+            why: s.why,
+            name: s.name,
+            verb: s.verb,
+            target: s.target,
+        }),
+        issue_url,
+        actions,
+    }
+}
+
+/// What would make a project's documentation better: the Issues table's
+/// "improves the docs" rows, over the facts members did not reject.
+async fn list_doc_quality(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<DocQualityQuery>,
+) -> ApiResult<JsonBody<DocQualityRowListDto>> {
+    use super::spec_model::doc_quality;
+    let project_id = parse_project_id(&query.project_id)?;
+    let kind = query
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty());
+    if let Some(k) = kind
+        && !matches!(
+            k,
+            "onlyadr" | "nodefinition" | "onesided" | "norelation" | "twonames"
+        )
+    {
+        return Err(DocumentsError::invalid_argument()
+            .with_field_violation(
+                "kind",
+                "must be onlyadr, nodefinition, onesided, norelation or twonames".to_owned(),
+                "INVALID",
+            )
+            .create());
+    }
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let (_, facts, coverage) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    let (choices, terms, reviews) = tokio::try_join!(
+        service.glossary_choices(&ctx, workspace_id, project_id),
+        service.spec_terms(&ctx, workspace_id, project_id),
+        service.spec_reviews(&ctx, workspace_id, project_id),
+    )
+    .map_err(internal)?;
+    let apart: std::collections::HashMap<String, Vec<String>> = terms
+        .into_iter()
+        .map(|t| (t.term_key, super::service::distinct_keys(&t.distinct_from)))
+        .collect();
+    // The glossary is every fact's, as `GET /glossary` answers it.
+    let glossary: Vec<doc_quality::Term> = super::spec_model::glossary::entries(&facts, &choices)
+        .into_iter()
+        .map(|e| doc_quality::Term {
+            distinct_from: apart.get(&e.key).cloned().unwrap_or_default(),
+            aliases: e.aliases.into_iter().map(|a| a.key).collect(),
+            key: e.key,
+            name: e.name,
+            facts: e.facts,
+        })
+        .collect();
+    // The entities are what members did not reject.
+    let rejected: std::collections::BTreeSet<String> = reviews
+        .iter()
+        .filter(|r| r.state == "rejected")
+        .map(|r| r.fact_key.clone())
+        .collect();
+    let kept: Vec<super::spec_model::extract::Fact> = facts
+        .into_iter()
+        .filter(|f| {
+            rejected.is_empty() || !rejected.contains(&super::spec_model::fact_key::fact_key(f))
+        })
+        .collect();
+    // A sentence is proposed only where the lines the model read are the
+    // repository's: a document read at its current revision.
+    let revisions: std::collections::BTreeMap<String, String> = coverage
+        .into_iter()
+        .filter(|c| c.state == "extracted")
+        .map(|c| (c.path, c.revision))
+        .collect();
+    let mut issues: std::collections::BTreeMap<String, String> = reviews
+        .into_iter()
+        .filter(|r| r.state == "opened")
+        .filter_map(|r| {
+            let key = r.fact_key.strip_prefix("iss:")?.to_string();
+            Some((key, r.note.unwrap_or_default()))
+        })
+        .collect();
+    let items = doc_quality::doc_quality(
+        &doc_quality::entities_of(&kept, &glossary),
+        &glossary,
+        &revisions,
+    );
+    let mut by_kind: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    for i in &items {
+        *by_kind.entry(i.kind.as_str().to_string()).or_default() += 1;
+    }
+    let rows: Vec<DocQualityRowDto> = items
+        .into_iter()
+        .filter(|i| kind.is_none_or(|k| i.kind.as_str() == k))
+        .map(|i| {
+            let url = issues.remove(&i.key);
+            doc_quality_row(i, url)
+        })
+        .collect();
+    let (items, total) = page_of(rows, query.page);
+    Ok(Json(DocQualityRowListDto {
+        items,
+        total,
+        by_kind,
+    }))
+}
+
 /// One question for a document's author: an entity the project's other
 /// documents relate to what this one speaks of, and this one never names.
 #[derive(Debug)]
@@ -10854,6 +11172,49 @@ pub fn register_routes(
             StatusCode::OK,
             "Where it stands",
         )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/project-domain-model/doc-quality")
+        .operation_id("studio_documents.list_project_domain_model_doc_quality")
+        .summary("What would make a project's documentation better, each change ready to save")
+        .description(
+            "The Issues tab's \"improves the docs\" rows, read off the project domain model \
+             (the facts members did not reject, folded into entities under the glossary), \
+             worst gap first: a thing of the domain only an ADR or a feature describes \
+             (`onlyadr`), one described three times or more and never said what it is \
+             (`nodefinition`), a relation only one side writes down (`onesided`), a thing \
+             whose name says what it is about while nothing relates the two (`norelation`, \
+             proposed only in a document read at its current revision), and two glossary \
+             entries that are probably one thing (`twonames`). Each row carries the change \
+             ready to make: `edit` for `POST /project-domain-model/entities`, `sentence` for \
+             `POST /project-domain-model/sentences/proposals`, `pair` for \
+             `POST /project-domain-model/glossary/decisions`, with `actions` naming which. \
+             None of them stops a build; `GET /project-domain-model/readiness` does not \
+             count them. Computed on every call; nothing is stored.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project whose documents to read")
+        .query_param(
+            "kind",
+            false,
+            "`onlyadr`, `nodefinition`, `onesided`, `norelation` or `twonames`: only that kind",
+        )
+        .query_param_typed(
+            "offset",
+            false,
+            "Zero-based index of the first row",
+            "integer",
+        )
+        .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .handler(list_doc_quality)
+        .json_response_with_schema::<DocQualityRowListDto>(openapi, StatusCode::OK, "The rows")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

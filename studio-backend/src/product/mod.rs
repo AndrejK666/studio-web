@@ -20,6 +20,8 @@ mod explanations;
 mod frontx;
 mod gear_roots;
 mod gearbox;
+mod infra_gdl;
+mod kind;
 mod mcp;
 pub(crate) use mcp::tools as mcp_tools;
 mod migrations;
@@ -194,6 +196,14 @@ impl RestApiCapability for StudioProductGear {
                 Arc::clone(&service),
                 ctx.client_hub(),
             )) as Arc<dyn port::GearScaffolds>);
+
+        // A project's repository, made or attached by its creation run
+        // (studio-organizations, `organizations.project_create`).
+        ctx.client_hub()
+            .register::<dyn port::ProjectRepositories>(Arc::new(port::Repositories::new(
+                Arc::clone(&service),
+            ))
+                as Arc<dyn port::ProjectRepositories>);
 
         let gearbox = port::engine(&ctx.client_hub());
         let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);

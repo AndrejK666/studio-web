@@ -754,6 +754,53 @@ export interface InfraService {
   args?: string[];
 }
 
+/** One `use_service(...)` call of a product's `infra`, as the server reads product.gdl. */
+export interface UseServiceCall {
+  name: string;
+  source: string;
+  image?: string | null;
+  chart?: string | null;
+  chart_version?: string | null;
+  config: Record<string, string>;
+  profile_config?: string | null;
+}
+
+/** `GET`/`PUT /studio-product/v1/product-infra`: the infra services as the description says them. */
+export interface ProductInfra {
+  items: InfraService[];
+  /** `product-description`, or `project-list` for a project with no description yet. */
+  source: 'project-list' | 'product-description';
+  /** The description revision the list was read from; a save is made against it. */
+  revision: number | null;
+  services: UseServiceCall[];
+}
+
+/** `POST /studio-product/v1/product-description-outlines`: what a product.gdl says. */
+export interface DescriptionOutline {
+  revision?: number | null;
+  infra?: UseServiceCall[] | null;
+  /** Absent when the product has no literal `profiles` list. */
+  profiles?: { id: string; kind: string }[] | null;
+  home_source?: string | null;
+  /** Each part of the product (`gear:<key>`, `mfe:<path>`, `shell`, `infra:postgres`) and its lines. */
+  nodes: { id: string; lines: number[] }[];
+  /** Each line with the parts it says, the first the one it is. */
+  lines: { line: number; nodes: string[] }[];
+}
+
+/** `GET`/`PUT /studio-product/v1/product-kind`: what the product is. */
+export interface ProductKindAnswer {
+  proposed: import('../model/product-kind').ProductKind;
+  reasons: string[];
+  basis: 'specs' | 'sources' | 'none';
+  alternatives: import('../model/product-kind').ProductKind[];
+  choice?: import('../model/product-kind').ProductKindChoice | null;
+  decided: boolean;
+  status: string;
+  kinds: { id: import('../model/product-kind').ProductKind; title: string; what: string; builds: string }[];
+  experimental: boolean;
+}
+
 /** What a deploy does with one infra service. */
 export interface InfraPlanItem {
   service: string;

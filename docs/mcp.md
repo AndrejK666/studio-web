@@ -176,6 +176,9 @@ person see the same rows.
 | `project_domain_model_upload_remove` | *changes:* removes an uploaded source, its file and its facts |
 | `project_domain_model_fact_review` | *changes:* accepts, rejects, corrects (`corrected` with the new `value`) or puts back facts by `fact_key` |
 | `project_domain_model_finding_decide` | *changes:* confirms a problem as real or dismisses it, by `fingerprint` |
+| `project_domain_model_doc_quality` | what would make the documentation better (`onlyadr`, `nodefinition`, `onesided`, `norelation`, `twonames`), each row with the change ready to make; none stops a build |
+| `project_domain_model_entity_save` | *changes:* writes one entity's section of `docs/domain-model.md` (a `doc_quality` row's `edit`) |
+| `project_domain_model_sentence_propose` | *changes:* proposes a sentence after a passage as a pull request (a `doc_quality` row's `sentence`) |
 
 **The project itself.** Where a project stands, as its Overview says it
 (studio-organizations).
@@ -183,6 +186,8 @@ person see the same rows.
 | Tool | What it answers |
 | --- | --- |
 | `project_status` | one verdict (`blocked`, `at_risk`, `on_track`) with its reason, the signals behind it worst first, and the path to a build with the next step; `unread` names what could not be read |
+| `project_create` | *changes:* creates a project as one background run -- the tenant, its configuration, its sources, a repository for its gears with a starter gear, a PRD from the brief, its kits; checked as you, carried out by Studio; answers `run_id` and `project_id`. The same `idempotency_key` again continues a run that stopped |
+| `project_create_status` | where a creation stands: the run's state and each step's |
 
 **The pipeline.** A project goes from its sources to a running product
 without the portal; each step is the REST route the portal calls for it.
@@ -201,6 +206,11 @@ without the portal; each step is the REST route the portal calls for it.
 | | `product_check` | the engine's verdict for one profile, composed from the picks |
 | | `product_description_check` | the engine's verdict on a saved revision as written, for one profile: GBX diagnostics |
 | | `gdl_file` | a component's `gear.gdl`, `frontx.gdl` or `service.gdl` |
+| | `product_description_edit` | *changes:* structured edits of the description (`set_infra`, `put_infra_service`, `remove_infra_service`) saved as the next revision; `dry_run` answers the text only |
+| | `product_description_outline` | what a description says without its text: infra services, profiles, home source, which lines say which gear, screen or database |
+| | `product_infra` | the infra services as the description says them, merged with the catalogue's passports and the environment's side |
+| | `product_kind` | what the product is: Studio's proposal from the specs with its reasons, and the confirmed kind |
+| | `product_kind_confirm` | *changes:* keeps the kind in the project's configuration |
 | Environments | `deploy_targets` | where the product can deploy, the bindings, the secret keys |
 | | `project_environments` | the project's own environments |
 | | `deploy_bindings_set` | *changes:* which profile each environment runs |
@@ -230,6 +240,7 @@ without the portal; each step is the REST route the portal calls for it.
 | | `deployment_status` | the release as its cluster reports it now |
 | | `deployment_logs` | the end of each container's log |
 | Runs | `task_run` | the background run an import, build or deploy started |
+| | `task_retry` | *changes:* runs a failed or cancelled run again; a project's creation continues where it stopped |
 
 **Kits.** What Studio has for an organization comes from kits (ADR-0068,
 ADR-0069 §4); an agent installs one the way a person does.

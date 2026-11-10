@@ -1,9 +1,16 @@
 /**
- * Where a project stands (`GET /studio-organizations/v1/project-status`,
- * studio-backend `organizations/status.rs`): one verdict, the signals behind
- * it, and the path from a repository to a passing build. The prototype
- * computed this in the browser from nine reads (`project-overview-model.ts`,
- * `project-path.ts`); the server now makes the same reads as the caller.
+ * studio-organizations' project routes:
+ *
+ * - Where a project stands (`GET /studio-organizations/v1/project-status`,
+ *   studio-backend `organizations/status.rs`): one verdict, the signals behind
+ *   it, and the path from a repository to a passing build. The prototype
+ *   computed this in the browser from nine reads (`project-overview-model.ts`,
+ *   `project-path.ts`); the server now makes the same reads as the caller.
+ * - A project's creation as one background run (`POST /project-creations`,
+ *   `GET /project-creations/{run_id}`, `organizations/project_create.rs`): the
+ *   portal used to make each step a request of its own (the tenant, its
+ *   configuration, its sources, ...); the server checks them as the caller and
+ *   carries them out as one resumable run.
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
@@ -64,6 +71,37 @@ export class ProjectPhaseApiService extends BaseApiService {
   }
 }
 
+/** One step of a project's creation. */
+export interface ProjectCreationStep {
+  /** `tenant`, `config`, `repository`, `sources`, `scaffold`, `prd` or `kits`. */
+  key: string;
+  state: 'pending' | 'done' | 'failed';
+  detail?: string | null;
+}
+
+/** A project's creation and where it stands. */
+export interface ProjectCreation {
+  run_id: string;
+  project_id: string;
+  organization_id: string;
+  workspace_id: string;
+  name: string;
+  state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  steps: ProjectCreationStep[];
+  error?: string | null;
+}
+
+/** What the New project dialog asks for. */
+export interface CreateProjectBody {
+  workspace_id: string;
+  name: string;
+  mode?: string;
+  brief?: string;
+  owner_id?: string;
+  sources?: { connection_id: string; full_path: string; clone_url: string; default_branch?: string }[];
+  idempotency_key?: string;
+}
+
 export class ProjectStatusApiService extends BaseApiService {
   constructor() {
     // The server reads every gear behind the status before it answers.
@@ -74,5 +112,20 @@ export class ProjectStatusApiService extends BaseApiService {
 
   readonly status = this.protocol(RestEndpointProtocol).queryWith<ProjectStatus, { projectId: string }>(
     ({ projectId }) => `/project-status?${new URLSearchParams({ project_id: projectId })}`
+  );
+
+  /** Check a project's creation as the caller and queue it as one run (202). */
+  readonly createProject = this.protocol(RestEndpointProtocol).mutation<ProjectCreation, CreateProjectBody>(
+    'POST',
+    '/project-creations'
+  );
+
+  /** Where a creation stands. */
+  readonly creation = this.protocol(RestEndpointProtocol).queryWith<
+    ProjectCreation,
+    { runId: string; organizationId: string }
+  >(
+    ({ runId, organizationId }) =>
+      `/project-creations/${encodeURIComponent(runId)}?${new URLSearchParams({ organization_id: organizationId })}`
   );
 }

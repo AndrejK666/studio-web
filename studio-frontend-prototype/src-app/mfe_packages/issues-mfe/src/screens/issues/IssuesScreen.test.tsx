@@ -82,6 +82,27 @@ describe('IssuesScreen', () => {
   const createIssue = vi.fn(() => Promise.resolve({ number: 8, url: 'https://github.com/o/r/issues/8' }));
   const review = vi.fn(() => Promise.resolve({ items: [], total: 0 }));
   const issues = vi.fn(() => Promise.resolve({ items: [finding, assumption], total: 2, by_group: { blocks: 1, look: 1 } }));
+  const docQuality = vi.fn(
+    (): Promise<{ items: unknown[]; total: number; by_kind: Record<string, number> }> =>
+      Promise.resolve({
+      items: [
+        {
+          key: 'nd:invoice',
+          kind: 'nodefinition',
+          label: 'No definition',
+          title: 'Invoice has no definition',
+          hint: '3 facts describe it.',
+          sides: [{ path: 'docs/b.md', line_start: 2 }],
+          edit: { name: 'Invoice', definition: 'An Invoice holds total.', fields: [], relations: [] },
+          entity: 'invoice',
+          issue_url: null,
+          actions: ['save_entity', 'create_issue'],
+        },
+      ],
+      total: 1,
+      by_kind: { nodefinition: 1 },
+    })
+  );
 
   beforeEach(() => {
     translations.mockReturnValue({
@@ -98,8 +119,7 @@ describe('IssuesScreen', () => {
       }),
       issues,
       readiness: query({ total: 4, cited: 1, reasoned: 0, open: 2, blocking: 1, ready: false }),
-      glossary: query({ items: [], total: 0 }),
-      reviews: query({ items: [], total: 0 }),
+      docQuality,
       buildEstimate: query({ documents: 0 }),
       decideFinding: vi.fn(() => ({ fetch: decide })),
       createIssue: { fetch: createIssue },
@@ -118,7 +138,28 @@ describe('IssuesScreen', () => {
     expect(screen.getByText('status_blocks')).toBeTruthy();
     // An issue already opened shows instead of the group, and is not offered again.
     expect(screen.getByText(/issue_number/)).toBeTruthy();
-    expect(screen.getAllByText('create_issue')).toHaveLength(1);
+    // The finding and the server's documentation row each offer one.
+    expect(screen.getAllByText('create_issue')).toHaveLength(2);
+  });
+
+  it("lists the server's documentation rows after the queue, and hides one once its entity is saved", async () => {
+    const saveEntity = vi.fn(() =>
+      Promise.resolve({ path: 'docs/domain-model.md', branch: 'studio/domain-model', commit_sha: 'abc' })
+    );
+    Object.assign(service, { saveEntity: vi.fn(() => ({ fetch: saveEntity })) });
+    render(<IssuesScreen bridge={bridge()} />);
+    fireEvent.click(await screen.findByText('Invoice has no definition'));
+    expect(docQuality).toHaveBeenCalledWith('p1');
+    fireEvent.click(screen.getByText('save_definition'));
+    await waitFor(() =>
+      expect(saveEntity).toHaveBeenCalledWith({
+        name: 'Invoice',
+        definition: 'An Invoice holds total.',
+        fields: [],
+        relations: [],
+      })
+    );
+    await waitFor(() => expect(screen.queryByText('Invoice has no definition')).toBeNull());
   });
 
   it('opens a finding, and a decision on it goes to the server and reads the queue again', async () => {
@@ -138,7 +179,8 @@ describe('IssuesScreen', () => {
 
   it('opens an issue for a row and records it under the row key', async () => {
     render(<IssuesScreen bridge={bridge()} />);
-    fireEvent.click(await screen.findByText('create_issue'));
+    // The finding's row first; the documentation's row after it.
+    fireEvent.click((await screen.findAllByText('create_issue'))[0]);
     fireEvent.click(screen.getByText('open_issue'));
     await waitFor(() =>
       expect(createIssue).toHaveBeenCalledWith(
@@ -163,6 +205,7 @@ describe('IssuesScreen', () => {
 
   it('says every reference resolves when nothing is queued and the model is not built', async () => {
     issues.mockResolvedValueOnce({ items: [], total: 0, by_group: { blocks: 0, look: 0 } });
+    docQuality.mockResolvedValueOnce({ items: [], total: 0, by_kind: {} });
     render(<IssuesScreen bridge={bridge()} />);
     expect(await screen.findByText('empty_unbuilt')).toBeTruthy();
     expect(screen.getByText('empty_unbuilt_body')).toBeTruthy();

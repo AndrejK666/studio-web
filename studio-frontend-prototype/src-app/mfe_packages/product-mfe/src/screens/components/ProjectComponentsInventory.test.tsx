@@ -1,5 +1,5 @@
 import { createRef } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 
@@ -74,6 +74,7 @@ describe('ProjectComponentsInventory', () => {
     vi.spyOn(api, 'gearboxCatalogue').mockRejectedValue(new Error('no engine'));
   });
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
     openScreen.mockReset();
   });

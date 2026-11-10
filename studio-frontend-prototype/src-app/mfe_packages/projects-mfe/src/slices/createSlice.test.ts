@@ -9,6 +9,8 @@ import {
   pickSource,
   searchRepos,
   submitFailed,
+  submitProgress,
+  submitStarted,
 } from './createSlice';
 
 const reducer = createWizardSlice.reducer;
@@ -85,5 +87,26 @@ describe(`${CREATE_SLICE_KEY}: choosing what is already chosen`, () => {
 
     state = reducer(state, chooseConnection('c-1'));
     expect(state).toMatchObject({ connectionId: 'c-1', search: 'api' });
+  });
+});
+
+describe(`${CREATE_SLICE_KEY}: the server's run`, () => {
+  const run = { runId: 'r1', state: 'failed', steps: [{ key: 'tenant', state: 'done' }, { key: 'config', state: 'failed', detail: 'down' }] };
+
+  it('keeps the run as last read after a failure, so the dialog says which step stopped', () => {
+    let state = reducer(undefined, { type: '@@init' });
+    state = reducer(state, submitStarted());
+    state = reducer(state, submitProgress(run));
+    state = reducer(state, submitFailed({ kind: 'provider', text: 'down' }));
+    expect(state.progress).toEqual(run);
+    expect(state.submitting).toBe(false);
+  });
+
+  it('starts again from no run when the member creates again', () => {
+    let state = reducer(undefined, { type: '@@init' });
+    state = reducer(state, submitProgress(run));
+    state = reducer(state, submitStarted());
+    expect(state.progress).toBeNull();
+    expect(state.submitting).toBe(true);
   });
 });
