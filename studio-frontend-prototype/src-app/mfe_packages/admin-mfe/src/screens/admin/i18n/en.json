@@ -573,5 +573,17 @@
   "dm_change_details": "Change and inverse patch",
   "dm_revert": "Restore this version",
   "dm_revert_confirm": "Restore model version {version}? This creates a new version and keeps the change history.",
-  "dm_revert_blocked": "An import or migration in this range has no inverse."
+  "dm_revert_blocked": "An import or migration in this range has no inverse.",
+  "dm_conformance": "Check stored objects",
+  "dm_conformance_summary": "{conforming} of {checked} checked objects conform to this type.",
+  "dm_conformance_partial": "Only a bounded sample was checked. These counts do not cover every stored object.",
+  "dm_conformance_empty": "There are no objects to check.",
+  "dm_conformance_violations": "Violations by field",
+  "dm_conformance_reason": "Reason",
+  "dm_conformance_missing": "Required value missing",
+  "dm_conformance_type": "Wrong value type",
+  "dm_conformance_enum": "Value outside the allowed choices",
+  "dm_conformance_undeclared": "Undeclared fields are allowed. Their stored values have been preserved.",
+  "dm_conformance_samples": "Example objects",
+  "dm_objects_label": "Objects"
 }

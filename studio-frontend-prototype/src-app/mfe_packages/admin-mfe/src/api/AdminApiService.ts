@@ -22,6 +22,7 @@ import type {
   ConnectorIdentity,
   ConnectorProvider,
   Conversion,
+  DomainConformance,
   DomainModelEdit,
   DomainModelHistory,
   DomainModelGraph,
@@ -383,6 +384,10 @@ export class AdminApiService extends BaseApiService {
   /** How many objects of each type the organization holds. */
   readonly domainTypeCounts = this.protocol(RestEndpointProtocol).queryWith<DomainTypeCounts, { orgId: string }>(
     ({ orgId }) => `/studio-domain-model/v1/type-counts?${q({ organization_id: orgId })}`
+  );
+
+  readonly domainConformance = this.rest.queryWith<DomainConformance, { orgId: string; typeId: string }>(
+    ({ orgId, typeId }) => `/studio-domain-model/v1/types/${e(typeId)}/conformance?${q({ organization_id: orgId })}`
   );
 
   readonly domainHistory = this.rest.queryWith<DomainModelHistory, { orgId: string }>(

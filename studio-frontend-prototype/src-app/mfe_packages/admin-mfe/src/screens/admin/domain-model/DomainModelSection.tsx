@@ -24,6 +24,7 @@ import { ErrorLine, Header, errText, useAdmin } from '../common';
 import { FieldDialog, TypeDialog } from './DomainModelDialogs';
 import { GtsIds, Relations } from './DomainModelRelations';
 import { DomainModelTools } from './DomainModelTools';
+import { DomainConformance } from './DomainConformance';
 import styles from '../Admin.module.css';
 import own from './DomainModel.module.css';
 
@@ -302,6 +303,7 @@ function DomainModelAdmin({ org }: { org: OrganizationRef }) {
                 <p className={styles.sub}>{originOf(model, entity).hint}</p>
                 {entity.description && <p className={styles.muted}>{entity.description}</p>}
                 <GtsIds model={model} id={entity.id} />
+                <DomainConformance key={`${org.id}:${entity.id}:${revision}`} orgId={org.id} typeId={entity.id} />
                 {!model.canEdit && <p className={styles.muted}>{t('dm_read_only')}</p>}
                 {error && !adding && !editing && !creating && <ErrorLine>{error}</ErrorLine>}
 

@@ -179,6 +179,21 @@ describe('Studio domain model', () => {
     }));
   });
 
+  it('clears a conformance report when selecting another type', async () => {
+    serve({ domainConformance: read('domainConformance', {
+      type: 'project', checked: 1, conforming: 1, truncated: false, violations: [], undeclared: [], sample: [],
+    }) });
+    render(<DomainModelSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'dm_conformance' }));
+    await screen.findByText('dm_conformance_summary');
+    fireEvent.click(document.querySelector('[data-dm-type="milestone"]') as HTMLElement);
+    expect(screen.queryByText('dm_conformance_summary')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'dm_conformance' }));
+    await waitFor(() => expect(calls.filter((c) => c.what === 'domainConformance').map((c) => c.arg)).toEqual([
+      { orgId: 'o1', typeId: 'project' }, { orgId: 'o1', typeId: 'milestone' },
+    ]));
+  });
+
   it('removes a field the type declares', async () => {
     render(<DomainModelSection />);
     const row = await shown('[data-dm-field="stage"]');

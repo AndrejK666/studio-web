@@ -302,3 +302,14 @@ export interface DomainObjectsGraph {
   edges: DomainModelGraph['edges'];
   truncated?: boolean;
 }
+
+/** A bounded check of stored objects against their effective type. */
+export interface DomainConformance {
+  type: string;
+  checked: number;
+  conforming: number;
+  truncated: boolean;
+  violations: { field: string; kind?: string | null; count: number }[];
+  undeclared: { field: string; kind?: string | null; count: number }[];
+  sample: { instance_id: string; violations: string[] }[];
+}
