@@ -2996,6 +2996,59 @@ pub struct SpecModelDto {
     pub unread_because: Option<String>,
 }
 
+/// A requirement the documents leave open: what a reader of the model is
+/// missing to interpret it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelOpenQuestionDto {
+    /// The requirement's identifier.
+    pub id: String,
+    pub text: String,
+    /// The words that leave it open ("TBD", a question).
+    pub because: Option<String>,
+    /// Where it is defined: the label's line.
+    pub defined_in: SpecModelSideDto,
+}
+
+/// What the model has read and what it has not, and why
+/// (`GET /project-domain-model/coverage`): every document's state, the typed
+/// documents this server could not read, and the questions the documents
+/// leave open.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecModelCoverageDto {
+    /// Every document of the model and where it stands.
+    pub items: Vec<SpecModelDocumentDto>,
+    pub total: u32,
+    /// Documents in each state (`extracted`, `failed`, `stale`, `pending`,
+    /// `kept`).
+    pub by_state: std::collections::BTreeMap<String, u32>,
+    /// Typed documents whose text this server has no copy of.
+    pub unread_documents: u32,
+    /// Their paths.
+    pub unread_paths: Vec<String>,
+    /// Why the copy is missing, when the server knows.
+    pub unread_because: Option<String>,
+    /// Requirements the documents leave as open questions.
+    pub open_questions: Vec<SpecModelOpenQuestionDto>,
+    /// Requirements that rest on an assumption.
+    pub assumptions: u32,
+    /// The running or last build, as the process answering knows it.
+    pub build: SpecModelBuildDto,
+}
+
+fn spec_model_document_dto(c: super::spec_model::Coverage) -> SpecModelDocumentDto {
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    SpecModelDocumentDto {
+        path: c.path,
+        revision: c.revision,
+        state: c.state.to_string(),
+        facts: count(c.facts),
+        dropped: count(c.dropped),
+        error: c.error,
+    }
+}
+
 /// The project's sources, the facts of their current revisions, and where
 /// each document stands.
 async fn spec_model_state(
@@ -3052,17 +3105,7 @@ async fn get_spec_model(
         unread_documents: count(sources.unread.len()),
         unread_because: sources.unread_because,
         build: super::spec_model::build::state(project_id).into(),
-        documents: coverage
-            .into_iter()
-            .map(|c| SpecModelDocumentDto {
-                path: c.path,
-                revision: c.revision,
-                state: c.state.to_string(),
-                facts: count(c.facts),
-                dropped: count(c.dropped),
-                error: c.error,
-            })
-            .collect(),
+        documents: coverage.into_iter().map(spec_model_document_dto).collect(),
         facts: facts
             .into_iter()
             .map(|f| SpecModelFactDto {
@@ -3085,6 +3128,90 @@ async fn get_spec_model(
             })
             .collect(),
     }))
+}
+
+/// The project's running or last build, as the process answering knows it.
+async fn get_spec_model_build(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecModelBuildDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    // Reaching the project is the read's authorization, as for the model.
+    let _ = parent_workspace(&service, &ctx, project_id).await?;
+    Ok(Json(super::spec_model::build::state(project_id).into()))
+}
+
+/// What the model has read, what it has not and why, and the questions the
+/// documents leave open.
+async fn get_spec_model_coverage(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecModelCoverageDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let reader = quality.reader()?;
+    let (sources, _, coverage) =
+        spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
+    Ok(Json(spec_model_coverage_dto(
+        sources,
+        coverage,
+        super::spec_model::build::state(project_id),
+    )))
+}
+
+/// The coverage answer, from the sources read, where each document stands
+/// and the build.
+fn spec_model_coverage_dto(
+    sources: super::spec_model::Sources,
+    coverage: Vec<super::spec_model::Coverage>,
+    build: super::spec_model::build::BuildState,
+) -> SpecModelCoverageDto {
+    use super::spec_model::requirements::Basis;
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let mut by_state: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    for c in &coverage {
+        *by_state.entry(c.state.to_string()).or_default() += 1;
+    }
+    let requirements = sources.requirements();
+    let assumptions = requirements
+        .iter()
+        .filter(|r| r.basis == Basis::Assumption)
+        .count();
+    let open_questions = requirements
+        .into_iter()
+        .filter(|r| r.basis == Basis::OpenQuestion)
+        .map(|r| {
+            let line = u32::try_from(r.line).ok();
+            SpecModelOpenQuestionDto {
+                defined_in: SpecModelSideDto {
+                    path: r.path,
+                    line_start: line,
+                    line_end: line,
+                    quote: None,
+                    binding_id: None,
+                },
+                id: r.id,
+                text: r.text,
+                because: r.because,
+            }
+        })
+        .collect();
+    let items: Vec<SpecModelDocumentDto> =
+        coverage.into_iter().map(spec_model_document_dto).collect();
+    SpecModelCoverageDto {
+        total: count(items.len()),
+        items,
+        by_state,
+        unread_documents: count(sources.unread.len()),
+        unread_paths: sources.unread,
+        unread_because: sources.unread_because,
+        open_questions,
+        assumptions: count(assumptions),
+        build: build.into(),
+    }
 }
 
 /// Read every document of the project not yet read at its revision, on the
@@ -8570,6 +8697,56 @@ pub fn register_routes(
         .error_503(openapi)
         .register(router, openapi);
 
+    router = OperationBuilder::get("/studio-documents/v1/project-domain-model/build")
+        .operation_id("studio_documents.get_project_domain_model_build")
+        .summary("A project's running or last build of its model")
+        .description(
+            "Where the build `POST /project-domain-model/builds` started stands, as the replica \
+             answering knows it: `running`, the documents it reads and how many are `done`, \
+             the one being read (`current`), the judge's progress, why it stopped (`error`), \
+             and when it started and finished. A build the replica never ran answers \
+             `running: false` and nothing else.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .handler(get_spec_model_build)
+        .json_response_with_schema::<SpecModelBuildDto>(openapi, StatusCode::OK, "The build")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/project-domain-model/coverage")
+        .operation_id("studio_documents.get_project_domain_model_coverage")
+        .summary("What a project's model has read, what it has not and why")
+        .description(
+            "Every document of the model with its state (`extracted`, `failed` with the error, \
+             `stale`, `pending`, `kept`), its facts and the facts dropped because the text did \
+             not bear them out; the typed documents this server has no copy of, their paths \
+             and why (`unread_because`); the requirements the documents leave as open \
+             questions and how many rest on an assumption: what is missing to interpret the \
+             model.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .handler(get_spec_model_coverage)
+        .json_response_with_schema::<SpecModelCoverageDto>(
+            openapi,
+            StatusCode::OK,
+            "The coverage",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
     router = OperationBuilder::get("/studio-documents/v1/project-domain-model/build-estimate")
         .operation_id("studio_documents.get_project_domain_model_build_estimate")
         .summary("What a build of a project's model would read, and about how long it would take")
@@ -11463,6 +11640,58 @@ mod tests {
         assert!(!review_state_fits("0123456789abcdef", "scored"));
         assert_eq!(review_note_max("hyp:0123456789abcdef"), 8000);
         assert_eq!(review_note_max("pri:cpt-a"), 2000);
+    }
+
+    #[test]
+    fn coverage_names_what_was_not_read_and_what_the_documents_leave_open() {
+        use super::super::spec_model::{Coverage, SourceText, Sources, build::BuildState};
+        let doc = |path: &str, text: &str| SourceText {
+            path: path.into(),
+            text: text.into(),
+            doc_type: Some("prd".into()),
+            node: String::new(),
+            binding: None,
+        };
+        let sources = Sources {
+            documents: vec![doc(
+                "docs/prd.md",
+                "# PRD\n\n**ID**: `cpt-a-fr-export`\n\nThe export format is TBD.\n\n\
+                 **ID**: `cpt-a-fr-search`\n\nWe assume people search by name.\n",
+            )],
+            unread: vec!["docs/gone.md".into()],
+            unread_because: Some("the last clone failed".into()),
+            ..Sources::default()
+        };
+        let state = |path: &str, state: &'static str, error: Option<&str>| Coverage {
+            path: path.into(),
+            revision: "r".into(),
+            state,
+            facts: 2,
+            dropped: 1,
+            error: error.map(str::to_string),
+        };
+        let coverage = vec![
+            state("docs/prd.md", "failed", Some("lines 1-9: 503")),
+            state("docs/old.md", "kept", None),
+        ];
+        let build = BuildState {
+            running: true,
+            documents: 3,
+            done: 1,
+            ..BuildState::default()
+        };
+        let dto = spec_model_coverage_dto(sources, coverage, build);
+        assert_eq!(dto.total, 2);
+        assert_eq!(dto.by_state.get("failed"), Some(&1));
+        assert_eq!(dto.items[0].error.as_deref(), Some("lines 1-9: 503"));
+        assert_eq!(dto.unread_documents, 1);
+        assert_eq!(dto.unread_paths, ["docs/gone.md"]);
+        assert_eq!(dto.unread_because.as_deref(), Some("the last clone failed"));
+        assert_eq!(dto.open_questions.len(), 1);
+        assert_eq!(dto.open_questions[0].id, "cpt-a-fr-export");
+        assert_eq!(dto.assumptions, 1);
+        assert!(dto.build.running);
+        assert_eq!((dto.build.documents, dto.build.done), (3, 1));
     }
 
     #[test]

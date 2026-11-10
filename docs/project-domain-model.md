@@ -304,14 +304,22 @@ Calibrated on real documentation ([calibration](#calibration)). **Run:**
 ## REST
 
 Under `/studio-documents/v1`, beside the gear's other routes. Every route below
-is also served under its old path, `/spec-model…` in place of
-`/project-domain-model…`, as a deprecated alias (same handler, the old
-`operation_id`) for callers written before the rename; the aliases are removed
-after 2027-03-31.
+written before the rename is also served under its old path, `/spec-model…` in
+place of `/project-domain-model…`, as a deprecated alias (same handler, the old
+`operation_id`) for callers written before it; the aliases are removed after
+2027-03-31. The routes added since (`build`, `coverage`) have no alias.
+
+The same build, its state and the coverage are MCP tools
+([mcp.md](mcp.md)): `project_domain_model_build` starts a build through
+`POST /project-domain-model/builds` as the caller, so it is authorized and paid
+for exactly as the portal's Build button; `project_domain_model_build_status`
+and `project_domain_model_coverage` read the two routes above.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/project-domain-model/builds` | Build a project's model on the caller's key: `202` with the `task_run` to follow |
+| `GET` | `/project-domain-model/build?project_id=` | The running or last build as the replica answering knows it: `documents`, `done`, `current`, `error`, `started_at`, `finished_at` |
+| `GET` | `/project-domain-model/coverage?project_id=` | What is missing to interpret the model: every document's state (`extracted`, `failed` with its `error`, `stale`, `pending`, `kept`) with its facts and dropped facts; the typed documents not read (`unread_paths`) and why (`unread_because`); the requirements left as `open_questions`, and how many rest on an assumption |
 | `GET` | `/project-domain-model/build-estimate?project_id=` | What a build would read now (or with `path`, one document), its approximate input tokens and seconds |
 | `GET` | `/project-domain-model?project_id=` | The assembled model: entities with their facts and sources, requirements, constraints, decisions; whether it is stale and which documents are not extracted yet |
 | `GET` | `/project-domain-model/findings?project_id=` | The findings with their sides, fix and decision, filterable by `rule` and `status` |

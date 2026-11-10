@@ -62,6 +62,55 @@ pub fn tools() -> Vec<Tool> {
             run: Run::Get("/studio-documents/v1/project-domain-model"),
         },
         Tool {
+            name: "project_domain_model_build",
+            description: "Start reading a project's documents into its project domain model, on \
+                your own model key (a build calls a model and costs tokens): every document not \
+                read at its revision, or only the one `path` names, which is read again \
+                whatever its state and whose facts replace only its own. Answers at once with the build's state; follow it with \
+                `project_domain_model_build_status`. A build already running is answered, not \
+                started twice. Say what you will read first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "path": { "type": "string",
+                            "description": "One document to read again, as `project_domain_model_coverage` lists it." }
+                    }),
+                    &["project_id"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-documents/v1/project-domain-model/builds",
+                query: &[],
+            },
+        },
+        Tool {
+            name: "project_domain_model_build_status",
+            description: "Where a project's running or last build of its project domain model \
+                stands: `running`, the `documents` it reads and how many are `done`, the one \
+                being read (`current`), why it stopped (`error`, most often no model key), and \
+                when it started and finished.",
+            input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-documents/v1/project-domain-model/build"),
+        },
+        Tool {
+            name: "project_domain_model_coverage",
+            description: "What a project's domain model has read and what is missing to \
+                interpret it: every document with its `state` (`extracted`, `failed` with its \
+                `error`, `stale`, `pending`, `kept`), its facts and the facts `dropped` because \
+                the text did not bear them out; the typed documents this server could not read \
+                (`unread_paths`) and why (`unread_because`); and the requirements the documents \
+                leave as `open_questions`.",
+            input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-documents/v1/project-domain-model/coverage"),
+        },
+        Tool {
             name: "project_domain_model_fact_review",
             description: "Accept or reject facts the model read, or put them back as proposed: \
                 an accepted fact is the project's reading, a rejected one leaves the model and \
@@ -189,6 +238,9 @@ mod tests {
                 "project_domain_model_issues",
                 "project_domain_model_readiness",
                 "project_domain_model_facts",
+                "project_domain_model_build",
+                "project_domain_model_build_status",
+                "project_domain_model_coverage",
                 "project_domain_model_fact_review",
                 "project_domain_model_finding_decide"
             ]
@@ -196,6 +248,47 @@ mod tests {
         for t in &all {
             let schema = (t.input_schema)();
             assert_eq!(schema["required"][0], "project_id", "{}", t.name);
+        }
+    }
+
+    #[test]
+    fn a_build_is_the_route_the_portal_starts_and_marked_as_changing() {
+        let all = tools();
+        let build = all
+            .iter()
+            .find(|t| t.name == "project_domain_model_build")
+            .expect("the build tool");
+        assert_eq!(build.effect, Effect::Write, "a build costs tokens");
+        assert!(build.experimental);
+        let r = request_of(
+            &all,
+            "project_domain_model_build",
+            json!({ "project_id": "p", "path": "docs/a.md" }),
+        );
+        assert_eq!(r.method, Method::Post);
+        assert_eq!(r.path, "/studio-documents/v1/project-domain-model/builds");
+        assert_eq!(r.body, json!({ "project_id": "p", "path": "docs/a.md" }));
+    }
+
+    #[test]
+    fn status_and_coverage_are_reads_of_the_project() {
+        for (tool, path) in [
+            (
+                "project_domain_model_build_status",
+                "/studio-documents/v1/project-domain-model/build",
+            ),
+            (
+                "project_domain_model_coverage",
+                "/studio-documents/v1/project-domain-model/coverage",
+            ),
+        ] {
+            let all = tools();
+            let t = all.iter().find(|t| t.name == tool).expect(tool);
+            assert_eq!(t.effect, Effect::Read, "{tool}");
+            let r = request_of(&all, tool, json!({ "project_id": "p" }));
+            assert_eq!(r.method, Method::Get, "{tool}");
+            assert_eq!(r.path, path);
+            assert_eq!(r.query, vec![("project_id".to_owned(), "p".to_owned())]);
         }
     }
 
