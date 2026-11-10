@@ -55,6 +55,10 @@ declare module '@gears-frontx/react' {
     'app/context/workspace/scoped': void;
     /** The workspace read failed; the shell retries once so the chain regains its slot. */
     'app/context/workspaces/failed': void;
+    /** A pin was picked: go to the address it keeps (app/pins). The materializer resolves the names and the level. */
+    'app/pins/open': {
+      route: { token: string; org?: string; workspace?: string; project?: string; section?: string };
+    };
     /** "Try again" on the editor whose session failed to come up. */
     'app/editor/session/retry': void;
   }

@@ -13,6 +13,7 @@ import { Popup } from './Popup';
 import { Overlay } from './Overlay';
 import { OverlayDialog } from './OverlayDialog';
 import { OrganizationAccessGate, useHasNoOrganization } from './OrganizationAccessGate';
+import { useLiveChannelOpen } from '@/app/live/useLiveChannel';
 
 export interface LayoutProps {
   children?: React.ReactNode;
@@ -24,6 +25,9 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   // still need the account menu and a way to sign out — but its context slot has
   // nothing to offer and the screen below has no scope to render in.
   const noOrganization = useHasNoOrganization();
+  // The Layout is mounted only behind the AuthGate: the live channel is open
+  // exactly while somebody is signed in (app/live/liveChannel.ts).
+  useLiveChannelOpen();
 
   useEffect(() => {
     fetchCurrentUser();

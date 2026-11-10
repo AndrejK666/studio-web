@@ -12,6 +12,7 @@ export {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
+  STUDIO_SHARED_PROPERTY_LIVE_EVENT,
 } from './host/hostProperties';
 export { STUDIO_MFE_ENTRY_IFRAME } from './host/hostTypes';
 export {
@@ -171,6 +172,14 @@ export {
   type StudioRunState,
 } from './tasks/StudioTasksApiService';
 export { runCount, runUpdateFromRun, type RunUpdate } from './tasks/runs';
+export {
+  LIVE_REFRESH_DELAY_MS,
+  domainChanged,
+  isRunEvent,
+  isStudioEvent,
+  useLiveStudioEvent,
+  useStudioEventRefresh,
+} from './tasks/liveEvents';
 export {
   createRunFollower,
   readCursor,

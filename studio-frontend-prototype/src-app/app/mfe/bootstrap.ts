@@ -57,6 +57,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
+  STUDIO_SHARED_PROPERTY_LIVE_EVENT,
   prewarmShadowStyles,
 } from '@constructor-studio/mfe-shared';
 import {
@@ -69,7 +70,7 @@ import { createScreenOpenHandler } from '@/app/mfe/screenOpenAction';
 import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { occupancyOf } from '@/app/mfe/domainOccupancy';
 import { outcomesOf } from '@/app/mfe/shellOutcomes';
-import { publishFrameUrl, publishStudioContext } from '@/app/mfe/sharedContext';
+import { publishFrameUrl, publishLiveEvent, publishStudioContext } from '@/app/mfe/sharedContext';
 
 const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
 
@@ -468,6 +469,7 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
       STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
       STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
+      STUDIO_SHARED_PROPERTY_LIVE_EVENT,
     ],
   });
 }
@@ -533,6 +535,9 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
   // it is ready (effects/editorSessionEffects.ts). `null`, never `undefined`,
   // for an MFE that requires the property.
   publishFrameUrl(app, null);
+  // Nothing heard yet: the live channel (app/live) relays its frames once the
+  // person is signed in. `null` for the same reason as the frame address.
+  publishLiveEvent(app, null);
 
   console.info(`[MFE Bootstrap] Fetching MFE manifests from ${MFE_MANIFESTS_URL}`);
   const response = await fetch(MFE_MANIFESTS_URL);

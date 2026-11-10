@@ -2,7 +2,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskRun } from '../../background/types';
 
-const { service, calls } = vi.hoisted(() => ({ service: {} as Record<string, unknown>, calls: [] as string[] }));
+const { service, calls, live } = vi.hoisted(() => ({
+  service: {} as Record<string, unknown>,
+  calls: [] as string[],
+  live: { value: null as unknown },
+}));
 
 vi.mock('../../i18n', () => ({
   useBackgroundTranslations: () => ({
@@ -13,7 +17,8 @@ vi.mock('../../i18n', () => ({
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
-  useSharedProperty: () => 'en',
+  // The shell's live channel relays its last event under its own property; every other read here is the language.
+  useSharedProperty: (id: string) => (id.includes('live.studio_events') ? live.value : 'en'),
 }));
 
 import { BackgroundScreen } from './BackgroundScreen';
@@ -36,6 +41,7 @@ const run = (id: string, state: string, task_type = 'catalog.sync'): TaskRun =>
 describe('BackgroundScreen', () => {
   beforeEach(() => {
     calls.length = 0;
+    live.value = null;
     Object.assign(service, {
       taskTypes: { fetch: () => Promise.resolve({ items: ['catalog.sync'] }) },
       schedules: {
@@ -87,5 +93,24 @@ describe('BackgroundScreen', () => {
     expect(await screen.findByText('Nightly catalogue')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'run_now' }));
     await waitFor(() => expect(calls).toContain('run-now:s1'));
+  });
+
+  it('reads the runs again when the shell relays a run transition', async () => {
+    const view = render(<BackgroundScreen />);
+    expect(await screen.findByText('the token was refused')).toBeTruthy();
+    const before = calls.filter((c) => c === 'failed').length;
+    live.value = { seq: 7, at_ms: 1, kind: 'task.succeeded', subject_type: 'task_run', subject_id: 'r', source: 'studio-tasks', payload: {} };
+    view.rerender(<BackgroundScreen />);
+    await waitFor(() => expect(calls.filter((c) => c === 'failed').length).toBeGreaterThan(before));
+  });
+
+  it('does not read again for an event about something else', async () => {
+    const view = render(<BackgroundScreen />);
+    expect(await screen.findByText('the token was refused')).toBeTruthy();
+    const before = calls.length;
+    live.value = { seq: 8, at_ms: 1, kind: 'workspace.created', subject_type: 'workspace', subject_id: 'w', source: 'x', payload: {} };
+    view.rerender(<BackgroundScreen />);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(calls.length).toBe(before);
   });
 });

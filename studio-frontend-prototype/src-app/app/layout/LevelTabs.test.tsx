@@ -128,11 +128,44 @@ vi.mock('@/app/i18n/shellTranslations', () => ({ useShellText: () => (key: strin
 vi.mock('./useScreenLevel', () => ({ useScreenLevel: () => level.value }));
 
 import { LevelTabs } from './LevelTabs';
+import { setPreferenceStoreForTests, type PreferenceStore } from '@/app/preferences/uiPreferences';
+import { resetPinsForTests } from '@/app/pins/usePins';
+import { PINS_KEY } from '@/app/pins/pins';
+
+/** The person's preferences, in memory: what the tabs read and write. */
+function fakePreferences(initial: Record<string, string> = {}) {
+  let prefs: Record<string, string> = { ...initial };
+  const listeners = new Set<() => void>();
+  const store: PreferenceStore = {
+    get: () => prefs,
+    set: vi.fn((key: string, value: string) => {
+      const next = { ...prefs };
+      if (value) next[key] = value;
+      else delete next[key];
+      prefs = next;
+      for (const listener of listeners) listener();
+    }),
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    load: () => Promise.resolve(),
+  };
+  return store;
+}
+
+/** The section tabs only, in the order drawn — not the row's Pin and Default order. */
+const tabLabels = () =>
+  Array.from(document.querySelectorAll('[data-tab]')).map((element) => element.textContent);
+
 
 const tab = (name: string) => screen.getByRole('button', { name });
 
 describe('LevelTabs (the level navigation)', () => {
   beforeEach(() => {
+    setPreferenceStoreForTests(fakePreferences());
+    localStorage.removeItem(PINS_KEY);
+    resetPinsForTests();
     level.value = 'organization';
     section.value = null;
     bootstrapState.status = 'ready';
@@ -148,8 +181,7 @@ describe('LevelTabs (the level navigation)', () => {
 
   it('lists the items of the level in scope, in order, settings last', () => {
     render(<LevelTabs />);
-    const labels = screen.getAllByRole('button').map((button) => button.textContent);
-    expect(labels).toEqual(['People', 'Connections', 'Settings']);
+    expect(tabLabels()).toEqual(['People', 'Connections', 'Settings']);
   });
 
   it('leaves out the items of another level', () => {
@@ -250,6 +282,122 @@ describe('LevelTabs (the level navigation)', () => {
     bootstrapState.status = 'failed';
     const { container } = render(<LevelTabs />);
     expect(container.firstChild).toBeNull();
+  });
+});
+
+describe('LevelTabs: the order a person keeps (tab-order.ts, /me/ui-preferences)', () => {
+  beforeEach(() => {
+    localStorage.removeItem(PINS_KEY);
+    resetPinsForTests();
+    level.value = 'organization';
+    section.value = null;
+    bootstrapState.status = 'ready';
+    registered.value = [settings, connections, people, projects];
+    mounted.value = [people];
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    setPreferenceStoreForTests(null);
+  });
+
+  it('draws the tabs in the stored order of their level', () => {
+    setPreferenceStoreForTests(fakePreferences({ 'organization.tabs.order': 'organization,connections' }));
+    render(<LevelTabs />);
+    // People was never stored: it keeps its default place, first, in front of the stored ones.
+    expect(tabLabels()).toEqual(['People', 'Settings', 'Connections']);
+  });
+
+  it('reads the order of another level as nothing', () => {
+    setPreferenceStoreForTests(fakePreferences({ 'project.tabs.order': 'connections' }));
+    render(<LevelTabs />);
+    expect(tabLabels()).toEqual(['People', 'Connections', 'Settings']);
+  });
+
+  it('moves a focused tab with Alt+Shift+arrow, and stores the order', () => {
+    const store = fakePreferences();
+    setPreferenceStoreForTests(store);
+    render(<LevelTabs />);
+    fireEvent.keyDown(tab('Connections'), { key: 'ArrowLeft', altKey: true, shiftKey: true });
+    expect(store.set).toHaveBeenCalledWith('organization.tabs.order', 'connections,people,organization');
+    expect(tabLabels()).toEqual(['Connections', 'People', 'Settings']);
+  });
+
+  it('ignores a plain arrow, and a move past the end', () => {
+    const store = fakePreferences();
+    setPreferenceStoreForTests(store);
+    render(<LevelTabs />);
+    fireEvent.keyDown(tab('Connections'), { key: 'ArrowLeft' });
+    fireEvent.keyDown(tab('People'), { key: 'ArrowLeft', altKey: true, shiftKey: true });
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it('stores nothing for the default order', () => {
+    const store = fakePreferences({ 'organization.tabs.order': 'connections,people,organization' });
+    setPreferenceStoreForTests(store);
+    render(<LevelTabs />);
+    fireEvent.keyDown(tab('Connections'), { key: 'ArrowRight', altKey: true, shiftKey: true });
+    expect(store.set).toHaveBeenCalledWith('organization.tabs.order', '');
+  });
+
+  it('offers the default order back only while another one is kept', () => {
+    const store = fakePreferences({ 'organization.tabs.order': 'connections,people' });
+    setPreferenceStoreForTests(store);
+    render(<LevelTabs />);
+    fireEvent.click(screen.getByRole('button', { name: 'level_tabs_default_order' }));
+    expect(store.set).toHaveBeenCalledWith('organization.tabs.order', '');
+    expect(screen.queryByRole('button', { name: 'level_tabs_default_order' })).toBeNull();
+  });
+
+  it('moves a dragged tab to where it is dropped', () => {
+    const store = fakePreferences();
+    setPreferenceStoreForTests(store);
+    render(<LevelTabs />);
+    const dataTransfer = { setData: vi.fn(), effectAllowed: '', dropEffect: '' };
+    fireEvent.dragStart(tab('Settings'), { dataTransfer });
+    // jsdom lays nothing out: every box is 0 wide at 0, so a pointer left of 0 lands in front.
+    fireEvent.dragOver(tab('People'), { dataTransfer, clientX: -1 });
+    fireEvent.drop(tab('People'), { dataTransfer, clientX: -1 });
+    expect(store.set).toHaveBeenCalledWith('organization.tabs.order', 'organization,people,connections');
+  });
+});
+
+describe('LevelTabs: Pin (pins.ts)', () => {
+  beforeEach(() => {
+    setPreferenceStoreForTests(fakePreferences());
+    localStorage.removeItem(PINS_KEY);
+    resetPinsForTests();
+    level.value = 'organization';
+    section.value = null;
+    bootstrapState.status = 'ready';
+    registered.value = [settings, connections, people, projects];
+    mounted.value = [people];
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    setPreferenceStoreForTests(null);
+  });
+
+  it('pins the section on screen, and unpins it again', () => {
+    render(<LevelTabs />);
+    const button = () => document.querySelector('[data-pin-toggle]') as HTMLElement;
+    expect(button().getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(button());
+    expect(button().getAttribute('aria-pressed')).toBe('true');
+    expect(JSON.parse(localStorage.getItem(PINS_KEY)!)).toEqual([
+      { route: { token: 'people' }, label: 'People', where: [] },
+    ]);
+    fireEvent.click(button());
+    expect(JSON.parse(localStorage.getItem(PINS_KEY)!)).toEqual([]);
+  });
+
+  it('offers no pin while no tab is on screen', () => {
+    mounted.value = [];
+    render(<LevelTabs />);
+    expect(document.querySelector('[data-pin-toggle]')).toBeNull();
   });
 });
 

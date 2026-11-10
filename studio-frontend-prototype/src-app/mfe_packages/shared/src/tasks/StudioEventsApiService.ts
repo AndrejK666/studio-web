@@ -62,6 +62,12 @@ export interface StudioRunEvent {
   /** The handler's structured result — counts, ids, whatever it reports. */
   result?: Record<string, unknown> | null;
   attempts?: number | null;
+  /**
+   * On an ending: whether a person started the run. `false` for Studio's own
+   * work (the scheduler's sweeps, a delivery a run queued), whose ending is
+   * nobody's news. Absent from a backend that predates it.
+   */
+  asked_by_person?: boolean;
 }
 
 /** A page of replayed events, oldest first. */

@@ -11,6 +11,8 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
+  STUDIO_SHARED_PROPERTY_LIVE_EVENT,
+  type StudioEvent,
 } from '@constructor-studio/mfe-shared';
 import { readAppContext } from '@/app/slices/appContextSlice';
 import { readSessionProfile } from '@/app/slices/appSessionSlice';
@@ -70,6 +72,15 @@ export function publishSessionProfile(app: FrontXApp): void {
  */
 export function publishFrameUrl(app: FrontXApp, url: string | null): void {
   publish(app, STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL, url);
+}
+
+/**
+ * The last frame of the shell's live channel (`app/live/liveChannel.ts`), or
+ * `null` before one. A parameter, like the frame address: the events stay out
+ * of the store.
+ */
+export function publishLiveEvent(app: FrontXApp, event: StudioEvent | null): void {
+  publish(app, STUDIO_SHARED_PROPERTY_LIVE_EVENT, event);
 }
 
 export function publishStudioContext(app: FrontXApp): void {

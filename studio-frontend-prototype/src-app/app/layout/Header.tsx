@@ -15,6 +15,8 @@ import type { OverlayExtension } from './overlayExtension';
 import { ContextChain } from './ContextChain';
 import { UserMenu } from './UserMenu';
 import { ProductMenu } from './ProductMenu';
+import { PinsMenu } from './PinsMenu';
+import { WorkInbox } from './WorkInbox';
 
 export interface HeaderProps {
   children?: React.ReactNode;
@@ -111,6 +113,10 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
           disabled={!inboxExtension}
           onClick={inboxExtension ? () => void openOverlayExtension(inboxExtension.id) : undefined}
         />
+        {/* What the person keeps within one click (the prototype's rail pins). */}
+        <PinsMenu />
+        {/* What finished since the portal was opened (the prototype's bell). */}
+        <WorkInbox />
         <UserMenu />
       </div>
 

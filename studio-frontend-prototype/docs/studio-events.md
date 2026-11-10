@@ -11,6 +11,7 @@ This page is the client half: what to call, and what bites.
 
 - [The rule](#the-rule)
 - [The service](#the-service)
+- [The shell's channel](#the-shells-channel)
 - [Watch every background run](#watch-every-background-run)
 - [Follow one run you just started](#follow-one-run-you-just-started)
 - [Refresh a list without polling](#refresh-a-list-without-polling)
@@ -91,6 +92,44 @@ interface StudioEvent<P = unknown> {
 For `task.*` events the payload is a `StudioRunEvent`, carrying the same fields
 `GET /studio-tasks/v1/runs/{id}` answers with — so one view can be fed by
 either without a second mapping.
+
+## The shell's channel
+
+Most screens do not need a stream of their own: they need to know that
+something happened, so they can read again. For them the shell holds **one**
+subscription to `events` for the signed-in person
+([`src-app/app/live/liveChannel.ts`](../src-app/app/live/liveChannel.ts)) — open
+while the Layout is mounted, that is, while somebody is signed in — and fans it
+out twice:
+
+- to the shell's own chrome (the bell, `layout/WorkInbox.tsx`);
+- across the realm boundary, as the shared property
+  `STUDIO_SHARED_PROPERTY_LIVE_EVENT`
+  (`…constructor_studio.live.studio_events.last_event.v1~`): the last event, or `null`
+  before the first. The screen domain declares it; an entry that wants it lists
+  it in `requiredProperties`.
+
+Inside an MFE, `useStudioEventRefresh` from `@constructor-studio/mfe-shared`
+turns it into a reload — a burst gathered into one call 300 ms after its first
+event, never starved by a run that keeps reporting, and the event that was
+already there when the screen mounted ignored:
+
+```tsx
+import { isRunEvent, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
+
+useStudioEventRefresh(isRunEvent, refresh); // Organization › Background work
+```
+
+Why a property and not a stream per screen: the prototype learned that a
+stream per widget took all six of the browser's HTTP/1.1 connections to the
+host, and every other request of the page queued behind them. The property is
+a signal, not a log — a screen that needs every event of one run in order
+(the editor's session, an import) still follows it with `streamFrom` or
+`createRunFollower`, as below.
+
+The channel listens to the person's home tenant (no `?organization_id=`), as
+the prototype's bell did. A platform administrator looking at another
+organization hears their home's events, not that organization's.
 
 ## Watch every background run
 
