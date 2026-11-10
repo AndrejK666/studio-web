@@ -64,7 +64,7 @@ describe('useStudioEventRefresh', () => {
       return null;
     };
     const view = render(<Probe />);
-    const publish = (next: StudioEvent) =>
+    const publish = (next: StudioEvent | null) =>
       act(() => fixture.setProperty(STUDIO_SHARED_PROPERTY_LIVE_EVENT, next as unknown as string));
     return { refresh, publish, view };
   }
@@ -100,6 +100,16 @@ describe('useStudioEventRefresh', () => {
     publish(event(3));
     act(() => vi.advanceTimersByTime(1000));
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("hears a new organization's events from its first seq, once the shell switched streams", () => {
+    const { refresh, publish } = mount(event(40));
+    // The shell's channel moved to another organization: null, then that
+    // tenant's own sequence, which starts low.
+    publish(null);
+    publish(event(2));
+    act(() => vi.advanceTimersByTime(300));
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it('drops a gathered refresh when the screen goes away', () => {

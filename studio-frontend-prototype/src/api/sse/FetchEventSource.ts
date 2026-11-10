@@ -50,8 +50,13 @@ const BACKOFF = [500, 1_000, 2_000, 5_000, 10_000] as const;
 export interface FetchEventSourceResume {
   /** This event's cursor, from its parsed payload. `undefined` = not cursored. */
   cursorOf: (event: unknown) => number | undefined;
-  /** Everything published after `cursor`, oldest first. */
-  gap: (cursor: number) => Promise<readonly unknown[]>;
+  /**
+   * Everything published after `cursor`, oldest first. `url` is the stream's
+   * own address, so one policy can serve several streams of an endpoint that
+   * differ by a query parameter (`/stream?organization_id=…` replays from
+   * `/events?organization_id=…`).
+   */
+  gap: (cursor: number, url: string) => Promise<readonly unknown[]>;
   /**
    * Cursor to start from on the FIRST connect, `0` included: given, the first
    * connect replays from it, and a replay that fails — then or on a reconnect —
@@ -229,7 +234,7 @@ export class FetchEventSource implements EventSourceLike {
 
     this.held = [];
     let failure: unknown = null;
-    const missed = await resume.gap(this.cursor).then(
+    const missed = await resume.gap(this.cursor, this.url).then(
       (events) => events,
       (error: unknown) => {
         failure = error;

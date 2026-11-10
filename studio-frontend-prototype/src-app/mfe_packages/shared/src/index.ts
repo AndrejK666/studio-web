@@ -169,6 +169,7 @@ export { checkoutDirectory, sessionSources, type SessionSource } from './project
 export {
   StudioEventsApiService,
   STUDIO_EVENTS_API_BASE_URL,
+  organizationOfStreamUrl,
   type StudioEvent,
   type StudioEventPage,
   type StudioRunEvent,

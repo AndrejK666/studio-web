@@ -114,6 +114,13 @@ export async function pageThrough(
   }
 }
 
+/** The organization a stream URL names (`?organization_id=`), or `null`. */
+export function organizationOfStreamUrl(url: string | undefined): string | null {
+  if (!url || !url.includes('?')) return null;
+  const value = new URLSearchParams(url.slice(url.indexOf('?') + 1)).get('organization_id');
+  return value ? value : null;
+}
+
 export class StudioEventsApiService extends BaseApiService {
   constructor() {
     const restProtocol = new RestProtocol({ timeout: 30000 });
@@ -141,12 +148,17 @@ export class StudioEventsApiService extends BaseApiService {
       new SseAuthPlugin({
         resume: {
           cursorOf: (event) => (event as StudioEvent | null)?.seq,
-          gap: (cursor) =>
-            pageThrough(
+          // The replay asks the same tenant the stream listens to: a stream
+          // opened for an organization (`?organization_id=`) replays from it.
+          gap: (cursor, url) => {
+            const organization = organizationOfStreamUrl(url);
+            const scope = organization ? `&organization_id=${encodeURIComponent(organization)}` : '';
+            return pageThrough(
               (afterSeq, limit) =>
-                restProtocol.get<StudioEventPage>(`/events?after_seq=${afterSeq}&limit=${limit}`),
+                restProtocol.get<StudioEventPage>(`/events?after_seq=${afterSeq}&limit=${limit}${scope}`),
               cursor,
-            ),
+            );
+          },
         },
       }),
     );
@@ -161,6 +173,20 @@ export class StudioEventsApiService extends BaseApiService {
    * read beforehand — a task can finish before this connection is even open.
    */
   readonly events = this.protocol(SseStreamProtocol).stream<StudioEvent>('/stream');
+
+  /**
+   * The live stream of one organization's tenant (`?organization_id=`): what a
+   * platform administrator, or a member of several organizations, hears while
+   * that organization is on screen. The server answers 404 for an organization
+   * the caller does not reach. `null` is the caller's home tenant — {@link events}.
+   * A reconnect replays that organization's gap, not the home tenant's.
+   */
+  eventsFor(organizationId: string | null) {
+    if (!organizationId) return this.events;
+    return this.protocol(SseStreamProtocol).stream<StudioEvent>(
+      `/stream?organization_id=${encodeURIComponent(organizationId)}`,
+    );
+  }
 
   /** The retained window after `afterSeq`, oldest first. */
   readonly since = this.protocol(RestEndpointProtocol).queryWith<

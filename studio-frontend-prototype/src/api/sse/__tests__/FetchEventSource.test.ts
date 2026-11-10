@@ -249,7 +249,7 @@ describe('FetchEventSource', () => {
     await until(() => seen.length === 3, 'the replayed events and the live one');
     source.close();
 
-    expect(gap).toHaveBeenCalledWith(0);
+    expect(gap).toHaveBeenCalledWith(0, expect.any(String));
     expect(seen).toEqual([1, 2, 3]);
   });
 

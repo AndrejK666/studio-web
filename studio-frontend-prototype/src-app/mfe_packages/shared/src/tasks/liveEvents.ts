@@ -87,7 +87,13 @@ export function useStudioEventRefresh(
   });
 
   useEffect(() => {
-    if (!event || event.seq <= handled.current) return;
+    // `null` after an event: the shell switched to another organization's
+    // stream, whose seq starts over — whatever comes next is news.
+    if (!event) {
+      handled.current = 0;
+      return;
+    }
+    if (event.seq <= handled.current) return;
     handled.current = event.seq;
     if (!latest.current.matches(event) || pending.current) return;
     pending.current = setTimeout(() => {

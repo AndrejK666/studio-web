@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SHARED_AUTH_SESSION_SYMBOL } from '@gears-frontx/frontx-template-shell';
-import { StudioEventsApiService, pageThrough, type StudioEvent } from './StudioEventsApiService';
+import {
+  StudioEventsApiService,
+  organizationOfStreamUrl,
+  pageThrough,
+  type StudioEvent,
+} from './StudioEventsApiService';
 
 type SharedAuthHost = typeof globalThis & { [SHARED_AUTH_SESSION_SYMBOL]?: unknown };
 
@@ -60,6 +65,22 @@ describe('StudioEventsApiService', () => {
     // useApiStream opens a new connection instead of keeping the old one.
     expect(service.streamFrom(7).key[2]).toBe('/stream?resume_from=7');
     expect(service.streamFrom(7).key).not.toEqual(service.events.key);
+  });
+
+  it("opens an organization's stream when one is named, the home tenant's otherwise", () => {
+    const service = new StudioEventsApiService();
+
+    expect(service.eventsFor(null)).toBe(service.events);
+    expect(service.eventsFor('org-1').key[2]).toBe('/stream?organization_id=org-1');
+    expect(service.eventsFor('org-1').key).not.toEqual(service.eventsFor('org-2').key);
+  });
+
+  it("reads the organization a stream names, so its gap is replayed from the same tenant", () => {
+    expect(organizationOfStreamUrl('/cf/studio-events/v1/stream?organization_id=org-1')).toBe('org-1');
+    expect(organizationOfStreamUrl('/cf/studio-events/v1/stream?resume_from=4&organization_id=o%202')).toBe('o 2');
+    expect(organizationOfStreamUrl('/cf/studio-events/v1/stream')).toBeNull();
+    expect(organizationOfStreamUrl('/cf/studio-events/v1/stream?organization_id=')).toBeNull();
+    expect(organizationOfStreamUrl(undefined)).toBeNull();
   });
 
   it('connects with the host session bearer and delivers parsed events', async () => {

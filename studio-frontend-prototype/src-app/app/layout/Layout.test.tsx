@@ -7,6 +7,10 @@ vi.mock('@/app/actions/bootstrapActions', () => ({
   fetchCurrentUser: vi.fn(),
   fetchAppContext: vi.fn(),
 }));
+vi.mock('@/app/live/useLiveChannel', () => ({
+  useLiveChannelOpen: () => undefined,
+  useLiveChannelFollowsOrganization: () => undefined,
+}));
 vi.mock('./Header', () => ({ Header: () => <div data-testid="top-bar" /> }));
 vi.mock('./LevelTabs', () => ({ LevelTabs: () => <div data-testid="level-tabs" /> }));
 vi.mock('./RuntimeKits', () => ({ RuntimeKits: () => <div data-testid="runtime-kits" /> }));

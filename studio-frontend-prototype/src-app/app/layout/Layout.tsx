@@ -15,7 +15,7 @@ import { Popup } from './Popup';
 import { Overlay } from './Overlay';
 import { OverlayDialog } from './OverlayDialog';
 import { OrganizationAccessGate, useHasNoOrganization } from './OrganizationAccessGate';
-import { useLiveChannelOpen } from '@/app/live/useLiveChannel';
+import { useLiveChannelFollowsOrganization, useLiveChannelOpen } from '@/app/live/useLiveChannel';
 import { Presence } from './Presence';
 
 export interface LayoutProps {
@@ -31,6 +31,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   // The Layout is mounted only behind the AuthGate: the live channel is open
   // exactly while somebody is signed in (app/live/liveChannel.ts).
   useLiveChannelOpen();
+  // …listening to the organization on screen, not only the person's home tenant.
+  useLiveChannelFollowsOrganization();
 
   useEffect(() => {
     fetchCurrentUser();

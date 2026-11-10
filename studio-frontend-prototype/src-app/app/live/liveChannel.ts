@@ -18,6 +18,14 @@
  * `StudioEventsApiService`); this module dedupes by `seq`, since a replayed
  * page and the live stream can overlap, and counts its users so the stream is
  * open exactly while somebody signed in is on the page.
+ *
+ * The stream follows the organization on screen ({@link LiveChannel.setScope},
+ * `?organization_id=`), not only the person's home tenant: a platform
+ * administrator looking at an organization, or a member of several, hears the
+ * runs and changes of the one they are looking at (the prototype's live domain
+ * changes did the same). A new scope closes the old stream and opens the new
+ * one; `seq` is per tenant, so the cursor starts over and the micro-frontends
+ * are told with a `null` that whatever they last heard is not this tenant's.
  */
 
 import { apiRegistry, type FrontXApp } from '@gears-frontx/react';
@@ -37,13 +45,21 @@ export type LiveListener = (event: StudioEvent) => void;
 export interface LiveChannel {
   /** Opens the stream for the first user; the returned release closes it after the last. */
   start(): () => void;
+  /**
+   * The organization to listen to (`null`: the person's home tenant). Taking
+   * effect at once while the stream is open, else at the next start.
+   */
+  setScope(organizationId: string | null): void;
+  /** The organization listened to, `null` for the home tenant. */
+  scope(): string | null;
   /** Hears every new event while the stream is open. */
   subscribe(listener: LiveListener): () => void;
   status(): LiveStatus;
 }
 
 export interface LiveChannelDeps {
-  stream: () => LiveStream;
+  /** The stream of one organization's tenant, or of the home tenant for `null`. */
+  stream: (organizationId: string | null) => LiveStream;
   /** Relays one event to the micro-frontends. */
   publish: (event: StudioEvent | null) => void;
   warn?: (message: string, error?: unknown) => void;
@@ -55,6 +71,7 @@ export function createLiveChannel({ stream, publish, warn = console.warn }: Live
   let lastSeq = 0;
   let state: LiveStatus = 'idle';
   let open: { stream: LiveStream; id: Promise<string> } | null = null;
+  let organization: string | null = null;
 
   const deliver = (event: StudioEvent): void => {
     if (typeof event?.seq !== 'number' || event.seq <= lastSeq) return;
@@ -72,7 +89,7 @@ export function createLiveChannel({ stream, publish, warn = console.warn }: Live
   const connect = (): void => {
     let descriptor: LiveStream;
     try {
-      descriptor = stream();
+      descriptor = stream(organization);
     } catch (error) {
       // No events service (a test app, a host without it): the screens keep
       // their own floor — a slow reload — and nothing breaks.
@@ -101,8 +118,8 @@ export function createLiveChannel({ stream, publish, warn = console.warn }: Live
     const closing = open;
     open = null;
     state = 'idle';
-    // A new person (or the same one, later) starts over: their tenant's cursor
-    // owes nothing to this one's.
+    // A new person (or the same one, later), or another organization, starts
+    // over: that tenant's cursor owes nothing to this one's.
     lastSeq = 0;
     if (closing) void closing.id.then((id) => closing.stream.disconnect(id), () => undefined);
   };
@@ -119,6 +136,17 @@ export function createLiveChannel({ stream, publish, warn = console.warn }: Live
         if (users === 0) disconnect();
       };
     },
+    setScope(organizationId) {
+      const next = organizationId || null;
+      if (next === organization) return;
+      organization = next;
+      if (users === 0) return;
+      disconnect();
+      // The screens' last event was another tenant's: its seq says nothing here.
+      publish(null);
+      connect();
+    },
+    scope: () => organization,
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -134,7 +162,7 @@ let shellChannel: LiveChannel | null = null;
 /** Creates the shell's channel; `main.tsx` calls it once, after the events service is registered. */
 export function registerLiveChannel(app: FrontXApp): LiveChannel {
   shellChannel = createLiveChannel({
-    stream: () => apiRegistry.getService(StudioEventsApiService).events,
+    stream: (organizationId) => apiRegistry.getService(StudioEventsApiService).eventsFor(organizationId),
     publish: (event) => publishLiveEvent(app, event),
   });
   return shellChannel;

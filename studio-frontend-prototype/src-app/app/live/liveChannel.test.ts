@@ -120,4 +120,70 @@ describe('createLiveChannel', () => {
     expect(channel.status()).toBe('closed');
     expect(warn).toHaveBeenCalled();
   });
+
+  describe('the organization on screen', () => {
+    function scoped() {
+      const streams = new Map<string, ReturnType<typeof fakeStream>>();
+      const opened: (string | null)[] = [];
+      const publish = vi.fn();
+      const channel = createLiveChannel({
+        stream: (org) => {
+          opened.push(org);
+          const fake = fakeStream();
+          streams.set(org ?? 'home', fake);
+          return fake.stream;
+        },
+        publish,
+        warn: vi.fn(),
+      });
+      return { streams, opened, publish, channel };
+    }
+
+    it("listens to the home tenant until an organization is named, then to that organization's", async () => {
+      const { streams, opened, channel } = scoped();
+      channel.start();
+      expect(opened).toEqual([null]);
+      channel.setScope('org-a');
+      expect(opened).toEqual([null, 'org-a']);
+      expect(channel.scope()).toBe('org-a');
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(streams.get('home')?.stream.disconnect).toHaveBeenCalledWith('c1');
+    });
+
+    it('opens nothing for a scope set before anybody started it, and uses it at the start', () => {
+      const { opened, channel } = scoped();
+      channel.setScope('org-a');
+      expect(opened).toEqual([]);
+      channel.start();
+      expect(opened).toEqual(['org-a']);
+    });
+
+    it('does not reopen for the same organization', () => {
+      const { opened, channel } = scoped();
+      channel.setScope('org-a');
+      channel.start();
+      channel.setScope('org-a');
+      expect(opened).toEqual(['org-a']);
+    });
+
+    it("tells the screens the last event is not this tenant's, and starts the cursor over", () => {
+      const { streams, publish, channel } = scoped();
+      channel.start();
+      streams.get('home')!.emit(event(40));
+      channel.setScope('org-b');
+      // org-b's seq is its own: a low one is news there.
+      streams.get('org-b')!.emit(event(3));
+      expect(publish.mock.calls.map(([e]) => (e as StudioEvent | null)?.seq ?? null)).toEqual([40, null, 3]);
+    });
+
+    it('goes back to the home tenant when no organization is on screen', () => {
+      const { opened, channel } = scoped();
+      channel.setScope('org-a');
+      channel.start();
+      channel.setScope(null);
+      expect(opened).toEqual(['org-a', null]);
+      expect(channel.scope()).toBeNull();
+    });
+  });
 });
