@@ -19,6 +19,7 @@ import '@/app/events/bootstrapEvents'; // Register app-level events (type augmen
 import { registerBootstrapEffects } from '@/app/effects/bootstrapEffects'; // Register app-level effects
 import { registerAppContextEffects } from '@/app/effects/appContextEffects'; // Top-bar context slot
 import { createEditorSession } from '@/app/effects/editorSessionEffects';
+import { registerLiveChannel } from '@/app/live/liveChannel';
 import { mfeBootstrapSlice } from '@/app/slices/mfeBootstrapSlice';
 import { appContextSlice } from '@/app/slices/appContextSlice';
 import { appSessionSlice } from '@/app/slices/appSessionSlice';
@@ -98,6 +99,9 @@ registerSlice(editorSessionSlice);
 registerBootstrapEffects(app);
 const editorSession = createEditorSession(app);
 registerAppContextEffects(app, editorSession);
+// One studio-events subscription for the signed-in person, opened by the
+// Layout and relayed to the bell and to every screen that asks (app/live).
+registerLiveChannel(app);
 
 // Register all themes (default theme has default:true, activates automatically)
 app.themeRegistry.register(defaultTheme);

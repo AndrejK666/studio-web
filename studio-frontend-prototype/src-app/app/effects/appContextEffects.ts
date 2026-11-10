@@ -231,6 +231,14 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
     routing.navigation.navigate(routeFor(token, 'workspace'), 'push');
   });
 
+  // A pin keeps a whole address, so opening one is a navigation like any
+  // other: the router reports it and `materialize` moves the slice, the
+  // switchers and the screen — or falls back, if the place is gone.
+  eventBus.on('app/pins/open', ({ route }) => {
+    if (!routing || !route.token) return;
+    routing.navigation.navigate({ ...route }, 'push');
+  });
+
   eventBus.on('app/editor/session/retry', () => editorSession.retry());
 
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4

@@ -113,6 +113,12 @@ describe('registerAppContextEffects', () => {
     expect(handle.navigation.navigate).toHaveBeenCalledWith({ token: 'people', org: 'o1' }, 'push');
   });
 
+  it('a pin goes to the whole address it keeps, whatever is in scope now', async () => {
+    const route = { token: 'projects', org: 'o2', workspace: 'w9', project: 'p7', section: 'specs' };
+    await emit('app/pins/open', { route });
+    expect(handle.navigation.navigate).toHaveBeenCalledWith(route, 'push');
+  });
+
   it('a tab click on a project section keeps the project and names the section', async () => {
     await emit('app/context/screen/requested', { extensionId: 'projects.artifacts' });
     expect(handle.navigation.navigate).toHaveBeenCalledWith(

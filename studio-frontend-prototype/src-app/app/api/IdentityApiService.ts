@@ -18,6 +18,11 @@ import {
 } from '@gears-frontx/react';
 import { RestMockPlugin } from '@gears-frontx/frontx-template-shell';
 import type { InvitationList, Membership, MembershipList } from './types';
+
+/** `GET`/`PUT /me/ui-preferences`: the whole map, both ways. */
+export interface UiPreferences {
+  preferences: Record<string, string>;
+}
 import { identityMockMap } from './mocks';
 
 export const IDENTITY_API_BASE_URL = '/cf/studio-user/v1';
@@ -68,4 +73,18 @@ export class IdentityApiService extends BaseApiService {
     Membership,
     { token: string } | { invitation_id: string }
   >('POST', '/me/invitations/accept');
+
+  /**
+   * The person's remembered UI choices — the order they keep a level's tabs
+   * in, among others: one map per person, at most 64 short entries
+   * (`studio-user`). Read once per session (`preferences/uiPreferences.ts`).
+   */
+  readonly uiPreferences =
+    this.protocol(RestEndpointProtocol).query<UiPreferences>('/me/ui-preferences');
+
+  /** Replace the whole map. Whole rather than merged: an absent key has to be able to mean "forget this one". */
+  readonly saveUiPreferences = this.protocol(RestEndpointProtocol).mutation<UiPreferences, UiPreferences>(
+    'PUT',
+    '/me/ui-preferences'
+  );
 }

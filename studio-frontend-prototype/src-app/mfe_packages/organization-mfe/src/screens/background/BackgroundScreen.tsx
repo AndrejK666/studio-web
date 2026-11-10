@@ -7,8 +7,13 @@
  * this deployment been doing, and what went wrong". **Schedules** is "what
  * fires on its own", with the one control a person needs: run it now. The
  * runs open on what failed and what is running; a scheduled task's succeeded
- * runs fold into one row. While something on screen is still moving the list
- * reads itself again every few seconds.
+ * runs fold into one row.
+ *
+ * `studio-tasks` announces every run transition on `studio-events`, and the
+ * shell relays its one subscription to this screen: the list reads itself
+ * again when a run moves. The poll stays as a floor while a run on screen is
+ * still moving — it covers a deployment without the channel, as in the
+ * prototype.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -27,6 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from '@gears-frontx/ui-kit';
+import { isRunEvent, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
 import { BackgroundApiService } from '../../api/BackgroundApiService';
 import {
   ATTENTION_STATES,
@@ -183,6 +189,8 @@ export const BackgroundScreen: React.FC = () => {
       alive = false;
     };
   }, [api, state, taskType, limit, recurring, tick]);
+
+  useStudioEventRefresh(isRunEvent, refresh);
 
   const live = !!page?.items.some((r) => r.state === 'queued' || r.state === 'running');
   useEffect(() => {

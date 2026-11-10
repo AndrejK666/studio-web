@@ -37,3 +37,14 @@ export const STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT =
  */
 export const STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL =
   'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~';
+
+/**
+ * The last event the shell's one `studio-events` subscription received
+ * (`StudioEvent`), or `null` before the first. The shell holds the only
+ * connection for the signed-in person and relays every frame here, so a
+ * screen is told that something happened without opening a stream of its own
+ * (`useStudioEventRefresh`). A signal to reload, not a log: a screen that
+ * mounts sees only the newest one, and a burst may coalesce.
+ */
+export const STUDIO_SHARED_PROPERTY_LIVE_EVENT =
+  'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.live.studio_events.last_event.v1~';
