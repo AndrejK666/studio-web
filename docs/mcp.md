@@ -206,6 +206,7 @@ without the portal; each step is the REST route the portal calls for it.
 | | `infra_services_set` | *changes:* replaces the list |
 | | `infra_service_public_url_set` | *changes:* sets or removes one service's `public_url`, keeping the rest |
 | | `infra_plan` | what a deploy to one environment does with them |
+| | `infra_keycloak_realm` | the Keycloak realm a project's Keycloak infra service imports, made from its passport and the latest description; nothing is written (`content` goes in with `infra_services_set`) |
 | | `image_import` | *changes:* copies an external image or chart into the project's path |
 | | `image_get` | one image: where, by digest, its state |
 | | `project_images` | the project's images and charts |
