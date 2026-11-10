@@ -16,6 +16,9 @@ Status: **proposed** · Date: 2026-11-10 · Builds on ADR-0066 (Studio's own mod
 
 - [Context and Problem Statement](#context-and-problem-statement)
 - [Considered Options](#considered-options)
+  - [Where a moved type's declaration lives](#where-a-moved-types-declaration-lives)
+  - [What uninstalling does to a type that has objects](#what-uninstalling-does-to-a-type-that-has-objects)
+  - [How existing organizations move](#how-existing-organizations-move)
 - [Decision Outcome](#decision-outcome)
   - [1. The core](#1-the-core)
   - [2. What it means that a kit brings a type](#2-what-it-means-that-a-kit-brings-a-type)
@@ -374,18 +377,18 @@ unknown type or field. A client can then tell "not installed here" from "wrong n
 Each phase is one change. It ships alone and leaves the model every organization reads
 unchanged until phase 5.
 
-| Phase | Delivers | Depends on |
+| Phase | Issue | Delivers | Depends on |
 |---|---|---|
-| 1 | The owner of every seed type as `meta.kit` in `ontology.studio.json`, an annotation with no behaviour. A test: every type has an owner, and no core type relates to a kit type except the crossings the analysis lists. `gen-domain-client.mjs` reads `ontology.studio.json` | — |
-| 2 | The gear layer: `ensure_type` records the gear's need as its own layer (§3); the merged model is unchanged | 1 |
-| 3 | The layered effective model, and the migration with its equality check (§5) | 2, #1004 (overlay installer), #1000 |
-| 4 | Absence: installed / dormant / absent (§4), `DOMAIN_TYPE_NOT_INSTALLED` and `DOMAIN_TYPE_DORMANT`, `KIT_NOT_INSTALLED` for a kit's MCP tools, the MCP fields, the generic screens' rules, sections that need a type (§2), the split generated client (§6), the platform's "Remove what a base kit left" (§7) | 3 |
-| 5 | Types move into their kits' overlays, **kits whose screens exist first**, one kit per change: org-reports (`report`); project-tests (`check`); project-issues (`finding`, `work-item`); project-specs (`document`, `policy`, `review-request`, `approval`, the Document types tab); components (`approval-request`); project-team (`assignment`); project-activity (`comment`; Timeline needs `milestone`); then the tab-only kits (project-artifacts, org-connections, project-domain-model, org-costs, org-infrastructure, product-releases), each taking its `shows` relations | 4 |
-| 6 | project-lifecycle's `risk`, `dependency`, `lifecycle-stage` and `milestone` join the overlay that #1004 gives project-lifecycle first | 4, #1004 |
-| 7 | The `project-git` built-in kit: `pull-request`, `repository.hosts`, the `pull-requests` Inbox source; the project status signal, the organization Overview's pull-request block and the Tests tab's open pull requests depend on it or degrade | 4, #1005 |
-| 8 | The `assistant` built-in kit, with `model`, `tool` and `message` | 4 |
-| 9 | `gears` and the numbered `kit.packages_*` relations leave the seed; existing `gears` objects go dormant | 4 |
-| 10 | The Inbox's `review-requests` source and the remaining status signals carry their kit (§6) | 5, #1005 |
+| 1 | [#1030](https://github.com/constructorfabric/studio-web/issues/1030) | The owner of every seed type as `meta.kit` in `ontology.studio.json`, an annotation with no behaviour. A test: every type has an owner, and no core type relates to a kit type except the crossings the analysis lists. `gen-domain-client.mjs` reads `ontology.studio.json` | — |
+| 2 | [#1031](https://github.com/constructorfabric/studio-web/issues/1031) | The gear layer: `ensure_type` records the gear's need as its own layer (§3); the merged model is unchanged | 1 |
+| 3 | [#1032](https://github.com/constructorfabric/studio-web/issues/1032) | The layered effective model, and the migration with its equality check (§5) | 2, #1004 (overlay installer), #1000 |
+| 4 | [#1033](https://github.com/constructorfabric/studio-web/issues/1033) | Absence: installed / dormant / absent (§4), `DOMAIN_TYPE_NOT_INSTALLED` and `DOMAIN_TYPE_DORMANT`, `KIT_NOT_INSTALLED` for a kit's MCP tools, the MCP fields, the generic screens' rules, sections that need a type (§2), the split generated client (§6), the platform's "Remove what a base kit left" (§7) | 3 |
+| 5 | [#1034](https://github.com/constructorfabric/studio-web/issues/1034) | Types move into their kits' overlays, **kits whose screens exist first**, one kit per change: org-reports (`report`); project-tests (`check`); project-issues (`finding`, `work-item`); project-specs (`document`, `policy`, `review-request`, `approval`, the Document types tab); components (`approval-request`); project-team (`assignment`); project-activity (`comment`; Timeline needs `milestone`); then the tab-only kits (project-artifacts, org-connections, project-domain-model, org-costs, org-infrastructure, product-releases), each taking its `shows` relations | 4 |
+| 6 | [#1035](https://github.com/constructorfabric/studio-web/issues/1035) | project-lifecycle's `risk`, `dependency`, `lifecycle-stage` and `milestone` join the overlay that #1004 gives project-lifecycle first | 4, #1004 |
+| 7 | [#1036](https://github.com/constructorfabric/studio-web/issues/1036) | The `project-git` built-in kit: `pull-request`, `repository.hosts`, the `pull-requests` Inbox source; the project status signal, the organization Overview's pull-request block and the Tests tab's open pull requests depend on it or degrade | 4, #1005 |
+| 8 | [#1037](https://github.com/constructorfabric/studio-web/issues/1037) | The `assistant` built-in kit, with `model`, `tool` and `message` | 4 |
+| 9 | [#1038](https://github.com/constructorfabric/studio-web/issues/1038) | `gears` and the numbered `kit.packages_*` relations leave the seed; existing `gears` objects go dormant | 4 |
+| 10 | [#1039](https://github.com/constructorfabric/studio-web/issues/1039) | The Inbox's `review-requests` source and the remaining status signals carry their kit (§6) | 5, #1005 |
 
 ## Consequences
 
