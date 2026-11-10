@@ -258,6 +258,14 @@ pub mod spec_extraction {
         pub model: String,
         #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
+        /// The repository commit the text was read at; `None` for a source
+        /// that is not a repository file, and for every reading kept before
+        /// it was recorded (`m0028`).
+        #[serde(default)]
+        pub source_commit: Option<String>,
+        /// The branch checked out when it was read.
+        #[serde(default)]
+        pub source_ref: Option<String>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

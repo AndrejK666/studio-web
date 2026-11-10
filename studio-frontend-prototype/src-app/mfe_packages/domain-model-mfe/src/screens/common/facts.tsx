@@ -8,7 +8,7 @@
 import { useContext } from 'react';
 import { FactReviewContext } from '../../model/review-state';
 import { PROVISIONAL_NOTE } from '../../model/saved-entities';
-import { codeSpans, sideLabel, type SpecModelFact, type SpecModelSide } from '../../model/spec-model';
+import { codeSpans, readAtLabel, sideLabel, type SpecModelFact, type SpecModelSide } from '../../model/spec-model';
 import { useCommonTranslations } from '../../i18n';
 import styles from './common.module.css';
 
@@ -21,8 +21,18 @@ export function Prose({ text }: { text: string }) {
 }
 
 /** Where a fact was read: the document and its lines, and the passage quoted. */
-export function SideLink({ side, onOpenFile }: { side: SpecModelSide; onOpenFile?: OpenFile }) {
+export function SideLink({
+  side,
+  onOpenFile,
+  readAt,
+}: {
+  side: SpecModelSide;
+  onOpenFile?: OpenFile;
+  /** The repository commit and branch the passage was read at. */
+  readAt?: { source_commit?: string | null; source_ref?: string | null };
+}) {
   const { t } = useCommonTranslations();
+  const at = readAt ? readAtLabel(readAt) : null;
   return (
     <div className={styles.side}>
       <button
@@ -34,6 +44,11 @@ export function SideLink({ side, onOpenFile }: { side: SpecModelSide; onOpenFile
       >
         {sideLabel(side)}
       </button>
+      {at && (
+        <code className={styles.readAt} data-testid="read-at" title={t('read_at_title', { commit: readAt?.source_commit ?? '' })}>
+          {at}
+        </code>
+      )}
       {side.quote && <blockquote className={styles.quote}>{side.quote}</blockquote>}
     </div>
   );
@@ -85,7 +100,7 @@ export function FactRow({ fact, onOpenFile }: { fact: SpecModelFact; onOpenFile?
         )}
       </div>
       {fact.value && fact.text && <div className={styles.hint}>{fact.text}</div>}
-      <SideLink side={fact.source} onOpenFile={onOpenFile} />
+      <SideLink side={fact.source} onOpenFile={onOpenFile} readAt={fact} />
     </div>
   );
 }

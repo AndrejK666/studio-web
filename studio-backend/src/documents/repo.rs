@@ -385,6 +385,8 @@ impl DocumentsRepo {
                     spec_extraction::Column::Provider,
                     spec_extraction::Column::Model,
                     spec_extraction::Column::CreatedAt,
+                    spec_extraction::Column::SourceCommit,
+                    spec_extraction::Column::SourceRef,
                 ])?;
         spec_extraction::Entity::insert(model.into_active_model())
             .secure()

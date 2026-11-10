@@ -46,6 +46,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0025::Migration),
             Box::new(m0026::Migration),
             Box::new(m0027::Migration),
+            Box::new(m0028::Migration),
         ]
     }
 }
@@ -1701,6 +1702,53 @@ mod m0027 {
             for sql in [
                 "ALTER TABLE studio_review_requests DROP COLUMN IF EXISTS rules_snapshot;",
                 "ALTER TABLE studio_review_requests DROP COLUMN IF EXISTS stakeholders;",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The repository commit and branch each document was read at, beside the
+/// hash of its text (`docs/project-domain-model.md`, "Where a fact was read").
+/// A reading kept before has neither, and says so as null.
+mod m0028 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0028_spec_model_extraction_commit"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                "ALTER TABLE studio_spec_model_extractions ADD COLUMN IF NOT EXISTS source_commit TEXT;",
+                "ALTER TABLE studio_spec_model_extractions ADD COLUMN IF NOT EXISTS source_ref TEXT;",
+            ] {
+                manager.get_connection().execute_unprepared(sql).await?;
+            }
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            for sql in [
+                "ALTER TABLE studio_spec_model_extractions DROP COLUMN IF EXISTS source_ref;",
+                "ALTER TABLE studio_spec_model_extractions DROP COLUMN IF EXISTS source_commit;",
             ] {
                 manager.get_connection().execute_unprepared(sql).await?;
             }

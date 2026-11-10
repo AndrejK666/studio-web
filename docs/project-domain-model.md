@@ -114,6 +114,19 @@ version). An unchanged document is never extracted again, so the model does not
 change between two builds of the same text, and a finding missing from a
 rebuild is resolved only when the text of one of its sides changed.
 
+**Where a fact was read.** The content hash says which text a fact came from;
+the repository says when. Every extraction of a repository file also keeps
+the commit SHA and the branch of the checkout it was read from
+(`RepoFileReader::checkout_revision`, or `synced_clone_revision` when the
+text came from the sync's own clone; the branch the project's source names
+when the checkout is on a detached `HEAD`). They are the commit the reading
+was *taken* at: an unchanged document is not read again, so a later commit
+that left its text alone keeps the earlier one. `GET /project-domain-model`
+and the coverage answer them as `source_commit` and `source_ref` on every
+document and every fact, and the Project domain model tab shows them beside
+the passage (`main @ 4fbc802`). A Studio document, an uploaded source and a
+reading kept before they were recorded answer null.
+
 ## The model
 
 - **Source document**: a typed document of the project (repository binding or
@@ -425,7 +438,9 @@ the most facts about it, from the repository history, bots left out.
 
 - `studio_spec_model_extractions`: `project_id`, `path`, `revision`,
   `extractor_version`, `facts jsonb`, `dropped` (facts whose quote failed),
-  `created_at`; unique on the first four.
+  `created_at`, `source_commit` and `source_ref` (the repository commit and
+  branch the text was read at, `m0028`; null for a Studio document, an
+  uploaded source, and every reading kept before); unique on the first four.
 - `studio_spec_model_judgements`: `project_id`, `fingerprint`, `revisions`
   (sorted, one per side), `judge_version`, `verdict` (`conflict` or `none`),
   `finding jsonb`, `created_at`; unique on the first four.

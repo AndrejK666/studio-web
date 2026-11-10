@@ -2969,6 +2969,13 @@ pub struct SpecModelDocumentDto {
     /// Facts the model gave that the text did not bear out.
     pub dropped: u32,
     pub error: Option<String>,
+    /// The repository commit the reading shown was taken at, beside the
+    /// content hash `revision`. Null for a Studio document, an uploaded
+    /// source, a document never read, and a reading kept before the commit
+    /// was recorded.
+    pub source_commit: Option<String>,
+    /// The branch checked out when it was read.
+    pub source_ref: Option<String>,
 }
 
 /// One fact, with the passage it rests on.
@@ -2995,6 +3002,11 @@ pub struct SpecModelFactDto {
     /// `entity` sits; absent otherwise.
     pub layer: Option<String>,
     pub source: SpecModelSideDto,
+    /// The repository commit the passage was read at (its document's
+    /// reading); null where the document's coverage has none.
+    pub source_commit: Option<String>,
+    /// The branch it was read on.
+    pub source_ref: Option<String>,
 }
 
 /// The project domain model as read so far.
@@ -3066,6 +3078,8 @@ fn spec_model_document_dto(c: super::spec_model::Coverage) -> SpecModelDocumentD
         facts: count(c.facts),
         dropped: count(c.dropped),
         error: c.error,
+        source_commit: c.at.as_ref().map(|a| a.commit.clone()),
+        source_ref: c.at.and_then(|a| a.git_ref),
     }
 }
 
@@ -3098,6 +3112,8 @@ async fn spec_model_state(
             dropped: r.dropped,
             error: r.error.as_deref(),
             created_at: r.created_at.unix_timestamp(),
+            source_commit: r.source_commit.as_deref(),
+            source_ref: r.source_ref.as_deref(),
         })
         .collect();
     let (mut facts, mut coverage) = super::spec_model::current(&sources.documents, &kept);
@@ -3121,15 +3137,34 @@ async fn get_spec_model(
     let (sources, facts, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
     let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let facts = spec_model_fact_dtos(facts, &coverage);
     Ok(Json(SpecModelDto {
         unread_documents: count(sources.unread.len()),
         unread_because: sources.unread_because,
         build: super::spec_model::build::state(project_id).into(),
         documents: coverage.into_iter().map(spec_model_document_dto).collect(),
-        facts: facts
-            .into_iter()
-            .map(|f| SpecModelFactDto {
+        facts,
+    }))
+}
+
+/// Every fact as the model answers it, with the commit and branch its
+/// document's reading was taken at.
+fn spec_model_fact_dtos(
+    facts: Vec<super::spec_model::extract::Fact>,
+    coverage: &[super::spec_model::Coverage],
+) -> Vec<SpecModelFactDto> {
+    let at: std::collections::BTreeMap<&str, &super::spec_model::GitRevision> = coverage
+        .iter()
+        .filter_map(|c| c.at.as_ref().map(|a| (c.path.as_str(), a)))
+        .collect();
+    facts
+        .into_iter()
+        .map(|f| {
+            let read_at = at.get(f.path.as_str()).copied();
+            SpecModelFactDto {
                 fact_key: super::spec_model::fact_key::fact_key(&f),
+                source_commit: read_at.map(|a| a.commit.clone()),
+                source_ref: read_at.and_then(|a| a.git_ref.clone()),
                 kind: f.kind,
                 subject: f.subject,
                 aspect: f.aspect,
@@ -3145,9 +3180,9 @@ async fn get_spec_model(
                     quote: Some(f.quote),
                     binding_id: None,
                 },
-            })
-            .collect(),
-    }))
+            }
+        })
+        .collect()
 }
 
 /// The project's running or last build, as the process answering knows it.
@@ -3290,9 +3325,8 @@ async fn start_spec_model_build(
             &ctx,
             pending,
             move |doc, read| async move {
-                let revision = super::spec_model::extract::revision(&doc.text);
                 if let Err(error) = service_ref
-                    .put_spec_extraction(ctx_ref, workspace_id, project_id, &doc.path, &revision, &read)
+                    .put_spec_extraction(ctx_ref, workspace_id, project_id, &doc, &read)
                     .await
                 {
                     tracing::warn!(%error, path = %doc.path, "project domain model: an extraction could not be kept");
@@ -3472,6 +3506,8 @@ async fn judged_candidates(
             dropped: r.dropped,
             error: r.error.as_deref(),
             created_at: r.created_at.unix_timestamp(),
+            source_commit: r.source_commit.as_deref(),
+            source_ref: r.source_ref.as_deref(),
         })
         .collect();
     let (facts, _) = sm::current(documents, &kept);
@@ -11725,6 +11761,7 @@ mod tests {
             doc_type: Some("prd".into()),
             node: String::new(),
             binding: None,
+            at: None,
         };
         let sources = Sources {
             documents: vec![doc(
@@ -11743,6 +11780,7 @@ mod tests {
             facts: 2,
             dropped: 1,
             error: error.map(str::to_string),
+            at: None,
         };
         let coverage = vec![
             state("docs/prd.md", "failed", Some("lines 1-9: 503")),
@@ -11769,6 +11807,43 @@ mod tests {
     }
 
     #[test]
+    fn every_fact_carries_the_commit_its_document_was_read_at() {
+        use super::super::spec_model::{Coverage, GitRevision, extract::Fact};
+        let fact = |path: &str| Fact {
+            kind: "entity".into(),
+            subject: "Invoice".into(),
+            aspect: String::new(),
+            value: String::new(),
+            text: "An invoice.".into(),
+            status: "active".into(),
+            status_because: String::new(),
+            path: path.into(),
+            line_start: 1,
+            line_end: 1,
+            quote: "An invoice".into(),
+            layer: None,
+        };
+        let coverage = vec![Coverage {
+            path: "docs/a.md".into(),
+            revision: "r".into(),
+            state: "extracted",
+            facts: 1,
+            dropped: 0,
+            error: None,
+            at: Some(GitRevision {
+                commit: "abc123".into(),
+                git_ref: Some("main".into()),
+            }),
+        }];
+        let dtos = spec_model_fact_dtos(vec![fact("docs/a.md"), fact("studio:1")], &coverage);
+        assert_eq!(dtos[0].source_commit.as_deref(), Some("abc123"));
+        assert_eq!(dtos[0].source_ref.as_deref(), Some("main"));
+        assert_eq!(dtos[1].source_commit, None, "not a repository file");
+        let doc = spec_model_document_dto(coverage[0].clone());
+        assert_eq!(doc.source_commit.as_deref(), Some("abc123"));
+    }
+
+    #[test]
     fn a_selected_build_reads_what_it_names_whatever_its_state() {
         use super::super::spec_model::{Coverage, SourceText, Sources, select::Selection};
         let doc = |path: &str| SourceText {
@@ -11777,6 +11852,7 @@ mod tests {
             doc_type: None,
             node: String::new(),
             binding: None,
+            at: None,
         };
         let sources = Sources {
             documents: vec![doc("docs/a.md"), doc("docs/b.md"), doc("notes/c.md")],
@@ -11791,6 +11867,7 @@ mod tests {
                 facts: 0,
                 dropped: 0,
                 error: None,
+                at: None,
             })
             .collect();
         let all = spec_model_pending(&sources, &coverage, Selection::default())

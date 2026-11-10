@@ -13,5 +13,6 @@
   "collapse": "Hide {name}",
   "page_of": "{from}–{to} of {total}",
   "previous": "Previous",
-  "next": "Next"
+  "next": "Next",
+  "read_at_title": "Read from the repository at commit {commit}"
 }

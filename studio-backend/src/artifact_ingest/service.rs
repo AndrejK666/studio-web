@@ -3177,6 +3177,30 @@ impl super::port::RepoFileReader for IngestService {
         IngestService::read_repo_files(self, workspace_id, repo_dir).await
     }
 
+    async fn checkout_revision(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+    ) -> Option<super::port::GitRevision> {
+        let dir = self.shared_checkout_dir(Some(workspace_id), Some(repo_dir))?;
+        revision_of(dir).await
+    }
+
+    async fn synced_clone_revision(
+        &self,
+        secret_ref: &str,
+        repo_full_path: &str,
+    ) -> Option<super::port::GitRevision> {
+        let dir = self
+            .work_root
+            .as_ref()?
+            .join(git_checkout::checkout_key(secret_ref, repo_full_path));
+        if !dir.join(".git").is_dir() {
+            return None;
+        }
+        revision_of(dir).await
+    }
+
     async fn read_synced_clone(
         &self,
         secret_ref: &str,
@@ -3270,6 +3294,20 @@ fn text_only(listing: Vec<(String, Option<String>)>) -> Vec<(String, String)> {
         .into_iter()
         .filter_map(|(path, text)| text.map(|t| (path, t)))
         .collect()
+}
+
+/// The commit and branch a checkout is at, off the async runtime.
+async fn revision_of(dir: PathBuf) -> Option<super::port::GitRevision> {
+    tokio::task::spawn_blocking(move || {
+        let commit = git_checkout::head_commit(&dir)?;
+        Some(super::port::GitRevision {
+            commit,
+            git_ref: git_checkout::head_ref(&dir),
+        })
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// [`git_checkout::read_text_file`] off the async runtime.

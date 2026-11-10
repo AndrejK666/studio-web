@@ -328,6 +328,12 @@ button.kpi {
   cursor: default;
 }
 
+.readAt {
+  justify-self: start;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+}
+
 .quote {
   margin: 0;
   padding: var(--space-1) var(--space-2);

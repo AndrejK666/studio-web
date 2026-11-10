@@ -389,7 +389,7 @@ and unscoped listings.
 Without a connector driver linked the routes stay mounted and answer 503 with
 the reason. In process the gear
 publishes seven ports on the ClientHub (`port.rs`): `RepoFileReader` (a
-checkout's text files), `ArtifactFiles` (a scope's file nodes),
+checkout's text files, and the commit and branch it is at), `ArtifactFiles` (a scope's file nodes),
 `ArtifactCounter` and `ProjectSignalSource` (portfolio and projects-table
 rollups), `ProjectWork` (a scope's issues, pull requests and commits with their
 text, which the documents gear links to the identifiers its documents define),

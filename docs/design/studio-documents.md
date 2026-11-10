@@ -337,7 +337,7 @@ before that are swept by each repository sync of the project.
 | `GET` | `/project-domain-model/related`, `/project-domain-model/trace`, `/project-domain-model/questions`, `/project-domain-model/term-drift`, `/project-domain-model/experts` | Requirements of other projects alike or opposite; requirement → documents, code, tests; what a document leaves out of the domain and whom to ask ([project-domain-model.md](../project-domain-model.md)) | unstable |
 | any | `/spec-model…` | Deprecated aliases of every `/project-domain-model…` route above, same handlers and old `operation_id`s, kept for the old prototype and the desktop until 2027-03-31 | deprecated |
 | `GET` | `/project-domain-model/build?project_id=` | The running or last build: documents, done, current, error, started and finished. Added after the rename, so it has no `/spec-model…` alias | unstable |
-| `GET` | `/project-domain-model/coverage?project_id=` | Per document `extracted`/`failed`/`stale`/`pending`/`kept` with the error, facts and dropped; the documents not read and why; the open questions. No alias | unstable |
+| `GET` | `/project-domain-model/coverage?project_id=` | Per document `extracted`/`failed`/`stale`/`pending`/`kept` with the error, facts and dropped, and the repository commit and branch it was read at (`source_commit`, `source_ref`); the documents not read and why; the open questions. No alias | unstable |
 | `POST` | `/review-brief` | A brief of one document for its reviewers | unstable |
 | `GET` `POST` | `/remarks`, `/remarks/replies` | Review threads on a document from its pull requests; a reply to one | unstable |
 | `GET` `POST` | `/decisions` | Decisions recorded on requirements | unstable |

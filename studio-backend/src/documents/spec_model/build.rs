@@ -446,6 +446,7 @@ mod tests {
             doc_type: None,
             node: String::new(),
             binding: None,
+            at: None,
         }
     }
 

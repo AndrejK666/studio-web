@@ -51,6 +51,11 @@ export interface SpecModelFact {
    *  kinds and on facts extracted before it was asked. */
   layer?: "domain" | "system" | "deployment" | null;
   source: SpecModelSide;
+  /** The repository commit and branch the passage was read at; null for a
+   *  Studio document, an uploaded source, or a reading kept before commits
+   *  were recorded. Absent from an older server. */
+  source_commit?: string | null;
+  source_ref?: string | null;
   /** Saved from this screen and not read by a build yet (saved-entities.ts):
    *  shown at once so a person sees the edit, replaced on the next build. */
   provisional?: boolean;
@@ -64,6 +69,17 @@ export interface SpecModelDocument {
   facts: number;
   dropped: number;
   error?: string | null;
+  /** The repository commit and branch the reading shown was taken at. */
+  source_commit?: string | null;
+  source_ref?: string | null;
+}
+
+/** Where in the repository's history a passage was read: `main @ 4fbc802`,
+ *  the commit alone on a detached checkout, `null` when not recorded. */
+export function readAtLabel(at: { source_commit?: string | null; source_ref?: string | null }): string | null {
+  if (!at.source_commit) return null;
+  const short = at.source_commit.slice(0, 7);
+  return at.source_ref ? `${at.source_ref} @ ${short}` : short;
 }
 
 export interface SpecModelBuild {

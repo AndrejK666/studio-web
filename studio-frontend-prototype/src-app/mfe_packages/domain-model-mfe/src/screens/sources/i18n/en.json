@@ -59,6 +59,7 @@
   "col_document": "Document",
   "col_state": "State",
   "col_facts": "Facts",
+  "col_read_at": "Read at",
   "col_dropped": "Dropped",
   "kept_title": "The repository copy is missing on the server: the last reading is shown",
   "rebuild_from": "Rebuild from this document"

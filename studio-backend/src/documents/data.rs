@@ -102,6 +102,8 @@ row!(
         ("provider", "string"),
         ("model", "string"),
         ("created_at", "timestamp"),
+        ("source_commit", "string?"),
+        ("source_ref", "string?"),
     ]
 );
 row!(
@@ -770,6 +772,8 @@ impl DocumentsData {
                 "provider",
                 "model",
                 "created_at",
+                "source_commit",
+                "source_ref",
             ];
             return self
                 .table

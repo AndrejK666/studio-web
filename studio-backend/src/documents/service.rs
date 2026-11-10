@@ -2258,8 +2258,10 @@ impl DocumentsService {
             .map(|r| r.path.clone())
             .chain([DOMAIN_DOC_PATH.to_owned()])
             .collect();
+        // The commit and branch each document is read at.
+        let mut at = std::collections::BTreeMap::new();
         let mut by_path = self
-            .checkout_listing(ctx, &tenants, reader, Some(&wanted))
+            .checkout_listing_at(ctx, &tenants, reader, Some(&wanted), Some(&mut at))
             .await;
         let tree = by_path.keys().cloned().collect();
         // Written by Studio but not synced yet: no binding, so no graph node
@@ -2273,6 +2275,7 @@ impl DocumentsService {
                 doc_type: Some(DOMAIN_DOC_TYPE.to_owned()),
                 node: String::new(),
                 binding: None,
+                at: at.get(DOMAIN_DOC_PATH).cloned(),
             });
         let mut unread = Vec::new();
         let documents: Vec<super::spec_model::SourceText> = rows
@@ -2280,6 +2283,7 @@ impl DocumentsService {
             .filter_map(|row| match by_path.remove(&row.path).flatten() {
                 Some(text) => Some(super::spec_model::SourceText {
                     binding: Some(row.id),
+                    at: at.get(&row.path).cloned(),
                     path: row.path,
                     text,
                     doc_type: row.type_key,
@@ -2340,6 +2344,7 @@ impl DocumentsService {
                 doc_type: Some(d.type_key),
                 node: String::new(),
                 binding: None,
+                at: None,
             })
             .collect())
     }
@@ -2767,17 +2772,20 @@ impl DocumentsService {
             .await
     }
 
-    /// Keep what reading one document revision gave.
+    /// Keep what reading one document revision gave, with the repository
+    /// commit and branch its text was read at.
     pub async fn put_spec_extraction(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
         project_id: Uuid,
-        path: &str,
-        revision: &str,
+        doc: &super::spec_model::SourceText,
         read: &super::spec_model::build::Read,
     ) -> Result<()> {
         let version = super::spec_model::extract::EXTRACTOR_VERSION;
+        let path = doc.path.as_str();
+        let revision = super::spec_model::extract::revision(&doc.text);
+        let revision = revision.as_str();
         self.data
             .put_extraction(
                 ctx,
@@ -2794,6 +2802,8 @@ impl DocumentsService {
                     provider: read.provider.clone(),
                     model: read.model.clone(),
                     created_at: OffsetDateTime::now_utc(),
+                    source_commit: doc.at.as_ref().map(|a| a.commit.clone()),
+                    source_ref: doc.at.as_ref().and_then(|a| a.git_ref.clone()),
                 },
             )
             .await
@@ -3267,6 +3277,24 @@ impl DocumentsService {
         reader: &dyn crate::artifact_ingest::port::RepoFileReader,
         wanted: Option<&std::collections::BTreeSet<String>>,
     ) -> std::collections::BTreeMap<String, Option<String>> {
+        self.checkout_listing_at(ctx, tenants, reader, wanted, None)
+            .await
+    }
+
+    /// [`Self::checkout_listing`], and, into `revisions`, the commit and
+    /// branch each listed path was read at: the checkout's `HEAD`, its branch
+    /// or else the branch the project's source names. A path of a checkout
+    /// that is not a git one gets none.
+    async fn checkout_listing_at(
+        &self,
+        ctx: &SecurityContext,
+        tenants: &[Uuid],
+        reader: &dyn crate::artifact_ingest::port::RepoFileReader,
+        wanted: Option<&std::collections::BTreeSet<String>>,
+        mut revisions: Option<
+            &mut std::collections::BTreeMap<String, crate::artifact_ingest::port::GitRevision>,
+        >,
+    ) -> std::collections::BTreeMap<String, Option<String>> {
         let mut by_path: std::collections::BTreeMap<String, Option<String>> =
             std::collections::BTreeMap::new();
         for tenant in tenants {
@@ -3303,9 +3331,11 @@ impl DocumentsService {
                 // No session checkout here — the usual case on a stand whose
                 // sessions keep theirs in their own volume. The sync's clone
                 // holds the same repository, as last synced.
+                let mut from_clone = false;
                 if files.is_empty()
                     && let Some((secret_ref, full_path)) = clone
                 {
+                    from_clone = true;
                     let listed = match wanted {
                         Some(w) => {
                             reader
@@ -3324,7 +3354,29 @@ impl DocumentsService {
                             Vec::new()
                         });
                 }
+                let revision = if revisions.is_some() && !files.is_empty() {
+                    let at = match clone.filter(|_| from_clone) {
+                        Some((secret_ref, full_path)) => {
+                            reader.synced_clone_revision(secret_ref, full_path).await
+                        }
+                        None => reader.checkout_revision(&tenant.to_string(), dir).await,
+                    };
+                    at.map(|mut r| {
+                        if r.git_ref.is_none() {
+                            r.git_ref.clone_from(&resolved.source.branch);
+                        }
+                        r
+                    })
+                } else {
+                    None
+                };
                 for (path, text) in files {
+                    if let (Some(revisions), Some(revision)) =
+                        (revisions.as_deref_mut(), revision.as_ref())
+                        && !by_path.contains_key(&path)
+                    {
+                        revisions.insert(path.clone(), revision.clone());
+                    }
                     by_path.entry(path).or_insert(text);
                 }
             }

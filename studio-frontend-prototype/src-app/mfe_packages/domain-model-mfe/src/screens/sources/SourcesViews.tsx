@@ -9,6 +9,7 @@ import { Button } from '@gears-frontx/ui-kit';
 import {
   coverageCounts,
   orderRelated,
+  readAtLabel,
   RELATION_LABEL,
   ruleLabel,
   workLabel,
@@ -393,6 +394,20 @@ export function Coverage({
                   {d.state}
                 </span>
               ),
+            },
+            {
+              id: 'read_at',
+              header: t('col_read_at'),
+              cell: (d) => {
+                const at = readAtLabel(d);
+                return at ? (
+                  <code className={common.code} title={d.source_commit ?? undefined}>
+                    {at}
+                  </code>
+                ) : (
+                  <span className={common.muted}>—</span>
+                );
+              },
             },
             { id: 'facts', header: t('col_facts'), num: true, compare: (a, b) => a.facts - b.facts, cell: (d) => d.facts },
             {

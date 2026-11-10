@@ -9,6 +9,7 @@ import {
   factsByKind,
   filterRequirements,
   orderRelated,
+  readAtLabel,
   mergeTargets,
   orderFindings,
   orderProductFindings,
@@ -360,5 +361,14 @@ describe("unread documents", () => {
   it("keeps the plain advice when nothing is typed, and says nothing when all were read", () => {
     expect(unreadNote(model(0))).toMatch(/None are yet/);
     expect(unreadNote(model(4, 0))).toBeNull();
+  });
+});
+
+describe("readAtLabel", () => {
+  it("names the branch and the short commit a passage was read at", () => {
+    expect(readAtLabel({ source_commit: "4fbc8023aa11", source_ref: "main" })).toBe("main @ 4fbc802");
+    expect(readAtLabel({ source_commit: "4fbc8023aa11", source_ref: null })).toBe("4fbc802");
+    expect(readAtLabel({ source_commit: null, source_ref: "main" })).toBeNull();
+    expect(readAtLabel({})).toBeNull();
   });
 });

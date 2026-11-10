@@ -7,6 +7,7 @@ fn doc(path: &str) -> SourceText {
         doc_type: None,
         node: String::new(),
         binding: None,
+        at: None,
     }
 }
 
