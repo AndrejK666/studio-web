@@ -30,7 +30,8 @@
         "route": "/infrastructure",
         "order": 50,
         "level": "organization",
-        "kit": "org-infrastructure"
+        "kit": "org-infrastructure",
+        "modelTab": "environments"
       }
     }
   ]

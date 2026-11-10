@@ -12,6 +12,7 @@
 import { screenDomain, type FrontXApp, type MfeRegistry } from '@gears-frontx/react';
 import { TENANT_TYPES, errorMessage, isStudioArtifactKind, type StudioArtifact } from '@constructor-studio/mfe-shared';
 import {
+  answersSection,
   entryPointOf,
   isAboveWorkspace,
   levelOf,
@@ -341,12 +342,15 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     // Section: of the level in scope, defaulting to that level's entry item.
     // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-2
     const levelInScope: ScreenLevel = next.project ? 'project' : ownerLevel;
-    const sections = group.members
-      .filter((member) => levelOf(member) === levelInScope)
+    const inScope = group.members.filter((member) => levelOf(member) === levelInScope);
+    const sections = inScope
       .map((member) => sectionOf(member))
       .filter((section): section is string => section !== undefined);
     if (sections.length > 0) {
-      if (wanted.section && !sections.includes(wanted.section)) {
+      // A member may answer a family of sections (`type:` for the tabs the
+      // Studio domain model adds, ADR-0066).
+      const wantedSection = wanted.section;
+      if (wantedSection && !inScope.some((member) => answersSection(member, wantedSection))) {
         warn(`"${wanted.section}" is not a section of ${group.token}; opening its first one`);
         wanted.section = undefined;
       }

@@ -42,6 +42,15 @@
           ],
           "$comment": "Where in the level's tabs the item sits. 'settings' pins it to the end regardless of order — the rule that replaced the order >= 100 band the shell used to read. 'hidden' keeps the screen registered and mountable but out of the tabs, and so never the screen a level opens on: it is reached some other way, such as opening an artifact. Defaults to 'main' when absent. 'product' puts it in the product menu on the wordmark (Docs & API, Architecture — ADR-0069) and out of every level's tabs; it opens across the screen."
         },
+        "sectionPrefix": {
+          "type": "boolean",
+          "$comment": "'section' is a prefix: the screen answers every section that starts with it, as 'type:' answers 'type:reports'. How a generic screen takes the tabs the Studio domain model adds (ADR-0066), whose names no manifest knows; the shell then lets such a section into the address."
+        },
+        "modelTab": {
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$",
+          "$comment": "The name of the 'shows' relation on the level's type in the Studio domain model that this tab is (ADR-0066). Absent: the section, else the route's last segment. A relation of that name is this tab rather than a generic one, and the level's hidden_tabs names the tab by it."
+        },
         "experimental": {
           "type": "boolean",
           "$comment": "The tab works but its place is not settled: the tabs mark it EXP, as the prototype did. A kit sets it in its own manifest; the shell only draws the mark."

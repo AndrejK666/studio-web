@@ -42,6 +42,28 @@ export interface LeveledPresentation {
   placement?: string;
   section?: string;
   parentSection?: string;
+  /**
+   * `section` is a prefix: the screen answers every section that starts with
+   * it (`type:` answers `type:reports`). How a generic screen takes the tabs
+   * the Studio domain model adds (ADR-0066), whose names no manifest knows.
+   */
+  sectionPrefix?: boolean;
+  /**
+   * The name of the `shows` relation on the level's type in the Studio domain
+   * model that this tab is (the prototype's tab id: `org` for the
+   * organization's Overview). Absent: the section, else the route's last
+   * segment. A relation of that name is this tab, not a generic one, and a
+   * level's `hidden_tabs` names the tab by it.
+   */
+  modelTab?: string;
+}
+
+/** Whether `extension` answers `section`: its own, or one under its prefix. */
+export function answersSection(extension: StudioScreenExtension, section: string): boolean {
+  const own = sectionOf(extension);
+  if (own === undefined) return false;
+  if (section === own) return true;
+  return extension.presentation.sectionPrefix === true && section.length > own.length && section.startsWith(own);
 }
 
 /**

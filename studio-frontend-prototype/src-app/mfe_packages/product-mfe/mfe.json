@@ -34,7 +34,8 @@
         "order": 34,
         "level": "project",
         "section": "product",
-        "kit": "product-releases"
+        "kit": "product-releases",
+        "modelTab": "components"
       }
     },
     {
@@ -48,7 +49,8 @@
         "order": 35,
         "level": "project",
         "section": "components",
-        "kit": "components"
+        "kit": "components",
+        "modelTab": "parts"
       }
     }
   ]

@@ -65,5 +65,16 @@
   "level_tabs_default_order_hint": "Put the sections back in their default order",
   "runtime_kit_failed": "The screens of kit {kit} {version} could not be loaded",
   "runtime_kit_screen_failed": "The {screen} screen of kit {kit} could not be opened",
-  "runtime_kit_dismiss": "Dismiss"
+  "runtime_kit_dismiss": "Dismiss",
+  "level_tabs_customize": "Tabs",
+  "level_tabs_customize_hint": "Choose which tabs show here, for everyone in this place",
+  "level_tabs_customize_title": "Tabs shown here",
+  "level_tabs_customize_note": "Hidden for everyone in this place; nothing a tab shows is removed. Which tabs exist is the Studio domain model's (Admin › Studio domain model).",
+  "level_tabs_show_named": "Show {label}",
+  "level_tabs_keep_one": "Keep at least one tab",
+  "level_tabs_reset": "Reset",
+  "level_tabs_reset_hint": "Show every tab",
+  "level_tabs_cancel": "Cancel",
+  "level_tabs_save": "Save",
+  "level_tabs_saving": "Saving…"
 }

@@ -6,6 +6,7 @@ import { SHELL_SCHEMAS } from '@/app/mfe/schemas';
 import {
   AccountsApiService,
   ConnectorsApiService,
+  DomainModelApiService,
   STUDIO_MFE_ENTRY_IFRAME,
   StudioEventsApiService,
   StudioTasksApiService,
@@ -52,6 +53,8 @@ apiRegistry.register(StudioEventsApiService);
 apiRegistry.register(StudioSessionApiService);
 apiRegistry.register(StudioTasksApiService);
 apiRegistry.register(ConnectorsApiService);
+// The Studio domain model: the `shows` relations a level draws as tabs (ADR-0066).
+apiRegistry.register(DomainModelApiService);
 
 // Initialize API services
 apiRegistry.initialize({});

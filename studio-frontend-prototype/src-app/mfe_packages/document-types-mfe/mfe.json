@@ -28,7 +28,8 @@
         "route": "/document-types",
         "order": 50,
         "level": "workspace",
-        "kit": "project-specs"
+        "kit": "project-specs",
+        "modelTab": "types"
       }
     }
   ]

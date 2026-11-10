@@ -377,8 +377,15 @@ describe('generated MFE manifest', () => {
     it("draws the workspace's tabs: the projects list, then the catalogue kits' screens", () => {
       // Project templates (kit project-lifecycle) and Document types (kit
       // project-specs) are the prototype's workspace catalogue tabs (ADR-0069).
+      // Attributes (admin-mfe's generic screen, ADR-0066) right after Projects, as
+      // the prototype's workspace band had it.
       const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'workspace');
-      expect(tabs.map((ext) => ext.presentation.label)).toEqual(['Projects', 'Project templates', 'Document types']);
+      expect(tabs.map((ext) => ext.presentation.label)).toEqual([
+        'Projects',
+        'Attributes',
+        'Project templates',
+        'Document types',
+      ]);
     });
 
     it("draws the project's tabs in the design's order, Specs and Sources after Artifacts", () => {
@@ -406,6 +413,9 @@ describe('generated MFE manifest', () => {
         'Activity',
         'Timeline',
         'Team',
+        // What the Studio domain model records about the project (admin-mfe's
+        // generic screen, ADR-0066; the prototype drew it on Overview).
+        'Attributes',
         // The project's own kits (ADR-0069 §4), before its settings.
         'Kits',
         'Settings',
@@ -432,8 +442,13 @@ describe('generated MFE manifest', () => {
 
     it('declares the project sections on the entry they are sections of', () => {
       // The editor is a project-level screen too, but hidden: no tab.
+      // The generic screens (Attributes, the model's tabs, ADR-0066) are the
+      // shell's too, but on every level, so they live in admin-mfe's entry.
       const project = screens.filter(
-        (ext) => ext.presentation?.level === 'project' && ext.presentation?.placement !== 'hidden'
+        (ext) =>
+          ext.presentation?.level === 'project' &&
+          ext.presentation?.placement !== 'hidden' &&
+          !/\.admin\.screens\.model_project(_types)?\.v1$/.test(ext.id)
       );
       // The projects list's entry: the workspace level also holds kit screens of their own.
       const workspaceEntry = screens.find(

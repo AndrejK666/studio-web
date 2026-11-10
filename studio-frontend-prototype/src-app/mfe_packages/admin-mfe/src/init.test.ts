@@ -20,6 +20,7 @@ const { authShared } = vi.hoisted(() => ({ authShared: vi.fn(() => 'auth-shared-
 vi.mock('@constructor-studio/mfe-shared', () => ({
   authShared,
   AccountsApiService: class AccountsApiService {},
+  DomainModelApiService: class DomainModelApiService {},
 }));
 
 vi.mock('./api/AdminApiService', () => ({
@@ -29,9 +30,10 @@ vi.mock('./api/AdminApiService', () => ({
 describe('admin-mfe init', () => {
   it('registers its API services before building the app', async () => {
     const module = await import('./init');
-    expect(register).toHaveBeenCalledTimes(2);
+    // Admin's own, the accounts reads, and the Studio domain model (the generic level screens).
+    expect(register).toHaveBeenCalledTimes(3);
     expect(initialize).toHaveBeenCalledTimes(1);
-    expect(register.mock.invocationCallOrder[1]).toBeLessThan(build.mock.invocationCallOrder[0]);
+    expect(register.mock.invocationCallOrder[2]).toBeLessThan(build.mock.invocationCallOrder[0]);
     // authShared last: without it every read goes out with no bearer (401).
     expect(use.mock.calls).toEqual([['i18n-plugin'], ['query-cache-shared-plugin'], ['auth-shared-plugin']]);
     expect(module.mfeApp).toEqual({ id: 'admin-mfe-app' });

@@ -493,6 +493,40 @@ describe('materialize', () => {
     expect(adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces');
   });
 
+  describe('a section family (the tabs the Studio domain model adds, ADR-0066)', () => {
+    const withModel = [
+      ...screens,
+      screen('model.attributes', '/model-workspace/attributes', 'workspace', { section: 'attributes', order: 30 }),
+      screen('model.types', '/model-workspace/types', 'workspace', {
+        section: 'type:',
+        sectionPrefix: true,
+        placement: 'hidden',
+        order: 999,
+      }),
+    ];
+
+    it('keeps a type:<name> section the generic screen answers, and mounts the group’s owner', () => {
+      const { materialize, adapter, state } = setup('/?screen=model-workspace;org=o1;workspace=w1;section=type:cost_centres', ready, withModel);
+      materialize();
+      expect(adapter.url()).toBe('/?screen=model-workspace;org=o1;workspace=w1;section=type:cost_centres');
+      expect(state().section).toBe('type:cost_centres');
+      expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'model.attributes' }));
+    });
+
+    it('opens the group’s first tab, not the family, when no section is named', () => {
+      const { materialize, adapter } = setup('/?screen=model-workspace;org=o1;workspace=w1', ready, withModel);
+      materialize();
+      expect(adapter.url()).toBe('/?screen=model-workspace;org=o1;workspace=w1;section=attributes');
+    });
+
+    it('still refuses a section neither member answers', () => {
+      const { materialize, adapter, warn } = setup('/?screen=model-workspace;org=o1;workspace=w1;section=typecost', ready, withModel);
+      materialize();
+      expect(adapter.url()).toBe('/?screen=model-workspace;org=o1;workspace=w1;section=attributes');
+      expect(warn).toHaveBeenCalled();
+    });
+  });
+
   it("falls back to the level's entry point once when the mount fails", async () => {
     mocks.mountScreen
       .mockRejectedValueOnce(new Error('no such entry'))

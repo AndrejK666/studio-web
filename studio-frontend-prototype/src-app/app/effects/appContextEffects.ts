@@ -10,7 +10,15 @@
  * data, fetched in `contextCatalogs.ts` and stored before any navigation.
  */
 import { eventBus, screenDomain, type FrontXApp } from '@gears-frontx/react';
-import { isAboveWorkspace, levelOf, placementOf, sectionOf, type ScreenLevel, type StudioScreenExtension } from '@/app/mfe/screenLevels';
+import {
+  answersSection,
+  isAboveWorkspace,
+  levelOf,
+  placementOf,
+  sectionOf,
+  type ScreenLevel,
+  type StudioScreenExtension,
+} from '@/app/mfe/screenLevels';
 import { createContextCatalogs } from '@/app/effects/contextCatalogs';
 import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
@@ -114,12 +122,14 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
   });
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-1
-  eventBus.on('app/context/screen/requested', ({ extensionId }) => {
+  eventBus.on('app/context/screen/requested', ({ extensionId, section: asked }) => {
     if (!routing) return;
     const target = screens().find((candidate) => candidate.id === extensionId);
     const token = target ? tokenOf(target) : undefined;
     if (!target || !token) return;
-    const section = sectionOf(target);
+    // A section asked for by name only where the screen answers it: a tab the
+    // Studio domain model adds is a section under a generic screen's prefix.
+    const section = asked && answersSection(target, asked) ? asked : sectionOf(target);
     routing.navigation.navigate(routeFor(token, levelOf(target), section ? { section } : {}), 'push');
   });
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-1

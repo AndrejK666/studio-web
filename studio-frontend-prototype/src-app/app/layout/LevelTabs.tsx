@@ -35,6 +35,9 @@ import { cn } from '@/app/lib/utils';
 import { levelIconName } from './levelIcon';
 import { useScreenLevel } from './useScreenLevel';
 import { screenShows, useInstalledKits } from './useInstalledKits';
+import { modelNameOf, screenIdOf, visibleTabs, withModelTabs } from './modelTabs';
+import { useHiddenTabs, useLevelModelTabs, useLevelTenant } from './useModelTabs';
+import { LevelTabsEditor } from './LevelTabsEditor';
 import styles from './LevelTabs.module.css';
 
 function isActiveItem(
@@ -59,7 +62,19 @@ export const LevelTabs: React.FC = () => {
   const level = useScreenLevel();
   const registered = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const installed = useInstalledKits();
-  const items = resolveLevelMenu(registered, level).filter((ext) => screenShows(ext, installed));
+  // The manifests' tabs, then the ones the Studio domain model adds (ADR-0066),
+  // then without what the level's settings hide.
+  const modelTabs = useLevelModelTabs(level);
+  const all = withModelTabs(
+    resolveLevelMenu(registered, level).filter((ext) => screenShows(ext, installed)),
+    registered,
+    level,
+    modelTabs
+  );
+  const tenant = useLevelTenant(level);
+  const { hidden, save: saveHidden } = useHiddenTabs(level, tenant);
+  const [preview, setPreview] = useState<string[] | null>(null);
+  const items = visibleTabs(all, preview ?? hidden);
   const mounted = useMountedExtensions(FRONTX_SCREEN_DOMAIN)[0] as StudioScreenExtension | undefined;
   const section = useAppSelector((state) => selectContext(state)?.section ?? null);
   const org = useAppSelector((state) => selectContext(state)?.org ?? null);
@@ -85,7 +100,13 @@ export const LevelTabs: React.FC = () => {
   const pinned = pin ? isPinned(pins, pin) : false;
 
   const choose = useCallback((chosen: StudioScreenExtension) => {
-    eventBus.emit('app/context/screen/requested', { extensionId: chosen.id });
+    // A tab the model adds is its generic screen, under the tab's section.
+    const screenId = screenIdOf(chosen);
+    const section = sectionOf(chosen);
+    eventBus.emit(
+      'app/context/screen/requested',
+      screenId !== chosen.id && section ? { extensionId: screenId, section } : { extensionId: chosen.id }
+    );
   }, []);
 
   const save = (next: string[]) =>
@@ -218,6 +239,17 @@ export const LevelTabs: React.FC = () => {
               <Star aria-hidden="true" className={styles.asideGlyph} fill={pinned ? 'currentColor' : 'none'} />
               {pinned ? t('pin_pinned') : t('pin_pin')}
             </button>
+          </NavigationMenuItem>
+        )}
+        {/* Which tabs show here, for everyone in this place (`hidden_tabs`). */}
+        {saveHidden && (
+          <NavigationMenuItem>
+            <LevelTabsEditor
+              tabs={all.map((ext) => ({ id: modelNameOf(ext), label: ext.presentation?.label ?? modelNameOf(ext) }))}
+              hidden={hidden}
+              onSave={saveHidden}
+              onPreview={setPreview}
+            />
           </NavigationMenuItem>
         )}
       </NavigationMenuList>

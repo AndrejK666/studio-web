@@ -28,6 +28,10 @@ vi.mock('./screens/admin/ObjectsSection', () => ({ ObjectsSection: () => 'object
 vi.mock('./screens/admin/views/ViewsSection', () => ({ ViewsSection: () => 'views' }));
 vi.mock('./screens/admin/IdentitiesSection', () => ({ IdentitiesSection: () => 'identities' }));
 vi.mock('./screens/admin/TenantsSection', () => ({ TenantsSection: () => 'tenants' }));
+vi.mock('./screens/model/ModelScreen', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./screens/model/ModelScreen')>()),
+  ModelScreen: ({ level, section: at }: { level: string; section: string | null }) => `model:${level}:${at}`,
+}));
 
 import { ADMIN_SECTIONS, AdminRoot, ORGANIZATION_SECTIONS } from './AdminRoot';
 
@@ -56,15 +60,41 @@ describe('AdminRoot', () => {
     expect([...orders].sort((a, b) => a - b)).toEqual(orders);
   });
 
-  // The one extension on another level: Organization › Connections is the
-  // Integrations screen (the prototype rendered `ConnectorsView` for both).
+  // Organization › Connections is the Integrations screen (the prototype
+  // rendered `ConnectorsView` for both).
   it('answers Organization › Connections with the Integrations section', () => {
-    const others = manifest.extensions.map((e) => e.presentation).filter((p) => p.level !== 'admin');
+    const others = manifest.extensions
+      .filter((e) => !/\.model_/.test(e.id))
+      .map((e) => e.presentation)
+      .filter((p) => p.level !== 'admin');
     expect(others.map((p) => [p.level, p.route, p.section])).toEqual(
       ORGANIZATION_SECTIONS.map((s) => ['organization', `/${s}`, s])
     );
     section.value = 'connections';
     render(<AdminRoot bridge={bridge} />);
     expect(screen.getByText('integrations')).toBeTruthy();
+  });
+
+  // The shell's generic screens (ADR-0066): on each of the three levels an
+  // Attributes tab, and a hidden screen answering every `type:` section.
+  it('declares Attributes and the model tabs’ screen on the three levels, one group per level', () => {
+    const generic = manifest.extensions.filter((e) => /\.model_/.test(e.id)).map((e) => e.presentation);
+    expect(generic.map((p) => [p.level, p.route, p.section, 'placement' in p ? p.placement : 'main'])).toEqual(
+      ['organization', 'workspace', 'project'].flatMap((level) => [
+        [level, `/model-${level}/attributes`, 'attributes', 'main'],
+        [level, `/model-${level}/types`, 'type:', 'hidden'],
+      ])
+    );
+    expect(generic.filter((p) => 'sectionPrefix' in p && p.sectionPrefix).map((p) => p.section)).toEqual(['type:', 'type:', 'type:']);
+  });
+
+  it.each([
+    ['model_workspace', 'attributes', 'model:workspace:attributes'],
+    ['model_project', 'type:vendors', 'model:project:type:vendors'],
+  ])('mounted as %s, shows the generic screen of its level at %s', (leaf, name, shown) => {
+    section.value = name;
+    render(<AdminRoot bridge={{ extensionId: `x~constructor_studio.admin.screens.${leaf}.v1` } as ChildMfeBridge} />);
+    expect(screen.getByText(shown)).toBeTruthy();
+    expect(document.querySelector('[data-admin-section]')?.getAttribute('data-admin-section')).toBe(name);
   });
 });

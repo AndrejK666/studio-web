@@ -37,7 +37,11 @@ declare module '@gears-frontx/react' {
     /** Go to a level: mount its first item. Emitted when a slot above or below the level in scope is picked. */
     'app/context/level/requested': { level: 'platform' | 'organization' | 'workspace' | 'project' | 'admin' };
     /** Go to one screen of the level in scope, named in the tabs. The shell decides what it means: another section of the mounted entry, or a mount. */
-    'app/context/screen/requested': { extensionId: string };
+    'app/context/screen/requested': {
+      extensionId: string;
+      /** One of the sections the screen answers, when it answers a family of them (`type:<name>`, a tab the Studio domain model adds); ignored otherwise. */
+      section?: string;
+    };
     /** A member asked to open one artifact of a project (#319's action); the shell navigates to the editor (#320). */
     'app/context/artifact/requested': StudioArtifactRequest;
     /** A section of the level in scope is now on screen — chosen in the tabs, or moved by the MFE itself. */

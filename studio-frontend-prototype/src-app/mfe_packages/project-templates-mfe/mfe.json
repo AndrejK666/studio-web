@@ -29,7 +29,8 @@
         "route": "/project-templates",
         "order": 40,
         "level": "workspace",
-        "kit": "project-lifecycle"
+        "kit": "project-lifecycle",
+        "modelTab": "ptypes"
       }
     }
   ]

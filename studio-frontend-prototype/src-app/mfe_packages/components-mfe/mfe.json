@@ -73,7 +73,8 @@
         "route": "/components",
         "order": 65,
         "level": "organization",
-        "kit": "components"
+        "kit": "components",
+        "modelTab": "gears"
       }
     }
   ]

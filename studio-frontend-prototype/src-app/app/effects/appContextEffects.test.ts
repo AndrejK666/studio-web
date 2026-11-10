@@ -53,6 +53,7 @@ const screens = [
   screen('projects.main', '/projects', 'workspace', { order: 20 }),
   screen('projects.overview', '/projects/overview', 'project', { section: 'overview', order: 10 }),
   screen('projects.artifacts', '/projects/artifacts', 'project', { section: 'artifacts', order: 20 }),
+  screen('model.types', '/model-project/types', 'project', { section: 'type:', sectionPrefix: true, placement: 'hidden', order: 999 }),
 ];
 
 async function emit(eventName: string, payload?: unknown): Promise<void> {
@@ -121,6 +122,20 @@ describe('registerAppContextEffects', () => {
 
   it('a tab click on a project section keeps the project and names the section', async () => {
     await emit('app/context/screen/requested', { extensionId: 'projects.artifacts' });
+    expect(handle.navigation.navigate).toHaveBeenCalledWith(
+      { token: 'projects', org: 'o1', workspace: 'w1', project: 'p1', section: 'artifacts' }, 'push'
+    );
+  });
+
+  it('a tab the Studio domain model adds opens its generic screen at the section it names', async () => {
+    await emit('app/context/screen/requested', { extensionId: 'model.types', section: 'type:vendors' });
+    expect(handle.navigation.navigate).toHaveBeenCalledWith(
+      { token: 'model-project', org: 'o1', workspace: 'w1', project: 'p1', section: 'type:vendors' }, 'push'
+    );
+  });
+
+  it('a section a screen does not answer is not written for it', async () => {
+    await emit('app/context/screen/requested', { extensionId: 'projects.artifacts', section: 'type:vendors' });
     expect(handle.navigation.navigate).toHaveBeenCalledWith(
       { token: 'projects', org: 'o1', workspace: 'w1', project: 'p1', section: 'artifacts' }, 'push'
     );

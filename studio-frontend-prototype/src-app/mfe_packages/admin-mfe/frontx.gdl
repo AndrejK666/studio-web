@@ -28,8 +28,10 @@ mfe(
 
     # What it brings, as mfe.json says: the labels of its screens, then the
     # route of each extension (presentation.route), in mfe.json's order. The
-    # last is Organization › Connections: the Integrations screen again, on the
-    # organization level, as the prototype had it.
+    # next is Organization › Connections: the Integrations screen again, on the
+    # organization level, as the prototype had it. Then the generic screens of
+    # the organization, the workspace and the project (ADR-0066): Attributes,
+    # and the hidden one that answers the tabs the Studio domain model adds.
     screens = [
         "Organizations",
         "People",
@@ -42,6 +44,12 @@ mfe(
         "All identities",
         "Project tenants",
         "Connections",
+        "Attributes",
+        "Domain model tab",
+        "Attributes",
+        "Domain model tab",
+        "Attributes",
+        "Domain model tab",
     ],
     mounts = [
         "/admin/organizations",
@@ -55,6 +63,12 @@ mfe(
         "/admin/identities",
         "/admin/tenants",
         "/connections",
+        "/model-organization/attributes",
+        "/model-organization/types",
+        "/model-workspace/attributes",
+        "/model-workspace/types",
+        "/model-project/attributes",
+        "/model-project/types",
     ],
 
     frontx = "0.2.0-alpha.15",

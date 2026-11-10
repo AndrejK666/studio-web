@@ -124,6 +124,19 @@ vi.mock('@/app/mfe/domainOccupancy', async (importOriginal) => ({
   useMountedExtensions: () => mounted.value,
 }));
 
+// The Studio domain model's tabs and the level's hidden ones (useModelTabs.ts):
+// none and nothing hidden unless a test says otherwise.
+const { modelTabsValue, hiddenValue, saveHidden } = vi.hoisted(() => ({
+  modelTabsValue: { value: [] as { name: string; label: string; target: string }[] },
+  hiddenValue: { value: [] as string[] },
+  saveHidden: { value: null as null | ((next: string[]) => Promise<void>) },
+}));
+vi.mock('./useModelTabs', () => ({
+  useLevelModelTabs: () => modelTabsValue.value,
+  useLevelTenant: () => 'tenant-1',
+  useHiddenTabs: () => ({ hidden: hiddenValue.value, save: saveHidden.value }),
+}));
+
 vi.mock('@/app/i18n/shellTranslations', () => ({ useShellText: () => (key: string) => key }));
 vi.mock('./useScreenLevel', () => ({ useScreenLevel: () => level.value }));
 
@@ -398,6 +411,110 @@ describe('LevelTabs: Pin (pins.ts)', () => {
     mounted.value = [];
     render(<LevelTabs />);
     expect(document.querySelector('[data-pin-toggle]')).toBeNull();
+  });
+});
+
+describe("LevelTabs: the Studio domain model's tabs and the hidden ones (ADR-0066)", () => {
+  const attributes = {
+    id: 'ext.model.attributes',
+    domain: SCREEN_DOMAIN,
+    entry: 'entry.admin',
+    presentation: {
+      label: 'Attributes',
+      icon: 'lucide:file-text',
+      route: '/model-organization/attributes',
+      order: 95,
+      level: 'organization',
+      section: 'attributes',
+    },
+  };
+  const generic = {
+    id: 'ext.model.types',
+    domain: SCREEN_DOMAIN,
+    entry: 'entry.admin',
+    presentation: {
+      label: 'Domain model tab',
+      icon: 'lucide:list',
+      route: '/model-organization/types',
+      order: 999,
+      level: 'organization',
+      section: 'type:',
+      sectionPrefix: true,
+      placement: 'hidden',
+    },
+  };
+
+  beforeEach(() => {
+    setPreferenceStoreForTests(fakePreferences());
+    localStorage.removeItem(PINS_KEY);
+    resetPinsForTests();
+    level.value = 'organization';
+    section.value = 'attributes';
+    bootstrapState.status = 'ready';
+    registered.value = [settings, connections, people, attributes, generic];
+    mounted.value = [attributes];
+    modelTabsValue.value = [
+      { name: 'people', label: 'Members', target: 'person' },
+      { name: 'cost_centres', label: 'Cost centres', target: 'cost-centre' },
+    ];
+    hiddenValue.value = [];
+    saveHidden.value = null;
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    setPreferenceStoreForTests(null);
+    modelTabsValue.value = [];
+    hiddenValue.value = [];
+    saveHidden.value = null;
+  });
+
+  it('draws a relation no screen answers as a tab after the built-in ones, before Settings', () => {
+    render(<LevelTabs />);
+    // `people` is People's own tab: it keeps its label, and is not drawn twice.
+    expect(tabLabels()).toEqual(['People', 'Connections', 'Attributes', 'Cost centres', 'Settings']);
+  });
+
+  it('opens the generic screen under the tab’s section', () => {
+    render(<LevelTabs />);
+    fireEvent.click(tab('Cost centres'));
+    expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/screen/requested', {
+      extensionId: 'ext.model.types',
+      section: 'type:cost_centres',
+    });
+  });
+
+  it('marks the tab of the section on screen as the current page', () => {
+    section.value = 'type:cost_centres';
+    render(<LevelTabs />);
+    expect(tab('Cost centres').getAttribute('aria-current')).toBe('page');
+    expect(tab('Attributes').getAttribute('aria-current')).toBeNull();
+  });
+
+  it('leaves out what the level hides, by model name', () => {
+    hiddenValue.value = ['type:cost_centres', 'connections'];
+    render(<LevelTabs />);
+    expect(tabLabels()).toEqual(['People', 'Attributes', 'Settings']);
+  });
+
+  it('offers Customize only where the level has a settings document', () => {
+    render(<LevelTabs />);
+    expect(document.querySelector('[data-tabs-customize]')).toBeNull();
+  });
+
+  it('previews a tab switched off and saves the names that are off', async () => {
+    const save = vi.fn(() => Promise.resolve());
+    saveHidden.value = save;
+    hiddenValue.value = ['releases'];
+    render(<LevelTabs />);
+    fireEvent.click(document.querySelector('[data-tabs-customize]') as HTMLElement);
+    fireEvent.click(screen.getAllByRole('switch')[0]);
+    // The first switch is People's: gone from the row before anything is saved.
+    expect(tabLabels()).not.toContain('People');
+    fireEvent.click(document.querySelector('[data-tabs-save]') as HTMLElement);
+    // `releases` is not a tab here (a kit not installed): its hiding is kept.
+    await vi.waitFor(() => expect(save).toHaveBeenCalledWith(['people', 'releases']));
   });
 });
 

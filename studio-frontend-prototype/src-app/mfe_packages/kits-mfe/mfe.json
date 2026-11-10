@@ -52,7 +52,8 @@
         "icon": "lucide:package",
         "route": "/project-kits",
         "order": 65,
-        "level": "project"
+        "level": "project",
+        "modelTab": "kits"
       }
     }
   ]

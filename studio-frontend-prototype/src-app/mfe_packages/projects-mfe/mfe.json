@@ -208,7 +208,8 @@
         "order": 60,
         "level": "project",
         "section": "team",
-        "kit": "project-team"
+        "kit": "project-team",
+        "modelTab": "people"
       }
     },
     {

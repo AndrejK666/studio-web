@@ -8,7 +8,7 @@ import own from './DomainModel.module.css';
 
 export interface TabInput { name: string; label: string; target: string }
 
-/** Model tabs are `shows` relations. Personal hidden/pinned tabs are settings. */
+/** Model tabs are `shows` relations; the shell draws them (LevelTabs). Which a place hides is its settings document's `hidden_tabs`. */
 export function DomainTabs({ model, id, busy, onAdd, onRemove }: {
   model: DomainModel;
   id: string;

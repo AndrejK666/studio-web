@@ -32,7 +32,8 @@
         "route": "/domain-model",
         "order": 31,
         "level": "project",
-        "kit": "project-domain-model"
+        "kit": "project-domain-model",
+        "modelTab": "model"
       }
     }
   ]

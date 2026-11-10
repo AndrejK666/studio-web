@@ -24,6 +24,10 @@ import { ObjectsSection } from './screens/admin/ObjectsSection';
 import { ViewsSection } from './screens/admin/views/ViewsSection';
 import { IdentitiesSection } from './screens/admin/IdentitiesSection';
 import { TenantsSection } from './screens/admin/TenantsSection';
+import { ModelScreen, modelLevelOf } from './screens/model/ModelScreen';
+
+/** The section of a level's Attributes tab (the generic screens, ADR-0066). */
+export const MODEL_ATTRIBUTES = 'attributes';
 import styles from './screens/admin/Admin.module.css';
 
 export const ADMIN_SECTIONS = [
@@ -61,18 +65,31 @@ export interface AdminRootProps {
 }
 
 export const AdminRoot: React.FC<AdminRootProps> = ({ bridge }) => {
+  const published = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_SECTION);
+  // The generic screens of a level (Attributes, the model's tabs): the
+  // extension the shell mounted says which level.
+  const modelLevel = modelLevelOf(bridge.extensionId);
   // People is where the prototype's Admin opened, and what an unknown section falls back to.
-  const section = sectionOf(useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_SECTION));
+  const section = sectionOf(published);
   const { containerRef, dataTheme, language } = useHostChrome();
   const { t, loading } = useAdminTranslations();
   return (
-    <div ref={containerRef} className={styles.screen} data-theme={dataTheme} data-admin-section={section}>
+    <div
+      ref={containerRef}
+      className={styles.screen}
+      data-theme={dataTheme}
+      data-admin-section={modelLevel ? (typeof published === 'string' ? published : MODEL_ATTRIBUTES) : section}
+    >
       {loading ? (
         <Skeleton className={styles.skeleton} />
       ) : (
         <AdminContext.Provider value={{ t, language, container: containerRef, bridge }}>
           <OrganizationProvider>
-            <Section section={section} />
+            {modelLevel ? (
+              <ModelScreen level={modelLevel} section={typeof published === 'string' ? published : null} />
+            ) : (
+              <Section section={section} />
+            )}
           </OrganizationProvider>
         </AdminContext.Provider>
       )}

@@ -66,5 +66,16 @@
   "level_tabs_default_order_hint": "Вернуть разделам порядок по умолчанию",
   "runtime_kit_failed": "Не удалось загрузить экраны кита {kit} {version}",
   "runtime_kit_screen_failed": "Не удалось открыть экран {screen} кита {kit}",
-  "runtime_kit_dismiss": "Скрыть"
+  "runtime_kit_dismiss": "Скрыть",
+  "level_tabs_customize": "Вкладки",
+  "level_tabs_customize_hint": "Выбрать, какие вкладки показывать здесь, для всех в этом месте",
+  "level_tabs_customize_title": "Вкладки здесь",
+  "level_tabs_customize_note": "Скрываются для всех в этом месте; содержимое вкладок не удаляется. Какие вкладки существуют, решает доменная модель Studio (Администрирование › Доменная модель Studio).",
+  "level_tabs_show_named": "Показывать {label}",
+  "level_tabs_keep_one": "Оставьте хотя бы одну вкладку",
+  "level_tabs_reset": "Сбросить",
+  "level_tabs_reset_hint": "Показать все вкладки",
+  "level_tabs_cancel": "Отмена",
+  "level_tabs_save": "Сохранить",
+  "level_tabs_saving": "Сохранение…"
 }
