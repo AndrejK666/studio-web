@@ -241,7 +241,10 @@ pub fn is_refusal(e: &anyhow::Error) -> bool {
     super::access::access_error(e).is_some_and(|a| {
         matches!(
             a,
-            super::access::AccessError::Denied | super::access::AccessError::Held(_)
+            super::access::AccessError::Denied
+                | super::access::AccessError::Held(_)
+                | super::access::AccessError::Dormant { .. }
+                | super::access::AccessError::NotInstalled { .. }
         )
     })
 }

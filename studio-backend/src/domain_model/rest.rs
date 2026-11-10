@@ -79,6 +79,16 @@ fn access_problem(e: &anyhow::Error) -> Option<CanonicalError> {
         super::access::AccessError::Held(_) => StudioDomainModelError::permission_denied()
             .with_reason("DOMAIN_OBJECT_HELD_BY_GEAR")
             .create(),
+        e @ super::access::AccessError::Dormant { kit, .. } => {
+            StudioDomainModelError::failed_precondition()
+                .with_precondition_violation(kit.clone(), e.to_string(), "DOMAIN_TYPE_DORMANT")
+                .create()
+        }
+        e @ super::access::AccessError::NotInstalled { kit, .. } => {
+            StudioDomainModelError::not_found(e.to_string())
+                .with_resource(format!("DOMAIN_TYPE_NOT_INSTALLED:{kit}"))
+                .create()
+        }
     })
 }
 
@@ -592,6 +602,13 @@ pub struct LegacyScopesQuery {
 }
 
 #[derive(Debug, serde::Deserialize)]
+pub struct TypesQuery {
+    /// `dormant` adds the types and fields kits left behind; only an
+    /// administrator of the model is answered with them.
+    pub include: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 pub struct ConformanceQuery {
     /// Narrow to one workspace/project scope.
     pub scope: Option<String>,
@@ -664,6 +681,7 @@ pub struct RevertResponse {
 async fn list_types(
     crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(handle): Extension<Handle>,
+    Query(q): Query<TypesQuery>,
 ) -> ApiResult<JsonBody<TypesResponse>> {
     let ontology = handle
         .0
@@ -671,6 +689,17 @@ async fn list_types(
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let can_edit_model = may_edit_model(&ctx, &handle).await;
+    // What kits left dormant shows only in Admin › Domain model, which asks
+    // for it (ADR-0070 §4); every other screen reads the installed model.
+    let with_dormant = can_edit_model
+        && q.include
+            .as_deref()
+            .is_some_and(|i| i.split(',').any(|p| p.trim() == "dormant"));
+    let ontology = if with_dormant {
+        ontology
+    } else {
+        super::ontology::Ontology::without_dormant(&ontology)
+    };
     let gts = super::gts::catalog_of(&ontology);
     Ok(Json(TypesResponse {
         ontology: with_origins(ontology),
@@ -1567,6 +1596,21 @@ async fn query_objects(
             group_by: a.group_by,
         }),
     };
+    // A type a kit left dormant is not installed for a member; an
+    // administrator still reads its objects (ADR-0070 §4).
+    if let Some(kit) = handle
+        .0
+        .dormant_kit(&ctx, &query.type_ref)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        && !may_edit_model(&ctx, &handle).await
+    {
+        let refused = anyhow::Error::from(super::access::AccessError::NotInstalled {
+            entity: query.type_ref.clone(),
+            kit,
+        });
+        return Err(access_problem(&refused).expect("an access error"));
+    }
     let outcome = handle.0.query(&ctx, &query).await.map_err(|e| match e {
         QueryError::Invalid(m) => bad(m),
         QueryError::Failed(e) => access_problem(&e)
@@ -1616,6 +1660,12 @@ pub fn register_routes(
             "string",
         )
         .require_license_features::<License>([])
+        .query_param_typed(
+            "include",
+            false,
+            "`dormant`: also the types and fields kits left behind, marked `meta.left_by` / `left_by` (administrators of the model only)",
+            "string",
+        )
         .handler(list_types)
         .json_response_with_schema::<TypesResponse>(openapi, StatusCode::OK, "The ontology")
         .error_401(openapi)
@@ -1773,6 +1823,7 @@ pub fn register_routes(
             "Matching objects with their relations",
         )
         .error_400(openapi)
+        .error_404(openapi)
         .error_403(openapi)
         .error_401(openapi)
         .error_500(openapi)

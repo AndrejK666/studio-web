@@ -598,6 +598,30 @@ it cannot be safely inferred from the new overlay. Imports keep trusted source
 metadata while contributing organization edits. History replays and reverts
 both the projection and its sources.
 
+### Installed, dormant and absent types (ADR-0070 §4)
+
+A type whose kit was uninstalled while it had objects, or while a gear held it,
+stays with `meta.left_by = {kit, version, at}`; a kit field left on a core type
+carries `left_by` too. What follows from the mark:
+
+- `GET /types` leaves dormant types, fields, relations and lifecycles out
+  (`Ontology::without_dormant`), so tabs, generic screens, filters and the
+  generated clients do not see them. `?include=dormant` returns them, marked,
+  to an administrator of the model; Admin › Studio domain model asks for it.
+- A person's create, change, delete or relation from an object of a dormant
+  type is refused: `failed_precondition`, violation `DOMAIN_TYPE_DORMANT`
+  naming the kit. The gear that holds the type writes through its trusted path
+  and is not refused (decision 7).
+- `POST /query` of a dormant type answers a member `not_found` with
+  `DOMAIN_TYPE_NOT_INSTALLED:<kit>`; an administrator reads its objects.
+- Reinstalling the kit removes the mark: the same objects, under the same ids,
+  are writable again. A type with no objects and no gear goes when its kit goes
+  (absent): unknown to every route.
+
+Still open: an administrator's "remove what *kit* left" (one model change that
+marks the objects deleted), and MCP tools of an uninstalled kit answering
+`KIT_NOT_INSTALLED` (#1039).
+
 ### The running core as a layer
 
 `core_layer` in the model head pins the core source an organization was last

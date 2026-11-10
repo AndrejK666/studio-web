@@ -726,6 +726,49 @@ impl Ontology {
     /// The `object_type` node for one entity — what the model-graph sync
     /// stores for it. Used to write a single changed type back to the graph
     /// without re-syncing the whole model.
+    /// The kit that left this type dormant (`meta.left_by.kit`, ADR-0070 §4):
+    /// the kit is gone and the type stays for its objects or its gear.
+    pub fn left_by(&self, entity_id: &str) -> Option<&str> {
+        self.entity(entity_id)?
+            .pointer("/meta/left_by/kit")?
+            .as_str()
+            .filter(|k| !k.is_empty())
+    }
+
+    /// The document without what kits left dormant: the types, and the
+    /// fields, relations and lifecycles marked `left_by`. What a member and
+    /// every screen outside Admin › Domain model reads (ADR-0070 §4).
+    pub fn without_dormant(doc: &Value) -> Value {
+        let mut doc = doc.clone();
+        let dormant = |v: &Value| v.get("left_by").is_some_and(|l| !l.is_null());
+        if let Some(entities) = doc.get_mut("entities").and_then(Value::as_array_mut) {
+            entities.retain(|e| !e.get("meta").is_some_and(dormant));
+            for e in entities.iter_mut() {
+                if let Some(ps) = e.get_mut("properties").and_then(Value::as_array_mut) {
+                    ps.retain(|p| !dormant(p));
+                }
+                if let Some(ls) = e
+                    .pointer_mut("/meta/lifecycles")
+                    .and_then(Value::as_array_mut)
+                {
+                    ls.retain(|l| !dormant(l));
+                }
+            }
+            let kept: std::collections::HashSet<String> = entities
+                .iter()
+                .filter_map(|e| e.get("id").and_then(Value::as_str).map(str::to_owned))
+                .collect();
+            if let Some(buckets) = doc.get_mut("buckets").and_then(Value::as_array_mut) {
+                for b in buckets {
+                    if let Some(order) = b.get_mut("entity_order").and_then(Value::as_array_mut) {
+                        order.retain(|id| id.as_str().is_some_and(|id| kept.contains(id)));
+                    }
+                }
+            }
+        }
+        doc
+    }
+
     /// The gear that keeps this type's objects (`meta.held_by`), when one does.
     pub fn held_by(&self, entity_id: &str) -> Option<&str> {
         self.entity(entity_id)?

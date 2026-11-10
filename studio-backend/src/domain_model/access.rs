@@ -44,6 +44,12 @@ pub enum AccessError {
     Unavailable(String),
     /// The type's objects are a gear's records: only that gear writes them.
     Held(String),
+    /// The kit that brought the type is gone: its objects stay, read-only
+    /// (ADR-0070 §4).
+    Dormant { entity: String, kit: String },
+    /// The type is dormant and the caller does not administer the model: for
+    /// them the kit's type is not installed.
+    NotInstalled { entity: String, kit: String },
 }
 
 impl std::fmt::Display for AccessError {
@@ -52,6 +58,14 @@ impl std::fmt::Display for AccessError {
             Self::Denied => f.write_str("not permitted on domain objects"),
             Self::Unavailable(m) => write!(f, "authorization unavailable: {m}"),
             Self::Held(m) => write!(f, "{m}: change it through that gear"),
+            Self::Dormant { entity, kit } => write!(
+                f,
+                "`{entity}` was left by kit `{kit}`, which is not installed: its objects are kept read-only; install the kit again to change them"
+            ),
+            Self::NotInstalled { entity, kit } => write!(
+                f,
+                "`{entity}` comes with kit `{kit}`, which is not installed in this organization"
+            ),
         }
     }
 }

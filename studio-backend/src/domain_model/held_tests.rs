@@ -406,3 +406,134 @@ async fn concurrent_cold_declarations_write_one_version() {
     }
     assert_eq!(service.revisions(&ctx()).await.unwrap().len(), expected);
 }
+
+#[tokio::test]
+async fn a_type_its_kit_left_keeps_its_objects_read_only_and_out_of_the_installed_model() {
+    use super::access::{AccessError, access_error};
+    use super::ontology::Ontology;
+    use super::service::WriteOptions;
+
+    let service = Arc::new(DomainModelService::new(Arc::new(
+        InMemoryDomainStore::default(),
+    )));
+    let notes = serde_json::from_value(json!({
+        "types": [{"name": "note", "fields": [{"name": "text", "type": "string"}]}],
+        "fields": [{"on": "project", "name": "note_count", "type": "integer?"}]
+    }))
+    .unwrap();
+    service
+        .sync_kit_model(&ctx(), "team-notes", "1", Some(&notes))
+        .await
+        .unwrap();
+    let written = WriteOptions {
+        validate: ValidateMode::Off,
+        ..Default::default()
+    };
+    let id = service
+        .create_object(
+            &ctx(),
+            "team-notes-note",
+            "n1",
+            written,
+            json!({"text": "kept"}),
+        )
+        .await
+        .unwrap()
+        .instance_id;
+    assert_eq!(
+        service
+            .dormant_kit(&ctx(), "team-notes-note")
+            .await
+            .unwrap(),
+        None
+    );
+
+    // Uninstalled with an object of the type: dormant, not absent.
+    let gone = service
+        .sync_kit_model(&ctx(), "team-notes", "1", None)
+        .await
+        .unwrap();
+    assert_eq!(gone.kept, ["team-notes-note".to_owned()]);
+    assert_eq!(
+        service
+            .dormant_kit(&ctx(), "team-notes-note")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("team-notes")
+    );
+
+    // People cannot write it any more: not a new object, not a change, not a
+    // deletion. The refusal names the kit.
+    let written = WriteOptions {
+        validate: ValidateMode::Off,
+        ..Default::default()
+    };
+    let refused = service
+        .create_object(
+            &ctx(),
+            "team-notes-note",
+            "n2",
+            written,
+            json!({"text": "new"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        access_error(&refused),
+        Some(AccessError::Dormant { kit, .. }) if kit == "team-notes"
+    ));
+    let mut set = Map::new();
+    set.insert("text".into(), json!("changed"));
+    let refused = service
+        .patch_object(&ctx(), &id, set, &[], ValidateMode::Off)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        access_error(&refused),
+        Some(AccessError::Dormant { .. })
+    ));
+    let refused = service.delete_object(&ctx(), &id).await.unwrap_err();
+    assert!(matches!(
+        access_error(&refused),
+        Some(AccessError::Dormant { .. })
+    ));
+    assert!(super::port::is_refusal(&refused));
+
+    // The installed model leaves it out; the administrator's view keeps it.
+    let doc = service.ontology_document(&ctx()).await.unwrap();
+    let installed = Ontology::without_dormant(&doc);
+    let has = |d: &Value, id: &str| {
+        d["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["id"] == id)
+    };
+    assert!(has(&doc, "team-notes-note"));
+    assert!(!has(&installed, "team-notes-note"));
+    assert!(installed["buckets"].as_array().unwrap().iter().all(|b| {
+        !b["entity_order"]
+            .as_array()
+            .is_some_and(|o| o.contains(&json!("team-notes-note")))
+    }));
+
+    // Reinstalling brings it back under the same id, writable again.
+    service
+        .sync_kit_model(&ctx(), "team-notes", "1", Some(&notes))
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .dormant_kit(&ctx(), "team-notes-note")
+            .await
+            .unwrap(),
+        None
+    );
+    let mut set = Map::new();
+    set.insert("text".into(), json!("changed"));
+    service
+        .patch_object(&ctx(), &id, set, &[], ValidateMode::Off)
+        .await
+        .unwrap();
+}

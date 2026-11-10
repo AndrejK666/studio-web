@@ -174,9 +174,13 @@ and its [type/relationship analysis](../../docs/design/domain-model-split.md).
    irreversible boundary. Still pending: kit types' entity-level overrides, one
    composition for gear/kit/core layers, head invalidation on install/deploy and
    showing a refused migration to administrators.
-4. #1033: installed / dormant / absent states. Uninstall must retain inhabited or
-   gear-held definitions and provenance; sync may write dormant records, while
-   absent types cannot be queried or written as installed features.
+4. #1033: installed / dormant / absent states. Delivered: dormant types and
+   fields are left out of `GET /types` unless an administrator asks
+   `include=dormant` (Admin › Studio domain model does); people's writes are
+   refused with `DOMAIN_TYPE_DORMANT` naming the kit while the holding gear's
+   sync keeps writing; a member's query answers `DOMAIN_TYPE_NOT_INSTALLED`;
+   reinstalling makes the same objects writable. Still open: the
+   administrator's "remove what the kit left" action.
 5. #1034–#1038: move feature definitions and their incoming relations/tabs into
    their owners, then lifecycle, Git and Assistant; retire `gears` and numbered
    package relations. Keep existing graph type ids and registry schemas stable.

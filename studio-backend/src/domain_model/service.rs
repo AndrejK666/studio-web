@@ -352,6 +352,19 @@ pub struct DomainModelService {
     claimed: Mutex<HashMap<Uuid, u64>>,
 }
 
+/// A person's write to a type a kit left dormant (ADR-0070 §4). The gear that
+/// holds it writes through its own path and is not refused.
+fn refuse_dormant(ontology: &Ontology, entity_id: &str) -> anyhow::Result<()> {
+    match ontology.left_by(entity_id) {
+        Some(kit) => Err(AccessError::Dormant {
+            entity: entity_id.to_owned(),
+            kit: kit.to_owned(),
+        }
+        .into()),
+        None => Ok(()),
+    }
+}
+
 /// How long an object path trusts its cached model before asking the graph
 /// for the head version again (one single-node read).
 const MODEL_RECHECK: std::time::Duration = std::time::Duration::from_secs(10);
@@ -1064,6 +1077,19 @@ impl DomainModelService {
         Ok(summary)
     }
 
+    /// The kit that left `type_ref` dormant in the caller's organization, if
+    /// it did; `None` for an installed or an unknown type.
+    pub async fn dormant_kit(
+        &self,
+        ctx: &SecurityContext,
+        type_ref: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let ontology = self.model(ctx).await?;
+        Ok(ontology
+            .resolve_entity_id(type_ref)
+            .and_then(|id| ontology.left_by(&id).map(str::to_owned)))
+    }
+
     /// The whole ontology document — the source the frontend regenerates from.
     pub async fn ontology_document(&self, ctx: &SecurityContext) -> anyhow::Result<Value> {
         Ok(self.model_current(ctx).await?.document().clone())
@@ -1204,6 +1230,7 @@ impl DomainModelService {
         if let Some(gear) = ontology.held_by(&entity_id) {
             return Err(AccessError::Held(format!("{entity_id} is kept by {gear}")).into());
         }
+        refuse_dormant(&ontology, &entity_id)?;
 
         // Against the whole type, bases included — most of what a type requires
         // is declared on one of them.
@@ -1433,6 +1460,7 @@ impl DomainModelService {
             .await?;
         // A gear's record takes a person's change only in the fields no gear
         // writes: what an administrator added to the type beside the gear's.
+        refuse_dormant(&ontology, &entity_id)?;
         if let Some(gear) = ontology.held_by(&entity_id) {
             let open = ontology.open_own_fields(&entity_id);
             if let Some(field) = set
@@ -1533,6 +1561,7 @@ impl DomainModelService {
         if let Some(gear) = ontology.held_by(&entity_id) {
             return Err(AccessError::Held(format!("{entity_id} is kept by {gear}")).into());
         }
+        refuse_dormant(&ontology, &entity_id)?;
         let write = self
             .policy
             .access(ctx, access::WRITE, Some(&entity_id))
@@ -2265,6 +2294,7 @@ impl DomainModelService {
         if let Some(gear) = ontology.held_by(&src) {
             return Err(AccessError::Held(format!("{src} is kept by {gear}")).into());
         }
+        refuse_dormant(&ontology, &src)?;
         // Relating is writing the source; it also reveals the target, so the
         // caller must be able to read it. Otherwise relating a person to a
         // project you cannot see would test whether it exists (ADR-0035 §5).

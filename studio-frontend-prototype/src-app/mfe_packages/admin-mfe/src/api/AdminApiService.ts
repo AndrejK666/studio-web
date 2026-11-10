@@ -376,9 +376,12 @@ export class AdminApiService extends BaseApiService {
    * home tenant is the platform root, whose model is not the organization's.
    */
 
-  /** The organization's model, and whether the caller may change it. */
+  /**
+   * The organization's model, and whether the caller may change it. Admin asks for what kits left
+   * dormant too (`include=dormant`, ADR-0070 §4): only this screen shows them, marked `left_by`.
+   */
   readonly domainTypes = this.protocol(RestEndpointProtocol).queryWith<DomainTypesResponse, { orgId: string }>(
-    ({ orgId }) => `/studio-domain-model/v1/types?${q({ organization_id: orgId })}`
+    ({ orgId }) => `/studio-domain-model/v1/types?${q({ organization_id: orgId, include: 'dormant' })}`
   );
 
   /** How many objects of each type the organization holds. */

@@ -219,9 +219,15 @@ in each organization:
 | State | When | Shown | People write | Members read | Administrators read |
 |---|---|---|---|---|---|
 | **installed** | the kit is installed (base, organization or project kit, ADR-0069 §4) | tabs, generic screens, filters, `domain_model_types` | as the type's rules allow | yes, through the PDP | yes |
-| **dormant** | the kit is gone, and the type has objects or a linked gear holds it | only in Admin › Domain model, marked "left by *kit*", and in `domain_model_types?include=dormant` | refused, 409 `DOMAIN_TYPE_DORMANT` | 404 `DOMAIN_TYPE_NOT_INSTALLED` with `kit` | read-only, and may remove it |
+| **dormant** | the kit is gone, and the type has objects or a linked gear holds it | only in Admin › Domain model, marked "left by *kit*", and in `domain_model_types?include=dormant` | refused, `failed_precondition` `DOMAIN_TYPE_DORMANT` naming the kit (400; see the note below) | 404 `DOMAIN_TYPE_NOT_INSTALLED` with `kit` | read-only, and may remove it |
 | **absent** | the kit is gone, and the type has no objects and no gear holds it | nowhere | 404 | 404 | 404 |
 
+- *Implementation note (2026-11-10, #1033):* the errors catalog keeps `409` for
+  concurrency conflicts (`aborted`) and lost creates (`already_exists`); a write
+  to a dormant type is the system in the wrong state, so it answers
+  `failed_precondition` (`400`) whose violation names the kit and carries
+  `DOMAIN_TYPE_DORMANT`. A member's `/query` of a dormant type answers
+  `not_found` with the resource `DOMAIN_TYPE_NOT_INSTALLED:<kit>`.
 - A dormant type keeps `meta.left_by = {kit, version, at}`. Its objects stay in the graph
   and in the read model as they were. A gear that holds it keeps writing, because the
   gear's sync is not the kit's, and no data is lost (§7, decision 7).
