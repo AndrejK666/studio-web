@@ -607,6 +607,31 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             screens: vec![project_tab("Team", Some("/projects/team"))],
             ..KitContents::default()
         },
+        // `assistant-mfe`: Studio AI, docked in the shell's sidebar beside
+        // whatever screen is open (the old prototype's `studio-ai.tsx`). No
+        // route: it is not a tab. It answers through studio-llm-proxy on the
+        // person's own key (a workspace's AI connections count inside a
+        // workspace); a chat completion only computes an answer, so it is a
+        // read. Its model, tool and message types come with ADR-0070 phase 8.
+        "assistant" => KitContents {
+            screens: vec![KitScreen {
+                kind: "section",
+                level: "organization".to_owned(),
+                label: "Studio AI".to_owned(),
+                route: None,
+                slot: Some("sidebar".to_owned()),
+            }],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-llm/v1/client-config",
+                    "GET /studio-llm/v1/workspaces/{workspace_id}/client-config",
+                    "POST /studio-llm/v1/chat/completions",
+                    "POST /studio-llm/v1/workspaces/{workspace_id}/chat/completions",
+                ]),
+                ..KitPermissions::default()
+            },
+            ..KitContents::default()
+        },
         "project-domain-model" => KitContents {
             screens: vec![project_tab("Project domain model", Some("/domain-model"))],
             permissions: KitPermissions {

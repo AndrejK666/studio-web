@@ -35,7 +35,9 @@ This README is what you need to work in the directory.
   `project-activity`, `project-specs`, `org-costs`, `org-reports`,
   `studio-api-docs` (level `platform`), `components` (platform, organization
   and project), `org-infrastructure`, `product-releases`,
-  `project-domain-model`, `org-connections`, `project-team` and
+  `project-domain-model`, `org-connections`, `project-team`, `assistant`
+  (Studio AI, the chat panel the shell docks in its sidebar; no route, its
+  permissions are studio-llm-proxy's client settings and chat completions) and
   `constructor-research`. Every built-in kit is a base kit by default except
   those in `OPT_IN_BUILTIN` (`service.rs`): `constructor-research` applies only
   where an organization installs it (or a platform administrator makes it a

@@ -121,6 +121,7 @@ async fn every_builtin_kit_is_a_base_kit_until_the_platform_removes_it() {
     assert_eq!(
         slugs(&installed.base),
         [
+            "assistant",
             "components",
             "org-connections",
             "org-costs",

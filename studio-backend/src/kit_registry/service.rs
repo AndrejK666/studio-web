@@ -834,6 +834,12 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "Build a project's product in Constructor Research and run it there as one of its applications: the Research projects, their hardware, and the deploys, rollbacks and addresses of what runs there. For the whole organization, or for one project.",
             &["organization", "project"],
         ),
+        kit(
+            "assistant",
+            "Assistant",
+            "Studio AI: the chat assistant docked beside every screen, answering on the person's own model key.",
+            &["organization", "workspace", "project"],
+        ),
     ]
 }
 
@@ -1178,7 +1184,8 @@ mod tests {
                 "project-domain-model",
                 "org-connections",
                 "project-team",
-                "constructor-research"
+                "constructor-research",
+                "assistant"
             ]
         );
         for kit in &kits {
