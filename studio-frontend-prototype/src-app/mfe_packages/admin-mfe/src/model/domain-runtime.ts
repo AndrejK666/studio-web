@@ -1,6 +1,6 @@
 // The pure part of the prototype's src/domain-runtime.ts (studio-frontend-poc/), unchanged but for `meta.kit` and
 // `meta.kit_version` (ADR-0067 §6, issue #1025). Left out: the build's seed (domain-model.gen.ts), the helpers only
-// other screens use (`openFieldsOf`, `relationsOfModel`), and the module-level loader and hooks, which the Studio
+// other screens use (`openFieldsOf`), and the module-level loader and hooks, which the Studio
 // domain model section replaces with its own read of `GET /studio-domain-model/v1/types` (`modelOf` below is that
 // loader's `build`).
 //
@@ -142,6 +142,37 @@ export function ancestorsOf(model: DomainModel, id: string): string[] {
     chain.push(base);
     at = base;
   }
+}
+
+const normalize = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** The entity a relation property points at, by its name or id. */
+function targetOf(model: DomainModel, type: string | undefined): string | null {
+  const t = normalize(type);
+  if (!t) return null;
+  return model.entities.find((e) => normalize(e.name) === t || normalize(e.id) === t)?.id ?? null;
+}
+
+/** The relations `include` follows from `id`, by name, and the entity each
+ *  reaches (the prototype's `relationsOfModel`, carried for saved views). A
+ *  name two bases point at different entities is left out: the query could
+ *  not tell which one it means. */
+export function relationsOfModel(model: DomainModel, id: string): Record<string, string> {
+  const chain = new Set(ancestorsOf(model, id));
+  const found: Record<string, string> = {};
+  const ambiguous = new Set<string>();
+  for (const e of model.entities) {
+    if (!chain.has(e.id)) continue;
+    for (const p of e.properties ?? []) {
+      if (!isRelation(p) || !p.name) continue;
+      const target = targetOf(model, p.type);
+      if (!target) continue;
+      if (p.name in found && found[p.name] !== target) ambiguous.add(p.name);
+      else found[p.name] = target;
+    }
+  }
+  for (const a of ambiguous) delete found[a];
+  return found;
 }
 
 /** Own and inherited payload fields, root first, nearest declaration wins. */

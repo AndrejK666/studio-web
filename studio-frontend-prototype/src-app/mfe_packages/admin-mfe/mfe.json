@@ -15,7 +15,8 @@
       ],
       "actions": [],
       "domainActions": [
-        "gts.frontx.mfes.comm.action.v1~constructor_studio.context.workspaces.publish.v1~"
+        "gts.frontx.mfes.comm.action.v1~constructor_studio.context.workspaces.publish.v1~",
+        "gts.frontx.mfes.comm.action.v1~constructor_studio.shell.screen.open.v1~"
       ],
       "manifest": "gts.frontx.mfes.mfe.mf_manifest.v1~constructor_studio.admin.mfe.manifest.v1",
       "exposedModule": "./lifecycle"
@@ -111,6 +112,19 @@
         "order": 70,
         "level": "admin",
         "section": "objects"
+      }
+    },
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.admin.screens.views.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.admin.mfe.main.v1",
+      "presentation": {
+        "label": "Views",
+        "icon": "lucide:table-properties",
+        "route": "/admin/views",
+        "order": 80,
+        "level": "admin",
+        "section": "views"
       }
     },
     {

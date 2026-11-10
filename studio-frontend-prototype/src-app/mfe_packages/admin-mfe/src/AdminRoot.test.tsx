@@ -25,6 +25,7 @@ vi.mock('./screens/admin/SecretsSection', () => ({ SecretsSection: () => 'secret
 vi.mock('./screens/admin/integrations/IntegrationsSection', () => ({ IntegrationsSection: () => 'integrations' }));
 vi.mock('./screens/admin/domain-model/DomainModelSection', () => ({ DomainModelSection: () => 'domain-model' }));
 vi.mock('./screens/admin/ObjectsSection', () => ({ ObjectsSection: () => 'objects' }));
+vi.mock('./screens/admin/views/ViewsSection', () => ({ ViewsSection: () => 'views' }));
 vi.mock('./screens/admin/IdentitiesSection', () => ({ IdentitiesSection: () => 'identities' }));
 vi.mock('./screens/admin/TenantsSection', () => ({ TenantsSection: () => 'tenants' }));
 

@@ -20,6 +20,7 @@ available independently of kit installation.
 | Secrets | `SecretsView` (`App.tsx`) | credstore, account-management, studio-connector |
 | Studio domain model | `DomainModelAdmin` (`domain-model-admin.tsx`), `domain-origin.ts`, the pure part of `domain-runtime.ts` (studio-frontend-poc/) | studio-domain-model |
 | Objects | `ObjectTypes` (`object-types.tsx`) | studio-components-catalog, types-registry |
+| Views | `ViewsScreen`, `ViewTable`, `ViewGraph`, `ViewEditor` (`views.tsx`), `views-model.ts` | studio-domain-model (`/types`, `/query`, `/mutate`) |
 | All identities | `IdentityDirectory` (`identity-directory.tsx`) | studio-identity, account-management |
 | Project tenants | `WorkspacesView` (`App.tsx`) | account-management |
 
@@ -43,6 +44,12 @@ else.
 - `DomainModelTools.tsx` — model history, a confirmed revert, JSON export and
   confirmed import. Readers can view and export; writes follow `can_edit_model`.
   An import without an inverse blocks reverting through that revision.
+- `src/model/views-model.ts` — the prototype's, with its tests, reading the
+  administered organization's model (passed in, no global loader) and
+  returning the editor's problems as message keys; `domain-runtime.ts` carries
+  the prototype's `relationsOfModel` for it.
+- `src/screens/admin/views/` — saved views: the list of live `view` objects,
+  a view run as a server-paged table (search, sort and page in the address
+  under `view.`, the shared `useListState`) or drawn on `DomainModelGraph`,
+  and the editor with a preview of the real query.
 - `src/api/AdminApiService.ts` — every route the sections call.
-
-Not here yet (see `docs/parity.md`): Views.

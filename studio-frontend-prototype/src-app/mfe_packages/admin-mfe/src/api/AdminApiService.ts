@@ -46,6 +46,7 @@ import type {
   TypeCount,
 } from './types';
 import type { RoleDef } from '../model/access';
+import type { LooseQuery, LooseResult } from '../model/views-model';
 
 const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
 const e = encodeURIComponent;
@@ -450,6 +451,24 @@ export class AdminApiService extends BaseApiService {
       DomainModelEdit,
       { rename_to?: string; type?: string; required?: boolean; description?: string }
     >('PATCH', `/studio-domain-model/v1/types/${e(type)}/fields/${e(name)}?${q({ organization_id: orgId })}`);
+  }
+
+  /**
+   * Read objects of one type: filtered, ordered, projected, related, paged by
+   * cursor (ADR-0066). What a saved view runs; a POST, so a mutation
+   * descriptor, but a read: it answers 200 and writes nothing.
+   */
+  queryDomain(orgId: string) {
+    return this.rest.mutation<LooseResult, LooseQuery>(
+      'POST', `/studio-domain-model/v1/query?${q({ organization_id: orgId })}`
+    );
+  }
+
+  /** Change domain objects in one batch, each checked against the model and the caller's rights. */
+  mutateDomain(orgId: string) {
+    return this.rest.mutation<{ results: unknown[] }, { validate?: 'strict' | 'warn' | 'off'; operations: Record<string, unknown>[] }>(
+      'POST', `/studio-domain-model/v1/mutate?${q({ organization_id: orgId })}`
+    );
   }
 
   /** Drop a field the type itself declares. Stored values stay in the objects. */

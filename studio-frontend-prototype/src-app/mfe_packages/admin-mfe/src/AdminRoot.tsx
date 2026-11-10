@@ -21,6 +21,7 @@ import { IntegrationsSection } from './screens/admin/integrations/IntegrationsSe
 import { SecretsSection } from './screens/admin/SecretsSection';
 import { DomainModelSection } from './screens/admin/domain-model/DomainModelSection';
 import { ObjectsSection } from './screens/admin/ObjectsSection';
+import { ViewsSection } from './screens/admin/views/ViewsSection';
 import { IdentitiesSection } from './screens/admin/IdentitiesSection';
 import { TenantsSection } from './screens/admin/TenantsSection';
 import styles from './screens/admin/Admin.module.css';
@@ -34,6 +35,8 @@ export const ADMIN_SECTIONS = [
   // The Studio domain model before Objects, where the prototype's Admin had it.
   'domain-model',
   'objects',
+  // Saved views of the model's objects, after Objects, as the prototype's Admin had them.
+  'views',
   'identities',
   'tenants',
 ] as const;
@@ -94,6 +97,8 @@ function Section({ section }: { section: AdminSection }) {
       return <DomainModelSection />;
     case 'objects':
       return <ObjectsSection />;
+    case 'views':
+      return <ViewsSection />;
     case 'identities':
       return <IdentitiesSection />;
     case 'tenants':
