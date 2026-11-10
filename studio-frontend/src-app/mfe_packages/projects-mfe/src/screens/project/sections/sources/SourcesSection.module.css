@@ -5,7 +5,7 @@
 }
 
 .upload {
-  margin-bottom: var(--space-4);
+  margin-block: var(--space-2);
 }
 
 /* TODO(#888): the design draws a 32px search and 14px cells, the kit's DataGrid (and Specs)
@@ -19,14 +19,6 @@
   margin-inline: auto;
   border: 0;
   white-space: normal;
-}
-
-.footer {
-  margin: 0;
-  padding: var(--space-3) var(--space-4);
-  font-size: var(--text-meta-size);
-  line-height: var(--text-meta-line-height);
-  color: var(--muted-foreground);
 }
 
 .muted {

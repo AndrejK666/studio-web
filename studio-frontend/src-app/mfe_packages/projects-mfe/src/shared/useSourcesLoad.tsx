@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { apiRegistry, useApiQuery, useQueryCache } from '@gears-frontx/react';
 import {
-  useDataGrid,
-  type DataGridLoadContext,
-  type DataGridLoadResult,
-} from '@gears-frontx/ui-kit';
-import { AccountsApiService, ConnectorsApiService } from '@constructor-studio/mfe-shared';
+  AccountsApiService,
+  ConnectorsApiService,
+  TEXT_SEARCH_FILTER_KEY,
+  useListRows,
+  type ListRows,
+} from '@constructor-studio/mfe-shared';
 import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
 import { DocumentsApiService } from '../api/DocumentsApiService';
 import { inFlight } from '../model/repoImport';
@@ -18,7 +19,6 @@ import {
   type SourcesFooter,
   type SourcesTableRow,
 } from '../model/sourceRows';
-import { TEXT_SEARCH_FILTER_KEY } from './dataGridFilters';
 import { useProjectImport } from './useArtifactImport';
 import { repositoryNodesParams } from './useArtifacts';
 import { projectConfigQuery, useProjectConfig } from './useProjectConfig';
@@ -28,27 +28,14 @@ export const SOURCES_FILTER_KEYS = {
   search: TEXT_SEARCH_FILTER_KEY,
 } as const;
 
-export interface SourcesLoad {
+export interface SourcesLoad extends Pick<ListRows<SourcesTableRow>, 'load' | 'rowsBridge'> {
   ready: boolean;
   failed: boolean;
   rows: SourcesTableRow[];
   footer: SourcesFooter;
   windowDays: number | null;
   retry: () => void;
-  load: (context: DataGridLoadContext) => Promise<DataGridLoadResult<SourcesTableRow>>;
-  rowsBridge: React.ReactElement;
 }
-
-const RowsBridge: React.FC<{ rowsKey: string }> = ({ rowsKey }) => {
-  const grid = useDataGrid();
-  const shown = useRef(rowsKey);
-  useEffect(() => {
-    if (shown.current === rowsKey) return;
-    shown.current = rowsKey;
-    void grid.triggerLoad();
-  }, [grid, rowsKey]);
-  return null;
-};
 
 function settledSyncsOf(lines: readonly SourceImportLine[]): string {
   return lines
@@ -123,8 +110,6 @@ export function useSourcesLoad(
   const rows = useMemo(() => buildSourceRows(answers), [answers]);
   const footer = useMemo(() => sourcesFooter(rows, answers), [rows, answers]);
 
-  const rowsKey = useMemo(() => JSON.stringify(rows), [rows]);
-
   // A repository's numbers move when its sync ends; nothing pushes them.
   const refetchAfterSync = useCallback(() => {
     void cache.invalidate(ingest.nodes(nodesParams));
@@ -138,22 +123,11 @@ export function useSourcesLoad(
     void cache.invalidate(ingest.nodes(nodesParams));
   }, [cache, accounts, ingest, nodesParams, projectId]);
 
-  const rowsRef = useRef(rows);
-  const uploadsNameRef = useRef(uploadsName);
-  useLayoutEffect(() => {
-    rowsRef.current = rows;
-    uploadsNameRef.current = uploadsName;
-  }, [rows, uploadsName]);
-
-  const load = useCallback(
-    async (context: DataGridLoadContext): Promise<DataGridLoadResult<SourcesTableRow>> => {
-      const search: string = context.filters?.[SOURCES_FILTER_KEYS.search]?.value ?? '';
-      const shown = filterSourceRows(rowsRef.current, search, uploadsNameRef.current);
-      const { page, limit } = context.pagination ?? { page: 1, limit: shown.length };
-      return { results: shown.slice((page - 1) * limit, page * limit), total: shown.length };
-    },
-    []
+  const search = useCallback(
+    (all: readonly SourcesTableRow[], text: string) => filterSourceRows(all, text, uploadsName),
+    [uploadsName]
   );
+  const { load, rowsBridge } = useListRows(rows, search);
 
   return {
     ready:
@@ -169,6 +143,6 @@ export function useSourcesLoad(
     windowDays: answers.activity?.days ?? null,
     retry,
     load,
-    rowsBridge: <RowsBridge rowsKey={rowsKey} />,
+    rowsBridge,
   };
 }

@@ -2323,6 +2323,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/builds/{build_id}",
+      "operation_id": "studio_environments.get_build",
+      "tag": "",
+      "summary": "One build of a project, as Studio keeps it",
+      "authenticated": true,
+      "responses": [
+        "EnvironmentBuildDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/builds/{build_id}/log",
       "operation_id": "studio_environments.get_build_log",
       "tag": "",
@@ -2340,6 +2356,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/config-secrets",
+      "operation_id": "studio_environments.get_config_secret_keys",
+      "tag": "",
+      "summary": "An environment's configuration-secret keys against what the product needs",
+      "authenticated": true,
+      "responses": [
+        "ConfigSecretKeysDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/deployments",
       "operation_id": "studio_environments.list_deployments",
       "tag": "",
@@ -2347,6 +2380,22 @@
       "authenticated": true,
       "responses": [
         "DeploymentListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/deployments/{deployment_id}",
+      "operation_id": "studio_environments.get_deployment",
+      "tag": "",
+      "summary": "One deployment, as Studio records it",
+      "authenticated": true,
+      "responses": [
+        "DeploymentDto"
       ],
       "errors": [
         "401",
@@ -2499,6 +2548,23 @@
         "InfraServiceListDto"
       ],
       "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/infra-services/{name}/keycloak-realm",
+      "operation_id": "studio_environments.get_keycloak_realm",
+      "tag": "",
+      "summary": "The realm a project's Keycloak imports",
+      "authenticated": true,
+      "responses": [
+        "KeycloakRealmDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "404",
         "500"
@@ -6449,6 +6515,24 @@
     },
     {
       "method": "POST",
+      "path": "/studio-product/v1/product-description-checks",
+      "operation_id": "studio_product.create_product_description_check",
+      "tag": "StudioProduct",
+      "summary": "Check a saved revision of the product's description for one profile",
+      "authenticated": true,
+      "request": "ProductDescriptionCheckRequest",
+      "responses": [
+        "ProductDescriptionCheckDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-product/v1/product-description-publications",
       "operation_id": "studio_product.create_product_description_publication",
       "tag": "StudioProduct",
@@ -7559,7 +7643,7 @@
       "tag": "StudioOrganizations",
       "summary": "Set the project types a tenant offers",
       "authenticated": true,
-      "request": "ProjectTypesDocDto",
+      "request": "ProjectTypesWriteDto",
       "responses": [
         "ProjectTypesDocDto"
       ],

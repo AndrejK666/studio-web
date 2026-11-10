@@ -5,7 +5,7 @@
  */
 
 import { useMemo } from 'react';
-import { useScreenTranslations, useTranslation } from '@gears-frontx/react';
+import { useFrontX, useScreenTranslations, useTranslation } from '@gears-frontx/react';
 import { loadScreenTranslations, type TranslationModules } from './screenTranslations';
 
 type TextParams = Record<string, string | number | boolean>;
@@ -50,10 +50,12 @@ export function screenText(
 export function createText(namespace: string): () => ScreenText {
   return function useScreenText(): ScreenText {
     const { t, language } = useTranslation();
-    return useMemo(
-      () => screenText((key, params) => t(`${namespace}:${key}`, params), language),
-      [t, language]
-    );
+    // The registry version moves when a dictionary registers; `t` and `language` don't.
+    const version = useFrontX().i18nRegistry.getVersion();
+    return useMemo(() => {
+      void version;
+      return screenText((key, params) => t(`${namespace}:${key}`, params), language);
+    }, [t, language, version]);
   };
 }
 

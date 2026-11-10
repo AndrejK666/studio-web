@@ -1,6 +1,5 @@
 {
   "title": "Воркспейсы",
-  "toolbar_label": "Воркспейсы",
   "table_label": "Воркспейсы",
   "search_placeholder": "Поиск воркспейсов...",
   "new_workspace": "Новый воркспейс",
@@ -24,8 +23,6 @@
   "clear_search": "Очистить поиск",
   "error_title": "Не удалось загрузить воркспейсы.",
   "retry": "Повторить",
-  "range_one": "{from}–{to} из {total} воркспейса",
-  "range_many": "{from}–{to} из {total} воркспейсов",
   "resolving_org": "Определяем организацию…",
   "no_org": "Организация не определена."
 }

@@ -1,20 +1,28 @@
 // @cpt-algo:cpt-studiofrontend-algo-connection-list-read:p2
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { apiRegistry, useApiQuery } from '@gears-frontx/react';
-import { type ConnectionDto, ConnectorsApiService, type OrganizationRef, useOrganization } from '@constructor-studio/mfe-shared';
+import { apiRegistry, useApiQuery, useQueryCache } from '@gears-frontx/react';
+import {
+  type ConnectionDto,
+  ConnectorsApiService,
+  type ListRows,
+  type OrganizationRef,
+  useListRows,
+  useOrganization,
+} from '@constructor-studio/mfe-shared';
 
 export interface ConnectionRow {
+  id: string;
   connection: ConnectionDto;
   providerName: string;
 }
 
-export interface ConnectionListView {
-  rows: ConnectionRow[];
+export interface ConnectionListView extends ListRows<ConnectionRow> {
   loading: boolean;
   failed: boolean;
   org: OrganizationRef | null;
   total: number;
+  retry: () => void;
 }
 
 export function matchesQuery(row: ConnectionRow, query: string): boolean {
@@ -26,16 +34,24 @@ export function matchesQuery(row: ConnectionRow, query: string): boolean {
   );
 }
 
-export function useConnectionList(query: string): ConnectionListView {
+function searchConnections(rows: readonly ConnectionRow[], query: string): readonly ConnectionRow[] {
+  // @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-4
+  return rows.filter((row) => matchesQuery(row, query));
+  // @cpt-end:cpt-studiofrontend-algo-connection-list-read:p2:inst-4
+}
+
+export function useConnectionList(): ConnectionListView {
   const connectors = apiRegistry.getService(ConnectorsApiService);
+  const cache = useQueryCache();
   const { org, loading: orgLoading } = useOrganization();
+  const tenantId = org?.id ?? '';
 
   // @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-2
   const { data: providerData, isLoading: providersLoading } = useApiQuery(connectors.providers);
   // @cpt-end:cpt-studiofrontend-algo-connection-list-read:p2:inst-2
 
   // @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-1
-  const listing = connectors.connections({ tenantId: org?.id ?? '' });
+  const listing = connectors.connections({ tenantId });
   const {
     data: connectionData,
     isLoading: connectionsLoading,
@@ -43,7 +59,7 @@ export function useConnectionList(query: string): ConnectionListView {
   } = useQuery({
     queryKey: listing.key,
     queryFn: ({ signal }) => listing.fetch({ signal }),
-    enabled: Boolean(org?.id),
+    enabled: Boolean(tenantId),
   });
   // @cpt-end:cpt-studiofrontend-algo-connection-list-read:p2:inst-1
 
@@ -52,6 +68,7 @@ export function useConnectionList(query: string): ConnectionListView {
       (providerData?.items ?? []).map((provider) => [provider.provider, provider.display_name])
     );
     return (connectionData?.items ?? []).map((connection) => ({
+      id: connection.id,
       connection,
       // @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-3
       providerName: names.get(connection.provider) ?? connection.provider,
@@ -59,17 +76,20 @@ export function useConnectionList(query: string): ConnectionListView {
     }));
   }, [providerData, connectionData]);
 
-  // @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-4
-  const rows = useMemo(() => all.filter((row) => matchesQuery(row, query)), [all, query]);
-  // @cpt-end:cpt-studiofrontend-algo-connection-list-read:p2:inst-4
+  const rows = useListRows(all, searchConnections);
+
+  const retry = useCallback(() => {
+    void cache.invalidate(connectors.connections({ tenantId }));
+  }, [cache, connectors, tenantId]);
 
   // @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-6
   return {
-    rows,
     loading: orgLoading || providersLoading || connectionsLoading,
     failed: connectionsFailed,
     org,
     total: all.length,
+    retry,
+    ...rows,
   };
   // @cpt-end:cpt-studiofrontend-algo-connection-list-read:p2:inst-6
 }

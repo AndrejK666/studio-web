@@ -2332,12 +2332,6 @@
           "relationLabel": ""
         },
         {
-          "name": "hidden_tabs",
-          "type": "string[]",
-          "description": "The tabs an administrator turned off for this level, by name; the relations that make them stay in the model.",
-          "relationLabel": ""
-        },
-        {
           "name": "org",
           "type": "organization",
           "relation": "organization",
@@ -2465,12 +2459,6 @@
           "relationLabel": ""
         },
         {
-          "name": "hidden_tabs",
-          "type": "string[]",
-          "description": "The tabs an administrator turned off for this level, by name; the relations that make them stay in the model.",
-          "relationLabel": ""
-        },
-        {
           "name": "projects",
           "type": "project",
           "relation": "project",
@@ -2494,7 +2482,7 @@
           "relation": "project-type",
           "extends": "edge",
           "relationType": "shows",
-          "relationLabel": "Project templates",
+          "relationLabel": "Templates & phases",
           "description": "A tab of the workspace: what it shows."
         },
         {

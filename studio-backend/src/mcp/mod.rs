@@ -273,17 +273,39 @@ mod tests {
             "project_connections",
             "product_description",
             "product_description_save",
+            "product_description_check",
             "infra_services_set",
+            "infra_plan",
+            "infra_service_public_url_set",
+            "config_secret_keys",
             "config_secret_set",
+            "config_secret_delete",
             "image_import",
             "build_plan",
             "build_start",
             "build_get",
+            "build_wait",
             "deploy_request",
+            "deployment_get",
+            "deployment_wait",
             "deployment_decide",
             "deployment_status",
         ] {
             assert!(names.contains(step), "no tool {step}");
+        }
+    }
+
+    #[test]
+    fn the_inbox_can_be_read_and_acted_on() {
+        let names: BTreeSet<&str> = tools().iter().map(|t| t.name).collect();
+        for tool in [
+            "inbox",
+            "inbox_mark",
+            "deployment_decide",
+            "review_verdict",
+            "task_run",
+        ] {
+            assert!(names.contains(tool), "no tool {tool}");
         }
     }
 

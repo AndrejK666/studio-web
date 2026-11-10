@@ -1,6 +1,3 @@
-/** Where DataGrid's text-search plugin puts its value in `DataGridLoadContext.filters`, its default key. */
-export const TEXT_SEARCH_FILTER_KEY = 'textSearch';
-
 /**
  * The value a tag group filter holds: the kit hands a list, also in `radio` mode,
  * and a stored value can have any shape, so anything but a list of strings reads as none.

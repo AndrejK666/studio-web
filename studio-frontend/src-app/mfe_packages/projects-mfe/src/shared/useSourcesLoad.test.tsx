@@ -1,6 +1,10 @@
 import { render, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConnectionDto, ProjectSource } from '@constructor-studio/mfe-shared';
+import {
+  PROJECT_CONFIG_TYPE,
+  type ConnectionDto,
+  type ProjectSource,
+} from '@constructor-studio/mfe-shared';
 import { ARTIFACT_NODE_TYPES } from '../api/artifactTypes';
 
 /** The Sources rows and the load the table calls (#685, DoD `...-sources-reads`). */
@@ -17,12 +21,13 @@ const { queries, asked, config, lines, studio, invalidate, triggerLoad } = vi.ho
     current: { own: [] as { created_at: string }[], loading: false, failed: false },
   },
   invalidate: vi.fn(),
-  triggerLoad: vi.fn(),
+  triggerLoad: vi.fn(() => ({ promise: Promise.resolve() })),
 }));
 
 const descriptor = (key: Key) => (params?: unknown) => ({ key, params });
 
-vi.mock('@gears-frontx/react', () => ({
+vi.mock('@gears-frontx/react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: {
     getService: () => ({
       getTenantMetadata: descriptor('config'),
@@ -41,11 +46,9 @@ vi.mock('@gears-frontx/react', () => ({
   },
   useQueryCache: () => ({ invalidate }),
 }));
-vi.mock('@gears-frontx/ui-kit', () => ({ useDataGrid: () => ({ triggerLoad }) }));
-vi.mock('@constructor-studio/mfe-shared', () => ({
-  AccountsApiService: class {},
-  ConnectorsApiService: class {},
-  PROJECT_CONFIG_TYPE: 'project-config',
+vi.mock('@gears-frontx/ui-kit', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gears-frontx/ui-kit')>()),
+  useDataGrid: () => ({ triggerLoad, getPlugin: () => undefined }),
 }));
 vi.mock('../api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: class {} }));
 vi.mock('../api/DocumentsApiService', () => ({ DocumentsApiService: class {} }));
@@ -147,7 +150,7 @@ beforeEach(() => {
   lines.current = [];
   asked.length = 0;
   invalidate.mockReset();
-  triggerLoad.mockReset();
+  triggerLoad.mockClear();
 });
 
 describe('useSourcesLoad', () => {
@@ -308,7 +311,7 @@ describe('useSourcesLoad', () => {
 
     view.retry();
     expect(invalidate.mock.calls.map(([query]) => [query.key, query.params])).toEqual([
-      ['config', { tenantId: 'p-1', metadataType: 'project-config' }],
+      ['config', { tenantId: 'p-1', metadataType: PROJECT_CONFIG_TYPE }],
       ['nodes', { scope: 'p-1', type: 'repo', limit: 200 }],
     ]);
   });

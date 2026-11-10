@@ -548,7 +548,8 @@ pub fn checked_for_project(
     if input.protected {
         return Err(invalid(
             "protected",
-            "an environment whose deploys need approval is the organization's: ask an              organization administrator for one",
+            "an environment whose deploys need approval is the organization's: ask an \
+             organization administrator for one",
         ));
     }
     let visible = EnvironmentList {
@@ -1430,6 +1431,12 @@ pub struct Deployment {
     /// gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<Preview>,
+    /// What the deploy said when it was asked and goes on with, `CODE:
+    /// message` each: a configuration secret the description wins over
+    /// (`CONFIG_SECRET_SHADOWED_BY_DESCRIPTION`), an issuer pods may not
+    /// reach (`INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 impl Deployment {
@@ -2585,6 +2592,7 @@ mod tests {
             pending_chart: None,
             research: None,
             preview: None,
+            warnings: Vec::new(),
         }
     }
 

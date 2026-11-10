@@ -1,17 +1,10 @@
 /** The columns of the workspaces table */
 
-import React from "react";
-import { Building2 } from "lucide-react";
+import { Layers } from "lucide-react";
+import type { DataGridTableColumn } from "@gears-frontx/ui-kit";
 import type { Tenant } from "@constructor-studio/mfe-shared";
 import { NoData } from "./NoData";
 import styles from "../WorkspacesScreen.module.css";
-
-export interface WorkspaceColumn {
-  key: string;
-  label: string;
-  className: string;
-  render: (row: Tenant) => React.ReactNode;
-}
 
 export interface WorkspaceColumnLabels {
   workspace: string;
@@ -34,12 +27,11 @@ export function workspaceColumns({
   labels,
   formatRelative,
   onOpen,
-}: WorkspaceColumnDeps): WorkspaceColumn[] {
+}: WorkspaceColumnDeps): DataGridTableColumn<Tenant>[] {
   return [
     {
-      key: "workspace",
+      id: "workspace",
       label: labels.workspace,
-      className: styles.colName,
       render: (row) => (
         // @cpt-dod:cpt-studiofrontend-dod-workspaces-screen-row-opens:p1
         <button
@@ -48,16 +40,17 @@ export function workspaceColumns({
           onClick={() => onOpen(row)}
         >
           <span className={styles.rowGlyph} aria-hidden>
-            <Building2 size={16} strokeWidth={1.3} />
+            <Layers size={16} strokeWidth={1.3} />
           </span>
           <span className={styles.name}>{row.name}</span>
         </button>
       ),
     },
     {
-      key: "projects",
+      id: "projects",
       label: labels.projects,
-      className: styles.colProjects,
+      width: "12%",
+      cellOverflow: "nowrap",
       render: (row) =>
         row.child_count === undefined ? (
           <NoData label={labels.noData} />
@@ -66,27 +59,31 @@ export function workspaceColumns({
         ),
     },
     {
-      key: "issues",
+      id: "issues",
       label: labels.issues,
-      className: styles.colIssues,
+      width: "12%",
+      cellOverflow: "nowrap",
       render: () => <NoData label={labels.noData} />,
     },
     {
-      key: "access",
+      id: "access",
       label: labels.access,
-      className: styles.colAccess,
+      width: "16%",
+      cellOverflow: "nowrap",
       render: () => <NoData label={labels.noData} />,
     },
     {
-      key: "configuration",
+      id: "configuration",
       label: labels.configuration,
-      className: styles.colConfiguration,
+      width: "16%",
+      cellOverflow: "nowrap",
       render: () => <NoData label={labels.noData} />,
     },
     {
-      key: "updated",
+      id: "updated",
       label: labels.updated,
-      className: styles.colUpdated,
+      width: "10%",
+      cellOverflow: "nowrap",
       render: (row) =>
         row.updated_at ? (
           <span className={styles.updated}>{formatRelative(row.updated_at)}</span>

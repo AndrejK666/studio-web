@@ -15,13 +15,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@gears-frontx/ui-kit';
-import { useEverLoaded, useWorkspace } from '@constructor-studio/mfe-shared';
+import { useEverLoaded, useThemedRoot, useWorkspace } from '@constructor-studio/mfe-shared';
 import { SpecQualityApiService } from '../../../../api/SpecQualityApiService';
 import { useSpecsSectionTranslations, useSpecsText } from '../../../../i18n';
 import { CHECK_CONFIRM_ABOVE, checkTargets } from '../../../../model/specsCheck';
 import { SPECS_CHECK_SLICE_KEY, checkRunning } from '../../../../slices/specsCheckSlice';
 import { requestSpecsCheck } from '../../../../actions/specsCheckActions';
-import { useThemedRoot } from '../../../../shared/useThemedRoot';
 import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
 
 interface SpecsActionsProps {

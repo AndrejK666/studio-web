@@ -11,6 +11,7 @@ vi.mock('@gears-frontx/react', () => ({
 }));
 vi.mock('@constructor-studio/mfe-shared', () => ({
   useOrganization: () => ({ org: { id: 'org-1', name: 'Acme' } }),
+  useThemedRoot: () => [null, () => undefined],
   useWorkspace: () => ({ workspace: null }),
 }));
 vi.mock('../../../i18n', () => ({

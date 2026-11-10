@@ -1,17 +1,21 @@
 import { renderHook } from '@testing-library/react';
+import { useMemo } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createText, pluralForm, screenText } from './screenText';
 
 const { registry } = vi.hoisted(() => ({
-  registry: { language: 'en', words: {} as Record<string, string> },
+  registry: { language: 'en', version: 0, words: {} as Record<string, string> },
 }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => {
-  // One `t` for every render, as the registry's: only the language moves.
+  // One `t` for every render, as the registry's: only the language and the
+  // registry's version move.
   const t = (key: string) => registry.words[key] ?? key;
+  const i18nRegistry = { getVersion: () => registry.version };
   return {
     ...(await importOriginal<typeof import('@gears-frontx/react')>()),
     useTranslation: () => ({ t, language: registry.language }),
+    useFrontX: () => ({ i18nRegistry }),
   };
 });
 
@@ -94,6 +98,7 @@ describe('createText', () => {
 
   beforeEach(() => {
     registry.language = 'en';
+    registry.version = 0;
     registry.words = { 'ns:title': 'Workspaces', 'ns:n_one': 'one', 'ns:n_few': 'few', 'ns:n_many': 'many' };
   });
 
@@ -108,5 +113,20 @@ describe('createText', () => {
     registry.language = 'ru';
     rerender();
     expect(result.current.count('n', 2)).toBe('few');
+  });
+
+  it('changes once a dictionary arrives, so what was memoized on it reads the words', () => {
+    registry.words = {};
+    const { result, rerender } = renderHook(() => {
+      const t = useText();
+      return useMemo(() => t('title'), [t]);
+    });
+    expect(result.current).toBe('ns:title');
+
+    registry.words = { 'ns:title': 'Workspaces' };
+    registry.version += 1;
+    rerender();
+
+    expect(result.current).toBe('Workspaces');
   });
 });

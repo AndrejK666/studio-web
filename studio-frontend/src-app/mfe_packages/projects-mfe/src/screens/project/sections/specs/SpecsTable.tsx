@@ -4,7 +4,6 @@ import {
   Alert,
   AlertDescription,
   Button,
-  DataGrid,
   DataGridEmptyStatePlugin,
   DataGridFiltersPlugin,
   DataGridOrderPlugin,
@@ -23,6 +22,7 @@ import {
   type DataGridTextSearchPluginApi,
 } from '@gears-frontx/ui-kit';
 import { FileText, Plug } from 'lucide-react';
+import { LIST_PAGE_LIMITS, ListGrid, useThemedRoot } from '@constructor-studio/mfe-shared';
 import { useSpecsText } from '../../../../i18n';
 import { requestOpenSpec } from '../../../../actions/artifactActions';
 import { openSourcesConnect } from '../../../../actions/sourcesConnectActions';
@@ -30,7 +30,6 @@ import { documentTypeOptions, specsFooter, type SpecRow } from '../../../../mode
 import { isSpecsFilter, SPECS_FILTERS } from '../../../../model/specsFilter';
 import { tagGroupChoice } from '../../../../shared/dataGridFilters';
 import { SPECS_FILTER_KEYS, useSpecsLoad } from '../../../../shared/useSpecsLoad';
-import { useThemedRoot } from '../../../../shared/useThemedRoot';
 import { specsSelected, specsShown } from '../../../../slices/specsCheckSlice';
 import {
   SPECS_FILTER_SLICE_KEY,
@@ -42,8 +41,6 @@ import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
 import { UploadPanel } from '../../upload/UploadPanel';
 import { SpecsCellsContext, specsColumns, type SpecsCells } from './specsColumns';
 import styles from './SpecsTable.module.css';
-
-const PAGE_LIMITS = [25, 50, 100];
 
 /** Only a row Check can send gets a checkbox (#879). */
 const checkable = (row: SpecRow): boolean => row.checkable;
@@ -215,41 +212,41 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
     snapshot && specsFooter(snapshot.rows, snapshot.sources.reviews_known, snapshot.filter);
   return (
     <div ref={findThemedRoot} className={styles.section}>
-      <UploadPanel projectId={projectId} projectName={projectName} />
+      <UploadPanel projectId={projectId} projectName={projectName} className={styles.notice} />
       {snapshot && !snapshot.sources.files_known && (
         <Alert className={styles.notice}>
           <AlertDescription>{t('files_unknown')}</AlertDescription>
         </Alert>
       )}
       <SpecsCellsContext.Provider value={cells}>
-        <DataGrid
+        <ListGrid
           name="specs"
           persistent="memory"
           columns={columns}
           load={load}
           portalContainer={container ?? undefined}
+          footer={
+            snapshot && footer && footer.total > 0
+              ? [
+                  t.count('footer_of', footer.total, { shown: snapshot.shown.length }),
+                  footer.findings !== null && t.count('footer_findings', footer.findings),
+                  projectName,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
+              : null
+          }
         >
           <DataGridTextSearchPlugin placeholder={t('search')} />
           <DataGridFiltersPlugin entities={filterEntities} isAllFiltersOptionVisible={false} />
           <FiltersFromSlice read={snapshot !== null && !snapshot.failed} />
           <DataGridRowSelectPlugin<SpecRow> visible={checkable} onSelectionChange={select} />
           <DataGridOrderPlugin />
-          <DataGridPaginationPlugin defaultLimit={PAGE_LIMITS[0]} limits={PAGE_LIMITS} />
+          <DataGridPaginationPlugin defaultLimit={LIST_PAGE_LIMITS[0]} limits={LIST_PAGE_LIMITS} />
           <DataGridEmptyStatePlugin component={SpecsEmpty} />
           {reloadBridge}
-        </DataGrid>
+        </ListGrid>
       </SpecsCellsContext.Provider>
-      {snapshot && footer && footer.total > 0 && (
-        <p className={styles.footer}>
-          {[
-            t.count('footer_of', footer.total, { shown: snapshot.shown.length }),
-            footer.findings !== null && t.count('footer_findings', footer.findings),
-            projectName,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </p>
-      )}
     </div>
   );
 };

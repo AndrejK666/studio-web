@@ -1,0 +1,10 @@
+.list {
+  padding-top: var(--space-2);
+}
+
+.footer {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-meta-size);
+  line-height: var(--text-meta-line-height);
+  color: var(--muted-foreground);
+}

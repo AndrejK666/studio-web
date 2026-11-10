@@ -178,14 +178,6 @@ person see the same rows.
 | --- | --- |
 | `project_status` | one verdict (`blocked`, `at_risk`, `on_track`) with its reason, the signals behind it worst first, and the path to a build with the next step; `unread` names what could not be read |
 
-**The person.** What waits on them across their organization's workspaces,
-and the marks they keep (studio-user, ADR-0068 §6).
-
-| Tool | What it answers or does |
-| --- | --- |
-| `inbox` | review requests and pull requests waiting on you, overdue first, each naming its `source`; `view: hidden` for what you marked away |
-| `inbox_mark` | *changes:* marks an item done, snoozes it until a time, or opens it again |
-
 **The pipeline.** A project goes from its sources to a running product
 without the portal; each step is the REST route the portal calls for it.
 
@@ -201,15 +193,18 @@ without the portal; each step is the REST route the portal calls for it.
 | | `product_description_save` | *changes:* a new revision against a base; `stale` when someone saved since |
 | | `product_record` | the picked gears and the engine's kept checks per profile |
 | | `product_check` | the engine's verdict for one profile, composed from the picks |
+| | `product_description_check` | the engine's verdict on a saved revision as written, for one profile: GBX diagnostics |
 | | `gdl_file` | a component's `gear.gdl`, `frontx.gdl` or `service.gdl` |
 | Environments | `deploy_targets` | where the product can deploy, the bindings, the secret keys |
 | | `project_environments` | the project's own environments |
 | | `deploy_bindings_set` | *changes:* which profile each environment runs |
 | | `config_secrets` | the secret keys per environment (never values) |
+| | `config_secret_keys` | one environment's keys against what the description and infra services need there: `missing` |
 | | `config_secret_set` | *changes:* sets a secret; the value is never echoed back |
 | | `config_secret_delete` | *changes:* removes a secret |
 | Infra | `infra_services` | the infra services the product runs beside its gears |
 | | `infra_services_set` | *changes:* replaces the list |
+| | `infra_service_public_url_set` | *changes:* sets or removes one service's `public_url`, keeping the rest |
 | | `infra_plan` | what a deploy to one environment does with them |
 | | `image_import` | *changes:* copies an external image or chart into the project's path |
 | | `image_get` | one image: where, by digest, its state |
@@ -217,11 +212,13 @@ without the portal; each step is the REST route the portal calls for it.
 | Build | `build_plan` | what a build would do and why it would be refused; starts nothing |
 | | `build_start` | *changes:* builds in an environment's cluster |
 | | `build_list` | the project's builds, newest first, with status and failure |
-| | `build_get` | one build's record |
+| | `build_get` | one build: status, lock hash, images, chart, `built_infra` |
+| | `build_wait` | waits up to 25 s for a build to end; `done` and its record |
 | | `build_log` | a Studio build's steps with the end of each log |
 | Deploy | `deploy_request` | *changes:* deploys a build, redeploys, or uninstalls |
 | | `deployments` | deployments with state and outcome |
-| | `deployment_get` | one deployment's record |
+| | `deployment_get` | one deployment: state, outcome, decision |
+| | `deployment_wait` | waits up to 25 s for a deployment to settle; `done` and its record |
 | | `deployment_decide` | *changes:* approves or declines (organization administrators) |
 | | `deployment_status` | the release as its cluster reports it now |
 | | `deployment_logs` | the end of each container's log |
@@ -242,9 +239,44 @@ ADR-0069 §4); an agent installs one the way a person does.
 | `kit_project_install` | *changes:* installs a kit for one project (the organization's kit administrators); only a kit whose levels include `project` |
 | `kit_project_uninstall` | *changes:* uninstalls the project's own kit; a base or organization kit is refused |
 
-There is no tool that checks a saved description revision's text for a
-profile: Studio has no route for it. `product_check` composes the description
-from the picked gears; the kept verdicts are in `product_record`.
+**The inbox.** Everything that waits for you in one organization, as the
+portal's Inbox lists it, and how to act on each item.
+
+| Tool | What it answers or does |
+| --- | --- |
+| `inbox` | deploys awaiting approval, reviews asked of you, pull requests whose next move is yours, your failed background work (an undelivered notification among it); each item's `act` names the tool that answers it |
+| `inbox_mark` | *changes:* marks an item done, snoozes it, or opens it again; the portal shows the same marks |
+| `me_inbox` | the Inbox the server composes (`GET /studio-user/v1/me/inbox`, ADR-0068 §6): review requests and pull requests waiting on you across every workspace, overdue first, each naming its `source`; `view: hidden` for what you marked away |
+| `review_requests` | a project's or workspace's review requests; `waiting_on: "me"` for yours |
+| `review_verdict` | *changes:* approves a review request or asks for changes |
+
+A deploy is answered with `deployment_decide`, a failed run read with
+`task_run`, a pull request on its provider. Each kind of item is one source
+in `src/user_profile/mcp.rs`; a new kind is one more source there and one in
+the portal's `inbox-sources.ts`.
+
+`product_check` composes the description from the picked gears and keeps its
+verdict in `product_record`; `product_description_check` checks a revision
+already saved, as a build lays it down, and keeps nothing.
+
+**Waiting.** A build takes minutes, a deploy less. `build_wait` and
+`deployment_wait` answer as soon as it ends, or after 25 seconds with
+`done: false` and the record as it is: call again until `done`. One call
+waits no longer because the gateway in front of Studio gives up on a request
+after 30 seconds. A deploy `awaiting_approval` counts as settled: nothing
+moves it but an administrator's `deployment_decide`.
+
+**Secrets.** `config_secret_keys` names what one environment needs: each
+`${NAME}` of the latest description outside every profile (a gear's
+configuration) or in the profile the environment runs, and each capability an
+infra service leaves to the project. One the database step or an infra
+service writes is marked so; `missing` is what a deploy would run without.
+Set each with `config_secret_set`: the value goes in through the tool's input
+and no tool ever answers it.
+
+Each of these steps has its own route: `GET /studio-environments/v1/builds/{build_id}`,
+`GET …/deployments/{deployment_id}`, `GET …/config-secrets` (all with
+`?project_id=`) and `POST /studio-product/v1/product-description-checks?project_id=`.
 
 **Changes.** Every tool that changes something (marked *changes* above) is
 annotated for your agent (`readOnlyHint: false`, and `destructiveHint` for one

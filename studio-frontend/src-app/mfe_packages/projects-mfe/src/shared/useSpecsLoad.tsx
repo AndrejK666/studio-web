@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRegistry, eventBus } from '@gears-frontx/react';
+import { TEXT_SEARCH_FILTER_KEY } from '@constructor-studio/mfe-shared';
 import {
   useDataGrid,
   type DataGridLoadContext,
@@ -17,7 +18,7 @@ import {
   type SpecsQuery,
 } from '../model/specRows';
 import { isSpecsFilter, type SpecsFilter } from '../model/specsFilter';
-import { TEXT_SEARCH_FILTER_KEY, tagGroupChoice } from './dataGridFilters';
+import { tagGroupChoice } from './dataGridFilters';
 
 /** Where the table's plugins put each filter in `DataGridLoadContext.filters` (#692, #878). */
 export const SPECS_FILTER_KEYS = {

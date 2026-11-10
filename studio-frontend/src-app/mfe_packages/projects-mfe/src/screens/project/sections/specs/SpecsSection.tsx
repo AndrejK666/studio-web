@@ -2,7 +2,8 @@
 import React, { useState } from 'react';
 import { useEverLoaded, useWorkspace } from '@constructor-studio/mfe-shared';
 import { useProjectText, useSpecsSectionTranslations, useSpecsText } from '../../../../i18n';
-import { PlaceholderSection, PlaceholderSkeleton } from '../PlaceholderSection';
+import { SectionSkeleton } from '../../../../components/SectionStates';
+import { PlaceholderSection } from '../PlaceholderSection';
 import { useTypeDecisionRefusals } from './useTypeDecisionRefusals';
 import { SpecsTable } from './SpecsTable';
 
@@ -18,10 +19,10 @@ export const SpecsSection: React.FC<{ projectId: string; projectName: string }> 
   const projectText = useProjectText();
   const [attempt, setAttempt] = useState(0);
 
-  if (!everLoaded && !error) return <PlaceholderSkeleton />;
+  if (!everLoaded && !error) return <SectionSkeleton />;
   // The documents are the workspace's: without one there is nothing to read them by.
   if (!workspace) {
-    if (loading) return <PlaceholderSkeleton />;
+    if (loading) return <SectionSkeleton />;
     return <PlaceholderSection title={projectText('section_specs')} note={t('no_workspace')} />;
   }
   return (

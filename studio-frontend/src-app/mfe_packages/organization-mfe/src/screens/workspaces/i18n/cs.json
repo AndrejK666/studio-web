@@ -1,6 +1,5 @@
 {
   "title": "Workspaces",
-  "toolbar_label": "Workspaces",
   "table_label": "Workspaces",
   "search_placeholder": "Search workspaces...",
   "new_workspace": "New workspace",
@@ -19,8 +18,6 @@
   "empty_search": "No workspace matches that search.",
   "error_title": "The workspaces could not be read.",
   "retry": "Try again",
-  "range_one": "{from}–{to} of {total} workspace",
-  "range_many": "{from}–{to} of {total} workspaces",
   "resolving_org": "Resolving the organization…",
   "no_org": "No organization is in scope."
 }
