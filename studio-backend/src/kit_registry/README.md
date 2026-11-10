@@ -36,8 +36,8 @@ This README is what you need to work in the directory.
   `studio-api-docs` (level `platform`), `components` (platform, organization
   and project), `org-infrastructure`, `product-releases`,
   `project-domain-model`, `org-connections`, `project-team` and
-  `research-integration`. Every built-in kit is a base kit by default except
-  those in `OPT_IN_BUILTIN` (`service.rs`): `research-integration` applies only
+  `constructor-research`. Every built-in kit is a base kit by default except
+  those in `OPT_IN_BUILTIN` (`service.rs`): `constructor-research` applies only
   where an organization installs it (or a platform administrator makes it a
   base kit). A feature ported into the portal is added here,
   with its contents in `contents.rs`: its screens (a route only once the
@@ -128,13 +128,16 @@ This README is what you need to work in the directory.
   installed for one project (`MODEL_KIT_NOT_FOR_PROJECT`). Without the domain
   model in the assembly, kits install and the model is left alone.
 - Whether a kit applies, for another gear (`port.rs` `KitPresence`,
-  registered in the ClientHub): the effective kits of the organization a
-  tenant belongs to (base and organization kits), as `GET /installed-kits`
-  answers. studio-environments asks it for `research-integration` before a
-  Research environment is added or changed, its Research projects or hardware
-  are listed, or a build, deploy or rollback to it starts (400
-  `failed_precondition`, `KIT_NOT_INSTALLED`); status, logs, uninstall and
-  removal stay. Design: `docs/design/studio-kits.md` §3.13.
+  registered in the ClientHub): for a project its effective kits (base ∪
+  organization ∪ its own), for an organization base ∪ its own, as
+  `GET /installed-kits` answers. studio-environments asks it for
+  `constructor-research` (levels organization and project, opt-in, a
+  compiled-in `builtin/constructor-research.kit.json`): the project's answer
+  before a build, deploy or rollback or a project's own Research environment,
+  the organization's before an organization's Research environment or its
+  Research projects/hardware listing (400 `failed_precondition`,
+  `KIT_NOT_INSTALLED`); status, logs, uninstall and removal stay. Design:
+  `docs/design/studio-kits.md` §3.13.
 - `project-lifecycle` is the first built-in kit with a model: the type
   `project-lifecycle-phase`, `project.phase` / `phase_owner` / `phase_since`,
   the tab `project.phases` and the phase lifecycle. Its function is
@@ -144,12 +147,18 @@ This README is what you need to work in the directory.
   refuses) and `GET /project-phases?organization_id=`. MCP: `project_phase`,
   `project_phase_set`, `project_phases`.
 - Inbox sources (ADR-0068 §6), `inbox.rs`: a kit's `inbox` in its
-  `kit.json` (`{id, label, query, title?, workspace_field?}`, the query a
-  domain query naming its `type`, `"$me"` the person). `GET /inbox-sources`
-  (`?organization_id=`, members) lists those of the kits installed for the
-  whole organization at their installed version; studio-user's
-  `GET /me/inbox` runs them as the person. MCP `kits_inbox_sources`.
-  Project lifecycle brings `phase-waiting`.
+  `kit.json`, of two kinds. `query` (default): `{id, label, query, title?,
+  workspace_field?}`, the query a domain query naming its `type`, `"$me"` the
+  person. `endpoint`: `{id, label, kind: "endpoint", path, title?}`, `path` a
+  literal `GET` route of Studio's own that the kit's `permissions.reads`
+  names, answering `{items: [{id, title?, workspace_id?, url?, due_at?,
+  overdue?}]}` for the caller. `GET /inbox-sources` (`?organization_id=`,
+  members) lists those of the kits installed for the whole organization at
+  their installed version, plus the `endpoint` sources of a built-in kit a
+  project may install alone; studio-user's `GET /me/inbox` runs them as the
+  person (a query, or a call of the route). MCP `kits_inbox_sources`.
+  Project lifecycle brings `phase-waiting`; Constructor Research
+  `deploy-failed` and `sign-in-expires`.
 
 - A kit's micro-frontends at run time (ADR-0068 phase 5), `bundles.rs`:
   `STUDIO_KIT_BUNDLES_DIR` names a directory whose every subdirectory with a

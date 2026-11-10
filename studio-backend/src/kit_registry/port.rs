@@ -6,10 +6,10 @@
 //!   created. The same desired-state write `POST
 //!   /studio-kits/v1/projects/{project_id}/installations` makes; materializing
 //!   stays `cfs`'s job.
-//! - [`KitPresence`]: whether a kit applies to an organization -- what a gear
-//!   asks before it does what only a kit brings (ADR-0070 §7, decision 5:
-//!   `KIT_NOT_INSTALLED`). studio-environments asks for the Research
-//!   Integration kit ([`RESEARCH_INTEGRATION_KIT`]).
+//! - [`KitPresence`]: whether a kit applies to an organization or a project --
+//!   what a gear asks before it does what only a kit brings (ADR-0070 §7,
+//!   decision 5: `KIT_NOT_INSTALLED`). studio-environments asks for the
+//!   Constructor Research kit ([`CONSTRUCTOR_RESEARCH_KIT`]).
 
 use std::sync::Arc;
 
@@ -18,8 +18,8 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::installed::KitInstaller;
+pub use super::service::CONSTRUCTOR_RESEARCH_KIT;
 use super::service::KitRegistryService;
-pub use super::service::RESEARCH_INTEGRATION_KIT;
 
 #[async_trait]
 pub trait ProjectKitRequests: Send + Sync + 'static {
@@ -100,10 +100,9 @@ impl ProjectKitRequests for KitRequests {
 /// Whether a kit applies where a gear is asked to act.
 #[async_trait]
 pub trait KitPresence: Send + Sync + 'static {
-    /// Does `kit_slug` apply to the organization `tenant` belongs to (`tenant`
-    /// is the organization or one of its projects)? A base kit or one the
-    /// organization installed for itself; a project's own kits are not asked
-    /// (a kit whose `levels` are `organization` only has none). The caller has
+    /// Does `kit_slug` apply where `tenant` is? For a project: its effective
+    /// kits, base ∪ organization ∪ the project's own. For an organization (or
+    /// any other tenant of one): base ∪ the organization's own. The caller has
     /// already been shown to reach `tenant`; the installations are read as
     /// this gear's service.
     async fn applies(
@@ -133,13 +132,12 @@ impl KitPresence for InstalledKits {
         tenant: Uuid,
         kit_slug: &str,
     ) -> anyhow::Result<bool> {
-        let installed = self
-            .installer
-            .installed(ctx, tenant)
-            .await
-            .map_err(|refusal| {
-                anyhow::anyhow!("the installed kits could not be read: {refusal:?}")
-            })?;
+        let installed = if self.installer.store().is_project(ctx, tenant).await {
+            self.installer.installed_in_project(ctx, tenant).await
+        } else {
+            self.installer.installed(ctx, tenant).await
+        }
+        .map_err(|refusal| anyhow::anyhow!("the installed kits could not be read: {refusal:?}"))?;
         Ok(installed.effective.iter().any(|k| k.kit_slug == kit_slug))
     }
 }

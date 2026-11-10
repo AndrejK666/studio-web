@@ -1,20 +1,31 @@
 //! Inbox sources from kits (ADR-0068 §6, phase 4).
 //!
-//! A kit declares, in its manifest's `inbox`, queries over its objects that
-//! say what waits on whom: `query` is the body `POST
-//! /studio-domain-model/v1/query` takes, with the string `"$me"` standing for
-//! the person whose Inbox is read; `title` names an item (`{field}` is a field
-//! of the row); `workspace_field` names the field that holds the workspace an
-//! item is in. This gear only says which sources apply to an organization —
-//! those of the kits installed for the whole of it (base and its own), at the
-//! version installed. studio-user's Inbox runs them as the person
-//! (`GET /studio-user/v1/me/inbox`), so the PDP decides what each person sees.
+//! A kit declares, in its manifest's `inbox`, what waits on whom. Two kinds:
+//!
+//! - `query` (the default): a query over its objects. `query` is the body
+//!   `POST /studio-domain-model/v1/query` takes, with the string `"$me"`
+//!   standing for the person whose Inbox is read; `title` names an item
+//!   (`{field}` is a field of the row); `workspace_field` names the field that
+//!   holds the workspace an item is in.
+//! - `endpoint`: a gear's route (`path`, which the kit's `permissions.reads`
+//!   names) that answers `{items: [{id, title?, …}]}` for whoever calls it,
+//!   from records that are not domain objects -- a deploy, a sign-in.
+//!
+//! This gear only says which sources apply to an organization -- those of the
+//! kits installed for the whole of it (base and its own), at the version
+//! installed. A built-in kit that may also be installed for one project
+//! brings its `endpoint` sources to every organization: its route answers only
+//! for the projects that have the kit, which this gear cannot list. A `query`
+//! source of a project's own kit is not listed (it would need the project's
+//! PDP scope). studio-user's Inbox runs them as the person
+//! (`GET /studio-user/v1/me/inbox`), so the PDP and the route decide what each
+//! person sees.
 
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::installed::{KitInstaller, Refusal};
-use super::manifest::{ManifestInboxSource, builtin_manifest};
+use super::installed::{KitInstaller, LEVEL_PROJECT, Refusal};
+use super::manifest::{INBOX_KIND_ENDPOINT, ManifestInboxSource, builtin_manifest};
 use super::service::{SHELF_BUILTIN, SHELF_ORGANIZATION};
 
 /// One source, with the kit it comes from.
@@ -52,13 +63,33 @@ impl KitInstaller {
                 _ => None,
             };
             for source in manifest.into_iter().flat_map(|m| m.inbox) {
-                if source.query.is_none() {
+                if source.kind() != INBOX_KIND_ENDPOINT && source.query.is_none() {
                     continue;
                 }
                 out.push(KitInboxSource {
                     kit_slug: kit.kit_slug.clone(),
                     kit_name: descriptor.name.clone(),
                     kit_version: kit.version.clone(),
+                    source,
+                });
+            }
+        }
+        // A built-in kit a project may have on its own: its `endpoint`
+        // sources, which answer only where the kit applies.
+        for kit in self.library().iter().filter(|k| {
+            k.shelf == SHELF_BUILTIN
+                && k.levels.iter().any(|l| l == LEVEL_PROJECT)
+                && !installed.effective.iter().any(|e| e.kit_slug == k.slug)
+        }) {
+            for source in builtin_manifest(&kit.slug)
+                .into_iter()
+                .flat_map(|m| m.inbox)
+                .filter(|s| s.kind() == INBOX_KIND_ENDPOINT)
+            {
+                out.push(KitInboxSource {
+                    kit_slug: kit.slug.clone(),
+                    kit_name: kit.name.clone(),
+                    kit_version: kit.default_version.clone(),
                     source,
                 });
             }

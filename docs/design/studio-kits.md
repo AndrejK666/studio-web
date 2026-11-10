@@ -321,7 +321,9 @@ catalogue reads gear repositories through), a directory in it and a ref.
 3. It checks it: the slug (and that no built-in or official kit has it,
    `KIT_SLUG_TAKEN`), the name, the levels (`organization`, `workspace`,
    `project`: `platform` is the base kits'), the screens' kinds and levels,
-   the functions' runtimes, distinct inbox source ids. Unknown keys are
+   the functions' runtimes, distinct inbox source ids and each source's kind
+   (a `query` names its type; an `endpoint` names a route of Studio's own
+   that `permissions.reads` lists). Unknown keys are
    refused, so a typo is a diagnostic before anything is added.
 4. It keeps the manifest as it was at the commit on the organization's
    installed-kits document (`shelf`), so describing the kit reads nothing.
@@ -332,7 +334,8 @@ exists. It declares the kit (`slug`, `name`, `description`, `publisher`,
 `kit.gdl` will take: `screens` (`{kind: tab|section, level, label, route?,
 slot?}`), `model` (the overlay, §3.10), `rules` and `services` and
 `mcp_tools` (`{name, description?}`), `functions` (`{name, runtime:
-wasm|agent, description?}`), `inbox` (§3.11), `permissions` (`{reads,
+wasm|agent, description?}`), `inbox` (`{id, label, kind?: query|endpoint,
+query?, path?, title?, workspace_field?}`, §3.11), `permissions` (`{reads,
 writes, listens}`), `material` (`{path, description?}`), `kinds`, `docs`. A
 kit described only by `.cf-studio-kit.toml` brings working material: its
 resources' install paths and its artifact kinds; a manifest that lists
@@ -508,30 +511,52 @@ MCP: `project_phase`, `project_phase_set`, `project_phases`.
 - [x] `p2` - **ID**: `cpt-studio-design-kits-inbox-sources`
 
 ADR-0068 §6, phase 4: the Inbox holds no items of its own; a kit may declare
-sources. A source in `kit.json` is
-`{id, label, query, title?, workspace_field?}`: `query` is the body
-`POST /studio-domain-model/v1/query` takes, over the kit's objects, with the
-string `"$me"` standing for the person whose Inbox is read; `title` names an
-item (`{field}` is a field of the row, the label when absent);
-`workspace_field` is the row's field holding its workspace.
+sources, of two kinds (`kind`, default `query`):
+
+- **`query`**, `{id, label, kind?: "query", query, title?, workspace_field?}`:
+  `query` is the body `POST /studio-domain-model/v1/query` takes, over the
+  kit's objects, with the string `"$me"` standing for the person whose Inbox
+  is read; `title` names an item (`{field}` is a field of the row, the label
+  when absent); `workspace_field` is the row's field holding its workspace.
+- **`endpoint`**, `{id, label, kind: "endpoint", path, title?}`: for what a
+  kit wants to say from records that are not domain objects (a deploy, a
+  sign-in). `path` is a gear's own route, `GET`, literal (`/studio-<gear>/v1/…`,
+  no query string, parameter, `..` or empty segment, at most 200 characters),
+  and the kit's `permissions.reads` must name it as `GET <path>`, so the
+  administrator saw it before installing. The route is called **as the
+  person** and answers the list envelope `{items, total}`; each item has an
+  `id` (a string or a number, stable within the source; an item without one
+  is left out) and may have `title`, `workspace_id`, `url`, `due_at`
+  (RFC 3339) and `overdue`, and any other field a `title` template names. The
+  title is the source's `title` filled from the item, else the item's own
+  `title`, else the source's label. The route decides whom an item waits on
+  and where the kit applies. A `query` source has no `path`; an `endpoint`
+  source has no `query` or `workspace_field`; any other `kind` is refused.
 
 `GET /studio-kits/v1/inbox-sources?organization_id=` (any member) lists the
 sources of the kits installed for the whole organization (base kits and its
-own; not a project's own: their sources would need the project's PDP scope),
-at the version installed, each with its kit's slug, name and version; the
-kits' models are brought up to date first, so the fields a source queries
-exist. studio-user's `GET /studio-user/v1/me/inbox` reads that list, runs each
-query **as the person** (so the PDP decides what each person sees) with
-`"$me"` their subject id, and adds the rows as items after its own sources:
+own; not a project's own `query` sources: those would need the project's PDP
+scope), at the version installed, each with its kit's slug, name and version,
+its `kind` and its `query` or `path`; the kits' models are brought up to date
+first, so the fields a source queries exist. A built-in kit that may be
+installed for one project (`levels` names `project`) brings its `endpoint`
+sources to every organization: this gear cannot list the projects that have
+it, and its route answers only for those. studio-user's
+`GET /studio-user/v1/me/inbox` reads that list and reads each source **as the
+person**: a `query` source with `"$me"` their subject id (so the PDP decides
+what each person sees), an `endpoint` source by calling its route (checked
+again to be a route of Studio's own before it is called with the person's
+token). It adds the rows as items after its own sources:
 `source = kit:<slug>/<id>`, `kit = {slug, name, version}`, the key
-`kit:<slug>/<id>:<object id>@<fingerprint of the row>` (an item marked done
-comes back when its object changes), done and snooze as for any item. A
-source that cannot be read is named in `unread`. MCP: `kits_inbox_sources`;
-`me_inbox` carries the kits' items.
+`kit:<slug>/<id>:<object or item id>@<fingerprint of the row or item>` (an
+item marked done comes back when it changes), done and snooze as for any
+item. A source that cannot be read is named in `unread`. MCP:
+`kits_inbox_sources`; `me_inbox` carries the kits' items.
 
 Project lifecycle brings one: `phase-waiting`, a project whose
 `phase_owner` is the person and whose phase is not `run` — "*Atlas* waits in
-its *discovery* phase".
+its *discovery* phase". Constructor Research brings two `endpoint` sources
+(§3.13): a failed Research deploy and a Research sign-in that runs out.
 
 Kit bundles (§3.12) are read from `STUDIO_KIT_BUNDLES_DIR` when it is set; a
 deployment with several backend replicas sets `STUDIO_KIT_BUNDLE_KEY` (at
@@ -609,63 +634,98 @@ the screen that the person can dismiss; the rest of the shell goes on.
   built-in screen does: installing a kit is trusting its publisher. The library
   shows who that is; signed kits are ADR-0068 phase 9.
 
-### 3.13 The Research Integration kit
+### 3.13 The Constructor Research kit
 
-- [ ] `p2` - **ID**: `cpt-studio-design-kits-research-integration`
+- [ ] `p2` - **ID**: `cpt-studio-design-kits-constructor-research`
 
-A kit an organization installs to build its projects' products in
-Constructor Research and run each as one of Research's applications
+A kit an organization, or one project, installs to build a product in
+Constructor Research and run it as one of Research's applications
 (`cpt-studio-adr-research-environments`, ADR-0049). The machinery is
 studio-environments' and studio-connector's and stays there: the `research`
 connection and its sign-in (ADR-0049 §1), `kind: research` environments on a
 Research project (§2), the build Studio prepares and Research compiles (§3),
 the deploy as an application of services, status, logs, rollback and
-uninstall (§4). The kit is what switches it on for an organization and the
-screen that walks it there (ADR-0068 §1: a feature that only some
-organizations need is a kit's).
+uninstall (§4). The kit is what switches it on, the screen that walks an
+organization there, and the Inbox items that say when something there waits
+on a person (ADR-0068 §1: a feature that only some organizations need is a
+kit's).
 
-**Where it sits.** Slug `research-integration`, shelf `builtin`, level
-`organization`. It is the first **opt-in built-in kit**
-(`OPT_IN_BUILTIN` in `service.rs`): compiled in like every built-in kit, but
-not a base kit by default (ADR-0068 §7, "installed only where someone asks
-for them"). An organization's administrator installs it under Organization ›
-Kits; a platform administrator may make it a base kit for everyone, and
-removing that record leaves nothing marked removed. It needs no other kit;
-its screen's links into Infrastructure and Releases simply lead nowhere when
-those base kits are removed.
+It is not ADR-0068 §7's "Research" built-in kit: that row is the portal's
+Research tab, discovery research (hypotheses and interviews), a different
+thing with a different future kit. This one is named after the product it
+integrates with.
 
-**What it brings** (`GET /studio-kits/v1/catalog/research-integration`):
+**Where it sits.** Slug `constructor-research`, name "Constructor Research",
+shelf `builtin`, levels `organization` and `project`. It is the first
+**opt-in built-in kit** (`OPT_IN_BUILTIN` in `service.rs`): compiled in like
+every built-in kit, but not a base kit by default (ADR-0068 §7, "installed only
+where someone asks for them"). An organization's administrator installs it
+under Organization › Kits, or for one project under Project › Kits (it brings
+no model, so `MODEL_KIT_NOT_FOR_PROJECT` does not apply); a platform
+administrator may make it a base kit for everyone, and removing that record
+leaves nothing marked removed. It needs no other kit; its screen's links into
+Infrastructure and Releases lead nowhere when those base kits are removed.
+Its compiled-in `kit.json` is `kit_registry/builtin/constructor-research.kit.json`.
+
+**What it brings** (`GET /studio-kits/v1/catalog/constructor-research`):
 
 | Part | What | Where |
 |---|---|---|
-| tab | Organization › Research (`/research`): the member's own sign-in, the steps sign in → connect a Research project → build and deploy from Releases, and each Research project with its hardware, Test, Change and what each project runs there (status, logs, address) | `infrastructure-mfe`, second entry `./researchLifecycle` |
-| function | the gate: studio-environments asks studio-kits (`KitPresence`) before it adds or changes a Research environment (the organization's or a project's own), lists a connection's Research projects or hardware, or starts a build, deploy or rollback to Research; without the kit, 400 `failed_precondition` `KIT_NOT_INSTALLED` naming the kit | `environments/service.rs` `require_research_kit` |
+| tab | Organization › Constructor Research (`/constructor-research`): the member's own sign-in, the steps sign in → connect a Research project → build and deploy from Releases, and each Research environment with its project and hardware, Test, Change and what each project runs there (status, logs, address) | `infrastructure-mfe`, second entry `./researchLifecycle` |
+| function | the gate: studio-environments asks studio-kits (`KitPresence`) before it adds or changes a Research environment, lists a connection's Research projects or hardware, or starts a build, deploy or rollback to Research; without the kit, 400 `failed_precondition` `KIT_NOT_INSTALLED` naming the kit | `environments/service.rs` `require_research_kit` |
+| inbox-source | `deploy-failed` and `sign-in-expires`, both of kind `endpoint` (§3.11) | `GET /studio-environments/v1/research/inbox/deploys`, `…/research/inbox/sign-in` |
 | mcp-tool | `research_projects`, `research_hardware`; the build and deploy themselves are `build_start` and `deploy_request` on a Research environment | `environments/mcp.rs` |
-| permissions | the routes its screen calls (`contents.rs`) | |
+| permissions | the routes its screen and its Inbox sources call (`contents.rs`, `kit.json`) | |
+
+**Where the gate looks.** A request about a project -- a build, a deploy, a
+rollback, the project's own Research environment -- asks the project's
+effective kits: base ∪ organization ∪ the project's own. A request about the
+organization's own environments -- adding or changing one, listing a
+connection's Research projects and hardware for that form -- asks the
+organization's: base ∪ its own. So a project that installed the kit alone
+builds and deploys to Research, also on the organization's Research
+environments, while the organization's Constructor Research tab stays hidden
+and its administrators cannot add a Research environment for everyone.
+
+**Inbox.**
+
+- `deploy-failed`: each Research deploy the person asked for whose newest
+  attempt in its environment failed, newest first, in the projects where the
+  kit applies; the title names the project and environment, `detail` says why.
+  It leaves when a newer deploy there succeeds (or is marked done; a newer
+  failure is a new item).
+- `sign-in-expires`: the person's own Research sign-in when its access key
+  runs out within 14 days or has run out. The key lasts 90 days from the
+  sign-in (ADR-0049 §1), so the end is the connection's `created_at` plus 90
+  days; a connection made before the keys (a refresh token) is read the same
+  way, which warns it early rather than never. Shown where the kit is in use:
+  it applies to the organization, or to a project the person deployed to
+  Research.
 
 No types: a Research environment, a build and a deploy are
 studio-environments' records, not domain objects (ADR-0070 §1, a kit that
-brings only screens).
+brings only screens) -- which is why its Inbox sources are `endpoint` ones.
 
-**Uninstalling** removes the tab and closes the gate. Nothing stored moves:
-Research environments stay in the organization's list (Infrastructure and
-Releases still show them), and status, logs, an uninstall of what runs there
-and removing the environment stay possible, so an organization can take its
-applications out of Research after it removed the kit. Reinstalling opens the
-gate on the same environments.
+**Uninstalling** removes the tab, closes the gate and empties its Inbox
+items. Nothing stored moves: Research environments stay in the organization's
+list (Infrastructure and Releases still show them), and status, logs, an
+uninstall of what runs there and removing the environment stay possible, so an
+organization can take its applications out of Research after it removed the
+kit. Reinstalling opens the gate on the same environments.
 
 **Not yet**, each for its own change:
 
-- An Inbox source (ADR-0068 §6) for a failed Research deploy or a Research
-  sign-in about to expire (the access key lasts 90 days, ADR-0049 §1): a kit's
-  source is a domain query, and deploys are not domain objects.
 - The Research parts of Infrastructure (the Research place, its form fields)
   and of Releases (a Research rung's sign-in and limits) as sections of this
   kit in those screens' slots: sections in another screen's slot are not
   built yet (§3.12). Until then Infrastructure reads `GET /installed-kits` and
   its "Add a place › Constructor Research" opens Organization › Kits where the
   kit is missing.
-- A project-level installation: the gate asks the organization's kits only.
+- A project-level screen: a project that installed the kit alone uses its
+  Releases; the Constructor Research tab is the organization's.
+- Listing Research projects for a project's own Research environment: the
+  listing asks the organization's kits, so a project-only installation types
+  the Research project's id.
 
 ## 4. Additional context
 

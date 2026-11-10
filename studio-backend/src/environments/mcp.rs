@@ -595,15 +595,15 @@ pub fn tools() -> Vec<Tool> {
             experimental: false,
             run: Run::Get("/studio-environments/v1/deployments/{deployment_id}/logs"),
         },
-        // The Research Integration kit's own (docs/design/studio-kits.md
+        // The Constructor Research kit's own (docs/design/studio-kits.md
         // §3.13): what a Research environment is made on. Its build, deploy
         // and rollback are `build_start` and `deploy_request` on a Research
         // environment; without the kit they answer `KIT_NOT_INSTALLED`.
         Tool {
             name: "research_projects",
             description: "The Constructor Research projects a `research` connection's user owns \
-                or collaborates on: what a Research environment is made on (the Research \
-                Integration kit, ADR-0049). An organization without the kit is refused \
+                or collaborates on: what a Research environment is made on (the Constructor \
+                Research kit, ADR-0049). An organization without the kit is refused \
                 `KIT_NOT_INSTALLED`; organization administrators only.",
             input_schema: || {
                 object(
@@ -622,7 +622,7 @@ pub fn tools() -> Vec<Tool> {
             name: "research_hardware",
             description: "The hardware configurations a Research project's services may run on, \
                 trial ones marked: what a Research environment's `research_hardware` is picked \
-                from (the Research Integration kit).",
+                from (the Constructor Research kit).",
             input_schema: || {
                 object(
                     json!({

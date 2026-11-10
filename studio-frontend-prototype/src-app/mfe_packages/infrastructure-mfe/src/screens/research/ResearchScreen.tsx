@@ -1,5 +1,5 @@
 /**
- * Organization › Research: the Research Integration kit's screen
+ * Organization › Constructor Research: the Constructor Research kit's screen
  * (docs/design/studio-kits.md §3.13, ADR-0049). Shown only where the
  * organization has installed the kit (`presentation.kit` in mfe.json).
  *
@@ -68,7 +68,7 @@ export const ResearchScreen: React.FC<{ bridge: ChildMfeBridge | null }> = ({ br
   const infra = useInfrastructureTranslations();
   const { t, loading } = useResearchTranslations();
   return (
-    <div ref={containerRef} className={styles.screen} data-theme={dataTheme} data-research-integration>
+    <div ref={containerRef} className={styles.screen} data-theme={dataTheme} data-constructor-research>
       {loading || infra.loading || orgLoading ? (
         <Skeleton className={styles.skeleton} />
       ) : !org ? (

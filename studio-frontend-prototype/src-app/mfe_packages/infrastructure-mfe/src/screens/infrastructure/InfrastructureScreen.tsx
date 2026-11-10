@@ -129,7 +129,7 @@ interface Health {
 type Tab = 'ladder' | 'where' | 'namespaces' | 'retention';
 
 /** "Add a place ▾": the one way a place is added, whatever its kind. A
- *  Research project comes with the Research Integration kit: without it the
+ *  Research project comes with the Constructor Research kit: without it the
  *  entry says so and opens the organization's kits. */
 function AddPlaceMenu({ onPick, researchKit }: { onPick: (kind: PlaceKind) => void; researchKit: boolean }) {
   const { t, container } = useInfra();
@@ -261,7 +261,7 @@ function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnection
   const load = useCallback(() => setRound((n) => n + 1), []);
   const { projects, workspaceIds } = useProjects(org.id);
   const people = usePeople([org.id, ...workspaceIds]);
-  /** Whether the organization has the Research Integration kit; null until
+  /** Whether the organization has the Constructor Research kit; null until
    *  read, or when studio-kits does not answer (then nothing is held back). */
   const [researchKit, setResearchKit] = useState<boolean | null>(null);
   useEffect(() => {

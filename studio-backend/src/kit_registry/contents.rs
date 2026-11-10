@@ -442,7 +442,7 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     "GET /studio-environments/v1/registries/{connection_id}/orphans",
                     "GET /studio-connector/v1/connections",
                     "POST /studio-connector/v1/connections/{id}/test",
-                    // Whether a Research place may be added (research-integration).
+                    // Whether a Research place may be added (constructor-research).
                     "GET /studio-kits/v1/installed-kits",
                 ]),
                 writes: owned(&[
@@ -568,27 +568,21 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         },
         // Building and running a product in Constructor Research (ADR-0049,
         // docs/design/studio-kits.md §3.13). Not a base kit by default
-        // (`OPT_IN_BUILTIN`). Its screen is Organization › Research, an entry
+        // (`OPT_IN_BUILTIN`); installed for an organization or one project.
+        // Its screen is Organization › Constructor Research, an entry
         // of `infrastructure-mfe`; a project's build, deploy and rollback to
         // Research stay on its Releases tab (product-releases), and
         // studio-environments refuses them with `KIT_NOT_INSTALLED` where
         // this kit is not installed.
-        "research-integration" => KitContents {
-            screens: vec![tab("organization", "Research", Some("/research"))],
-            mcp_tools: vec![
-                KitNamed {
-                    name: "research_projects".to_owned(),
-                    description: Some(
-                        "The Research projects a sign-in may run products in".to_owned(),
-                    ),
-                },
-                KitNamed {
-                    name: "research_hardware".to_owned(),
-                    description: Some(
-                        "The hardware a Research project's services may run on".to_owned(),
-                    ),
-                },
-            ],
+        "constructor-research" => KitContents {
+            // Its Inbox sources, MCP tools and the routes behind the sources
+            // are in its compiled-in kit.json
+            // (`builtin/constructor-research.kit.json`).
+            screens: vec![tab(
+                "organization",
+                "Constructor Research",
+                Some("/constructor-research"),
+            )],
             permissions: KitPermissions {
                 reads: owned(&[
                     "GET /studio-environments/v1/environments",

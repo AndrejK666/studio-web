@@ -239,7 +239,7 @@ without the portal; each step is the REST route the portal calls for it.
 | | `deployment_decide` | *changes:* approves or declines (organization administrators) |
 | | `deployment_status` | the release as its cluster reports it now |
 | | `deployment_logs` | the end of each container's log |
-| Research (Research Integration kit) | `research_projects` | the Constructor Research projects a `research` sign-in may run products in; `KIT_NOT_INSTALLED` without the kit |
+| Research (Constructor Research kit) | `research_projects` | the Constructor Research projects a `research` sign-in may run products in; `KIT_NOT_INSTALLED` without the kit |
 | | `research_hardware` | the hardware a Research project's services may run on, trial ones marked |
 | Runs | `task_run` | the background run an import, build or deploy started |
 | | `task_retry` | *changes:* runs a failed or cancelled run again; a project's creation continues where it stopped |

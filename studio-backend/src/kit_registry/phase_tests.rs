@@ -97,10 +97,19 @@ async fn an_installed_kit_s_inbox_sources_apply_to_the_organization() {
     let (installer, _) = setup();
     let member = caller(Uuid::from_u128(0x3e), ORG);
     let sources = installer.inbox_sources(&member, ORG).await.unwrap();
-    assert_eq!(sources.len(), 1, "{sources:?}");
-    assert_eq!(sources[0].kit_slug, SLUG);
-    assert_eq!(sources[0].kit_name, "Project lifecycle");
-    assert_eq!(sources[0].source.id, "phase-waiting");
+    let ours: Vec<_> = sources.iter().filter(|s| s.kit_slug == SLUG).collect();
+    assert_eq!(ours.len(), 1, "{sources:?}");
+    assert_eq!(ours[0].kit_name, "Project lifecycle");
+    assert_eq!(ours[0].source.id, "phase-waiting");
+    // Every other source is an `endpoint` source of a kit a project may have
+    // on its own (Constructor Research): its route answers where it applies.
+    assert!(
+        sources
+            .iter()
+            .filter(|s| s.kit_slug != SLUG)
+            .all(|s| s.source.kind() == "endpoint"),
+        "{sources:?}"
+    );
 
     let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
     installer.uninstall_base(&platform, SLUG).await.unwrap();
@@ -109,8 +118,30 @@ async fn an_installed_kit_s_inbox_sources_apply_to_the_organization() {
             .inbox_sources(&member, ORG)
             .await
             .unwrap()
-            .is_empty()
+            .iter()
+            .all(|s| s.kit_slug != SLUG)
     );
+
+    // A query source of a kit installed nowhere is never listed; the
+    // Constructor Research kit's endpoint sources are, before and after an
+    // organization installs it, once each.
+    let research = |sources: &[crate::kit_registry::inbox::KitInboxSource]| {
+        let mut ids: Vec<String> = sources
+            .iter()
+            .filter(|s| s.kit_slug == "constructor-research")
+            .map(|s| s.source.id.clone())
+            .collect();
+        ids.sort();
+        ids
+    };
+    let before = installer.inbox_sources(&member, ORG).await.unwrap();
+    assert_eq!(research(&before), ["deploy-failed", "sign-in-expires"]);
+    installer
+        .install_for_organization(&platform, ORG, "constructor-research", None)
+        .await
+        .unwrap();
+    let after = installer.inbox_sources(&member, ORG).await.unwrap();
+    assert_eq!(research(&after), ["deploy-failed", "sign-in-expires"]);
 }
 
 #[test]

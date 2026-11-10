@@ -69,14 +69,14 @@ pub const SHELF_BUILTIN: &str = "builtin";
 /// only where someone asks for them"). An organization installs one for
 /// itself, or a platform administrator makes it a base kit for every
 /// organization; until then it is in the library and applies nowhere.
-pub const OPT_IN_BUILTIN: &[&str] = &[RESEARCH_INTEGRATION_KIT];
+pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT];
 
-/// The Research Integration kit (`docs/design/studio-kits.md` §3.13): building
+/// The Constructor Research kit (`docs/design/studio-kits.md` §3.13): building
 /// a project's product in Constructor Research and running it there as one of
 /// its applications (ADR-0049). studio-environments asks for it before a
 /// Research environment is added or changed, or a build, deploy or rollback
 /// to one starts.
-pub const RESEARCH_INTEGRATION_KIT: &str = "research-integration";
+pub const CONSTRUCTOR_RESEARCH_KIT: &str = "constructor-research";
 
 /// Is `slug` a built-in kit only where somebody installs it?
 pub fn is_opt_in_builtin(slug: &str) -> bool {
@@ -829,10 +829,10 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
         // Not a base kit by default (`OPT_IN_BUILTIN`): an organization that
         // runs its products in Constructor Research installs it.
         kit(
-            RESEARCH_INTEGRATION_KIT,
-            "Research Integration",
-            "Build a project's product in Constructor Research and run it there as one of its applications: the Research projects, their hardware, and the deploys, rollbacks and addresses of what runs there.",
-            &["organization"],
+            CONSTRUCTOR_RESEARCH_KIT,
+            "Constructor Research",
+            "Build a project's product in Constructor Research and run it there as one of its applications: the Research projects, their hardware, and the deploys, rollbacks and addresses of what runs there. For the whole organization, or for one project.",
+            &["organization", "project"],
         ),
     ]
 }
@@ -1178,7 +1178,7 @@ mod tests {
                 "project-domain-model",
                 "org-connections",
                 "project-team",
-                "research-integration"
+                "constructor-research"
             ]
         );
         for kit in &kits {

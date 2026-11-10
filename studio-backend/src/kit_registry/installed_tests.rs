@@ -594,7 +594,7 @@ async fn only_a_project_level_kit_goes_in_a_project() {
 
 #[tokio::test]
 async fn an_opt_in_builtin_kit_applies_only_where_someone_installs_it() {
-    use crate::kit_registry::service::RESEARCH_INTEGRATION_KIT as RESEARCH;
+    use crate::kit_registry::service::CONSTRUCTOR_RESEARCH_KIT as RESEARCH;
     let (installer, store) = installer();
     let member = caller(MEMBER, ORG);
     // In the library, built in, and installed nowhere by default.
@@ -668,7 +668,7 @@ async fn an_opt_in_builtin_kit_applies_only_where_someone_installs_it() {
 
 #[tokio::test]
 async fn a_gear_asks_whether_a_kit_applies_to_an_organization_or_its_project() {
-    use crate::kit_registry::port::{InstalledKits, KitPresence, RESEARCH_INTEGRATION_KIT};
+    use crate::kit_registry::port::{CONSTRUCTOR_RESEARCH_KIT, InstalledKits, KitPresence};
     let (installer, _) = installer();
     let installer = Arc::new(installer);
     let presence = InstalledKits::new(Arc::clone(&installer));
@@ -682,23 +682,69 @@ async fn a_gear_asks_whether_a_kit_applies_to_an_organization_or_its_project() {
     );
     assert!(
         !presence
-            .applies(&member, ORG, RESEARCH_INTEGRATION_KIT)
+            .applies(&member, ORG, CONSTRUCTOR_RESEARCH_KIT)
             .await
             .unwrap()
     );
     installer
-        .install_for_organization(&caller(ORG_ADMIN, ORG), ORG, RESEARCH_INTEGRATION_KIT, None)
+        .install_for_organization(&caller(ORG_ADMIN, ORG), ORG, CONSTRUCTOR_RESEARCH_KIT, None)
         .await
         .unwrap();
     // The organization's answer is its projects' answer too.
     for tenant in [ORG, PROJECT] {
         assert!(
             presence
-                .applies(&member, tenant, RESEARCH_INTEGRATION_KIT)
+                .applies(&member, tenant, CONSTRUCTOR_RESEARCH_KIT)
                 .await
                 .unwrap(),
             "{tenant}"
         );
     }
     assert!(!presence.applies(&member, ORG, "no-such-kit").await.unwrap());
+}
+
+#[tokio::test]
+async fn a_project_installs_constructor_research_on_its_own() {
+    use crate::kit_registry::port::{CONSTRUCTOR_RESEARCH_KIT, InstalledKits, KitPresence};
+    let (installer, _) = installer();
+    let installer = Arc::new(installer);
+    let presence = InstalledKits::new(Arc::clone(&installer));
+    let admin = caller(ORG_ADMIN, ORG);
+    let member = caller(MEMBER, ORG);
+    // It brings no model, so one project may have it.
+    let own = installer
+        .install_for_project(&admin, PROJECT, CONSTRUCTOR_RESEARCH_KIT, None)
+        .await
+        .unwrap();
+    assert_eq!(own.kind, KIND_PROJECT);
+    let installed = installer
+        .installed_in_project(&member, PROJECT)
+        .await
+        .unwrap();
+    assert!(slugs(&installed.project).contains(&CONSTRUCTOR_RESEARCH_KIT));
+    assert!(slugs(&installed.effective).contains(&CONSTRUCTOR_RESEARCH_KIT));
+    // The project has it; its organization does not.
+    assert!(
+        presence
+            .applies(&member, PROJECT, CONSTRUCTOR_RESEARCH_KIT)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !presence
+            .applies(&member, ORG, CONSTRUCTOR_RESEARCH_KIT)
+            .await
+            .unwrap()
+    );
+    // And it goes again with the project's installation.
+    installer
+        .uninstall_for_project(&admin, PROJECT, CONSTRUCTOR_RESEARCH_KIT)
+        .await
+        .unwrap();
+    assert!(
+        !presence
+            .applies(&member, PROJECT, CONSTRUCTOR_RESEARCH_KIT)
+            .await
+            .unwrap()
+    );
 }

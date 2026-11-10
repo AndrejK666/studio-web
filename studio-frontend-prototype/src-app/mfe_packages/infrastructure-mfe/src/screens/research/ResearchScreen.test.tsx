@@ -124,7 +124,7 @@ function setUp({
 
 const renderScreen = () => render(<ResearchScreen bridge={null} />);
 
-describe('Organization › Research', () => {
+describe('Organization › Constructor Research', () => {
   beforeEach(() => {
     openScreen.mockReset();
     setUp();

@@ -241,6 +241,78 @@ pub fn kit_items(source: &Value, rows: Vec<Value>, spaces: &[(String, String)]) 
         .collect()
 }
 
+/// The kind of a kit's source whose items a gear's route answers
+/// (`docs/design/studio-kits.md` §3.11).
+pub const ENDPOINT: &str = "endpoint";
+
+/// Whether an `endpoint` source's `path` is one the Inbox calls: a gear's own
+/// literal route. studio-kits checked it when it read the kit's manifest;
+/// checked again here, since this is where it is called with the person's
+/// token.
+pub fn endpoint_path_allowed(path: &str) -> bool {
+    path.starts_with("/studio-")
+        && path.contains("/v1/")
+        && !path.contains(['?', '#', '{', '}', '\\', ' '])
+        && !path.contains("..")
+        && !path.contains("//")
+}
+
+/// One `endpoint` source's answer (`{items: [{id, title?, workspace_id?,
+/// url?, due_at?, overdue?, …}]}`) as items. An item with no `id` is left
+/// out: its done mark would have nothing to hold on to. Its title is the
+/// source's template filled from the item, else the item's own `title`, else
+/// the source's label.
+pub fn endpoint_items(
+    source: &Value,
+    answered: Vec<Value>,
+    spaces: &[(String, String)],
+) -> Vec<Item> {
+    let slug = source["kit_slug"].as_str().unwrap_or_default();
+    let id = source["id"].as_str().unwrap_or_default();
+    let label = source["label"].as_str().unwrap_or_default();
+    let template = source["title"].as_str().filter(|t| !t.is_empty());
+    let kit = ItemKit {
+        slug: slug.to_owned(),
+        name: source["kit_name"].as_str().unwrap_or(slug).to_owned(),
+        version: source["kit_version"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+    };
+    answered
+        .into_iter()
+        .filter_map(|item| {
+            let object = match &item["id"] {
+                Value::String(s) if !s.is_empty() => s.clone(),
+                Value::Number(n) => n.to_string(),
+                _ => return None,
+            };
+            let workspace_id = text(&item["workspace_id"]).unwrap_or_default();
+            let workspace_name = spaces
+                .iter()
+                .find(|(w, _)| *w == workspace_id)
+                .map(|(_, n)| n.clone())
+                .unwrap_or_default();
+            let title = match template {
+                Some(t) => fill(t, &item),
+                None => text(&item["title"]).unwrap_or_else(|| label.to_owned()),
+            };
+            Some(Item {
+                key: format!("kit:{slug}/{id}:{object}@{}", fingerprint(&item)),
+                source: format!("kit:{slug}/{id}"),
+                kit: Some(kit.clone()),
+                workspace_id,
+                workspace_name,
+                title,
+                url: text(&item["url"]),
+                due_at: text(&item["due_at"]),
+                overdue: item["overdue"].as_bool().unwrap_or(false),
+                record: item,
+            })
+        })
+        .collect()
+}
+
 /// Whether a mark hides its item now: done, or snoozed until later.
 fn hides(mark: Option<&Mark>, now: OffsetDateTime) -> bool {
     match mark {
@@ -312,19 +384,32 @@ async fn kit_sources(api: &Api, me: &str, spaces: &[(String, String)]) -> Read {
         }
     };
     let answers = futures_util::future::join_all(sources.iter().map(|source| async move {
-        let query = with_me(&source["query"], me);
-        let answer = api.post("/studio-domain-model/v1/query", &[], &query).await;
+        let answer = if source["kind"] == ENDPOINT {
+            // A gear's route, called as the person: it answers their items.
+            match source["path"].as_str().filter(|p| endpoint_path_allowed(p)) {
+                Some(path) => api.get(path, &[]).await,
+                None => Err(crate::mcp::sdk::ToolError(
+                    "the source names no route of Studio's own".into(),
+                )),
+            }
+        } else {
+            let query = with_me(&source["query"], me);
+            api.post("/studio-domain-model/v1/query", &[], &query).await
+        };
         (source, answer)
     }))
     .await;
     let mut items = Vec::new();
     for (source, answer) in answers {
         match answer {
-            Ok(page) => items.extend(kit_items(
-                source,
-                page["items"].as_array().cloned().unwrap_or_default(),
-                spaces,
-            )),
+            Ok(page) => {
+                let rows = page["items"].as_array().cloned().unwrap_or_default();
+                items.extend(if source["kind"] == ENDPOINT {
+                    endpoint_items(source, rows, spaces)
+                } else {
+                    kit_items(source, rows, spaces)
+                });
+            }
             Err(e) => unread.push(format!(
                 "{} ({}): {}",
                 source["kit_name"].as_str().unwrap_or_default(),

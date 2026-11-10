@@ -1285,6 +1285,114 @@ async fn list_research_hardware(
     }))
 }
 
+/// One item the Constructor Research kit's Inbox sources answer
+/// (`docs/design/studio-kits.md` §3.11, a source of kind `endpoint`): what
+/// waits on the person, read from studio-environments' records.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchInboxItemDto {
+    /// Stable within the source: the deploy's id, or the sign-in's.
+    pub id: String,
+    pub title: String,
+    /// The project it is about, when it is about one.
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub environment_name: Option<String>,
+    /// When it is due, RFC 3339: when a sign-in runs out.
+    pub due_at: Option<String>,
+    pub overdue: bool,
+    /// Whole days until a sign-in runs out; 0 once it has.
+    pub days_left: Option<i64>,
+    /// What else there is to read: why the deploy failed.
+    pub detail: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchInboxItemListDto {
+    pub items: Vec<ResearchInboxItemDto>,
+    pub total: u32,
+}
+
+fn inbox_list(items: Vec<ResearchInboxItemDto>) -> ResearchInboxItemListDto {
+    ResearchInboxItemListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }
+}
+
+async fn research_inbox_deploys(
+    OrgCtx(ctx): OrgCtx,
+    Extension(envs): Extension<Environments>,
+) -> ApiResult<JsonBody<ResearchInboxItemListDto>> {
+    let items = envs
+        .0
+        .research_failed_deploys(&ctx, ctx.subject_tenant_id())
+        .await
+        .map_err(problem)?
+        .into_iter()
+        .map(|d| ResearchInboxItemDto {
+            id: d.id.to_string(),
+            title: format!(
+                "{}: the deploy to {} in Constructor Research failed",
+                d.project_name, d.environment_name
+            ),
+            project_id: Some(d.project_id.to_string()),
+            project_name: Some(d.project_name),
+            environment_name: Some(d.environment_name),
+            due_at: None,
+            overdue: false,
+            days_left: None,
+            detail: d.outcome,
+        })
+        .collect();
+    Ok(Json(inbox_list(items)))
+}
+
+async fn research_inbox_sign_in(
+    OrgCtx(ctx): OrgCtx,
+    Extension(envs): Extension<Environments>,
+) -> ApiResult<JsonBody<ResearchInboxItemListDto>> {
+    let due = envs
+        .0
+        .research_sign_in_due(&ctx, ctx.subject_tenant_id())
+        .await
+        .map_err(problem)?;
+    let items = due
+        .map(|due| {
+            let title = if due.days_left == 0 {
+                "Your Constructor Research sign-in has run out: sign in again under Connections"
+                    .to_owned()
+            } else {
+                format!(
+                    "Your Constructor Research sign-in runs out in {} day{}: sign in again under \
+                     Connections",
+                    due.days_left,
+                    if due.days_left == 1 { "" } else { "s" }
+                )
+            };
+            ResearchInboxItemDto {
+                id: format!("{}@{}", due.connection_id, due.expires_at),
+                title,
+                project_id: None,
+                project_name: None,
+                environment_name: None,
+                due_at: time::OffsetDateTime::from_unix_timestamp(due.expires_at)
+                    .ok()
+                    .and_then(|t| {
+                        t.format(&time::format_description::well_known::Rfc3339)
+                            .ok()
+                    }),
+                overdue: due.days_left == 0,
+                days_left: Some(due.days_left),
+                detail: None,
+            }
+        })
+        .into_iter()
+        .collect();
+    Ok(Json(inbox_list(items)))
+}
+
 fn binding_dto(b: Binding) -> BindingDto {
     BindingDto {
         profile: b.profile,
@@ -1827,6 +1935,59 @@ pub fn register_routes(
         .error_401(openapi)
         .error_403(openapi)
         .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    // The Constructor Research kit's Inbox sources (kind `endpoint`,
+    // docs/design/studio-kits.md §3.11): studio-user's Inbox calls them as
+    // the person.
+    router = OperationBuilder::get("/studio-environments/v1/research/inbox/deploys")
+        .operation_id("studio_environments.list_research_inbox_deploys")
+        .summary("The caller's Research deploys that failed")
+        .description(
+            "Any member, for themselves: each Constructor Research deploy they asked for whose \
+             newest attempt in its environment failed, newest first, in the projects where the \
+             Constructor Research kit applies (the project's, its organization's or a base \
+             installation). An item leaves when a newer deploy there succeeds. The kit's Inbox \
+             source `deploy-failed`.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .handler(research_inbox_deploys)
+        .json_response_with_schema::<ResearchInboxItemListDto>(
+            openapi,
+            StatusCode::OK,
+            "The deploys that wait on the caller",
+        )
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/research/inbox/sign-in")
+        .operation_id("studio_environments.list_research_inbox_sign_ins")
+        .summary("The caller's Research sign-in, when it runs out soon")
+        .description(
+            "Any member, for themselves: their own Constructor Research sign-in when its access \
+             key runs out within 14 days or has run out (a key lasts 90 days from the sign-in, \
+             ADR-0049 §1), where the Constructor Research kit is in use (it applies to the \
+             organization, or to a project the caller deployed to Research). At most one item. \
+             The kit's Inbox source `sign-in-expires`.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .handler(research_inbox_sign_in)
+        .json_response_with_schema::<ResearchInboxItemListDto>(
+            openapi,
+            StatusCode::OK,
+            "The sign-in, when it is due",
+        )
+        .error_401(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

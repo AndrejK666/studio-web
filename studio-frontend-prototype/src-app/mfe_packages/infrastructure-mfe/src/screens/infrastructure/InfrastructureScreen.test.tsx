@@ -96,7 +96,7 @@ function setUp({
   environments = [env({}), env({ id: 'e-prod', name: 'prod', protected: true, promote_from: 'e-dev' })],
   deployments = [deployment({}), deployment({ id: 'd0', environment_id: 'e-dev', environment_name: 'dev', state: 'succeeded', chart_version: '1.1.0' })],
   environmentsError,
-  kits = ['org-infrastructure', 'research-integration'],
+  kits = ['org-infrastructure', 'constructor-research'],
 }: {
   mayManage?: boolean;
   environments?: DeployEnvironment[];
@@ -293,7 +293,7 @@ describe('Organization › Infrastructure', () => {
     expect(openScreen).toHaveBeenCalledWith(null, '/connections');
   });
 
-  it('sends an organization without the Research Integration kit to its kits', async () => {
+  it('sends an organization without the Constructor Research kit to its kits', async () => {
     openScreen.mockReset();
     setUp({ kits: ['org-infrastructure'] });
     renderScreen();

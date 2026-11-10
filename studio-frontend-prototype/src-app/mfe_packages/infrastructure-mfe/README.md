@@ -6,8 +6,8 @@ The built-in kit `org-infrastructure` (ADR-0068 §7) and, until a platform
 administrator removes it, a base kit (ADR-0069 §4).
 
 Its second entry, `./researchLifecycle` (`src/researchLifecycle.tsx`,
-`src/screens/research/`, `src/model/research.ts`), is Organization › Research,
-the screen of the `research-integration` kit: an opt-in built-in kit, shown
+`src/screens/research/`, `src/model/research.ts`), is Organization › Constructor Research,
+the screen of the `constructor-research` kit: an opt-in built-in kit, shown
 only where the organization installed it (`docs/design/studio-kits.md`
 §3.13). It reuses this package's environment form, deploy line and status
 parts, and reads `studio-kits`' `GET /installed-kits` so that Infrastructure's

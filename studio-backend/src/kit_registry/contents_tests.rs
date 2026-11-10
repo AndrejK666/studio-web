@@ -146,16 +146,20 @@ fn the_builtin_screens_are_today_s_tabs() {
         levels("project-domain-model"),
         [at("project", "Project domain model", Some("/domain-model"))]
     );
-    // Research Integration: one organization tab, and the MCP tools that
+    // Constructor Research: one organization tab, and the MCP tools that
     // make a Research environment.
     assert_eq!(
-        levels("research-integration"),
-        [at("organization", "Research", Some("/research"))]
+        levels("constructor-research"),
+        [at(
+            "organization",
+            "Constructor Research",
+            Some("/constructor-research")
+        )]
     );
     let research = describe(
         builtin_catalogue()
             .into_iter()
-            .find(|kit| kit.slug == "research-integration")
+            .find(|kit| kit.slug == "constructor-research")
             .unwrap(),
     );
     let tools: Vec<&str> = research

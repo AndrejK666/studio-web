@@ -107,6 +107,41 @@ fn a_kit_json_that_does_not_check_is_refused() {
         .is_err(),
         "an inbox query names its type"
     );
+    // An endpoint source names a gear's route its permissions read, and
+    // nothing a query source has.
+    let endpoint = |source: &str, reads: &str| {
+        let mut v: serde_json::Value = serde_json::from_str(OPS).unwrap();
+        v["inbox"] = serde_json::from_str(source).unwrap();
+        v["permissions"]["reads"] = serde_json::from_str(reads).unwrap();
+        read_kit_json(&v.to_string())
+    };
+    let ok = r#"[{"id": "a", "label": "x", "kind": "endpoint", "path": "/studio-environments/v1/research/inbox/deploys"}]"#;
+    let reads = r#"["GET /studio-environments/v1/research/inbox/deploys"]"#;
+    let m = endpoint(ok, reads).unwrap();
+    assert_eq!(m.inbox[0].kind(), INBOX_KIND_ENDPOINT);
+    assert!(
+        endpoint(ok, "[]").is_err(),
+        "a route the administrator was not shown"
+    );
+    for bad in [
+        r#"[{"id": "a", "label": "x", "kind": "endpoint"}]"#,
+        r#"[{"id": "a", "label": "x", "kind": "endpoint", "path": "https://evil.example/v1/x"}]"#,
+        r#"[{"id": "a", "label": "x", "kind": "endpoint", "path": "/studio-environments/v1/x?all=1"}]"#,
+        r#"[{"id": "a", "label": "x", "kind": "endpoint", "path": "/studio-environments/v1/{id}"}]"#,
+        r#"[{"id": "a", "label": "x", "kind": "endpoint", "path": "/studio-environments/v1/../v2"}]"#,
+        r#"[{"id": "a", "label": "x", "kind": "endpoint", "path": "/studio-environments/v1/research/inbox/deploys", "query": {"type": "project"}}]"#,
+        r#"[{"id": "a", "label": "x", "kind": "webhook", "path": "/studio-environments/v1/research/inbox/deploys"}]"#,
+        r#"[{"id": "a", "label": "x", "path": "/studio-environments/v1/research/inbox/deploys"}]"#,
+    ] {
+        assert!(
+            endpoint(
+                bad,
+                r#"["GET /studio-environments/v1/research/inbox/deploys", "GET https://evil.example/v1/x", "GET /studio-environments/v1/x?all=1", "GET /studio-environments/v1/{id}", "GET /studio-environments/v1/../v2"]"#
+            )
+            .is_err(),
+            "{bad}"
+        );
+    }
     // The model overlay is read and checked with the manifest.
     assert!(read_kit_json(&with("model", r#"{"types": [{"name": "Bad Name"}]}"#)).is_err());
     assert!(read_kit_json(&with("model", r#"{"tables": []}"#)).is_err());
@@ -153,4 +188,41 @@ fn a_cf_studio_kit_toml_brings_material_for_one_kit() {
     assert!(m.model.is_none());
     assert!(read_cf_studio_kit(TOML_TWO, Some("nope")).is_err());
     assert!(read_cf_studio_kit("", None).is_err());
+}
+
+#[test]
+fn constructor_research_brings_two_endpoint_sources_and_no_model() {
+    let m = builtin_manifest("constructor-research").expect("compiled in");
+    assert_eq!(m.levels, ["organization", "project"]);
+    assert!(
+        m.model.is_none(),
+        "no model: it may be installed for one project"
+    );
+    let sources: Vec<(&str, &str, Option<&str>)> = m
+        .inbox
+        .iter()
+        .map(|s| (s.id.as_str(), s.kind(), s.path.as_deref()))
+        .collect();
+    assert_eq!(
+        sources,
+        [
+            (
+                "deploy-failed",
+                INBOX_KIND_ENDPOINT,
+                Some("/studio-environments/v1/research/inbox/deploys")
+            ),
+            (
+                "sign-in-expires",
+                INBOX_KIND_ENDPOINT,
+                Some("/studio-environments/v1/research/inbox/sign-in")
+            ),
+        ]
+    );
+    let catalogue = crate::kit_registry::service::builtin_catalogue();
+    let kit = catalogue
+        .iter()
+        .find(|k| k.slug == "constructor-research")
+        .unwrap();
+    assert_eq!(kit.levels, m.levels, "the catalogue and the kit.json agree");
+    assert_eq!(kit.name, m.name);
 }

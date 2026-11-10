@@ -1,5 +1,5 @@
 /**
- * The Research Integration kit's reading of the organization
+ * The Constructor Research kit's reading of the organization
  * (docs/design/studio-kits.md §3.13, ADR-0049): whether the kit applies, the
  * member's own sign-in to Constructor Research, the organization's Research
  * environments, and what each project runs in them.
@@ -9,7 +9,7 @@ import type { Connection, DeployEnvironment, Deployment, InstalledKits } from '.
 import { whatRunsWhere } from './releases';
 
 /** The kit's slug in studio-kits' library. */
-export const RESEARCH_KIT = 'research-integration';
+export const RESEARCH_KIT = 'constructor-research';
 
 /** Whether the organization has the kit, from `GET /installed-kits`. */
 export function researchKitApplies(installed: InstalledKits | null | undefined): boolean {

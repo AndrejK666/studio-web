@@ -1623,9 +1623,16 @@ pub struct KitInboxSourceQueryDto {
     pub kit_version: String,
     pub id: String,
     pub label: String,
-    /// The body `POST /studio-domain-model/v1/query` takes; the string
-    /// `"$me"` in it is the person whose Inbox is read.
+    /// `query`: `query` is run over the kit's objects. `endpoint`: `path` is
+    /// called, and answers `{items: [{id, title?, …}]}` for the caller.
+    pub kind: String,
+    /// For a `query` source, the body `POST /studio-domain-model/v1/query`
+    /// takes; the string `"$me"` in it is the person whose Inbox is read.
+    /// `null` for an `endpoint` source.
     pub query: serde_json::Value,
+    /// For an `endpoint` source: the gear's route, `GET`, called as the
+    /// person whose Inbox is read.
+    pub path: Option<String>,
     /// An item's title; `{field}` is a field of the row.
     pub title: Option<String>,
     /// The row's field naming the workspace an item is in.
@@ -1654,9 +1661,11 @@ async fn list_inbox_sources(
             kit_slug: s.kit_slug,
             kit_name: s.kit_name,
             kit_version: s.kit_version,
+            kind: s.source.kind().to_owned(),
             id: s.source.id,
             label: s.source.label,
             query: s.source.query.unwrap_or_default(),
+            path: s.source.path,
             title: s.source.title,
             workspace_field: s.source.workspace_field,
         })
@@ -1672,9 +1681,11 @@ fn register_phase_routes(mut router: Router, openapi: &dyn OpenApiRegistry) -> R
         .summary("The Inbox sources of the kits installed for an organization")
         .description(
             "Any member. Each source a kit installed for the whole organization (a base kit or \
-             its own) declares (ADR-0068 §6): the query over the kit's objects that says what \
-             waits on whom (`\"$me\"` is the person whose Inbox is read), how an item is titled, \
-             and the kit it comes from. studio-user's Inbox runs them as the person.",
+             its own) declares (ADR-0068 §6), and the `endpoint` sources of a built-in kit a \
+             project may install on its own: a `query` over the kit's objects that says what \
+             waits on whom (`\"$me\"` is the person whose Inbox is read), or an `endpoint`, a \
+             gear's route that answers the person's items; how an item is titled, and the kit \
+             it comes from. studio-user's Inbox runs them as the person.",
         )
         .tag("StudioKits")
         .authenticated()

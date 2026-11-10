@@ -4,7 +4,7 @@
  * `t('title')` while the registry is asked for `screen.infrastructure.main:title`.
  *
  * Two screens: Organization › Infrastructure (`main`, the org-infrastructure
- * kit) and Organization › Research (`research`, the research-integration kit).
+ * kit) and Organization › Constructor Research (`research`, the constructor-research kit).
  */
 
 import { createScreenTranslations, type TranslationModules } from '@constructor-studio/mfe-shared';

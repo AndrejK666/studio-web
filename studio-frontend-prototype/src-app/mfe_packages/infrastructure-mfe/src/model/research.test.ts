@@ -56,7 +56,7 @@ const deployment = (patch: Partial<Deployment>): Deployment => ({
   ...patch,
 });
 
-describe('the Research Integration kit', () => {
+describe('the Constructor Research kit', () => {
   it('applies only where the organization has it', () => {
     expect(researchKitApplies({ effective: [{ kit_slug: RESEARCH_KIT, version: '1' }] })).toBe(true);
     expect(researchKitApplies({ effective: [{ kit_slug: 'org-infrastructure', version: '1' }] })).toBe(false);

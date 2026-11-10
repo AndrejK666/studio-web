@@ -9,8 +9,8 @@
 # environments it defines on them and what runs where, carried over from the
 # prototype (ADR-0069 §5).
 #
-# Its second screen, Organization › Research, is the Research Integration
-# kit's, `research-integration`: a built-in kit that is not a base kit by
+# Its second screen, Organization › Constructor Research, is the Constructor Research
+# kit's, `constructor-research`: a built-in kit that is not a base kit by
 # default (docs/design/studio-kits.md §3.13), shown only where an
 # organization installed it.
 gdl_version = "1.5"
@@ -22,12 +22,12 @@ mfe(
     # The backend gears its screens call, by gear id.
     requires = ["studio-environments", "studio-connector", "studio-kits", "account-management"],
 
-    screens = ["Infrastructure", "Research"],
-    mounts = ["/infrastructure", "/research"],
+    screens = ["Infrastructure", "Constructor Research"],
+    mounts = ["/infrastructure", "/constructor-research"],
 
     frontx = "0.2.0-alpha.15",
 
     roles = [],
 
-    preview = ["/infrastructure", "/research"],
+    preview = ["/infrastructure", "/constructor-research"],
 )

@@ -127,16 +127,57 @@ pub struct ManifestFunction {
 pub struct ManifestInboxSource {
     pub id: String,
     pub label: String,
-    /// The body `POST /studio-domain-model/v1/query` takes; the string
-    /// `"$me"` anywhere in it is the person whose Inbox is read.
+    /// How its items are read: [`INBOX_KIND_QUERY`] (the default) or
+    /// [`INBOX_KIND_ENDPOINT`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// For a `query` source: the body `POST /studio-domain-model/v1/query`
+    /// takes; the string `"$me"` anywhere in it is the person whose Inbox is
+    /// read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query: Option<Value>,
+    /// For an `endpoint` source: a gear's route, `GET` without a query
+    /// string, that answers `{items: [{id, title?, …}]}` for the person who
+    /// calls it. The kit's `permissions.reads` names it (`GET <path>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     /// The item's title: `{field}` is the field of the object.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// The object's field naming the workspace an item is in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_field: Option<String>,
+}
+
+/// An Inbox source whose items are a domain query's rows over the kit's
+/// objects (ADR-0068 §6).
+pub const INBOX_KIND_QUERY: &str = "query";
+/// An Inbox source whose items a gear's route answers for the person, from
+/// records that are not domain objects (a deploy, a sign-in).
+pub const INBOX_KIND_ENDPOINT: &str = "endpoint";
+
+impl ManifestInboxSource {
+    /// The source's kind; a source that names none is a `query`.
+    pub fn kind(&self) -> &str {
+        self.kind.as_deref().unwrap_or(INBOX_KIND_QUERY)
+    }
+}
+
+/// Why `path` cannot be an endpoint source's route: a gear's own route
+/// (`/studio-<gear>/v1/…`), literal, with no query string, no `..` and no
+/// parameter. `None` when it can.
+pub fn endpoint_path_problem(path: &str) -> Option<&'static str> {
+    if !path.starts_with("/studio-") || !path.contains("/v1/") {
+        return Some("a gear's own route, /studio-<gear>/v1/…");
+    }
+    if path.contains(['?', '#', '{', '}', '\\', ' ']) || path.contains("..") || path.contains("//")
+    {
+        return Some("a literal path: no query string, parameter, `..` or empty segment");
+    }
+    if path.len() > 200 {
+        return Some("at most 200 characters");
+    }
+    None
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +213,10 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
     // `report` and the organization's Reports tab, moved out of the core
     // (ADR-0070 phase 5): declared with their existing ids.
     ("org-reports", include_str!("builtin/org-reports.kit.json")),
+    (
+        "constructor-research",
+        include_str!("builtin/constructor-research.kit.json"),
+    ),
 ];
 
 /// Built-in kit `slug`'s `kit.json`, when it has one.
@@ -269,15 +314,62 @@ fn check(m: &KitManifest) -> Result<(), String> {
         return Err(format!("{KIT_JSON}: two inbox sources share an id"));
     }
     for s in &m.inbox {
-        if let Some(q) = &s.query
-            && q.get("type")
-                .and_then(Value::as_str)
-                .is_none_or(str::is_empty)
-        {
-            return Err(format!(
-                "{KIT_JSON}: inbox source `{}`: `query` is a domain query naming its `type`",
-                s.id
-            ));
+        match s.kind() {
+            INBOX_KIND_QUERY => {
+                if s.path.is_some() {
+                    return Err(format!(
+                        "{KIT_JSON}: inbox source `{}`: a `query` source has no `path`",
+                        s.id
+                    ));
+                }
+                if let Some(q) = &s.query
+                    && q.get("type")
+                        .and_then(Value::as_str)
+                        .is_none_or(str::is_empty)
+                {
+                    return Err(format!(
+                        "{KIT_JSON}: inbox source `{}`: `query` is a domain query naming its `type`",
+                        s.id
+                    ));
+                }
+            }
+            INBOX_KIND_ENDPOINT => {
+                if s.query.is_some() || s.workspace_field.is_some() {
+                    return Err(format!(
+                        "{KIT_JSON}: inbox source `{}`: an `endpoint` source has no `query` or \
+                         `workspace_field`: its route answers the items",
+                        s.id
+                    ));
+                }
+                let Some(path) = s.path.as_deref() else {
+                    return Err(format!(
+                        "{KIT_JSON}: inbox source `{}`: an `endpoint` source names its `path`",
+                        s.id
+                    ));
+                };
+                if let Some(why) = endpoint_path_problem(path) {
+                    return Err(format!(
+                        "{KIT_JSON}: inbox source `{}`: `path` {path} is not a route it may \
+                         name: {why}",
+                        s.id
+                    ));
+                }
+                let read = format!("GET {path}");
+                if !m.permissions.reads.contains(&read) {
+                    return Err(format!(
+                        "{KIT_JSON}: inbox source `{}`: `permissions.reads` does not name \
+                         `{read}`; the administrator approves the routes a kit calls",
+                        s.id
+                    ));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "{KIT_JSON}: inbox source `{}` is a `{other}`; a source is a `{INBOX_KIND_QUERY}` \
+                     or an `{INBOX_KIND_ENDPOINT}`",
+                    s.id
+                ));
+            }
         }
     }
     if m.model.as_ref().is_some_and(|v| !v.is_object()) {

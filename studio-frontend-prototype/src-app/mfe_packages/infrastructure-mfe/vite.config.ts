@@ -29,7 +29,7 @@ export default defineConfig({
       filename: 'remoteEntry.js',
       exposes: {
         './lifecycle': './src/lifecycle.tsx',
-        // Second entry: Organization › Research, the research-integration
+        // Second entry: Organization › Constructor Research, the constructor-research
         // kit's screen (its own lifecycle: one singleton holds one root).
         './researchLifecycle': './src/researchLifecycle.tsx',
       },

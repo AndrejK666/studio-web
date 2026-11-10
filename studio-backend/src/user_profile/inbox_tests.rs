@@ -168,3 +168,71 @@ fn a_kit_s_rows_are_items_that_carry_their_kit() {
     let (open, _) = inbox(items, &[], NOW);
     assert_eq!(open.len(), 1);
 }
+
+#[test]
+fn an_endpoint_source_s_items_are_what_its_route_answers() {
+    let source = json!({
+        "kit_slug": "constructor-research", "kit_name": "Constructor Research",
+        "kit_version": "0.9.0", "id": "deploy-failed", "label": "A Research deploy failed",
+        "kind": "endpoint", "path": "/studio-environments/v1/research/inbox/deploys"
+    });
+    let spaces = vec![("w1".to_owned(), "Web".to_owned())];
+    let items = endpoint_items(
+        &source,
+        vec![
+            json!({"id": "d1", "title": "Shop: the deploy failed", "workspace_id": "w1",
+                   "due_at": "2026-11-20T00:00:00Z", "overdue": true}),
+            json!({"title": "no id: left out"}),
+            json!({"id": 7}),
+        ],
+        &spaces,
+    );
+    assert_eq!(items.len(), 2);
+    let first = &items[0];
+    assert_eq!(first.source, "kit:constructor-research/deploy-failed");
+    assert!(
+        first
+            .key
+            .starts_with("kit:constructor-research/deploy-failed:d1@")
+    );
+    assert_eq!(first.title, "Shop: the deploy failed");
+    assert_eq!(
+        (first.workspace_id.as_str(), first.workspace_name.as_str()),
+        ("w1", "Web")
+    );
+    assert_eq!(first.due_at.as_deref(), Some("2026-11-20T00:00:00Z"));
+    assert!(first.overdue);
+    assert_eq!(first.kit.as_ref().unwrap().name, "Constructor Research");
+    // No title of its own: the source's label.
+    assert_eq!(items[1].title, "A Research deploy failed");
+    assert!(items[1].key.contains(":7@"));
+    // A changed item is a new one: a done mark does not hide it.
+    let again = endpoint_items(
+        &source,
+        vec![json!({"id": "d1", "title": "other"})],
+        &spaces,
+    );
+    assert_ne!(again[0].key, first.key);
+    // The source's template wins over the item's title.
+    let templated = json!({"kit_slug": "k", "id": "s", "label": "L", "title": "{name} waits",
+                           "kind": "endpoint"});
+    let items = endpoint_items(&templated, vec![json!({"id": "1", "name": "Atlas"})], &[]);
+    assert_eq!(items[0].title, "Atlas waits");
+}
+
+#[test]
+fn an_endpoint_source_calls_only_studio_s_own_routes() {
+    assert!(endpoint_path_allowed(
+        "/studio-environments/v1/research/inbox/deploys"
+    ));
+    for bad in [
+        "https://evil.example/studio-x/v1/y",
+        "/studio-environments/v1/x?all=1",
+        "/studio-environments/v1/../v2/x",
+        "/studio-environments/v1/{id}",
+        "/api/v1/x",
+        "//studio-x/v1/y",
+    ] {
+        assert!(!endpoint_path_allowed(bad), "{bad}");
+    }
+}

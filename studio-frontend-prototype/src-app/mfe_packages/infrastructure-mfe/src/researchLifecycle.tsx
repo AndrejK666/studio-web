@@ -1,6 +1,6 @@
 /**
- * The second entry of this MFE: Organization › Research, the Research
- * Integration kit's screen (`research-integration`, docs/design/studio-kits.md
+ * The second entry of this MFE: Organization › Constructor Research, the
+ * Constructor Research kit's screen (`constructor-research`, docs/design/studio-kits.md
  * §3.13). Its own entry, not a section of Infrastructure's: the shell shows it
  * only where the organization installed that kit, and one lifecycle singleton
  * holds one root.
