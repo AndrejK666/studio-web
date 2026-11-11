@@ -25,7 +25,7 @@ export const WORKSPACES_NAMESPACE = `screen.${SCREENSET}.${WORKSPACES_SCREEN}`;
 type ModuleMap = TranslationModules;
 
 const workspacesModules = import.meta.glob('./screens/workspaces/i18n/*.json') as ModuleMap;
-const homeModules = import.meta.glob('./screens/home/i18n/*.json') as ModuleMap;
+const settingsModules = import.meta.glob('./screens/settings/i18n/*.json') as ModuleMap;
 
 
 const loadWorkspacesTranslations = loadScreenTranslations(workspacesModules, './screens/workspaces/i18n');
@@ -37,8 +37,13 @@ export function useWorkspacesScreenTranslations(): UseScreenTranslationsReturn {
 
 export const useWorkspacesText = createText(WORKSPACES_NAMESPACE);
 
-/** The home screen's dictionary and its text function in one call. */
-export const useHomeTranslations = createScreenTranslations(SCREENSET, 'home', homeModules, './screens/home/i18n');
+/** Organization › Settings' dictionary and its text function in one call. */
+export const useSettingsTranslations = createScreenTranslations(
+  SCREENSET,
+  'settings',
+  settingsModules,
+  './screens/settings/i18n'
+);
 
 const overviewModules = import.meta.glob('./screens/overview/i18n/*.json') as ModuleMap;
 

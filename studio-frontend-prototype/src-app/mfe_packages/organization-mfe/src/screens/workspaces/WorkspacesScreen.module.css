@@ -89,33 +89,97 @@ input.search {
   overflow: hidden;
 }
 
-.colProjects {
-  width: 12%;
-}
-
-.colIssues {
-  width: 12%;
-}
-
-.colAccess {
-  width: 16%;
-}
-
-.colConfiguration {
-  width: 16%;
+.colNum {
+  width: 8%;
+  text-align: end;
+  white-space: nowrap;
 }
 
 .colUpdated {
-  width: 10%;
-}
-
-.colProjects,
-.colIssues,
-.colAccess,
-.colConfiguration,
-.colUpdated {
+  width: 9%;
   text-align: start;
   white-space: nowrap;
+}
+
+.colActions {
+  width: 15rem;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.chips {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.expand {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--icon-size-md);
+  block-size: var(--icon-size-md);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.nameStack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.summary {
+  min-width: 0;
+  font-size: var(--text-meta-size);
+  line-height: var(--text-meta-line-height);
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectsCell {
+  background: var(--muted);
+}
+
+.projects {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0 0 0 var(--space-6);
+  list-style: none;
+}
+
+.projects li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.projectFacts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-meta-size);
+  color: var(--muted-foreground);
 }
 
 .nameButton {

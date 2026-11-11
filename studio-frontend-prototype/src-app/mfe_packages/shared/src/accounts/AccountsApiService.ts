@@ -135,6 +135,16 @@ export class AccountsApiService extends BaseApiService {
     );
   }
 
+  /** Rename a tenant: `name` is the only field AM lets change (RFC 7396 merge patch). */
+  renameTenant(tenantId: string) {
+    return this.rest.mutation<Tenant, { name: string }>('PATCH', tenantPath({ tenantId }));
+  }
+
+  /** Delete a tenant. AM refuses one that still has children; the refusal is its own words. */
+  deleteTenant(tenantId: string) {
+    return this.rest.mutation<void, void>('DELETE', tenantPath({ tenantId }));
+  }
+
   createProject(
     params: { name: string; parentId: string },
     options?: { signal?: AbortSignal }

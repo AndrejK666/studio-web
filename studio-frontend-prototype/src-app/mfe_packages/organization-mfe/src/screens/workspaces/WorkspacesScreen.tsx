@@ -1,7 +1,14 @@
-/** The organization's workspaces */
+/**
+ * The organization's workspaces — the prototype's `ProjectsPortfolio`
+ * (`projects.tsx`): one row a workspace with what the organization overview
+ * says of it (spend over 30 days and its change, failing specs, pull requests
+ * stuck past the overview's threshold, quiet days), its projects folded under
+ * it, search and the managed filter; open, rename, delete.
+ */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  FRONTX_SHARED_PROPERTY_LANGUAGE,
   apiRegistry,
   useApiQuery,
   useMfeBridge,
@@ -26,10 +33,22 @@ import {
   type Tenant,
 } from "@constructor-studio/mfe-shared";
 import { requestWorkspace } from "../../actions/workspaceActions";
+import { OverviewApiService } from "../../api/OverviewApiService";
+import { ConfirmDialog, NameDialog } from "../../components/dialogs";
 import { useWorkspacesScreenTranslations, useWorkspacesText } from "../../i18n";
 import { WorkspacesToolbar } from "./components/WorkspacesToolbar";
 import { WorkspacesTable } from "./components/WorkspacesTable";
+import { healthOf, visibleWorkspaces, type ManagedFilter } from "./model";
 import styles from "./WorkspacesScreen.module.css";
+
+/** A sum in the reader's language and the overview's currency. */
+function money(value: number, currency: string, language: string): string {
+  try {
+    return new Intl.NumberFormat(language, { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
+  } catch {
+    return `${Math.round(value)} ${currency}`;
+  }
+}
 
 // @cpt-dod:cpt-studiofrontend-dod-workspaces-screen-level:p1
 const WorkspaceList: React.FC<{
@@ -40,6 +59,12 @@ const WorkspaceList: React.FC<{
   const accounts = apiRegistry.getService(AccountsApiService);
   const t = useWorkspacesText();
   const [query, setQuery] = useState("");
+  const [managed, setManaged] = useState<ManagedFilter>("all");
+  const [renaming, setRenaming] = useState<Tenant | null>(null);
+  const [deleting, setDeleting] = useState<Tenant | null>(null);
+  const container = useRef<HTMLDivElement>(null);
+  const published = useSharedProperty(FRONTX_SHARED_PROPERTY_LANGUAGE);
+  const language = typeof published === "string" && published ? published : "en";
   // `staleTime: 0` is what makes the `refetch()` below reach the network, and
   // is not an accidental opt-out of the shared 30s default. There are two
   // caches, and this number is handed to both: react-query's, whose staleness
@@ -52,6 +77,13 @@ const WorkspaceList: React.FC<{
     accounts.getWorkspaces({ organizationId: organization.id }),
     { staleTime: 0 },
   );
+
+  // Spend, failing specs, stuck pull requests and quiet days per workspace:
+  // the organization overview's numbers, shown where the workspaces are. Best
+  // effort, as the prototype read it: without it those cells are dashes.
+  const overview = useApiQuery(
+    apiRegistry.getService(OverviewApiService).overview({ organizationId: organization.id }),
+  ).data;
 
   const scopedWorkspace = useSharedProperty(
     STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
@@ -72,11 +104,14 @@ const WorkspaceList: React.FC<{
     [all],
   );
 
-  const rows = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return all;
-    return all.filter((row) => row.name.toLowerCase().includes(needle));
-  }, [all, query]);
+  const rows = useMemo(() => visibleWorkspaces(all, query, managed), [all, query, managed]);
+  const narrowed = query.trim() !== "" || managed !== "all";
+
+  const health = useCallback((row: Tenant) => healthOf(overview, row.id), [overview]);
+  const cash = useCallback(
+    (value: number) => money(value, overview?.spend?.currency || "USD", language),
+    [overview, language],
+  );
 
   // @cpt-dod:cpt-studiofrontend-dod-workspaces-screen-row-opens:p1
   const open = useCallback(
@@ -86,10 +121,22 @@ const WorkspaceList: React.FC<{
     [bridge, organization.id],
   );
 
+  const rename = async (name: string) => {
+    if (!renaming) return;
+    await accounts.renameTenant(renaming.id).fetch({ name });
+    await refetch();
+  };
+  const remove = async () => {
+    if (!deleting) return;
+    await accounts.deleteTenant(deleting.id).fetch(undefined);
+    await refetch();
+  };
+  const dialogLabels = { cancel: t("cancel"), close: t("close") };
+
   const pending = translationsPending || (isLoading && all.length === 0);
 
   return (
-    <div className={styles.screen}>
+    <div className={styles.screen} ref={container}>
       <WorkspacesToolbar
         query={query}
         onQueryChange={setQuery}
@@ -97,6 +144,9 @@ const WorkspaceList: React.FC<{
         canCreate
         total={all.length}
         projectTotal={projectTotal}
+        organizationName={organization.name}
+        managed={managed}
+        onManagedChange={setManaged}
       />
 
       <div className={styles.panel}>
@@ -127,13 +177,19 @@ const WorkspaceList: React.FC<{
               // "1-2 of 10", and passing `rows` would make it say "1-2 of 2".
               total={all.length}
               empty={
-                query.trim() ? (
+                narrowed && all.length > 0 ? (
                   <Empty className={styles.empty}>
                     <EmptyHeader>
                       <EmptyDescription>{t("empty_search")}</EmptyDescription>
                     </EmptyHeader>
                     <EmptyActions>
-                      <Button variant="link" onClick={() => setQuery("")}>
+                      <Button
+                        variant="link"
+                        onClick={() => {
+                          setQuery("");
+                          setManaged("all");
+                        }}
+                      >
                         {t("clear_search")}
                       </Button>
                     </EmptyActions>
@@ -151,10 +207,37 @@ const WorkspaceList: React.FC<{
                 )
               }
               onOpen={open}
+              onRename={setRenaming}
+              onDelete={setDeleting}
+              health={health}
+              stuckDays={overview?.stuck_days ?? 7}
+              cash={cash}
             />
           </>
         )}
       </div>
+      <NameDialog
+        open={renaming !== null}
+        title={t("rename_title", { name: renaming?.name ?? "" })}
+        fieldLabel={t("rename_field")}
+        initial={renaming?.name ?? ""}
+        saveLabel={t("save")}
+        savingLabel={t("saving")}
+        labels={dialogLabels}
+        container={container}
+        onSave={rename}
+        onClose={() => setRenaming(null)}
+      />
+      <ConfirmDialog
+        open={deleting !== null}
+        title={t("delete_title", { name: deleting?.name ?? "" })}
+        body={t("delete_body")}
+        confirmLabel={t("delete")}
+        labels={dialogLabels}
+        container={container}
+        onConfirm={remove}
+        onClose={() => setDeleting(null)}
+      />
     </div>
   );
 };

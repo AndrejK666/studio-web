@@ -5,6 +5,7 @@ import { useMfeBridge } from "@gears-frontx/react";
 import { openWorkspaceForm } from "../../../actions/overlayActions";
 import type { ScreenText } from "@constructor-studio/mfe-shared";
 import { useWorkspacesText } from "../../../i18n";
+import { MANAGED_FILTERS, type ManagedFilter } from "../model";
 import styles from "../WorkspacesScreen.module.css";
 
 interface WorkspacesToolbarProps {
@@ -14,11 +15,22 @@ interface WorkspacesToolbarProps {
   canCreate: boolean;
   total?: number;
   projectTotal?: number;
+  /** The organization the list is of, said beside the counts as the prototype did. */
+  organizationName?: string;
+  managed?: ManagedFilter;
+  onManagedChange?: (filter: ManagedFilter) => void;
 }
 
-function totalsLine(t: ScreenText, total: number, projectTotal: number): string {
-  return `${t.count("totals_workspaces", total)} · ${t.count("totals_projects", projectTotal)}`;
+function totalsLine(t: ScreenText, total: number, projectTotal: number, organizationName?: string): string {
+  const counts = `${t.count("totals_workspaces", total)} · ${t.count("totals_projects", projectTotal)}`;
+  return organizationName ? `${counts} ${t("in_org", { name: organizationName })}` : counts;
 }
+
+const MANAGED_LABEL: Record<ManagedFilter, string> = {
+  all: "filter_all",
+  self: "filter_self",
+  org: "filter_org",
+};
 
 export const WorkspacesToolbar: React.FC<WorkspacesToolbarProps> = ({
   query,
@@ -27,6 +39,9 @@ export const WorkspacesToolbar: React.FC<WorkspacesToolbarProps> = ({
   canCreate,
   total,
   projectTotal,
+  organizationName,
+  managed,
+  onManagedChange,
 }) => {
   const bridge = useMfeBridge();
   const t = useWorkspacesText();
@@ -42,11 +57,27 @@ export const WorkspacesToolbar: React.FC<WorkspacesToolbarProps> = ({
           {busy ? <Skeleton className={styles.titleSkeleton} /> : t("title")}
         </h2>
         {!busy && total !== undefined && projectTotal !== undefined && (
-          <p className={styles.totals}>{totalsLine(t, total, projectTotal)}</p>
+          <p className={styles.totals}>{totalsLine(t, total, projectTotal, organizationName)}</p>
         )}
       </div>
 
       <div className={styles.controls}>
+        {managed && onManagedChange && (
+          <div className={styles.chips} role="group" aria-label={t("filter_label")}>
+            {MANAGED_FILTERS.map((filter) => (
+              <Button
+                key={filter}
+                size="sm"
+                variant={managed === filter ? "secondary" : "ghost"}
+                aria-pressed={managed === filter}
+                onClick={() => onManagedChange(filter)}
+                data-workspace-filter={filter}
+              >
+                {t(MANAGED_LABEL[filter])}
+              </Button>
+            ))}
+          </div>
+        )}
         <Input
           className={styles.search}
           type="search"

@@ -46,6 +46,10 @@ vi.mock('./api/BackgroundApiService', () => ({
   BackgroundApiService: class BackgroundApiService {},
 }));
 
+vi.mock('./api/OrganizationSettingsApiService', () => ({
+  OrganizationSettingsApiService: class OrganizationSettingsApiService {},
+}));
+
 vi.mock('./api/OverviewApiService', () => ({
   OverviewApiService: class OverviewApiService {},
 }));
@@ -83,8 +87,8 @@ describe('organization-mfe init', () => {
     const module = await import('./init');
 
     // The scaffold's, the accounts client, the overview, background work and
-    // the person's Inbox.
-    expect(register).toHaveBeenCalledTimes(5);
+    // the person's Inbox, and the organization's settings.
+    expect(register).toHaveBeenCalledTimes(6);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);

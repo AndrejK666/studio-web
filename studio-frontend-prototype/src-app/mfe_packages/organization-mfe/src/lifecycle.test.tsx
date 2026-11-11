@@ -69,10 +69,10 @@ vi.mock('./api/_BlankApiService', () => ({
   },
 }));
 
-// Only the home screen's text is stubbed; the other screens keep the real module.
+// Only the settings screen's text is stubbed; the other screens keep the real module.
 vi.mock('./i18n', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./i18n')>()),
-  useHomeTranslations: useScreenTranslationsMock,
+  useSettingsTranslations: useScreenTranslationsMock,
 }));
 
 describe('organization-mfe lifecycle', () => {
@@ -167,10 +167,10 @@ describe('organization-mfe lifecycle', () => {
       </FrontXProvider>
     );
 
-    // The key-echoing translation mock makes the placeholder's i18n keys
-    // directly assertable.
+    // The key-echoing translation mock makes the screen's i18n keys directly
+    // assertable; no organization has been relayed yet, so it waits for one.
     expect(await screen.findByText('title')).toBeTruthy();
-    expect(screen.getByText('description')).toBeTruthy();
+    expect(screen.getByText('resolving_org')).toBeTruthy();
   });
 
   it('inherits base mount behavior from StudioMfeLifecycle', async () => {
