@@ -163,8 +163,13 @@ const CHAINS_KEPT_MAX: usize = 4096;
 /// whole time a chain is kept.
 #[derive(Debug, Default)]
 pub struct TenantChains {
-    kept: Mutex<HashMap<(Uuid, Uuid, Uuid), (Instant, Vec<Uuid>)>>,
+    kept: Mutex<HashMap<ChainKey, KeptChain>>,
 }
+
+/// The caller's subject, the caller's tenant, and the owner tenant.
+type ChainKey = (Uuid, Uuid, Uuid);
+/// When the chain was read, and the owner's ancestry it found.
+type KeptChain = (Instant, Vec<Uuid>);
 
 impl TenantChains {
     fn key(ctx: &SecurityContext, tenant: Uuid) -> (Uuid, Uuid, Uuid) {

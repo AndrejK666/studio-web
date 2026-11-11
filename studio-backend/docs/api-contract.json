@@ -2786,6 +2786,38 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/research/inbox/deploys",
+      "operation_id": "studio_environments.list_research_inbox_deploys",
+      "tag": "",
+      "summary": "The caller's Research deploys that failed",
+      "authenticated": true,
+      "responses": [
+        "ResearchInboxItemListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/research/inbox/sign-in",
+      "operation_id": "studio_environments.list_research_inbox_sign_ins",
+      "tag": "",
+      "summary": "The caller's Research sign-in, when it runs out soon",
+      "authenticated": true,
+      "responses": [
+        "ResearchInboxItemListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/research/projects",
       "operation_id": "studio_environments.list_research_projects",
       "tag": "",

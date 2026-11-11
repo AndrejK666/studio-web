@@ -3807,6 +3807,28 @@ response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.ru
 response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.size_bytes	i64	optional
 response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	items.tags	Vec<String>	always
 response	GET /studio-environments/v1/registries/{}/repositories/{}/tags	total	u32	always
+response	GET /studio-environments/v1/research/inbox/deploys	items	Vec<{}>	always
+response	GET /studio-environments/v1/research/inbox/deploys	items.days_left	i64	optional
+response	GET /studio-environments/v1/research/inbox/deploys	items.detail	String	optional
+response	GET /studio-environments/v1/research/inbox/deploys	items.due_at	String	optional
+response	GET /studio-environments/v1/research/inbox/deploys	items.environment_name	String	optional
+response	GET /studio-environments/v1/research/inbox/deploys	items.id	String	always
+response	GET /studio-environments/v1/research/inbox/deploys	items.overdue	bool	always
+response	GET /studio-environments/v1/research/inbox/deploys	items.project_id	String	optional
+response	GET /studio-environments/v1/research/inbox/deploys	items.project_name	String	optional
+response	GET /studio-environments/v1/research/inbox/deploys	items.title	String	always
+response	GET /studio-environments/v1/research/inbox/deploys	total	u32	always
+response	GET /studio-environments/v1/research/inbox/sign-in	items	Vec<{}>	always
+response	GET /studio-environments/v1/research/inbox/sign-in	items.days_left	i64	optional
+response	GET /studio-environments/v1/research/inbox/sign-in	items.detail	String	optional
+response	GET /studio-environments/v1/research/inbox/sign-in	items.due_at	String	optional
+response	GET /studio-environments/v1/research/inbox/sign-in	items.environment_name	String	optional
+response	GET /studio-environments/v1/research/inbox/sign-in	items.id	String	always
+response	GET /studio-environments/v1/research/inbox/sign-in	items.overdue	bool	always
+response	GET /studio-environments/v1/research/inbox/sign-in	items.project_id	String	optional
+response	GET /studio-environments/v1/research/inbox/sign-in	items.project_name	String	optional
+response	GET /studio-environments/v1/research/inbox/sign-in	items.title	String	always
+response	GET /studio-environments/v1/research/inbox/sign-in	total	u32	always
 response	GET /studio-environments/v1/research/projects	items	Vec<{}>	always
 response	GET /studio-environments/v1/research/projects	items.id	String	always
 response	GET /studio-environments/v1/research/projects	items.name	String	always
@@ -3998,10 +4020,12 @@ response	GET /studio-kits/v1/catalog/{}	origin.refreshed_at	String	optional
 response	GET /studio-kits/v1/catalog/{}	origin.repository	String	optional
 response	GET /studio-kits/v1/inbox-sources	items	Vec<{}>	always
 response	GET /studio-kits/v1/inbox-sources	items.id	String	always
+response	GET /studio-kits/v1/inbox-sources	items.kind	String	always
 response	GET /studio-kits/v1/inbox-sources	items.kit_name	String	always
 response	GET /studio-kits/v1/inbox-sources	items.kit_slug	String	always
 response	GET /studio-kits/v1/inbox-sources	items.kit_version	String	always
 response	GET /studio-kits/v1/inbox-sources	items.label	String	always
+response	GET /studio-kits/v1/inbox-sources	items.path	String	optional
 response	GET /studio-kits/v1/inbox-sources	items.query	Value	always
 response	GET /studio-kits/v1/inbox-sources	items.title	String	optional
 response	GET /studio-kits/v1/inbox-sources	items.workspace_field	String	optional
@@ -8035,6 +8059,8 @@ route	GET /studio-environments/v1/registries
 route	GET /studio-environments/v1/registries/{}/orphans
 route	GET /studio-environments/v1/registries/{}/repositories
 route	GET /studio-environments/v1/registries/{}/repositories/{}/tags
+route	GET /studio-environments/v1/research/inbox/deploys
+route	GET /studio-environments/v1/research/inbox/sign-in
 route	GET /studio-environments/v1/research/projects
 route	GET /studio-environments/v1/research/projects/{}/hardware
 route	GET /studio-environments/v1/targets
