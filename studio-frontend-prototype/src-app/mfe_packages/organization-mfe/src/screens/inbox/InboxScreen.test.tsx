@@ -31,11 +31,12 @@ vi.mock('../overview/InboxGroup', async () => {
       reloadKey?: number;
     }) => {
       group.props.push(props as Record<string, unknown>);
+      const { onFailed, onCount, onSources, reloadKey } = props;
       useEffect(() => {
-        props.onFailed?.(false);
-        props.onCount?.(3);
-        props.onSources?.(sources);
-      }, [props.reloadKey]);
+        onFailed?.(false);
+        onCount?.(3);
+        onSources?.(sources);
+      }, [onFailed, onCount, onSources, reloadKey]);
       return <div data-inbox-list data-only={props.only ?? ''} />;
     },
   };

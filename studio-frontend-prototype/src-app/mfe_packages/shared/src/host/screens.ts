@@ -56,13 +56,13 @@ export interface ScreenAvailability {
 /** The shell's answer, as two questions a screen asks before drawing a button. */
 export function useScreenAvailability(options?: { bridge?: ChildMfeBridge }): ScreenAvailability {
   const value = useSharedProperty<unknown>(STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE, options);
-  const available = isAvailableScreens(value) ? value : null;
-  return useMemo(
-    () => ({
+  // By content: the bridge hands a new object on every publish.
+  const key = isAvailableScreens(value) ? JSON.stringify({ routes: value.routes, kits: value.kits }) : '';
+  return useMemo(() => {
+    const available = key ? (JSON.parse(key) as AvailableScreens) : null;
+    return {
       route: (route) => routeAvailable(available, route),
       kit: (slug) => kitAvailable(available, slug),
-    }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- by content: the bridge hands a new object per publish
-    [available?.routes.join('\n'), available?.kits?.join('\n'), available === null, available?.kits === null]
-  );
+    };
+  }, [key]);
 }
