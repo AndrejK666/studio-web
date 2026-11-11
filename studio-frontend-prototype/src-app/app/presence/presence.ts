@@ -16,6 +16,9 @@ import { PresenceApiService, type PresenceNote } from '@/app/api/PresenceApiServ
 /** How often we report in. The server judges by three of these, so missing one to a sleeping laptop costs nothing. */
 export const BEAT_MS = 30_000;
 
+/** How long a place has to hold before a move is reported: the places a load or a click passes through are not reported. */
+export const PLACE_SETTLE_MS = 750;
+
 /** Notes arrive appended: the heartbeat hands each over exactly once, so what is on screen is the only copy. */
 export function appendNotes(current: readonly PresenceNote[], arrived: readonly PresenceNote[]): PresenceNote[] {
   if (arrived.length === 0) return current as PresenceNote[];
@@ -100,9 +103,14 @@ export function usePresence(
     };
   }, [beat, enabled]);
 
-  // The first beat, and one more whenever the person moves.
+  // The first beat, and one more whenever the person moves — once the place
+  // has settled. Opening the portal walks it through two or three places in
+  // its first second ('studio', the level, the section), and each used to cost
+  // a POST of its own.
   useEffect(() => {
-    if (enabled) void beat();
+    if (!enabled) return undefined;
+    const timer = setTimeout(() => void beat(), PLACE_SETTLE_MS);
+    return () => clearTimeout(timer);
   }, [beat, enabled, who.place, who.detail]);
 
   const dismiss = useCallback((id: string) => setNotes((current) => dismissNote(current, id)), []);

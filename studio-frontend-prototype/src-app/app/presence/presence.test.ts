@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { BEAT_MS, appendNotes, dismissNote, placeOf, usePresence, type PresenceClient } from './presence';
+import { BEAT_MS, PLACE_SETTLE_MS, appendNotes, dismissNote, placeOf, usePresence, type PresenceClient } from './presence';
 import type { PresenceNote } from '@/app/api/PresenceApiService';
 
 const note = (id: string, text = id): PresenceNote => ({ id, from_user_id: 'u2', text, sent_ms: 1 });
@@ -24,6 +24,12 @@ describe('presence notes', () => {
 });
 
 describe('usePresence', () => {
+  /** Lets the place hold long enough to be reported. */
+  const settle = () =>
+    act(async () => {
+      vi.advanceTimersByTime(PLACE_SETTLE_MS);
+    });
+
   let client: PresenceClient & { beat: ReturnType<typeof vi.fn>; leave: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
@@ -38,9 +44,9 @@ describe('usePresence', () => {
     vi.useRealTimers();
   });
 
-  it('beats at once with who and where, then every BEAT_MS, and leaves on unmount', async () => {
+  it('beats once the place holds, with who and where, then every BEAT_MS, and leaves on unmount', async () => {
     const { result, unmount } = renderHook(() => usePresence({ displayName: 'Ann', place: 'specs', detail: 'Web' }, client));
-    await act(async () => {});
+    await settle();
     expect(client.beat).toHaveBeenCalledWith({ display_name: 'Ann', place: 'specs', detail: 'Web' });
     expect(result.current.online).toBe(3);
     const before = client.beat.mock.calls.length;
@@ -52,19 +58,28 @@ describe('usePresence', () => {
     expect(client.leave).toHaveBeenCalled();
   });
 
-  it('beats again at once when the person moves', async () => {
+  it('beats again when the person moves and the new place holds', async () => {
     const { rerender } = renderHook(({ place }) => usePresence({ place }, client), { initialProps: { place: 'specs' } });
-    await act(async () => {});
+    await settle();
     client.beat.mockClear();
     rerender({ place: 'issues' });
-    await act(async () => {});
+    await settle();
     expect(client.beat).toHaveBeenCalledWith({ display_name: undefined, place: 'issues', detail: undefined });
+  });
+
+  it('reports only where a quick walk of places ends: one beat, not one per place', async () => {
+    const { rerender } = renderHook(({ place }) => usePresence({ place }, client), { initialProps: { place: 'studio' } });
+    rerender({ place: 'organization' });
+    rerender({ place: 'overview' });
+    await settle();
+    expect(client.beat).toHaveBeenCalledTimes(1);
+    expect(client.beat).toHaveBeenCalledWith({ display_name: undefined, place: 'overview', detail: undefined });
   });
 
   it('collects the notes a beat hands over, and dismisses one', async () => {
     client.beat.mockResolvedValueOnce({ messages: [note('n1', 'Lunch?')], online: 2 });
     const { result } = renderHook(() => usePresence({ place: 'specs' }, client));
-    await act(async () => {});
+    await settle();
     expect(result.current.notes.map((n) => n.text)).toEqual(['Lunch?']);
     act(() => result.current.dismiss('n1'));
     expect(result.current.notes).toEqual([]);
@@ -73,7 +88,8 @@ describe('usePresence', () => {
   it('stays quiet when the gear is not there', async () => {
     client.beat.mockRejectedValue(new Error('404'));
     const { result } = renderHook(() => usePresence({ place: 'specs' }, client));
-    await act(async () => {});
+    await settle();
+    expect(client.beat).toHaveBeenCalled();
     expect(result.current.notes).toEqual([]);
     expect(result.current.online).toBe(0);
   });
