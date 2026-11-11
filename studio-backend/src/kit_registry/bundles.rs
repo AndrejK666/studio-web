@@ -344,7 +344,8 @@ impl KitBundles {
             } else {
                 self.grant(slug, version)
             };
-            let prefix = format!("{GATEWAY_PREFIX}/studio-kits/v1/kits/{slug}/{version}/mfe/{grant}");
+            let prefix =
+                format!("{GATEWAY_PREFIX}/studio-kits/v1/kits/{slug}/{version}/mfe/{grant}");
             for package in packages {
                 let base_path = format!("{prefix}/{package}/");
                 let (config, error) = match read_config(
@@ -392,7 +393,9 @@ impl KitBundles {
             let Some(Ok(org)) = grant.get(..32).map(Uuid::try_parse) else {
                 return Ok(None);
             };
-            return self.org_file(org, slug, version, grant, package, path).await;
+            return self
+                .org_file(org, slug, version, grant, package, path)
+                .await;
         }
         if !same(&self.grant(slug, version), grant) {
             return Ok(None);

@@ -7,6 +7,8 @@
 event	desktop_session.command_sent	desktop_session
 event	domain.model_changed	domain_model
 event	domain.objects_changed	domain_type
+event	kit.installed	kit
+event	kit.uninstalled	kit
 event	review_request.cancelled	review_request
 event	review_request.created	review_request
 event	review_request.decided	review_request
@@ -16,6 +18,10 @@ event	task.progress	task_run
 event	task.queued	task_run
 event	task.running	task_run
 event	task.succeeded	task_run
+event	tenant.access_changed	tenant
+event	tenant.deleted	tenant
+event	tenant.logo_changed	tenant
+event	tenant.renamed	tenant
 event	theia.audit	workspace
 event	theia.operation	workspace
 event	theia.repositories-changed	workspace
@@ -30,6 +36,16 @@ event-field	domain.model_changed	version
 event-field	domain.objects_changed	count
 event-field	domain.objects_changed	entity
 event-field	domain.objects_changed	op
+event-field	kit.installed	kit_slug
+event-field	kit.installed	level
+event-field	kit.installed	organization_id
+event-field	kit.installed	project_id
+event-field	kit.installed	version
+event-field	kit.uninstalled	kit_slug
+event-field	kit.uninstalled	level
+event-field	kit.uninstalled	organization_id
+event-field	kit.uninstalled	project_id
+event-field	kit.uninstalled	version
 event-field	review_request.cancelled	due_at
 event-field	review_request.cancelled	id
 event-field	review_request.cancelled	outstanding
@@ -85,6 +101,18 @@ event-field	task.succeeded	run_id
 event-field	task.succeeded	state
 event-field	task.succeeded	summary
 event-field	task.succeeded	task_type
+event-field	tenant.access_changed	organization_id
+event-field	tenant.access_changed	tenant_id
+event-field	tenant.deleted	organization_id
+event-field	tenant.deleted	tenant_id
+event-field	tenant.deleted	tenant_type
+event-field	tenant.logo_changed	has_logo
+event-field	tenant.logo_changed	organization_id
+event-field	tenant.logo_changed	tenant_id
+event-field	tenant.renamed	name
+event-field	tenant.renamed	organization_id
+event-field	tenant.renamed	tenant_id
+event-field	tenant.renamed	tenant_type
 event-field	theia.audit	event
 event-field	theia.audit	runtime
 event-field	theia.audit	sequence
@@ -113,8 +141,10 @@ event-field	theia.workspace-snapshot-changed	workspace_id
 event-subject	desktop_session
 event-subject	domain_model
 event-subject	domain_type
+event-subject	kit
 event-subject	review_request
 event-subject	task_run
+event-subject	tenant
 event-subject	workspace
 request	PATCH /studio-connector/v1/connections/{}	base_url	String	optional
 request	PATCH /studio-connector/v1/connections/{}	label	String	optional
@@ -1204,8 +1234,16 @@ request	PUT /studio-kits/v1/organization-kits/{}	version	String	optional
 request	PUT /studio-kits/v1/project-kits/{}	version	String	optional
 request	PUT /studio-kits/v1/project-phase	owner	String	optional
 request	PUT /studio-kits/v1/project-phase	phase	String	required
+request	PUT /studio-organizations/v1/access-grants	role_key	String	required
+request	PUT /studio-organizations/v1/access-grants	scope_id	String	optional
+request	PUT /studio-organizations/v1/access-grants	scope_name	String	optional
+request	PUT /studio-organizations/v1/access-grants	scope_type	String	required
+request	PUT /studio-organizations/v1/access-grants	subject_id	String	required
+request	PUT /studio-organizations/v1/access-grants	subject_name	String	optional
+request	PUT /studio-organizations/v1/access-grants	subject_type	String	required
 request	PUT /studio-organizations/v1/logo	content_type	String	required
 request	PUT /studio-organizations/v1/logo	data	String	required
+request	PUT /studio-organizations/v1/name	name	String	required
 request	PUT /studio-organizations/v1/project-types	phases	Vec<Value>	optional
 request	PUT /studio-organizations/v1/project-types	types	Vec<Value>	optional
 request	PUT /studio-product/v1/gear-explanations/{}	text	String	required
@@ -3666,6 +3704,17 @@ response	GET /studio-environments/v1/images/{}	size_bytes	i64	optional
 response	GET /studio-environments/v1/images/{}	source_ref	String	optional
 response	GET /studio-environments/v1/images/{}	state	String	always
 response	GET /studio-environments/v1/images/{}	tags	Vec<String>	always
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items	Vec<{}>	always
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.days_left	i64	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.detail	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.due_at	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.environment_name	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.id	String	always
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.overdue	bool	always
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.project_id	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.project_name	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.title	String	always
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	total	u32	always
 response	GET /studio-environments/v1/infra-services	items	Vec<{}>	always
 response	GET /studio-environments/v1/infra-services	items.args	Vec<String>	always
 response	GET /studio-environments/v1/infra-services	items.chart_ref	String	optional
@@ -3965,6 +4014,9 @@ response	GET /studio-kits/v1/catalog/{}	contents.functions.description	String	op
 response	GET /studio-kits/v1/catalog/{}	contents.functions.name	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.functions.runtime	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.inbox	Vec<{}>	always
+response	GET /studio-kits/v1/catalog/{}	contents.inbox.destination	{}	optional
+response	GET /studio-kits/v1/catalog/{}	contents.inbox.destination.mcp_tool	String	optional
+response	GET /studio-kits/v1/catalog/{}	contents.inbox.destination.route	String	optional
 response	GET /studio-kits/v1/catalog/{}	contents.inbox.id	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.inbox.label	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.kinds	Vec<String>	always
@@ -3974,6 +4026,7 @@ response	GET /studio-kits/v1/catalog/{}	contents.material.path	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.mcp_tools	Vec<{}>	always
 response	GET /studio-kits/v1/catalog/{}	contents.mcp_tools.description	String	optional
 response	GET /studio-kits/v1/catalog/{}	contents.mcp_tools.name	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.mfe	Vec<String>	always
 response	GET /studio-kits/v1/catalog/{}	contents.permissions	{}	always
 response	GET /studio-kits/v1/catalog/{}	contents.permissions.listens	Vec<String>	always
 response	GET /studio-kits/v1/catalog/{}	contents.permissions.reads	Vec<String>	always
@@ -3985,6 +4038,7 @@ response	GET /studio-kits/v1/catalog/{}	contents.screens	Vec<{}>	always
 response	GET /studio-kits/v1/catalog/{}	contents.screens.kind	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.screens.label	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.screens.level	String	always
+response	GET /studio-kits/v1/catalog/{}	contents.screens.needs	Vec<String>	always
 response	GET /studio-kits/v1/catalog/{}	contents.screens.route	String	optional
 response	GET /studio-kits/v1/catalog/{}	contents.screens.slot	String	optional
 response	GET /studio-kits/v1/catalog/{}	contents.services	Vec<{}>	always
@@ -4019,6 +4073,9 @@ response	GET /studio-kits/v1/catalog/{}	origin.provider	String	optional
 response	GET /studio-kits/v1/catalog/{}	origin.refreshed_at	String	optional
 response	GET /studio-kits/v1/catalog/{}	origin.repository	String	optional
 response	GET /studio-kits/v1/inbox-sources	items	Vec<{}>	always
+response	GET /studio-kits/v1/inbox-sources	items.destination	{}	optional
+response	GET /studio-kits/v1/inbox-sources	items.destination.mcp_tool	String	optional
+response	GET /studio-kits/v1/inbox-sources	items.destination.route	String	optional
 response	GET /studio-kits/v1/inbox-sources	items.id	String	always
 response	GET /studio-kits/v1/inbox-sources	items.kind	String	always
 response	GET /studio-kits/v1/inbox-sources	items.kit_name	String	always
@@ -4082,6 +4139,9 @@ response	GET /studio-kits/v1/organization-shelf	items.contents.functions.descrip
 response	GET /studio-kits/v1/organization-shelf	items.contents.functions.name	String	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.functions.runtime	String	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.inbox	Vec<{}>	always
+response	GET /studio-kits/v1/organization-shelf	items.contents.inbox.destination	{}	optional
+response	GET /studio-kits/v1/organization-shelf	items.contents.inbox.destination.mcp_tool	String	optional
+response	GET /studio-kits/v1/organization-shelf	items.contents.inbox.destination.route	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.contents.inbox.id	String	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.inbox.label	String	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.kinds	Vec<String>	always
@@ -4091,6 +4151,7 @@ response	GET /studio-kits/v1/organization-shelf	items.contents.material.path	Str
 response	GET /studio-kits/v1/organization-shelf	items.contents.mcp_tools	Vec<{}>	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.mcp_tools.description	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.contents.mcp_tools.name	String	always
+response	GET /studio-kits/v1/organization-shelf	items.contents.mfe	Vec<String>	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.permissions	{}	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.permissions.listens	Vec<String>	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.permissions.reads	Vec<String>	always
@@ -4102,6 +4163,7 @@ response	GET /studio-kits/v1/organization-shelf	items.contents.screens	Vec<{}>	a
 response	GET /studio-kits/v1/organization-shelf	items.contents.screens.kind	String	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.screens.label	String	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.screens.level	String	always
+response	GET /studio-kits/v1/organization-shelf	items.contents.screens.needs	Vec<String>	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.screens.route	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.contents.screens.slot	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.contents.services	Vec<{}>	always
@@ -5096,6 +5158,7 @@ response	GET /studio-user/v1/me/colleagues	items.role	String	always
 response	GET /studio-user/v1/me/colleagues	items.user_id	String	always
 response	GET /studio-user/v1/me/colleagues	total	u32	always
 response	GET /studio-user/v1/me/inbox	items	Vec<{}>	always
+response	GET /studio-user/v1/me/inbox	items.destination	Value	optional
 response	GET /studio-user/v1/me/inbox	items.due_at	String	optional
 response	GET /studio-user/v1/me/inbox	items.key	String	always
 response	GET /studio-user/v1/me/inbox	items.kit	{}	optional
@@ -5109,9 +5172,11 @@ response	GET /studio-user/v1/me/inbox	items.title	String	always
 response	GET /studio-user/v1/me/inbox	items.url	String	optional
 response	GET /studio-user/v1/me/inbox	items.workspace_id	String	always
 response	GET /studio-user/v1/me/inbox	items.workspace_name	String	always
+response	GET /studio-user/v1/me/inbox	members_known	bool	always
 response	GET /studio-user/v1/me/inbox	other	u32	always
 response	GET /studio-user/v1/me/inbox	total	u32	always
 response	GET /studio-user/v1/me/inbox	unread	Vec<String>	always
+response	GET /studio-user/v1/me/inbox	workspaces	u32	always
 response	GET /studio-user/v1/me/inbox-marks	items	Vec<{}>	always
 response	GET /studio-user/v1/me/inbox-marks	items.item_key	String	always
 response	GET /studio-user/v1/me/inbox-marks	items.state	String	always
@@ -6526,6 +6591,9 @@ response	POST /studio-kits/v1/organization-shelf	contents.functions.description	
 response	POST /studio-kits/v1/organization-shelf	contents.functions.name	String	always
 response	POST /studio-kits/v1/organization-shelf	contents.functions.runtime	String	always
 response	POST /studio-kits/v1/organization-shelf	contents.inbox	Vec<{}>	always
+response	POST /studio-kits/v1/organization-shelf	contents.inbox.destination	{}	optional
+response	POST /studio-kits/v1/organization-shelf	contents.inbox.destination.mcp_tool	String	optional
+response	POST /studio-kits/v1/organization-shelf	contents.inbox.destination.route	String	optional
 response	POST /studio-kits/v1/organization-shelf	contents.inbox.id	String	always
 response	POST /studio-kits/v1/organization-shelf	contents.inbox.label	String	always
 response	POST /studio-kits/v1/organization-shelf	contents.kinds	Vec<String>	always
@@ -6535,6 +6603,7 @@ response	POST /studio-kits/v1/organization-shelf	contents.material.path	String	a
 response	POST /studio-kits/v1/organization-shelf	contents.mcp_tools	Vec<{}>	always
 response	POST /studio-kits/v1/organization-shelf	contents.mcp_tools.description	String	optional
 response	POST /studio-kits/v1/organization-shelf	contents.mcp_tools.name	String	always
+response	POST /studio-kits/v1/organization-shelf	contents.mfe	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	contents.permissions	{}	always
 response	POST /studio-kits/v1/organization-shelf	contents.permissions.listens	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	contents.permissions.reads	Vec<String>	always
@@ -6546,6 +6615,7 @@ response	POST /studio-kits/v1/organization-shelf	contents.screens	Vec<{}>	always
 response	POST /studio-kits/v1/organization-shelf	contents.screens.kind	String	always
 response	POST /studio-kits/v1/organization-shelf	contents.screens.label	String	always
 response	POST /studio-kits/v1/organization-shelf	contents.screens.level	String	always
+response	POST /studio-kits/v1/organization-shelf	contents.screens.needs	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	contents.screens.route	String	optional
 response	POST /studio-kits/v1/organization-shelf	contents.screens.slot	String	optional
 response	POST /studio-kits/v1/organization-shelf	contents.services	Vec<{}>	always
@@ -6586,6 +6656,9 @@ response	POST /studio-kits/v1/organization-shelf/preview	contents.functions.desc
 response	POST /studio-kits/v1/organization-shelf/preview	contents.functions.name	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.functions.runtime	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.inbox	Vec<{}>	always
+response	POST /studio-kits/v1/organization-shelf/preview	contents.inbox.destination	{}	optional
+response	POST /studio-kits/v1/organization-shelf/preview	contents.inbox.destination.mcp_tool	String	optional
+response	POST /studio-kits/v1/organization-shelf/preview	contents.inbox.destination.route	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	contents.inbox.id	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.inbox.label	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.kinds	Vec<String>	always
@@ -6595,6 +6668,7 @@ response	POST /studio-kits/v1/organization-shelf/preview	contents.material.path	
 response	POST /studio-kits/v1/organization-shelf/preview	contents.mcp_tools	Vec<{}>	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.mcp_tools.description	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	contents.mcp_tools.name	String	always
+response	POST /studio-kits/v1/organization-shelf/preview	contents.mfe	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.permissions	{}	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.permissions.listens	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.permissions.reads	Vec<String>	always
@@ -6606,6 +6680,7 @@ response	POST /studio-kits/v1/organization-shelf/preview	contents.screens	Vec<{}
 response	POST /studio-kits/v1/organization-shelf/preview	contents.screens.kind	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.screens.label	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.screens.level	String	always
+response	POST /studio-kits/v1/organization-shelf/preview	contents.screens.needs	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.screens.route	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	contents.screens.slot	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	contents.services	Vec<{}>	always
@@ -6646,6 +6721,9 @@ response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.functions.d
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.functions.name	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.functions.runtime	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.inbox	Vec<{}>	always
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.inbox.destination	{}	optional
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.inbox.destination.mcp_tool	String	optional
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.inbox.destination.route	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.inbox.id	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.inbox.label	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.kinds	Vec<String>	always
@@ -6655,6 +6733,7 @@ response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.material.pa
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.mcp_tools	Vec<{}>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.mcp_tools.description	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.mcp_tools.name	String	always
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.mfe	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.permissions	{}	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.permissions.listens	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.permissions.reads	Vec<String>	always
@@ -6666,6 +6745,7 @@ response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.screens	Vec
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.screens.kind	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.screens.label	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.screens.level	String	always
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.screens.needs	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.screens.route	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.screens.slot	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.services	Vec<{}>	always
@@ -7567,9 +7647,19 @@ response	PUT /studio-kits/v1/project-phase	phase_owner	String	optional
 response	PUT /studio-kits/v1/project-phase	phase_since	String	optional
 response	PUT /studio-kits/v1/project-phase	project_id	String	always
 response	PUT /studio-kits/v1/project-phase	states	Vec<String>	always
+response	PUT /studio-organizations/v1/access-grants	id	String	always
+response	PUT /studio-organizations/v1/access-grants	role_key	String	always
+response	PUT /studio-organizations/v1/access-grants	scope_id	String	always
+response	PUT /studio-organizations/v1/access-grants	scope_name	String	always
+response	PUT /studio-organizations/v1/access-grants	scope_type	String	always
+response	PUT /studio-organizations/v1/access-grants	subject_id	String	always
+response	PUT /studio-organizations/v1/access-grants	subject_name	String	always
+response	PUT /studio-organizations/v1/access-grants	subject_type	String	always
 response	PUT /studio-organizations/v1/logo	content_type	String	always
 response	PUT /studio-organizations/v1/logo	data	String	always
 response	PUT /studio-organizations/v1/logo	digest	String	always
+response	PUT /studio-organizations/v1/name	name	String	always
+response	PUT /studio-organizations/v1/name	tenant_id	String	always
 response	PUT /studio-organizations/v1/project-types	types	Vec<Value>	always
 response	PUT /studio-product/v1/gear-explanations/{}	gear_id	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	source	String	always
@@ -7910,6 +8000,7 @@ route	DELETE /studio-kits/v1/organization-kits/{}
 route	DELETE /studio-kits/v1/organization-shelf/{}
 route	DELETE /studio-kits/v1/project-kits/{}
 route	DELETE /studio-kits/v1/projects/{}/installations/{}
+route	DELETE /studio-organizations/v1/access-grants
 route	DELETE /studio-organizations/v1/logo
 route	DELETE /studio-organizations/v1/organizations/{}
 route	DELETE /studio-organizations/v1/project-types
@@ -8050,6 +8141,7 @@ route	GET /studio-environments/v1/environments/{}/readiness
 route	GET /studio-environments/v1/image-retention
 route	GET /studio-environments/v1/images
 route	GET /studio-environments/v1/images/{}
+route	GET /studio-environments/v1/inbox/deploys-awaiting-approval
 route	GET /studio-environments/v1/infra-services
 route	GET /studio-environments/v1/infra-services/{}/keycloak-realm
 route	GET /studio-environments/v1/namespace-assignments
@@ -8375,7 +8467,9 @@ route	PUT /studio-kits/v1/base-kits/{}
 route	PUT /studio-kits/v1/organization-kits/{}
 route	PUT /studio-kits/v1/project-kits/{}
 route	PUT /studio-kits/v1/project-phase
+route	PUT /studio-organizations/v1/access-grants
 route	PUT /studio-organizations/v1/logo
+route	PUT /studio-organizations/v1/name
 route	PUT /studio-organizations/v1/project-types
 route	PUT /studio-product/v1/gear-explanations/{}
 route	PUT /studio-product/v1/product-infra

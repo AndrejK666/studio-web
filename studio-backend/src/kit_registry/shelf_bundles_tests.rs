@@ -94,9 +94,7 @@ async fn an_organizations_kit_is_served_under_the_organization() {
     let grant = b.org_grant(org, "hello-kit", COMMIT);
     assert_eq!(
         listed[0].base_path,
-        format!(
-            "/cf/studio-kits/v1/kits/hello-kit/{COMMIT}/mfe/{grant}/hello/"
-        )
+        format!("/cf/studio-kits/v1/kits/hello-kit/{COMMIT}/mfe/{grant}/hello/")
     );
     assert_eq!(listed[0].config.as_ref().unwrap()["manifest"]["id"], "m");
     // Another organization has no such kit on its shelf.
@@ -202,7 +200,11 @@ async fn the_grant_covers_the_organization() {
         .unwrap()
         .unwrap();
     assert_eq!(bytes, b"export const x = 1;");
-    assert!(KitBundles::is_org_grant(&b.org_grant(org, "hello-kit", COMMIT)));
+    assert!(KitBundles::is_org_grant(&b.org_grant(
+        org,
+        "hello-kit",
+        COMMIT
+    )));
     // A shared kit's grant does not reach an organization's kit.
     assert!(
         b.file(
