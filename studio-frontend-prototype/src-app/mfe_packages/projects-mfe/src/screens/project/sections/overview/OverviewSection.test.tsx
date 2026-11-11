@@ -2,7 +2,9 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectStatus } from '../../../../model/projectStatus';
 
-const { query, openScreen, phaseRead, phaseSet } = vi.hoisted(() => ({
+const { query, openScreen, phaseRead, phaseSet, available, live } = vi.hoisted(() => ({
+  available: { value: null as unknown },
+  live: { value: null as unknown },
   query: vi.fn(),
   openScreen: vi.fn(),
   phaseRead: vi.fn(),
@@ -30,6 +32,8 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   },
   useApiQuery: query,
   useMfeBridge: () => null,
+  useSharedProperty: (id: string) =>
+    id.includes('screens.available') ? available.value : id.includes('last_event') ? live.value : null,
 }));
 
 import { OverviewSection } from './OverviewSection';
@@ -69,6 +73,7 @@ const ok = (data: ProjectStatus) => ({ data, isLoading: false, isError: false, e
 
 describe('OverviewSection', () => {
   beforeEach(() => {
+    available.value = null;
     openScreen.mockReset();
     query.mockReturnValue(ok(blocked));
     phaseRead.mockReset();
@@ -131,6 +136,47 @@ describe('OverviewSection', () => {
     expect(openScreen).toHaveBeenCalledWith(null, '/releases');
     // The pull request list is not in this portal: no dead button.
     expect(screen.queryByRole('button', { name: 'Show pull requests' })).toBeNull();
+  });
+
+  it("offers no button to a kit's tab where that kit is not installed for the project", () => {
+    // Releases (product-releases) and Specs (project-specs) are not installed here.
+    available.value = { routes: ['/projects/overview', '/projects/sources', '/space'], kits: [] };
+    render(<OverviewSection projectId="p1" />);
+    expect(screen.queryByRole('button', { name: 'Open Releases' })).toBeNull();
+    // The next step's screen is missing too: Open IDE is the primary action.
+    expect(document.querySelector('[data-next-step]')).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'open_ide' })).toHaveLength(1);
+    // A step whose screen shows keeps its button.
+    fireEvent.click(document.querySelector('[data-path-step="repos"]') as HTMLElement);
+    fireEvent.click(screen.getByRole('button', { name: 'Open Sources' }));
+    expect(openScreen).toHaveBeenLastCalledWith(null, '/projects/sources');
+  });
+
+  it('reads the status again when a background run ends, not while one runs', async () => {
+    vi.useFakeTimers();
+    const refetch = vi.fn();
+    query.mockReturnValue({ ...ok(blocked), refetch });
+    live.value = null;
+    const view = render(<OverviewSection projectId="p1" />);
+    const run = (seq: number, state: string) => ({
+      seq,
+      at_ms: seq,
+      kind: `task.${state}`,
+      subject_type: 'task_run',
+      subject_id: `r${seq}`,
+      source: 'studio-tasks',
+      payload: { run_id: `r${seq}`, state },
+    });
+    live.value = run(1, 'running');
+    view.rerender(<OverviewSection projectId="p1" />);
+    vi.advanceTimersByTime(1000);
+    expect(refetch).not.toHaveBeenCalled();
+    live.value = run(2, 'succeeded');
+    view.rerender(<OverviewSection projectId="p1" />);
+    vi.advanceTimersByTime(1000);
+    expect(refetch).toHaveBeenCalledTimes(1);
+    live.value = null;
+    vi.useRealTimers();
   });
 
   it('names the sources it could not read', () => {

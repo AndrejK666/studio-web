@@ -30,7 +30,13 @@ import {
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
-import { openScreen, useOrganization, useScreenAvailability } from '@constructor-studio/mfe-shared';
+import {
+  isRunEnding,
+  openScreen,
+  useOrganization,
+  useScreenAvailability,
+  useStudioEventRefresh,
+} from '@constructor-studio/mfe-shared';
 import { requestWorkspace } from '../../actions/workspaceActions';
 import { OverviewApiService } from '../../api/OverviewApiService';
 import { attentionStatus, growthText, othersAttention, workspaceLine, type NeedTarget } from '../../overview/model';
@@ -98,6 +104,9 @@ function OrganizationOverview({
     if (route) openScreen(bridge, route);
   };
   const read = useApiQuery(apiRegistry.getService(OverviewApiService).overview({ organizationId }));
+  // A run that ended (a sync, a report, a build) may change what needs
+  // attention: read again, from the organization on screen's live channel.
+  useStudioEventRefresh(isRunEnding, () => void read.refetch());
   const o: OrgOverview | undefined = read.data;
   const cash = (n: number) => money(n, o?.spend?.currency || 'USD', language);
   const others = o ? othersAttention(o, cash) : [];

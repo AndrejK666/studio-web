@@ -3,7 +3,7 @@ import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMfeBridgeFixture } from '@frontx-test-utils/createMfeBridgeFixture';
 import { STUDIO_SHARED_PROPERTY_LIVE_EVENT } from '../host/hostProperties';
-import { domainChanged, isRunEvent, isStudioEvent, useStudioEventRefresh } from './liveEvents';
+import { domainChanged, isRunEnding, isRunEvent, isStudioEvent, useStudioEventRefresh } from './liveEvents';
 import type { StudioEvent } from './StudioEventsApiService';
 
 function event(seq: number, subject_type = 'task_run'): StudioEvent {
@@ -15,6 +15,15 @@ describe('isStudioEvent', () => {
     expect(isStudioEvent(event(1))).toBe(true);
     expect(isStudioEvent(null)).toBe(false);
     expect(isStudioEvent({ seq: '1', kind: 'x', subject_type: 'y', subject_id: 'z' })).toBe(false);
+  });
+
+  it("tells a run's ending from its progress", () => {
+    const run = (state: string): StudioEvent => ({ ...event(1), payload: { run_id: 'r', state } });
+    expect(isRunEnding(run('succeeded'))).toBe(true);
+    expect(isRunEnding(run('failed'))).toBe(true);
+    expect(isRunEnding(run('cancelled'))).toBe(true);
+    expect(isRunEnding(run('running'))).toBe(false);
+    expect(isRunEnding({ ...run('succeeded'), subject_type: 'workspace' })).toBe(false);
   });
 
   it('tells a run transition from anything else', () => {

@@ -38,6 +38,18 @@ export function isRunEvent(event: StudioEvent): event is StudioEvent<StudioRunEv
 }
 
 /**
+ * Whether an event is a run's ending — succeeded, failed or cancelled: what
+ * changes a status a screen shows (a sync that read the sources, a build),
+ * where a run's every progress report would only make the screen read again
+ * for nothing.
+ */
+export function isRunEnding(event: StudioEvent): event is StudioEvent<StudioRunEvent> {
+  if (!isRunEvent(event)) return false;
+  const state = (event.payload as Partial<StudioRunEvent> | null)?.state;
+  return state === 'succeeded' || state === 'failed' || state === 'cancelled';
+}
+
+/**
  * A matcher for domain changes (ADR-0066, the prototype's `useDomainRefresh`):
  * objects of one of `types` were written, deleted or related
  * (`domain.objects_changed`), or — with `model` — the model itself changed

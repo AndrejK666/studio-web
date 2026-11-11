@@ -196,6 +196,7 @@ export {
   LIVE_REFRESH_DELAY_MS,
   domainChanged,
   isRunEvent,
+  isRunEnding,
   isStudioEvent,
   useLiveStudioEvent,
   useStudioEventRefresh,

@@ -17,14 +17,25 @@
  *
  * Actions open other screens through the shell (`openScreen`). A tab this
  * portal does not have yet (the pull requests list) gets no
- * button rather than a dead one (`routeFor`). A 503 is the server saying
+ * button rather than a dead one (`routeFor`), and neither does a kit's tab
+ * where that kit is not installed for the project (`useScreenAvailability`:
+ * Specs, Activity, the Project domain model, Issues, Product, Releases are
+ * kits' screens). The status is read again when a background run ends
+ * (studio-events). A 503 is the server saying
  * studio-mcp is down: shown as an error, not as an empty project.
  */
 
 import React, { useState } from 'react';
 import { apiRegistry, useApiQuery, useMfeBridge } from '@gears-frontx/react';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
-import { errorMessage, openScreen, responseStatus } from '@constructor-studio/mfe-shared';
+import {
+  errorMessage,
+  isRunEnding,
+  openScreen,
+  responseStatus,
+  useScreenAvailability,
+  useStudioEventRefresh,
+} from '@constructor-studio/mfe-shared';
 import { ProjectStatusApiService } from '../../../../api/ProjectStatusApiService';
 import {
   LEVEL_TONE,
@@ -41,10 +52,22 @@ import { PhaseChip } from './PhaseChip';
 
 type Text = ReturnType<typeof useOverviewSectionTranslations>['t'];
 
+/** The route an action opens here, or null: not in this portal, or its kit not installed. */
+type Reach = (target: string, key?: string) => string | null;
+
 export const OverviewSection: React.FC<{ projectId: string }> = ({ projectId }) => {
   const { t, loading } = useOverviewSectionTranslations();
   const bridge = useMfeBridge();
+  const availability = useScreenAvailability();
+  const reach: Reach = (target, key) => {
+    const route = routeFor(target, key);
+    return route && availability.route(route) ? route : null;
+  };
   const read = useApiQuery(apiRegistry.getService(ProjectStatusApiService).status({ projectId }), { staleTime: 0 });
+  // A run that ended — a sync, a build, a deploy — may have moved the verdict
+  // or the path: read the status again (the shell's live channel, scoped to
+  // the organization on screen), keeping the old answer on screen meanwhile.
+  useStudioEventRefresh(isRunEnding, () => void read.refetch());
   const open = (route: string | null) => {
     if (route) openScreen(bridge, route);
   };
@@ -82,6 +105,7 @@ export const OverviewSection: React.FC<{ projectId: string }> = ({ projectId }) 
         status={read.data}
         t={t}
         open={open}
+        reach={reach}
         refreshing={read.isFetching}
         onRefresh={() => void read.refetch()}
       />
@@ -95,17 +119,20 @@ function StatusView({
   status,
   t,
   open,
+  reach,
   refreshing,
   onRefresh,
 }: {
   status: ProjectStatus;
   t: Text;
   open: (route: string | null) => void;
+  reach: Reach;
   refreshing: boolean;
   onRefresh: () => void;
 }) {
   const next = nextStep(status);
-  const ide = routeFor('ide');
+  const ide = reach('ide');
+  const nextRoute = next ? reach(next.tab, next.step) : null;
   return (
     <div className={styles.section} data-project-overview>
       <div className={styles.head}>
@@ -121,16 +148,18 @@ function StatusView({
           {status.more > 0 && <span className={styles.muted}>{t('more_below', { count: status.more })}</span>}
         </div>
         <div className={styles.actions}>
-          {next && routeFor(next.tab, next.step) ? (
-            <Button title={next.status} data-next-step={next.step} onClick={() => open(routeFor(next.tab, next.step))}>
+          {next && nextRoute ? (
+            <Button title={next.status} data-next-step={next.step} onClick={() => open(nextRoute)}>
               {next.action}
             </Button>
           ) : (
-            <Button data-open-ide onClick={() => open(ide)}>
-              {t('open_ide')}
-            </Button>
+            ide && (
+              <Button data-open-ide onClick={() => open(ide)}>
+                {t('open_ide')}
+              </Button>
+            )
           )}
-          {next && routeFor(next.tab, next.step) && (
+          {next && nextRoute && ide && (
             <Button variant="outline" data-open-ide onClick={() => open(ide)}>
               {t('open_ide')}
             </Button>
@@ -149,7 +178,7 @@ function StatusView({
       </div>
       <p className={styles.about}>{t('about')}</p>
 
-      <PathStrip steps={status.path} t={t} open={open} />
+      <PathStrip steps={status.path} t={t} open={open} reach={reach} />
 
       <Card data-project-needs>
         <CardHeader>
@@ -166,7 +195,7 @@ function StatusView({
           ) : (
             <ul className={styles.list}>
               {status.signals.map((s) => {
-                const route = routeFor(s.action.target, s.key);
+                const route = reach(s.action.target, s.key);
                 return (
                   <li
                     key={s.key}
@@ -204,10 +233,12 @@ function PathStrip({
   steps,
   t,
   open,
+  reach,
 }: {
   steps: ProjectPathStep[];
   t: Text;
   open: (route: string | null) => void;
+  reach: Reach;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
   const progress = pathProgress(steps);
@@ -250,11 +281,11 @@ function PathStrip({
       {shown && (
         <div className={styles.stepDetail} data-step-detail={shown.step}>
           <span>{shown.state === 'unknown' ? t('step_unknown', { status: shown.status }) : shown.status}</span>
-          {routeFor(shown.tab, shown.step) && (
+          {reach(shown.tab, shown.step) && (
             <Button
               variant={shown.state === 'current' ? 'default' : 'outline'}
               size="sm"
-              onClick={() => open(routeFor(shown.tab, shown.step))}
+              onClick={() => open(reach(shown.tab, shown.step))}
             >
               {shown.action}
             </Button>
