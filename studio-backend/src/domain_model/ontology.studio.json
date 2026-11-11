@@ -2107,15 +2107,6 @@
           "description": "A tab of the project: what it shows."
         },
         {
-          "name": "artifacts",
-          "type": "repository-file",
-          "relation": "repository-file",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Artifacts",
-          "description": "A tab of the project: what it shows."
-        },
-        {
           "name": "sources",
           "type": "repository",
           "relation": "repository",
@@ -7535,6 +7526,7 @@
     "organization.reports": "org-reports",
     "policy": "project-specs",
     "project.activity": "project-activity",
+    "project.artifacts": "project-artifacts",
     "project.documented_by": "project-specs",
     "project.issues": "project-issues",
     "project.people": "project-team",
