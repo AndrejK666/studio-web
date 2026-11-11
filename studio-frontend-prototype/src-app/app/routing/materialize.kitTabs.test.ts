@@ -189,6 +189,33 @@ describe('materialize: a kit’s tab under a token another micro-frontend owns',
     expect(mountedId()).toBe('projects.main');
   });
 
+  it('falls back to the project’s Overview, in the project, when a kit’s tab does not mount', async () => {
+    mocks.mountScreen.mockImplementation(async (_registry: unknown, ext: StudioScreenExtension) => {
+      if (ext.id === 'activity.activity') throw new Error('remoteEntry.js 404');
+      mocks.mounted = [ext.id];
+    });
+    const h = setup(`${AT};section=activity`, [...withKits]);
+    h.materialize();
+    await vi.waitFor(() => expect(h.adapter.url()).toBe(`${AT};section=overview`));
+    await vi.waitFor(() => expect(mocks.mounted).toEqual(['projects.main']));
+    expect(h.state().project?.id).toBe('p1');
+  });
+
+  it('falls back from a project screen of another token to the project’s entry point, keeping the project', async () => {
+    const generic = own(
+      screen('model.project', '/model-project/types', 'project', { section: 'type:', sectionPrefix: true, order: 900 }),
+      'entry.admin'
+    );
+    mocks.mountScreen.mockImplementation(async (_registry: unknown, ext: StudioScreenExtension) => {
+      if (ext.id === 'model.project') throw new Error('remoteEntry.js 404');
+      mocks.mounted = [ext.id];
+    });
+    const h = setup('/?screen=model-project;org=o1;workspace=w1;project=p1;section=type:milestones', [...withKits, generic]);
+    h.materialize();
+    await vi.waitFor(() => expect(h.adapter.url()).toBe(`${AT};section=overview`));
+    await vi.waitFor(() => expect(mocks.mounted).toEqual(['projects.main']));
+  });
+
   it('names the kit’s screen, not the owner, when it does not mount', async () => {
     mocks.mountScreen.mockImplementation(async () => {
       throw new Error('remoteEntry.js 404');

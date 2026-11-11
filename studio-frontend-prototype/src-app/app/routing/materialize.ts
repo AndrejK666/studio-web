@@ -251,9 +251,15 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       `Screen "${group.token}" (${id} at ${presentation.route}) did not mount (${reason}); not trying again until the address changes`
     );
     // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-8
-    const fallback =
-      fallbackTo === group.token ? null : entryRoute(registry, levelOf(group.owner), navigation.currentRoute());
-    if (!fallback || fallback.token === group.token) {
+    const current = navigation.currentRoute();
+    const level = levelOf(target);
+    const fallback = fallbackTo === group.token ? null : entryRoute(registry, level, current);
+    // A project's screen falls back to the project's entry point, in the
+    // project: not to the workspace's list with the project dropped.
+    if (fallback && level === 'project' && current?.project) fallback.project = current.project;
+    // Under the same token the entry point is another screen only when the
+    // one that failed is a kit's tab in a micro-frontend of its own.
+    if (!fallback || (fallback.token === group.token && target.id === group.owner.id)) {
       // The level's entry point did not mount either, or there is none to fall
       // back to: nothing is mounted, the warning above has said so, and this
       // visit is not tried again. The next address starts afresh.

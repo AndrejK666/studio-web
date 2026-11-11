@@ -48,6 +48,8 @@ const answer = (organization_id: string, project_id: string | null, kits: string
   effective: kits.map((kit_slug) => ({ kit_slug, version: '1' })),
 });
 
+const lastQuery = () => queries[queries.length - 1];
+
 const kitScreen = (kit: string, needs?: string[]) =>
   ({ id: kit, entry: 'e', presentation: { label: kit, route: `/${kit}`, level: 'project', kit, ...(needs && { needs }) } }) as unknown as StudioScreenExtension;
 
@@ -64,10 +66,10 @@ describe('useInstalledKits across a switch', () => {
     state.answer = answer('o-1', null, ['org-costs']);
     const { result, rerender } = renderHook(() => useInstalledKits());
     expect([...(result.current ?? [])]).toEqual(['org-costs']);
-    expect(queries.at(-1)?.key).toEqual(['installed', { organizationId: 'o-1' }]);
+    expect(lastQuery()?.key).toEqual(['installed', { organizationId: 'o-1' }]);
     state.project = 'p-1';
     rerender();
-    expect(queries.at(-1)?.key).toEqual(['installed', { projectId: 'p-1' }]);
+    expect(lastQuery()?.key).toEqual(['installed', { projectId: 'p-1' }]);
   });
 
   it('does not take the organization left’s answer for the new one’s', () => {
@@ -95,7 +97,7 @@ describe('useInstalledKits across a switch', () => {
   it('reads nothing with no organization and no project', () => {
     state.org = null;
     renderHook(() => useInstalledKits());
-    expect(queries.at(-1)?.enabled).toBe(false);
+    expect(lastQuery()?.enabled).toBe(false);
   });
 });
 
@@ -111,9 +113,9 @@ describe('screenShows while the new scope is unknown', () => {
 describe('useInstalledTypes across a switch', () => {
   it('asks for the organization in scope, and only when a screen needs a type', () => {
     renderHook(({ wanted }) => useInstalledTypes(wanted), { initialProps: { wanted: false } });
-    expect(queries.at(-1)).toEqual({ key: ['types', { organizationId: 'o-1' }], enabled: false });
+    expect(lastQuery()).toEqual({ key: ['types', { organizationId: 'o-1' }], enabled: false });
     state.org = 'o-2';
     renderHook(() => useInstalledTypes(true));
-    expect(queries.at(-1)).toEqual({ key: ['types', { organizationId: 'o-2' }], enabled: true });
+    expect(lastQuery()).toEqual({ key: ['types', { organizationId: 'o-2' }], enabled: true });
   });
 });
