@@ -233,6 +233,7 @@ pub struct KitInstaller {
     authority: Arc<dyn KitAuthority>,
     reader: Arc<dyn super::shelf::KitSourceReader>,
     models: Option<Arc<dyn super::models::ModelPort>>,
+    events: Option<Arc<dyn crate::studio_events::StudioEventPublisher>>,
 }
 
 impl KitInstaller {
@@ -247,6 +248,23 @@ impl KitInstaller {
             authority,
             reader: Arc::new(super::shelf::NoReader),
             models: None,
+            events: None,
+        }
+    }
+
+    /// Publish `kit.installed` / `kit.uninstalled` through `events`
+    /// ([`super::events`]).
+    pub fn with_events(
+        mut self,
+        events: Arc<dyn crate::studio_events::StudioEventPublisher>,
+    ) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    fn announce(&self, kind: &str, level: super::events::Level, slug: &str, version: Option<&str>) {
+        if let Some(events) = &self.events {
+            events.publish(super::events::event(kind, level, slug, version));
         }
     }
 
@@ -406,7 +424,15 @@ impl KitInstaller {
                 Ok(Some(install_project(doc, record.clone())))
             })
             .await?;
-        installed.ok_or_else(|| Refusal::Internal(anyhow!("the project kit was not recorded")))
+        let installed = installed
+            .ok_or_else(|| Refusal::Internal(anyhow!("the project kit was not recorded")))?;
+        self.announce(
+            super::events::INSTALLED,
+            super::events::Level::Project { org, project },
+            &installed.kit_slug,
+            Some(&installed.version),
+        );
+        Ok(installed)
     }
 
     /// Stop `project` having `slug` as its own. Refused for a kit it has only
@@ -418,13 +444,19 @@ impl KitInstaller {
         slug: &str,
     ) -> Result<(), Refusal> {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
-        self.require_project_admin(ctx, project).await?;
+        let org = self.require_project_admin(ctx, project).await?;
         let above = self.installed(ctx, project).await?;
         self.store
             .update(project, &mut |doc| {
                 uninstall_project(doc, &slug, &above.base, &above.organization).map(|()| None)
             })
             .await?;
+        self.announce(
+            super::events::UNINSTALLED,
+            super::events::Level::Project { org, project },
+            &slug,
+            None,
+        );
         Ok(())
     }
 
@@ -477,7 +509,15 @@ impl KitInstaller {
                 Ok(Some(install_base(doc, record.clone())))
             })
             .await?;
-        installed.ok_or_else(|| Refusal::Internal(anyhow!("the base kit was not recorded")))
+        let installed =
+            installed.ok_or_else(|| Refusal::Internal(anyhow!("the base kit was not recorded")))?;
+        self.announce(
+            super::events::INSTALLED,
+            super::events::Level::Base,
+            &installed.kit_slug,
+            Some(&installed.version),
+        );
+        Ok(installed)
     }
 
     /// Stop `slug` being a base kit. A built-in kit stays removed until it is
@@ -491,6 +531,12 @@ impl KitInstaller {
                 uninstall_base(doc, &slug, catalogue).map(|()| None)
             })
             .await?;
+        self.announce(
+            super::events::UNINSTALLED,
+            super::events::Level::Base,
+            &slug,
+            None,
+        );
         Ok(())
     }
 
@@ -516,7 +562,15 @@ impl KitInstaller {
                 Ok(Some(install_organization(doc, record.clone())))
             })
             .await?;
-        installed.ok_or_else(|| Refusal::Internal(anyhow!("the organization kit was not recorded")))
+        let installed = installed
+            .ok_or_else(|| Refusal::Internal(anyhow!("the organization kit was not recorded")))?;
+        self.announce(
+            super::events::INSTALLED,
+            super::events::Level::Organization(org),
+            &installed.kit_slug,
+            Some(&installed.version),
+        );
+        Ok(installed)
     }
 
     /// Stop the organization `tenant` having `slug`. Refused for a kit it
@@ -539,6 +593,14 @@ impl KitInstaller {
                 uninstall_organization(doc, &slug, &base).map(|()| None)
             })
             .await?;
+        // Heard before the model is reconciled: the kit no longer applies,
+        // whatever the model's answer.
+        self.announce(
+            super::events::UNINSTALLED,
+            super::events::Level::Organization(org),
+            &slug,
+            None,
+        );
         // What the kit brought into the model goes, unless it still applies
         // (a base kit too); a type with objects stays, marked left by it.
         self.reconcile_models(org).await?;

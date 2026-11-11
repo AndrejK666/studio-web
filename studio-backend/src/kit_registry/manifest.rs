@@ -8,7 +8,8 @@
 //!   types and the overlay on the organization's model), `rules`,
 //!   `functions`, `services`, `inbox`, `mcp_tools`, `permissions`,
 //!   `material`, `kinds`, `docs` — beside who the kit is (`slug`, `name`,
-//!   `levels`, ...). Unknown keys are refused, so a typo is a diagnostic
+//!   `levels`, ...) and the built micro-frontends it carries (`mfe`, as
+//!   `kit.gdl`'s `mfe = [path("mfe/<package>")]`). Unknown keys are refused, so a typo is a diagnostic
 //!   before anything is added rather than a section quietly missing. When
 //!   `kit.gdl` lands, its `kit(...)` call takes the same names.
 //! - **`.cf-studio-kit.toml`**: the installer's manifest `cfs` reads. A kit
@@ -63,6 +64,12 @@ pub struct KitManifest {
     pub version: Option<String>,
     #[serde(default)]
     pub levels: Vec<String>,
+    /// The kit's built micro-frontends, each a directory beside the manifest,
+    /// `mfe/<package>` (as `kit.gdl`'s `mfe = [path(...)]`): served to the
+    /// shell from the repository at the pinned commit
+    /// ([`super::shelf_bundles`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mfe: Vec<String>,
     #[serde(default)]
     pub screens: Vec<ManifestScreen>,
     /// The model overlay (ADR-0067 §6): types, fields, relations, tabs and
@@ -100,6 +107,10 @@ pub struct ManifestScreen {
     pub route: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slot: Option<String>,
+    /// The domain types the screen shows that another kit brings (`milestone`
+    /// for a timeline): where one is not installed, the shell hides it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +158,24 @@ pub struct ManifestInboxSource {
     /// The object's field naming the workspace an item is in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_field: Option<String>,
+    /// Which tool answers an item (ADR-0068 §6): the kit's screen it opens
+    /// and the kit's MCP tool that acts on it. Without one an item opens the
+    /// kit's workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination: Option<ManifestInboxDestination>,
+}
+
+/// Where an Inbox item is answered.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestInboxDestination {
+    /// The portal route of the kit's screen that answers it, one of its
+    /// `screens[].route` (`/projects/issues`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    /// One of the kit's `mcp_tools`, for an agent working the Inbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_tool: Option<String>,
 }
 
 /// An Inbox source whose items are a domain query's rows over the kit's
@@ -344,6 +373,16 @@ fn check(m: &KitManifest) -> Result<(), String> {
             ));
         }
     }
+    for path in &m.mfe {
+        if super::bundles::package_name(path).is_none() {
+            return Err(format!(
+                "{KIT_JSON}: mfe \"{path}\" is not `mfe/<package>` (lowercase letters, digits, `-`, `_`)"
+            ));
+        }
+    }
+    if m.mfe.len() > 16 {
+        return Err(format!("{KIT_JSON}: at most 16 `mfe` packages"));
+    }
     for f in &m.functions {
         if !matches!(f.runtime.as_str(), "wasm" | "agent") {
             return Err(format!(
@@ -358,6 +397,26 @@ fn check(m: &KitManifest) -> Result<(), String> {
         return Err(format!("{KIT_JSON}: two inbox sources share an id"));
     }
     for s in &m.inbox {
+        if let Some(d) = &s.destination {
+            if let Some(route) = d.route.as_deref()
+                && !m.screens.iter().any(|x| x.route.as_deref() == Some(route))
+            {
+                return Err(format!(
+                    "{KIT_JSON}: inbox source `{}`: destination route `{route}` is none of the \
+                     kit's `screens[].route`",
+                    s.id
+                ));
+            }
+            if let Some(tool) = d.mcp_tool.as_deref()
+                && !m.mcp_tools.iter().any(|t| t.name == tool)
+            {
+                return Err(format!(
+                    "{KIT_JSON}: inbox source `{}`: destination tool `{tool}` is none of the \
+                     kit's `mcp_tools`",
+                    s.id
+                ));
+            }
+        }
         match s.kind() {
             INBOX_KIND_QUERY => {
                 if s.path.is_some() {
@@ -563,6 +622,7 @@ pub fn contents_of(m: &KitManifest) -> KitContents {
                 label: s.label.clone(),
                 route: s.route.clone(),
                 slot: s.slot.clone(),
+                needs: s.needs.clone(),
             })
             .collect(),
         types,
@@ -587,6 +647,7 @@ pub fn contents_of(m: &KitManifest) -> KitContents {
             .map(|s| KitInboxSource {
                 id: s.id.clone(),
                 label: s.label.clone(),
+                destination: s.destination.clone(),
             })
             .collect(),
         mcp_tools: named(&m.mcp_tools),
@@ -605,6 +666,7 @@ pub fn contents_of(m: &KitManifest) -> KitContents {
             .collect(),
         kinds: m.kinds.clone(),
         docs: m.docs.clone(),
+        mfe: m.mfe.clone(),
     }
 }
 

@@ -226,3 +226,42 @@ fn constructor_research_brings_two_endpoint_sources_and_no_model() {
     assert_eq!(kit.levels, m.levels, "the catalogue and the kit.json agree");
     assert_eq!(kit.name, m.name);
 }
+
+#[test]
+fn a_kit_json_names_its_bundles_screen_needs_and_inbox_destinations() {
+    let body = r#"{
+      "slug": "ops-runbooks", "name": "Ops", "levels": ["project"],
+      "mfe": ["mfe/runbooks"],
+      "screens": [{"kind": "tab", "level": "project", "label": "Runbooks",
+                   "route": "/projects/runbooks", "needs": ["milestone"]}],
+      "mcp_tools": [{"name": "runbook_run"}],
+      "inbox": [{"id": "due", "label": "Due",
+                 "query": {"type": "runbook"},
+                 "destination": {"route": "/projects/runbooks", "mcp_tool": "runbook_run"}}]
+    }"#;
+    let m = read_kit_json(body).unwrap();
+    let c = contents_of(&m);
+    assert_eq!(c.mfe, ["mfe/runbooks"]);
+    assert_eq!(c.screens[0].needs, ["milestone"]);
+    let d = c.inbox[0].destination.as_ref().unwrap();
+    assert_eq!(d.route.as_deref(), Some("/projects/runbooks"));
+    assert_eq!(d.mcp_tool.as_deref(), Some("runbook_run"));
+
+    let bad_mfe = body.replace("mfe/runbooks", "dist/runbooks");
+    assert!(
+        read_kit_json(&bad_mfe)
+            .unwrap_err()
+            .contains("mfe/<package>")
+    );
+    let bad_route = body.replace(
+        r#""destination": {"route": "/projects/runbooks""#,
+        r#""destination": {"route": "/projects/elsewhere""#,
+    );
+    assert!(
+        read_kit_json(&bad_route)
+            .unwrap_err()
+            .contains("screens[].route")
+    );
+    let bad_tool = body.replace(r#""mcp_tool": "runbook_run""#, r#""mcp_tool": "nope""#);
+    assert!(read_kit_json(&bad_tool).unwrap_err().contains("mcp_tools"));
+}

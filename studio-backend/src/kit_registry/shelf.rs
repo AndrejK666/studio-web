@@ -104,6 +104,22 @@ pub trait KitSourceReader: Send + Sync {
         org: Uuid,
         input: &SourceInput,
     ) -> Result<Fetched, Refusal>;
+
+    /// One file of the kit's repository at the commit `origin` is pinned to
+    /// (`path` from the repository's root), text or not: a built bundle's
+    /// chunk ([`super::shelf_bundles`]). `None` when there is no such file.
+    async fn read_file(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        origin: &KitOrigin,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, Refusal> {
+        let _ = (ctx, org, origin, path);
+        Err(Refusal::Internal(anyhow!(
+            "this reader cannot read a kit's files"
+        )))
+    }
 }
 
 /// No connector in this assembly: every source is unreadable.
@@ -426,13 +442,29 @@ impl KitInstaller {
         slug: &str,
         version: &str,
     ) -> Result<Option<KitManifest>, Refusal> {
+        Ok(self
+            .shelf_kit_at(org, slug, version)
+            .await?
+            .map(|k| k.manifest))
+    }
+
+    /// `org`'s shelf kit `slug` at `version` (its pinned commit): the
+    /// shelf's current one, or one kept for an installation after a refresh.
+    pub(super) async fn shelf_kit_at(
+        &self,
+        org: Uuid,
+        slug: &str,
+        version: &str,
+    ) -> Result<Option<ShelfKit>, Refusal> {
+        if org == super::installed::PLATFORM_TENANT || org.is_nil() {
+            return Ok(None);
+        }
         let doc = self.store().read(&service_context(org)?, org).await?;
         Ok(doc
             .shelf
             .into_iter()
             .chain(doc.shelf_versions)
-            .find(|k| k.kit.slug == slug && k.kit.default_version == version)
-            .map(|k| k.manifest))
+            .find(|k| k.kit.slug == slug && k.kit.default_version == version))
     }
 
     async fn read_source(
@@ -463,42 +495,82 @@ impl KitInstaller {
 /// Reads a source through the connector service.
 pub struct ConnectorSourceReader(pub crate::connectors::sdk::Connectors);
 
+impl ConnectorSourceReader {
+    /// The connector service and the provider of `connection_id`, when it
+    /// is a connection the organization `org` holds and shares: an
+    /// organization's kit is read through nothing else.
+    async fn organization_connection(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        connection_id: Uuid,
+    ) -> Result<(Arc<crate::connectors::sdk::ConnectorService>, String), Refusal> {
+        use crate::connectors::sdk::holder_of_row;
+        let service = self.0.get().ok_or_else(|| {
+            Refusal::Internal(anyhow!(
+                "studio-connector is not running here, so no repository can be read"
+            ))
+        })?;
+        let Some((found, connection)) = service.nearest_by_id(ctx, org, connection_id).await else {
+            return Err(Refusal::Invalid(format!(
+                "the organization has no connection {connection_id}"
+            )));
+        };
+        let holder = holder_of_row(&connection, found);
+        if holder != org {
+            return Err(Refusal::Invalid(format!(
+                "connection {connection_id} is held by {holder}, not by the organization: an \
+                 organization's kit is read through one of its own connections"
+            )));
+        }
+        if connection.scope.trim().eq_ignore_ascii_case("personal") {
+            return Err(Refusal::Invalid(format!(
+                "connection {connection_id} is personal: an organization's kit is read through \
+                 a connection the organization shares"
+            )));
+        }
+        Ok((service, connection.provider))
+    }
+}
+
 #[async_trait]
 impl KitSourceReader for ConnectorSourceReader {
+    async fn read_file(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        origin: &KitOrigin,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, Refusal> {
+        use crate::connectors::sdk::Repository;
+        let (service, provider) = self
+            .organization_connection(ctx, org, origin.connection_id)
+            .await?;
+        let at_commit = Repository::open(
+            &service,
+            ctx,
+            org,
+            Some(origin.connection_id),
+            &provider,
+            &origin.repository,
+            Some(&origin.commit),
+        )
+        .await
+        .map_err(Refusal::Internal)?;
+        at_commit.read_bytes(path).await.map_err(Refusal::Internal)
+    }
+
     async fn fetch(
         &self,
         ctx: &SecurityContext,
         org: Uuid,
         input: &SourceInput,
     ) -> Result<Fetched, Refusal> {
-        use crate::connectors::sdk::{Repository, holder_of_row};
-        let service = self.0.get().ok_or_else(|| {
-            Refusal::Internal(anyhow!(
-                "studio-connector is not running here, so no repository can be read"
-            ))
-        })?;
-        let Some((found, connection)) = service.nearest_by_id(ctx, org, input.connection_id).await
-        else {
-            return Err(Refusal::Invalid(format!(
-                "the organization has no connection {}",
-                input.connection_id
-            )));
-        };
-        let holder = holder_of_row(&connection, found);
-        if holder != org {
-            return Err(Refusal::Invalid(format!(
-                "connection {} is held by {holder}, not by the organization: an organization's \
-                 kit is read through one of its own connections",
-                input.connection_id
-            )));
-        }
-        if connection.scope.trim().eq_ignore_ascii_case("personal") {
-            return Err(Refusal::Invalid(format!(
-                "connection {} is personal: an organization's kit is read through a connection \
-                 the organization shares",
-                input.connection_id
-            )));
-        }
+        use crate::connectors::sdk::Repository;
+        let (service, provider) = self
+            .organization_connection(ctx, org, input.connection_id)
+            .await?;
+        let holder = org;
         let unreadable = |e: anyhow::Error| {
             Refusal::Invalid(format!(
                 "{} cannot be read through connection {}: {e:#}",
@@ -510,7 +582,7 @@ impl KitSourceReader for ConnectorSourceReader {
             ctx,
             holder,
             Some(input.connection_id),
-            &connection.provider,
+            &provider,
             &input.repository,
             input.git_ref.as_deref(),
         )
@@ -547,7 +619,7 @@ impl KitSourceReader for ConnectorSourceReader {
             ctx,
             holder,
             Some(input.connection_id),
-            &connection.provider,
+            &provider,
             &input.repository,
             Some(&commit),
         )
@@ -560,13 +632,13 @@ impl KitSourceReader for ConnectorSourceReader {
                 format!("{}/{file}", input.path)
             };
             if let Some(found) = pinned.read_file(&path).await.map_err(unreadable)? {
-                let repository_url = if connection.provider == "github" {
+                let repository_url = if provider == "github" {
                     format!("https://github.com/{}", input.repository)
                 } else {
                     String::new()
                 };
                 return Ok(Fetched {
-                    provider: connection.provider.clone(),
+                    provider: provider.clone(),
                     commit,
                     file,
                     body: found.text,

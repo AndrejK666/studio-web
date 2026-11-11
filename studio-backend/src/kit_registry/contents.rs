@@ -53,6 +53,8 @@ pub struct KitContents {
     pub material: Vec<KitMaterial>,
     pub kinds: Vec<String>,
     pub docs: Vec<String>,
+    /// The built micro-frontends it carries, `mfe/<package>`.
+    pub mfe: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +67,9 @@ pub struct KitScreen {
     pub route: Option<String>,
     /// For a section: the slot it goes in.
     pub slot: Option<String>,
+    /// Domain types another kit brings that the screen shows; the shell hides
+    /// it where one is not installed.
+    pub needs: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +98,8 @@ pub struct KitFunction {
 pub struct KitInboxSource {
     pub id: String,
     pub label: String,
+    /// Which screen and tool answer its items.
+    pub destination: Option<super::manifest::ManifestInboxDestination>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -167,6 +174,7 @@ fn tab(level: &str, label: &str, route: Option<&str>) -> KitScreen {
         label: label.to_owned(),
         route: route.map(str::to_owned),
         slot: None,
+        needs: Vec::new(),
     }
 }
 
@@ -290,7 +298,10 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         "project-activity" => KitContents {
             screens: vec![
                 project_tab("Activity", Some("/projects/activity")),
-                project_tab("Timeline", Some("/projects/timeline")),
+                KitScreen {
+                    needs: vec!["milestone".to_owned()],
+                    ..project_tab("Timeline", Some("/projects/timeline"))
+                },
             ],
             permissions: KitPermissions {
                 reads: owned(&[
@@ -312,6 +323,7 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 label: "Costs".to_owned(),
                 route: Some("/costs".to_owned()),
                 slot: None,
+                needs: Vec::new(),
             }],
             permissions: KitPermissions {
                 reads: owned(&[
@@ -333,6 +345,7 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 label: "Docs & API".to_owned(),
                 route: Some("/api-docs".to_owned()),
                 slot: Some("product-menu".to_owned()),
+                needs: Vec::new(),
             }],
             permissions: KitPermissions {
                 reads: owned(&["GET /openapi.json"]),
@@ -646,6 +659,7 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 label: "Studio AI".to_owned(),
                 route: None,
                 slot: Some("sidebar".to_owned()),
+                needs: Vec::new(),
             }],
             permissions: KitPermissions {
                 reads: owned(&[

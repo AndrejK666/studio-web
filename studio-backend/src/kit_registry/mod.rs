@@ -7,6 +7,7 @@
 
 mod bundles;
 mod contents;
+mod events;
 mod inbox;
 pub(crate) mod installed;
 mod manifest;
@@ -17,6 +18,7 @@ pub mod port;
 mod rest;
 pub(crate) mod service;
 mod shelf;
+mod shelf_bundles;
 
 pub(crate) use installed::KITS_INSTALLED_METADATA_TYPE;
 pub(crate) use mcp::tools as mcp_tools;
@@ -69,8 +71,18 @@ impl Gear for StudioKitsGear {
             .with_reader(shelf::reader(ctx.client_hub()))
             // A kit's model overlay goes into the organization's model through
             // the domain model's port (ADR-0067 §6).
-            .with_models(Arc::new(models::HubModels(ctx.client_hub()))),
+            .with_models(Arc::new(models::HubModels(ctx.client_hub())))
+            // `kit.installed` / `kit.uninstalled`, so the shell reads the kits
+            // again when somebody else changes them.
+            .with_events(Arc::new(events::HubEvents(ctx.client_hub()))),
         );
+        // An organization's own kits' screens, read from its repository at the
+        // pinned commit (ADR-0068 phases 5 and 7).
+        service
+            .bundles()
+            .add_source(Arc::new(shelf_bundles::ShelfBundles::new(
+                Arc::clone(&installer) as Arc<dyn shelf_bundles::ShelfLookup>,
+            )));
         let access = crate::org_scope::OrgAccess(Arc::new(
             crate::studio_session::sdk::TenantMembership::new(account_management),
         ));

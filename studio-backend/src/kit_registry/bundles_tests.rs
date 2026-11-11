@@ -64,12 +64,15 @@ async fn the_manifests_name_where_each_package_is_served() {
     let k = kits();
     let b = bundles(&k.0);
     let listed = b
-        .manifests(&[
-            ("hello-kit".into(), "0.1.0".into()),
-            // Another version, and a kit with no bundles: nothing.
-            ("hello-kit".into(), "0.2.0".into()),
-            ("project-tests".into(), "1.0.0".into()),
-        ])
+        .manifests(
+            uuid::Uuid::nil(),
+            &[
+                ("hello-kit".into(), "0.1.0".into()),
+                // Another version, and a kit with no bundles: nothing.
+                ("hello-kit".into(), "0.2.0".into()),
+                ("project-tests".into(), "1.0.0".into()),
+            ],
+        )
         .await;
     assert_eq!(listed.len(), 1);
     let m = &listed[0];
@@ -88,7 +91,9 @@ async fn a_package_that_was_not_built_is_listed_with_why() {
     let k = kits();
     std::fs::remove_file(k.0.join("hello-kit/mfe/hello").join(MFE_MANIFEST)).unwrap();
     let b = bundles(&k.0);
-    let listed = b.manifests(&[("hello-kit".into(), "0.1.0".into())]).await;
+    let listed = b
+        .manifests(uuid::Uuid::nil(), &[("hello-kit".into(), "0.1.0".into())])
+        .await;
     assert!(listed[0].config.is_none());
     assert!(
         listed[0]

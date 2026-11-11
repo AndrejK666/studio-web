@@ -21,24 +21,31 @@
 //!
 //! # Where the bytes come from
 //!
-//! A [`BundleSource`]. Today one: [`DirSource`], a directory named by
-//! `STUDIO_KIT_BUNDLES_DIR` whose every subdirectory holding a `kit.gdl` is a
-//! kit, added to the library on the organization shelf at the version its
-//! passport states (development and the demo, `examples/kits/`). An
-//! organization's kit read from its connected repository at a pinned commit
-//! (ADR-0068 phase 7) is another source behind the same trait: it answers
-//! `packages` and `read` for the kits it knows, and nothing here changes.
+//! A [`BundleSource`]. Two:
+//!
+//! - [`DirSource`], a directory named by `STUDIO_KIT_BUNDLES_DIR` whose every
+//!   subdirectory holding a `kit.gdl` is a kit, added to the library on the
+//!   organization shelf at the version its passport states (development and
+//!   the demo, `examples/kits/`). Its kits are everybody's.
+//! - The organization shelf ([`super::shelf_bundles::ShelfBundles`]): a kit an
+//!   organization added from its own repository names its bundles in
+//!   `kit.json` (`"mfe": ["mfe/<package>"]`), and they are read through the
+//!   organization's connection at the commit the kit is pinned to. Its kits
+//!   are one organization's ([`BundleSource::per_organization`]): one slug can
+//!   sit on two organizations' shelves, so their grant names the organization
+//!   ([`KitBundles::org_grant`]) and the file route reads it back from there.
 //!
 //! # Who may read the files
 //!
 //! The shell's module loader fetches a bundle's files itself and sends no
 //! token, so the file route is anonymous, like a photo (`studio-user`). What
-//! guards it is the `grant` in the path: an HMAC of the kit and the version,
-//! keyed by the deployment (`STUDIO_KIT_BUNDLE_KEY`, else a key drawn at start).
-//! It is learned only from `GET /mfe-manifests`, which answers only for kits
-//! effective where the caller is a member. Uninstalling a kit takes it out of
-//! that answer; a grant once learned stays valid for that version until the key
-//! changes, the same as a cached bundle would.
+//! guards it is the `grant` in the path: an HMAC of the kit and the version
+//! (and the organization, for an organization's kit), keyed by the deployment
+//! (`STUDIO_KIT_BUNDLE_KEY`, else a key drawn at start). It is learned only
+//! from `GET /mfe-manifests`, which answers only for kits effective where the
+//! caller is a member. Uninstalling a kit takes it out of that answer; a grant
+//! once learned stays valid for that version until the key changes, the same
+//! as a cached bundle would.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -46,6 +53,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use super::service::{KitDescriptor, SHELF_ORGANIZATION, normalize_slug};
 use crate::components_catalog::{KIT_GDL_FILE, read_kit_gdl};
@@ -62,7 +70,9 @@ pub const MFE_MANIFEST: &str = "mfe-manifest.json";
 /// Where the gateway serves this backend's routes.
 const GATEWAY_PREFIX: &str = "/cf";
 /// The largest file served; a bundle's chunks are far smaller.
-const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+pub(super) const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
+/// An organization's grant: its id (32 hex digits) and the HMAC (32).
+const ORG_GRANT_LEN: usize = 64;
 /// The largest `mfe-manifest.json` read.
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 
@@ -71,12 +81,22 @@ const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 pub trait BundleSource: Send + Sync {
     /// Kits this source adds to the library; empty for a source that only
     /// carries files for kits the library lists already.
-    fn kits(&self) -> Vec<KitDescriptor>;
-    /// The packages `slug` has at `version`; empty when this source has none.
-    fn packages(&self, slug: &str, version: &str) -> Vec<String>;
+    fn kits(&self) -> Vec<KitDescriptor> {
+        Vec::new()
+    }
+    /// Whether its kits are one organization's, so `org` decides which kit a
+    /// slug is and the files are served under the organization. A source
+    /// that is not ignores `org`.
+    fn per_organization(&self) -> bool {
+        false
+    }
+    /// The packages `slug` has at `version` for `org`; empty when this source
+    /// has none.
+    async fn packages(&self, org: Uuid, slug: &str, version: &str) -> Result<Vec<String>>;
     /// One file of a package, `None` when there is no such file.
     async fn read(
         &self,
+        org: Uuid,
         slug: &str,
         version: &str,
         package: &str,
@@ -130,6 +150,11 @@ impl BundleFile {
     fn relative(&self) -> PathBuf {
         self.segments.iter().collect()
     }
+
+    /// The path inside the package, `/`-separated.
+    pub fn as_path(&self) -> String {
+        self.segments.join("/")
+    }
 }
 
 /// The types a bundle is made of. Anything else is not served.
@@ -155,7 +180,7 @@ fn content_type(ext: &str) -> Option<&'static str> {
 }
 
 /// A package name: the `<package>` of `mfe/<package>`.
-fn package_name(path: &str) -> Option<&str> {
+pub(super) fn package_name(path: &str) -> Option<&str> {
     let name = path.strip_prefix("mfe/")?;
     let ok = name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
         && name
@@ -191,13 +216,28 @@ pub struct KitMfeManifest {
 
 /// Every source, and the key grants are signed with.
 pub struct KitBundles {
-    sources: Vec<Arc<dyn BundleSource>>,
+    sources: std::sync::RwLock<Vec<Arc<dyn BundleSource>>>,
     key: Vec<u8>,
 }
 
 impl KitBundles {
     pub fn new(sources: Vec<Arc<dyn BundleSource>>, key: Vec<u8>) -> Self {
-        Self { sources, key }
+        Self {
+            sources: std::sync::RwLock::new(sources),
+            key,
+        }
+    }
+
+    /// Add a source after start: the organization shelf, which needs the
+    /// installer that is built after the catalogue.
+    pub fn add_source(&self, source: Arc<dyn BundleSource>) {
+        if let Ok(mut sources) = self.sources.write() {
+            sources.push(source);
+        }
+    }
+
+    fn sources(&self) -> Vec<Arc<dyn BundleSource>> {
+        self.sources.read().map(|s| s.clone()).unwrap_or_default()
     }
 
     /// `STUDIO_KIT_BUNDLES_DIR` and `STUDIO_KIT_BUNDLE_KEY`. A directory that
@@ -233,54 +273,88 @@ impl KitBundles {
 
     /// Kits the sources add to the library.
     pub fn kits(&self) -> Vec<KitDescriptor> {
-        self.sources.iter().flat_map(|s| s.kits()).collect()
+        self.sources().iter().flat_map(|s| s.kits()).collect()
     }
 
-    fn source_for(
+    /// The source that has bundles for `slug` at `version` in `org`, and
+    /// their packages. `scoped` picks the organization's sources (`Some`
+    /// true), the shared ones (`Some` false) or either (`None`). A source
+    /// that cannot say is logged and passed over.
+    async fn source_for(
         &self,
+        org: Uuid,
         slug: &str,
         version: &str,
-    ) -> Option<(&Arc<dyn BundleSource>, Vec<String>)> {
-        self.sources.iter().find_map(|source| {
-            let packages = source.packages(slug, version);
-            (!packages.is_empty()).then_some((source, packages))
-        })
+        scoped: Option<bool>,
+    ) -> Option<(Arc<dyn BundleSource>, Vec<String>)> {
+        for source in self.sources() {
+            if scoped.is_some_and(|s| s != source.per_organization()) {
+                continue;
+            }
+            match source.packages(org, slug, version).await {
+                Ok(packages) if !packages.is_empty() => return Some((source, packages)),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    kit = %slug, %version, organization_id = %org,
+                    "studio-kits: a bundle source cannot say what a kit has: {error:#}"
+                ),
+            }
+        }
+        None
     }
 
     /// What proves a caller was shown `slug` at `version`.
     pub fn grant(&self, slug: &str, version: &str) -> String {
-        let mac = hmac_sha256(
-            &self.key,
-            format!("studio-kits/mfe\n{slug}\n{version}").as_bytes(),
-        );
+        self.sign(&format!("studio-kits/mfe\n{slug}\n{version}"))
+    }
+
+    /// What proves a caller was shown `org`'s own kit `slug` at `version`:
+    /// the organization (32 hex digits) and an HMAC over it, the slug and the
+    /// version. The anonymous file route learns from it whose shelf to read,
+    /// and nobody can name another organization without the key.
+    pub fn org_grant(&self, org: Uuid, slug: &str, version: &str) -> String {
+        format!(
+            "{}{}",
+            org.simple(),
+            self.sign(&format!("studio-kits/mfe\n{org}\n{slug}\n{version}"))
+        )
+    }
+
+    /// Whether `grant` is an organization's ([`Self::org_grant`]): everything
+    /// it covers is at a pinned commit, so it never changes.
+    pub fn is_org_grant(grant: &str) -> bool {
+        grant.len() == ORG_GRANT_LEN
+    }
+
+    fn sign(&self, message: &str) -> String {
+        let mac = hmac_sha256(&self.key, message.as_bytes());
         hex::encode(&mac[..16])
     }
 
-    fn grant_holds(&self, slug: &str, version: &str, grant: &str) -> bool {
-        let expected = self.grant(slug, version);
-        expected.len() == grant.len()
-            && expected
-                .bytes()
-                .zip(grant.bytes())
-                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-                == 0
-    }
-
-    /// The packages of each kit in `kits` (slug, version) that has bundles,
-    /// with where their files are served.
-    pub async fn manifests(&self, kits: &[(String, String)]) -> Vec<KitMfeManifest> {
+    /// The packages of each kit in `kits` (slug, version) that has bundles
+    /// where `org` is, with where their files are served.
+    pub async fn manifests(&self, org: Uuid, kits: &[(String, String)]) -> Vec<KitMfeManifest> {
         let mut out = Vec::new();
         for (slug, version) in kits {
-            let Some((source, packages)) = self.source_for(slug, version) else {
+            let Some((source, packages)) = self.source_for(org, slug, version, None).await else {
                 continue;
             };
-            let grant = self.grant(slug, version);
+            let grant = if source.per_organization() {
+                self.org_grant(org, slug, version)
+            } else {
+                self.grant(slug, version)
+            };
+            let prefix = format!("{GATEWAY_PREFIX}/studio-kits/v1/kits/{slug}/{version}/mfe/{grant}");
             for package in packages {
-                let base_path = format!(
-                    "{GATEWAY_PREFIX}/studio-kits/v1/kits/{slug}/{version}/mfe/{grant}/{package}/"
-                );
-                let (config, error) = match read_config(source.as_ref(), slug, version, &package)
-                    .await
+                let base_path = format!("{prefix}/{package}/");
+                let (config, error) = match read_config(
+                    source.as_ref(),
+                    org,
+                    slug,
+                    version,
+                    &package,
+                )
+                .await
                 {
                     Ok(config) => (Some(config), None),
                     Err(error) => {
@@ -301,8 +375,10 @@ impl KitBundles {
         out
     }
 
-    /// One file of a bundle, for a holder of the kit's grant. `None` for
-    /// anything else: a wrong grant reads the same as a missing file.
+    /// One file of a kit's bundle, for a holder of the kit's grant: a shared
+    /// kit's, or an organization's own ([`Self::org_grant`], whose shelf the
+    /// grant names). `None` for anything else: a wrong grant reads the same
+    /// as a missing file.
     pub async fn file(
         &self,
         slug: &str,
@@ -311,34 +387,83 @@ impl KitBundles {
         package: &str,
         path: &str,
     ) -> Result<Option<(BundleFile, Vec<u8>)>> {
-        if !self.grant_holds(slug, version, grant) {
+        if Self::is_org_grant(grant) {
+            // `get`, not indexing: the path segment may not be ASCII.
+            let Some(Ok(org)) = grant.get(..32).map(Uuid::try_parse) else {
+                return Ok(None);
+            };
+            return self.org_file(org, slug, version, grant, package, path).await;
+        }
+        if !same(&self.grant(slug, version), grant) {
             return Ok(None);
         }
+        self.read_file(Uuid::nil(), false, slug, version, package, path)
+            .await
+    }
+
+    /// One file of `org`'s own kit's bundle, for a holder of its grant.
+    pub async fn org_file(
+        &self,
+        org: Uuid,
+        slug: &str,
+        version: &str,
+        grant: &str,
+        package: &str,
+        path: &str,
+    ) -> Result<Option<(BundleFile, Vec<u8>)>> {
+        if !same(&self.org_grant(org, slug, version), grant) {
+            return Ok(None);
+        }
+        self.read_file(org, true, slug, version, package, path)
+            .await
+    }
+
+    async fn read_file(
+        &self,
+        org: Uuid,
+        scoped: bool,
+        slug: &str,
+        version: &str,
+        package: &str,
+        path: &str,
+    ) -> Result<Option<(BundleFile, Vec<u8>)>> {
         let Some(file) = BundleFile::parse(path) else {
             return Ok(None);
         };
-        let Some((source, packages)) = self.source_for(slug, version) else {
+        let Some((source, packages)) = self.source_for(org, slug, version, Some(scoped)).await
+        else {
             return Ok(None);
         };
         if !packages.iter().any(|p| p == package) {
             return Ok(None);
         }
         Ok(source
-            .read(slug, version, package, &file)
+            .read(org, slug, version, package, &file)
             .await?
             .map(|bytes| (file, bytes)))
     }
 }
 
+/// Two grants are the same, compared in constant time.
+fn same(expected: &str, grant: &str) -> bool {
+    expected.len() == grant.len()
+        && expected
+            .bytes()
+            .zip(grant.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
+}
+
 async fn read_config(
     source: &dyn BundleSource,
+    org: Uuid,
     slug: &str,
     version: &str,
     package: &str,
 ) -> Result<serde_json::Value> {
     let file = BundleFile::parse(MFE_MANIFEST).context("the manifest's name")?;
     let bytes = source
-        .read(slug, version, package, &file)
+        .read(org, slug, version, package, &file)
         .await?
         .with_context(|| format!("no {MFE_MANIFEST}: build the bundle first"))?;
     if bytes.len() as u64 > MAX_MANIFEST_BYTES {
@@ -491,14 +616,16 @@ impl BundleSource for DirSource {
         self.kits.iter().map(|k| k.kit.clone()).collect()
     }
 
-    fn packages(&self, slug: &str, version: &str) -> Vec<String> {
-        self.kit(slug, version)
+    async fn packages(&self, _org: Uuid, slug: &str, version: &str) -> Result<Vec<String>> {
+        Ok(self
+            .kit(slug, version)
             .map(|k| k.packages.clone())
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     async fn read(
         &self,
+        _org: Uuid,
         slug: &str,
         version: &str,
         package: &str,

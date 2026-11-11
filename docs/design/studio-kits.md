@@ -533,6 +533,27 @@ sources, of two kinds (`kind`, default `query`):
   and where the kit applies. A `query` source has no `path`; an `endpoint`
   source has no `query` or `workspace_field`; any other `kind` is refused.
 
+Either kind may name its **`destination`** (ADR-0068 §6, "which tool answers
+it"): `{route?, mcp_tool?}`, the kit's screen that answers an item (one of its
+`screens[].route`) and the kit's MCP tool that acts on it (one of its
+`mcp_tools`), both checked when the manifest is read. `/inbox-sources` and
+each Inbox item carry it; without one an item opens the kit's workspace.
+
+A screen may say which domain types another kit brings it shows,
+`screens[].needs` (`["milestone"]` for Project activity's Timeline): the kit's
+detail lists it, and the shell hides the screen where one is not installed.
+
+`GET /studio-user/v1/me/inbox?organization_id=` reads the organization on
+screen (its workspaces through `/rollups?organization_id=`, its kits' sources
+with the same scope); without it, the caller's home. Beside the sources it
+answers `members_known` (whether pull requests' accounts were matched to
+members) and `workspaces` (how many were read), and the shell's own
+`failed-runs` source: the person's background runs that failed in the last 7
+days (studio-tasks), an undelivered notification among them. Deploys waiting
+for a decision are answered by
+`GET /studio-environments/v1/inbox/deploys-awaiting-approval` (an `endpoint`
+source for the Releases kit's manifest to declare).
+
 `GET /studio-kits/v1/inbox-sources?organization_id=` (any member) lists the
 sources of the kits installed for the whole organization (base kits and its
 own; not a project's own `query` sources: those would need the project's PDP
@@ -582,15 +603,18 @@ as the string it names.
 `kit.gdl` that names bundles being one kit at the version it states. Those
 kits join the library on the `organization` shelf with `source = bundle-dir`
 (never the IDE's `official` list, and never a slug the library already holds),
-so they are installed like any other kit. Serving bundles from an organization's
-connected repository at a pinned commit (ADR-0068 phase 7) needs another
-`BundleSource`; this implementation serves directory bundles only. A package is served only at the version its source
-built; an installation at another version lists nothing.
+so they are installed like any other kit. The second source is the
+organization shelf (`shelf_bundles.rs`, ADR-0068 phase 7): a shelf kit's
+`kit.json` names its bundles (`"mfe": ["mfe/<package>"]`, directories beside
+the manifest), and they are read through the organization's own connection at
+the commit the kit is pinned to. A package is served only at the version its
+source built; an installation at another version lists nothing.
 
 **What the shell is told.** `GET /mfe-manifests` resolves the scope exactly as
 `GET /installed-kits` does and lists, for each effective kit with bundles at
 its installed version, each package: `kit_slug`, `version`, `package`,
 `base_path` = `/cf/studio-kits/v1/kits/{slug}/{version}/mfe/{grant}/{package}/`
+(for a shelf kit `version` is the pinned commit and `grant` names the organization)
 and `config` (its `mfe-manifest.json`), or `config: null` with `error` when it
 does not read (not built, not JSON, not a FrontX build).
 
@@ -630,8 +654,10 @@ the screen that the person can dismiss; the rest of the shell goes on.
   not available here (naming the kit when it had been loaded in this page) and
   offers the level's home. A screen whose kit is uninstalled while on display
   ends in the same state.
-- *Live.* The installed kits are read again on a `kit.*` studio event (none is
-  published yet) or `domain.model_changed`.
+- *Live.* The installed kits are read again on a `kit.*` studio event
+  (`kit.installed` / `kit.uninstalled`, published by the installer on the
+  organization's channel; a base kit's on the platform's) or
+  `domain.model_changed`.
 
 **Slots.** ADR-0068 §2's `section in a screen`: a kit contributes into a named
 slot the shell owns, never into a domain of its own (a package naming a domain
@@ -657,24 +683,26 @@ is tried again only when its registration changes.
 status chip. A slot inside a micro-frontend's own page is not offered: the
 screen would have to host a domain in its shadow root.
 
-**Repository-backed bundles (not built).** What a `BundleSource` for an
-organization's shelf kit needs, beyond the trait as it is:
-1. *Which bundles.* `kit.json` (the shelf manifest) names screens but no
-   bundle directories; it needs `kit.gdl`'s `mfe = [path(...)]` (or a
-   `screens[].mfe`) so `packages(slug, version)` has an answer.
-2. *Whose kit.* A shelf kit's installed version is its pinned commit, but the
-   same slug can sit on two organizations' shelves. The source must resolve
-   (organization, slug, commit) to the `KitOrigin` (connection, repository,
-   path), so `packages` and `read` need the organization: either
-   `{org}` in the file route and the grant (HMAC over org, slug, version), or
-   the grant mapped server-side to the organization.
-3. *Reading.* `KitSourceReader` only fetches a manifest; reading
-   `mfe/<package>/<file>` at a commit through the organization's connection
-   is new, and the anonymous file route must not call the Git host per chunk:
-   files at a commit are immutable, so cache them (memory or disk) keyed by
-   commit and path, and cap the size as `DirSource` does.
+**Repository-backed bundles** (issue #1045).
+1. *Which bundles.* `kit.json` names them: `"mfe": ["mfe/<package>"]`, as
+   `kit.gdl`'s `mfe = [path(...)]`, at most 16, checked when the kit is added.
+2. *Whose kit.* A shelf kit's installed version is its pinned commit, and one
+   slug can sit on two organizations' shelves, so a `BundleSource` says
+   whether it is `per_organization`; such a kit's grant is the organization
+   (32 hex digits) followed by an HMAC over the organization, the slug and the
+   commit, and the same file route reads the organization back from it. The shelf resolves (organization,
+   slug, commit) to the `KitOrigin` (connection, repository, directory),
+   from the current shelf entry or one kept for an installation after a
+   refresh.
+3. *Reading.* `KitSourceReader::read_file` reads a file's bytes at the commit
+   through the organization's own shared connection (the same checks as
+   adding the kit), as the gear's service identity in the organization: the
+   grant proves a member was shown the kit. Files at a commit are immutable,
+   so they are kept in memory keyed by connection, repository, commit and
+   path, up to 64 MiB (oldest out; a missing file is remembered too), and
+   served with `immutable` caching. At most 16 MiB a file, as `DirSource`.
 4. The shell needs no change: it uses `base_path` as given and keys a
-   registration's revision on it.
+   registration's revision on it, so a re-pin is a new revision.
 
 **Security.**
 - The shell's module loader (`MfeHandlerMF`) fetches a bundle's files itself,

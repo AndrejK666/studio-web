@@ -77,6 +77,9 @@ pub struct KitScreenDto {
     pub route: Option<String>,
     /// For a section, the slot of the screen it goes in; null for a tab.
     pub slot: Option<String>,
+    /// Domain types another kit brings that the screen shows (`milestone`):
+    /// where one is not installed the shell hides the screen.
+    pub needs: Vec<String>,
 }
 
 /// A GTS type a kit registers under its own namespace.
@@ -112,6 +115,27 @@ pub struct KitFunctionDto {
 pub struct KitInboxSourceDto {
     pub id: String,
     pub label: String,
+    /// Which screen and tool answer its items; null when it names none.
+    pub destination: Option<KitInboxDestinationDto>,
+}
+
+/// Where a kit's Inbox item is answered (ADR-0068 §6).
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitInboxDestinationDto {
+    /// The portal route of the kit's screen that answers it.
+    pub route: Option<String>,
+    /// The kit's MCP tool that acts on it.
+    pub mcp_tool: Option<String>,
+}
+
+impl From<super::manifest::ManifestInboxDestination> for KitInboxDestinationDto {
+    fn from(d: super::manifest::ManifestInboxDestination) -> Self {
+        Self {
+            route: d.route,
+            mcp_tool: d.mcp_tool,
+        }
+    }
 }
 
 /// What a kit's code and rules are held to.
@@ -153,6 +177,9 @@ pub struct KitContentsDto {
     /// The artifact kinds it brings templates and rules for (PRD, ADR, ...).
     pub kinds: Vec<String>,
     pub docs: Vec<String>,
+    /// The built micro-frontends it carries (`mfe/<package>`), served to the
+    /// shell at run time (`GET /mfe-manifests`).
+    pub mfe: Vec<String>,
 }
 
 /// One kit of the library and what is inside it.
@@ -362,6 +389,7 @@ impl From<KitDetail> for KitDetailDto {
                         label: s.label,
                         route: s.route,
                         slot: s.slot,
+                        needs: s.needs,
                     })
                     .collect(),
                 types: c
@@ -390,6 +418,7 @@ impl From<KitDetail> for KitDetailDto {
                     .map(|i| KitInboxSourceDto {
                         id: i.id,
                         label: i.label,
+                        destination: i.destination.map(Into::into),
                     })
                     .collect(),
                 mcp_tools: named(c.mcp_tools),
@@ -408,6 +437,7 @@ impl From<KitDetail> for KitDetailDto {
                     .collect(),
                 kinds: c.kinds,
                 docs: c.docs,
+                mfe: c.mfe,
             },
             manifest: value.manifest.map(str::to_owned),
             origin: None,
@@ -777,7 +807,7 @@ async fn list_mfe_manifests(
         .map(|kit| (kit.kit_slug.clone(), kit.version.clone()))
         .collect();
     let items: Vec<KitMfeManifestDto> = bundles
-        .manifests(&kits)
+        .manifests(installed.organization_id, &kits)
         .await
         .into_iter()
         .map(Into::into)
@@ -797,12 +827,23 @@ async fn get_mfe_file(
     Extension(bundles): Extension<Arc<KitBundles>>,
     Path((kit_slug, version, grant, package, file)): Path<(String, String, String, String, String)>,
 ) -> axum::response::Response {
+    let read = bundles
+        .file(&kit_slug, &version, &grant, &package, &file)
+        .await;
+    let pinned = KitBundles::is_org_grant(&grant);
+    mfe_file_response(read, pinned, &kit_slug, &version, &package)
+}
+
+fn mfe_file_response(
+    read: anyhow::Result<Option<(super::bundles::BundleFile, Vec<u8>)>>,
+    pinned: bool,
+    kit_slug: &str,
+    version: &str,
+    package: &str,
+) -> axum::response::Response {
     use axum::http::{HeaderValue, header};
     use axum::response::IntoResponse;
-    match bundles
-        .file(&kit_slug, &version, &grant, &package, &file)
-        .await
-    {
+    match read {
         Ok(Some((file, bytes))) => {
             let mut response = bytes.into_response();
             let headers = response.headers_mut();
@@ -814,7 +855,7 @@ async fn get_mfe_file(
             // the manifests) names it, so it is asked again every time.
             headers.insert(
                 header::CACHE_CONTROL,
-                HeaderValue::from_static(if file.is_immutable() {
+                HeaderValue::from_static(if pinned || file.is_immutable() {
                     "private, max-age=31536000, immutable"
                 } else {
                     "private, no-cache"
@@ -1024,7 +1065,10 @@ fn register_installer_routes(mut router: Router, openapi: &dyn OpenApiRegistry) 
          effective where the caller is a member, and a wrong one answers 404 like a missing \
          file. Serves only a bundle's own types (scripts, styles, JSON, images, fonts, wasm) \
          with their content type and `nosniff`; never an HTML page, a hidden file or \
-         anything outside the package. `assets/` is cached as immutable, the rest revalidated.",
+         anything outside the package. `assets/` is cached as immutable, the rest revalidated. \
+         An organization's own kit (`kit.json` `mfe`) has a grant naming the organization: its \
+         files are read from the organization's repository through its connection at the \
+         commit the kit is pinned to (`version`), kept in memory, and all cached as immutable.",
     )
     .tag("StudioKits")
     .anonymous()
@@ -1637,6 +1681,9 @@ pub struct KitInboxSourceQueryDto {
     pub title: Option<String>,
     /// The row's field naming the workspace an item is in.
     pub workspace_field: Option<String>,
+    /// Which screen and tool answer an item; null when the source names
+    /// none, and an item opens the kit's workspace.
+    pub destination: Option<KitInboxDestinationDto>,
 }
 
 #[derive(Debug)]
@@ -1668,6 +1715,7 @@ async fn list_inbox_sources(
             path: s.source.path,
             title: s.source.title,
             workspace_field: s.source.workspace_field,
+            destination: s.source.destination.map(Into::into),
         })
         .collect();
     let (items, total) = page_of(items, page);
@@ -1872,7 +1920,17 @@ async fn materialize_installation(
     let value = service
         .materialize_installation(&ctx, project_id, &kit_slug, body.repository_id)
         .await
-        .map_err(internal)?;
+        .map_err(|error| {
+            if error.is::<super::service::SessionUnavailable>() {
+                session_unavailable(error)
+            } else if error.is::<super::service::NotRequested>() {
+                KitRegistryError::not_found(error.to_string())
+                    .with_resource(kit_slug.clone())
+                    .create()
+            } else {
+                internal(error)
+            }
+        })?;
     Ok(Json(value.into()))
 }
 
@@ -2060,7 +2118,12 @@ pub fn register_routes(
     )
     .operation_id("studio_kits.materialize_installation")
     .summary("Install a requested kit in the project's running IDE")
-    .description("Calls the S2S-token-gated Theia runner. The kit and Git ref are independently validated by the IDE.")
+    .description(
+        "Calls the S2S-token-gated Theia runner. The kit and Git ref are independently \
+         validated by the IDE. 503 when the IDE could not do it -- no running session, or the \
+         session's install failed (the row records why) -- as `reconcile` and `repositories` \
+         answer; 404 when the project never requested the kit.",
+    )
     .tag("StudioKits")
     .authenticated()
     .require_license_features::<License>([])
@@ -2068,10 +2131,16 @@ pub fn register_routes(
     .path_param("kit_slug", "Registered kit slug")
     .json_request::<MaterializeKitInstallationDto>(openapi, "Optional target repository")
     .handler(materialize_installation)
-    .json_response_with_schema::<KitInstallationDto>(openapi, StatusCode::OK, "Materialized installation")
+    .json_response_with_schema::<KitInstallationDto>(
+        openapi,
+        StatusCode::OK,
+        "Materialized installation",
+    )
     .error_401(openapi)
     .error_403(openapi)
+    .error_404(openapi)
     .error_500(openapi)
+    .error_503(openapi)
     .register(router, openapi);
 
     router = OperationBuilder::post(

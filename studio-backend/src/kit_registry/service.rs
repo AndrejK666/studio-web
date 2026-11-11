@@ -409,6 +409,9 @@ impl KitRegistryService {
         }
     }
 
+    /// Fails with [`SessionUnavailable`] when the IDE could not do it (no
+    /// bridge, no running session, the session's install refused), and with
+    /// [`NotRequested`] when the project never asked for the kit.
     pub async fn materialize_installation(
         &self,
         ctx: &SecurityContext,
@@ -421,7 +424,7 @@ impl KitRegistryService {
         let index = installations
             .iter()
             .position(|entry| entry.kit_slug == kit_slug)
-            .context("kit installation has not been requested")?;
+            .ok_or_else(|| anyhow::Error::new(NotRequested(kit_slug.clone())))?;
         installations[index].status = "installing".to_owned();
         installations[index].failure_reason = None;
         // Cloned rather than moved: the failure arm needs to know which
@@ -490,11 +493,39 @@ impl KitRegistryService {
                 );
                 self.write_installations(ctx, project_id, installations)
                     .await?;
-                Err(error)
+                Err(anyhow::Error::new(SessionUnavailable(format!("{error:#}"))))
             }
         }
     }
+}
 
+/// The IDE could not materialize a kit: no bridge, no running session, or the
+/// session's install failed. The repository set exists only while a session
+/// runs, so this is an expected state (503), not a defect.
+#[derive(Debug)]
+pub struct SessionUnavailable(pub String);
+
+impl std::fmt::Display for SessionUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SessionUnavailable {}
+
+/// The project never requested the kit it asked to materialize (404).
+#[derive(Debug)]
+pub struct NotRequested(pub String);
+
+impl std::fmt::Display for NotRequested {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the project has not requested kit `{}`", self.0)
+    }
+}
+
+impl std::error::Error for NotRequested {}
+
+impl KitRegistryService {
     /// Record an install that ran somewhere the backend cannot call: a
     /// desktop IDE (ADR-0027), which installs the kit into its own checkout
     /// with its own `cfs` and says how it went. The row changes exactly as a
