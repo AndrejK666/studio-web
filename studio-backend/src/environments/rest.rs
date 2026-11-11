@@ -1349,6 +1349,41 @@ async fn research_inbox_deploys(
     Ok(Json(inbox_list(items)))
 }
 
+/// Deploys waiting for the caller's decision: an Inbox `endpoint` source.
+async fn inbox_deploys_awaiting_approval(
+    OrgCtx(ctx): OrgCtx,
+    Extension(envs): Extension<Environments>,
+) -> ApiResult<JsonBody<ResearchInboxItemListDto>> {
+    let items = envs
+        .0
+        .deploys_awaiting_approval(&ctx, ctx.subject_tenant_id())
+        .await
+        .map_err(problem)?
+        .into_iter()
+        .map(|d| ResearchInboxItemDto {
+            id: d.id.to_string(),
+            title: format!(
+                "{}: {} asks to deploy to {}",
+                d.project_name,
+                if d.requested_by_name.is_empty() {
+                    "somebody"
+                } else {
+                    d.requested_by_name.as_str()
+                },
+                d.environment_name
+            ),
+            project_id: Some(d.project_id.to_string()),
+            project_name: Some(d.project_name),
+            environment_name: Some(d.environment_name),
+            due_at: None,
+            overdue: false,
+            days_left: None,
+            detail: Some(format!("asked {}", d.requested_at)),
+        })
+        .collect();
+    Ok(Json(inbox_list(items)))
+}
+
 async fn research_inbox_sign_in(
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
@@ -1960,6 +1995,32 @@ pub fn register_routes(
             openapi,
             StatusCode::OK,
             "The deploys that wait on the caller",
+        )
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/inbox/deploys-awaiting-approval")
+        .operation_id("studio_environments.list_inbox_deploys_awaiting_approval")
+        .summary("Deploys waiting for the caller's decision")
+        .description(
+            "For whoever decides deploys in the organization (an organization administrator, \
+             or a holder of the environments' manage privilege): each deploy \
+             `awaiting_approval`, the longest waiting first; empty for anybody else. An Inbox \
+             `endpoint` source (ADR-0068 §6, the Releases kit's): an item is answered by \
+             `POST /studio-environments/v1/deployments/{deployment_id}/decisions` (approve, or decline with \
+             a reason) and leaves when it is decided.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .handler(inbox_deploys_awaiting_approval)
+        .json_response_with_schema::<ResearchInboxItemListDto>(
+            openapi,
+            StatusCode::OK,
+            "The deploys waiting for a decision",
         )
         .error_401(openapi)
         .error_403(openapi)

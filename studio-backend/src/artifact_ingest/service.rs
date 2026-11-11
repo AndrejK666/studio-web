@@ -228,6 +228,26 @@ impl SyncSummary {
     }
 }
 
+/// Put `repository` (the repository node's `full_path`) on each hit whose
+/// `repo` names one of `repos`.
+pub fn name_repositories(hits: &mut [GtsNode], repos: &[GtsNode]) {
+    for hit in hits {
+        let Some(repo) = hit.value.get("repo").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let name = repos
+            .iter()
+            .find(|r| r.instance_id == repo)
+            .and_then(|r| r.value.get("full_path"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        if let (Some(name), Some(obj)) = (name, hit.value.as_object_mut()) {
+            obj.entry("repository".to_string())
+                .or_insert(serde_json::Value::String(name));
+        }
+    }
+}
+
 pub struct IngestService {
     credstore: Arc<dyn CredStoreClientV1>,
     /// provider key (`github`, …) → driver.
@@ -2347,13 +2367,31 @@ impl IngestService {
     /// retrieval — it embeds the query with the same provider that embedded
     /// the nodes and fuses the vector and lexical arms; the in-memory fallback
     /// matches text.
+    /// Each hit that names its repository node (`repo`, an id) also carries
+    /// the repository's name, `repository` (`owner/name`, the node's
+    /// `full_path`), so a reader with checkouts opens the file in the right
+    /// one instead of looking for the path in every checkout.
     pub async fn search(
         &self,
         ctx: &SecurityContext,
         text: &str,
         limit: u32,
     ) -> anyhow::Result<Vec<GtsNode>> {
-        self.graph.search(ctx, text, limit).await
+        let mut hits = self.graph.search(ctx, text, limit).await?;
+        if hits.iter().any(|n| {
+            n.value
+                .get("repo")
+                .is_some_and(serde_json::Value::is_string)
+        }) {
+            // The repository nodes are few, and the listing is cached.
+            match self.graph.list(ctx, Some(super::gts::REPO_TYPE)).await {
+                Ok(repos) => name_repositories(&mut hits, &repos),
+                Err(error) => {
+                    tracing::warn!("artifact search: repository names not read: {error:#}");
+                }
+            }
+        }
+        Ok(hits)
     }
 
     /// Register a user-uploaded or Studio-generated project artifact after its
@@ -3346,6 +3384,36 @@ fn item_link_edges(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod search_hit_tests {
+    use super::super::graph::GtsNode;
+    use serde_json::json;
+
+    #[test]
+    fn a_search_hit_says_which_repository_its_file_is_in() {
+        let repos = vec![GtsNode {
+            type_id: super::super::gts::REPO_TYPE,
+            instance_id: "r1".into(),
+            value: json!({"full_path": "acme/web"}),
+        }];
+        let mut hits = vec![
+            GtsNode {
+                type_id: super::super::gts::FILE_TYPE,
+                instance_id: "f1".into(),
+                value: json!({"repo": "r1", "path": "docs/a.md"}),
+            },
+            GtsNode {
+                type_id: super::super::gts::FILE_TYPE,
+                instance_id: "f2".into(),
+                value: json!({"path": "uploaded.md"}),
+            },
+        ];
+        super::name_repositories(&mut hits, &repos);
+        assert_eq!(hits[0].value["repository"], "acme/web");
+        assert!(hits[1].value.get("repository").is_none());
+    }
 }
 
 #[cfg(test)]

@@ -236,3 +236,33 @@ fn an_endpoint_source_calls_only_studio_s_own_routes() {
         assert!(!endpoint_path_allowed(bad), "{bad}");
     }
 }
+
+#[test]
+fn a_failed_run_of_the_person_waits_on_them_for_a_week() {
+    let now = time::OffsetDateTime::parse(
+        "2026-11-11T12:00:00Z",
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap();
+    let run = |id: &str, by: &str, state: &str, at: &str| {
+        serde_json::json!({
+            "id": id, "requested_by": by, "state": state, "updated_at": at,
+            "task_type": "notify.send", "last_error": "the channel refused it",
+        })
+    };
+    let items = failed_run_items(
+        vec![
+            run("old", "me", "failed", "2026-11-01T12:00:00Z"),
+            run("a", "me", "failed", "2026-11-09T12:00:00Z"),
+            run("b", "me", "failed", "2026-11-10T12:00:00Z"),
+            run("theirs", "you", "failed", "2026-11-10T12:00:00Z"),
+            run("fine", "me", "succeeded", "2026-11-10T12:00:00Z"),
+        ],
+        "me",
+        now,
+    );
+    let keys: Vec<&str> = items.iter().map(|i| i.key.as_str()).collect();
+    assert_eq!(keys, ["run:b", "run:a"]);
+    assert_eq!(items[0].source, FAILED_RUNS);
+    assert_eq!(items[0].title, "notify.send failed: the channel refused it");
+}

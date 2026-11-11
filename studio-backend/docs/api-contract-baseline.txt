@@ -75,7 +75,6 @@ error-404	POST /studio-documents/v1/workspaces/{workspace_id}/types
 error-404	POST /studio-domain-model/v1/types/{id}/fields
 error-404	POST /studio-identity/v1/users/{identity_id}/assignment
 error-404	POST /studio-kits/v1/projects/{project_id}/installations
-error-404	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materialize
 error-404	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/reconcile
 error-404	POST /studio-user/v1/organizations/{org_id}/invitations
 error-404	POST /studio-user/v1/users/{user_id}/aliases

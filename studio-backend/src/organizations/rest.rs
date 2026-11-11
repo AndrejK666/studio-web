@@ -231,7 +231,7 @@ async fn upsert_organization_logo(
             .create()
     })?;
     service
-        .set_logo(org, Some(&logo))
+        .set_logo(&ctx, org, Some(&logo))
         .await
         .map_err(|error| CanonicalError::internal(format!("{error:#}")).create())?;
     Ok(Json(logo_dto(logo)))
@@ -250,10 +250,197 @@ async fn delete_organization_logo(
             .create());
     }
     service
-        .set_logo(org, None)
+        .set_logo(&ctx, org, None)
         .await
         .map_err(|error| CanonicalError::internal(format!("{error:#}")).create())?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// One grant to put (`PUT /access-grants`).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct PutAccessGrantRequest {
+    /// `member` (a person: their person id) or `team`.
+    pub subject_type: String,
+    pub subject_id: String,
+    /// What a screen shows for the subject.
+    pub subject_name: Option<String>,
+    /// A role the organization defines (`admin`, `editor`, `viewer`, ...);
+    /// never `owner`, which follows an owner membership.
+    pub role_key: String,
+    /// `org` (the whole organization) or `project`.
+    pub scope_type: String,
+    /// The project, for a `project` grant.
+    pub scope_id: Option<String>,
+    pub scope_name: Option<String>,
+}
+
+/// One grant as now kept.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AccessGrantDto {
+    pub id: String,
+    pub subject_type: String,
+    pub subject_id: String,
+    pub subject_name: String,
+    pub role_key: String,
+    pub scope_type: String,
+    pub scope_id: String,
+    pub scope_name: String,
+}
+
+/// Which grant to remove (`DELETE /access-grants`), and where.
+#[derive(Debug, serde::Deserialize)]
+pub struct AccessGrantQuery {
+    #[serde(default)]
+    pub organization_id: Option<String>,
+    #[serde(default)]
+    pub subject_type: Option<String>,
+    #[serde(default)]
+    pub subject_id: Option<String>,
+    #[serde(default)]
+    pub scope_type: Option<String>,
+    #[serde(default)]
+    pub scope_id: Option<String>,
+}
+
+fn grant_org(raw: Option<&str>) -> ApiResult<Uuid> {
+    raw.and_then(|r| Uuid::parse_str(r.trim()).ok())
+        .ok_or_else(|| {
+            OrganizationError::invalid_argument()
+                .with_constraint("organization_id must be the organization's uuid")
+                .create()
+        })
+}
+
+fn change_refused(error: super::access_grants::ChangeError) -> CanonicalError {
+    match error {
+        super::access_grants::ChangeError::Invalid(why) => OrganizationError::invalid_argument()
+            .with_constraint(why)
+            .create(),
+        super::access_grants::ChangeError::Internal(e) => {
+            CanonicalError::internal(format!("{e:#}")).create()
+        }
+    }
+}
+
+async fn put_access_grant(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    axum::extract::Query(query): axum::extract::Query<AccessGrantQuery>,
+    Json(request): Json<PutAccessGrantRequest>,
+) -> ApiResult<JsonBody<AccessGrantDto>> {
+    let service = configured(service)?;
+    let org = grant_org(query.organization_id.as_deref())?;
+    if !service.may_manage_access(&ctx, org).await {
+        return Err(OrganizationError::permission_denied()
+            .with_reason("ACCESS_ADMIN_REQUIRED")
+            .create());
+    }
+    let key = super::access_grants::key_of(
+        &request.subject_type,
+        &request.subject_id,
+        &request.scope_type,
+        request.scope_id.as_deref(),
+    )
+    .map_err(|e| {
+        OrganizationError::invalid_argument()
+            .with_constraint(format!("{e:#}"))
+            .create()
+    })?;
+    let grant = super::access_grants::Grant {
+        key,
+        role_key: request.role_key.trim().to_owned(),
+        subject_name: request.subject_name.filter(|n| !n.trim().is_empty()),
+        scope_name: request.scope_name.filter(|n| !n.trim().is_empty()),
+    };
+    let written = service
+        .change_access(&ctx, org, &|doc| {
+            super::access_grants::put(doc, org, &grant)
+        })
+        .await
+        .map_err(change_refused)?;
+    let text = |name: &str| written[name].as_str().unwrap_or_default().to_owned();
+    Ok(Json(AccessGrantDto {
+        id: text("id"),
+        subject_type: text("subjectType"),
+        subject_id: text("subjectId"),
+        subject_name: text("subjectName"),
+        role_key: text("roleKey"),
+        scope_type: text("scopeType"),
+        scope_id: text("scopeId"),
+        scope_name: text("scopeName"),
+    }))
+}
+
+async fn delete_access_grant(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    axum::extract::Query(query): axum::extract::Query<AccessGrantQuery>,
+) -> ApiResult<StatusCode> {
+    let service = configured(service)?;
+    let org = grant_org(query.organization_id.as_deref())?;
+    if !service.may_manage_access(&ctx, org).await {
+        return Err(OrganizationError::permission_denied()
+            .with_reason("ACCESS_ADMIN_REQUIRED")
+            .create());
+    }
+    let key = super::access_grants::key_of(
+        query.subject_type.as_deref().unwrap_or_default(),
+        query.subject_id.as_deref().unwrap_or_default(),
+        query.scope_type.as_deref().unwrap_or_default(),
+        query.scope_id.as_deref(),
+    )
+    .map_err(|e| {
+        OrganizationError::invalid_argument()
+            .with_constraint(format!("{e:#}"))
+            .create()
+    })?;
+    service
+        .change_access(&ctx, org, &|doc| super::access_grants::remove(doc, &key))
+        .await
+        .map_err(change_refused)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// A new name for an organization or a workspace.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct RenameTenantRequest {
+    pub name: String,
+}
+
+/// The name as now kept.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct TenantNameDto {
+    pub tenant_id: String,
+    pub name: String,
+}
+
+async fn rename_tenant(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    axum::extract::Query(query): axum::extract::Query<LogoQuery>,
+    Json(request): Json<RenameTenantRequest>,
+) -> ApiResult<JsonBody<TenantNameDto>> {
+    let service = configured(service)?;
+    let tenant = org_id(&query)?;
+    let name = request.name.trim();
+    if name.is_empty() || name.chars().count() > 200 {
+        return Err(OrganizationError::invalid_argument()
+            .with_constraint("name is 1..=200 characters")
+            .create());
+    }
+    let name = service.rename(&ctx, tenant, name).await.map_err(|error| {
+        OrganizationError::invalid_argument()
+            .with_constraint(format!("{error:#}"))
+            .create()
+    })?;
+    Ok(Json(TenantNameDto {
+        tenant_id: tenant.to_string(),
+        name,
+    }))
 }
 
 fn configured(service: Option<Arc<OrganizationService>>) -> ApiResult<Arc<OrganizationService>> {
@@ -800,7 +987,10 @@ fn rollup_dto(r: super::rollups::Rollup) -> RollupDto {
 }
 
 async fn list_rollups(
-    Extension(ctx): Extension<SecurityContext>,
+    // `?organization_id=`: the portfolio of an organization the caller
+    // reaches but is not at home in (the Inbox on another organization's
+    // screen).
+    crate::org_scope::OrgCtx(ctx): crate::org_scope::OrgCtx,
     Extension(sources): Extension<Option<Arc<super::rollups::Sources>>>,
     axum::extract::Query(query): axum::extract::Query<RollupQuery>,
 ) -> ApiResult<JsonBody<RollupListDto>> {
@@ -1487,6 +1677,83 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    let router = OperationBuilder::put("/studio-organizations/v1/access-grants")
+        .operation_id("studio_organizations.upsert_access_grant")
+        .summary("Give a subject one role on one scope of the organization")
+        .description(
+            "Changes one grant of the organization's access config instead of the whole \
+             document, so two people editing the Team or People screen do not overwrite each \
+             other: the document is written back on the version read (account-management's \
+             optimistic lock) and a write that lost the race reads again. Replaces the role the \
+             subject held on that scope. Whoever administers access (`access.manage`, or the \
+             owner) may; the PDP decides the write again. Never the `owner` role, which \
+             follows an owner membership. Publishes `tenant.access_changed`.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", true, "The organization", "string")
+        .json_request::<PutAccessGrantRequest>(openapi, "The grant")
+        .handler(put_access_grant)
+        .json_response_with_schema::<AccessGrantDto>(openapi, StatusCode::OK, "The grant as kept")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::delete("/studio-organizations/v1/access-grants")
+        .operation_id("studio_organizations.delete_access_grant")
+        .summary("Take one grant away")
+        .description(
+            "Removes the grant naming `subject_type`/`subject_id` on `scope_type` (and \
+             `scope_id` for a project), and nothing else. Who may is who may put one; an owner \
+             grant is refused. 204, also when there was no such grant. Publishes \
+             `tenant.access_changed`.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", true, "The organization", "string")
+        .query_param("subject_type", true, "`member` or `team`")
+        .query_param("subject_id", true, "The subject")
+        .query_param("scope_type", true, "`org` or `project`")
+        .query_param("scope_id", false, "The project, for a `project` grant")
+        .handler(delete_access_grant)
+        .no_content_response(StatusCode::NO_CONTENT, "Removed")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-organizations/v1/name")
+        .operation_id("studio_organizations.update_tenant_name")
+        .summary("Rename an organization or a workspace")
+        .description(
+            "Renames the tenant through account-management as the caller (it decides who \
+             may) and publishes `tenant.renamed` on the organization's channel, so every open \
+             path bar shows the new name without reading again. A project is renamed in its \
+             project config.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", false, "The organization", "string")
+        .query_param_typed(
+            "tenant_id",
+            false,
+            "A workspace instead (or the organization)",
+            "string",
+        )
+        .json_request::<RenameTenantRequest>(openapi, "The new name")
+        .handler(rename_tenant)
+        .json_response_with_schema::<TenantNameDto>(openapi, StatusCode::OK, "The name as kept")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     let router = OperationBuilder::delete("/studio-organizations/v1/organizations/{org_id}")
         .operation_id("studio_organizations.delete_organization")
         .summary("Delete an organization")
@@ -1712,6 +1979,12 @@ Labels are deliberately \
             "workspace_id",
             false,
             "Narrow the answer to this workspace and its projects",
+        )
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
         )
         .handler(list_rollups)
         .json_response_with_schema::<RollupListDto>(openapi, StatusCode::OK, "The rollups")

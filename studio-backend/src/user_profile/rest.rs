@@ -1182,6 +1182,11 @@ pub struct InboxItemDto {
     /// The source's own record, as its route answers it: a review request,
     /// an open pull request.
     pub record: serde_json::Value,
+    /// Which screen and tool answer it, as its kit's source declares
+    /// (`{route?, mcp_tool?}`, `GET /studio-kits/v1/inbox-sources`); null for
+    /// the shell's own sources and a source naming none, whose item opens
+    /// the kit's workspace.
+    pub destination: Option<serde_json::Value>,
 }
 
 /// The caller's Inbox, one view of it.
@@ -1196,6 +1201,12 @@ pub struct InboxDto {
     /// The sources that could not be read, each with why: what they hold
     /// is not known, never nothing.
     pub unread: Vec<String>,
+    /// Whether pull requests' accounts were matched to the organization's
+    /// members. False: an empty list may mean the caller's account is not
+    /// known, not that nothing waits.
+    pub members_known: bool,
+    /// How many workspaces of the organization were read.
+    pub workspaces: u32,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1203,6 +1214,10 @@ pub struct InboxQuery {
     /// `open` (default) or `hidden` (done, or snoozed until later).
     #[serde(default)]
     pub view: Option<String>,
+    /// The organization whose workspaces and kits are read; the caller's
+    /// home when absent. Each source checks the caller reaches it.
+    #[serde(default)]
+    pub organization_id: Option<uuid::Uuid>,
     #[serde(flatten)]
     pub page: crate::pagination::PageQuery,
 }
@@ -1231,7 +1246,11 @@ async fn get_my_inbox(
     // `"$me"` in a kit's source is the caller as the domain model knows
     // them: their subject (what `phase_owner` and other kit fields record).
     let me = ctx.subject_id().to_string();
-    let (read, marks) = tokio::join!(super::inbox::read(&api, &me), service.inbox_marks(&user_id));
+    let org = query.organization_id.map(|o| o.to_string());
+    let (read, marks) = tokio::join!(
+        super::inbox::read(&api, &me, org.as_deref()),
+        service.inbox_marks(&user_id)
+    );
     let marks: Vec<super::inbox::Mark> = marks
         .map_err(internal)?
         .into_iter()
@@ -1264,6 +1283,7 @@ async fn get_my_inbox(
             due_at: i.due_at,
             overdue: i.overdue,
             record: i.record,
+            destination: i.destination,
         })
         .collect();
     let (items, total) = crate::pagination::page_of(rows, query.page);
@@ -1272,6 +1292,8 @@ async fn get_my_inbox(
         total,
         other: u32::try_from(other).unwrap_or(u32::MAX),
         unread: read.unread,
+        members_known: read.members_known,
+        workspaces: u32::try_from(read.workspaces).unwrap_or(u32::MAX),
     }))
 }
 
@@ -2122,6 +2144,13 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .query_param("view", false, "`open` (default) or `hidden`")
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            "The organization whose workspaces and kits are read (the one on screen); the \
+             caller's home tenant when absent",
+            "string",
+        )
         .query_param_typed(
             "offset",
             false,

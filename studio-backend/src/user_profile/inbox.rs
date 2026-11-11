@@ -24,6 +24,12 @@ use crate::mcp::sdk::Api;
 /// nothing else tells them apart.
 pub const REVIEW_REQUESTS: &str = "review-requests";
 pub const PULL_REQUESTS: &str = "pull-requests";
+/// The person's background runs that failed in the last [`FAILED_RUN_DAYS`]
+/// days (studio-tasks), an undelivered notification among them: the shell's
+/// own source, as the bell is.
+pub const FAILED_RUNS: &str = "failed-runs";
+/// How far back a failed run waits on the person.
+pub const FAILED_RUN_DAYS: i64 = 7;
 
 /// The kit an item comes from (ADR-0068 §6).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +61,10 @@ pub struct Item {
     pub overdue: bool,
     /// The source's own record, as its route answers it.
     pub record: Value,
+    /// Which screen and tool answer it, as its kit's source declares
+    /// (`{route?, mcp_tool?}`); `None` for the shell's own sources and a
+    /// source that names none.
+    pub destination: Option<Value>,
 }
 
 /// A mark the person keeps on an item.
@@ -120,6 +130,7 @@ pub fn items_of(
         due_at: text(&r["due_at"]),
         overdue: r["overdue"].as_bool().unwrap_or(false),
         record: r,
+        destination: None,
     });
     let pull = pulls_in_order(pulls).into_iter().map(|p| Item {
         key: pull_key(&p),
@@ -132,8 +143,56 @@ pub fn items_of(
         due_at: None,
         overdue: false,
         record: p,
+        destination: None,
     });
     review.chain(pull).collect()
+}
+
+/// The failed runs (`GET /studio-tasks/v1/runs?state=failed` items) the
+/// person `me` asked for that ended within [`FAILED_RUN_DAYS`] of `now`, as
+/// items, newest first. A run is one item for as long as it lives; asking it
+/// again is a new run.
+pub fn failed_run_items(runs: Vec<Value>, me: &str, now: OffsetDateTime) -> Vec<Item> {
+    let since = now - time::Duration::days(FAILED_RUN_DAYS);
+    let ended = |r: &Value| {
+        r["updated_at"].as_str().and_then(|t| {
+            OffsetDateTime::parse(t, &time::format_description::well_known::Rfc3339).ok()
+        })
+    };
+    let mut runs: Vec<(OffsetDateTime, Value)> = runs
+        .into_iter()
+        .filter(|r| r["state"] == "failed" && r["requested_by"].as_str() == Some(me))
+        .filter_map(|r| ended(&r).filter(|t| *t >= since).map(|t| (t, r)))
+        .collect();
+    runs.sort_by_key(|r| std::cmp::Reverse(r.0));
+    runs.into_iter()
+        .map(|(_, r)| {
+            let kind = r["task_type"]
+                .as_str()
+                .unwrap_or("a background run")
+                .to_owned();
+            let title = match text(&r["last_error"]) {
+                Some(why) => format!(
+                    "{kind} failed: {}",
+                    why.chars().take(160).collect::<String>()
+                ),
+                None => format!("{kind} failed"),
+            };
+            Item {
+                key: format!("run:{}", r["id"].as_str().unwrap_or_default()),
+                source: FAILED_RUNS.to_owned(),
+                kit: None,
+                workspace_id: String::new(),
+                workspace_name: String::new(),
+                title,
+                url: None,
+                due_at: None,
+                overdue: false,
+                record: r,
+                destination: None,
+            }
+        })
+        .collect()
 }
 
 /// The string a kit's source query names the person by.
@@ -236,9 +295,15 @@ pub fn kit_items(source: &Value, rows: Vec<Value>, spaces: &[(String, String)]) 
                 due_at: None,
                 overdue: false,
                 record: row,
+                destination: destination(source),
             }
         })
         .collect()
+}
+
+/// A source's `destination`, when it names one.
+fn destination(source: &Value) -> Option<Value> {
+    source.get("destination").filter(|d| d.is_object()).cloned()
 }
 
 /// The kind of a kit's source whose items a gear's route answers
@@ -308,6 +373,7 @@ pub fn endpoint_items(
                 due_at: text(&item["due_at"]),
                 overdue: item["overdue"].as_bool().unwrap_or(false),
                 record: item,
+                destination: destination(source),
             })
         })
         .collect()
@@ -363,20 +429,28 @@ const PULL_PAGES: usize = 10;
 pub struct Read {
     pub items: Vec<Item>,
     pub unread: Vec<String>,
+    /// Whether every pull request's accounts were matched to the
+    /// organization's members (`open-pull-requests`' `members_known`): when
+    /// not, "nothing waits on you" may mean "your account is not known".
+    pub members_known: bool,
+    /// How many workspaces were read.
+    pub workspaces: usize,
 }
 
-/// The sources the kits installed for the caller's organization bring
+/// `?organization_id=` for a read about `org`, nothing for the caller's home.
+fn scope(org: Option<&str>) -> Vec<(String, String)> {
+    org.map(|o| vec![("organization_id".to_string(), o.to_string())])
+        .unwrap_or_default()
+}
+
+/// The sources the kits installed for the organization bring
 /// (`GET /studio-kits/v1/inbox-sources`), each run as the caller with
 /// `"$me"` the caller, as items after the shell's own.
-async fn kit_sources(api: &Api, me: &str, spaces: &[(String, String)]) -> Read {
+async fn kit_sources(api: &Api, me: &str, org: Option<&str>, spaces: &[(String, String)]) -> Read {
     let mut unread = Vec::new();
-    let sources = match api
-        .get(
-            "/studio-kits/v1/inbox-sources",
-            &[("limit".to_string(), "200".to_string())],
-        )
-        .await
-    {
+    let mut q = scope(org);
+    q.push(("limit".to_string(), "200".to_string()));
+    let sources = match api.get("/studio-kits/v1/inbox-sources", &q).await {
         Ok(r) => r["items"].as_array().cloned().unwrap_or_default(),
         Err(e) => {
             unread.push(format!("kit sources: {}", e.0));
@@ -385,16 +459,18 @@ async fn kit_sources(api: &Api, me: &str, spaces: &[(String, String)]) -> Read {
     };
     let answers = futures_util::future::join_all(sources.iter().map(|source| async move {
         let answer = if source["kind"] == ENDPOINT {
-            // A gear's route, called as the person: it answers their items.
+            // A gear's route, called as the person: it answers their items,
+            // in the organization the Inbox is read for.
             match source["path"].as_str().filter(|p| endpoint_path_allowed(p)) {
-                Some(path) => api.get(path, &[]).await,
+                Some(path) => api.get(path, &scope(org)).await,
                 None => Err(crate::mcp::sdk::ToolError(
                     "the source names no route of Studio's own".into(),
                 )),
             }
         } else {
             let query = with_me(&source["query"], me);
-            api.post("/studio-domain-model/v1/query", &[], &query).await
+            api.post("/studio-domain-model/v1/query", &scope(org), &query)
+                .await
         };
         (source, answer)
     }))
@@ -418,14 +494,23 @@ async fn kit_sources(api: &Api, me: &str, spaces: &[(String, String)]) -> Read {
             )),
         }
     }
-    Read { items, unread }
+    Read {
+        items,
+        unread,
+        members_known: true,
+        workspaces: spaces.len(),
+    }
 }
 
-/// Every source of every workspace of the caller's organization, read as the
-/// caller (`me` is their subject id), the kits' sources among them.
-pub async fn read(api: &Api, me: &str) -> Read {
+/// Every source of every workspace of the organization, read as the caller
+/// (`me` is their subject id), the kits' sources among them. `org` is the
+/// organization on screen; `None` is the caller's home.
+pub async fn read(api: &Api, me: &str, org: Option<&str>) -> Read {
     let mut unread = Vec::new();
-    let spaces = match api.get("/studio-organizations/v1/rollups", &[]).await {
+    let spaces = match api
+        .get("/studio-organizations/v1/rollups", &scope(org))
+        .await
+    {
         Ok(r) => workspaces(&r),
         Err(e) => {
             unread.push(format!("workspaces: {}", e.0));
@@ -440,6 +525,7 @@ pub async fn read(api: &Api, me: &str) -> Read {
         let reviews = api.get("/studio-documents/v1/review-requests", &q).await;
         let mut pulls: Vec<Value> = Vec::new();
         let mut pulls_failed = None;
+        let mut known = true;
         let mut offset = 0usize;
         for _ in 0..PULL_PAGES {
             let mut pq = q.clone();
@@ -451,6 +537,7 @@ pub async fn read(api: &Api, me: &str) -> Read {
             {
                 Ok(page) => {
                     let got = page["items"].as_array().cloned().unwrap_or_default();
+                    known &= page["members_known"].as_bool().unwrap_or(true);
                     let total = page["total"].as_u64().unwrap_or(0);
                     offset += got.len();
                     let done = got.is_empty() || offset as u64 >= total;
@@ -465,12 +552,14 @@ pub async fn read(api: &Api, me: &str) -> Read {
                 }
             }
         }
-        (id, name, reviews, pulls, pulls_failed)
+        (id, name, reviews, pulls, pulls_failed, known)
     }))
     .await;
+    let mut members_known = true;
     let mut reviews_all = Vec::new();
     let mut pulls_all = Vec::new();
-    for (id, name, reviews, pulls, failed) in per {
+    for (id, name, reviews, pulls, failed, known) in per {
+        members_known &= known;
         // A backend without review requests answers 404: there are none.
         let reviews = match reviews {
             Ok(r) => r["items"].as_array().cloned().unwrap_or_default(),
@@ -483,13 +572,31 @@ pub async fn read(api: &Api, me: &str) -> Read {
         pulls_all.extend(items_of(id, name, Vec::new(), pulls));
     }
     reviews_all.extend(pulls_all);
+    // The person's failed runs, in the organization's tenant.
+    let mut rq = vec![
+        ("state".to_string(), "failed".to_string()),
+        ("limit".to_string(), "200".to_string()),
+    ];
+    if let Some(org) = org {
+        rq.push(("tenant".to_string(), org.to_string()));
+    }
+    match api.get("/studio-tasks/v1/runs", &rq).await {
+        Ok(page) => reviews_all.extend(failed_run_items(
+            page["items"].as_array().cloned().unwrap_or_default(),
+            me,
+            OffsetDateTime::now_utc(),
+        )),
+        Err(e) => unread.push(format!("{FAILED_RUNS}: {}", e.0)),
+    }
     // What the installed kits bring (ADR-0068 §6), after the shell's own.
-    let kits = kit_sources(api, me, &spaces).await;
+    let kits = kit_sources(api, me, org, &spaces).await;
     reviews_all.extend(kits.items);
     unread.extend(kits.unread);
     Read {
         items: reviews_all,
         unread,
+        members_known,
+        workspaces: spaces.len(),
     }
 }
 

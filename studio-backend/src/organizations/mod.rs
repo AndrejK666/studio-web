@@ -11,7 +11,9 @@
 //! that those three are written by one operation, in an order that can be
 //! resumed (see `service`).
 
+mod access_grants;
 mod creation;
+mod events;
 pub mod logo;
 mod mcp;
 mod metrics;

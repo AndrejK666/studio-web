@@ -2873,6 +2873,23 @@ impl EnvironmentService {
         Ok(out)
     }
 
+    /// The deploys of `org` waiting for a decision, oldest first, when the
+    /// caller is one who decides them (an organization administrator, or
+    /// whoever holds the environments' manage privilege); empty for anybody
+    /// else. The Releases kit's Inbox source: Approve / Decline answer it
+    /// (`POST /deployments/{deployment_id}/decisions`).
+    pub async fn deploys_awaiting_approval(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> Result<Vec<Deployment>> {
+        if !self.may_manage(ctx, org).await {
+            return Ok(Vec::new());
+        }
+        let all = self.deployments(ctx, org, None, None).await?;
+        Ok(awaiting_approval(&all).into_iter().cloned().collect())
+    }
+
     /// The kit's Inbox source `sign-in-expires`: the caller's own Research
     /// sign-in when it runs out within [`RESEARCH_SIGN_IN_WARN_DAYS`] or has
     /// run out (its access key lasts the connector's key lifetime from the
@@ -3790,6 +3807,16 @@ fn sign_in_due(
 /// The Research deploys `me` asked for whose newest attempt in their
 /// environment failed, newest first. Previews are left out: Research takes
 /// none.
+/// The deploys waiting for a decision, oldest first: the longest wait leads.
+fn awaiting_approval(all: &[Deployment]) -> Vec<&Deployment> {
+    let mut out: Vec<&Deployment> = all
+        .iter()
+        .filter(|d| d.state == DeploymentState::AwaitingApproval)
+        .collect();
+    out.sort_by(|a, b| a.requested_at.cmp(&b.requested_at));
+    out
+}
+
 fn failed_research_deploys<'d>(all: &'d [Deployment], me: &str) -> Vec<&'d Deployment> {
     let mut newest: BTreeMap<(Uuid, Uuid), &Deployment> = BTreeMap::new();
     for d in all
