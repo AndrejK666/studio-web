@@ -164,10 +164,15 @@ pub use crate::domain_model::port::kit_type_gts;
 
 /// The `kit.json` of the built-in kits that bring more than a screen: a
 /// model, an Inbox source, MCP tools. Compiled in, read like any other.
-const BUILTIN_MANIFESTS: &[(&str, &str)] = &[(
-    "project-lifecycle",
-    include_str!("builtin/project-lifecycle.kit.json"),
-)];
+const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
+    (
+        "project-lifecycle",
+        include_str!("builtin/project-lifecycle.kit.json"),
+    ),
+    // `report` and the organization's Reports tab, moved out of the core
+    // (ADR-0070 phase 5): declared with their existing ids.
+    ("org-reports", include_str!("builtin/org-reports.kit.json")),
+];
 
 /// Built-in kit `slug`'s `kit.json`, when it has one.
 pub fn builtin_manifest(slug: &str) -> Option<KitManifest> {

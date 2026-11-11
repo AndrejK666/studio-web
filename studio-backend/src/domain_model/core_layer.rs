@@ -78,6 +78,9 @@ pub struct CoreLayerChange {
     /// Core keys the running core no longer declares: left as they are, now
     /// the organization's (`type` or `type.field`).
     pub released: Vec<String>,
+    /// What moved to a kit: marked left by that kit until its overlay adopts
+    /// it (`type` or `type.field`, with the kit).
+    pub moved: Vec<(String, String)>,
 }
 
 impl Ontology {
@@ -93,6 +96,7 @@ impl Ontology {
     pub(in crate::domain_model) fn sync_core_layer(
         &mut self,
         seed: &[Value],
+        moves: &BTreeMap<String, String>,
     ) -> anyhow::Result<Option<CoreLayerChange>> {
         let running = contributions(seed);
         let previous: Option<Layer> = self
@@ -178,6 +182,7 @@ impl Ontology {
             }
         };
         layer.overrides.retain(|_, keys| !keys.is_empty());
+        change.moved = hand_over(&mut next, moves);
         next.doc[KEY] = json!(layer);
         change.updated = differing(self, &next);
         if next.document() == self.document() {
@@ -244,6 +249,52 @@ fn field_content(p: &Value) -> Value {
         }
     }
     p
+}
+
+/// Mark what moved out of the core with the kit it moved to, as if that kit
+/// had left it (`left_by`): dormant until the kit's overlay declares it, which
+/// adopts it with the organization's definition, its objects and its ids. A
+/// key a kit already carries, or that is already marked, is left alone; so is
+/// one the organization never had.
+fn hand_over(o: &mut Ontology, moves: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    let mut moved = Vec::new();
+    for (key, kit) in moves {
+        let mark = json!({"kit": kit, "version": "core", "at": "moved from the core"});
+        match key.split_once('.') {
+            None => {
+                let Ok(e) = o.entity_mut(key) else { continue };
+                if kit_declared(e) {
+                    continue;
+                }
+                if !e.get("meta").is_some_and(Value::is_object) {
+                    e["meta"] = json!({});
+                }
+                e["meta"]["left_by"] = mark;
+                moved.push((key.clone(), kit.clone()));
+            }
+            Some((entity, name)) => {
+                let Ok(e) = o.entity_mut(entity) else {
+                    continue;
+                };
+                let Some(p) = e
+                    .get_mut("properties")
+                    .and_then(Value::as_array_mut)
+                    .and_then(|ps| {
+                        ps.iter_mut()
+                            .find(|p| p.get("name").and_then(Value::as_str) == Some(name))
+                    })
+                else {
+                    continue;
+                };
+                if foreign_field(p) || !p.is_object() {
+                    continue;
+                }
+                p["left_by"] = mark;
+                moved.push((key.clone(), kit.clone()));
+            }
+        }
+    }
+    moved
 }
 
 /// Another layer owns this type's own attributes.
@@ -469,7 +520,7 @@ mod tests {
         let mut o = legacy(Ontology::load());
         let before = entities(&o);
         let change = o
-            .sync_core_layer(&Ontology::running_core())
+            .sync_core_layer(&Ontology::running_core(), &Ontology::running_moves())
             .unwrap()
             .unwrap();
         assert!(change.adopted);
@@ -481,12 +532,15 @@ mod tests {
             "the migration changes nothing it reads"
         );
         assert!(
-            o.sync_core_layer(&Ontology::running_core())
+            o.sync_core_layer(&Ontology::running_core(), &Ontology::running_moves())
                 .unwrap()
                 .is_none()
         );
 
-        let change = o.sync_core_layer(&next_core()).unwrap().unwrap();
+        let change = o
+            .sync_core_layer(&next_core(), &BTreeMap::new())
+            .unwrap()
+            .unwrap();
         assert!(!change.adopted);
         assert!(change.updated.contains(&"project".to_string()));
         assert_eq!(change.released, vec!["project.started_at".to_string()]);
@@ -500,7 +554,9 @@ mod tests {
         // Dropped by the core, kept for the objects that carry it.
         assert!(field(&o, "project", "started_at").is_some());
         assert!(
-            o.sync_core_layer(&next_core()).unwrap().is_none(),
+            o.sync_core_layer(&next_core(), &BTreeMap::new())
+                .unwrap()
+                .is_none(),
             "idempotent"
         );
     }
@@ -510,7 +566,7 @@ mod tests {
         let mut o = Ontology::load();
         assert!(o.has_core_layer());
         assert!(
-            o.sync_core_layer(&Ontology::running_core())
+            o.sync_core_layer(&Ontology::running_core(), &Ontology::running_moves())
                 .unwrap()
                 .is_none()
         );
@@ -539,7 +595,7 @@ mod tests {
         .unwrap();
         let before = entities(&o);
         let change = o
-            .sync_core_layer(&Ontology::running_core())
+            .sync_core_layer(&Ontology::running_core(), &Ontology::running_moves())
             .unwrap()
             .unwrap();
         assert!(change.adopted);
@@ -552,7 +608,9 @@ mod tests {
 
         // After the migration the organization removes a core field.
         o.remove_field("project", "target_at").unwrap();
-        o.sync_core_layer(&next_core()).unwrap().unwrap();
+        o.sync_core_layer(&next_core(), &BTreeMap::new())
+            .unwrap()
+            .unwrap();
         let description = field(&o, "project", "description").unwrap();
         assert_eq!(description["description"], "ours", "its edit stays");
         assert_eq!(
@@ -602,7 +660,9 @@ mod tests {
             },
         )
         .unwrap();
-        o.sync_core_layer(&next_core()).unwrap().unwrap();
+        o.sync_core_layer(&next_core(), &BTreeMap::new())
+            .unwrap()
+            .unwrap();
         assert_eq!(
             field(&o, "project", "key").unwrap()["description"],
             "The short key, next core"
@@ -614,7 +674,7 @@ mod tests {
         let mut o = legacy(Ontology::load());
         o.remove_field("project", "key").unwrap();
         let change = o
-            .sync_core_layer(&Ontology::running_core())
+            .sync_core_layer(&Ontology::running_core(), &Ontology::running_moves())
             .unwrap()
             .unwrap();
         assert!(change.adopted);
@@ -642,7 +702,9 @@ mod tests {
             "description",
             json!("the kit's"),
         );
-        o.sync_core_layer(&next_core()).unwrap().unwrap();
+        o.sync_core_layer(&next_core(), &BTreeMap::new())
+            .unwrap()
+            .unwrap();
         assert_eq!(
             field(&o, "project", "key").unwrap()["description"],
             "the gear's"
@@ -664,13 +726,23 @@ mod tests {
         o.mark_uploaded("product model");
         o.add_studio_types();
         let before = entities(&o);
+        let mut moved = o.clone();
         let change = o
-            .sync_core_layer(&Ontology::running_core())
+            .sync_core_layer(&Ontology::running_core(), &BTreeMap::new())
             .unwrap()
             .unwrap();
         assert!(change.adopted);
         assert_eq!(entities(&o), before);
-        o.sync_core_layer(&next_core()).unwrap().unwrap();
+        // The upload's `report` extends the kit's type (ADR-0070 §7,
+        // decision 9): handed over to org-reports, not taken as the core's.
+        moved
+            .sync_core_layer(&Ontology::running_core(), &Ontology::running_moves())
+            .unwrap()
+            .unwrap();
+        assert_eq!(moved.left_by("report"), Some("org-reports"));
+        o.sync_core_layer(&next_core(), &BTreeMap::new())
+            .unwrap()
+            .unwrap();
         assert!(field(&o, "project", "budget_code").is_some());
     }
 
@@ -691,7 +763,139 @@ mod tests {
         let mut o = Ontology::load();
         o.doc[KEY]["format"] = json!(2);
         let before = o.document().clone();
-        assert!(o.sync_core_layer(&next_core()).is_err());
+        assert!(o.sync_core_layer(&next_core(), &BTreeMap::new()).is_err());
         assert_eq!(o.document(), &before);
+    }
+
+    const REPORTS_KIT: &str = include_str!("../kit_registry/builtin/org-reports.kit.json");
+
+    fn reports_overlay() -> crate::domain_model::kit_overlay::KitOverlay {
+        let kit: Value = serde_json::from_str(REPORTS_KIT).unwrap();
+        serde_json::from_value(kit["model"].clone()).unwrap()
+    }
+
+    /// A model from before `report` left the core: the type and the
+    /// organization's Reports tab, as the old core wrote them.
+    fn with_old_report(mut o: Ontology) -> (Ontology, Vec<Value>) {
+        let kit: Value = serde_json::from_str(REPORTS_KIT).unwrap();
+        let mut report = kit["model"]["types"][0]["entity"].clone();
+        report["meta"]["kit"] = json!("org-reports");
+        let tab = json!({"name": "reports", "type": "report", "relation": "report",
+            "extends": "edge", "relationType": "shows", "relationLabel": "Reports",
+            "description": "A tab of the organization: what it shows."});
+        o.entities_mut().unwrap().push(report.clone());
+        o.entity_mut("organization").unwrap()["properties"]
+            .as_array_mut()
+            .unwrap()
+            .push(tab.clone());
+        let mut old_core = Ontology::running_core();
+        old_core.push(report);
+        old_core
+            .iter_mut()
+            .find(|e| e["id"] == "organization")
+            .unwrap()["properties"]
+            .as_array_mut()
+            .unwrap()
+            .push(tab);
+        (o, old_core)
+    }
+
+    #[test]
+    fn a_type_that_moved_to_a_kit_is_handed_over_and_the_kit_adopts_it_as_the_organization_had_it()
+    {
+        use crate::domain_model::kit_overlay::sync;
+        let moves = Ontology::running_moves();
+        assert_eq!(moves.get("report").map(String::as_str), Some("org-reports"));
+        assert!(
+            !Ontology::load().has_entity("report"),
+            "the core no longer has it"
+        );
+
+        // An organization already on the layer, whose old core had `report`;
+        // it changed the type's description.
+        let (mut layered, old_core) = with_old_report(legacy(Ontology::load()));
+        layered
+            .sync_core_layer(&old_core, &BTreeMap::new())
+            .unwrap();
+        layered.entity_mut("report").unwrap()["description"] = json!("ours");
+        // And a legacy organization that never had the layer.
+        let (legacy_org, _) = with_old_report(legacy(Ontology::load()));
+
+        for mut o in [layered, legacy_org] {
+            let change = o
+                .sync_core_layer(&Ontology::running_core(), &moves)
+                .unwrap()
+                .unwrap();
+            assert!(
+                change
+                    .moved
+                    .contains(&("report".into(), "org-reports".into()))
+            );
+            assert_eq!(
+                o.left_by("report"),
+                Some("org-reports"),
+                "dormant until the kit adopts it"
+            );
+            assert_eq!(
+                property(&o, "organization", "reports").unwrap()["left_by"]["kit"],
+                "org-reports"
+            );
+            let fields_before = o.entity("report").unwrap()["properties"].clone();
+            let description = o.entity("report").unwrap()["description"].clone();
+
+            sync(
+                &mut o,
+                "org-reports",
+                "1",
+                Some(&reports_overlay()),
+                &|_| true,
+            )
+            .unwrap();
+            assert_eq!(o.left_by("report"), None, "adopted");
+            let report = o.entity("report").unwrap();
+            assert_eq!(report["meta"]["origin"], "kit");
+            assert_eq!(report["meta"]["kit"], "org-reports");
+            assert_eq!(report["meta"]["gts"], "gts.cf.studio.domain.report.v1~");
+            assert_eq!(
+                report["properties"], fields_before,
+                "the organization's fields stay"
+            );
+            assert_eq!(report["description"], description);
+            let tab = property(&o, "organization", "reports").unwrap();
+            assert!(tab.get("left_by").is_none());
+            assert_eq!(tab["kit"], "org-reports");
+            assert_eq!(tab["relationType"], "shows");
+            // The next start finds it the kit's and hands nothing over again.
+            assert!(
+                o.sync_core_layer(&Ontology::running_core(), &moves)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_organization_gets_the_moved_type_whole_from_its_kit_and_loses_it_with_the_kit() {
+        use crate::domain_model::kit_overlay::sync;
+        let mut o = Ontology::load();
+        sync(
+            &mut o,
+            "org-reports",
+            "1",
+            Some(&reports_overlay()),
+            &|_| false,
+        )
+        .unwrap();
+        let kit: Value = serde_json::from_str(REPORTS_KIT).unwrap();
+        let written = &kit["model"]["types"][0]["entity"];
+        let report = o.entity("report").unwrap();
+        assert_eq!(report["properties"], written["properties"]);
+        assert_eq!(report["bucket"], written["bucket"]);
+        assert_eq!(report["meta"]["kit"], "org-reports");
+        assert!(property(&o, "organization", "reports").is_some());
+        // Without objects, uninstalling takes it away: absent.
+        sync(&mut o, "org-reports", "1", None, &|_| false).unwrap();
+        assert!(!o.has_entity("report"));
+        assert!(property(&o, "organization", "reports").is_none());
     }
 }

@@ -843,7 +843,10 @@ impl DomainModelService {
     /// stored model as it is, on the legacy additive repair, so nothing
     /// changes silently. Answers the number of types changed.
     pub async fn ensure_studio_types(&self, ctx: &SecurityContext) -> anyhow::Result<usize> {
-        match self.sync_core_layer(ctx, &Ontology::running_core()).await {
+        match self
+            .sync_core_layer(ctx, &Ontology::running_core(), &Ontology::running_moves())
+            .await
+        {
             Ok(change) => Ok(change.map_or(0, |c| c.updated.len())),
             Err(e) => {
                 warn!(
@@ -903,6 +906,7 @@ impl DomainModelService {
         &self,
         ctx: &SecurityContext,
         core: &[Value],
+        moves: &std::collections::BTreeMap<String, String>,
     ) -> anyhow::Result<Option<super::ontology::CoreLayerChange>> {
         self.ensure_persisted(ctx).await?;
         for attempt in 0..EDIT_ATTEMPTS {
@@ -922,7 +926,7 @@ impl DomainModelService {
                 );
             }
             let mut next = (*current).clone();
-            let Some(change) = next.sync_core_layer(core)? else {
+            let Some(change) = next.sync_core_layer(core, moves)? else {
                 return Ok(None);
             };
             let (op, patch, undo) = if change.adopted {
@@ -4032,7 +4036,7 @@ mod tests {
 
         let next = DomainModelService::new(store.clone());
         let refused = next
-            .sync_core_layer(&ctx, &Ontology::running_core())
+            .sync_core_layer(&ctx, &Ontology::running_core(), &Ontology::running_moves())
             .await
             .unwrap_err()
             .to_string();

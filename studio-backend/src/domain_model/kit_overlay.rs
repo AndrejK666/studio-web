@@ -69,6 +69,21 @@ pub struct KitOverlay {
     pub tabs: Vec<OverlayTab>,
     #[serde(default)]
     pub lifecycles: Vec<OverlayLifecycle>,
+    /// Fields, relations and tabs that move out of the core into this kit
+    /// (ADR-0070 phase 5), each as the model writes it, so an organization
+    /// reads them exactly as before: added as written, with the kit's marks.
+    #[serde(default)]
+    pub properties: Vec<OverlayProperty>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OverlayProperty {
+    /// The type it is on.
+    pub on: String,
+    /// The property as the model writes it: `name`, `type`, and for a
+    /// relation or a tab `relation`, `relationType`, `extends: edge`, ...
+    pub property: Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +112,14 @@ pub struct OverlayType {
     pub bucket: Option<String>,
     #[serde(default)]
     pub fields: Vec<TypeField>,
+    /// The type's whole definition as Studio's model writes it, for a type
+    /// that moves out of the core into this kit (ADR-0070 phase 5): needs
+    /// `id`. Where the model lacks the type it is added as written, with the
+    /// kit's marks; where the model has it (an organization that had it from
+    /// the core), the organization's definition stays and only the marks
+    /// change, as for any declared type.
+    #[serde(default)]
+    pub entity: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,6 +299,22 @@ pub fn validate(slug: &str, o: &KitOverlay) -> Result<(), KitModelError> {
                 t.name
             ));
         }
+        if let Some(entity) = &t.entity {
+            let Some(id) = &t.id else {
+                return bad(format!(
+                    "type `{}`: a whole `entity` definition needs the `id` it keeps",
+                    t.name
+                ));
+            };
+            if entity.get("id").and_then(Value::as_str) != Some(id.as_str())
+                || !entity.get("properties").is_some_and(Value::is_array)
+            {
+                return bad(format!(
+                    "type `{}`: `entity` must be a model entity with the id `{id}` and its properties",
+                    t.name
+                ));
+            }
+        }
         if types.contains(&t.name) {
             return bad(format!("type `{}` is declared twice", t.name));
         }
@@ -310,6 +349,15 @@ pub fn validate(slug: &str, o: &KitOverlay) -> Result<(), KitModelError> {
         props.push(key);
         Ok(())
     };
+    for p in &o.properties {
+        let Some(name) = p.property.get("name").and_then(Value::as_str) else {
+            return bad(format!("a moved property on `{}` has no name", p.on));
+        };
+        if p.property.get("type").and_then(Value::as_str).is_none() {
+            return bad(format!("moved property `{}.{name}` has no type", p.on));
+        }
+        add(&p.on, name)?;
+    }
     for f in &o.fields {
         if f.type_name.trim().is_empty() {
             return bad(format!("field `{}.{}` has no type", f.on, f.name));
@@ -528,6 +576,18 @@ pub fn sync(
                     .map(str::to_owned)
             })
             .unwrap_or_else(|| "planning".into());
+        if let Some(entity) = &t.entity {
+            let mut want = entity.clone();
+            if !want.get("meta").is_some_and(Value::is_object) {
+                want["meta"] = json!({});
+            }
+            want["meta"]["origin"] = json!(ORIGIN_KIT);
+            want["meta"]["kit"] = json!(slug);
+            want["meta"]["kit_version"] = json!(version);
+            want["meta"]["gts"] = json!(t.gts(slug));
+            want_types.push((id.clone(), want));
+            continue;
+        }
         want_types.push((
             id.clone(),
             json!({
@@ -577,6 +637,15 @@ pub fn sync(
                 }),
             ));
         }
+    }
+    for p in &overlay.properties {
+        let name = p
+            .property
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        want_props.push((resolve(&p.on)?, name, p.property.clone()));
     }
     for f in &overlay.fields {
         want_props.push((

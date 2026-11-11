@@ -22,7 +22,7 @@
 // `effective_properties`, `declared_relations` — and `query.rs`'s rule for
 // which relation a name means on a type. Change them together.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,6 +32,39 @@ const OUTPUT = resolve(ROOT, "studio-frontend-prototype/src-app/mfe_packages/sha
 
 const doc = JSON.parse(readFileSync(INPUT, "utf8"));
 const entities = doc.entities ?? [];
+
+// Types that moved out of the core into a built-in kit (ADR-0070 phase 5) are
+// still every base-kit organization's: their whole definitions come from the
+// kits' `kit.json`, with the tabs the kits put on the levels.
+const KITS = resolve(ROOT, "studio-backend/src/kit_registry/builtin");
+for (const file of readdirSync(KITS).filter((f) => f.endsWith(".kit.json")).sort()) {
+  const model = JSON.parse(readFileSync(resolve(KITS, file), "utf8")).model ?? {};
+  for (const t of model.types ?? []) {
+    if (t.entity && !entities.some((e) => e.id === t.entity.id)) entities.push(t.entity);
+  }
+  for (const { on, property } of model.properties ?? []) {
+    const level = entities.find((e) => e.id === on);
+    if (!level || (level.properties ?? []).some((q) => q.name === property.name)) continue;
+    level.properties = [...(level.properties ?? []), property];
+  }
+  for (const tab of model.tabs ?? []) {
+    const level = entities.find((e) => e.id === tab.level);
+    const target = entities.find((e) => e.id === tab.target);
+    if (!level || !target || (level.properties ?? []).some((q) => q.name === tab.name)) continue;
+    level.properties = [
+      ...(level.properties ?? []),
+      {
+        name: tab.name,
+        type: target.id,
+        relation: target.id,
+        extends: "edge",
+        relationType: "shows",
+        relationLabel: tab.label,
+        description: `A tab of the ${tab.level}: what it shows.`,
+      },
+    ];
+  }
+}
 const byId = new Map(entities.map((e) => [e.id, e]));
 
 const normalize = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");

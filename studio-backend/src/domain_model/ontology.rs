@@ -112,6 +112,18 @@ impl Ontology {
     pub(in crate::domain_model) fn running_core() -> Vec<Value> {
         studio_types()
     }
+
+    /// What has moved out of the running core into a kit (ADR-0070 phase
+    /// 5): a type by its id, or a field as `type.field`, to the kit's slug.
+    pub(in crate::domain_model) fn running_moves() -> std::collections::BTreeMap<String, String> {
+        studio_model()
+            .get("moved_to_kits")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+            .collect()
+    }
 }
 
 impl Ontology {
@@ -123,7 +135,7 @@ impl Ontology {
         };
         // A new organization starts on the running core with nothing of its
         // own: there is no legacy model to migrate.
-        o.sync_core_layer(&studio_types())
+        o.sync_core_layer(&studio_types(), &Self::running_moves())
             .expect("Studio's own model composes onto itself");
         o
     }
@@ -1763,7 +1775,6 @@ mod tests {
             "project.issues -> finding",
             "project.specs -> document",
             "project.tests -> check",
-            "organization.reports -> report",
             "repository.hosts -> pull-request",
             "actor.authors -> comment",
             "kit.introduces_type_22 -> finding",
@@ -1803,7 +1814,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!((core, kit, retired), (44, 19, 1));
+        assert_eq!((core, kit, retired), (44, 18, 1));
     }
 
     #[test]
