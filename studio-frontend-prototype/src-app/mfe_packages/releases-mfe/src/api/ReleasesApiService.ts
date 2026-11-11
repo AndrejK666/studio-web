@@ -27,6 +27,15 @@ import type {
   ProjectTargets,
   TaskRun,
   UserPage,
+  DeployEnvironment,
+  DeployEnvironmentInput,
+  DeploymentLogs,
+  EnvironmentBuild,
+  MappingPlanSummary,
+  MyResearchProjects,
+  ProjectPath,
+  ResearchHardware,
+  StudioBuildStarted,
 } from './types';
 
 const ENV = '/studio-environments/v1';
@@ -65,6 +74,55 @@ export class ReleasesApiService extends BaseApiService {
   /** Where the project's product can be deployed: the environments, the bindings, the secret keys. */
   readonly targets = this.protocol(RestEndpointProtocol).queryWith<ProjectTargets, ProjectParams>(
     ({ projectId }) => `${ENV}/targets?${project(projectId)}`
+  );
+
+  /** Where the project stands from its product to running, one read (#1050). */
+  readonly projectPath = this.protocol(RestEndpointProtocol).queryWith<ProjectPath, ProjectParams>(
+    ({ projectId }) => `${ENV}/project-path?${project(projectId)}`
+  );
+
+  /** One deploy, with its cause when it failed. */
+  readonly deployment = this.protocol(RestEndpointProtocol).queryWith<Deployment, ProjectParams & { id: string }>(
+    ({ projectId, id }) => `${ENV}/deployments/${enc(id)}?${project(projectId)}`
+  );
+
+  /** The end of a deploy's logs: its containers', or its Research services'. */
+  readonly deploymentLogs = this.protocol(RestEndpointProtocol).queryWith<
+    DeploymentLogs,
+    { organizationId: string; id: string }
+  >(({ organizationId, id }) => `${ENV}/deployments/${enc(id)}/logs?${org(organizationId)}`);
+
+  /** One build as Studio keeps it, with its cause when it failed. */
+  readonly build = this.protocol(RestEndpointProtocol).queryWith<EnvironmentBuild, ProjectParams & { buildId: string }>(
+    ({ projectId, buildId }) => `${ENV}/builds/${enc(buildId)}?${project(projectId)}`
+  );
+
+  /** Build the product in an environment: its cluster, or Constructor Research. */
+  startBuild(projectId: string) {
+    return this.rest.mutation<StudioBuildStarted, { environment_id: string }>('POST', `${ENV}/builds?${project(projectId)}`);
+  }
+
+  /** The caller's own Research projects (#1053); refused without the kit or a sign-in. */
+  readonly myResearchProjects = this.protocol(RestEndpointProtocol).queryWith<MyResearchProjects, ProjectParams>(
+    ({ projectId }) => `${ENV}/research/my-projects?${project(projectId)}`
+  );
+
+  readonly myResearchHardware = this.protocol(RestEndpointProtocol).queryWith<
+    { items: ResearchHardware[]; total: number },
+    ProjectParams & { researchProject: string }
+  >(({ projectId, researchProject }) => `${ENV}/research/my-projects/${enc(researchProject)}/hardware?${project(projectId)}`);
+
+  /** Add one of the project's own environments: a Research one runs on the caller's sign-in. */
+  createProjectEnvironment(projectId: string) {
+    return this.rest.mutation<DeployEnvironment, DeployEnvironmentInput>(
+      'POST',
+      `${ENV}/project-environments?${project(projectId)}`
+    );
+  }
+
+  /** What the project's specifications need (studio-spec-mapping): the Specs step reads its size. */
+  readonly specPlan = this.protocol(RestEndpointProtocol).queryWith<MappingPlanSummary, ProjectParams>(
+    ({ projectId }) => `/studio-spec-mapping/v1/plan?${project(projectId)}`
   );
 
   /** The project's deploys, newest first. */

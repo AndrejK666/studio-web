@@ -441,6 +441,125 @@ export interface Deployment {
   outcome?: string | null;
   /** A preview (ADR-0055); absent for a deploy of what runs there. */
   preview?: DeploymentPreview | null;
+  /** It runs in Constructor Research (ADR-0049); absent from an older server. */
+  research?: boolean;
+  /** Where the application answers: a Research application's public address, a preview's host. */
+  public_url?: string | null;
+  /** Why it failed and what fixes it (#1054); only for a failed deploy. */
+  cause?: FailureCause | null;
+}
+
+/** One thing to do about a failure (#1054). */
+export interface FailureAction {
+  /** `open_gear` | `retry` | `provide_secret` | `choose_hardware` |
+   *  `ask_organization` | `sign_in` | `check_environment` | `open_log`. */
+  kind: string;
+  label: string;
+  gear?: string | null;
+  key?: string | null;
+}
+
+/** Why a build or a deploy failed, in words a person acts on (#1054). */
+export interface FailureCause {
+  /** `GEAR_BUILD_FAILED`, `SECRET_MISSING`, `QUOTA_OR_HARDWARE_LIMIT`,
+   *  `RESEARCH_SIGN_IN_EXPIRED`, `IMAGE_PULL_FAILED`, `CLUSTER_UNREACHABLE`,
+   *  `CONNECTION_UNREADABLE`, `APP_CRASHED`, `UNKNOWN`. */
+  code: string;
+  summary: string;
+  gear?: string | null;
+  key?: string | null;
+  lines: string[];
+  actions: FailureAction[];
+}
+
+/** What a path step's button does, and on what (#1050). */
+export interface PathAction {
+  kind: string;
+  label: string;
+  build_id?: string | null;
+  environment_id?: string | null;
+  deployment_id?: string | null;
+  key?: string | null;
+  gear?: string | null;
+  url?: string | null;
+}
+
+export interface PathCheck {
+  /** `ENVIRONMENT` | `PROFILE_BOUND` | `SECRET` | `RESEARCH_SIGN_IN`. */
+  code: string;
+  text: string;
+  done: boolean;
+  action?: PathAction | null;
+}
+
+export type PathStepId = "specs" | "product" | "build" | "image" | "environment" | "running";
+export type PathStepState = "done" | "active" | "failed" | "blocked" | "next" | "later";
+
+export interface PathStep {
+  id: PathStepId;
+  state: PathStepState;
+  reason: string;
+  checklist: PathCheck[];
+  action?: PathAction | null;
+  cause?: FailureCause | null;
+  build_id?: string | null;
+  environment_id?: string | null;
+  deployment_id?: string | null;
+  url?: string | null;
+}
+
+/** The caller's own Constructor Research sign-in. */
+export interface ResearchSignIn {
+  state: "signed_in" | "runs_out" | "expired" | "none";
+  days_left?: number | null;
+  connection_id?: string | null;
+}
+
+/** `GET /studio-environments/v1/project-path` (#1050). */
+export interface ProjectPath {
+  organization_id: string;
+  steps: PathStep[];
+  current: PathStepId;
+  environment_id?: string | null;
+  running_in: { environment_id: string; environment_name: string; url?: string | null }[];
+  /** Whether the Constructor Research kit applies: without it no Research target is offered. */
+  research_kit: boolean;
+  research?: ResearchSignIn | null;
+}
+
+/** The caller's own Research projects, and the connection they were read with (#1053). */
+export interface MyResearchProjects {
+  connection_id: string;
+  items: ResearchProject[];
+  total: number;
+}
+
+/** `POST /studio-environments/v1/builds`: a build Studio started. */
+export interface StudioBuildStarted {
+  build_id: string;
+  run_id: string;
+  namespace: string;
+}
+
+/** `GET /studio-environments/v1/builds/{id}`: one build as Studio keeps it. */
+export interface EnvironmentBuild {
+  build_id: string;
+  where?: string | null;
+  status: string;
+  failure?: string | null;
+  failure_step?: string | null;
+  cause?: FailureCause | null;
+}
+
+/** The end of each container's log of a deployed release. */
+export interface DeploymentLogs {
+  containers: ContainerLog[];
+}
+
+/** The plan the spec mapping reads from the project's documents: only its size is read here. */
+export interface MappingPlanSummary {
+  items: unknown[];
+  total: number;
 }
 
 /** A release as its cluster reports it now. */

@@ -4,7 +4,13 @@
  * `product-releases` (ADR-0069 §5): how the project's product goes out.
  *
  *   - The header says where the product stands, read from the ladder
- *     (releaseStatus).
+ *     (releaseStatus), with Deploy to…: one dialog listing every target,
+ *     Constructor Research among them where its kit applies (#1053).
+ *   - The path to running (#1050): Specs → Product → Build → Image →
+ *     Environment → Running, each step's state, reason, checklist and one
+ *     action (ProjectPath.tsx); a failed step its cause (#1054).
+ *   - A deploy the address names (`&deployment=`, the Inbox's link) opens
+ *     by itself, with its cause and log (DeploymentDetail.tsx).
  *   - Then the steps, as tabs: Build, Deploy and History. It opens on the
  *     step that is next -- Build until something is published, then Deploy
  *     -- unless the member picked another for the project before.
@@ -27,8 +33,12 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import { useSharedProperty } from '@gears-frontx/react';
 import { Badge, Button, Skeleton, Tabs, TabsList, TabsTrigger } from '@gears-frontx/ui-kit';
-import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, isNotFound, useHostChrome } from '@constructor-studio/mfe-shared';
-import type { Deployment, ProjectTargets } from '../../api/types';
+import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, isNotFound, openScreen, useHostChrome } from '@constructor-studio/mfe-shared';
+import type { Deployment, PathAction, ProjectPath, ProjectTargets } from '../../api/types';
+import { deploymentFromSearch, pathSteps, type Intent, type SpecsSeen } from '../../model/path';
+import { DeployDialog } from './DeployDialog';
+import { DeploymentDetail } from './DeploymentDetail';
+import { ProjectPathView } from './ProjectPath';
 import { ideBuildsOf, type IdeBuild } from '../../model/builds';
 import { deploysHint } from '../../model/pipeline';
 import { deployableBuilds } from '../../model/project-deploys';
@@ -114,9 +124,24 @@ function ProjectReleases({ projectId, base }: { projectId: string; base: Release
   );
 }
 
+/** The deploy the address names, read once as the screen opens. */
+function addressedDeployment(): string | null {
+  try {
+    return deploymentFromSearch(window.location.search);
+  } catch {
+    return null;
+  }
+}
+
 function Releases({ projectId, onOrganization }: { projectId: string; onOrganization: (id: string) => void }) {
-  const { t } = useReleases();
+  const { t, bridge } = useReleases();
   const api = useApi();
+  const [path, setPath] = useState<ProjectPath | null>(null);
+  const [specs, setSpecs] = useState<SpecsSeen>('unavailable');
+  // Deploy to…: closed, or open on an environment or the Research target.
+  const [dialog, setDialog] = useState<{ environmentId: string | null; research: boolean } | null>(null);
+  // The deploy opened by itself: the address's, or one a step or a cause named.
+  const [shown, setShown] = useState<string | null>(addressedDeployment);
   const [targets, setTargets] = useState<ProjectTargets | null>(null);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [builds, setBuilds] = useState<IdeBuild[]>([]);
@@ -154,13 +179,25 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
         .fetch({ staleTime: 0 })
         .then((p) => ideBuildsOf(p.nodes ?? []))
         .catch(() => [] as IdeBuild[]),
+      // The path to running; an older backend has none and the screen goes on without it.
+      api
+        .projectPath({ projectId })
+        .fetch({ staleTime: 0 })
+        .catch(() => null),
+      api
+        .specPlan({ projectId })
+        .fetch({ staleTime: 0 })
+        .then((p): SpecsSeen => ({ count: p.total ?? p.items?.length ?? 0 }))
+        .catch((): SpecsSeen => 'unavailable'),
     ])
-      .then(([tg, d, b]) => {
+      .then(([tg, d, b, pt, sp]) => {
         if (!live) return;
         setNow(Date.now());
         setTargets(tg);
         setDeployments(d.items);
         setBuilds(b);
+        setPath(pt);
+        setSpecs(sp);
         onOrganization(tg.organization_id);
       })
       .catch((e: unknown) => {
@@ -184,6 +221,29 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   // What is next: build until something is published, then deploy it.
   const next: ReleaseTab | null = targets || unavailable || error ? (published === 0 ? 'build' : 'deploy') : null;
   const tab = picked && tabs.includes(picked) ? picked : next;
+
+  // What a path step's or a cause's button does here.
+  const onIntent = (intent: Intent, action: Partial<PathAction>) => {
+    switch (intent.kind) {
+      case 'screen':
+        openScreen(bridge, intent.route);
+        return;
+      case 'tab':
+        pick(intent.tab);
+        if (intent.tab === 'deploy' && action.environment_id) setOpen(action.environment_id);
+        return;
+      case 'deploy':
+        setDialog({ environmentId: intent.environmentId, research: intent.research });
+        return;
+      case 'deployment':
+        setShown(intent.id);
+        return;
+      case 'url':
+        window.open(intent.url, '_blank', 'noopener,noreferrer');
+        return;
+      default:
+    }
+  };
 
   const tabStatus = (x: ReleaseTab): string => {
     if (x === 'build') return published > 0 ? t.count('status_build_published', published) : t('status_build_none');
@@ -215,8 +275,33 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
             !error && <span className={styles.muted}>{t('reading')}</span>
           )}
         </div>
+        {targets && (
+          <Button size="sm" onClick={() => setDialog({ environmentId: null, research: false })} data-deploy-to>
+            {t('deploy_to')}
+          </Button>
+        )}
       </header>
       <p className={styles.about}>{t('about')}</p>
+      {shown && <DeploymentDetail key={shown} id={shown} onClose={() => setShown(null)} onIntent={onIntent} />}
+      {path && (
+        <ProjectPathView
+          steps={pathSteps(path, specs)}
+          current={path.current}
+          specsCount={specs === 'unavailable' ? null : specs.count}
+          onIntent={onIntent}
+        />
+      )}
+      {dialog && targets && (
+        <DeployDialog
+          environments={targets.environments.map((x) => x.environment)}
+          builds={builds}
+          path={path}
+          focus={dialog}
+          onClose={() => setDialog(null)}
+          onChanged={changed}
+          onIntent={onIntent}
+        />
+      )}
       {targets && published > 0 && (
         <NextLine
           hint={deploysHint({
