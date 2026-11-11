@@ -16,7 +16,7 @@ import type { SourceRow, SourcesTableRow, UploadsRow } from '../../../../model/s
 import type { SourceRowActions } from '../../../../shared/useSourceRowActions';
 import { useDayTime } from '../../../../shared/dayTime';
 import { useDaysAgo } from '../../../../shared/daysAgo';
-import { ActivitySparkline } from './ActivitySparkline';
+import { LazyActivitySparkline } from './LazyActivitySparkline';
 import { PROVIDER_ICONS } from '../../../../components/providerIcons';
 import { SourceRowMenu } from './SourceRowMenu';
 import styles from './SourcesSection.module.css';
@@ -178,7 +178,7 @@ const PullRequestsCell: React.FC<{
         <span className={styles.prOpen}>{t('prs_open', { count: open })}</span>
         <span className={styles.prMerged}>{t('prs_merged', { count: merged })}</span>
       </span>
-      <ActivitySparkline
+      <LazyActivitySparkline
         days={days}
         max={scale}
         series={t('chart_series')}

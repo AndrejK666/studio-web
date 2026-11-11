@@ -241,7 +241,25 @@ describe('the Specs cell', () => {
   });
 });
 
+/** The week's chart once its lazy chunk has arrived. */
+async function loadedChart(container: HTMLElement): Promise<HTMLElement> {
+  // The first test to ask transforms Recharts: well over waitFor's default second.
+  await waitFor(() => expect(container.querySelector('.recharts-wrapper')).not.toBeNull(), { timeout: 10_000 });
+  return container.querySelector('.recharts-wrapper') as HTMLElement;
+}
+
 describe('the Pull requests cell', () => {
+  it('keeps the chart box and its name while the chart loads', async () => {
+    const { container } = cell('pull_requests', sourceRow({ activity: WEEK }));
+    const name = 'Pull requests per day, oldest first: 0, 0, 1, 0, 0, 1, 0';
+
+    expect(container.querySelector('[data-sparkline-pending]')).not.toBeNull();
+    expect(screen.getByRole('img', { name })).toBeTruthy();
+    await waitFor(() => expect(container.querySelector('[data-sparkline-pending]')).toBeNull(), { timeout: 10_000 });
+    expect(container.querySelector('[data-chart]')).not.toBeNull();
+    expect(screen.getByRole('img', { name })).toBeTruthy();
+  });
+
   it('shows the open and merged counts beside the week', () => {
     cell('pull_requests', sourceRow({ activity: WEEK }));
 
@@ -261,7 +279,7 @@ describe('the Pull requests cell', () => {
       return { x: 0, y: 0, top: 0, left: 0, width: 96, height: 24, right: 96, bottom: 24 } as DOMRect;
     });
     const { container } = cell('pull_requests', sourceRow({ activity: WEEK }));
-    const chart = container.querySelector('.recharts-wrapper') as HTMLElement;
+    const chart = await loadedChart(container);
 
     // Seven bars across 96px: the fourth from the end is three days back.
     fireEvent.mouseMove(chart, { clientX: 48, clientY: 12 });
@@ -276,9 +294,10 @@ describe('the Pull requests cell', () => {
       x: 0, y: 0, top: 0, left: 0, width: 96, height: 24, right: 96, bottom: 24,
     } as DOMRect);
     const { container } = cell('pull_requests', sourceRow({ activity: WEEK }), root);
+    const chart = await loadedChart(container);
 
     fireEvent.pointerEnter(container.querySelector('[data-chart]') as HTMLElement);
-    fireEvent.mouseMove(container.querySelector('.recharts-wrapper') as HTMLElement, {
+    fireEvent.mouseMove(chart, {
       clientX: 94,
       clientY: 12,
     });
