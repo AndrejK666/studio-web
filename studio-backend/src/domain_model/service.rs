@@ -324,11 +324,22 @@ struct TenantModel {
     version: u64,
 }
 
+/// The type ids a registration carried, and the ones it pinned.
+type RegisteredTypes = (std::collections::BTreeSet<String>, Vec<String>);
+
 pub struct DomainModelService {
     store: Arc<dyn DomainStore>,
     /// One expensive registration flight per tenant, independent of other
     /// tenants. A cold screen can issue dozens of concurrent object reads.
     registration: Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
+    /// The type ids this process last registered for a tenant, and which of
+    /// them were pinned. A registration is a function of the type ids alone
+    /// (`gts::derived_node_schema` reads nothing else), so a model that comes
+    /// back with no type this set lacks needs no second one. That is the
+    /// common case: a reload after the head moved, a kit or core sync that
+    /// changed a field. Without it every reload re-registered the whole model,
+    /// which on studio-dev cost `/connections` about 1.4 s a request.
+    registered_types: Mutex<HashMap<Uuid, RegisteredTypes>>,
     /// One gear declaration written at a time per tenant. Cold reads after a
     /// start declare the same need together; racing they each claimed the
     /// same version, and all but one re-read the model and tried again.
@@ -374,6 +385,7 @@ impl DomainModelService {
         Self {
             store,
             registration: Mutex::new(HashMap::new()),
+            registered_types: Mutex::new(HashMap::new()),
             declaring: Mutex::new(HashMap::new()),
             policy: Arc::new(TenantOnly),
             tenants: Mutex::new(HashMap::new()),
@@ -1175,10 +1187,38 @@ impl DomainModelService {
                 return Ok(());
             }
             let (node_types, edge_types) = (ontology.node_types(), ontology.edge_types());
+            let wanted: std::collections::BTreeSet<String> = node_types
+                .iter()
+                .map(|t| t.type_id.clone())
+                .chain(edge_types.iter().map(|t| t.type_id.clone()))
+                .collect();
+            let known = self
+                .registered_types
+                .lock()
+                .map_err(|_| anyhow::anyhow!("domain registered-types lock poisoned"))?
+                .get(&tenant)
+                .filter(|(done, _)| wanted.is_subset(done))
+                .map(|(_, pinned)| pinned.clone());
+            if let Some(pinned) = known {
+                let mut tenants = self.tenants_lock()?;
+                if let Some(m) = tenants.get_mut(&tenant)
+                    && Arc::ptr_eq(&m.ontology, &ontology)
+                {
+                    m.registered = true;
+                    m.pinned = pinned;
+                    return Ok(());
+                }
+                continue;
+            }
             let pinned = self
                 .store
                 .register_types(ctx, &node_types, &edge_types)
                 .await?;
+            if let Ok(mut done) = self.registered_types.lock() {
+                let entry = done.entry(tenant).or_default();
+                entry.0.extend(wanted);
+                entry.1 = pinned.clone();
+            }
             let mut tenants = self.tenants_lock()?;
             if let Some(m) = tenants.get_mut(&tenant)
                 && Arc::ptr_eq(&m.ontology, &ontology)
@@ -3590,6 +3630,49 @@ mod tests {
         registration.await.unwrap();
         assert_eq!(store.registrations.load(Ordering::SeqCst), 2);
         assert!(service.tenants_lock().unwrap()[&ctx.subject_tenant_id()].registered);
+    }
+
+    /// What studio-dev did on every `/connections`: the head moved, the model
+    /// was reloaded with the same types, and the whole model was registered
+    /// again (with 55 refusals, one call each). A reload that brings no new
+    /// type must not register; one that does, must.
+    #[tokio::test]
+    async fn a_reload_with_the_same_types_does_not_register_them_again() {
+        use std::sync::atomic::Ordering;
+        let store = Arc::new(TenantScopedStore::default());
+        let service = Arc::new(DomainModelService::new(store.clone()));
+        let ctx = ctx_for(1);
+        service.ensure_types(&ctx).await.unwrap();
+        assert_eq!(store.registrations.load(Ordering::SeqCst), 1);
+
+        // A reload: the same model, a new `Arc`, and `registered` cleared.
+        {
+            let mut tenants = service.tenants_lock().unwrap();
+            let m = tenants.get_mut(&ctx.subject_tenant_id()).unwrap();
+            m.ontology = Arc::new((*m.ontology).clone());
+            m.registered = false;
+        }
+        service.ensure_types(&ctx).await.unwrap();
+        assert_eq!(store.registrations.load(Ordering::SeqCst), 1);
+        assert!(service.tenants_lock().unwrap()[&ctx.subject_tenant_id()].registered);
+
+        // A model with a type the last registration did not carry.
+        {
+            let mut tenants = service.tenants_lock().unwrap();
+            let m = tenants.get_mut(&ctx.subject_tenant_id()).unwrap();
+            let mut grown = (*m.ontology).clone();
+            grown
+                .add_entity(EntitySpec {
+                    id: "brand-new".into(),
+                    name: "Brand new".into(),
+                    ..Default::default()
+                })
+                .unwrap();
+            m.ontology = Arc::new(grown);
+            m.registered = false;
+        }
+        service.ensure_types(&ctx).await.unwrap();
+        assert_eq!(store.registrations.load(Ordering::SeqCst), 2);
     }
 
     /// A store that keys everything by tenant, like the real graph does.
