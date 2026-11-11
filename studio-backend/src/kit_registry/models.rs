@@ -190,3 +190,12 @@ impl KitInstaller {
             .find(|k| k.kit_slug == slug))
     }
 }
+
+#[cfg(test)]
+impl KitInstaller {
+    /// Import kits' models through `port`: for a test outside this gear,
+    /// which cannot name [`ModelPort`].
+    pub fn with_model_port(self, port: Arc<dyn DomainObjects>) -> Self {
+        self.with_models(Arc::new(FixedModels(port)))
+    }
+}

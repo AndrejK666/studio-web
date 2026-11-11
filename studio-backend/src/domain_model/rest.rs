@@ -2350,3 +2350,7 @@ pub fn register_routes(
         None => router,
     }
 }
+
+#[cfg(test)]
+#[path = "kit_lifecycle_tests.rs"]
+mod kit_lifecycle_tests;

@@ -3484,6 +3484,34 @@ impl DomainModelService {
 }
 
 #[cfg(test)]
+impl DomainModelService {
+    /// Store `doc` as this tenant's model the way a build before the core
+    /// layer (ADR-0070 §5) left it: every type as an `object_type` node and
+    /// the model node, version 0. A new service over the same store is then
+    /// the next process starting on a legacy organization.
+    pub(in crate::domain_model) async fn store_legacy_for_test(
+        &self,
+        ctx: &SecurityContext,
+        doc: Value,
+    ) -> anyhow::Result<()> {
+        let legacy = Ontology::from_value(doc).map_err(|e| anyhow::anyhow!("{e}"))?;
+        anyhow::ensure!(!legacy.has_core_layer(), "a legacy model has no core layer");
+        self.tenants_lock()?.insert(
+            ctx.subject_tenant_id(),
+            TenantModel {
+                ontology: Arc::new(legacy),
+                persisted: false,
+                registered: false,
+                pinned: Vec::new(),
+                version: 0,
+            },
+        );
+        self.sync_model(ctx).await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     //! The model is per tenant and lives in the store, so the two things worth
     //! asserting offline are that a tenant's edit stays its own and that a
