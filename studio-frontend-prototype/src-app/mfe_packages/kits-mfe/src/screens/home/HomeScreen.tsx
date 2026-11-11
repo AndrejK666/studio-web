@@ -15,6 +15,7 @@ import {
 import { KitsApiService, type CatalogKit, type InstalledKits, type KitDetail } from '../../api/KitsApiService';
 import { KitDetailView, contentsSummary } from './KitDetailView';
 import { AddFromRepository } from './AddFromRepository';
+import { IdeKits } from './IdeKits';
 import { useHomeTranslations } from '../../i18n';
 import styles from './HomeScreen.module.css';
 
@@ -346,6 +347,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
           ))}
         </ul>
       )}
+      {/* What the project's IDE has: the official kits `cfs` writes into its checkouts. */}
+      {scope === 'project' && projectId && !open && <IdeKits projectId={projectId} t={t} />}
     </div>
   );
 };

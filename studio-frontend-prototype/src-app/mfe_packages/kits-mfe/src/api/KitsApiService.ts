@@ -6,6 +6,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
+import type { KitInstallation, ProjectRepository } from '../model/ideKits';
 
 export const KITS_API_BASE_URL = '/cf/studio-kits/v1';
 
@@ -232,6 +233,52 @@ export class KitsApiService extends BaseApiService {
     return this.protocol(RestEndpointProtocol).mutation<void, void>(
       'DELETE',
       `/organization-shelf/${encodeURIComponent(slug)}?${org(organizationId)}`
+    );
+  }
+
+  /* ── The project's IDE (the installer `cfs` runs in its session) ── */
+
+  /** The kits `cfs` can install: the official shelf only (the IDE allow-lists them). */
+  readonly ideCatalog = this.protocol(RestEndpointProtocol).query<CatalogPage>('/catalog?shelf=official&limit=200');
+
+  readonly ideInstallations = this.protocol(RestEndpointProtocol).queryWith<
+    { items: KitInstallation[]; total: number },
+    { projectId: string }
+  >(({ projectId }) => `/projects/${encodeURIComponent(projectId)}/installations?limit=200`);
+
+  /** 503 while the project has no running IDE session. */
+  readonly ideRepositories = this.protocol(RestEndpointProtocol).queryWith<
+    { items: ProjectRepository[]; total: number },
+    { projectId: string }
+  >(({ projectId }) => `/projects/${encodeURIComponent(projectId)}/repositories?limit=200`);
+
+  requestIdeInstallation(projectId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<
+      KitInstallation,
+      { kit_slug: string; version: string; install_mode: 'copy'; scope: 'project' | 'all-repositories' }
+    >('POST', `/projects/${encodeURIComponent(projectId)}/installations`);
+  }
+
+  /** Writes the kit into one repository through the running IDE. */
+  materializeIdeInstallation(projectId: string, slug: string) {
+    return this.protocol(RestEndpointProtocol).mutation<KitInstallation, { repository_id?: string }>(
+      'POST',
+      `/projects/${encodeURIComponent(projectId)}/installations/${encodeURIComponent(slug)}/materialize`
+    );
+  }
+
+  /** Writes the kit wherever its scope says; repositories already at the version are skipped. 503 without a session. */
+  reconcileIdeInstallation(projectId: string, slug: string) {
+    return this.protocol(RestEndpointProtocol).mutation<KitInstallation, Record<string, never>>(
+      'POST',
+      `/projects/${encodeURIComponent(projectId)}/installations/${encodeURIComponent(slug)}/reconcile`
+    );
+  }
+
+  removeIdeInstallation(projectId: string, slug: string) {
+    return this.protocol(RestEndpointProtocol).mutation<void, void>(
+      'DELETE',
+      `/projects/${encodeURIComponent(projectId)}/installations/${encodeURIComponent(slug)}`
     );
   }
 

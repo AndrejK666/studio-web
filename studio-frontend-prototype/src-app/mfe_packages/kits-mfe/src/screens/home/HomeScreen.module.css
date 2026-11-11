@@ -243,3 +243,44 @@
   border-radius: 0.375rem;
   background: var(--muted);
 }
+
+/* Project › Kits › In the IDE: the official kits `cfs` writes into checkouts. */
+.ide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.ideHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.input {
+  height: 2.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: transparent;
+  color: inherit;
+  padding: 0 0.5rem;
+  font: inherit;
+}
+
+.addFields label.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.8125rem;
+}
