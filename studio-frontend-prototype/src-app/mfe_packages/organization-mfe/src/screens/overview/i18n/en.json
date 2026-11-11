@@ -65,5 +65,9 @@
   "inbox_source_pulls": "Pull requests",
   "inbox_refresh": "Refresh",
   "inbox_open_all": "Inbox →",
-  "inbox_kit_absent_title": "Its kit is not installed here, so there is no tab to open it on"
+  "inbox_kit_absent_title": "Its kit is not installed here, so there is no tab to open it on",
+  "open_costs": "Costs →",
+  "open_workspaces": "Workspaces →",
+  "open_people": "People →",
+  "open_workspace": "Open"
 }

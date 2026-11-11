@@ -187,3 +187,16 @@
   opacity: 0.6;
   cursor: default;
 }
+
+/* A tile's way to the screen its figures come from. */
+.tileOpen {
+  align-self: flex-start;
+  margin-top: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}

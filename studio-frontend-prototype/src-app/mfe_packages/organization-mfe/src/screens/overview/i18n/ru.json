@@ -67,5 +67,9 @@
   "inbox_source_pulls": "Пул-реквесты",
   "inbox_refresh": "Обновить",
   "inbox_open_all": "Входящие →",
-  "inbox_kit_absent_title": "Его набор здесь не установлен, поэтому открыть его негде"
+  "inbox_kit_absent_title": "Его набор здесь не установлен, поэтому открыть его негде",
+  "open_costs": "Затраты →",
+  "open_workspaces": "Рабочие пространства →",
+  "open_people": "Люди →",
+  "open_workspace": "Открыть"
 }

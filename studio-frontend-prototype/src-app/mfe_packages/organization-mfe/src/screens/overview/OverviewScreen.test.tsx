@@ -1,8 +1,13 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrgOverview } from '../../overview/types';
 
-const { query } = vi.hoisted(() => ({ query: vi.fn() }));
+const { query, available, openScreen, requestWorkspace } = vi.hoisted(() => ({
+  query: vi.fn(),
+  available: { value: null as unknown },
+  openScreen: vi.fn(),
+  requestWorkspace: vi.fn(),
+}));
 
 vi.mock('../../i18n', () => {
   const t = (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key);
@@ -22,12 +27,14 @@ vi.mock('./InboxGroup', async () => {
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
   useOrganization: () => ({ org: { id: 'o1', name: 'Acme' }, loading: false, failed: false }),
+  openScreen,
 }));
+vi.mock('../../actions/workspaceActions', () => ({ requestWorkspace }));
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => ({ overview: () => ({}) }) },
   useApiQuery: query,
-  useSharedProperty: () => 'en',
+  useSharedProperty: (id: string) => (id.includes('screens.available') ? available.value : 'en'),
   useMfeBridge: () => null,
 }));
 
@@ -58,7 +65,47 @@ const overview: OrgOverview = {
 };
 
 describe('OverviewScreen', () => {
-  beforeEach(() => query.mockReturnValue({ data: overview, isLoading: false, isError: false, error: null }));
+  beforeEach(() => {
+    query.mockReturnValue({ data: overview, isLoading: false, isError: false, error: null });
+    available.value = null;
+    openScreen.mockReset();
+    requestWorkspace.mockReset();
+  });
+
+  it("opens a kit's screen only where its kit is installed: Costs and Components", () => {
+    const withSpend = {
+      ...overview,
+      needs: [
+        { kind: 'spend', tone: 'warn', projects: [], current: 150, previous: 100, forecast: 200 },
+        { kind: 'components', tone: 'warn', projects: [], components: 2 },
+      ],
+    } as unknown as OrgOverview;
+    query.mockReturnValue({ data: withSpend, isLoading: false, isError: false, error: null });
+    available.value = { routes: ['/organization/workspaces', '/people', '/costs'], kits: ['org-costs'] };
+    render(<OverviewScreen />);
+    // The spend tile and the spend row open Costs, whose kit is installed.
+    fireEvent.click(screen.getByRole('button', { name: 'open_costs' }));
+    expect(openScreen).toHaveBeenLastCalledWith(null, '/costs');
+    // Components (`components` kit) is not installed here: no tile, no row button.
+    expect(screen.queryByRole('button', { name: 'Decide' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'open_people' }));
+    expect(openScreen).toHaveBeenLastCalledWith(null, '/people');
+  });
+
+  it('offers no button to a screen the shell does not list', () => {
+    available.value = { routes: ['/organization/workspaces'], kits: [] };
+    render(<OverviewScreen />);
+    expect(screen.queryByRole('button', { name: 'Fix the connection' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'open_costs' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'open_people' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'open_workspaces' })).toBeTruthy();
+  });
+
+  it('opens a workspace from its row', () => {
+    render(<OverviewScreen />);
+    fireEvent.click(screen.getByRole('button', { name: 'open_workspace' }));
+    expect(requestWorkspace).toHaveBeenCalledWith(null, { id: 'w1', name: 'Main' }, 'o1');
+  });
 
   it('names the refused connection, the figures and the workspaces', () => {
     render(<OverviewScreen />);

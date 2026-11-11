@@ -11,8 +11,14 @@
  *     stuck pull requests wait on, components to decide, idle people;
  *   - the workspaces, each with its worst project and why.
  *
+ * Where a row, a tile or a workspace leads is a screen of this portal, and
+ * only one that shows where the person is: a kit's screen (Costs, Components)
+ * only where its kit is installed (`useScreenAvailability`). A target with no
+ * screen here gets no button rather than a dead one.
+ *
  * Not yet here: the metrics board (charts over 7/30/90 days, Constructor
- * Insight's figures).
+ * Insight's figures) — panels the kits that own those figures contribute,
+ * once a screen can mount a kit's contribution (parity.md).
  */
 
 import React, { useState } from 'react';
@@ -24,7 +30,8 @@ import {
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
-import { openScreen, useOrganization } from '@constructor-studio/mfe-shared';
+import { openScreen, useOrganization, useScreenAvailability } from '@constructor-studio/mfe-shared';
+import { requestWorkspace } from '../../actions/workspaceActions';
 import { OverviewApiService } from '../../api/OverviewApiService';
 import { attentionStatus, growthText, othersAttention, workspaceLine, type NeedTarget } from '../../overview/model';
 import type { OrgOverview } from '../../overview/types';
@@ -34,15 +41,17 @@ import styles from './OverviewScreen.module.css';
 
 type Text = ReturnType<typeof useOverviewTranslations>['t'];
 
-/** Where a row's action leads, among the screens this portal has so far.
- *  Costs and Components are not here yet (parity.md): their
- *  rows say what is wrong and offer no button rather than a dead one. */
 /** The whole Inbox (`screens/inbox`), opened from the top bar too. */
 const INBOX_ROUTE = '/inbox';
 
-const TARGET_ROUTE: Partial<Record<NeedTarget, string>> = {
+/** Where a row's action leads (the prototype's views): Costs is the
+ *  `org-costs` kit's screen, Components (`gears`) the `components` kit's;
+ *  either is offered only where its kit is installed. */
+export const TARGET_ROUTE: Record<NeedTarget, string> = {
   connectors: '/connections',
+  costs: '/costs',
   projects: '/organization/workspaces',
+  gears: '/components',
   people: '/people',
   tasks: '/organization/tasks',
 };
@@ -80,6 +89,14 @@ function OrganizationOverview({
   language: string;
 }) {
   const bridge = useMfeBridge();
+  const availability = useScreenAvailability();
+  /** The route of a target, when its screen shows where the person is. */
+  const routeOf = (target: NeedTarget): string | null =>
+    availability.route(TARGET_ROUTE[target]) ? TARGET_ROUTE[target] : null;
+  const go = (target: NeedTarget) => {
+    const route = routeOf(target);
+    if (route) openScreen(bridge, route);
+  };
   const read = useApiQuery(apiRegistry.getService(OverviewApiService).overview({ organizationId }));
   const o: OrgOverview | undefined = read.data;
   const cash = (n: number) => money(n, o?.spend?.currency || 'USD', language);
@@ -115,7 +132,7 @@ function OrganizationOverview({
       {o && (
         <>
           <div className={styles.tiles} data-overview-tiles>
-            <Tile title={t('tile_spend')}>
+            <Tile title={t('tile_spend')} open={routeOf('costs') ? { label: t('open_costs'), go: () => go('costs') } : null}>
               {o.costs === 'hidden' ? (
                 <span className={styles.muted}>{t('tile_spend_hidden')}</span>
               ) : o.costs === 'unreadable' || !o.spend ? (
@@ -132,7 +149,10 @@ function OrganizationOverview({
                 </>
               )}
             </Tile>
-            <Tile title={t('tile_delivery')}>
+            <Tile
+              title={t('tile_delivery')}
+              open={routeOf('projects') ? { label: t('open_workspaces'), go: () => go('projects') } : null}
+            >
               <span className={styles.big}>{t('tile_delivery_value', { merged: shown(o.delivery.merged, t) })}</span>
               <span className={styles.muted}>
                 {t('tile_delivery_sub', {
@@ -147,7 +167,7 @@ function OrganizationOverview({
               </span>
               <span className={styles.muted}>{t('tile_specs_sub', { findings: shown(o.specs.open_findings, t) })}</span>
             </Tile>
-            <Tile title={t('tile_people')}>
+            <Tile title={t('tile_people')} open={routeOf('people') ? { label: t('open_people'), go: () => go('people') } : null}>
               <span className={styles.big}>{t('tile_people_value', { active: shown(o.people.active, t) })}</span>
               <span className={styles.muted}>
                 {t('tile_people_sub', { idle: shown(o.people.idle?.length ?? null, t) })}
@@ -180,12 +200,8 @@ function OrganizationOverview({
                       <li key={r.key} className={`${styles.row} ${styles[r.tone]}`} data-attention={r.key.split(':')[0]}>
                         <b>{r.sentence}</b>
                         {r.detail && <span className={styles.muted}> · {r.detail}</span>}
-                        {TARGET_ROUTE[r.action.target] && (
-                          <button
-                            type="button"
-                            className={styles.action}
-                            onClick={() => openScreen(bridge, TARGET_ROUTE[r.action.target]!)}
-                          >
+                        {routeOf(r.action.target) && (
+                          <button type="button" className={styles.action} onClick={() => go(r.action.target)}>
                             {r.action.label}
                           </button>
                         )}
@@ -206,6 +222,14 @@ function OrganizationOverview({
                     <li key={ws.id} className={styles.row} data-overview-workspace={ws.id}>
                       <b>{ws.name}</b>
                       <span className={styles.muted}> · {workspaceLine(ws, o.stuck_days)}</span>
+                      {/* The workspace itself: the shell moves the session into it. */}
+                      <button
+                        type="button"
+                        className={styles.action}
+                        onClick={() => requestWorkspace(bridge, { id: ws.id, name: ws.name }, organizationId)}
+                      >
+                        {t('open_workspace')}
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -218,13 +242,29 @@ function OrganizationOverview({
   );
 }
 
-function Tile({ title, children }: { title: string; children: React.ReactNode }) {
+function Tile({
+  title,
+  open = null,
+  children,
+}: {
+  title: string;
+  /** The screen the tile's figures come from, when it shows here. */
+  open?: { label: string; go: () => void } | null;
+  children: React.ReactNode;
+}) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className={styles.tileTitle}>{title}</CardTitle>
       </CardHeader>
-      <CardContent className={styles.tileBody}>{children}</CardContent>
+      <CardContent className={styles.tileBody}>
+        {children}
+        {open && (
+          <button type="button" className={styles.tileOpen} data-tile-open onClick={open.go}>
+            {open.label}
+          </button>
+        )}
+      </CardContent>
     </Card>
   );
 }
