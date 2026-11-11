@@ -117,10 +117,33 @@ describe('Project › Timeline', () => {
   });
 
   it('shows a refused read in the gear’s words', async () => {
-    serve(WITH_MILESTONE, new Error('DOMAIN_TYPE_NOT_INSTALLED: project-lifecycle'));
+    serve(WITH_MILESTONE, new Error('the graph store is not answering'));
     render(<TimelineScreen projectId="p1" t={t} container={container} />);
     await waitFor(() => screen.getByRole('alert'));
-    expect(screen.getByRole('alert').textContent).toContain('project-lifecycle');
+    expect(screen.getByRole('alert').textContent).toContain('the graph store is not answering');
+    expect((document.querySelector('[data-timeline-add]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('is read-only and says not installed when the objects route refuses a type the model still lists', async () => {
+    serve(WITH_MILESTONE, new Error('DOMAIN_TYPE_NOT_INSTALLED: project-lifecycle'));
+    render(<TimelineScreen projectId="p1" t={t} container={container} />);
+    await waitFor(() => expect(document.querySelector('[data-timeline-no-type="not_installed"]')).not.toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect((document.querySelector('[data-timeline-add]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('says the type was left dormant, read-only, rather than failing', async () => {
+    const dormant = Object.assign(new Error('Request failed with status code 400'), {
+      response: {
+        status: 400,
+        data: { context: { violations: [{ type: 'DOMAIN_TYPE_DORMANT', subject: 'project-lifecycle' }] } },
+      },
+    });
+    serve(WITH_MILESTONE, dormant);
+    render(<TimelineScreen projectId="p1" t={t} container={container} />);
+    await waitFor(() => expect(document.querySelector('[data-timeline-no-type="dormant"]')).not.toBeNull());
+    expect(document.querySelector('[data-timeline-no-type]')?.textContent).toBe('milestone_type_dormant');
+    expect((document.querySelector('[data-timeline-add]') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('adds a milestone with one upsert and reads again', async () => {

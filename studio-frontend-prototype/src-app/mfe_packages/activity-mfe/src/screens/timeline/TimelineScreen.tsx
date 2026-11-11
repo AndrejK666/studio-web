@@ -9,8 +9,11 @@
  * project-lifecycle's (ADR-0070 §7), so the section declares it needs it
  * (`presentation.needs`) and the shell hides the tab where it is not
  * installed. Opened anyway (an old address), it says the model has no
- * milestones rather than failing. Read again when milestones or the model
- * change (`domain.objects_changed`, `domain.model_changed`).
+ * milestones rather than failing; and where the objects route refuses the
+ * type although the model still lists it (left dormant, or not installed
+ * here: `typeAbsence`), it says so and offers no writes. Read again when
+ * milestones or the model change (`domain.objects_changed`,
+ * `domain.model_changed`).
  */
 
 import React, { Fragment, useEffect, useMemo, useState } from 'react';
@@ -29,9 +32,11 @@ import {
   domainChanged,
   errorMessage,
   refusalText,
+  typeAbsence,
   useOrganization,
   useStudioEventRefresh,
   type ScreenText,
+  type TypeAbsence,
 } from '@constructor-studio/mfe-shared';
 import { ActivityApiService } from '../../api/ActivityApiService';
 import { modelOf, shown, type DomainModel, type ModelField } from '../../model/fields';
@@ -69,6 +74,8 @@ export const TimelineScreen: React.FC<{
   const [counts, setCounts] = useState<{ key: unknown[]; count: number }[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  /** The objects route refused the type itself: dormant, or not installed here. */
+  const [absent, setAbsent] = useState<TypeAbsence | null>(null);
   const [editing, setEditing] = useState<Milestone | 'new' | null>(null);
   const [removing, setRemoving] = useState<Milestone | null>(null);
   const [busy, setBusy] = useState(false);
@@ -78,7 +85,9 @@ export const TimelineScreen: React.FC<{
   useStudioEventRefresh(watched, () => setRevision((n) => n + 1));
 
   const model = modelRead && 'model' in modelRead ? modelRead.model : null;
-  const installed = hasMilestone(model);
+  const declared = hasMilestone(model);
+  // The model may still list the type while the objects route already refuses it.
+  const installed = declared && absent === null;
   const fields = useMemo(() => milestoneFields(model), [model]);
 
   // The model first: without the type there is nothing to ask for.
@@ -99,7 +108,7 @@ export const TimelineScreen: React.FC<{
   // Read again after a save or a delete here, as after one elsewhere (`revision`).
   const [reads, setReads] = useState(0);
   useEffect(() => {
-    if (!orgId || !installed) return;
+    if (!orgId || !declared) return;
     let alive = true;
     apiRegistry
       .getService(ActivityApiService)
@@ -108,19 +117,22 @@ export const TimelineScreen: React.FC<{
       .then((res) => {
         if (!alive) return;
         setError(null);
+        setAbsent(null);
         setItems((res.items ?? []).map((r) => ({ id: r.id, value: (r.value ?? {}) as Record<string, unknown> })));
         setCounts(res.groups ?? []);
         setTotal(res.total ?? 0);
       })
       .catch((e: unknown) => {
         if (!alive) return;
-        setError(t('milestones_failed', { error: errText(e) }));
+        const why = typeAbsence(e);
+        setAbsent(why);
+        setError(why ? null : t('milestones_failed', { error: errText(e) }));
         setItems([]);
       });
     return () => {
       alive = false;
     };
-  }, [orgId, projectId, installed, revision, reads, t]);
+  }, [orgId, projectId, declared, revision, reads, t]);
 
   const remove = async (m: Milestone) => {
     if (!orgId) return;
@@ -151,8 +163,8 @@ export const TimelineScreen: React.FC<{
     if ('error' in modelRead) return <p className={styles.error}>{t('model_failed', { error: modelRead.error })}</p>;
     if (!installed) {
       return (
-        <p className={styles.muted} data-timeline-no-type>
-          {t('no_milestone_type')}
+        <p className={styles.muted} data-timeline-no-type={absent?.reason ?? 'absent'}>
+          {absent?.reason === 'dormant' ? t('milestone_type_dormant') : t('no_milestone_type')}
         </p>
       );
     }
@@ -230,7 +242,7 @@ export const TimelineScreen: React.FC<{
       {items && total > items.length && (
         <p className={styles.muted}>{t('milestones_incomplete', { count: MILESTONE_LIMIT })}</p>
       )}
-      {editing && orgId && (
+      {editing && orgId && installed && (
         <MilestoneDialog
           t={t}
           container={container}

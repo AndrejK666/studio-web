@@ -35,6 +35,7 @@ import {
   responseStatus,
   shownValue,
   tableColumns,
+  typeAbsence,
   useStudioEventRefresh,
   type DomainModel,
   type DomainQueryRow,
@@ -42,19 +43,25 @@ import {
   type ModelRelation,
   type QuerySortState,
   type TabLevel,
+  type TypeAbsence,
 } from '@constructor-studio/mfe-shared';
 import { ErrorLine, Header, errText, useAdmin } from '../admin/common';
 import { FieldRow } from './ObjectAttributes';
 import styles from '../admin/Admin.module.css';
 import own from './Model.module.css';
 
-/** A failed read, told apart: refused, or failed. */
+/** A failed read, told apart: refused, the type not in use here (ADR-0070 §4), or failed. */
 interface Problem {
   forbidden: boolean;
+  absent: TypeAbsence | null;
   text: string;
 }
 
-const problemOf = (e: unknown): Problem => ({ forbidden: responseStatus(e) === 403, text: errText(e) });
+const problemOf = (e: unknown): Problem => ({
+  forbidden: responseStatus(e) === 403,
+  absent: typeAbsence(e),
+  text: errText(e),
+});
 
 /** What names an object in a list: its name or title, else its id. */
 export function objectLabel(row: DomainQueryRow): string {
@@ -150,7 +157,17 @@ export function TypeObjects({
           </Badge>
         }
       />
-      {problem && <ErrorLine>{problem.forbidden ? t('model_forbidden') : problem.text}</ErrorLine>}
+      {problem?.absent ? (
+        // Not a failure: the type is not in use here. Said, and nothing offered.
+        <p className={styles.muted} data-model-type-absent={problem.absent.reason}>
+          {t(problem.absent.reason === 'dormant' ? 'model_type_dormant' : 'model_type_not_installed', {
+            type: entity.name ?? type,
+            kit: problem.absent.kit ?? '?',
+          })}
+        </p>
+      ) : (
+        problem && <ErrorLine>{problem.forbidden ? t('model_forbidden') : problem.text}</ErrorLine>
+      )}
       {page && !page.complete && <p className={styles.muted}>{t('model_incomplete')}</p>}
       {page && page.items.length === 0 && !problem && (
         <p className={styles.muted} data-model-empty>

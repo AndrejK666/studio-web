@@ -158,6 +158,43 @@ describe('a tab the Studio domain model adds (type:<name>)', () => {
     expect(screen.queryByText('model_empty')).toBeNull();
   });
 
+  it('pages through the objects, and a new sort starts again from the first page', async () => {
+    serve({ query: { items: rows, total: 120, complete: true } });
+    render(<ModelScreen level="workspace" section="type:vendors" />);
+    await screen.findByText('Initech');
+    const previous = () => screen.getByRole('button', { name: 'model_previous' }) as HTMLButtonElement;
+    const next = () => screen.getByRole('button', { name: 'model_next' }) as HTMLButtonElement;
+    expect(previous().disabled).toBe(true);
+    fireEvent.click(next());
+    await waitFor(() => expect(last()).toEqual({ type: 'vendor', project_id: 'w1', limit: 50, offset: 50 }));
+    expect(previous().disabled).toBe(false);
+    fireEvent.click(next());
+    await waitFor(() => expect(last()?.offset).toBe(100));
+    expect(next().disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /^rating/ }));
+    await waitFor(() => expect(last()?.order_by).toEqual([{ field: 'rating', direction: 'asc' }]));
+    expect(last()?.offset ?? 0).toBe(0);
+  });
+
+  it('says a type left dormant, or not installed here, is not in use — not a failure, nothing offered', async () => {
+    const dormant = Object.assign(new Error('Request failed with status code 400'), {
+      response: {
+        status: 400,
+        data: { context: { violations: [{ type: 'DOMAIN_TYPE_DORMANT', subject: 'vendor-kit', description: 'dormant' }] } },
+      },
+    });
+    serve({ query: dormant });
+    render(<ModelScreen level="workspace" section="type:vendors" />);
+    await waitFor(() => expect(document.querySelector('[data-model-type-absent="dormant"]')).not.toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText('model_empty')).toBeNull();
+    cleanup();
+    serve({ query: refusal(404, 'DOMAIN_TYPE_NOT_INSTALLED:vendor-kit') });
+    render(<ModelScreen level="workspace" section="type:vendors" />);
+    await waitFor(() => expect(document.querySelector('[data-model-type-absent="not_installed"]')).not.toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('shows another failure in the gear’s own words', async () => {
     serve({ query: refusal(500, 'the read model is filling') });
     render(<ModelScreen level="workspace" section="type:vendors" />);

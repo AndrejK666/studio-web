@@ -36,6 +36,7 @@
   "loading_milestones": "Loading milestones…",
   "no_milestones": "No milestones yet. Add the first one: a name and a date are enough.",
   "no_milestone_type": "This organization's domain model has no milestone type — milestones come with the Project lifecycle kit — so there is nothing to show.",
+  "milestone_type_dormant": "Milestones are not in use here: the Project lifecycle kit that brings them has left them dormant. They are kept, and show again once the kit is installed again.",
   "model_failed": "The domain model could not be read: {error}",
   "milestones_failed": "The milestones could not be read: {error}",
   "milestones_incomplete": "Only the first {count} milestones are shown.",

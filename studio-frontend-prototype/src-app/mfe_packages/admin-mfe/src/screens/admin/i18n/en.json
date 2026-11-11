@@ -854,6 +854,8 @@
   "model_no": "no",
   "model_forbidden": "You may not read these objects. Someone with access to them can open this tab.",
   "model_tab_gone": "This tab is no longer in the Studio domain model.",
+  "model_type_dormant": "{type} is not in use here: the kit {kit} that brings it has left it dormant. Its objects are kept and show again once the kit is installed again.",
+  "model_type_not_installed": "{type} is not installed here: it comes with the kit {kit}. Install the kit to see and keep its objects.",
   "model_tab_unknown_type": "This tab shows {type}, which the Studio domain model does not define. Add the type in Admin › Studio domain model, or change the tab.",
   "model_in_organization": "in the organization",
   "model_in_workspace": "in this workspace",
