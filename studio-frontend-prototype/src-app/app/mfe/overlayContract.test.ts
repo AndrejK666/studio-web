@@ -435,6 +435,8 @@ describe('generated MFE manifest', () => {
         // project's "Project domain model" kit tab.
         'Studio domain model',
         'Objects',
+        // Saved views of the model's objects (admin-mfe, order 80), after Objects.
+        'Views',
         'All identities',
         'Project tenants',
         // The prototype's System (who is here, a test notification, raw types and JSON).
