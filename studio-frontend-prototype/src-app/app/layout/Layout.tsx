@@ -10,6 +10,7 @@ import { Header } from './Header';
 import { LevelTabs } from './LevelTabs';
 import { RuntimeKits } from './RuntimeKits';
 import { Screen } from './Screen';
+import { KitDock } from './KitDock';
 import { Popup } from './Popup';
 import { Overlay } from './Overlay';
 import { OverlayDialog } from './OverlayDialog';
@@ -46,7 +47,11 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       {!noOrganization && <LevelTabs />}
       {/* Kits' screens loaded at run time, and a tile for any that did not come up. */}
       {!noOrganization && <RuntimeKits />}
-      <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
+      {/* The screen, and beside it what a kit docks there (Studio AI). */}
+      <div className="flex min-h-0 flex-1">
+        <Screen>{noOrganization ? <OrganizationAccessGate /> : children}</Screen>
+        {!noOrganization && <KitDock />}
+      </div>
 
       {/* Out of the flow, over everything: dialogs and overlays. */}
       <OverlayDialog />

@@ -10,6 +10,7 @@ vi.mock('@/app/actions/bootstrapActions', () => ({
 vi.mock('./Header', () => ({ Header: () => <div data-testid="top-bar" /> }));
 vi.mock('./LevelTabs', () => ({ LevelTabs: () => <div data-testid="level-tabs" /> }));
 vi.mock('./RuntimeKits', () => ({ RuntimeKits: () => <div data-testid="runtime-kits" /> }));
+vi.mock('./KitDock', () => ({ KitDock: () => <div data-testid="kit-dock" /> }));
 vi.mock('./Popup', () => ({ Popup: () => null }));
 vi.mock('./Overlay', () => ({ Overlay: () => null }));
 vi.mock('./OverlayDialog', () => ({ OverlayDialog: () => null }));
@@ -43,6 +44,12 @@ describe('Layout', () => {
     expect(screen.getByTestId('presence')).toBeTruthy();
   });
 
+  it("puts the kits' dock beside the screen, in the same row", () => {
+    renderLayout();
+    const dock = screen.getByTestId('kit-dock');
+    expect(dock.parentElement).toBe(screen.getByTestId('mounted-screen').closest('main')?.parentElement);
+  });
+
   // Onboarding: there is no level to name and no section to offer.
   it('draws neither for a person with no organization, who gets the gate instead', () => {
     noOrganization.value = true;
@@ -50,6 +57,7 @@ describe('Layout', () => {
     expect(screen.getByTestId('top-bar')).toBeTruthy();
     expect(screen.queryByTestId('level-tabs')).toBeNull();
     expect(screen.queryByTestId('mounted-screen')).toBeNull();
+    expect(screen.queryByTestId('kit-dock')).toBeNull();
     expect(screen.getByTestId('access-gate')).toBeTruthy();
   });
 });

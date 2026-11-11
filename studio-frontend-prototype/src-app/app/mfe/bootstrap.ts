@@ -544,6 +544,26 @@ export function buildStudioScreenDomain(): ExtensionDomain {
 }
 
 /**
+ * The sidebar domain this host registers: what a kit docks beside the screen
+ * (`layout/KitDock.tsx`; Studio AI, the `assistant` kit). It carries where the
+ * person is — the framework's `sidebarDomain` declares theme and language
+ * only, and a domain that does not declare a property cannot deliver it.
+ */
+export function buildStudioSidebarDomain(): ExtensionDomain {
+  return unrouted({
+    ...sidebarDomain,
+    sharedProperties: [
+      ...sidebarDomain.sharedProperties,
+      STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
+      STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
+      STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
+      STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
+      STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+    ],
+  });
+}
+
+/**
  * Bootstrap MFE system for the host application.
  *
  * Synchronously registers the four well-known domains (screen, sidebar,
@@ -585,7 +605,7 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
     ],
   });
   registry.registerDomain(studioScreenDomain, new ScreenDomainFactory(registry));
-  registry.registerDomain(unrouted(sidebarDomain), new OptionalDomainFactory(registry, sidebarDomain.id));
+  registry.registerDomain(buildStudioSidebarDomain(), new OptionalDomainFactory(registry, sidebarDomain.id));
   // Framed domains: the extension states its own footprint, the shell only clamps it.
   registry.registerDomain(unrouted(popupDomain), new OptionalDomainFactory(registry, popupDomain.id, false));
   registry.registerDomain(

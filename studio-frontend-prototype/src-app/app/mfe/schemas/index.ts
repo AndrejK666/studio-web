@@ -9,6 +9,7 @@ import type { JSONSchema } from '@gears-frontx/react';
 import { themeSchema, languageSchema, extensionScreenSchema } from '@gears-frontx/frontx-template-shell';
 import extensionOverlaySchemaJson from './extension_overlay.v1.json';
 import extensionSlotContributionSchemaJson from './extension_slot_contribution.v1.json';
+import extensionSidebarSchemaJson from './extension_sidebar.v1.json';
 import extensionScreenLeveledSchemaJson from './extension_screen_leveled.v1.json';
 import actionContextPublishSchemaJson from './action_context_publish.v1.json';
 import actionContextWorkspacesPublishSchemaJson from './action_context_workspaces_publish.v1.json';
@@ -44,6 +45,8 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   // What a kit contributes into one of the shell's named slots (mfe/slots.ts):
   // every slot domain pins it, so a contribution has a type to chain through.
   extensionSlotContributionSchemaJson as JSONSchema,
+  // The sidebar's counterpart: what a kit docks beside the screen (Studio AI).
+  extensionSidebarSchemaJson as JSONSchema,
   // One derivation further down the screen chain: the level a screen belongs to —
   // organization, workspace or project — which the tabs group by. After
   // extensionScreenSchema on purpose: a derived schema resolves its parent by

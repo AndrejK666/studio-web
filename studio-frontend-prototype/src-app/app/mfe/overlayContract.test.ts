@@ -21,6 +21,7 @@ import { describe, expect, it } from 'vitest';
 import {
   overlayDomain,
   screenDomain,
+  sidebarDomain,
   gtsPlugin,
   type MfeEntryMF,
   type Extension,
@@ -31,7 +32,7 @@ import {
 import { validateContract } from '@gears-frontx/mfes';
 import { helloKitManifest } from '@frontx-test-utils/helloKitManifest';
 import { SHELL_SCHEMAS } from './schemas';
-import { buildStudioScreenDomain } from './bootstrap';
+import { buildStudioScreenDomain, buildStudioSidebarDomain } from './bootstrap';
 import { toManifestConfig } from './runtimeKits';
 import { resolveLevelMenu, type StudioScreenExtension } from './screenLevels';
 import {
@@ -243,6 +244,31 @@ describe('generated MFE manifest', () => {
         (ext) => ext.domain === screenDomain.id && ext.presentation?.route === '/search'
       );
       expect(asScreen).toBeUndefined();
+    });
+  });
+
+  describe('docked kit panels (sidebar)', () => {
+    const docked = extensions.filter((ext) => ext.domain === sidebarDomain.id);
+    const assistant = docked.find((ext) => ext.presentation?.kit === 'assistant');
+
+    it('has Studio AI, the assistant kit, docked in the sidebar', () => {
+      expect(assistant).toBeDefined();
+    });
+
+    it('names a kit on every docked panel: the sidebar is never the shell\'s own', () => {
+      expect(docked.filter((ext) => !ext.presentation?.kit).map((ext) => ext.id)).toEqual([]);
+    });
+
+    it('carries the derived sidebar type, which is what has a schema', () => {
+      for (const ext of docked) expect(ext.id).toContain('frontx.screensets.layout.sidebar.v1~');
+    });
+
+    it('satisfies the sidebar domain the shell declares, context included', () => {
+      const entry = entriesById.get(assistant!.entry);
+      expect(entry).toBeDefined();
+      const result = validateContract(entry!, buildStudioSidebarDomain() as typeof sidebarDomain, gtsPlugin);
+      expect(result.errors ?? []).toEqual([]);
+      expect(result.valid).toBe(true);
     });
   });
 
