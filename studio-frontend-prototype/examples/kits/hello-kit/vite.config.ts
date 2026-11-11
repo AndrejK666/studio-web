@@ -31,6 +31,9 @@ export default defineConfig({
     federation({
       name: 'helloKit',
       filename: 'remoteEntry.js',
+      // No type archive (@mf-types.zip): nothing consumes it, and generating it
+      // ran tsc over the whole MFE on every build.
+      dts: false,
       exposes: {
         './lifecycle': './src/lifecycle.tsx',
         // Contributions into the shell's named slots (mfe/slots.ts in the shell).

@@ -27,6 +27,9 @@ export default defineConfig({
     federation({
       name: 'activityMfe',
       filename: 'remoteEntry.js',
+      // No type archive (@mf-types.zip): nothing consumes it, and generating it
+      // ran tsc over the whole MFE on every build.
+      dts: false,
       exposes: {
         './lifecycle': './src/lifecycle.tsx',
       },
