@@ -616,9 +616,21 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             },
             ..KitContents::default()
         },
-        // The Team section of `projects-mfe`.
+        // `team-mfe`: a project's Team, the role grants scoped to it in the
+        // organization's access config. That config is account-management's
+        // tenant metadata (read and written whole, as the old prototype did),
+        // a platform route outside this backend's contract, so it is not
+        // listed here.
         "project-team" => KitContents {
             screens: vec![project_tab("Team", Some("/projects/team"))],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-user/v1/organizations/{org_id}/members",
+                    "GET /studio-user/v1/me/colleagues",
+                    "GET /studio-organizations/v1/access-catalogue",
+                ]),
+                ..KitPermissions::default()
+            },
             ..KitContents::default()
         },
         // `assistant-mfe`: Studio AI, docked in the shell's sidebar beside

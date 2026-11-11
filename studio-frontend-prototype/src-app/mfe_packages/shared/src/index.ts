@@ -292,3 +292,5 @@ export {
   domainTypesPath,
   type DomainTypesResponse,
 } from './domain/DomainModelApiService';
+// People and teams (people-mfe, team-mfe).
+export * from './people';

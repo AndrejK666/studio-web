@@ -1,128 +1,18 @@
-import React from 'react';
-import { render, screen } from '@testing-library/react';
-import {
-  FRONTX_SHARED_PROPERTY_LANGUAGE,
-  FRONTX_SHARED_PROPERTY_THEME,
-} from '@gears-frontx/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMfeBridgeFixture } from '../../../__test-utils__/createMfeBridgeFixture';
+import { describe, expect, it, vi } from 'vitest';
 
-type BridgeFixture = ReturnType<typeof createMfeBridgeFixture>;
-type TestBridge = BridgeFixture['bridge'];
-type TestApp = { id: string };
-
-const superMountSpy = vi.fn();
-const {
-  getServiceMock,
-  useApiQueryMock,
-  useScreenTranslationsMock,
-} = vi.hoisted(() => ({
-  getServiceMock: vi.fn(),
-  useApiQueryMock: vi.fn(),
-  useScreenTranslationsMock: vi.fn(),
-}));
-
-vi.mock('@gears-frontx/react', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@gears-frontx/react')>();
-  return {
-    ...actual,
-    apiRegistry: {
-      getService: getServiceMock,
-    },
-    useApiQuery: useApiQueryMock,
-  };
-});
-
+vi.mock('./init', () => ({ mfeApp: { id: 'people-mfe-app' } }));
+vi.mock('./screens/people/PeopleScreen', () => ({ PeopleScreen: () => null }));
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
   StudioMfeLifecycle: class StudioMfeLifecycle {
-    constructor(public readonly app: TestApp) {}
-
-    mount(container: Element | ShadowRoot, bridge: TestBridge): void {
-      superMountSpy(container, bridge);
-    }
+    constructor(public readonly app: unknown) {}
   },
 }));
 
-vi.mock('./init', () => ({
-  mfeApp: { id: 'blank-mfe-app' },
-}));
+import lifecycle from './lifecycle';
 
-vi.mock('./api/_BlankApiService', () => ({
-  _BlankApiService: class MockBlankApiService {
-    static {
-      void 0;
-    }
-  },
-}));
-
-vi.mock('./i18n', () => ({
-  useHomeTranslations: useScreenTranslationsMock,
-}));
-
-describe('blank-mfe lifecycle', () => {
-  beforeEach(() => {
-    getServiceMock.mockReturnValue({ getStatus: { type: 'status' } });
-    useScreenTranslationsMock.mockReturnValue({ t: (key: string) => key, loading: false });
-    useApiQueryMock.mockReturnValue({
-      data: {
-        message: 'Blank MFE query example is active.',
-        generatedAt: '2026-03-23T12:00:00.000Z',
-        capabilities: ['query-key-factory'],
-      },
-      isLoading: false,
-      isError: false,
-      error: null,
-    });
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('binds the shared MFE app to the lifecycle instance', async () => {
-    const module = await import('./lifecycle');
-    const lifecycle = module.default;
-
-    expect(Reflect.get(lifecycle, 'app')).toEqual({ id: 'blank-mfe-app' } satisfies TestApp);
-  });
-
-  it('renders the real home screen with the provided bridge', async () => {
-    const module = await import('./lifecycle');
-    const lifecycle = module.default;
-    const renderContent = Reflect.get(lifecycle, 'renderContent');
-    const { bridge } = createMfeBridgeFixture({
-      domainId: 'blank-domain',
-      instanceId: 'blank-instance',
-      initialProperties: {
-        [FRONTX_SHARED_PROPERTY_THEME]: 'blank-theme',
-        [FRONTX_SHARED_PROPERTY_LANGUAGE]: 'en',
-      },
-    });
-
-    expect(typeof renderContent).toBe('function');
-    render(<>{renderContent(bridge) as React.ReactNode}</>);
-
-    // The key-echoing translation mock makes the placeholder's i18n keys
-    // directly assertable.
-    expect(await screen.findByText('title')).toBeTruthy();
-    expect(screen.getByText('description')).toBeTruthy();
-    expect(screen.getByText('coming_soon')).toBeTruthy();
-  });
-
-  it('inherits base mount behavior from StudioMfeLifecycle', async () => {
-    const module = await import('./lifecycle');
-    const lifecycle = module.default as {
-      mount: (container: Element, bridge: TestBridge) => void;
-    };
-    const container = document.createElement('div');
-    const { bridge } = createMfeBridgeFixture({
-      domainId: 'blank-domain',
-      instanceId: 'blank-instance',
-    });
-
-    lifecycle.mount(container, bridge);
-
-    expect(superMountSpy).toHaveBeenCalledWith(container, bridge);
+describe('people-mfe lifecycle', () => {
+  it('binds the People app to the lifecycle the shell mounts', () => {
+    expect((lifecycle as unknown as { app: unknown }).app).toEqual({ id: 'people-mfe-app' });
   });
 });

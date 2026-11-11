@@ -1,38 +1,17 @@
 /**
- * MFE Bootstrap — executed once when any entry first loads.
- * Creates the minimal FrontX app, registers slices, effects, and API services.
- * Cache/runtime note:
- * - The host app owns the shared runtime via queryCache().
- * - Child apps join that shared QueryClient via queryCacheShared().
- * - Do not add queryCache(), presets.full(), or QueryClientProvider here.
+ * The People screen's app: its API services, the framework's i18n and the
+ * shared query cache. No slices — the screen reads and draws.
  */
-// @cpt-dod:cpt-frontx-dod-mfe-isolation-internal-dataflow:p1
-// @cpt-dod:cpt-frontx-dod-unit-test-generation-and-agent-verification-blank-mfe-tests:p1
-// @cpt-flow:cpt-frontx-flow-mfe-isolation-mfe-bootstrap:p1
 
-import {
-  createFrontX,
-  registerSlice,
-  apiRegistry,
-  effects,
-  i18n,
-  mock,
-  queryCacheShared,
-} from '@gears-frontx/react';
-import { homeSlice } from './slices/homeSlice';
-import { initHomeEffects } from './effects/homeEffects';
-import { _BlankApiService } from './api/_BlankApiService';
+import { createFrontX, apiRegistry, i18n, queryCacheShared } from '@gears-frontx/react';
+import { AccountsApiService, PeopleApiService, authShared } from '@constructor-studio/mfe-shared';
 
-// Register API services BEFORE build — mock plugin syncs during build(),
-// so services must already be present for mock activation to find them
-apiRegistry.register(_BlankApiService);
+apiRegistry.register(PeopleApiService);
+apiRegistry.register(AccountsApiService);
 apiRegistry.initialize();
 
-// Create only the local MFE app shell.
-// queryCacheShared() joins the host-owned QueryClient without reconfiguring it.
-const mfeApp = createFrontX().use(effects()).use(i18n()).use(queryCacheShared()).use(mock()).build();
-
-// Register slices with effects (needs store from build())
-registerSlice(homeSlice, initHomeEffects);
+// authShared(): the host's auth plugin lives in the host's realm, so without it
+// every read goes out with no bearer and answers 401.
+const mfeApp = createFrontX().use(i18n()).use(queryCacheShared()).use(authShared()).build();
 
 export { mfeApp };
