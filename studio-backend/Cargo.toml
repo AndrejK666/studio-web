@@ -286,3 +286,8 @@ testcontainers-modules = { version = "0.11", features = ["postgres"] }
 # see `src/test_pg.rs`. An exit hook is the one place left to stop it, and the
 # C runtime's is the only exit hook there is.
 libc = "0.2"
+# The gear's in-memory store (`infra::fake_store`, behind `test-support`), so a
+# test can drive the real graph-storage service in process: type updates, the
+# `index` trait and the projection's payload `$filter` are the gear's rules,
+# and a fake of the client would only restate what we think they are.
+graph_storage = { package = "weftgraph", version = "=0.3.0-rc.2", features = ["test-support"] }

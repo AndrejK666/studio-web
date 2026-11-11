@@ -46,6 +46,8 @@ mod rehome;
 mod rest;
 mod service;
 mod store;
+#[cfg(all(test, feature = "graph"))]
+mod store_graph_tests;
 mod tenant_objects;
 pub(crate) mod validate;
 
