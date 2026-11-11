@@ -28,7 +28,7 @@ import {
   domainChanged,
   listQuery,
   modelTabs,
-  nextSort,
+  nextQuerySort,
   objectQuery,
   readableFields,
   relationsOfModel,
@@ -40,7 +40,7 @@ import {
   type DomainQueryRow,
   type DomainRowSet,
   type ModelRelation,
-  type SortState,
+  type QuerySortState,
   type TabLevel,
 } from '@constructor-studio/mfe-shared';
 import { ErrorLine, Header, errText, useAdmin } from '../admin/common';
@@ -85,7 +85,7 @@ export function TypeObjects({
   const entity = tab ? model.byId.get(tab.target) ?? null : null;
   const type = entity?.id ?? null;
   const columns = type ? tableColumns(model, type) : [];
-  const [sort, setSort] = useState<SortState | null>(null);
+  const [sort, setSort] = useState<QuerySortState | null>(null);
   const [offset, setOffset] = useState(0);
   const [page, setPage] = useState<DomainRowSet | null>(null);
   const [problem, setProblem] = useState<Problem | null>(null);
@@ -176,7 +176,7 @@ export function TypeObjects({
                           title={t('model_sort_hint')}
                           onClick={() => {
                             setOffset(0);
-                            setSort((s) => nextSort(s, name));
+                            setSort((s) => nextQuerySort(s, name));
                           }}
                         >
                           {name.replace(/_/g, ' ')}

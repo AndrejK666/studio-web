@@ -253,7 +253,7 @@ export {
   attributesWrite,
   inputValue,
   listQuery,
-  nextSort,
+  nextSort as nextQuerySort,
   objectQuery,
   parsedValue,
   readableFields,
@@ -270,7 +270,7 @@ export {
   type DomainRowSet,
   type DomainSelection,
   type SortDirection,
-  type SortState,
+  type SortState as QuerySortState,
 } from './domain/domainQuery';
 export {
   DomainModelApiService,
