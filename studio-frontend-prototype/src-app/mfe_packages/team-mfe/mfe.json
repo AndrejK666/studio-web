@@ -32,7 +32,8 @@
         "route": "/projects/team",
         "order": 60,
         "level": "project",
-        "kit": "project-team"
+        "kit": "project-team",
+        "modelTab": "people"
       }
     }
   ]
