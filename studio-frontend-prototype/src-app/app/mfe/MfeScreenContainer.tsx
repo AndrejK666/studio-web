@@ -12,6 +12,7 @@ import {
 import { bootstrapMFE } from './bootstrap';
 import { EditorSessionStatus } from './EditorSessionStatus';
 import { UnresolvedScreen } from '@/app/layout/UnresolvedScreen';
+import { KitAbsentScreen } from '@/app/layout/KitAbsentScreen';
 import { KitSlot } from '@/app/layout/KitSlot';
 import { SHELL_SLOTS } from './slots';
 import { EditorBar } from './EditorBar';
@@ -63,6 +64,8 @@ export function MfeScreenContainer() {
             />
             <EditorSessionStatus />
             <UnresolvedScreen registry={app.mfeRegistry} />
+            {/* A kit's screen reached where its kit is not installed (an old link, a pin). */}
+            <KitAbsentScreen />
           </div>
         </>
       ) : null}

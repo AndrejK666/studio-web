@@ -13,6 +13,7 @@ vi.mock('./bootstrap', () => ({
 vi.mock('./EditorSessionStatus', () => ({ EditorSessionStatus: () => null }));
 vi.mock('@/app/layout/KitSlot', () => ({ KitSlot: () => null }));
 vi.mock('@/app/layout/UnresolvedScreen', () => ({ UnresolvedScreen: () => null }));
+vi.mock('@/app/layout/KitAbsentScreen', () => ({ KitAbsentScreen: () => null }));
 vi.mock('./EditorBar', () => ({ EditorBar: () => null }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({

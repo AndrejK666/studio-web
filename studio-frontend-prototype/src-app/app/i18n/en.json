@@ -86,6 +86,7 @@
   "screen_unknown_title": "This screen is not available here",
   "screen_unknown_body": "No kit installed here brings a screen at “{screen}”. The link may be old, or the kit that brings it is not installed here.",
   "screen_unknown_kit": "{screen} comes from kit {kit}, which is not installed here or was removed.",
+  "screen_needs_types": "{screen} shows {types}, which the kits installed here do not bring.",
   "screen_unknown_home": "Open this level’s home",
   "kit_slot_failed": "{label} could not be shown",
   "editor_session_reason_ended": "You stopped the session. Try again starts a new one.",
