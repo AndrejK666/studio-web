@@ -607,6 +607,75 @@ already knows (its own unchanged schemas survive an upgrade); its extensions' `p
 package refused, not readable, or whose screen does not mount is a tile above
 the screen that the person can dismiss; the rest of the shell goes on.
 
+**The lifecycle in the shell** (issue #1006).
+- *Desired state.* The list for a scope is what the registry holds for it: a
+  package listed at a new revision (its `version` or its `base_path`) replaces
+  its registration; a package no longer listed — uninstalled, or not installed
+  where the person moved — is unregistered, and the FrontX runtime releases
+  whatever of it was mounted. The shell treats `base_path` as opaque, so a
+  source that pins a commit into the path makes a re-pin a new revision.
+- *Upgrade without a reload.* FrontX's module handler keeps every loaded
+  remote for the page's life, keyed by extension id. When an extension comes
+  back at another revision the shell forgets that load
+  (`mfe/remoteCache.ts`; mfes 0.4 has no public eviction, so it reads the
+  handler's private cache and does nothing if it is not there) and the next
+  mount loads the new bundle; the screen on display is mounted again.
+- *Cold deep links.* Routing starts before the kits' packages are registered.
+  An address no registered screen answers to keeps its place: its
+  organization, workspace and project are applied, and it waits while the
+  loader has `begin`-ed the scope and not yet `settle`-d it (settled after
+  `sync`, or when either read fails; at most 20 s). Each registration change
+  re-reads the screen groups and applies the address again, so the kit's
+  screen opens; when the scope settles without it the screen area says it is
+  not available here (naming the kit when it had been loaded in this page) and
+  offers the level's home. A screen whose kit is uninstalled while on display
+  ends in the same state.
+- *Live.* The installed kits are read again on a `kit.*` studio event (none is
+  published yet) or `domain.model_changed`.
+
+**Slots.** ADR-0068 §2's `section in a screen`: a kit contributes into a named
+slot the shell owns, never into a domain of its own (a package naming a domain
+the shell has not registered is refused). Each slot is a FrontX extension
+domain with the concurrent mount strategy
+(`studio-frontend-prototype/src-app/app/mfe/slots.ts`); a contribution is an
+extension of `gts.frontx.mfes.ext.extension.v1~constructor_studio.shell.slots.contribution.v1~`
+whose `presentation` carries `label`, `order` (ascending, then id), `kit`
+(set by the shell for a runtime package), and optionally `level` and `screen`
+(the route of the item it goes with). A slot passes theme, language,
+organization, workspace, project, section, the person and the last studio
+event. Each contribution mounts on its own action chain into its own shadow
+root; one that fails is a small note in its place and on the kit's tile, and
+is tried again only when its registration changes.
+
+| Slot | Domain | Drawn |
+|---|---|---|
+| `project.header.status` | `…shell.slots.project_header_status.v1` | beside the open project in the path bar |
+| `screen.toolbar.actions` | `…shell.slots.screen_toolbar_actions.v1` | at the end of the level's tab row |
+| `screen.panels` | `…shell.slots.screen_panels.v1` | above the screen, e.g. `screen = "/projects/overview"` |
+
+`examples/kits/hello-kit` contributes a panel to Project › Overview and a
+status chip. A slot inside a micro-frontend's own page is not offered: the
+screen would have to host a domain in its shadow root.
+
+**Repository-backed bundles (not built).** What a `BundleSource` for an
+organization's shelf kit needs, beyond the trait as it is:
+1. *Which bundles.* `kit.json` (the shelf manifest) names screens but no
+   bundle directories; it needs `kit.gdl`'s `mfe = [path(...)]` (or a
+   `screens[].mfe`) so `packages(slug, version)` has an answer.
+2. *Whose kit.* A shelf kit's installed version is its pinned commit, but the
+   same slug can sit on two organizations' shelves. The source must resolve
+   (organization, slug, commit) to the `KitOrigin` (connection, repository,
+   path), so `packages` and `read` need the organization: either
+   `{org}` in the file route and the grant (HMAC over org, slug, version), or
+   the grant mapped server-side to the organization.
+3. *Reading.* `KitSourceReader` only fetches a manifest; reading
+   `mfe/<package>/<file>` at a commit through the organization's connection
+   is new, and the anonymous file route must not call the Git host per chunk:
+   files at a commit are immutable, so cache them (memory or disk) keyed by
+   commit and path, and cap the size as `DirSource` does.
+4. The shell needs no change: it uses `base_path` as given and keys a
+   registration's revision on it.
+
 **Security.**
 - The shell's module loader (`MfeHandlerMF`) fetches a bundle's files itself,
   with no token, so the file route is anonymous (like a person's photo in

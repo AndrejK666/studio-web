@@ -34,6 +34,7 @@ import { groupScreens } from './screenTokens';
 import { TENANT_TYPES } from '@constructor-studio/mfe-shared';
 import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { createMaterializer } from './materialize';
+import { unresolvedScreenOf } from './unresolvedScreen';
 
 const screens = [
   screen('org.workspaces', '/organization/workspaces', 'organization', { section: 'workspaces', order: 20 }),
@@ -738,5 +739,130 @@ describe('materialize', () => {
     });
     materialize();
     expect(catalogs.loadWorkspaces).toHaveBeenCalledWith('o1');
+  });
+});
+
+/**
+ * Issue #1006: a kit's screens are registered after routing starts. An
+ * address naming one waits for the kits of its scope, opens it once it is
+ * registered, and is called unknown — keeping the address — once the kits are
+ * registered without it.
+ */
+describe('materialize: an address a kit may still answer', () => {
+  const kitScreen = screen('hello.main', '/hello-kit', 'project', { order: 90, kit: 'hello-kit' });
+
+  function setupRuntime(url: string, initial: Partial<AppContextState>, waitMs = 1000) {
+    const { history, adapter } = freshNavigationHistory(url);
+    const navigation = createShellNavigation(history);
+    const extensions: StudioScreenExtension[] = [...screens];
+    const { app, state } = fakeApp(initial, extensions);
+    let groups = groupScreens(extensions);
+    const settled = new Set<string>();
+    const runtime = { isSettled: (scope: string) => settled.has(scope) };
+    const catalogs = { loadOrganizations: vi.fn(), loadWorkspaces: vi.fn(), loadProjects: vi.fn(), resolveProject: vi.fn() };
+    const warn = vi.fn();
+    const materializer = createMaterializer({ app, navigation, groups: () => groups, catalogs, warn, runtime, waitMs });
+    const unresolved = () => unresolvedScreenOf(app.mfeRegistry!).get();
+    /** What `startRouting` does when the runtime kits register a package. */
+    const register = (extension: StudioScreenExtension) => {
+      extensions.push(extension);
+      groups = groupScreens(extensions);
+    };
+    const unregister = (id: string) => {
+      extensions.splice(extensions.findIndex((ext) => ext.id === id), 1);
+      groups = groupScreens(extensions);
+    };
+    return { ...materializer, adapter, state, warn, settled, unresolved, register, unregister };
+  }
+
+  const LINK = '/?screen=hello-kit;org=o1;workspace=w1;project=p1';
+  const inProject = { ...ready, projects: [ATLAS] };
+
+  afterEach(() => vi.useRealTimers());
+
+  it('waits on a cold deep link, applying its context and keeping the address', () => {
+    const { materialize, adapter, state, warn, unresolved } = setupRuntime(LINK, inProject);
+    materialize();
+    expect(unresolved()).toEqual({ token: 'hello-kit', status: 'waiting', level: 'project' });
+    expect(adapter.url()).toBe(LINK);
+    // The project is opened, so the loader reads the project's kits.
+    expect(state().project).toEqual(ATLAS);
+    expect(mocks.mountScreen).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('opens the kit screen once its kit registers it, and clears the wait', () => {
+    const { materialize, adapter, settled, unresolved, register } = setupRuntime(LINK, inProject);
+    materialize();
+    register(kitScreen);
+    settled.add('project:p1');
+    materialize();
+    expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'hello.main' }));
+    expect(unresolved()).toBeNull();
+    expect(adapter.url()).toBe(LINK);
+  });
+
+  it('calls the address unknown once the kits of its scope are registered without it, and keeps it', () => {
+    const { materialize, adapter, settled, unresolved, warn } = setupRuntime(LINK, inProject);
+    materialize();
+    settled.add('project:p1');
+    materialize();
+    expect(unresolved()).toEqual({ token: 'hello-kit', status: 'unknown', level: 'project' });
+    expect(adapter.url()).toBe(LINK);
+    expect(mocks.mountScreen).not.toHaveBeenCalled();
+    materialize();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('judges by the scope the address names: an organization settled says nothing of a project in it', () => {
+    const { materialize, settled, unresolved } = setupRuntime(LINK, inProject);
+    settled.add('organization:o1');
+    materialize();
+    expect(unresolved()?.status).toBe('waiting');
+  });
+
+  it('stops waiting when the kits never settle', () => {
+    vi.useFakeTimers();
+    const { materialize, unresolved } = setupRuntime(LINK, inProject, 500);
+    materialize();
+    expect(unresolved()?.status).toBe('waiting');
+    vi.advanceTimersByTime(500);
+    expect(unresolved()?.status).toBe('unknown');
+  });
+
+  it('a wait from an address since left does not end the next one', () => {
+    vi.useFakeTimers();
+    const { materialize, transition, unresolved } = setupRuntime(LINK, inProject, 500);
+    materialize();
+    vi.advanceTimersByTime(400);
+    transition();
+    vi.advanceTimersByTime(200);
+    expect(unresolved()?.status).toBe('waiting');
+    vi.advanceTimersByTime(400);
+    expect(unresolved()?.status).toBe('unknown');
+  });
+
+  it('falls back gracefully when the kit of the screen on display is removed', () => {
+    const { materialize, settled, unresolved, register, unregister } = setupRuntime(LINK, inProject);
+    register(kitScreen);
+    settled.add('project:p1');
+    materialize();
+    expect(unresolved()).toBeNull();
+    unregister('hello.main');
+    materialize();
+    expect(unresolved()).toEqual({ token: 'hello-kit', status: 'unknown', level: 'project' });
+  });
+
+  it('keeps a section the address names while nobody can say whose it is', () => {
+    const { materialize, adapter } = setupRuntime(`${LINK};section=notes`, inProject);
+    materialize();
+    expect(adapter.url()).toBe(`${LINK};section=notes`);
+  });
+
+  it('still opens a built-in screen at once, settled or not', () => {
+    const { materialize, unresolved } = setupRuntime('/?screen=people;org=o1', ready);
+    materialize();
+    expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'people' }));
+    expect(unresolved()).toBeNull();
   });
 });

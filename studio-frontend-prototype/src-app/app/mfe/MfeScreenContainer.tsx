@@ -11,6 +11,9 @@ import {
 } from '@gears-frontx/react';
 import { bootstrapMFE } from './bootstrap';
 import { EditorSessionStatus } from './EditorSessionStatus';
+import { UnresolvedScreen } from '@/app/layout/UnresolvedScreen';
+import { KitSlot } from '@/app/layout/KitSlot';
+import { SHELL_SLOTS } from './slots';
 import type { MfeBootstrapStatus } from '@/app/slices/mfeBootstrapSlice';
 
 export function MfeScreenContainer() {
@@ -39,20 +42,23 @@ export function MfeScreenContainer() {
   }, [app.mfeRegistry]);
 
   return (
-    <div className="relative flex-1 overflow-auto" data-mfe-screen-container>
+    <div className="relative flex flex-1 flex-col overflow-auto" data-mfe-screen-container>
       {status === 'failed' ? (
         <div className="p-6 text-label text-muted-foreground" role="alert" data-mfe-bootstrap-failed>
           Screens could not be loaded. Check the console for the manifest error.
         </div>
       ) : status === 'ready' && app.mfeRegistry ? (
         <>
+          {/* Kits' panels for the screen on display (slot screen.panels), e.g. on Project › Overview. */}
+          <KitSlot slot={SHELL_SLOTS.screenPanels} direction="column" className="shrink-0 px-6 pt-4" />
           <ExtensionDomainSlot
             registry={app.mfeRegistry}
             domainId={screenDomain.id}
-            className="h-full"
+            className="min-h-0 flex-1"
             onAttached={startRouting}
           />
           <EditorSessionStatus />
+          <UnresolvedScreen registry={app.mfeRegistry} />
         </>
       ) : null}
     </div>

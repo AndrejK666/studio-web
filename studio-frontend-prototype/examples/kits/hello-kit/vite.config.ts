@@ -33,6 +33,9 @@ export default defineConfig({
       filename: 'remoteEntry.js',
       exposes: {
         './lifecycle': './src/lifecycle.tsx',
+        // Contributions into the shell's named slots (mfe/slots.ts in the shell).
+        './panel': './src/panel.tsx',
+        './status': './src/status.tsx',
       },
       // Shared deps are externalized below and provided by the shell's
       // handler at run time, exactly as for a built-in MFE.

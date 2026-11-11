@@ -2,8 +2,12 @@
 
 A kit from outside the portal's build (ADR-0068 phase 5): one project tab,
 **Hello**, whose screen the portal loads at run time from the kit's own
-bundle. Installing the kit shows the tab, uninstalling hides it, and the
-portal is not rebuilt for either.
+bundle, and two contributions into screens the kit does not own — a panel on
+Project › Overview (slot `screen.panels`) and a chip beside the open project
+in the path bar (slot `project.header.status`). Installing the kit shows them,
+uninstalling takes them out (and a page showing the tab says it is not
+available here), installing a new version swaps them in without a reload, and
+the portal is not rebuilt for any of it.
 
 It is deliberately not under `src-app/mfe_packages/`: nothing in the portal's
 `npm run build` sees it. It builds with the portal's `node_modules` (it sits
@@ -17,9 +21,13 @@ inside the bundle, as in every portal MFE.
 | File | What |
 |---|---|
 | `kit.gdl` | The kit's passport: `name` (its slug), `version`, `levels`, and `mfe = [path("mfe/hello")]`, the bundle |
-| `mfe.json` | The FrontX manifest: one Module Federation entry and one screen extension (level `project`, route `/hello-kit`, kit `hello-kit`) |
-| `vite.config.ts` | The same Module Federation build as a portal MFE, written into `mfe/hello/` |
-| `src/` | The screen |
+| `mfe.json` | The FrontX manifest: three Module Federation entries; one screen extension (level `project`, route `/hello-kit`, kit `hello-kit`) and two slot contributions (type `…shell.slots.contribution.v1~`: the panel with `screen: "/projects/overview"`, the status chip) |
+| `vite.config.ts` | The same Module Federation build as a portal MFE, written into `mfe/hello/`; exposes `./lifecycle`, `./panel`, `./status` |
+| `src/` | The screen, the panel and the chip |
+
+The slots a kit can contribute into, and what a contribution's
+`presentation` says, are the shell's contract: `src-app/app/mfe/slots.ts` and
+`docs/design/studio-kits.md` §3.12.
 
 `mfe/hello/` (git-ignored) is the built bundle: `mfe-manifest.json`,
 `remoteEntry.js`, `assets/`, `shared/`. That directory is what the backend

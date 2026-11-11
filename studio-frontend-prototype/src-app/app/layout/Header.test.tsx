@@ -62,6 +62,8 @@ vi.mock('./useInstalledKits', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./useInstalledKits')>()),
   useInstalledKits: () => null,
 }));
+// The kits' status slot has its own suite (KitSlot.test.tsx).
+vi.mock('./KitSlot', () => ({ ProjectStatusSlot: () => null }));
 vi.mock('./ContextChain', () => ({
   ContextChain: () => <div data-testid="context-chain" />,
 }));

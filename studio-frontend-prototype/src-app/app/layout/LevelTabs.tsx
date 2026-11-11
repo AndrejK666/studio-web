@@ -32,6 +32,8 @@ import { isDefaultOrder, moveTo, serializeOrder } from '@/app/preferences/tab-or
 import { pinFor, usePins } from '@/app/pins/usePins';
 import { isPinned } from '@/app/pins/pins';
 import { cn } from '@/app/lib/utils';
+import { SHELL_SLOTS } from '@/app/mfe/slots';
+import { KitSlot } from './KitSlot';
 import { levelIconName } from './levelIcon';
 import { useScreenLevel } from './useScreenLevel';
 import { screenShows, useInstalledKits } from './useInstalledKits';
@@ -252,6 +254,10 @@ export const LevelTabs: React.FC = () => {
             />
           </NavigationMenuItem>
         )}
+        {/* Kits' actions for this level or this screen (slot screen.toolbar.actions). */}
+        <NavigationMenuItem>
+          <KitSlot slot={SHELL_SLOTS.screenToolbarActions} />
+        </NavigationMenuItem>
       </NavigationMenuList>
     </NavigationMenu>
   );

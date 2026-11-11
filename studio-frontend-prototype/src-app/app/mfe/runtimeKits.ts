@@ -23,9 +23,24 @@
  *   own slug, whatever the bundle says, so `screenShows` hides it wherever the
  *   kit is not installed.
  *
+ * - contribute to a domain the shell does not have: a kit's sections go into
+ *   the shell's named slots (`mfe/slots.ts`), not into domains of its own.
+ *
  * A package that fails any of this, or does not read, is a failure on the
  * error tile (`layout/RuntimeKits.tsx`) and is not registered; the rest of
  * the shell goes on. So is a runtime screen that does not mount.
+ *
+ * The lifecycle (issue #1006):
+ * - `sync` is the desired state of the scope in view: a package listed at a
+ *   new revision (version or `base_path`) replaces its registration, and a
+ *   package no longer listed is unregistered — uninstalling takes its tabs and
+ *   sections out, and the runtime releases whatever of it was mounted.
+ * - A remote the page already loaded is forgotten when its extension comes
+ *   back at another revision (`forgetLoadedRemote`), so the new version mounts
+ *   without a page reload.
+ * - `begin` / `settle` say whether the kits of a scope have been registered
+ *   yet. Routing (`routing/materialize.ts`) waits on that before it calls an
+ *   address unknown, so a cold deep link to a kit's screen opens it.
  */
 
 import {
@@ -37,6 +52,9 @@ import {
 } from '@gears-frontx/react';
 import { prewarmShadowStyles } from '@constructor-studio/mfe-shared';
 import { mfeStylesheetHrefs, registerMfePackage, type MfeManifestConfig } from '@/app/mfe/bootstrap';
+import { forgetLoadedRemote } from '@/app/mfe/remoteCache';
+import { tokenOf } from '@/app/routing/screenTokens';
+import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 import type { KitMfeManifest } from '@/app/api/InstalledKitsApiService';
 
 export type { KitMfeManifest };
@@ -58,6 +76,30 @@ type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const keyOf = (item: Pick<KitMfeManifest, 'kit_slug' | 'package'>): string => `${item.kit_slug}/${item.package}`;
+
+/**
+ * What one registration of a package is: its version and where its files are.
+ * `base_path` is opaque to the shell; a source that pins a commit (an
+ * organization's repository, ADR-0068 phase 7) changes it without changing
+ * the version, and that is a new revision too.
+ */
+const revisionOf = (item: Pick<KitMfeManifest, 'version' | 'base_path'>): string => `${item.version}@${item.base_path}`;
+
+/**
+ * The scope the runtime kits are read for, as the loader and routing both
+ * name it: the open project, else the organization in view.
+ */
+export function runtimeScopeKey(scope: { project?: string | null; org?: string | null }): string | null {
+  if (scope.project) return `project:${scope.project}`;
+  if (scope.org) return `organization:${scope.org}`;
+  return null;
+}
+
+/** A screen a runtime kit brought, remembered after the kit went: what "not available here" names. */
+export interface KnownRuntimeScreen {
+  kit: string;
+  label: string;
+}
 
 /** One field of an extension's `presentation`, which the SDK types do not carry. */
 const presented = (extension: unknown, field: 'route' | 'label'): unknown =>
@@ -153,6 +195,11 @@ function checkAgainst(registry: MfeRegistry, config: MfeManifestConfig, own: Rea
     if (typeof route === 'string' && !own.has(ext.id)) routes.set(route, ext.id);
   }
   for (const extension of config.extensions ?? []) {
+    // `registerMfePackage` skips an extension of a domain the host does not
+    // own; for a kit that is a section that would silently never show.
+    if (!registry.getDomain(extension.domain)) {
+      throw new Error(`extension ${extension.id} goes into ${extension.domain}, which is not a slot the shell has`);
+    }
     if (registry.getExtension(extension.id) && !own.has(extension.id)) {
       throw new Error(`extension ${extension.id} is already registered`);
     }
@@ -171,26 +218,51 @@ function checkAgainst(registry: MfeRegistry, config: MfeManifestConfig, own: Rea
 
 interface Registered {
   version: string;
+  revision: string;
   ids: string[];
   schemas: Map<string, string>;
   extensionIds: string[];
   labels: Map<string, string>;
 }
 
-/** The runtime packages of one registry, and what did not come up. */
+/** Whether `extension` is a screen (it has a route), and its token. */
+function screenTokenOf(extension: unknown): string | undefined {
+  const route = presented(extension, 'route');
+  return typeof route === 'string' ? tokenOf(extension as StudioScreenExtension) : undefined;
+}
+
+/**
+ * The runtime packages of one registry, what did not come up, and whether the
+ * kits of the scope in view have been registered yet.
+ *
+ * One `subscribe` hears every change: a failure, a registration or removal
+ * (`revision()` moves), and a scope beginning or settling.
+ */
 export class RuntimeKits {
   private readonly registered = new Map<string, Registered>();
+  /**
+   * The revision each runtime extension was last registered at, kept after
+   * it is unregistered: the same revision coming back reuses what the page
+   * loaded, another one loads afresh.
+   */
+  private readonly loadedAt = new Map<string, string>();
+  /** Screens runtime kits brought, by route token, remembered after they go. */
+  private readonly known = new Map<string, KnownRuntimeScreen>();
   private failureList: RuntimeKitFailure[] = [];
   private readonly listeners = new Set<() => void>();
   private pending: Promise<void> = Promise.resolve();
+  private scope: string | null = null;
+  private scopeSettled = false;
+  private changes = 0;
 
   constructor(private readonly registry: MfeRegistry) {}
 
   /**
-   * Register what `items` lists and is not registered yet at that version.
-   * A kit at a new version replaces its old registration. Nothing is
-   * unregistered for a kit that is not listed: a screen of a kit installed
-   * elsewhere stays registered and `screenShows` hides it here.
+   * Make the registry hold what `items` lists, at the revisions listed: a
+   * package listed at a new revision replaces its registration, and a package
+   * no longer listed is unregistered (the kit was uninstalled, or the person
+   * moved to a scope where it is not installed). A package whose new revision
+   * is refused keeps its old registration and says why on its tile.
    */
   sync(items: readonly KitMfeManifest[], origin: string): Promise<void> {
     const next = this.pending.then(() => this.syncNow(items, origin));
@@ -200,10 +272,26 @@ export class RuntimeKits {
 
   private async syncNow(items: readonly KitMfeManifest[], origin: string): Promise<void> {
     const failures = new Map(this.failureList.map((f) => [f.key, f]));
+    const listed = new Set(items.map(keyOf));
+    let changed = false;
+
+    for (const [key, registered] of [...this.registered]) {
+      if (listed.has(key)) continue;
+      await this.unregister(registered.extensionIds);
+      this.registered.delete(key);
+      failures.delete(key);
+      changed = true;
+    }
+    for (const key of [...failures.keys()]) {
+      // A package that is no longer listed has nothing left to say.
+      if (!listed.has(key) && !this.registered.has(key)) failures.delete(key);
+    }
+
     for (const item of items) {
       const key = keyOf(item);
+      const revision = revisionOf(item);
       const current = this.registered.get(key);
-      if (current?.version === item.version) continue;
+      if (current?.revision === revision) continue;
       failures.delete(key);
       const fail = (reason: string) =>
         failures.set(key, { key, kit: item.kit_slug, version: item.version, package: item.package, reason });
@@ -218,19 +306,33 @@ export class RuntimeKits {
       if (current) {
         await this.unregister(current.extensionIds);
         this.registered.delete(key);
+        changed = true;
+      }
+      const extensions = config.extensions ?? [];
+      // A remote this page loaded at another revision is not the one to mount now.
+      for (const ext of extensions) {
+        const before = this.loadedAt.get(ext.id);
+        if (before !== undefined && before !== revision) forgetLoadedRemote(ext.id);
       }
       try {
         await registerMfePackage(this.registry, config);
       } catch (error) {
         // Whatever of the package did register comes out again: half a kit
         // is not shown.
-        await this.unregister((config.extensions ?? []).map((ext) => ext.id));
+        await this.unregister(extensions.map((ext) => ext.id));
         fail(messageOf(error));
+        changed = true;
         continue;
       }
-      const extensions = config.extensions ?? [];
+      changed = true;
+      for (const ext of extensions) {
+        this.loadedAt.set(ext.id, revision);
+        const token = screenTokenOf(ext);
+        if (token) this.known.set(token, { kit: item.kit_slug, label: String(presented(ext, 'label') ?? token) });
+      }
       this.registered.set(key, {
         version: item.version,
+        revision,
         ids: [...new Set([
           ...(current?.ids ?? []),
           ...(config.manifest ? [config.manifest.id] : []),
@@ -248,7 +350,42 @@ export class RuntimeKits {
       });
       prewarmShadowStyles(mfeStylesheetHrefs([config]));
     }
-    this.setFailures([...failures.values()]);
+    if (changed) this.changes += 1;
+    if (!this.setFailures([...failures.values()]) && changed) this.emit();
+  }
+
+  /**
+   * The kits of `scope` are being read: until `settle(scope)`, an address
+   * naming a screen nobody has registered waits instead of being called
+   * unknown. A scope begun again (its kits changed) waits again.
+   */
+  begin(scope: string): void {
+    if (this.scope === scope && !this.scopeSettled) return;
+    this.scope = scope;
+    this.scopeSettled = false;
+    this.emit();
+  }
+
+  /** The kits of `scope` are registered, or it was found there are none to register. */
+  settle(scope: string): void {
+    if (this.scope !== scope || this.scopeSettled) return;
+    this.scopeSettled = true;
+    this.emit();
+  }
+
+  /** Whether the kits of `scope` have been registered (or found to be none). */
+  isSettled(scope: string): boolean {
+    return this.scope === scope && this.scopeSettled;
+  }
+
+  /** Moves whenever a runtime package is registered or unregistered. */
+  revision(): number {
+    return this.changes;
+  }
+
+  /** The kit and label of a screen a runtime kit brought at `token`, even after it went. */
+  knownScreen(token: string): KnownRuntimeScreen | undefined {
+    return this.known.get(token);
   }
 
   /** A runtime screen did not mount: on the tile. Not a runtime screen: nothing. */
@@ -287,22 +424,29 @@ export class RuntimeKits {
     return () => this.listeners.delete(listener);
   }
 
-  private setFailures(next: RuntimeKitFailure[]): void {
+  private emit(): void {
+    for (const listener of [...this.listeners]) listener();
+  }
+
+  /** Replaces the failures and tells the listeners; `false` when nothing changed. */
+  private setFailures(next: RuntimeKitFailure[]): boolean {
     const same =
       next.length === this.failureList.length &&
       next.every((f, i) => {
         const o = this.failureList[i];
         return o.key === f.key && o.reason === f.reason && o.version === f.version && o.label === f.label;
       });
-    if (same) return;
+    if (same) return false;
     this.failureList = next;
-    for (const listener of this.listeners) listener();
+    this.emit();
+    return true;
   }
 
   private async unregister(ids: readonly string[]): Promise<void> {
     for (const id of ids) {
       if (!this.registry.getExtension(id)) continue;
       try {
+        // The runtime releases the extension wherever it is mounted.
         await this.registry.unregisterExtension(id);
       } catch (error) {
         console.warn(`[Runtime kits] could not unregister ${id}: ${messageOf(error)}`);

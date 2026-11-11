@@ -18,6 +18,7 @@ import {
   ExtensionDomainImplementationFactory,
   ExclusiveMountStrategy,
   OptionalMountStrategy,
+  ConcurrentMountStrategy,
   ActionHandler,
   FRONTX_ACTION_MOUNT_EXT,
   FRONTX_ACTION_UNMOUNT_EXT,
@@ -71,6 +72,7 @@ import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { occupancyOf } from '@/app/mfe/domainOccupancy';
 import { outcomesOf } from '@/app/mfe/shellOutcomes';
 import { publishFrameUrl, publishLiveEvent, publishStudioContext } from '@/app/mfe/sharedContext';
+import { KIT_SLOT_EXTENSION_TYPE, SHELL_SLOTS, orderOf, type ShellSlot, type SlotContribution } from '@/app/mfe/slots';
 
 const MFE_MANIFESTS_URL = '/generated-mfe-manifests.json';
 
@@ -284,6 +286,73 @@ class OptionalDomainFactory extends ExtensionDomainImplementationFactory {
   build(ctx: DomainContext): OptionalDomainImpl {
     return new OptionalDomainImpl(ctx, new HostContainerHooks(this.registry, this.domainId, this.fill), this.handlers);
   }
+}
+
+/**
+ * A slot's containers sit side by side in the slot's root, in the
+ * contributions' order: the root is a flex box (`layout/KitSlot.tsx`), so the
+ * order holds whatever order the mounts finish in.
+ */
+class SlotContainerHooks extends HostContainerHooks {
+  constructor(private readonly slotRegistry: MfeRegistry, domainId: string) {
+    super(slotRegistry, domainId, false);
+  }
+
+  override create(extensionId: string): Element {
+    const el = super.create(extensionId) as HTMLElement;
+    const extension = this.slotRegistry.getExtension(extensionId) as SlotContribution | undefined;
+    el.style.order = String(extension ? orderOf(extension) : 0);
+    el.style.minWidth = '0';
+    return el;
+  }
+}
+
+/** Every contribution its own container, mounted and unmounted one by one (`mfe/slots.ts`). */
+class SlotDomainImpl extends ExtensionDomainImplementation {
+  private readonly strategy: ConcurrentMountStrategy;
+
+  constructor(ctx: DomainContext, hooks: HostContainerHooks) {
+    super();
+    this.strategy = new ConcurrentMountStrategy(ctx.mounter, hooks);
+    ctx.registerHandler(FRONTX_ACTION_MOUNT_EXT, mountHandler(this.strategy, hooks));
+    ctx.registerHandler(
+      FRONTX_ACTION_UNMOUNT_EXT,
+      ActionHandler.fromFunction((_t, p) => this.strategy.unmount(p as ActionPayload)),
+    );
+  }
+
+  protected getMountStrategies(): MountStrategy[] {
+    return [this.strategy];
+  }
+}
+
+class SlotDomainFactory extends ExtensionDomainImplementationFactory {
+  constructor(private readonly registry: MfeRegistry, private readonly domainId: string) { super(); }
+  build(ctx: DomainContext): SlotDomainImpl {
+    return new SlotDomainImpl(ctx, new SlotContainerHooks(this.registry, this.domainId));
+  }
+}
+
+/**
+ * One named slot's domain: the sidebar's lifecycle and mount/unmount actions,
+ * the studio context a contribution may ask for, and the contribution type
+ * every extension in it chains through. Exported for the tests.
+ */
+export function buildSlotDomain(slot: ShellSlot): ExtensionDomain {
+  return unrouted({
+    ...sidebarDomain,
+    id: slot.domainId,
+    sharedProperties: [
+      ...sidebarDomain.sharedProperties,
+      STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
+      STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
+      STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
+      STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
+      STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+      STUDIO_SHARED_PROPERTY_LIVE_EVENT,
+    ],
+    extensionsTypeId: KIT_SLOT_EXTENSION_TYPE,
+  });
 }
 
 // @cpt-begin:cpt-frontx-dod-mfe-registry-mfe-schema-registration:p1:inst-1
@@ -525,6 +594,11 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
       [STUDIO_ACTION_WORKSPACES_PUBLISH]: createWorkspacePublishHandler(),
     }),
   );
+  // The named slots a kit contributes into (mfe/slots.ts): registered before
+  // any package, so a contribution finds its domain.
+  for (const slot of Object.values(SHELL_SLOTS)) {
+    registry.registerDomain(buildSlotDomain(slot), new SlotDomainFactory(registry, slot.domainId));
+  }
 
   const currentThemeId = app.themeRegistry?.getCurrent()?.id ?? 'default';
   registry.updateSharedProperty(FRONTX_SHARED_PROPERTY_THEME, currentThemeId);

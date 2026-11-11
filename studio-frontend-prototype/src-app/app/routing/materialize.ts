@@ -22,7 +22,7 @@ import {
 } from '@/app/mfe/screenLevels';
 import { occupancyOf } from '@/app/mfe/domainOccupancy';
 import { mountScreen } from '@/app/mfe/mountScreen';
-import { runtimeKitsOf } from '@/app/mfe/runtimeKits';
+import { runtimeKitsOf, runtimeScopeKey } from '@/app/mfe/runtimeKits';
 import { publishStudioContext } from '@/app/mfe/sharedContext';
 import {
   closeContextProject,
@@ -39,6 +39,17 @@ import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { EDITOR_SCREEN_TOKEN, routesEqual, type ShellRoute } from './route';
 import { groupOfExtension, groupOfToken, type ScreenGroup } from './screenTokens';
 import type { ShellNavigation } from './navigation';
+import { unresolvedScreenOf } from './unresolvedScreen';
+
+/** How long an address waits for the kits of its scope before it is called unknown anyway. */
+export const RUNTIME_SCREEN_WAIT_MS = 20_000;
+
+/** The level an address implies when no screen answers to it: as deep as it names. */
+function impliedLevel(route: ShellRoute): ScreenLevel {
+  if (route.project) return 'project';
+  if (route.workspace) return 'workspace';
+  return 'organization';
+}
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-artifact-address:p1
 function artifactOf(route: ShellRoute): StudioArtifact | null {
@@ -68,6 +79,16 @@ export interface MaterializerDeps {
   catalogs: ContextCatalogs;
   warn?: (message: string) => void;
   session?: Pick<EditorSession, 'sync'>;
+  /**
+   * The kits' screens registered at run time (`mfe/runtimeKits.ts`). With it,
+   * an address no screen answers to keeps its place: it waits until the kits
+   * of its scope are registered, then is shown as unknown (`unresolvedScreen.ts`).
+   * Without it no screen can arrive later, and such an address falls back to
+   * the organization's entry point.
+   */
+  runtime?: { isSettled(scope: string): boolean };
+  /** {@link RUNTIME_SCREEN_WAIT_MS} unless a test says otherwise. */
+  waitMs?: number;
 }
 
 export interface Materializer {
@@ -104,6 +125,12 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   let fallbackTo: string | null = null;
   /** The visit whose editor had nothing to open and nowhere to go, so that is said once per address. */
   let editorStrandedIn: number | null = null;
+  /** The visit an unanswered address started waiting in, so its time limit is set once. */
+  let waitingIn: number | null = null;
+  /** The visit whose wait ran out: its address is unknown even if the kits never settle. */
+  let waitedOutIn: number | null = null;
+  /** The visit whose address was found unknown, so that is said once per address. */
+  let unknownIn: number | null = null;
 
   const screensOf = (registry: MfeRegistry): StudioScreenExtension[] =>
     registry.getExtensionsForDomain(screenDomain.id) as StudioScreenExtension[];
@@ -246,6 +273,39 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     pass(true);
   };
 
+  /**
+   * An address no registered screen answers to, with runtime kits about
+   * (issue #1006). While the kits of its scope are still being registered it
+   * waits — a cold deep link to a kit's screen lands here before the kit's
+   * screens are registered, and opens once they are (the registration makes
+   * `startRouting` apply the address again). Once they are registered, or the
+   * wait runs out, it is unknown. Either way the address is kept: installing
+   * the kit and coming back, or reloading, opens it.
+   */
+  const holdUnresolved = (registry: MfeRegistry, route: ShellRoute, level: ScreenLevel): void => {
+    const store = unresolvedScreenOf(registry);
+    const scope = runtimeScopeKey({ project: route.project, org: route.org });
+    const settled = scope !== null && deps.runtime?.isSettled(scope) === true;
+    if (!settled && waitedOutIn !== visit) {
+      store.set({ token: route.token, status: 'waiting', level });
+      if (waitingIn !== visit) {
+        waitingIn = visit;
+        const startedIn = visit;
+        setTimeout(() => {
+          if (visit !== startedIn) return;
+          waitedOutIn = startedIn;
+          materialize();
+        }, deps.waitMs ?? RUNTIME_SCREEN_WAIT_MS);
+      }
+      return;
+    }
+    if (unknownIn !== visit) {
+      unknownIn = visit;
+      warn(`No screen answers to "${route.token}" here: no installed kit brings it`);
+    }
+    store.set({ token: route.token, status: 'unknown', level });
+  };
+
   /** One pass over the address; `remount` asks for its screen even while that counts as mounted. */
   const pass = (remount: boolean): void => {
     const registry = app.mfeRegistry;
@@ -257,7 +317,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     const address = navigation.currentRoute();
     let route = address;
     let group = route ? groupOfToken(groups, route.token) : undefined;
-    if (!route || !group) {
+    if (!route || (!group && !deps.runtime)) {
       if (route) warn(`No screen answers to "${route.token}"; opening the organization level instead`);
       // Substituted, not written yet: the pass below fills the defaults and
       // writes the whole normalized route once, and mounts in the same pass.
@@ -265,10 +325,13 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       group = route ? groupOfToken(groups, route.token) : undefined;
       if (!route || !group) return;
     }
+    // From here `group` is undefined only for an address a kit's screen may
+    // still answer (issue #1006): its context is applied like any other, and
+    // the screen waits for the kits of that scope (`holdUnresolved`).
 
     const wanted: ShellRoute = { ...route };
     const next: ShellRoute = { token: route.token };
-    const ownerLevel = levelOf(group.owner);
+    const ownerLevel = group ? levelOf(group.owner) : impliedLevel(route);
 
     // Organization: validated only once the person's list is known.
     let context = readAppContext(app);
@@ -342,7 +405,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     // Section: of the level in scope, defaulting to that level's entry item.
     // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-2
     const levelInScope: ScreenLevel = next.project ? 'project' : ownerLevel;
-    const inScope = group.members.filter((member) => levelOf(member) === levelInScope);
+    const inScope = (group?.members ?? []).filter((member) => levelOf(member) === levelInScope);
     const sections = inScope
       .map((member) => sectionOf(member))
       .filter((section): section is string => section !== undefined);
@@ -351,24 +414,28 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       // Studio domain model adds, ADR-0066).
       const wantedSection = wanted.section;
       if (wantedSection && !inScope.some((member) => answersSection(member, wantedSection))) {
-        warn(`"${wanted.section}" is not a section of ${group.token}; opening its first one`);
+        warn(`"${wanted.section}" is not a section of ${route.token}; opening its first one`);
         wanted.section = undefined;
       }
-      const entry = entryPointOf(group.members, levelInScope);
+      const entry = entryPointOf(group?.members ?? [], levelInScope);
       next.section = wanted.section ?? (entry ? sectionOf(entry) : undefined) ?? sections[0];
       if (readAppContext(app).section !== next.section) dispatch(setContextSection(next.section));
+    } else if (!group && wanted.section) {
+      // Nobody can say yet whether it is a section of the screen being waited for: kept.
+      next.section = wanted.section;
     } else if (readAppContext(app).section !== null) {
       dispatch(setContextSection(null));
     }
 
     // Artifact: only the editor, and only inside a project, carries one.
-    const artifact = next.project && group.token === EDITOR_SCREEN_TOKEN ? artifactOf(wanted) : null;
+    const isEditor = group?.token === EDITOR_SCREEN_TOKEN;
+    const artifact = next.project && isEditor ? artifactOf(wanted) : null;
     if (artifact) {
       next.artifact = artifact.artifactId;
       next.repository = artifact.repository;
       next.path = artifact.path;
       next.kind = artifact.kind;
-    } else if (group.token === EDITOR_SCREEN_TOKEN) {
+    } else if (group && isEditor) {
       const level: ScreenLevel = next.project ? 'project' : 'workspace';
       const reason = !next.project
         ? 'The editor needs a project'
@@ -388,7 +455,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
         editorStrandedIn = visit;
       }
     } else if (wanted.artifact) {
-      warn(`Artifact ${wanted.artifact} belongs on the editor, not on ${group.token}; dropping it`);
+      warn(`Artifact ${wanted.artifact} belongs on the editor, not on ${route.token}; dropping it`);
     }
     if (!sameArtifact(readAppContext(app).artifact, artifact)) dispatch(setContextArtifact(artifact));
 
@@ -399,11 +466,17 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     deps.session?.sync({
       projectId: next.project ?? null,
       orgId: next.org ?? null,
-      editor: group.token === EDITOR_SCREEN_TOKEN && next.project !== undefined,
+      editor: isEditor && next.project !== undefined,
       artifact,
     });
 
     if (!routesEqual(next, address)) navigation.navigate(next, 'replace');
+
+    if (!group) {
+      holdUnresolved(registry, next, ownerLevel);
+      return;
+    }
+    unresolvedScreenOf(registry).set(null);
 
     // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
     // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-6

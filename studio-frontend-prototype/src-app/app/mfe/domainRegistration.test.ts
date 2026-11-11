@@ -16,6 +16,8 @@ import {
   registerSlice,
   screenDomain,
   FRONTX_ACTION_MOUNT_EXT,
+  FRONTX_MFE_ENTRY_MF,
+  MfeHandlerMF,
   type ChildMfeBridge,
   type ExtensionDomain,
   type MfeEntryLifecycle,
@@ -44,6 +46,9 @@ import { occupancyOf } from './domainOccupancy';
 import { MfeHandlerIframe, type MfeEntryIframe } from './MfeHandlerIframe';
 import type { StudioScreenExtension } from './screenLevels';
 import { executeAndSettle } from './shellOutcomes';
+import { helloKitManifest } from '@frontx-test-utils/helloKitManifest';
+import { RuntimeKits } from './runtimeKits';
+import { SHELL_SLOTS } from './slots';
 
 // What main.tsx registers before constructing the app.
 for (const schema of SHELL_SCHEMAS) gtsPlugin.registerSchema(schema);
@@ -117,7 +122,8 @@ class FixtureFrameHandler extends MfeHandlerIframe {
 // the file shares one app, bootstrapped by the first test that needs it.
 const app = createFrontX()
   .useAll(presets.full())
-  .use(microfrontends({ typeSystem: gtsPlugin, mfeHandlers: [new FixtureFrameHandler(STUDIO_MFE_ENTRY_IFRAME)] }))
+  // The MF handler too: a kit's package (issue #1006) brings Module Federation entries, registered here, never loaded.
+  .use(microfrontends({ typeSystem: gtsPlugin, mfeHandlers: [new FixtureFrameHandler(STUDIO_MFE_ENTRY_IFRAME), new MfeHandlerMF(FRONTX_MFE_ENTRY_MF)] }))
   .build();
 const registry = app.mfeRegistry!;
 
@@ -190,7 +196,7 @@ describe('shell domains on a real registry', () => {
   it('no domain is registered with a route, so the framework router stays out of the address', async () => {
     await bootstrapped();
 
-    expect(declarations).toHaveLength(4);
+    expect(declarations).toHaveLength(4 + Object.keys(SHELL_SLOTS).length);
     for (const declaration of declarations) expect(declaration).not.toHaveProperty('route');
   });
 
@@ -417,5 +423,54 @@ describe('the screen slot re-attaching on a real registry', () => {
 
     await vi.waitFor(() => expect(mountedIn(root, 'arriving')).toBe(true));
     expect(mounted()).toEqual([fixtureScreen('arriving')]);
+  });
+});
+
+/**
+ * Issue #1006 on a real registry: the named slots are domains a kit's
+ * contributions register into — validated against the contribution type —
+ * and an uninstalled kit takes its screen and its contributions out.
+ */
+describe('named slots and the runtime kit lifecycle on a real registry', () => {
+  const ORIGIN = 'https://studio.example';
+  const inSlot = (slot: { domainId: string }) => registry.getExtensionsForDomain(slot.domainId).map((ext) => ext.id);
+
+  it('registers the demo kit’s panel and status chip into their slots, gated by its kit', async () => {
+    await bootstrapped();
+    const kits = new RuntimeKits(registry);
+    await kits.sync([helloKitManifest()], ORIGIN);
+    expect(kits.failures()).toEqual([]);
+    expect(inSlot(SHELL_SLOTS.screenPanels)).toEqual([
+      'gts.frontx.mfes.ext.extension.v1~constructor_studio.shell.slots.contribution.v1~example.hello_kit.slots.overview_panel.v1',
+    ]);
+    expect(inSlot(SHELL_SLOTS.projectHeaderStatus)).toHaveLength(1);
+    const [panel] = registry.getExtensionsForDomain(SHELL_SLOTS.screenPanels.domainId) as unknown as Array<{ presentation: { kit: string } }>;
+    expect(panel.presentation.kit).toBe('hello-kit');
+
+    // Uninstalled: the scope's list no longer names it.
+    await kits.sync([], ORIGIN);
+    expect(inSlot(SHELL_SLOTS.screenPanels)).toEqual([]);
+    expect(inSlot(SHELL_SLOTS.projectHeaderStatus)).toEqual([]);
+    expect(registry.getExtensionsForDomain(screenDomain.id).some((ext) => ext.id.includes('hello_kit'))).toBe(false);
+  });
+
+  it('refuses a contribution that is not of the slot contribution type', async () => {
+    await bootstrapped();
+    const item = helloKitManifest();
+    const config = item.config as { extensions: Array<Record<string, unknown>> };
+    const kits = new RuntimeKits(registry);
+    await kits.sync([{
+      ...item,
+      kit_slug: 'wrong-type',
+      config: {
+        ...config,
+        extensions: [{
+          ...config.extensions[1],
+          id: 'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.overlay.v1~example.wrong_type.slots.panel.v1',
+        }],
+      },
+    }], ORIGIN);
+    expect(kits.failures()).toHaveLength(1);
+    expect(inSlot(SHELL_SLOTS.screenPanels)).toEqual([]);
   });
 });

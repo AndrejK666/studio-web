@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isValidGtsID } from '@globaltypesystem/gts-ts';
 import { STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL } from '@constructor-studio/mfe-shared';
 import { buildStudioScreenDomain } from './bootstrap';
+import { SHELL_SLOTS } from './slots';
 
 const registerDomain = vi.fn();
 const updateSharedProperty = vi.fn();
@@ -39,7 +40,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => {
     // of its own — adding the studio context properties to each — so both stubs
     // have to carry the fields it spreads or the spread throws.
     screenDomain: { id: 'screen-domain', actions: [], sharedProperties: [] },
-    sidebarDomain: { id: 'sidebar-domain' },
+    sidebarDomain: { id: 'sidebar-domain', actions: [], sharedProperties: [] },
     popupDomain: { id: 'popup-domain' },
     overlayDomain: { id: 'overlay-domain', actions: [], sharedProperties: [] },
   };
@@ -66,14 +67,14 @@ describe('bootstrapMFE (host-app)', () => {
     vi.restoreAllMocks();
   });
 
-  it('registers the four base domains before fetching manifests', async () => {
+  it('registers the four base domains and the named slots before fetching manifests', async () => {
     fetchSpy.mockResolvedValue(new Response('[]', { status: 200 }));
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const { bootstrapMFE } = await import('./bootstrap');
     await bootstrapMFE(mockApp as never);
 
-    expect(registerDomain).toHaveBeenCalledTimes(4);
+    expect(registerDomain).toHaveBeenCalledTimes(4 + Object.keys(SHELL_SLOTS).length);
     expect(updateSharedProperty.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(warnSpy).toHaveBeenCalled();
   });

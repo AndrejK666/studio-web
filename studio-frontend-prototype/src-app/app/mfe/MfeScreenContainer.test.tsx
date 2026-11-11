@@ -11,6 +11,8 @@ vi.mock('./bootstrap', () => ({
 }));
 
 vi.mock('./EditorSessionStatus', () => ({ EditorSessionStatus: () => null }));
+vi.mock('@/app/layout/KitSlot', () => ({ KitSlot: () => null }));
+vi.mock('@/app/layout/UnresolvedScreen', () => ({ UnresolvedScreen: () => null }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<Record<string, never>>()),
@@ -123,7 +125,8 @@ describe('MfeScreenContainer', () => {
       const slot = screen.getByTestId('extension-domain-slot');
       expect(slot.dataset.domainId).toBe(mockScreenDomain.id);
       expect(slot.dataset.registryPresent).toBe('yes');
-      expect(slot.dataset.className).toContain('h-full');
+      // It fills what the kits' panels above it leave.
+      expect(slot.dataset.className).toContain('flex-1');
     });
   });
 

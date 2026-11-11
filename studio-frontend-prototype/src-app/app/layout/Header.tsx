@@ -13,6 +13,7 @@ import { Icon } from '@iconify/react';
 import { cn } from '@/app/lib/utils';
 import type { OverlayExtension } from './overlayExtension';
 import { ContextChain } from './ContextChain';
+import { ProjectStatusSlot } from './KitSlot';
 import { UserMenu } from './UserMenu';
 import { ProductMenu } from './ProductMenu';
 import { PinsMenu } from './PinsMenu';
@@ -94,6 +95,8 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
 
       <div className="ml-8 flex min-w-0 items-center">
         <ContextChain />
+        {/* A kit's status chip for the open project (slot project.header.status). */}
+        <ProjectStatusSlot />
       </div>
 
       <div className="ml-auto flex items-center gap-2">

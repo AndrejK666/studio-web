@@ -81,5 +81,11 @@
   "level_tabs_reset_hint": "Show every tab",
   "level_tabs_cancel": "Cancel",
   "level_tabs_save": "Save",
-  "level_tabs_saving": "Saving…"
+  "level_tabs_saving": "Saving…",
+  "screen_waiting_for_kits": "Opening {screen}: waiting for the kits installed here…",
+  "screen_unknown_title": "This screen is not available here",
+  "screen_unknown_body": "No kit installed here brings a screen at “{screen}”. The link may be old, or the kit that brings it is not installed here.",
+  "screen_unknown_kit": "{screen} comes from kit {kit}, which is not installed here or was removed.",
+  "screen_unknown_home": "Open this level’s home",
+  "kit_slot_failed": "{label} could not be shown"
 }

@@ -82,5 +82,11 @@
   "level_tabs_reset_hint": "Показать все вкладки",
   "level_tabs_cancel": "Отмена",
   "level_tabs_save": "Сохранить",
-  "level_tabs_saving": "Сохранение…"
+  "level_tabs_saving": "Сохранение…",
+  "screen_waiting_for_kits": "Открываем {screen}: ждём киты, установленные здесь…",
+  "screen_unknown_title": "Этот экран здесь недоступен",
+  "screen_unknown_body": "Ни один кит, установленный здесь, не даёт экран «{screen}». Ссылка могла устареть, или кит, который его даёт, здесь не установлен.",
+  "screen_unknown_kit": "{screen} — экран кита {kit}, который здесь не установлен или был удалён.",
+  "screen_unknown_home": "Открыть начало этого уровня",
+  "kit_slot_failed": "Не удалось показать {label}"
 }

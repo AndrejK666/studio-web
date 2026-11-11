@@ -7,7 +7,14 @@
  *
  * The read follows the installed-kits answer the tabs use, keyed by its
  * effective kits and versions, so installing on the Kits tab — which refreshes
- * that answer — loads the new kit's screens too.
+ * that answer — loads the new kit's screens too, and uninstalling or upgrading
+ * one unloads the old registration (`RuntimeKits.sync`). That answer is read
+ * again when the live channel says a kit or the domain model changed
+ * somewhere (another person, another tab).
+ *
+ * The scope's kits are `begin`-ed while they are read and `settle`-d once
+ * they are registered or found to be none — also when either read fails — so
+ * routing knows when an address naming no registered screen is really unknown.
  *
  * What did not come up is a tile above the screen, one per package, which the
  * person can dismiss; nothing else of the shell is held back by it.
@@ -16,13 +23,24 @@
 import React, { useEffect, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import { apiRegistry, useApiQuery, useAppSelector, useFrontX } from '@gears-frontx/react';
+import type { StudioEvent } from '@constructor-studio/mfe-shared';
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
 import { MFE_BOOTSTRAP_SLICE_KEY, setMfeBootstrapStatus, type MfeBootstrapState } from '@/app/slices/mfeBootstrapSlice';
-import { runtimeKitsOf, type RuntimeKits as RuntimeKitsStore } from '@/app/mfe/runtimeKits';
+import { runtimeKitsOf, runtimeScopeKey, type RuntimeKits as RuntimeKitsStore } from '@/app/mfe/runtimeKits';
+import { useStudioEvents } from '@/app/live/useLiveChannel';
 import { useShellText } from '@/app/i18n/shellTranslations';
 
 const selectContext = (state: Record<string, unknown>) => state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined;
+
+/**
+ * Whether a live event may mean the kits installed somewhere changed: a kit
+ * event, should the installer publish one, or a change of the domain model,
+ * which installing a kit with a model overlay makes (ADR-0067 §6).
+ */
+export function mayChangeInstalledKits(event: Pick<StudioEvent, 'kind' | 'subject_type'>): boolean {
+  return event.kind.startsWith('kit.') || event.subject_type === 'kit' || event.kind === 'domain.model_changed';
+}
 
 /** Loads the effective kits' micro-frontends into the registry. Renders nothing. */
 export function useRuntimeKitLoader(): RuntimeKitsStore | null {
@@ -50,32 +68,54 @@ export function useRuntimeKitLoader(): RuntimeKitsStore | null {
         .sort()
         .join(',')
     : null;
+  const scopeKey = runtimeScopeKey({ project: projectId, org: orgId });
+  const { isError, refetch } = installed;
+
+  // A new scope's kits are unknown until they are read.
+  useEffect(() => {
+    if (registry && scopeKey) runtimeKitsOf(registry).begin(scopeKey);
+  }, [registry, scopeKey]);
+
+  // No answer about the installed kits: no kit screens to wait for.
+  useEffect(() => {
+    if (registry && scopeKey && isError) runtimeKitsOf(registry).settle(scopeKey);
+  }, [registry, scopeKey, isError]);
+
+  useStudioEvents((event) => {
+    if (mayChangeInstalledKits(event)) void refetch();
+  });
 
   useEffect(() => {
-    if (!registry || !ready || signature === null) return;
+    if (!registry || !ready || signature === null || !scopeKey) return;
     let live = true;
     const kits = runtimeKitsOf(registry);
     const at = projectId ? { projectId } : { organizationId: orgId ?? '' };
+    // The kits changed: whatever waits on this scope waits for the new answer.
+    kits.begin(scopeKey);
     void (async () => {
       let items;
       try {
-        items = (await apiRegistry.getService(InstalledKitsApiService).mfeManifests(at).fetch({ staleTime: 0 }))
-          ?.items;
+        items =
+          (await apiRegistry.getService(InstalledKitsApiService).mfeManifests(at).fetch({ staleTime: 0 }))?.items ?? [];
       } catch (error) {
         // A backend without the route answers nothing to load: no kit screens, no tile.
         console.warn('[Runtime kits] the kits’ micro-frontends could not be listed:', error);
+        if (live) kits.settle(scopeKey);
         return;
       }
-      if (!live || !items || items.length === 0) return;
+      if (!live) return;
+      // The desired state of this scope: new revisions replace, unlisted packages go.
       await kits.sync(items, window.location.origin);
+      if (!live) return;
+      kits.settle(scopeKey);
       // Registration is invisible to the store; one dispatch wakes the tabs
-      // (`useDomainExtensions` re-reads the registry on any store change).
-      if (live) app.store.dispatch(setMfeBootstrapStatus('ready'));
+      // and the slots (`useDomainExtensions` re-reads the registry on any store change).
+      app.store.dispatch(setMfeBootstrapStatus('ready'));
     })();
     return () => {
       live = false;
     };
-  }, [app, registry, ready, signature, orgId, projectId]);
+  }, [app, registry, ready, signature, scopeKey, orgId, projectId]);
 
   return registry ? runtimeKitsOf(registry) : null;
 }
