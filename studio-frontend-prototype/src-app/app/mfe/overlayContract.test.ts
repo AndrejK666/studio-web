@@ -565,7 +565,7 @@ describe('a kit manifest registered at run time', () => {
     const raw = lying.config as { extensions: Array<{ presentation: Record<string, unknown> }> };
     raw.extensions[0].presentation.kit = 'project-tests';
     const gated = toManifestConfig(lying, 'https://studio.example');
-    expect(gated.extensions?.map((ext) => (ext as { presentation?: { kit?: string } }).presentation?.kit)).toEqual(['hello-kit']);
+    expect(gated.extensions?.map((ext) => (ext as { presentation?: { kit?: string } }).presentation?.kit)).toEqual(raw.extensions.map(() => 'hello-kit'));
   });
 
   it('takes no route and no GTS package a built-in screen has', () => {
