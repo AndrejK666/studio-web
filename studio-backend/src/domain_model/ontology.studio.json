@@ -2263,15 +2263,6 @@
           "description": "A tab of the organization: what it shows."
         },
         {
-          "name": "environments",
-          "type": "deployment-environment",
-          "relation": "deployment-environment",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Infrastructure",
-          "description": "A tab of the organization: what it shows."
-        },
-        {
           "name": "gears",
           "type": "gear",
           "relation": "gear",
@@ -7480,6 +7471,7 @@
     "kit.introduces_type_22": "project-issues",
     "organization.connectors": "org-connections",
     "organization.costs": "org-costs",
+    "organization.environments": "org-infrastructure",
     "organization.reports": "org-reports",
     "policy": "project-specs",
     "project.activity": "project-activity",
