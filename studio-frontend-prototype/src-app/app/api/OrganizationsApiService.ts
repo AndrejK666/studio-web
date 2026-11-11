@@ -67,6 +67,12 @@ export class OrganizationsApiService extends BaseApiService {
   readonly capabilities =
     this.protocol(RestEndpointProtocol).query<OrganizationCapabilities>('/capabilities');
 
+  /** An organization's logo (base64, ≤ 256 KiB); 404 when it has none. Set in Admin › Organizations. */
+  readonly logo = this.protocol(RestEndpointProtocol).queryWith<
+    { content_type: string; data: string; digest?: string },
+    { orgId: string }
+  >(({ orgId }) => `/logo?organization_id=${encodeURIComponent(orgId)}`);
+
   /**
    * Create an organization and become its owner.
    *

@@ -39,6 +39,16 @@ export function sharedConnections(connections: readonly StoredConnection[]): Sto
   return connections.filter((c) => c.scope !== 'personal');
 }
 
+/** The profile lists the caller's own: the connections stored as personal. */
+export function personalConnections(connections: readonly StoredConnection[]): StoredConnection[] {
+  return connections.filter((c) => c.scope === 'personal');
+}
+
+/** What a person may connect as their own: anything but a cluster or a registry, which only the organization holds. */
+export function personalProviders<P extends { provider: string; category?: string }>(providers: readonly P[]): P[] {
+  return providers.filter((p) => !orgOnlyProvider(p));
+}
+
 /** The kinds this Studio offers that nothing is connected for yet. */
 export function missingCategories(
   providers: readonly Pick<ConnectorProvider, 'provider' | 'category'>[],

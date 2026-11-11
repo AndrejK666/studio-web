@@ -22,6 +22,13 @@ export {
 } from './types';
 export { identityMockMap, organizationsMockMap } from './mocks';
 export {
+  PresenceApiService,
+  PRESENCE_API_BASE_URL,
+  type Heartbeat,
+  type PresenceEntry,
+  type PresenceNote,
+} from './PresenceApiService';
+export {
   StudioSessionApiService,
   STUDIO_SESSION_API_BASE_URL,
   type StudioSession,

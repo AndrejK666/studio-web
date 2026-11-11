@@ -13,6 +13,7 @@ import {
 } from '@constructor-studio/mfe-shared';
 import { IdentityApiService, OrganizationsApiService, StudioSessionApiService } from '@/app/api';
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
+import { PresenceApiService } from '@/app/api/PresenceApiService';
 import { MfeHandlerIframe } from '@/app/mfe/MfeHandlerIframe';
 import './globals.css'; // Global styles with CSS variables
 import '@/app/i18n/shellTranslations'; // The shell's own strings (`shell:`)
@@ -55,6 +56,8 @@ apiRegistry.register(StudioTasksApiService);
 apiRegistry.register(ConnectorsApiService);
 // The Studio domain model: the `shows` relations a level draws as tabs (ADR-0066).
 apiRegistry.register(DomainModelApiService);
+// Who is in Studio now: the heartbeat, and the notes it collects (layout/Presence.tsx).
+apiRegistry.register(PresenceApiService);
 
 // Initialize API services
 apiRegistry.initialize({});

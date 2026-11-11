@@ -684,7 +684,7 @@ function MemberPanel({
   );
 }
 
-function EmailList({ emails }: { emails: PersonEmail[] }) {
+export function EmailList({ emails }: { emails: PersonEmail[] }) {
   const { t } = useAdmin();
   if (!emails.length) return <span className={styles.sub}>{t('ids_no_address')}</span>;
   const source = (s: string) => (['profile', 'sign_in', 'alias'].includes(s) ? t(`email_source_${s}`) : s);

@@ -13,6 +13,7 @@ vi.mock('./RuntimeKits', () => ({ RuntimeKits: () => <div data-testid="runtime-k
 vi.mock('./Popup', () => ({ Popup: () => null }));
 vi.mock('./Overlay', () => ({ Overlay: () => null }));
 vi.mock('./OverlayDialog', () => ({ OverlayDialog: () => null }));
+vi.mock('./Presence', () => ({ Presence: () => <div data-testid="presence" /> }));
 vi.mock('./OrganizationAccessGate', () => ({
   OrganizationAccessGate: () => <div data-testid="access-gate" />,
   useHasNoOrganization: () => noOrganization.value,
@@ -38,6 +39,8 @@ describe('Layout', () => {
     expect(screen.getByTestId('top-bar')).toBeTruthy();
     expect(screen.getByTestId('level-tabs')).toBeTruthy();
     expect(screen.getByTestId('mounted-screen')).toBeTruthy();
+    // Signed in means reporting in: the heartbeat and the notes left for this person.
+    expect(screen.getByTestId('presence')).toBeTruthy();
   });
 
   // Onboarding: there is no level to name and no section to offer.

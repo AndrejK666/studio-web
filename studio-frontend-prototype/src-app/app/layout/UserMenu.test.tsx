@@ -14,7 +14,9 @@ interface TestUser {
   avatarUrl?: string;
 }
 
-const { mockAuth, mockDispatch, mockEventBus, headerState, mockApiRegistry, screens } = vi.hoisted(() => ({
+const { mockAuth, mockDispatch, mockEventBus, headerState, mockApiRegistry, screens, theme } = vi.hoisted(() => ({
+  /** The shell's theme, as `useTheme` answers. */
+  theme: { currentTheme: 'default' as string | undefined, themes: [], setTheme: vi.fn() },
   /** The screens registered in the shell: what decides the Platform and Admin entries. */
   screens: [] as Array<{ id: string; presentation: { label: string; route: string; level?: string } }>,
   mockApiRegistry: { has: vi.fn(() => false), getService: vi.fn() },
@@ -36,6 +38,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   eventBus: mockEventBus,
   apiRegistry: mockApiRegistry,
   useDomainExtensions: () => screens,
+  useTheme: () => theme,
 }));
 
 vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellText'));
@@ -120,6 +123,33 @@ describe('UserMenu', () => {
     fireEvent.click(await screen.findByText('Platform'));
     expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/level/requested', { level: 'platform' });
     screens.length = 0;
+  });
+
+  it('opens Profile, the hidden screen at /profile, the way a tab click asks for a screen', async () => {
+    screens.length = 0;
+    const { unmount } = render(<UserMenu />);
+    openMenu();
+    await screen.findByText('Organization');
+    // Without the screen registered there is nothing to open.
+    expect(screen.queryByText('Profile')).toBeNull();
+    unmount();
+
+    screens.push({ id: 'profile-ext', presentation: { label: 'Profile', route: '/profile', level: 'organization' } });
+    render(<UserMenu />);
+    openMenu();
+    fireEvent.click(await screen.findByText('Profile'));
+    expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/screen/requested', { extensionId: 'profile-ext' });
+    screens.length = 0;
+  });
+
+  it('switches to the dark theme and remembers it as the prototype did (app.theme)', async () => {
+    window.localStorage.removeItem('studio.ui-preferences.v1');
+    theme.currentTheme = 'default';
+    render(<UserMenu />);
+    openMenu();
+    fireEvent.click(await screen.findByText('Dark theme'));
+    expect(theme.setTheme).toHaveBeenCalledWith('dark');
+    expect(JSON.parse(window.localStorage.getItem('studio.ui-preferences.v1') ?? '{}')).toMatchObject({ 'app.theme': 'dark' });
   });
 
   it('sign-out clears the user and logs out via the auth runtime', async () => {

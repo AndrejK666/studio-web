@@ -32,6 +32,8 @@ vi.mock('./screens/model/ModelScreen', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./screens/model/ModelScreen')>()),
   ModelScreen: ({ level, section: at }: { level: string; section: string | null }) => `model:${level}:${at}`,
 }));
+vi.mock('./screens/admin/SystemSection', () => ({ SystemSection: () => 'system' }));
+vi.mock('./screens/admin/ProfileSection', () => ({ ProfileSection: () => 'profile' }));
 
 import { ADMIN_SECTIONS, AdminRoot, ORGANIZATION_SECTIONS } from './AdminRoot';
 
@@ -96,5 +98,15 @@ describe('AdminRoot', () => {
     render(<AdminRoot bridge={{ extensionId: `x~constructor_studio.admin.screens.${leaf}.v1` } as ChildMfeBridge} />);
     expect(screen.getByText(shown)).toBeTruthy();
     expect(document.querySelector('[data-admin-section]')?.getAttribute('data-admin-section')).toBe(name);
+  });
+
+  // Profile: no tab lists it; the user menu opens it by its route.
+  it('answers the hidden Profile screen with the Profile section', () => {
+    const profile = manifest.extensions.map((e) => e.presentation).find((p) => p.route === '/profile');
+    expect(profile).toMatchObject({ level: 'organization', placement: 'hidden', section: 'profile' });
+    expect(profile).not.toHaveProperty('kit');
+    section.value = 'profile';
+    render(<AdminRoot bridge={bridge} />);
+    expect(screen.getByText('profile')).toBeTruthy();
   });
 });

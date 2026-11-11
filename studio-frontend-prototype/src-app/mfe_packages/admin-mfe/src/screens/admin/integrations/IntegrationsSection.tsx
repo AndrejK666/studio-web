@@ -6,7 +6,8 @@
  * (asked once, kept five minutes), the provider picker and the credential form,
  * a connection made by signing in, the editor that keeps the connection's id,
  * and the repository browser of a source-code connection. A person's own
- * connections are not listed here; they are on the profile.
+ * connections are not listed here; they are on the profile, which renders this
+ * same screen with `personal` (the prototype's `ConnectorsView owner="personal"`).
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -15,7 +16,12 @@ import { Card, CardContent } from '@gears-frontx/ui-kit';
 import { responseStatus, useOrganization, type OrganizationRef } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../../api/AdminApiService';
 import type { ConnectorProvider, StoredConnection } from '../../../api/types';
-import { environmentsByConnection, sharedConnections } from '../../../model/connections';
+import {
+  environmentsByConnection,
+  personalConnections,
+  personalProviders,
+  sharedConnections,
+} from '../../../model/connections';
 import { ErrorLine, Header, errText, useAdmin } from '../common';
 import { AddConnection } from './AddConnection';
 import { ConnectionTable } from './ConnectionTable';
@@ -36,7 +42,11 @@ export function IntegrationsSection() {
   return <Integrations key={org.id} org={org} />;
 }
 
-function Integrations({ org }: { org: OrganizationRef }) {
+/**
+ * One organization's connections: the shared ones (Admin › Integrations), or with
+ * `personal` the caller's own there (Profile), which are added only as the caller's.
+ */
+export function Integrations({ org, personal = false }: { org: OrganizationRef; personal?: boolean }) {
   const { t } = useAdmin();
   const api = apiRegistry.getService(AdminApiService);
   const [providers, setProviders] = useState<ConnectorProvider[] | null>(null);
@@ -51,7 +61,9 @@ function Integrations({ org }: { org: OrganizationRef }) {
   const [envUses, setEnvUses] = useState<Map<string, string[]>>(new Map());
 
   // Which environments deploy with each cluster, for Used by. A failure leaves the column quiet.
+  // A person's own connections are never a cluster or a registry, so the profile does not ask.
   useEffect(() => {
+    if (personal) return;
     let live = true;
     api
       .environments({ orgId: org.id })
@@ -61,7 +73,7 @@ function Integrations({ org }: { org: OrganizationRef }) {
     return () => {
       live = false;
     };
-  }, [api, org.id]);
+  }, [api, org.id, personal]);
 
   const reload = useCallback(
     () =>
@@ -94,19 +106,26 @@ function Integrations({ org }: { org: OrganizationRef }) {
     void reload();
   }, [reload]);
 
-  const listed = connections === null ? null : sharedConnections(connections);
+  const listed =
+    connections === null ? null : personal ? personalConnections(connections) : sharedConnections(connections);
 
   return (
     <>
-      <Header
-        title={t('int_title')}
-        info={
-          <>
-            <p>{t('int_about', { name: org.name })}</p>
-            <p>{t('int_about_tokens')}</p>
-          </>
-        }
-      />
+      {personal ? (
+        <h3 className={styles.subtitle} data-my-connections={org.id}>
+          {t('prof_connections_in', { name: org.name })}
+        </h3>
+      ) : (
+        <Header
+          title={t('int_title')}
+          info={
+            <>
+              <p>{t('int_about', { name: org.name })}</p>
+              <p>{t('int_about_tokens')}</p>
+            </>
+          }
+        />
+      )}
       {err && <ErrorLine>{err}</ErrorLine>}
       {note && (
         <p className={styles.notice} role="status" data-integrations-note>
@@ -128,6 +147,7 @@ function Integrations({ org }: { org: OrganizationRef }) {
           org={org}
           providers={providers ?? []}
           category={adding || undefined}
+          personal={personal}
           onClose={() => setAdding(null)}
           onAdded={(r) => {
             setNote(
@@ -144,7 +164,7 @@ function Integrations({ org }: { org: OrganizationRef }) {
       {!disabled && (
         <ConnectionTable
           org={org}
-          providers={providers ?? []}
+          providers={personal ? personalProviders(providers ?? []) : (providers ?? [])}
           connections={listed ?? []}
           // A failed read stays "reading" under its error, never "nothing connected".
           loading={listed === null}

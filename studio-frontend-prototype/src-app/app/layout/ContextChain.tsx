@@ -44,6 +44,7 @@ import { resolveLevelMenu, type ScreenLevel, type StudioScreenExtension } from '
 import { useShellText } from '@/app/i18n/shellTranslations';
 import type { ScreenText } from '@constructor-studio/mfe-shared';
 import { useScreenLevel } from './useScreenLevel';
+import { useOrgLogo } from './orgLogo';
 import styles from './ContextChain.module.css';
 
 interface ChainSlot {
@@ -171,6 +172,18 @@ function belowOrganization(level: ScreenLevel, context: AppContextState, t: Scre
 const requestLevel = (level: ScreenLevel) =>
   eventBus.emit('app/context/level/requested', { level });
 
+/**
+ * A slot's or an option's mark: the organization's logo where it has one (the
+ * prototype's `OrgMark`), else the level's glyph.
+ */
+const SlotMark: React.FC<{ slot: ChainSlot; id: string | undefined; className?: string }> = ({ slot, id, className }) => {
+  const logo = useOrgLogo(slot.level === 'organization' ? id : null);
+  if (logo) {
+    return <img src={logo} alt="" aria-hidden="true" className={className ?? 'size-4 rounded-sm object-contain'} data-org-logo={id} />;
+  }
+  return <slot.Icon strokeWidth={1.5} aria-hidden="true" />;
+};
+
 /** The slot's face: the design's ghost button — icon, name, chevron. */
 const SlotFace = React.forwardRef<
   HTMLButtonElement,
@@ -183,7 +196,7 @@ const SlotFace = React.forwardRef<
       ref={ref}
       variant="utility"
       size="sm"
-      icon={<slot.Icon strokeWidth={1.5} />}
+      icon={<SlotMark slot={slot} id={slot.current?.id} />}
       aria-current={isCurrent ? 'page' : undefined}
       aria-label={label}
       className={styles.slot}
@@ -246,7 +259,7 @@ const MenuSlot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isC
                 !isCurrent && option.id === slot.current?.id ? () => requestLevel(slot.level) : undefined
               }
             >
-              <slot.Icon aria-hidden="true" />
+              <SlotMark slot={slot} id={option.id} />
               {option.name}
             </DropdownMenuRadioItem>
           ))}

@@ -65,6 +65,40 @@ describe('registerBootstrapEffects', () => {
     expect(dispatch).toHaveBeenCalledWith(setHeaderLoading(false));
   });
 
+  it('then shows the person Studio keeps: their chosen name and photo (Profile)', async () => {
+    mockGetService.mockReturnValue({
+      getMe: { fetch: vi.fn().mockResolvedValue({ subject_id: 'abcdef12-3456' }) },
+      myPerson: {
+        fetch: vi.fn().mockResolvedValue({
+          id: 'p1',
+          display_name: 'Ada Lovelace',
+          avatar_url: 'https://avatars.githubusercontent.com/u/1',
+        }),
+      },
+    });
+    await emit('app/user/fetch');
+    await vi.waitFor(() =>
+      expect(dispatch).toHaveBeenCalledWith(
+        setUser({
+          displayName: 'Ada Lovelace',
+          email: 'ada@example.com',
+          avatarUrl: 'https://avatars.githubusercontent.com/u/1',
+        })
+      )
+    );
+  });
+
+  it('keeps the token words when the person read fails', async () => {
+    mockGetService.mockReturnValue({
+      getMe: { fetch: vi.fn().mockResolvedValue({ subject_id: 'abcdef12-3456' }) },
+      myPerson: { fetch: vi.fn().mockRejectedValue(new Error('503')) },
+    });
+    await emit('app/user/fetch');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const users = dispatch.mock.calls.filter(([a]) => a.type === setUser({}).type);
+    expect(users).toEqual([[setUser({ displayName: 'Ada L', email: 'ada@example.com' })]]);
+  });
+
   it('falls back to preferred_username, then to the /me subject id', async () => {
     mockGetIdentity.mockResolvedValue({ sub: 'x', claims: { preferred_username: 'ada' } });
     await emit('app/user/fetch');

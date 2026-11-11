@@ -21,7 +21,7 @@ import {
 import { rememberSignInReturn, SIGN_IN_CALLBACK_PATH, type OrganizationRef } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../../api/AdminApiService';
 import type { ConnectorIdentity, ConnectorProvider } from '../../../api/types';
-import { CATEGORY_KEYS, reachFor, type Reach } from '../../../model/connections';
+import { CATEGORY_KEYS, personalProviders, reachFor, type Reach } from '../../../model/connections';
 import { kubeconfigServer } from '../../../model/kubeconfig';
 import { ErrorLine, errText, useAdmin } from '../common';
 import { ConnectorLogo, LogoSlot } from './ConnectorLogo';
@@ -33,6 +33,7 @@ export function AddConnection({
   org,
   providers,
   category,
+  personal = false,
   onClose,
   onAdded,
 }: {
@@ -40,15 +41,20 @@ export function AddConnection({
   providers: ConnectorProvider[];
   /** Open on one kind, from the "Not connected yet" line. */
   category?: string;
+  /** From the profile: the connection is the caller's own, never the organization's. */
+  personal?: boolean;
   onClose: () => void;
   onAdded: (r: ConnectorIdentity) => void;
 }) {
   const { t } = useAdmin();
   const [picked, setPicked] = useState<ConnectorProvider | null>(null);
   const [find, setFind] = useState('');
-  const [reach, setReach] = useState<Reach>('organization');
+  const startReach: Reach = personal ? 'personal' : 'organization';
+  const [reach, setReach] = useState<Reach>(startReach);
+  // A profile never offers what only the organization may hold (a cluster, a registry).
+  const offered = personal ? personalProviders(providers) : providers;
 
-  if (providers.length === 0) {
+  if (offered.length === 0) {
     return (
       <Card data-connection-picker>
         <CardContent className={styles.cardBody}>
@@ -71,9 +77,10 @@ export function AddConnection({
               provider={picked}
               reach={reach}
               onReach={setReach}
+              fixedReach={personal}
               onBack={() => {
                 setPicked(null);
-                setReach('organization');
+                setReach(startReach);
               }}
               onClose={onClose}
               onAdded={onAdded}
@@ -105,7 +112,7 @@ export function AddConnection({
         </div>
         {CATEGORY_KEYS.filter((key) => !category || key === category).map((key) => {
           const title = t(`int_cat_${key}`);
-          const group = providers.filter(
+          const group = offered.filter(
             (p) => p.category === key && (!q || `${p.display_name} ${p.provider} ${title}`.toLowerCase().includes(q))
           );
           // Research's tile stays in sight while this Studio cannot offer it yet (ADR-0049 §1).
@@ -124,7 +131,7 @@ export function AddConnection({
                     title={p.default_base_url}
                     onClick={() => {
                       setPicked(p);
-                      setReach((r) => reachFor(p, r));
+                      setReach((r) => (personal ? 'personal' : reachFor(p, r)));
                     }}
                     data-provider={p.provider}
                   >
@@ -160,6 +167,7 @@ function CredentialForm({
   provider,
   reach,
   onReach,
+  fixedReach = false,
   onBack,
   onClose,
   onAdded,
@@ -168,6 +176,8 @@ function CredentialForm({
   provider: ConnectorProvider;
   reach: Reach;
   onReach: (reach: Reach) => void;
+  /** The profile's form: the reach is the caller's alone and not offered. */
+  fixedReach?: boolean;
   onBack: () => void;
   onClose: () => void;
   onAdded: (r: ConnectorIdentity) => void;
@@ -232,13 +242,15 @@ function CredentialForm({
         </span>
       </div>
 
-      <label className={styles.field}>
-        {t('int_available_to')}
-        <NativeSelect value={reach} onChange={(e) => onReach(e.target.value as Reach)} data-connection-reach>
-          <NativeSelectOption value="organization">{t('int_reach_org', { name: org.name })}</NativeSelectOption>
-          <NativeSelectOption value="personal">{t('int_reach_personal')}</NativeSelectOption>
-        </NativeSelect>
-      </label>
+      {!fixedReach && (
+        <label className={styles.field}>
+          {t('int_available_to')}
+          <NativeSelect value={reach} onChange={(e) => onReach(e.target.value as Reach)} data-connection-reach>
+            <NativeSelectOption value="organization">{t('int_reach_org', { name: org.name })}</NativeSelectOption>
+            <NativeSelectOption value="personal">{t('int_reach_personal')}</NativeSelectOption>
+          </NativeSelect>
+        </label>
+      )}
       <p className={own.hint}>{reach === 'organization' ? t('int_reach_org_hint') : t('int_reach_personal_hint')}</p>
 
       <label className={styles.field}>

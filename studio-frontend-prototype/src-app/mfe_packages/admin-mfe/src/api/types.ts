@@ -119,7 +119,95 @@ export interface MyMembership {
 export interface StudioProfile {
   id: string;
   display_name?: string | null;
+  /** What the person typed; `emails` lists every address they hold. */
   email?: string | null;
+  /** Usable as is in an `<img>`: a stored photo is served anonymously at a URL carrying its digest. */
+  avatar_url?: string | null;
+  /** Absent from a backend older than the people profile. */
+  emails?: PersonEmail[];
+  last_seen_at_epoch_ms?: number | null;
+}
+
+/** What a claim or a revoke of an outside account did (`/me/aliases`). */
+export interface AliasWrite {
+  /** written | written_over_a_proof | already_held | refused */
+  outcome: string;
+  /** Why, when `outcome` is `refused`. */
+  reason?: string | null;
+  /** The caller's accounts after the write. */
+  aliases: PersonAlias[];
+}
+
+/** What one confirmation pass over the caller's proofs did. */
+export interface AliasConfirmReport {
+  confirmed: { kind: string; external_id: string }[];
+  already_confirmed: number;
+  skipped_shared: number;
+  skipped_other_owner?: number;
+  skipped_unknown_owner?: number;
+  skipped_no_handle?: number;
+  refused: string[];
+}
+
+/* ── studio-presence: who is in Studio now ── */
+
+/** Somebody in Studio, as the presence gear reports them. */
+export interface PresenceEntry {
+  user_id: string;
+  display_name?: string | null;
+  tenant_id: string;
+  /** The portal's word for where they are. */
+  place: string;
+  detail?: string | null;
+  since_ms: number;
+  last_seen_ms: number;
+}
+
+export interface OnlineList {
+  items: PresenceEntry[];
+  total: number;
+  online_ttl_ms: number;
+  heartbeat_ms: number;
+}
+
+/* ── studio-connector / studio-notify: a test notification ── */
+
+/** A channel a notification connection can post to. */
+export interface NotifyTarget {
+  /** Provider-native id — what `target` expects. */
+  id: string;
+  name: string;
+  /** The server or workspace the channel belongs to (a Discord guild). */
+  container?: string | null;
+  private: boolean;
+  /** Zulip: a message to this channel must carry a `topic`. */
+  topic_required: boolean;
+}
+
+/** Where a message landed, as the platform reported it. */
+export interface SentMessage {
+  connection_id: string;
+  provider: string;
+  target: string;
+  message_id?: string | null;
+}
+
+/** A queued notification: the run that delivers it. */
+export interface QueuedNotification {
+  run_id: string;
+  poll: string;
+}
+
+export interface NotificationBody {
+  connection_id?: string;
+  target?: string;
+  workspace_id?: string;
+  level?: 'info' | 'warn' | 'error';
+  title?: string;
+  text: string;
+  link?: string;
+  topic?: string;
+  tenant_id?: string;
 }
 
 /** A resource-group group: a team, for a grant. */

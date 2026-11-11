@@ -437,6 +437,8 @@ describe('generated MFE manifest', () => {
         'Objects',
         'All identities',
         'Project tenants',
+        // The prototype's System (who is here, a test notification, raw types and JSON).
+        'System',
       ]);
     });
 

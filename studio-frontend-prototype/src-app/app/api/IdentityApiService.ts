@@ -19,6 +19,15 @@ import {
 import { RestMockPlugin } from '@gears-frontx/frontx-template-shell';
 import type { InvitationList, Membership, MembershipList } from './types';
 
+/** `GET /me`: the person, as far as the header shows them (the rest is Profile's). */
+export interface PersonSummary {
+  id: string;
+  display_name?: string | null;
+  email?: string | null;
+  /** Usable as is in an `<img>`: a stored photo or the one GitHub serves. */
+  avatar_url?: string | null;
+}
+
 /** `GET`/`PUT /me/ui-preferences`: the whole map, both ways. */
 export interface UiPreferences {
   preferences: Record<string, string>;
@@ -73,6 +82,9 @@ export class IdentityApiService extends BaseApiService {
     Membership,
     { token: string } | { invitation_id: string }
   >('POST', '/me/invitations/accept');
+
+  /** The canonical Studio person: the account button's name and photo, as in the prototype. */
+  readonly myPerson = this.protocol(RestEndpointProtocol).query<PersonSummary>('/me');
 
   /**
    * The person's remembered UI choices — the order they keep a level's tabs

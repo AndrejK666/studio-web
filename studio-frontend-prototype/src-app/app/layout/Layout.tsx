@@ -15,6 +15,7 @@ import { Overlay } from './Overlay';
 import { OverlayDialog } from './OverlayDialog';
 import { OrganizationAccessGate, useHasNoOrganization } from './OrganizationAccessGate';
 import { useLiveChannelOpen } from '@/app/live/useLiveChannel';
+import { Presence } from './Presence';
 
 export interface LayoutProps {
   children?: React.ReactNode;
@@ -51,6 +52,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       <OverlayDialog />
       <Popup />
       <Overlay />
+      {/* The heartbeat that puts this person in Admin › System's list, and the notes left for them. */}
+      <Presence />
     </div>
   );
 };

@@ -32,6 +32,7 @@ vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellTe
 vi.mock('./useScreenLevel', () => ({ useScreenLevel: () => level.value }));
 
 import { ContextChain } from './ContextChain';
+import { createLogoStore, setLogoStoreForTests } from './orgLogo';
 import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 
 // cmdk scrolls the highlighted row into view and measures its list; jsdom has
@@ -68,6 +69,25 @@ describe('ContextChain (the path in the top bar)', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  describe("the organization's logo (the prototype's OrgMark)", () => {
+    afterEach(() => setLogoStoreForTests(null));
+
+    it('shows the logo in the organization slot, and the glyph for one without', async () => {
+      setLogoStoreForTests(
+        createLogoStore((orgId) =>
+          orgId === 'org-1'
+            ? Promise.resolve({ content_type: 'image/png', data: 'AAAA' })
+            : Promise.reject(new Error('404'))
+        )
+      );
+      render(<ContextChain />);
+      const slot = screen.getByRole('button', { name: 'Organization: Acme Corporation' });
+      await vi.waitFor(() =>
+        expect(slot.querySelector('[data-org-logo="org-1"]')?.getAttribute('src')).toBe('data:image/png;base64,AAAA')
+      );
+    });
   });
 
   describe('slots per level', () => {

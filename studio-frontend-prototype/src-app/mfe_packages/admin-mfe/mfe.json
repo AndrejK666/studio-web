@@ -156,6 +156,19 @@
       }
     },
     {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.admin.screens.system.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.admin.mfe.main.v1",
+      "presentation": {
+        "label": "System",
+        "icon": "lucide:activity",
+        "route": "/admin/system",
+        "order": 105,
+        "level": "admin",
+        "section": "system"
+      }
+    },
+    {
       "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.admin.screens.connections.v1",
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.admin.mfe.main.v1",
@@ -253,6 +266,20 @@
         "placement": "hidden",
         "section": "type:",
         "sectionPrefix": true
+      }
+    },
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.admin.screens.profile.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.admin.mfe.main.v1",
+      "presentation": {
+        "label": "Profile",
+        "icon": "lucide:circle-user-round",
+        "route": "/profile",
+        "order": 900,
+        "level": "organization",
+        "placement": "hidden",
+        "section": "profile"
       }
     }
   ]

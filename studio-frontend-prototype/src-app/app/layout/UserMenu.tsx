@@ -8,6 +8,10 @@
  * A platform administrator also finds the organization requests here
  * (ADR-0051 §5): the menu is the one control that stays when they have no
  * organization in scope, or none at all.
+ *
+ * Profile — the person, their identities and their own connections — opens from
+ * here, as the prototype's account button did: a screen no tab lists
+ * (`/profile`, admin-mfe), asked for the way a tab click asks.
  */
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-chain:p1
@@ -31,10 +35,14 @@ import {
 } from '@gears-frontx/ui-kit/dropdown-menu';
 import { Avatar, AvatarImage, AvatarFallback } from '@gears-frontx/ui-kit/avatar';
 import { Skeleton } from '@gears-frontx/ui-kit/skeleton';
-import { Building2, Inbox, LogOut, Shield, Server } from 'lucide-react';
+import { Building2, CircleUserRound, Inbox, LogOut, Moon, Shield, Server, Sun } from 'lucide-react';
+import { useThemeChoice } from '@/app/preferences/theme';
 import { resolveLevelMenu, type StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { useShellText } from '@/app/i18n/shellTranslations';
 import { OrganizationRequestsDialog, useDecidesRequests } from './OrganizationRequests';
+
+/** The route of the Profile screen the menu opens. */
+export const PROFILE_ROUTE = '/profile';
 
 /** First letters of the first two words of the name, or of the email. */
 function initialsOf(user: { displayName?: string; email?: string } | null | undefined): string {
@@ -61,6 +69,9 @@ export const UserMenu: React.FC = () => {
   const screens = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const hasPlatform = resolveLevelMenu(screens, 'platform').length > 0;
   const hasAdmin = resolveLevelMenu(screens, 'admin').length > 0;
+  const profile = screens.find((screen) => screen.presentation?.route === PROFILE_ROUTE);
+  // The person's theme: applied once their preferences answer, switched here.
+  const [theme, chooseTheme] = useThemeChoice();
   const [requestsOpen, setRequestsOpen] = useState(false);
   const closeRequests = useCallback(() => setRequestsOpen(false), []);
 
@@ -98,6 +109,14 @@ export const UserMenu: React.FC = () => {
             )}
           </div>
           <DropdownMenuSeparator />
+          {profile && (
+            <DropdownMenuItem
+              onClick={() => eventBus.emit('app/context/screen/requested', { extensionId: profile.id })}
+            >
+              <CircleUserRound aria-hidden="true" />
+              {t('user_menu_profile')}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             onClick={() => eventBus.emit('app/context/level/requested', { level: 'organization' })}
           >
@@ -126,6 +145,13 @@ export const UserMenu: React.FC = () => {
               {t('user_menu_organization_requests')}
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem
+            onClick={() => chooseTheme(theme === 'dark' ? 'light' : 'dark')}
+            data-theme-toggle
+          >
+            {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+            {theme === 'dark' ? t('user_menu_theme_light') : t('user_menu_theme_dark')}
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => void signOut()}>
             <LogOut aria-hidden="true" />

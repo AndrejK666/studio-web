@@ -28,6 +28,8 @@ import { ModelScreen, modelLevelOf } from './screens/model/ModelScreen';
 
 /** The section of a level's Attributes tab (the generic screens, ADR-0066). */
 export const MODEL_ATTRIBUTES = 'attributes';
+import { SystemSection } from './screens/admin/SystemSection';
+import { ProfileSection } from './screens/admin/ProfileSection';
 import styles from './screens/admin/Admin.module.css';
 
 export const ADMIN_SECTIONS = [
@@ -43,14 +45,17 @@ export const ADMIN_SECTIONS = [
   'views',
   'identities',
   'tenants',
+  // The prototype's System: who is here, a test notification, the platform's raw state.
+  'system',
 ] as const;
 
 /**
  * What this entry answers on the organization level: Organization › Connections
  * is the same screen as Admin › Integrations, as the prototype rendered both
- * (`ConnectorsView` with the organization as its tenant).
+ * (`ConnectorsView` with the organization as its tenant); Profile is a hidden
+ * screen the user menu opens (`/profile`).
  */
-export const ORGANIZATION_SECTIONS = ['connections'] as const;
+export const ORGANIZATION_SECTIONS = ['connections', 'profile'] as const;
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number] | (typeof ORGANIZATION_SECTIONS)[number];
 
@@ -120,6 +125,10 @@ function Section({ section }: { section: AdminSection }) {
       return <IdentitiesSection />;
     case 'tenants':
       return <TenantsSection />;
+    case 'system':
+      return <SystemSection />;
+    case 'profile':
+      return <ProfileSection />;
     default:
       return <PeopleSection />;
   }

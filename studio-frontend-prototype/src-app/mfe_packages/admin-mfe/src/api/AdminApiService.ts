@@ -15,6 +15,8 @@
 
 import { BaseApiService, RestEndpointProtocol, RestPlugin, RestProtocol, type RestRequestContext } from '@gears-frontx/react';
 import type {
+  AliasConfirmReport,
+  AliasWrite,
   CatalogType,
   Colleague,
   Connection,
@@ -36,11 +38,18 @@ import type {
   MemberIdentities,
   MembershipRole,
   MyMembership,
+  NotificationBody,
+  NotifyTarget,
+  OnlineList,
   OrgInvitation,
   OrgMember,
   OrganizationLogo,
+  PersonAlias,
+  PersonLogin,
   PlatformIdentity,
+  QueuedNotification,
   RemoteRepo,
+  SentMessage,
   StoredConnection,
   StudioProfile,
   TypeCount,
@@ -164,6 +173,52 @@ export class AdminApiService extends BaseApiService {
   );
 
   readonly myProfile = this.protocol(RestEndpointProtocol).query<StudioProfile>('/studio-user/v1/me');
+
+  /* ── studio-user: the caller's own person (Profile) ── */
+
+  /** Change what the caller's person is called. A blank field is left as is. */
+  readonly updateMyProfile = this.protocol(RestEndpointProtocol).mutation<StudioProfile, { display_name?: string }>(
+    'POST',
+    '/studio-user/v1/me'
+  );
+
+  /** Store the caller's photo (PNG, JPEG, WebP or GIF, at most 1 MiB, base64). */
+  readonly uploadMyAvatar = this.protocol(RestEndpointProtocol).mutation<
+    StudioProfile,
+    { content_type: string; data: string }
+  >('PUT', '/studio-user/v1/me/avatar');
+
+  /** Remove the caller's stored photo. */
+  readonly deleteMyAvatar = this.protocol(RestEndpointProtocol).mutation<StudioProfile, void>(
+    'DELETE',
+    '/studio-user/v1/me/avatar'
+  );
+
+  /** The sign-ins that resolve to the caller's person. */
+  readonly myLogins = this.protocol(RestEndpointProtocol).query<{ items: PersonLogin[] }>('/studio-user/v1/me/logins');
+
+  /** The outside accounts attributed to the caller's person. */
+  readonly myAliases = this.protocol(RestEndpointProtocol).query<{ aliases: PersonAlias[] }>(
+    '/studio-user/v1/me/aliases'
+  );
+
+  /** Say an account is the caller's. A claim attributes nothing until proved. */
+  readonly claimMyAlias = this.protocol(RestEndpointProtocol).mutation<
+    AliasWrite,
+    { kind: string; external_id: string }
+  >('POST', '/studio-user/v1/me/aliases');
+
+  /** Take an account off the caller's person. */
+  readonly revokeMyAlias = this.protocol(RestEndpointProtocol).mutation<
+    AliasWrite,
+    { kind: string; external_id: string }
+  >('POST', '/studio-user/v1/me/aliases/revoke');
+
+  /** Record every account the caller's sign-ins and personal connections already proved. */
+  readonly confirmMyAliases = this.protocol(RestEndpointProtocol).mutation<AliasConfirmReport, void>(
+    'POST',
+    '/studio-user/v1/me/aliases/confirm'
+  );
 
   readonly memberIdentities = this.protocol(RestEndpointProtocol).queryWith<
     MemberIdentities,
@@ -369,6 +424,49 @@ export class AdminApiService extends BaseApiService {
   }
 
   readonly gtsTypeTitles = this.protocol(RestEndpointProtocol).query<GtsEntityPage>('/types-registry/v1/entities');
+
+  /* ── System: the platform's raw state (the prototype's `SystemView`) ── */
+
+  /** The running gears (`gear-orchestrator`), raw. */
+  readonly gears = this.protocol(RestEndpointProtocol).query<unknown>('/gear-orchestrator/v1/gears');
+
+  /** The outbound API gateway's upstreams (`oagw`), raw. */
+  readonly oagwUpstreams = this.protocol(RestEndpointProtocol).query<unknown>('/oagw/v1/upstreams');
+
+  /** Every registered GTS entity, raw (the same read as `gtsTypeTitles`, kept whole). */
+  readonly gtsEntities = this.protocol(RestEndpointProtocol).query<unknown>('/types-registry/v1/entities');
+
+  /* ── studio-presence ── */
+
+  /** Who is in Studio right now, and where. Not paged: it is about now. */
+  readonly presenceOnline = this.protocol(RestEndpointProtocol).query<OnlineList>('/studio-presence/v1/online');
+
+  /** Leave a note for somebody in Studio now; `delivered: false` means they are not, and nothing was queued. */
+  readonly presenceSend = this.protocol(RestEndpointProtocol).mutation<
+    { delivered: boolean; waiting: number },
+    { to_user_id: string; text: string; from_display_name?: string }
+  >('POST', '/studio-presence/v1/messages');
+
+  /* ── studio-connector / studio-notify: a test notification ── */
+
+  readonly notifyTargets = this.protocol(RestEndpointProtocol).queryWith<
+    { items: NotifyTarget[] },
+    { id: string; tenant: string }
+  >(({ id, tenant }) => `/studio-connector/v1/connections/${e(id)}/targets?${q({ tenant })}`);
+
+  /** Post now and wait for the platform's answer: delivered once, never retried. */
+  sendConnectorMessage(id: string, tenant: string) {
+    return this.rest.mutation<
+      SentMessage,
+      { target?: string; title?: string; text: string; link?: string; topic?: string }
+    >('POST', `/studio-connector/v1/connections/${e(id)}/messages?${q({ tenant })}`);
+  }
+
+  /** Queue a notification: a `notify.deliver` run, retried and dead-lettered rather than dropped. */
+  readonly queueNotification = this.protocol(RestEndpointProtocol).mutation<QueuedNotification, NotificationBody>(
+    'POST',
+    '/studio-notify/v1/messages'
+  );
 
   /*
    * ── studio-domain-model: the Studio domain model (ADR-0066) ──

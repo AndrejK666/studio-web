@@ -11,6 +11,7 @@ import { eventBus, setUser, setHeaderLoading, apiRegistry, type FrontXApp } from
 import { publishSessionProfile } from '@/app/mfe/sharedContext';
 import { setSessionProfile, type SessionProfile } from '@/app/slices/appSessionSlice';
 import { AccountsApiService } from '@constructor-studio/mfe-shared';
+import { IdentityApiService } from '@/app/api/IdentityApiService';
 import { setMfeBootstrapStatus } from '@/app/slices/mfeBootstrapSlice';
 
 /**
@@ -22,6 +23,16 @@ import { setMfeBootstrapStatus } from '@/app/slices/mfeBootstrapSlice';
 function claimString(claims: Record<string, unknown> | undefined, key: string): string | undefined {
   const value = claims?.[key];
   return typeof value === 'string' && value ? value : undefined;
+}
+
+/** The caller's Studio person, or null when studio-user is not there or does not answer. */
+async function personSummary() {
+  if (!apiRegistry.has(IdentityApiService)) return null;
+  try {
+    return await apiRegistry.getService(IdentityApiService).myPerson.fetch({ staleTime: 0 });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -63,6 +74,16 @@ export function registerBootstrapEffects(app: FrontXApp): void {
         (me?.subject_id ? `${me.subject_id.slice(0, 8)}…` : undefined);
       const email = claimString(claims, 'email');
       dispatch(setUser({ displayName, email }));
+      // The account button shows the person Studio keeps — the name and photo they
+      // chose in Profile, or the picture a GitHub sign-in brought — as the prototype's
+      // did. Without studio-user it stays on the token's words.
+      void personSummary().then((person) => {
+        const avatarUrl = person?.avatar_url?.trim();
+        const name = person?.display_name?.trim();
+        if (avatarUrl || name) {
+          dispatch(setUser({ displayName: name || displayName, email, ...(avatarUrl ? { avatarUrl } : {}) }));
+        }
+      });
       if (me?.subject_id) {
         const profile: SessionProfile = { id: me.subject_id };
         if (displayName) profile.displayName = displayName;
