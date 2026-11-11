@@ -92,7 +92,7 @@ export const SourcesTable: React.FC<SourcesTableProps> = ({
   workspaceId,
 }) => {
   const t = useSourcesText();
-  const sources = useSourcesLoad(projectId, workspaceId, orgId, t('uploads_name'));
+  const sources = useSourcesLoad(projectId, workspaceId, t('uploads_name'));
   const actions = useSourceRowActions(projectId, workspaceId, orgId);
   const [container, findThemedRoot] = useThemedRoot();
 

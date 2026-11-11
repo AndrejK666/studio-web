@@ -32,7 +32,7 @@ export function useSourcesSync({
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-4
   const nodes = useApiQuery(ingest.nodes(repositoryNodesParams(projectId)));
   // @cpt-end:cpt-studiofrontend-algo-project-sources-sync-missing:p2:inst-4
-  const { byId, loading, failed } = useSourceConnections(orgId);
+  const { byId, loading, failed } = useSourceConnections(orgId, projectId);
   const { repos: lines, lookedUp } = useProjectImport(projectId);
 
   const repoNodes = nodes.data?.nodes ?? null;

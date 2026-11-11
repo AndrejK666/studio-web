@@ -21,6 +21,7 @@ import {
 import { TEXT_SEARCH_FILTER_KEY } from './dataGridFilters';
 import { useProjectImport } from './useArtifactImport';
 import { repositoryNodesParams } from './useArtifacts';
+import { projectConnectionsParams } from './useConnections';
 import { projectConfigQuery, useProjectConfig } from './useProjectConfig';
 import { useProjectDocuments } from './useProjectDocuments';
 
@@ -76,7 +77,6 @@ function useOnSyncSettled(projectId: string, settledSyncs: string, onSettled: ()
 export function useSourcesLoad(
   projectId: string,
   workspaceId: string | null,
-  orgId: string,
   uploadsName: string
 ): SourcesLoad {
   const accounts = apiRegistry.getService(AccountsApiService);
@@ -88,7 +88,8 @@ export function useSourcesLoad(
   const config = useProjectConfig(projectId);
   const nodesParams = useMemo(() => repositoryNodesParams(projectId), [projectId]);
   const nodes = useApiQuery(ingest.nodes(nodesParams));
-  const connections = useApiQuery(connectors.connections({ tenantId: orgId }));
+  // The project's own connections and its organization's (#1043).
+  const connections = useApiQuery(connectors.connections(projectConnectionsParams(projectId)));
   const activity = useApiQuery(ingest.sourceActivity({ scope: projectId }));
   const specs = useApiQuery(documents.specsPerSource({ scope: projectId }));
   const studio = useProjectDocuments(workspaceId, projectId);

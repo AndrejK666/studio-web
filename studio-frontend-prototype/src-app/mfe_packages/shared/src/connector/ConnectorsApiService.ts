@@ -21,6 +21,12 @@ export const REPOSITORY_PAGE_LIMIT = 100;
 export interface ConnectionsParams {
   /** Organization tenant whose catalogue to read. */
   tenantId: string;
+  /**
+   * The tenant's own connections together with those held above it up to its
+   * organization, each marked `inherited` (a project's Sources). Without it the
+   * nearest tenant with a catalogue answers alone.
+   */
+  withAncestors?: boolean;
 }
 
 export interface ConnectionTestParams {
@@ -43,8 +49,9 @@ export interface SendMessageParams {
   tenantId: string;
 }
 
-export function connectionsPath({ tenantId }: ConnectionsParams): string {
-  return `/connections?tenant=${encodeURIComponent(tenantId)}`;
+export function connectionsPath({ tenantId, withAncestors }: ConnectionsParams): string {
+  const path = `/connections?tenant=${encodeURIComponent(tenantId)}`;
+  return withAncestors ? `${path}&with_ancestors=true` : path;
 }
 
 export function connectionTestPath({ connectionId, tenantId }: ConnectionTestParams): string {

@@ -311,6 +311,8 @@ export interface StoredConnection {
   options?: Record<string, string>;
   /** Whether the caller created it. */
   mine?: boolean;
+  /** Held above the tenant the list was asked for; sent with `with_ancestors` (#1043). */
+  inherited?: boolean;
 }
 
 export interface ConnectorIdentity {

@@ -554,6 +554,27 @@ impl ConnectorService {
         Ok(self.load(ctx, tenant).await?.items)
     }
 
+    /// `tenant`'s own connections together with those held above it up to its
+    /// organization -- a project's, its workspace's and its organization's --
+    /// each once, nearest first (#1043). [`Self::list`] stops at the nearest
+    /// tenant with a catalogue, so a project with a connection of its own hid
+    /// its organization's.
+    ///
+    /// Nothing held above the organization: the platform root's connections
+    /// are not the organization's to use (`ownership`), so a list of what a
+    /// project can use does not offer them -- unless the tenant asked about is
+    /// the root itself. The tenant's own catalogue failing to read fails the
+    /// list; an ancestor that cannot be read is left out.
+    pub async fn list_with_ancestors(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+    ) -> anyhow::Result<Vec<Connection>> {
+        let own = self.list(ctx, tenant).await?;
+        let reachable = reachable_connections(self.am.as_ref(), ctx, tenant).await;
+        Ok(merge_reachable(tenant, own, reachable))
+    }
+
     /// The gear repositories `tenant` itself holds (ADR-0046), oldest first,
     /// each with what a clone needs. Only the tenant's own: the platform's
     /// are read in the root, an organization's in the organization, and an
@@ -1680,6 +1701,23 @@ async fn reachable_connections(
     out
 }
 
+/// The list [`ConnectorService::list_with_ancestors`] answers: `own` first (the
+/// nearest catalogue's, as [`ConnectorService::list`] reads it), then every
+/// other reachable connection not already in it, leaving out what the
+/// platform root holds unless `tenant` is the root.
+fn merge_reachable(tenant: Uuid, own: Vec<Connection>, reachable: Vec<Connection>) -> Vec<Connection> {
+    use super::ownership::PLATFORM_ROOT_TENANT;
+    let allowed =
+        |c: &Connection| tenant == PLATFORM_ROOT_TENANT || c.owner_tenant_id != PLATFORM_ROOT_TENANT;
+    let mut out: Vec<Connection> = own.into_iter().filter(|c| allowed(c)).collect();
+    for c in reachable {
+        if allowed(&c) && !out.iter().any(|seen| seen.id == c.id) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// The `provider` connections a model key may come from, in the order to try
 /// them: personal, then workspace (only when the request named a workspace),
 /// then organization -- nearest tenant first within each.
@@ -2164,6 +2202,38 @@ mod default_connection_tests {
             created_at_epoch_secs: 0,
             options: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_project_lists_its_own_connections_and_its_organizations_but_not_the_platforms() {
+        use super::super::ownership::PLATFORM_ROOT_TENANT;
+        let (project, org) = (Uuid::from_u128(30), Uuid::from_u128(10));
+        let held = |label: &str, at: Uuid| Connection {
+            owner_tenant_id: at,
+            ..conn(label, "github", "organization")
+        };
+        let own = held("own", project);
+        let org_row = held("org", org);
+        let root = held("root", PLATFORM_ROOT_TENANT);
+        // The walk reads the project's catalogue again before its ancestors'.
+        let reachable = vec![own.clone(), org_row.clone(), root.clone()];
+        let out = merge_reachable(project, vec![own], reachable);
+        let labels: Vec<&str> = out.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, ["own", "org"]);
+
+        // A project with no catalogue of its own reads its organization's as
+        // the nearest one: the same rows, once.
+        let out = merge_reachable(
+            project,
+            vec![org_row.clone()],
+            vec![org_row.clone(), org_row.clone(), root.clone()],
+        );
+        let labels: Vec<&str> = out.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, ["org"]);
+
+        // The platform itself does see its own.
+        let out = merge_reachable(PLATFORM_ROOT_TENANT, vec![root.clone()], vec![root]);
+        assert_eq!(out.len(), 1);
     }
 
     #[test]

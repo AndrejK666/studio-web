@@ -25,6 +25,9 @@ describe('studio-connector paths', () => {
 
   it('encodes a tenant id that would otherwise break the query string', () => {
     expect(connectionsPath({ tenantId: 'a b&c' })).toBe('/connections?tenant=a%20b%26c');
+    expect(connectionsPath({ tenantId: 'p-1', withAncestors: true })).toBe(
+      '/connections?tenant=p-1&with_ancestors=true'
+    );
   });
 
   it('scopes the health check to the same tenant', () => {

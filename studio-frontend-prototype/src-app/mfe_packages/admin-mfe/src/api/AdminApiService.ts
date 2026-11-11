@@ -337,11 +337,19 @@ export class AdminApiService extends BaseApiService {
     '/studio-connector/v1/providers'
   );
 
-  /** Connections visible from `tenant`: its own, or inherited from an ancestor. */
+  /**
+   * Connections visible from `tenant`: its own, or inherited from an ancestor. With
+   * `withAncestors`, its own together with every one held above it up to its organization,
+   * each marked `inherited` (#1043).
+   */
   readonly storedConnections = this.protocol(RestEndpointProtocol).queryWith<
     { items: StoredConnection[] },
-    { tenant: string }
-  >(({ tenant }) => `/studio-connector/v1/connections?${q({ tenant })}`);
+    { tenant: string; withAncestors?: boolean }
+  >(({ tenant, withAncestors }) =>
+    withAncestors
+      ? `/studio-connector/v1/connections?${q({ tenant, with_ancestors: 'true' })}`
+      : `/studio-connector/v1/connections?${q({ tenant })}`
+  );
 
   /** Verify a credential without storing it ("Test connection"). */
   readonly probeConnection = this.protocol(RestEndpointProtocol).mutation<

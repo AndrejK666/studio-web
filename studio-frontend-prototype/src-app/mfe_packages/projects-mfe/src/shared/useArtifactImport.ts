@@ -55,7 +55,7 @@ export function useArtifactImport({
     byId,
     loading: connectionsLoading,
     failed: connectionsFailed,
-  } = useSourceConnections(orgId);
+  } = useSourceConnections(orgId, projectId);
 
   const connectionsRead = !connectionsLoading && !connectionsFailed;
 

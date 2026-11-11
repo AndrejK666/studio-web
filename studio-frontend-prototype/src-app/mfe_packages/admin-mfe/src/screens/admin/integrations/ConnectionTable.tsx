@@ -130,7 +130,8 @@ export function ConnectionTable({
   };
   const defaultUrl = (p: string) => providers.find((x) => x.provider === p)?.default_base_url ?? '';
   // A row stored on an ancestor is shared with sibling tenants: removing it affects them too.
-  const inheritedOf = (c: StoredConnection) => c.owner_tenant_id !== org.id;
+  // The gear says so on the list read with ancestors (#1043); else the holder tells.
+  const inheritedOf = (c: StoredConnection) => c.inherited ?? c.owner_tenant_id !== org.id;
   const browsable = (c: StoredConnection) => categoryOf(c.provider) === 'source_code';
 
   const probe = useCallback(

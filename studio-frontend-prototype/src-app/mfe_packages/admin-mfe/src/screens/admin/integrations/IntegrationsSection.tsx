@@ -79,7 +79,7 @@ export function Integrations({ org, personal = false }: { org: OrganizationRef; 
     () =>
       Promise.all([
         api.connectorProviders.fetch({ staleTime: 0 }),
-        api.storedConnections({ tenant: org.id }).fetch({ staleTime: 0 }),
+        api.storedConnections({ tenant: org.id, withAncestors: true }).fetch({ staleTime: 0 }),
       ]).then(
         ([p, c]) => {
           setProviders(p.items ?? []);

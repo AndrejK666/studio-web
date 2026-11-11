@@ -117,7 +117,7 @@ const pathOf = (row: SourcesTableRow) => (row.kind === 'uploads' ? 'uploads' : r
 /** The hook, and its bridge rendered as the grid would. */
 function mount(workspaceId: string | null = 'ws-1') {
   let projectId = 'p-1';
-  const hook = renderHook((props: { projectId: string }) => useSourcesLoad(props.projectId, workspaceId, 'org-1', 'Uploaded files'), {
+  const hook = renderHook((props: { projectId: string }) => useSourcesLoad(props.projectId, workspaceId, 'Uploaded files'), {
     initialProps: { projectId },
   });
   const grid = render(hook.result.current.rowsBridge);

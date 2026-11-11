@@ -34,6 +34,8 @@ export interface ConnectionDto {
   scope: string;
   secret_ref: string;
   created_at_epoch_secs: number;
+  /** Held above the tenant the list was asked for (`owner_tenant_id` says where). */
+  inherited?: boolean;
 }
 
 export interface ConnectionListDto {

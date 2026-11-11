@@ -4,7 +4,11 @@
 
 import { useMemo } from 'react';
 import { apiRegistry, useApiQuery } from '@gears-frontx/react';
-import { type ConnectionDto, ConnectorsApiService } from '@constructor-studio/mfe-shared';
+import {
+  type ConnectionDto,
+  type ConnectionsParams,
+  ConnectorsApiService,
+} from '@constructor-studio/mfe-shared';
 
 /** `ProviderDto.category` of a driver whose repositories can be browsed. */
 const SOURCE_CODE_CATEGORY = 'source_code';
@@ -29,7 +33,21 @@ interface ProviderFacts {
   category: string;
 }
 
-export function useSourceConnections(orgId: string): ConnectionsView {
+/**
+ * What a project's sources resolve their connections against: the project's
+ * own together with its workspace's and its organization's (#1043). Reading
+ * the organization alone left a repository attached through the project's
+ * own connection "Not connected".
+ */
+export function projectConnectionsParams(projectId: string): ConnectionsParams {
+  return { tenantId: projectId, withAncestors: true };
+}
+
+/**
+ * The source-host connections of `orgId`, or — with `projectId` — the
+ * project's own and everything above it (`projectConnectionsParams`).
+ */
+export function useSourceConnections(orgId: string, projectId?: string | null): ConnectionsView {
   const connectors = apiRegistry.getService(ConnectorsApiService);
 
   const {
@@ -42,7 +60,9 @@ export function useSourceConnections(orgId: string): ConnectionsView {
     data: connectionData,
     isLoading: connectionsLoading,
     isError: connectionsFailed,
-  } = useApiQuery(connectors.connections({ tenantId: orgId }));
+  } = useApiQuery(
+    connectors.connections(projectId ? projectConnectionsParams(projectId) : { tenantId: orgId })
+  );
 
   const catalogue = useMemo(() => {
     const facts = new Map<string, ProviderFacts>(
