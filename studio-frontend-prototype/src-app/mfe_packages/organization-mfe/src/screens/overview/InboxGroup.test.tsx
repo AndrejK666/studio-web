@@ -237,3 +237,120 @@ describe('InboxGroup', () => {
     expect(screen.queryByText('inbox_nothing')).toBeNull();
   });
 });
+
+describe('InboxGroup: a kit’s endpoint sources beside the shell’s own (constructor-research)', () => {
+  // The server reads constructor-research's two endpoint sources
+  // (`kind: "endpoint"` in its kit.json) as the caller and lists their rows
+  // with the shell's own, keyed `kit:<slug>/<id>:<row>@<stamp>`.
+  const research = { slug: 'constructor-research', name: 'Constructor Research', version: '0.9.0' };
+  const deployFailed: InboxItem = {
+    key: 'kit:constructor-research/deploy-failed:d1@2026-11-10',
+    source: 'kit:constructor-research/deploy-failed',
+    workspace_id: 'w1',
+    workspace_name: 'Main',
+    title: 'Shop: the deploy failed',
+    url: 'https://research.example.test/apps/shop/deploys/d1',
+    due_at: null,
+    overdue: true,
+    record: { id: 'd1', title: 'Shop: the deploy failed' },
+    kit: research,
+  };
+  const signIn: InboxItem = {
+    key: 'kit:constructor-research/sign-in-expires:me@2026-11-12',
+    source: 'kit:constructor-research/sign-in-expires',
+    workspace_id: '',
+    workspace_name: '',
+    title: 'Your Constructor Research sign-in runs out tomorrow',
+    url: null,
+    due_at: '2026-11-12T09:00:00Z',
+    overdue: false,
+    record: { id: 'me' },
+    kit: research,
+  };
+  const everything = page([review, deployFailed, pull, signIn]);
+  const installed = (kits: string[]) => {
+    shared.value = { [STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE]: { routes: ['/constructor-research'], kits } };
+  };
+  const rowOf = (title: string) => screen.getByText(title).closest('li') as HTMLElement;
+
+  beforeEach(() => {
+    inbox.mockReset();
+    mark.mockReset();
+    mark.mockResolvedValue({});
+  });
+
+  it('lists the kit’s rows in the server’s order with the shell’s, each source counted once', async () => {
+    installed(['constructor-research']);
+    inbox.mockResolvedValue(everything);
+    const onSources = vi.fn();
+    const onCount = vi.fn();
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} onSources={onSources} onCount={onCount} />);
+    await screen.findByText('Shop: the deploy failed');
+    const kinds = [...document.querySelectorAll('li[data-attention]')].map((li) => li.getAttribute('data-attention'));
+    expect(kinds).toEqual([
+      'review',
+      'kit:constructor-research/deploy-failed',
+      'pull',
+      'kit:constructor-research/sign-in-expires',
+    ]);
+    expect(onCount).toHaveBeenLastCalledWith(4);
+    expect(onSources).toHaveBeenLastCalledWith([
+      { source: 'review-requests', kit: null, count: 1 },
+      { source: 'kit:constructor-research/deploy-failed', kit: research, count: 1 },
+      { source: 'pull-requests', kit: null, count: 1 },
+      { source: 'kit:constructor-research/sign-in-expires', kit: research, count: 1 },
+    ]);
+  });
+
+  it('opens a failed deploy at its own page and offers no workspace for a sign-in that names none', async () => {
+    installed(['constructor-research']);
+    inbox.mockResolvedValue(everything);
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
+    await screen.findByText('Shop: the deploy failed');
+    const deploy = rowOf('Shop: the deploy failed');
+    expect(deploy.querySelector('a')?.getAttribute('href')).toBe(deployFailed.url);
+    expect(deploy.querySelector('[data-inbox-kit="constructor-research"]')?.hasAttribute('data-kit-absent')).toBe(false);
+    const sign = rowOf('Your Constructor Research sign-in runs out tomorrow');
+    expect(sign.querySelector('a')).toBeNull();
+    expect(sign.textContent).not.toContain('inbox_open_project');
+    expect(sign.textContent).toContain('inbox_done');
+  });
+
+  it('keeps the rows of an uninstalled kit, marked absent, with Done and Snooze but no way in', async () => {
+    installed(['project-issues']);
+    inbox.mockResolvedValue(everything);
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
+    await screen.findByText('Shop: the deploy failed');
+    const deploy = rowOf('Shop: the deploy failed');
+    expect(deploy.querySelector('[data-inbox-kit="constructor-research"]')?.getAttribute('data-kit-absent')).toBe('true');
+    expect(deploy.querySelector('a')).toBeNull();
+    expect(deploy.textContent).toContain('inbox_done');
+    expect(deploy.textContent).toContain('inbox_snooze');
+    // The shell's own sources are not the kit's: their way in stays.
+    expect(rowOf('Fix login').querySelector('a')?.getAttribute('href')).toBe(pull.url);
+  });
+
+  it('marks a kit’s row done under its own key', async () => {
+    installed(['constructor-research']);
+    inbox.mockResolvedValue(everything);
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
+    await screen.findByText('Shop: the deploy failed');
+    const done = [...rowOf('Shop: the deploy failed').querySelectorAll('button')].find((b) => b.textContent === 'inbox_done')!;
+    fireEvent.click(done);
+    await waitFor(() =>
+      expect(mark).toHaveBeenCalledWith({ item_key: deployFailed.key, state: 'done', until: null })
+    );
+  });
+
+  it('names a kit source the server could not read beside the rows it could', async () => {
+    installed(['constructor-research']);
+    inbox.mockResolvedValue(
+      page([review, deployFailed], { unread: ['kit:constructor-research/sign-in-expires: 502'] })
+    );
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
+    await screen.findByText('Shop: the deploy failed');
+    expect(document.querySelector('[data-inbox-unread]')?.textContent).toContain(
+      'kit:constructor-research/sign-in-expires: 502'
+    );
+  });
+});
