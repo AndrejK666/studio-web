@@ -425,8 +425,12 @@ class StandaloneEsmBuilder {
     // re-exports so `import { createContext } from "react"` works in blob URLs.
     this.patchCjsNamedExports(outfile, dep.name);
 
-    // Last, and before anything hashes the file (`computeContentHash`).
     StandaloneEsmBuilder.normalizeEmbeddedModulePaths(outfile);
+
+    // Last, after the text patches above (they match esbuild's readable
+    // output: `__require("react")`, `export default …;`) and before anything
+    // hashes the file (`computeContentHash`).
+    await StandaloneEsmBuilder.minify(outfile);
 
     const label =
       dep.externals.length > 0
@@ -577,6 +581,11 @@ class StandaloneEsmBuilder {
     return name.replace(/^@/, '').replace(/\//g, '-');
   }
 
+  private static async minify(outfile: string): Promise<void> {
+    const source = fs.readFileSync(outfile, 'utf-8');
+    fs.writeFileSync(outfile, await minifySharedChunkSource(source), 'utf-8');
+  }
+
   private static normalizeEmbeddedModulePaths(outfile: string): void {
     const source = fs.readFileSync(outfile, 'utf-8');
     const normalized = normalizeEmbeddedModulePathsInSource(source);
@@ -603,6 +612,31 @@ export function computeContentHash(chunkFilePath: string): string | undefined {
     );
     return undefined;
   }
+}
+
+/**
+ * Minifies one standalone shared chunk. The chunks were the only unminified
+ * code the portal shipped: some 2 MB that every page fetches once (the
+ * handler reuses a chunk across MFEs by `contentHash`) and every MFE realm
+ * parses and evaluates again, since each load gets its own blob copy.
+ *
+ * What the runtime reads off the text survives: ESM export names are never
+ * mangled, and bare imports keep their specifier (`from"react"` — the
+ * handler's rewrite allows no space between `from` and the quote). Pure
+ * function of its input, so one dependency still hashes the same in every MFE.
+ */
+export async function minifySharedChunkSource(source: string): Promise<string> {
+  const result = await esbuild.transform(source, {
+    format: 'esm',
+    target: 'esnext',
+    minify: true,
+    // Licence headers stay, at the end of the file.
+    legalComments: 'eof',
+    // Same production define as the bundling step: a branch left on
+    // `process.env.NODE_ENV` would otherwise stop minification from removing it.
+    define: { 'process.env.NODE_ENV': '"production"' },
+  });
+  return result.code;
 }
 
 /**
