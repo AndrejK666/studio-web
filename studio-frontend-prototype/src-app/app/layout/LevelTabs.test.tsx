@@ -118,6 +118,10 @@ const { installedKits } = vi.hoisted(() => ({
 vi.mock('./useInstalledKits', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./useInstalledKits')>()),
   useInstalledKits: () => installedKits.value,
+  useInstalledTypes: () => installedTypes.value,
+}));
+const { installedTypes } = vi.hoisted(() => ({
+  installedTypes: { value: null as ReadonlySet<string> | null },
 }));
 vi.mock('@/app/mfe/domainOccupancy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/app/mfe/domainOccupancy')>()),
@@ -529,5 +533,47 @@ describe('LevelTabs and kits (ADR-0069 §4)', () => {
     expect(screenShows(kitTab as never, new Set(['project-tests']))).toBe(true);
     expect(screenShows(kitTab as never, new Set())).toBe(false);
     expect(screenShows(shellTab as never, new Set())).toBe(true);
+  });
+
+  it('shows a section that needs another kit\'s type only where the type is installed (ADR-0070 §2)', async () => {
+    const { screenShows } = await import('./useInstalledKits');
+    const timeline = {
+      id: 'timeline',
+      presentation: { label: 'Timeline', route: '/projects/timeline', level: 'project', kit: 'project-activity', needs: ['milestone'] },
+    };
+    const kits = new Set(['project-activity']);
+    // Unknown hides nothing.
+    expect(screenShows(timeline as never, kits, null)).toBe(true);
+    expect(screenShows(timeline as never, kits, new Set(['milestone', 'project']))).toBe(true);
+    // project-lifecycle not installed, or the type dormant: the model has no milestone.
+    expect(screenShows(timeline as never, kits, new Set(['project']))).toBe(false);
+    // The kit itself still decides first.
+    expect(screenShows(timeline as never, new Set(), new Set(['milestone']))).toBe(false);
+  });
+
+  it('drops a tab whose needed type the organization lacks', () => {
+    level.value = 'project';
+    const activity = {
+      id: 'ext.activity',
+      domain: SCREEN_DOMAIN,
+      entry: 'entry.activity',
+      presentation: { label: 'Activity', icon: 'lucide:activity', route: '/projects/activity', order: 60, level: 'project', section: 'activity' },
+    };
+    const timeline = {
+      id: 'ext.timeline',
+      domain: SCREEN_DOMAIN,
+      entry: 'entry.activity',
+      presentation: { label: 'Timeline', icon: 'lucide:milestone', route: '/projects/timeline', order: 61, level: 'project', section: 'timeline', needs: ['milestone'] },
+    };
+    registered.value = [activity, timeline];
+    installedTypes.value = new Set(['project']);
+    render(<LevelTabs />);
+    expect(screen.queryByText('Activity')).not.toBeNull();
+    expect(screen.queryByText('Timeline')).toBeNull();
+    cleanup();
+    installedTypes.value = new Set(['project', 'milestone']);
+    render(<LevelTabs />);
+    expect(screen.queryByText('Timeline')).not.toBeNull();
+    installedTypes.value = null;
   });
 });

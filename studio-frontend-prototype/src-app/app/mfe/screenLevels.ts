@@ -39,6 +39,11 @@ export interface LeveledPresentation {
   experimental?: boolean;
   /** The kit that brings the screen; shown only where the kit is installed. */
   kit?: string;
+  /**
+   * The domain types the screen shows that another kit brings (ADR-0070 §2):
+   * shown only where every one is installed.
+   */
+  needs?: readonly string[];
   placement?: string;
   section?: string;
   parentSection?: string;

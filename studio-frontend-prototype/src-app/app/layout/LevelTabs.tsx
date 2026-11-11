@@ -36,7 +36,7 @@ import { SHELL_SLOTS } from '@/app/mfe/slots';
 import { KitSlot } from './KitSlot';
 import { levelIconName } from './levelIcon';
 import { useScreenLevel } from './useScreenLevel';
-import { screenShows, useInstalledKits } from './useInstalledKits';
+import { screenShows, typesNeeded, useInstalledKits, useInstalledTypes } from './useInstalledKits';
 import { modelNameOf, screenIdOf, visibleTabs, withModelTabs } from './modelTabs';
 import { useHiddenTabs, useLevelModelTabs, useLevelTenant } from './useModelTabs';
 import { LevelTabsEditor } from './LevelTabsEditor';
@@ -64,11 +64,14 @@ export const LevelTabs: React.FC = () => {
   const level = useScreenLevel();
   const registered = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const installed = useInstalledKits();
-  // The manifests' tabs, then the ones the Studio domain model adds (ADR-0066),
-  // then without what the level's settings hide.
+  // The manifests' tabs (a tab whose kit or needed type is not installed here
+  // left out), then the ones the Studio domain model adds (ADR-0066), then
+  // without what the level's settings hide.
+  const leveled = resolveLevelMenu(registered, level);
+  const types = useInstalledTypes(leveled.some((ext) => typesNeeded(ext).length > 0));
   const modelTabs = useLevelModelTabs(level);
   const all = withModelTabs(
-    resolveLevelMenu(registered, level).filter((ext) => screenShows(ext, installed)),
+    leveled.filter((ext) => screenShows(ext, installed, types)),
     registered,
     level,
     modelTabs

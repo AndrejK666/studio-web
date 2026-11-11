@@ -15,6 +15,7 @@ import { IdentityApiService, OrganizationsApiService, StudioSessionApiService } 
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
 import { PresenceApiService } from '@/app/api/PresenceApiService';
 import { InboxCountApiService } from '@/app/api/InboxCountApiService';
+import { ModelTypesApiService } from '@/app/api/ModelTypesApiService';
 import { MfeHandlerIframe } from '@/app/mfe/MfeHandlerIframe';
 import './globals.css'; // Global styles with CSS variables
 import '@/app/i18n/shellTranslations'; // The shell's own strings (`shell:`)
@@ -50,6 +51,9 @@ apiRegistry.register(OrganizationsApiService);
 apiRegistry.register(InstalledKitsApiService);
 // How many items wait on the person: the top bar's Inbox button.
 apiRegistry.register(InboxCountApiService);
+// Which domain types are installed: a screen that needs another kit's type
+// (a section's `needs`, ADR-0070 §2) shows only there.
+apiRegistry.register(ModelTypesApiService);
 // The backend's push channel: studio-tasks announces every background run on
 // it, so a view is told instead of polling.
 apiRegistry.register(StudioEventsApiService);

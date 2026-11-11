@@ -5,9 +5,6 @@ export type ProjectSection =
   | 'artifacts'
   | 'specs'
   | 'sources'
-  | 'activity'
-  | 'timeline'
-  | 'team'
   | 'settings';
 
 /** Where a freshly opened project lands, and what its tab is. */
@@ -18,9 +15,6 @@ export const PROJECT_SECTIONS: readonly ProjectSection[] = [
   'artifacts',
   'specs',
   'sources',
-  'activity',
-  'timeline',
-  'team',
   'settings',
 ];
 

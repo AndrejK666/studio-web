@@ -172,49 +172,6 @@
       }
     },
     {
-      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.projects.sections.activity.v1",
-      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
-      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.main.v1",
-      "presentation": {
-        "label": "Activity",
-        "icon": "lucide:history",
-        "route": "/projects/activity",
-        "order": 40,
-        "level": "project",
-        "section": "activity",
-        "kit": "project-activity"
-      }
-    },
-    {
-      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.projects.sections.timeline.v1",
-      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
-      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.main.v1",
-      "presentation": {
-        "label": "Timeline",
-        "icon": "lucide:calendar-days",
-        "route": "/projects/timeline",
-        "order": 50,
-        "level": "project",
-        "section": "timeline",
-        "kit": "project-activity"
-      }
-    },
-    {
-      "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.projects.sections.team.v1",
-      "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
-      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.main.v1",
-      "presentation": {
-        "label": "Team",
-        "icon": "lucide:users",
-        "route": "/projects/team",
-        "order": 60,
-        "level": "project",
-        "section": "team",
-        "kit": "project-team",
-        "modelTab": "people"
-      }
-    },
-    {
       "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.projects.sections.settings.v1",
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.main.v1",

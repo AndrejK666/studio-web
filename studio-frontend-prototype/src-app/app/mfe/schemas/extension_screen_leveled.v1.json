@@ -59,6 +59,11 @@
           "type": "string",
           "pattern": "^[a-z0-9-]+$",
           "$comment": "The slug of the kit that brings this screen (ADR-0068 §2, ADR-0069 §4). The shell shows it only where the kit is installed — as a base kit or by the organization — and shows it while that is not yet known. Absent: the shell's own screen, always shown."
+        },
+        "needs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "$comment": "Domain types (ontology ids, e.g. 'milestone') the screen shows that another kit brings (ADR-0070 §2). The shell shows it only where every one is installed for the organization in scope, hides it where any is absent or dormant, and shows it while that is not yet known."
         }
       },
       "required": [

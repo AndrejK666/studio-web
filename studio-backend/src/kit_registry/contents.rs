@@ -281,12 +281,26 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             },
             ..KitContents::default()
         },
-        // A section of `projects-mfe` today, which reads nothing yet.
+        // `activity-mfe`: the project's Activity (the checks and comments
+        // studio-artifact-ingest keeps) and its Timeline, which shows
+        // project-lifecycle's `milestone` objects (ADR-0070 §2, §7). The
+        // Timeline's extension declares `needs: ["milestone"]`, so the portal
+        // hides it where that type is not installed; Activity needs no other
+        // kit.
         "project-activity" => KitContents {
             screens: vec![
                 project_tab("Activity", Some("/projects/activity")),
                 project_tab("Timeline", Some("/projects/timeline")),
             ],
+            permissions: KitPermissions {
+                reads: owned(&[
+                    "GET /studio-artifact-ingest/v1/activity",
+                    "GET /studio-domain-model/v1/types",
+                    "POST /studio-domain-model/v1/query",
+                ]),
+                writes: owned(&["POST /studio-domain-model/v1/mutate"]),
+                ..KitPermissions::default()
+            },
             ..KitContents::default()
         },
         // `costs-mfe`: the organization's costs, its price list and budgets

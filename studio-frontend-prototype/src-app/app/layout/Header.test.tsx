@@ -64,6 +64,7 @@ vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellTe
 vi.mock('./useInstalledKits', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./useInstalledKits')>()),
   useInstalledKits: () => null,
+  useInstalledTypes: () => null,
 }));
 // The kits' status slot has its own suite (KitSlot.test.tsx).
 vi.mock('./KitSlot', () => ({ ProjectStatusSlot: () => null }));
