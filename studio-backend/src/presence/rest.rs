@@ -468,7 +468,12 @@ mod tests {
     }
 
     async fn list(id: u128, admins: Admins) -> ApiResult<JsonBody<OnlineListDto>> {
-        list_online(Extension(caller(id)), Extension(registry()), Extension(admins)).await
+        list_online(
+            Extension(caller(id)),
+            Extension(registry()),
+            Extension(admins),
+        )
+        .await
     }
 
     #[tokio::test]
@@ -481,7 +486,9 @@ mod tests {
 
     #[tokio::test]
     async fn anybody_else_is_refused_with_the_reason() {
-        let refused = list(7, Admins(Some(Arc::new(Reader)))).await.expect_err("refused");
+        let refused = list(7, Admins(Some(Arc::new(Reader))))
+            .await
+            .expect_err("refused");
         let response = refused.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)

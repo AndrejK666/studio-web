@@ -451,7 +451,9 @@ fn build(f: &PathFacts) -> Draft {
 
 /// The steps in order. The current one is the first that is known and not
 /// done; an unknown step is skipped rather than made current, because a
-/// failed read is not where the project stands.
+/// failed read is not where the project stands. Every kit is installed:
+/// the server asks [`project_path_for`]; the tests read the whole path.
+#[cfg(test)]
 pub fn project_path(f: &PathFacts) -> Vec<Step> {
     project_path_for(f, &Kits::All)
 }

@@ -871,10 +871,7 @@ impl Overview {
     ///
     /// [`KitPresence`]: crate::kit_registry::port::KitPresence
     pub async fn kits(&self, ctx: &SecurityContext, tenant: Uuid) -> Kits {
-        let Ok(presence) = self
-            .hub
-            .get::<dyn crate::kit_registry::port::KitPresence>()
-        else {
+        let Ok(presence) = self.hub.get::<dyn crate::kit_registry::port::KitPresence>() else {
             return Kits::All;
         };
         match presence.effective(ctx, tenant).await {

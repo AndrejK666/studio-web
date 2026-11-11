@@ -106,7 +106,9 @@ impl DetachRecord {
             format!("{} detached from the project", self.full_path)
         };
         match (&self.pruned, self.kept_attached) {
-            (_, true) => format!("{what}; still attached through another source, nothing forgotten"),
+            (_, true) => {
+                format!("{what}; still attached through another source, nothing forgotten")
+            }
             (Some(p), _) => format!(
                 "{what}; forgot {} repository node(s), {} artifact(s), {} binding(s)",
                 p.repos, p.nodes, p.bindings

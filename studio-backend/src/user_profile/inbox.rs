@@ -585,7 +585,8 @@ async fn kit_sources(
 /// organization on screen; `None` is the caller's home.
 pub async fn read(api: &Api, me: &str, org: Option<&str>) -> Read {
     let mut unread = Vec::new();
-    let rollups = api.get("/studio-organizations/v1/rollups", &scope(org));
+    let query = scope(org);
+    let rollups = api.get("/studio-organizations/v1/rollups", &query);
     let (rollups, listed) = tokio::join!(rollups, listed_sources(api, org));
     let spaces = match rollups {
         Ok(r) => workspaces(&r),

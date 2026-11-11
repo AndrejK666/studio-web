@@ -506,6 +506,15 @@ impl DomainModelService {
     /// the stored head version (one node) and reload when it has moved. It is
     /// one extra single-row read on the endpoints where being a version behind
     /// would be visibly wrong.
+    /// The tenant's model as the read model's fill sees it, for tests.
+    #[cfg(test)]
+    pub(crate) async fn tenant_model(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<Arc<Ontology>> {
+        self.model_current(ctx).await
+    }
+
     async fn model_current(&self, ctx: &SecurityContext) -> anyhow::Result<Arc<Ontology>> {
         let ontology = self.model(ctx).await?;
         let tenant = ctx.subject_tenant_id();
@@ -3977,7 +3986,7 @@ mod tests {
             .await
             .unwrap();
         let (_, v2) = service
-            .add_field(&ctx, "risk", field("mitigation_owner"))
+            .add_field(&ctx, "event", field("mitigation_owner"))
             .await
             .unwrap();
 
@@ -3988,7 +3997,7 @@ mod tests {
         let doc = service.ontology_document(&ctx).await.unwrap();
         // v1's change stands, v2's is gone.
         assert!(has_field(&doc, "team", "cost_center"));
-        assert!(!has_field(&doc, "risk", "mitigation_owner"));
+        assert!(!has_field(&doc, "event", "mitigation_owner"));
         // History is appended to, not rewritten.
         let versions: Vec<u64> = service
             .revisions(&ctx)
@@ -4002,7 +4011,7 @@ mod tests {
         // And the revert is itself reversible.
         service.revert(&ctx, 2).await.unwrap();
         let doc = service.ontology_document(&ctx).await.unwrap();
-        assert!(has_field(&doc, "risk", "mitigation_owner"));
+        assert!(has_field(&doc, "event", "mitigation_owner"));
     }
 
     #[tokio::test]
@@ -4044,14 +4053,14 @@ mod tests {
         // B's cache is a version behind and its first claim is taken; it
         // recomputes against A's model instead of overwriting it.
         let (_, vb) = b
-            .add_field(&ctx, "risk", field("mitigation_owner"))
+            .add_field(&ctx, "event", field("mitigation_owner"))
             .await
             .unwrap();
         assert_eq!((va, vb), (1, 2));
 
         let doc = b.ontology_document(&ctx).await.unwrap();
         assert!(has_field(&doc, "team", "cost_center"));
-        assert!(has_field(&doc, "risk", "mitigation_owner"));
+        assert!(has_field(&doc, "event", "mitigation_owner"));
     }
 
     #[tokio::test]

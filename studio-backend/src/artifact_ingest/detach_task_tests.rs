@@ -116,7 +116,11 @@ async fn the_source_leaves_the_config_and_then_its_artifacts_are_forgotten() {
     assert_eq!(left["sources"].as_array().unwrap().len(), 1);
     assert_eq!(left["sources"][0]["full_path"], "acme/web");
     assert_eq!(left["build"]["workflow"], "build.yml");
-    assert!(record.summary().contains("acme/api detached"), "{}", record.summary());
+    assert!(
+        record.summary().contains("acme/api detached"),
+        "{}",
+        record.summary()
+    );
 }
 
 #[tokio::test]
@@ -137,7 +141,11 @@ async fn a_retry_after_a_failed_prune_does_not_write_the_config_again() {
         steps.calls(),
         vec!["unlist", "still_listed", "prune", "still_listed", "prune"]
     );
-    assert_eq!(record.unlisted, Some(true), "what the first attempt did is kept");
+    assert_eq!(
+        record.unlisted,
+        Some(true),
+        "what the first attempt did is kept"
+    );
     assert!(record.pruned.is_some());
 }
 
@@ -149,7 +157,11 @@ async fn a_source_already_gone_from_the_config_is_still_pruned() {
     assert_eq!(ended, Ok(()));
     assert_eq!(record.unlisted, Some(false));
     assert!(record.pruned.is_some());
-    assert!(record.summary().contains("was not among"), "{}", record.summary());
+    assert!(
+        record.summary().contains("was not among"),
+        "{}",
+        record.summary()
+    );
 }
 
 #[tokio::test]
@@ -184,8 +196,17 @@ fn the_entry_is_matched_by_repository_not_by_spelling() {
         {"clone_url": "https://user@GitHub.com/acme/api/"},
         {"clone_url": "https://github.com/acme/api-docs.git"}
     ]});
-    assert!(without_source(&mut config, "https://github.com/acme/api.git"));
+    assert!(without_source(
+        &mut config,
+        "https://github.com/acme/api.git"
+    ));
     assert_eq!(config["sources"].as_array().unwrap().len(), 1);
-    assert!(!without_source(&mut config, "https://github.com/acme/api.git"));
-    assert!(!without_source(&mut json!({}), "https://github.com/acme/api.git"));
+    assert!(!without_source(
+        &mut config,
+        "https://github.com/acme/api.git"
+    ));
+    assert!(!without_source(
+        &mut json!({}),
+        "https://github.com/acme/api.git"
+    ));
 }

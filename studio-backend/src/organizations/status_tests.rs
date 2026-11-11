@@ -531,7 +531,10 @@ fn a_signal_of_a_kit_not_installed_is_left_out_and_the_verdict_is_the_rest_s() {
     // path is the repository alone.
     let none = only(&[]);
     let signals = project_signals_for(&f, &none);
-    assert_eq!(signals.iter().map(|s| s.key).collect::<Vec<_>>(), ["refused"]);
+    assert_eq!(
+        signals.iter().map(|s| s.key).collect::<Vec<_>>(),
+        ["refused"]
+    );
     let steps = project_path_for(&f.path.clone().unwrap(), &none);
     assert_eq!(steps.iter().map(|s| s.id).collect::<Vec<_>>(), ["repos"]);
     let mut fine = f.clone();

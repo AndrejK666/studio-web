@@ -44,9 +44,18 @@ const PLATFORM_ADMIN: Uuid = Uuid::from_u128(0xad);
 
 // ── What moved, read from the running build ────────────────────────────────
 
+/// What moved out of the core to a kit, as `key -> kit`. A key the core
+/// dropped is left by Studio itself: no kit brings it back.
+fn kit_moves() -> BTreeMap<String, String> {
+    Ontology::running_moves()
+        .into_iter()
+        .filter(|(_, kit)| kit != crate::domain_model::ontology::LEFT_BY_STUDIO)
+        .collect()
+}
+
 /// Whole types that moved to a kit, with the kit.
 fn moved_types() -> BTreeMap<String, String> {
-    Ontology::running_moves()
+    kit_moves()
         .into_iter()
         .filter(|(k, _)| !k.contains('.'))
         .collect()
@@ -55,7 +64,7 @@ fn moved_types() -> BTreeMap<String, String> {
 /// Fields, relations and tabs of a core type that moved to a kit:
 /// `(type, field, kit)`.
 fn moved_fields() -> Vec<(String, String, String)> {
-    Ontology::running_moves()
+    kit_moves()
         .into_iter()
         .filter_map(|(k, kit)| {
             let (e, f) = k.split_once('.')?;
@@ -89,7 +98,7 @@ fn type_owners() -> BTreeSet<String> {
 
 /// Every kit something moved to.
 fn owners() -> BTreeSet<String> {
-    Ontology::running_moves().into_values().collect()
+    kit_moves().into_values().collect()
 }
 
 // ── Doubles: where installations are kept, and who may do what ────────────

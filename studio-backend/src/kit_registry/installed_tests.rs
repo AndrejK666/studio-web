@@ -131,6 +131,7 @@ async fn every_builtin_kit_is_a_base_kit_until_the_platform_removes_it() {
             "project-activity",
             "project-artifacts",
             "project-domain-model",
+            "project-git",
             "project-issues",
             "project-lifecycle",
             "project-specs",
@@ -579,9 +580,9 @@ async fn only_a_project_level_kit_goes_in_a_project() {
         Err(Refusal::Invalid(_))
     ));
     assert!(store.docs.lock().unwrap().is_empty(), "a refusal wrote");
-    // A kit whose levels name `project` does.
+    // A kit whose levels name `project` and that brings no model does.
     installer
-        .install_for_project(&admin, PROJECT, "assistant", None)
+        .install_for_project(&admin, PROJECT, "constructor-research", None)
         .await
         .unwrap();
     // Unless it brings a model, which is the organization's (ADR-0067 §6).

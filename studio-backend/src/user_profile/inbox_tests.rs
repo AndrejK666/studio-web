@@ -301,10 +301,7 @@ fn studio_s_own_sources_are_read_only_where_their_kits_list_them() {
 
     // The kits could not be read: both are read, as the shell's.
     let unknown = Owned::of(None);
-    assert_eq!(
-        (unknown.reviews, unknown.pulls),
-        (Some(None), Some(None))
-    );
+    assert_eq!((unknown.reviews, unknown.pulls), (Some(None), Some(None)));
 }
 
 #[test]
@@ -316,12 +313,14 @@ fn an_item_of_studio_s_own_source_names_its_kit_and_keeps_its_key() {
         vec![pull("p1")],
     );
     let git = studio_source("project-git", PULL_REQUESTS);
-    let (reviews, pulls): (Vec<Item>, Vec<Item>) = items
-        .into_iter()
-        .partition(|i| i.source == REVIEW_REQUESTS);
+    let (reviews, pulls): (Vec<Item>, Vec<Item>) =
+        items.into_iter().partition(|i| i.source == REVIEW_REQUESTS);
     let pulls = owned_by(pulls, Some(&git));
     assert_eq!(pulls[0].source, PULL_REQUESTS);
-    assert_eq!(pulls[0].key, "pr:p1@2026-10-13T09:00:00Z", "marks still apply");
+    assert_eq!(
+        pulls[0].key, "pr:p1@2026-10-13T09:00:00Z",
+        "marks still apply"
+    );
     assert_eq!(
         pulls[0].kit,
         Some(ItemKit {

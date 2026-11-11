@@ -29,34 +29,34 @@ fn kits_extend_files_and_leave_the_core_file_when_uninstalled() {
 fn a_kit_declares_a_type_studio_already_has_and_keeps_its_ids_and_holds() {
     // Issue #1025: a core type moves into the kit that brings its screens.
     let mut o = Ontology::load();
-    o.hold("milestone", "studio-planning", &["name".to_owned()])
+    o.hold("template", "studio-planning", &["name".to_owned()])
         .unwrap();
     let declare = overlay(json!({
-        "types": [{"name": "milestone", "id": "milestone",
+        "types": [{"name": "template", "id": "template",
                    "fields": [{"name": "name", "type": "string"},
                               {"name": "phase_gate", "type": "boolean?"}]}]
     }));
     let change = sync(&mut o, SLUG, "1", Some(&declare), &|_| false).unwrap();
     assert!(
-        change.added.contains(&"milestone.phase_gate".to_owned()),
+        change.added.contains(&"template.phase_gate".to_owned()),
         "{change:?}"
     );
-    let m = o.entity("milestone").unwrap();
+    let m = o.entity("template").unwrap();
     assert_eq!(m["meta"]["kit"], SLUG);
     // The same ids: stored objects keep matching.
-    assert_eq!(m["meta"]["gts"], "gts.cf.studio.domain.milestone.v1~");
+    assert_eq!(m["meta"]["gts"], "gts.cf.studio.domain.template.v1~");
     // The gear still holds it, and its own fields stay.
     assert_eq!(m["meta"]["held_by"], "studio-planning");
-    assert_eq!(prop(&o, "milestone", "name").unwrap()["kit"], SLUG);
+    assert_eq!(prop(&o, "template", "name").unwrap()["kit"], SLUG);
     assert_eq!(
-        prop(&o, "milestone", "name").unwrap()["held_by"],
+        prop(&o, "template", "name").unwrap()["held_by"],
         "studio-planning"
     );
-    assert!(prop(&o, "milestone", "status").is_some());
+    assert!(prop(&o, "template", "status").is_some());
     // A declared field of another type is still a conflict.
     let mut fresh = Ontology::load();
     let retype = overlay(json!({
-        "types": [{"name": "milestone", "id": "milestone",
+        "types": [{"name": "template", "id": "template",
                    "fields": [{"name": "name", "type": "integer"}]}]
     }));
     assert!(matches!(
@@ -65,8 +65,8 @@ fn a_kit_declares_a_type_studio_already_has_and_keeps_its_ids_and_holds() {
     ));
     // Uninstalled, a held type stays (left by the kit), with what the gear writes.
     let gone = sync(&mut o, SLUG, "1", None, &|_| false).unwrap();
-    assert_eq!(gone.kept, ["milestone".to_owned()]);
-    assert!(o.entity("milestone").is_some());
+    assert_eq!(gone.kept, ["template".to_owned()]);
+    assert!(o.entity("template").is_some());
 }
 
 fn overlay(v: Value) -> KitOverlay {

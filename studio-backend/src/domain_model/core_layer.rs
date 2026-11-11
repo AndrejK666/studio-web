@@ -879,11 +879,11 @@ mod tests {
         let moves = Ontology::running_moves();
         assert_eq!(
             moves.get("gears").map(String::as_str),
-            Some(super::super::ontology::LEFT_BY_STUDIO)
+            Some(crate::domain_model::ontology::LEFT_BY_STUDIO)
         );
         assert_eq!(
             moves.get("kit.packages_9").map(String::as_str),
-            Some(super::super::ontology::LEFT_BY_STUDIO)
+            Some(crate::domain_model::ontology::LEFT_BY_STUDIO)
         );
         let fresh = Ontology::load();
         assert!(!fresh.has_entity("gears"));

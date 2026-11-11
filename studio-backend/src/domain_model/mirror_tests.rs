@@ -76,7 +76,7 @@ impl Pair {
     async fn new(tenant: Uuid) -> Self {
         let inner = Arc::new(InMemoryDomainStore::default());
         let mirror = mirror().await;
-        Self {
+        let pair = Self {
             graph: DomainModelService::new(inner.clone()),
             sql: DomainModelService::new(Arc::new(IndexedDomainStore::new(
                 inner.clone(),
@@ -85,7 +85,22 @@ impl Pair {
             inner,
             mirror,
             ctx: ctx_in(tenant),
+        };
+        // The objects below are risks, which kit project-lifecycle brings
+        // (ADR-0070): the organization's model carries it, as a base kit.
+        let kit: Value = serde_json::from_str(include_str!(
+            "../kit_registry/builtin/project-lifecycle.kit.json"
+        ))
+        .expect("project-lifecycle kit.json");
+        let overlay: super::super::kit_overlay::KitOverlay =
+            serde_json::from_value(kit["model"].clone()).expect("its model");
+        for service in [&pair.sql, &pair.graph] {
+            service
+                .sync_kit_model(&pair.ctx, "project-lifecycle", "1", Some(&overlay))
+                .await
+                .expect("the kit's model");
         }
+        pair
     }
 
     /// Written through the read model's store, so both halves have it.
@@ -97,12 +112,14 @@ impl Pair {
     }
 
     async fn fill(&self) {
+        // The organization's model, kits and all, as the service hands it.
+        let model = self.graph.tenant_model(&self.ctx).await.expect("model");
         fill_tenant(
             self.inner.as_ref() as &dyn DomainStore,
             &self.mirror,
             &FillState::default(),
             &self.ctx,
-            &Ontology::load(),
+            &model,
         )
         .await
         .expect("fill");

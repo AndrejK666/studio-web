@@ -184,13 +184,16 @@ async fn studio_s_own_inbox_sources_come_and_go_with_their_kits() {
         .await
         .unwrap();
     assert!(studio(installer.inbox_sources(&member, ORG).await.unwrap()).is_empty());
-    // A project's own installation does not turn them on for the
-    // organization: the Inbox reads by workspace.
+    // project-git brings a model, which is the organization's: a project
+    // cannot take it while the organization's model does not carry it, so
+    // nothing turns its source on behind the organization's back.
     let admin = caller(ADMIN, ORG);
-    installer
-        .install_for_project(&admin, PROJECT, "project-git", None)
-        .await
-        .unwrap();
+    assert!(matches!(
+        installer
+            .install_for_project(&admin, PROJECT, "project-git", None)
+            .await,
+        Err(Refusal::ModelKitNotForProject(slug)) if slug == "project-git"
+    ));
     assert!(studio(installer.inbox_sources(&member, ORG).await.unwrap()).is_empty());
     // The organization installs it for itself: its source is back, and goes
     // again when the organization removes it.

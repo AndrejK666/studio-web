@@ -1705,10 +1705,15 @@ async fn reachable_connections(
 /// nearest catalogue's, as [`ConnectorService::list`] reads it), then every
 /// other reachable connection not already in it, leaving out what the
 /// platform root holds unless `tenant` is the root.
-fn merge_reachable(tenant: Uuid, own: Vec<Connection>, reachable: Vec<Connection>) -> Vec<Connection> {
+fn merge_reachable(
+    tenant: Uuid,
+    own: Vec<Connection>,
+    reachable: Vec<Connection>,
+) -> Vec<Connection> {
     use super::ownership::PLATFORM_ROOT_TENANT;
-    let allowed =
-        |c: &Connection| tenant == PLATFORM_ROOT_TENANT || c.owner_tenant_id != PLATFORM_ROOT_TENANT;
+    let allowed = |c: &Connection| {
+        tenant == PLATFORM_ROOT_TENANT || c.owner_tenant_id != PLATFORM_ROOT_TENANT
+    };
     let mut out: Vec<Connection> = own.into_iter().filter(|c| allowed(c)).collect();
     for c in reachable {
         if allowed(&c) && !out.iter().any(|seen| seen.id == c.id) {

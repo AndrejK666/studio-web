@@ -56,7 +56,11 @@ pub const ORG_ADMIN_REQUIRED: &str = "ORG_ADMIN_REQUIRED";
 /// its channel or into the IDE of whoever has its workspace open: its
 /// administrator's to send, or a platform administrator's (#1044). Other
 /// gears notify through the `Notifications` port, which this does not gate.
-async fn require_admin(ctx: &SecurityContext, authority: &Authority, tenant: Uuid) -> ApiResult<()> {
+async fn require_admin(
+    ctx: &SecurityContext,
+    authority: &Authority,
+    tenant: Uuid,
+) -> ApiResult<()> {
     let allowed = match authority.0.as_deref() {
         Some(authority) => authority.may_administer(ctx, tenant, SEND_PRIVILEGE).await,
         None => false,
@@ -312,6 +316,10 @@ mod tests {
 
     #[tokio::test]
     async fn without_studio_user_nobody_may() {
-        assert!(require_admin(&caller(OWNER), &Authority(None), ORG).await.is_err());
+        assert!(
+            require_admin(&caller(OWNER), &Authority(None), ORG)
+                .await
+                .is_err()
+        );
     }
 }
