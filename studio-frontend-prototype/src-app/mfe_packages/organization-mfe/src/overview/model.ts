@@ -12,6 +12,14 @@ export type NeedTarget = "connectors" | "costs" | "projects" | "gears" | "tasks"
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** The kit that owns pull requests (ADR-0070 §7). */
+export const GIT_KIT = "project-git";
+
+/** Whether the answer was computed with `kit` installed: kits the server could not read count as yes. */
+export function hasKit(o: Pick<OrgOverview, "kits">, kit: string): boolean {
+  return o.kits == null || o.kits.includes(kit);
+}
+
 /** "+23%", "−5%", or "new" when nothing was spent before. */
 export function growthText(current: number, previous: number): string {
   if (previous <= 0) return current > 0 ? "new" : "—";

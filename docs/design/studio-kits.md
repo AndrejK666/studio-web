@@ -511,7 +511,7 @@ MCP: `project_phase`, `project_phase_set`, `project_phases`.
 - [x] `p2` - **ID**: `cpt-studio-design-kits-inbox-sources`
 
 ADR-0068 §6, phase 4: the Inbox holds no items of its own; a kit may declare
-sources, of two kinds (`kind`, default `query`):
+sources, of three kinds (`kind`, default `query`):
 
 - **`query`**, `{id, label, kind?: "query", query, title?, workspace_field?}`:
   `query` is the body `POST /studio-domain-model/v1/query` takes, over the
@@ -531,7 +531,22 @@ sources, of two kinds (`kind`, default `query`):
   title is the source's `title` filled from the item, else the item's own
   `title`, else the source's label. The route decides whom an item waits on
   and where the kit applies. A `query` source has no `path`; an `endpoint`
-  source has no `query` or `workspace_field`; any other `kind` is refused.
+  source has no `query` or `workspace_field`.
+- **`studio`**, `{id, label, kind: "studio"}`: one of the two sources
+  studio-user's Inbox reads itself — `review-requests` (studio-documents, a
+  review waiting on the person's verdict) and `pull-requests` (studio-artifact-
+  ingest, a pull request whose next step is theirs) — which a built-in kit
+  owns: project-specs declares the first, project-git the second (ADR-0070 §7).
+  It names no `query`, `path`, `title` or `workspace_field`; its `id` is one of
+  the two. It is listed only while its kit is installed for the whole
+  organization (a base kit or its own; a project's own installation does not
+  count, because the Inbox reads by workspace), and only from a built-in kit:
+  one in an organization's shelf kit brings nothing. Without the kit the Inbox
+  reads no such items. Its items keep their `source`, key and record; they
+  carry the kit. When the kits' sources cannot be read, both are read as the
+  shell's, and `unread` says so.
+
+Any other `kind` is refused.
 
 Either kind may name its **`destination`** (ADR-0068 §6, "which tool answers
 it"): `{route?, mcp_tool?}`, the kit's screen that answers an item (one of its

@@ -152,6 +152,26 @@ describe('OverviewSection', () => {
     expect(openScreen).toHaveBeenLastCalledWith(null, '/projects/sources');
   });
 
+  it('asks for the kit each signal and step names, not only for its route', () => {
+    // The route shows, but the signal's kit is gone since the status was read.
+    available.value = {
+      routes: ['/projects/overview', '/projects/sources', '/projects/specs', '/releases', '/space'],
+      kits: ['project-specs'],
+    };
+    const named: ProjectStatus = {
+      ...blocked,
+      signals: blocked.signals.map((s) => ({ ...s, kit: s.key === 'build' ? 'product-releases' : 'project-git' })),
+      path: blocked.path.map((p) => ({ ...p, kit: p.step === 'types' ? 'project-specs' : p.step === 'build' ? 'product-releases' : null })),
+      kits: ['project-specs'],
+    };
+    query.mockReturnValue(ok(named));
+    render(<OverviewSection projectId="p1" />);
+    expect(document.querySelector('[data-attention="build"]')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Open Releases' })).toBeNull();
+    // Specs is installed: its step stays the next one, with its button.
+    expect(document.querySelector('[data-next-step]')).toBeTruthy();
+  });
+
   it('reads the status again when a background run ends, not while one runs', async () => {
     vi.useFakeTimers();
     const refetch = vi.fn();

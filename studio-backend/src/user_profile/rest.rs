@@ -1170,7 +1170,11 @@ pub struct InboxItemDto {
     /// `kit:<slug>/<source id>` (ADR-0068 §6); a client renders one it does
     /// not know by `title`.
     pub source: String,
-    /// The kit an item comes from; null for the shell's own sources.
+    /// The kit an item comes from: `project-specs` for `review-requests`,
+    /// `project-git` for `pull-requests` (ADR-0070 §7), the kit of a kit's
+    /// source; null for the shell's own (`failed-runs`), and for Studio's two
+    /// when the installed kits could not be read. Without its kit installed
+    /// for the organization a source has no items.
     pub kit: Option<InboxKitDto>,
     pub workspace_id: String,
     pub workspace_name: String,
@@ -2135,8 +2139,9 @@ pub fn register_routes(
              caller's marks applied. `view=open` (the default) lists what waits, overdue \
              first, then by due date, then reviews before pull requests; `view=hidden` lists \
              what a mark hides (done, or snoozed until later), and `other` counts the view \
-             not shown. Each item names its `source` (`review-requests`, `pull-requests`; \
-             kits add more) and carries the source's own record, and its `key` is what \
+             not shown. Each item names its `source` (`review-requests` of the project-specs \
+             kit, `pull-requests` of project-git, each read only while its kit is installed \
+             for the organization; kits add more) and carries the source's own record, and its `key` is what \
              `PUT /me/inbox-marks` takes. Sources that could not be read are in `unread`: \
              what they hold is not known, never nothing.",
         )

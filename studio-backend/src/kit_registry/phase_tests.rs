@@ -101,13 +101,14 @@ async fn an_installed_kit_s_inbox_sources_apply_to_the_organization() {
     assert_eq!(ours.len(), 1, "{sources:?}");
     assert_eq!(ours[0].kit_name, "Project lifecycle");
     assert_eq!(ours[0].source.id, "phase-waiting");
-    // Every other source is an `endpoint` source of a kit a project may have
-    // on its own (Constructor Research): its route answers where it applies.
+    // Every other source is Studio's own, turned on by its built-in kit, or an
+    // `endpoint` source of a kit a project may have on its own (Constructor
+    // Research): its route answers where it applies.
     assert!(
         sources
             .iter()
             .filter(|s| s.kit_slug != SLUG)
-            .all(|s| s.source.kind() == "endpoint"),
+            .all(|s| matches!(s.source.kind(), "endpoint" | "studio")),
         "{sources:?}"
     );
 
@@ -142,6 +143,70 @@ async fn an_installed_kit_s_inbox_sources_apply_to_the_organization() {
         .unwrap();
     let after = installer.inbox_sources(&member, ORG).await.unwrap();
     assert_eq!(research(&after), ["deploy-failed", "sign-in-expires"]);
+}
+
+#[tokio::test]
+async fn studio_s_own_inbox_sources_come_and_go_with_their_kits() {
+    let (installer, _) = setup();
+    let member = caller(Uuid::from_u128(0x3e), ORG);
+    let studio = |sources: Vec<crate::kit_registry::inbox::KitInboxSource>| {
+        let mut ids: Vec<(String, String)> = sources
+            .into_iter()
+            .filter(|s| s.source.kind() == "studio")
+            .map(|s| (s.kit_slug, s.source.id))
+            .collect();
+        ids.sort();
+        ids
+    };
+    let pair = |kit: &str, id: &str| (kit.to_owned(), id.to_owned());
+    // Both kits are base kits: every organization has both sources.
+    assert_eq!(
+        studio(installer.inbox_sources(&member, ORG).await.unwrap()),
+        [
+            pair("project-git", "pull-requests"),
+            pair("project-specs", "review-requests")
+        ]
+    );
+    // Without project-specs there are no review requests; the pull requests
+    // stay, and nothing is restarted for it.
+    let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
+    installer
+        .uninstall_base(&platform, "project-specs")
+        .await
+        .unwrap();
+    assert_eq!(
+        studio(installer.inbox_sources(&member, ORG).await.unwrap()),
+        [pair("project-git", "pull-requests")]
+    );
+    // Without project-git either, none of Studio's own.
+    installer
+        .uninstall_base(&platform, "project-git")
+        .await
+        .unwrap();
+    assert!(studio(installer.inbox_sources(&member, ORG).await.unwrap()).is_empty());
+    // A project's own installation does not turn them on for the
+    // organization: the Inbox reads by workspace.
+    let admin = caller(ADMIN, ORG);
+    installer
+        .install_for_project(&admin, PROJECT, "project-git", None)
+        .await
+        .unwrap();
+    assert!(studio(installer.inbox_sources(&member, ORG).await.unwrap()).is_empty());
+    // The organization installs it for itself: its source is back, and goes
+    // again when the organization removes it.
+    installer
+        .install_for_organization(&admin, ORG, "project-git", None)
+        .await
+        .unwrap();
+    assert_eq!(
+        studio(installer.inbox_sources(&member, ORG).await.unwrap()),
+        [pair("project-git", "pull-requests")]
+    );
+    installer
+        .uninstall_for_organization(&admin, ORG, "project-git")
+        .await
+        .unwrap();
+    assert!(studio(installer.inbox_sources(&member, ORG).await.unwrap()).is_empty());
 }
 
 #[test]

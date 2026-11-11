@@ -26,11 +26,16 @@ type Text = ReturnType<typeof useOverviewTranslations>['t'];
 /** How often the page reads the Inbox again without being asked (the prototype's). */
 export const INBOX_PAGE_REREAD_MS = 120_000;
 
-/** A source's chip word: its kit's name, or the shell's own sources in the person's language. */
+/**
+ * A source's chip word: Studio's own two (review requests, pull requests) in
+ * the person's language — they name their kit (project-specs, project-git,
+ * ADR-0070 §7) but say what they hold, not where they come from — else its
+ * kit's name.
+ */
 export function sourceLabel(source: InboxSourceCount, t: Text): string {
-  if (source.kit?.name) return source.kit.name;
   if (source.source === 'review-requests') return t('inbox_source_reviews');
   if (source.source === 'pull-requests') return t('inbox_source_pulls');
+  if (source.kit?.name) return source.kit.name;
   return source.source;
 }
 

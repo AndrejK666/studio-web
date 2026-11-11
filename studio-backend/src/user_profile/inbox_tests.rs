@@ -266,3 +266,71 @@ fn a_failed_run_of_the_person_waits_on_them_for_a_week() {
     assert_eq!(items[0].source, FAILED_RUNS);
     assert_eq!(items[0].title, "notify.send failed: the channel refused it");
 }
+
+// ── Studio's own sources belong to kits (ADR-0070 §7) ──
+
+fn studio_source(kit: &str, id: &str) -> Value {
+    json!({"kit_slug": kit, "kit_name": kit, "kit_version": "1.0.0", "kind": "studio",
+        "id": id, "label": id, "query": null, "destination": null})
+}
+
+#[test]
+fn studio_s_own_sources_are_read_only_where_their_kits_list_them() {
+    let specs = studio_source("project-specs", REVIEW_REQUESTS);
+    let git = studio_source("project-git", PULL_REQUESTS);
+    let other = json!({"kit_slug": "product-releases", "kind": "endpoint",
+        "id": "deploys-awaiting-approval", "path": "/studio-environments/v1/inbox/x"});
+
+    // Both kits installed: both sources, each with its kit.
+    let both = Owned::of(Some(&[specs.clone(), git.clone(), other.clone()]));
+    assert_eq!(both.reviews, Some(Some(specs.clone())));
+    assert_eq!(both.pulls, Some(Some(git.clone())));
+
+    // Without project-specs: no review requests.
+    let no_specs = Owned::of(Some(&[git.clone(), other.clone()]));
+    assert!(no_specs.reviews.is_none());
+    assert!(no_specs.pulls.is_some());
+
+    // An organization with no kits at all: neither.
+    assert_eq!(Owned::of(Some(&[])), Owned::default());
+
+    // A source of the same id that is not Studio's kind turns nothing on.
+    let mut endpoint = git.clone();
+    endpoint["kind"] = json!("endpoint");
+    assert!(Owned::of(Some(&[endpoint])).pulls.is_none());
+
+    // The kits could not be read: both are read, as the shell's.
+    let unknown = Owned::of(None);
+    assert_eq!(
+        (unknown.reviews, unknown.pulls),
+        (Some(None), Some(None))
+    );
+}
+
+#[test]
+fn an_item_of_studio_s_own_source_names_its_kit_and_keeps_its_key() {
+    let items = items_of(
+        "w1",
+        "Payments",
+        vec![review("r1", None, false)],
+        vec![pull("p1")],
+    );
+    let git = studio_source("project-git", PULL_REQUESTS);
+    let (reviews, pulls): (Vec<Item>, Vec<Item>) = items
+        .into_iter()
+        .partition(|i| i.source == REVIEW_REQUESTS);
+    let pulls = owned_by(pulls, Some(&git));
+    assert_eq!(pulls[0].source, PULL_REQUESTS);
+    assert_eq!(pulls[0].key, "pr:p1@2026-10-13T09:00:00Z", "marks still apply");
+    assert_eq!(
+        pulls[0].kit,
+        Some(ItemKit {
+            slug: "project-git".into(),
+            name: "project-git".into(),
+            version: "1.0.0".into()
+        })
+    );
+    // Without an owner, an item stays the shell's.
+    let reviews = owned_by(reviews, None);
+    assert!(reviews[0].kit.is_none());
+}

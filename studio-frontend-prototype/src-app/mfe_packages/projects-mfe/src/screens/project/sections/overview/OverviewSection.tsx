@@ -53,15 +53,18 @@ import { PhaseChip } from './PhaseChip';
 type Text = ReturnType<typeof useOverviewSectionTranslations>['t'];
 
 /** The route an action opens here, or null: not in this portal, or its kit not installed. */
-type Reach = (target: string, key?: string) => string | null;
+type Reach = (target: string, key?: string, kit?: string | null) => string | null;
 
 export const OverviewSection: React.FC<{ projectId: string }> = ({ projectId }) => {
   const { t, loading } = useOverviewSectionTranslations();
   const bridge = useMfeBridge();
   const availability = useScreenAvailability();
-  const reach: Reach = (target, key) => {
+  // The server names the kit each signal and step belongs to and leaves out
+  // those of kits not installed (ADR-0070 §7); the shell's answer is asked
+  // too, so a kit removed since the read offers no dead button.
+  const reach: Reach = (target, key, kit) => {
     const route = routeFor(target, key);
-    return route && availability.route(route) ? route : null;
+    return route && availability.route(route) && availability.kit(kit) ? route : null;
   };
   const read = useApiQuery(apiRegistry.getService(ProjectStatusApiService).status({ projectId }), { staleTime: 0 });
   // A run that ended — a sync, a build, a deploy — may have moved the verdict
@@ -132,7 +135,7 @@ function StatusView({
 }) {
   const next = nextStep(status);
   const ide = reach('ide');
-  const nextRoute = next ? reach(next.tab, next.step) : null;
+  const nextRoute = next ? reach(next.tab, next.step, next.kit) : null;
   return (
     <div className={styles.section} data-project-overview>
       <div className={styles.head}>
@@ -195,7 +198,7 @@ function StatusView({
           ) : (
             <ul className={styles.list}>
               {status.signals.map((s) => {
-                const route = reach(s.action.target, s.key);
+                const route = reach(s.action.target, s.key, s.kit);
                 return (
                   <li
                     key={s.key}
@@ -281,11 +284,11 @@ function PathStrip({
       {shown && (
         <div className={styles.stepDetail} data-step-detail={shown.step}>
           <span>{shown.state === 'unknown' ? t('step_unknown', { status: shown.status }) : shown.status}</span>
-          {reach(shown.tab, shown.step) && (
+          {reach(shown.tab, shown.step, shown.kit) && (
             <Button
               variant={shown.state === 'current' ? 'default' : 'outline'}
               size="sm"
-              onClick={() => open(reach(shown.tab, shown.step))}
+              onClick={() => open(reach(shown.tab, shown.step, shown.kit))}
             >
               {shown.action}
             </Button>

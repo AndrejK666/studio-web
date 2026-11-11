@@ -111,6 +111,12 @@ pub trait KitPresence: Send + Sync + 'static {
         tenant: Uuid,
         kit_slug: &str,
     ) -> anyhow::Result<bool>;
+
+    /// The slugs of every kit that applies where `tenant` is, as
+    /// [`Self::applies`] reads them: what a reader of several kits' signals
+    /// asks once (studio-organizations' project status and Overview).
+    async fn effective(&self, ctx: &SecurityContext, tenant: Uuid)
+    -> anyhow::Result<Vec<String>>;
 }
 
 /// studio-kits' [`KitPresence`]: the same answer `GET /installed-kits` gives.
@@ -132,12 +138,24 @@ impl KitPresence for InstalledKits {
         tenant: Uuid,
         kit_slug: &str,
     ) -> anyhow::Result<bool> {
+        Ok(self
+            .effective(ctx, tenant)
+            .await?
+            .iter()
+            .any(|k| k == kit_slug))
+    }
+
+    async fn effective(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+    ) -> anyhow::Result<Vec<String>> {
         let installed = if self.installer.store().is_project(ctx, tenant).await {
             self.installer.installed_in_project(ctx, tenant).await
         } else {
             self.installer.installed(ctx, tenant).await
         }
         .map_err(|refusal| anyhow::anyhow!("the installed kits could not be read: {refusal:?}"))?;
-        Ok(installed.effective.iter().any(|k| k.kit_slug == kit_slug))
+        Ok(installed.effective.into_iter().map(|k| k.kit_slug).collect())
     }
 }

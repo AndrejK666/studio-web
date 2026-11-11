@@ -1074,6 +1074,12 @@ pub struct OrganizationOverviewDto {
     pub waiting_on: Option<Vec<OverviewQueueDto>>,
     /// The component registry's open decisions. Null when it could not be read.
     pub decisions: Option<OverviewDecisionsDto>,
+    /// The kits installed for the whole organization that the answer was
+    /// computed for (ADR-0070 §7): a need of a kit not among them is not
+    /// listed, and without `project-git` the pull-request parts (`delivery`'s
+    /// counts, `waiting_on`, each place's `stuck`) are null or zero. Null when
+    /// the installed kits could not be read, and nothing was left out.
+    pub kits: Option<Vec<String>>,
 }
 
 /// One thing that waits on the organization's leaders. `kind` says which
@@ -1101,6 +1107,12 @@ pub struct OverviewNeedDto {
     pub people: Option<u32>,
     pub components: Option<u32>,
     pub runs: Option<u32>,
+    /// The kit the need is read for and whose screen answers it
+    /// (`project-git` for stuck pull requests, `org-costs` for spend,
+    /// `components` for the registry's decisions); null for the shell's own
+    /// (a refused connection, failed runs). A need of a kit not installed for
+    /// the organization is not listed.
+    pub kit: Option<String>,
 }
 
 /// The organization's spend. People's own keys are never in it: `own_keys`
@@ -1297,6 +1309,12 @@ pub struct ProjectSignalDto {
     pub phrase: String,
     pub detail: Option<String>,
     pub action: ProjectSignalActionDto,
+    /// The kit the signal is read for and whose tab its action opens
+    /// (`project-git`, `project-specs`, `project-issues`, `product-releases`,
+    /// `project-activity`); null for the shell's own (the repository
+    /// connection, the IDE). A signal of a kit not installed for the project
+    /// is not listed (ADR-0070 §7).
+    pub kit: Option<String>,
 }
 
 /// One step of the project's path.
@@ -1317,6 +1335,9 @@ pub struct ProjectPathStepDto {
     /// The project tab where it is done, and its button.
     pub tab: String,
     pub action: String,
+    /// The kit whose tab that is; null for Sources, the shell's own. A step
+    /// of a kit not installed for the project is not on its path.
+    pub kit: Option<String>,
 }
 
 /// A project's status: one verdict, the signals behind it, its path.
@@ -1339,8 +1360,12 @@ pub struct ProjectStatusDto {
     /// The step to do next; absent when the path is done or unknown.
     pub next: Option<String>,
     /// The sources that could not be read: their part is not known, and
-    /// never counted as nothing wrong or nothing done.
+    /// never counted as nothing wrong or nothing done. A source of a kit not
+    /// installed for the project is not read and not named here.
     pub unread: Vec<String>,
+    /// The kits installed for the project that the status was computed for;
+    /// null when they could not be read, and nothing was left out.
+    pub kits: Option<Vec<String>>,
 }
 
 /// `?project_id=`: the project whose status to read.
@@ -1422,23 +1447,61 @@ async fn get_project_status(
         })
     };
     let project = id.to_string();
-    let (read, health) = tokio::join!(
+    // The kits installed for the project: what each signal and step belongs
+    // to (ADR-0070 §7). Read beside the facts; a kit that does not apply
+    // leaves its facts unread-and-unsaid rather than unknown.
+    let kits = async {
+        match overview.as_ref() {
+            Some(overview) => overview.kits(&ctx, id).await,
+            None => status::Kits::All,
+        }
+    };
+    let (read, health, kits) = tokio::join!(
         super::status_read::read(&api, &project, rollup.repos),
-        health
+        health,
+        kits
     );
     let mut unread = Vec::new();
-    for (name, missing) in [
-        ("repositories", read.path.repositories.is_none()),
-        ("specs", read.path.specs.is_none()),
-        ("project domain model", read.path.model.is_none()),
-        ("findings", read.path.findings.is_none()),
-        ("product", read.path.product.is_none()),
-        ("builds", read.path.build.is_none()),
-        ("pull requests", read.pulls.is_none()),
-        ("deployments", read.deployments.is_none()),
-        ("organization health", health.is_none()),
+    for (name, missing, kit) in [
+        ("repositories", read.path.repositories.is_none(), None),
+        (
+            "specs",
+            read.path.specs.is_none(),
+            status::step_kit("types"),
+        ),
+        (
+            "project domain model",
+            read.path.model.is_none(),
+            status::step_kit("model"),
+        ),
+        (
+            "findings",
+            read.path.findings.is_none(),
+            status::step_kit("findings"),
+        ),
+        (
+            "product",
+            read.path.product.is_none(),
+            status::step_kit("product"),
+        ),
+        (
+            "builds",
+            read.path.build.is_none(),
+            status::step_kit("build"),
+        ),
+        (
+            "pull requests",
+            read.pulls.is_none(),
+            status::signal_kit("stuck"),
+        ),
+        (
+            "deployments",
+            read.deployments.is_none(),
+            status::signal_kit("deploy"),
+        ),
+        ("organization health", health.is_none(), None),
     ] {
-        if missing {
+        if missing && kits.has(kit) {
             unread.push(name.to_string());
         }
     }
@@ -1458,9 +1521,9 @@ async fn get_project_status(
     let path = facts
         .path
         .as_ref()
-        .map(status::project_path)
+        .map(|p| status::project_path_for(p, &kits))
         .unwrap_or_default();
-    let signals = status::project_signals(&facts);
+    let signals = status::project_signals_for(&facts, &kits);
     let verdict = status::project_verdict(&signals, Some(&path));
     let next = status::next_step(&path).map(|s| s.id.to_string());
     let path_facts = facts.path.clone().unwrap_or_default();
@@ -1481,6 +1544,7 @@ async fn get_project_status(
                     label: s.action_label.to_string(),
                     target: s.action_target.to_string(),
                 },
+                kit: s.kit.map(str::to_string),
             })
             .collect(),
         path: path
@@ -1493,10 +1557,15 @@ async fn get_project_status(
                 status: s.status.clone(),
                 tab: s.tab.to_string(),
                 action: s.action.to_string(),
+                kit: s.kit.map(str::to_string),
             })
             .collect(),
         next,
         unread,
+        kits: match kits {
+            status::Kits::All => None,
+            status::Kits::Only(kits) => Some(kits),
+        },
     }))
 }
 

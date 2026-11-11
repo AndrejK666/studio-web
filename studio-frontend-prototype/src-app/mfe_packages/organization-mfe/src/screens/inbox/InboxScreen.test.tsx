@@ -81,6 +81,9 @@ describe('InboxScreen', () => {
   it("names the shell's own sources in the person's words and a kit's by the kit", () => {
     const t = ((key: string) => key) as never;
     expect(sourceLabel({ source: 'pull-requests', kit: null, count: 1 }, t)).toBe('inbox_source_pulls');
+    // Studio's own two name their kit (ADR-0070 §7) and keep their own words.
+    const git = { slug: 'project-git', name: 'Git', version: '1.0.0' };
+    expect(sourceLabel({ source: 'pull-requests', kit: git, count: 1 }, t)).toBe('inbox_source_pulls');
     expect(sourceLabel(sources[1]!, t)).toBe('Project lifecycle');
     expect(sourceLabel({ source: 'kit:x/y', kit: null, count: 1 }, t)).toBe('kit:x/y');
   });

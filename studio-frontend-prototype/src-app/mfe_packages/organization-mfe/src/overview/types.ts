@@ -26,6 +26,12 @@ export interface OrgOverview {
   money: OrgMoney[] | null;
   waiting_on: OrgQueue[] | null;
   decisions: { undecided: number; candidates: number; registered: number; published: number } | null;
+  /**
+   * The organization's kits the answer was computed for (ADR-0070 §7): without
+   * `project-git` the pull-request parts are null and its need is not listed.
+   * Null when they could not be read.
+   */
+  kits?: string[] | null;
 }
 
 export interface OrgNeed {
@@ -43,6 +49,8 @@ export interface OrgNeed {
   people?: number | null;
   components?: number | null;
   runs?: number | null;
+  /** The kit whose screen answers it (`project-git`, `org-costs`, `components`); null for the shell's own. */
+  kit?: string | null;
 }
 
 export interface OrgSpend {

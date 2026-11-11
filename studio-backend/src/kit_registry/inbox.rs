@@ -10,6 +10,12 @@
 //! - `endpoint`: a gear's route (`path`, which the kit's `permissions.reads`
 //!   names) that answers `{items: [{id, title?, …}]}` for whoever calls it,
 //!   from records that are not domain objects -- a deploy, a sign-in.
+//! - `studio`: one of the sources studio-user's Inbox reads itself
+//!   (`review-requests`, `pull-requests`), which a built-in kit owns
+//!   (project-specs, project-git; ADR-0070 §7). Listed only while the kit
+//!   applies to the whole organization, so an organization without it has no
+//!   such items. A project's own installation does not turn it on: the Inbox
+//!   reads by workspace, not by project.
 //!
 //! This gear only says which sources apply to an organization -- those of the
 //! kits installed for the whole of it (base and its own), at the version
@@ -25,7 +31,9 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::installed::{KitInstaller, LEVEL_PROJECT, Refusal};
-use super::manifest::{INBOX_KIND_ENDPOINT, ManifestInboxSource, builtin_manifest};
+use super::manifest::{
+    INBOX_KIND_ENDPOINT, INBOX_KIND_STUDIO, ManifestInboxSource, builtin_manifest,
+};
 use super::service::{SHELF_BUILTIN, SHELF_ORGANIZATION};
 
 /// One source, with the kit it comes from.
@@ -63,7 +71,12 @@ impl KitInstaller {
                 _ => None,
             };
             for source in manifest.into_iter().flat_map(|m| m.inbox) {
-                if source.kind() != INBOX_KIND_ENDPOINT && source.query.is_none() {
+                if source.kind() == INBOX_KIND_STUDIO {
+                    // Only a built-in kit turns one of Studio's own on.
+                    if descriptor.shelf != SHELF_BUILTIN {
+                        continue;
+                    }
+                } else if source.kind() != INBOX_KIND_ENDPOINT && source.query.is_none() {
                     continue;
                 }
                 out.push(KitInboxSource {

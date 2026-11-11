@@ -282,5 +282,12 @@
         }
       }
     ]
-  }
+  },
+  "inbox": [
+    {
+      "id": "pull-requests",
+      "label": "Pull requests waiting on you",
+      "kind": "studio"
+    }
+  ]
 }

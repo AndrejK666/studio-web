@@ -1669,6 +1669,9 @@ pub struct KitInboxSourceQueryDto {
     pub label: String,
     /// `query`: `query` is run over the kit's objects. `endpoint`: `path` is
     /// called, and answers `{items: [{id, title?, …}]}` for the caller.
+    /// `studio`: one of the sources studio-user's Inbox reads itself
+    /// (`review-requests`, `pull-requests`), on while its kit is installed
+    /// for the whole organization.
     pub kind: String,
     /// For a `query` source, the body `POST /studio-domain-model/v1/query`
     /// takes; the string `"$me"` in it is the person whose Inbox is read.
@@ -1732,7 +1735,9 @@ fn register_phase_routes(mut router: Router, openapi: &dyn OpenApiRegistry) -> R
              its own) declares (ADR-0068 §6), and the `endpoint` sources of a built-in kit a \
              project may install on its own: a `query` over the kit's objects that says what \
              waits on whom (`\"$me\"` is the person whose Inbox is read), or an `endpoint`, a \
-             gear's route that answers the person's items; how an item is titled, and the kit \
+             gear's route that answers the person's items, or `studio`, one of Studio's own \
+             sources (review requests, pull requests) that the kit turns on; how an item is \
+             titled, and the kit \
              it comes from. studio-user's Inbox runs them as the person.",
         )
         .tag("StudioKits")

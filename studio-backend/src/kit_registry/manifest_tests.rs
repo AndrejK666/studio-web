@@ -265,3 +265,32 @@ fn a_kit_json_names_its_bundles_screen_needs_and_inbox_destinations() {
     let bad_tool = body.replace(r#""mcp_tool": "runbook_run""#, r#""mcp_tool": "nope""#);
     assert!(read_kit_json(&bad_tool).unwrap_err().contains("mcp_tools"));
 }
+
+#[test]
+fn a_studio_source_is_one_studio_reads_and_its_kit_declares() {
+    let studio = |source: &str| {
+        let mut v: serde_json::Value = serde_json::from_str(OPS).unwrap();
+        v["inbox"] = serde_json::from_str(source).unwrap();
+        read_kit_json(&v.to_string())
+    };
+    let m = studio(r#"[{"id": "pull-requests", "label": "x", "kind": "studio"}]"#).unwrap();
+    assert_eq!(m.inbox[0].kind(), INBOX_KIND_STUDIO);
+    for bad in [
+        r#"[{"id": "anything", "label": "x", "kind": "studio"}]"#,
+        r#"[{"id": "review-requests", "label": "x", "kind": "studio", "path": "/studio-documents/v1/review-requests"}]"#,
+        r#"[{"id": "review-requests", "label": "x", "kind": "studio", "query": {"type": "document"}}]"#,
+        r#"[{"id": "review-requests", "label": "x", "kind": "studio", "title": "{title}"}]"#,
+    ] {
+        assert!(studio(bad).is_err(), "{bad}");
+    }
+    // The built-in kits that own Studio's two sources declare them.
+    let declares = |slug: &str, id: &str| {
+        builtin_manifest(slug)
+            .unwrap()
+            .inbox
+            .iter()
+            .any(|s| s.id == id && s.kind() == INBOX_KIND_STUDIO)
+    };
+    assert!(declares("project-git", "pull-requests"));
+    assert!(declares("project-specs", "review-requests"));
+}

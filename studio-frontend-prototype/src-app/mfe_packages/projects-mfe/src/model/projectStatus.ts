@@ -18,6 +18,13 @@ export interface ProjectSignal {
   detail?: string | null;
   /** `target`: a project tab (`sources`, `specs`, `model`, `components`, `releases`, `activity`), `pulls` or `ide`. */
   action: { label: string; target: string };
+  /**
+   * The kit the signal is read for and whose tab its action opens
+   * (`project-git`, `project-specs`, `project-issues`, `product-releases`,
+   * `project-activity`); null for the shell's own. The server leaves out a
+   * signal of a kit not installed for the project (ADR-0070 §7).
+   */
+  kit?: string | null;
 }
 
 export interface ProjectPathStep {
@@ -30,6 +37,8 @@ export interface ProjectPathStep {
   status: string;
   tab: string;
   action: string;
+  /** The kit whose tab that is; null for Sources. A step of a kit not installed is not on the path. */
+  kit?: string | null;
 }
 
 export interface ProjectStatus {
@@ -42,6 +51,8 @@ export interface ProjectStatus {
   path: ProjectPathStep[];
   next?: string | null;
   unread: string[];
+  /** The kits installed for the project the status was computed for; null when they could not be read. */
+  kits?: string[] | null;
 }
 
 /**

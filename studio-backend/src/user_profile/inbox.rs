@@ -8,9 +8,13 @@
 //! snoozed until a time (`me/inbox-marks`) — and the marks are applied here.
 //!
 //! Every item names its `source`, so a kit can add a source later without the
-//! shape changing. Today's two: `review-requests` (studio-documents, a review
-//! that waits on the person's verdict) and `pull-requests` (studio-artifact-
-//! ingest, a pull request whose next step is theirs). They are read through
+//! shape changing. Studio reads two itself: `review-requests` (studio-documents,
+//! a review that waits on the person's verdict) and `pull-requests` (studio-
+//! artifact-ingest, a pull request whose next step is theirs). Each belongs to
+//! a kit, which declares it as a `studio` source in its `kit.json` —
+//! project-specs and project-git (ADR-0070 §7) — and is read only while that
+//! kit applies to the organization: without it the Inbox has no such items,
+//! and an item names the kit it came from. They are read through
 //! their REST routes as the caller (`crate::mcp::sdk::Api`), with the same
 //! `waiting_on=me` the portal sent, so the Inbox shows a person exactly what
 //! those routes show them.
@@ -443,21 +447,95 @@ fn scope(org: Option<&str>) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// The sources the kits installed for the organization bring
-/// (`GET /studio-kits/v1/inbox-sources`), each run as the caller with
-/// `"$me"` the caller, as items after the shell's own.
-async fn kit_sources(api: &Api, me: &str, org: Option<&str>, spaces: &[(String, String)]) -> Read {
-    let mut unread = Vec::new();
+/// The kind of source Studio's Inbox reads itself, which a built-in kit owns
+/// (`review-requests` with project-specs, `pull-requests` with project-git;
+/// ADR-0070 §7).
+pub const STUDIO: &str = "studio";
+
+/// Which of Studio's own sources the organization's kits turn on, each as
+/// its kit lists it; `None` for one no installed kit brings. `listed` is
+/// `None` when the kits' sources could not be read: then both are read, as
+/// they were before kits owned them, rather than an Inbox emptied by a
+/// failed read.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Owned {
+    pub reviews: Option<Option<Value>>,
+    pub pulls: Option<Option<Value>>,
+}
+
+impl Owned {
+    /// Of the listed sources (`GET /studio-kits/v1/inbox-sources` items),
+    /// or every source on with no kit when they could not be read.
+    pub fn of(listed: Option<&[Value]>) -> Self {
+        let Some(listed) = listed else {
+            return Owned {
+                reviews: Some(None),
+                pulls: Some(None),
+            };
+        };
+        let find = |id: &str| {
+            listed
+                .iter()
+                .find(|s| s["kind"] == STUDIO && s["id"] == id)
+                .cloned()
+                .map(Some)
+        };
+        Owned {
+            reviews: find(REVIEW_REQUESTS),
+            pulls: find(PULL_REQUESTS),
+        }
+    }
+}
+
+/// `items` as the source `owner` lists it: its kit and destination. `None`
+/// leaves them the shell's.
+pub fn owned_by(items: Vec<Item>, owner: Option<&Value>) -> Vec<Item> {
+    let Some(source) = owner else {
+        return items;
+    };
+    let slug = source["kit_slug"].as_str().unwrap_or_default();
+    let kit = ItemKit {
+        slug: slug.to_owned(),
+        name: source["kit_name"].as_str().unwrap_or(slug).to_owned(),
+        version: source["kit_version"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+    };
+    items
+        .into_iter()
+        .map(|mut i| {
+            i.kit = Some(kit.clone());
+            i.destination = destination(source);
+            i
+        })
+        .collect()
+}
+
+/// The organization's kits' Inbox sources
+/// (`GET /studio-kits/v1/inbox-sources`), or why they could not be read.
+async fn listed_sources(api: &Api, org: Option<&str>) -> Result<Vec<Value>, String> {
     let mut q = scope(org);
     q.push(("limit".to_string(), "200".to_string()));
-    let sources = match api.get("/studio-kits/v1/inbox-sources", &q).await {
-        Ok(r) => r["items"].as_array().cloned().unwrap_or_default(),
-        Err(e) => {
-            unread.push(format!("kit sources: {}", e.0));
-            Vec::new()
-        }
-    };
-    let answers = futures_util::future::join_all(sources.iter().map(|source| async move {
+    api.get("/studio-kits/v1/inbox-sources", &q)
+        .await
+        .map(|r| r["items"].as_array().cloned().unwrap_or_default())
+        .map_err(|e| e.0)
+}
+
+/// The sources the kits installed for the organization bring, Studio's own
+/// aside, each run as the caller with `"$me"` the caller, as items after the
+/// shell's own.
+async fn kit_sources(
+    api: &Api,
+    me: &str,
+    org: Option<&str>,
+    spaces: &[(String, String)],
+    sources: &[Value],
+) -> Read {
+    let mut unread = Vec::new();
+    let sources: Vec<&Value> = sources.iter().filter(|s| s["kind"] != STUDIO).collect();
+    let answers = futures_util::future::join_all(sources.into_iter().map(|source| async move {
         let answer = if source["kind"] == ENDPOINT {
             // A gear's route, called as the person: it answers their items,
             // in the organization the Inbox is read for.
@@ -507,27 +585,42 @@ async fn kit_sources(api: &Api, me: &str, org: Option<&str>, spaces: &[(String, 
 /// organization on screen; `None` is the caller's home.
 pub async fn read(api: &Api, me: &str, org: Option<&str>) -> Read {
     let mut unread = Vec::new();
-    let spaces = match api
-        .get("/studio-organizations/v1/rollups", &scope(org))
-        .await
-    {
+    let rollups = api.get("/studio-organizations/v1/rollups", &scope(org));
+    let (rollups, listed) = tokio::join!(rollups, listed_sources(api, org));
+    let spaces = match rollups {
         Ok(r) => workspaces(&r),
         Err(e) => {
             unread.push(format!("workspaces: {}", e.0));
             Vec::new()
         }
     };
+    let listed = match listed {
+        Ok(listed) => Some(listed),
+        Err(e) => {
+            unread.push(format!("kit sources: {e}"));
+            None
+        }
+    };
+    // Review requests are project-specs', pull requests project-git's: each
+    // is read only while its kit applies to the organization.
+    let owned = Owned::of(listed.as_deref());
+    let (with_reviews, with_pulls) = (owned.reviews.is_some(), owned.pulls.is_some());
     let per = futures_util::future::join_all(spaces.iter().map(|(id, name)| async move {
         let q = vec![
             ("workspace_id".to_string(), id.clone()),
             ("waiting_on".to_string(), "me".to_string()),
         ];
-        let reviews = api.get("/studio-documents/v1/review-requests", &q).await;
+        let reviews = if with_reviews {
+            api.get("/studio-documents/v1/review-requests", &q).await
+        } else {
+            Ok(Value::Null)
+        };
         let mut pulls: Vec<Value> = Vec::new();
         let mut pulls_failed = None;
         let mut known = true;
         let mut offset = 0usize;
-        for _ in 0..PULL_PAGES {
+        let pages = if with_pulls { PULL_PAGES } else { 0 };
+        for _ in 0..pages {
             let mut pq = q.clone();
             pq.push(("limit".to_string(), "200".to_string()));
             pq.push(("offset".to_string(), offset.to_string()));
@@ -568,8 +661,14 @@ pub async fn read(api: &Api, me: &str, org: Option<&str>) -> Read {
         if let Some(why) = failed {
             unread.push(format!("{PULL_REQUESTS} in {name}: {why}"));
         }
-        reviews_all.extend(items_of(id, name, reviews, Vec::new()));
-        pulls_all.extend(items_of(id, name, Vec::new(), pulls));
+        reviews_all.extend(owned_by(
+            items_of(id, name, reviews, Vec::new()),
+            owned.reviews.as_ref().and_then(Option::as_ref),
+        ));
+        pulls_all.extend(owned_by(
+            items_of(id, name, Vec::new(), pulls),
+            owned.pulls.as_ref().and_then(Option::as_ref),
+        ));
     }
     reviews_all.extend(pulls_all);
     // The person's failed runs, in the organization's tenant.
@@ -589,7 +688,7 @@ pub async fn read(api: &Api, me: &str, org: Option<&str>) -> Read {
         Err(e) => unread.push(format!("{FAILED_RUNS}: {}", e.0)),
     }
     // What the installed kits bring (ADR-0068 §6), after the shell's own.
-    let kits = kit_sources(api, me, org, &spaces).await;
+    let kits = kit_sources(api, me, org, &spaces, listed.as_deref().unwrap_or_default()).await;
     reviews_all.extend(kits.items);
     unread.extend(kits.unread);
     Read {

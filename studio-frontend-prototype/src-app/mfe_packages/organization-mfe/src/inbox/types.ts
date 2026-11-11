@@ -33,7 +33,11 @@ export interface InboxItem {
   overdue: boolean;
   /** The source's own record: a review request, an open pull request, a kit's row. */
   record: ReviewRecord | OpenPullRequest | Record<string, unknown>;
-  /** The kit a source comes from (`kit:<slug>/<id>`); absent for the shell's own sources. */
+  /**
+   * The kit a source comes from: a kit's (`kit:<slug>/<id>`), project-specs for
+   * `review-requests`, project-git for `pull-requests` (ADR-0070 §7; without the
+   * kit the server reads no such items); absent for the shell's own (`failed-runs`).
+   */
   kit?: InboxKit | null;
 }
 

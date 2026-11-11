@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { OrgNeed, OrgOverview, OrgWorkspace } from "./types";
 import {
+  GIT_KIT,
+  hasKit,
   attentionStatus,
   growthText,
   othersAttention,
@@ -22,6 +24,16 @@ import {
 
 const money = (n: number) => `$${n}`;
 const need = (extra: Partial<OrgNeed>): OrgNeed => ({ kind: "runs", tone: "warn", projects: [], ...extra });
+
+describe("hasKit", () => {
+  it("answers from the kits the overview was computed for; unknown kits count as installed", () => {
+    expect(hasKit({ kits: [GIT_KIT] }, GIT_KIT)).toBe(true);
+    expect(hasKit({ kits: ["components"] }, GIT_KIT)).toBe(false);
+    expect(hasKit({ kits: [] }, GIT_KIT)).toBe(false);
+    expect(hasKit({ kits: null }, GIT_KIT)).toBe(true);
+    expect(hasKit({}, GIT_KIT)).toBe(true);
+  });
+});
 
 describe("the organization's overview, in words", () => {
   it("says growth, and 'new' when nothing was spent before", () => {

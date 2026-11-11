@@ -435,3 +435,123 @@ fn the_last_deploy_is_the_newest_that_ran_installs_only() {
     assert_eq!(last_deploy(&all), Some(&b));
     assert_eq!(last_deploy(&[]), None);
 }
+
+// ── the kits (ADR-0070 §7) ──────────────────────────────────────────────────
+
+fn only(kits: &[&str]) -> Kits {
+    Kits::Only(kits.iter().map(|k| (*k).to_string()).collect())
+}
+
+/// A project with every kind of signal at once.
+fn troubled() -> Facts {
+    let mut f = facts();
+    f.health = Some(Health {
+        refused: true,
+        quiet_days: Some(20),
+        ..Health::default()
+    });
+    f.specs_failing = Some(2);
+    f.open_comments = Some(3);
+    f.path.as_mut().unwrap().findings = Some(FindingFacts { open: 1, high: 1 });
+    f.path.as_mut().unwrap().build = Some(BuildFacts::Last {
+        status: "failed".into(),
+        sha: String::new(),
+    });
+    let mut nobody = pr(1);
+    nobody.waiting = "nobody".into();
+    f.pulls = Some(vec![pr(9), nobody]);
+    f
+}
+
+#[test]
+fn every_signal_and_step_names_the_kit_whose_tab_it_opens() {
+    let kit_of: Vec<(&str, Option<&str>)> = project_signals(&troubled())
+        .iter()
+        .map(|s| (s.key, s.kit))
+        .collect();
+    assert_eq!(
+        kit_of,
+        [
+            ("refused", None),
+            ("build", Some(RELEASES_KIT)),
+            ("findings", Some(ISSUES_KIT)),
+            ("specs", Some(SPECS_KIT)),
+            ("stuck", Some(GIT_KIT)),
+            ("nobody", Some(GIT_KIT)),
+            ("threads", Some(ACTIVITY_KIT)),
+            ("quiet", Some(ACTIVITY_KIT)),
+        ]
+    );
+    let steps: Vec<(&str, Option<&str>)> = project_path(&path())
+        .iter()
+        .map(|s| (s.id, s.kit))
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            ("repos", None),
+            ("types", Some(SPECS_KIT)),
+            ("model", Some(DOMAIN_MODEL_KIT)),
+            ("findings", Some(ISSUES_KIT)),
+            ("product", Some(RELEASES_KIT)),
+            ("build", Some(RELEASES_KIT)),
+        ]
+    );
+}
+
+#[test]
+fn a_signal_of_a_kit_not_installed_is_left_out_and_the_verdict_is_the_rest_s() {
+    let f = troubled();
+    // Every kit: as before.
+    assert_eq!(
+        project_signals_for(&f, &Kits::All),
+        project_signals(&f),
+        "kits that cannot be told hide nothing"
+    );
+    // Without project-git the pull requests say nothing; at risk only for
+    // the specs once the blocking ones' kits are gone too.
+    let no_git = project_signals_for(
+        &f,
+        &only(&[SPECS_KIT, ISSUES_KIT, RELEASES_KIT, ACTIVITY_KIT]),
+    );
+    assert!(no_git.iter().all(|s| s.kit != Some(GIT_KIT)));
+    let mut calm = f.clone();
+    calm.health.as_mut().unwrap().refused = false;
+    let kits = only(&[SPECS_KIT]);
+    let signals = project_signals_for(&calm, &kits);
+    let keys: Vec<&str> = signals.iter().map(|s| s.key).collect();
+    assert_eq!(keys, ["specs"]);
+    let steps = project_path_for(&calm.path.clone().unwrap(), &kits);
+    let v = project_verdict(&signals, Some(&steps));
+    assert_eq!(
+        (v.state, v.reason.as_str(), v.more),
+        ("at_risk", "2 specs fail their checks", 0)
+    );
+    // An organization without any kit: only the shell's own signal, and the
+    // path is the repository alone.
+    let none = only(&[]);
+    let signals = project_signals_for(&f, &none);
+    assert_eq!(signals.iter().map(|s| s.key).collect::<Vec<_>>(), ["refused"]);
+    let steps = project_path_for(&f.path.clone().unwrap(), &none);
+    assert_eq!(steps.iter().map(|s| s.id).collect::<Vec<_>>(), ["repos"]);
+    let mut fine = f.clone();
+    fine.health = None;
+    let signals = project_signals_for(&fine, &none);
+    assert!(signals.is_empty());
+    let v = project_verdict(&signals, Some(&steps));
+    assert_eq!((v.state, v.reason.as_str()), ("on_track", "path complete"));
+}
+
+#[test]
+fn a_step_of_a_kit_not_installed_is_never_current() {
+    // Specs is where a new project stands; without the kit, the next step
+    // is the product.
+    let mut f = path();
+    f.specs = Some(SpecQueues::default());
+    f.product = Some(ProductFacts::default());
+    assert_eq!(next_step(&project_path(&f)).map(|s| s.id), Some("types"));
+    let kits = only(&[DOMAIN_MODEL_KIT, ISSUES_KIT, RELEASES_KIT]);
+    let steps = project_path_for(&f, &kits);
+    assert!(steps.iter().all(|s| s.id != "types"));
+    assert_eq!(next_step(&steps).map(|s| s.id), Some("product"));
+}

@@ -39,7 +39,15 @@ import {
 } from '@constructor-studio/mfe-shared';
 import { requestWorkspace } from '../../actions/workspaceActions';
 import { OverviewApiService } from '../../api/OverviewApiService';
-import { attentionStatus, growthText, othersAttention, workspaceLine, type NeedTarget } from '../../overview/model';
+import {
+  GIT_KIT,
+  attentionStatus,
+  growthText,
+  hasKit,
+  othersAttention,
+  workspaceLine,
+  type NeedTarget,
+} from '../../overview/model';
 import type { OrgOverview } from '../../overview/types';
 import { useOverviewTranslations } from '../../i18n';
 import { InboxGroup } from './InboxGroup';
@@ -158,18 +166,21 @@ function OrganizationOverview({
                 </>
               )}
             </Tile>
-            <Tile
-              title={t('tile_delivery')}
-              open={routeOf('projects') ? { label: t('open_workspaces'), go: () => go('projects') } : null}
-            >
-              <span className={styles.big}>{t('tile_delivery_value', { merged: shown(o.delivery.merged, t) })}</span>
-              <span className={styles.muted}>
-                {t('tile_delivery_sub', {
-                  open: shown(o.delivery.open, t),
-                  wait: shown(o.delivery.median_wait_days, t),
-                })}
-              </span>
-            </Tile>
+            {/* Pull requests are the Git kit's: without it there is no delivery tile, not an unknown one. */}
+            {hasKit(o, GIT_KIT) && (
+              <Tile
+                title={t('tile_delivery')}
+                open={routeOf('projects') ? { label: t('open_workspaces'), go: () => go('projects') } : null}
+              >
+                <span className={styles.big}>{t('tile_delivery_value', { merged: shown(o.delivery.merged, t) })}</span>
+                <span className={styles.muted}>
+                  {t('tile_delivery_sub', {
+                    open: shown(o.delivery.open, t),
+                    wait: shown(o.delivery.median_wait_days, t),
+                  })}
+                </span>
+              </Tile>
+            )}
             <Tile title={t('tile_specs')}>
               <span className={styles.big}>
                 {t('tile_specs_value', { failing: shown(o.specs.failing, t), specs: shown(o.specs.specs, t) })}

@@ -23,9 +23,46 @@
 //!
 //! Signals of level `info` (comment threads waiting, a quiet project) are
 //! listed and do not move the verdict.
+//!
+//! EVERY SIGNAL AND STEP NAMES THE KIT whose tab it opens (ADR-0070 §7,
+//! `docs/design/domain-model-split.md` §7): pull requests are project-git's,
+//! specs project-specs', findings project-issues', the project domain model
+//! project-domain-model's, the product, builds and deploys product-releases',
+//! comment threads and quiet projects project-activity's. A signal or step
+//! whose kit does not apply to the project is left out ([`Kits`]) and the
+//! verdict is computed from the rest; the repository connection and the IDE
+//! are the shell's and always stay.
 
 /// A pull request quiet this many days or more is stuck.
 pub const QUIET_DAYS: u32 = 7;
+
+/// The kits a project's status reads for (`kit_registry/builtin`).
+pub const GIT_KIT: &str = "project-git";
+pub const SPECS_KIT: &str = "project-specs";
+pub const ISSUES_KIT: &str = "project-issues";
+pub const DOMAIN_MODEL_KIT: &str = "project-domain-model";
+pub const RELEASES_KIT: &str = "product-releases";
+pub const ACTIVITY_KIT: &str = "project-activity";
+
+/// The kits that apply to a project: `All` where they cannot be told (an
+/// assembly without studio-kits, or its answer could not be read), so
+/// nothing is hidden for a failed read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Kits {
+    All,
+    Only(Vec<String>),
+}
+
+impl Kits {
+    /// Whether something owned by `kit` shows; the shell's own (`None`)
+    /// always does.
+    pub fn has(&self, kit: Option<&str>) -> bool {
+        match (self, kit) {
+            (_, None) | (Kits::All, _) => true,
+            (Kits::Only(kits), Some(k)) => kits.iter().any(|x| x == k),
+        }
+    }
+}
 
 fn plural(n: u32, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
@@ -137,6 +174,19 @@ pub struct Step {
     /// The project tab where the step is done.
     pub tab: &'static str,
     pub action: &'static str,
+    /// The kit whose tab that is; `None` for the shell's own (Sources).
+    pub kit: Option<&'static str>,
+}
+
+/// The kit a step of the path is done in.
+pub fn step_kit(id: &str) -> Option<&'static str> {
+    match id {
+        "types" => Some(SPECS_KIT),
+        "model" => Some(DOMAIN_MODEL_KIT),
+        "findings" => Some(ISSUES_KIT),
+        "kind" | "product" | "build" => Some(RELEASES_KIT),
+        _ => None,
+    }
 }
 
 struct Draft {
@@ -403,12 +453,19 @@ fn build(f: &PathFacts) -> Draft {
 /// done; an unknown step is skipped rather than made current, because a
 /// failed read is not where the project stands.
 pub fn project_path(f: &PathFacts) -> Vec<Step> {
+    project_path_for(f, &Kits::All)
+}
+
+/// [`project_path`] of a project with `kits`: a step whose kit does not
+/// apply is not on its path, and is never current.
+pub fn project_path_for(f: &PathFacts, kits: &Kits) -> Vec<Step> {
     let mut drafts = vec![repos(f), types(f), model(f), findings(f)];
     if let Some(k) = &f.kind {
         drafts.push(kind(k.as_ref()));
     }
     drafts.push(product(f));
     drafts.push(build(f));
+    drafts.retain(|d| kits.has(step_kit(d.id)));
     let current = drafts.iter().position(|d| d.done == Some(false));
     drafts
         .into_iter()
@@ -425,6 +482,7 @@ pub fn project_path(f: &PathFacts) -> Vec<Step> {
             status: d.status,
             tab: d.tab,
             action: d.action,
+            kit: step_kit(d.id),
         })
         .collect()
 }
@@ -484,6 +542,21 @@ pub struct Signal {
     pub action_label: &'static str,
     /// A project tab, `pulls` (the pull requests list) or `ide`.
     pub action_target: &'static str,
+    /// The kit the signal is read for and whose tab it opens; `None` for the
+    /// shell's own (the repository connection, the IDE).
+    pub kit: Option<&'static str>,
+}
+
+/// The kit a signal belongs to, by its key.
+pub fn signal_kit(key: &str) -> Option<&'static str> {
+    match key {
+        "stuck" | "nobody" => Some(GIT_KIT),
+        "specs" => Some(SPECS_KIT),
+        "findings" => Some(ISSUES_KIT),
+        "product" | "build" | "deploy" => Some(RELEASES_KIT),
+        "threads" | "quiet" => Some(ACTIVITY_KIT),
+        _ => None,
+    }
 }
 
 /// An open pull request as the signals read it.
@@ -603,7 +676,16 @@ fn signal(
         detail,
         action_label,
         action_target,
+        kit: signal_kit(key),
     }
+}
+
+/// [`project_signals`] of a project with `kits`: a signal whose kit does not
+/// apply is left out, so the verdict is the remaining signals'.
+pub fn project_signals_for(f: &Facts, kits: &Kits) -> Vec<Signal> {
+    let mut out = project_signals(f);
+    out.retain(|s| kits.has(s.kit));
+    out
 }
 
 /// Everything that waits on the project manager or the team, worst first.

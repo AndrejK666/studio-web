@@ -138,8 +138,8 @@ pub struct ManifestFunction {
 pub struct ManifestInboxSource {
     pub id: String,
     pub label: String,
-    /// How its items are read: [`INBOX_KIND_QUERY`] (the default) or
-    /// [`INBOX_KIND_ENDPOINT`].
+    /// How its items are read: [`INBOX_KIND_QUERY`] (the default),
+    /// [`INBOX_KIND_ENDPOINT`] or [`INBOX_KIND_STUDIO`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     /// For a `query` source: the body `POST /studio-domain-model/v1/query`
@@ -184,6 +184,15 @@ pub const INBOX_KIND_QUERY: &str = "query";
 /// An Inbox source whose items a gear's route answers for the person, from
 /// records that are not domain objects (a deploy, a sign-in).
 pub const INBOX_KIND_ENDPOINT: &str = "endpoint";
+/// An Inbox source Studio's Inbox reads itself, known by its id (one of
+/// [`STUDIO_INBOX_SOURCES`]), that a built-in kit brings: the kit says
+/// whether it applies, the Inbox how it is read (ADR-0070 §7). A kit of an
+/// organization's shelf that declares one brings nothing.
+pub const INBOX_KIND_STUDIO: &str = "studio";
+/// The sources a [`INBOX_KIND_STUDIO`] source may name: review requests
+/// (studio-documents, project-specs) and pull requests (studio-artifact-
+/// ingest, project-git).
+pub const STUDIO_INBOX_SOURCES: &[&str] = &["review-requests", "pull-requests"];
 
 impl ManifestInboxSource {
     /// The source's kind; a source that names none is a `query`.
@@ -467,10 +476,31 @@ fn check(m: &KitManifest) -> Result<(), String> {
                     ));
                 }
             }
+            INBOX_KIND_STUDIO => {
+                if !STUDIO_INBOX_SOURCES.contains(&s.id.as_str()) {
+                    return Err(format!(
+                        "{KIT_JSON}: inbox source `{}`: a `{INBOX_KIND_STUDIO}` source is one \
+                         Studio reads itself: {}",
+                        s.id,
+                        STUDIO_INBOX_SOURCES.join(", ")
+                    ));
+                }
+                if s.query.is_some()
+                    || s.path.is_some()
+                    || s.workspace_field.is_some()
+                    || s.title.is_some()
+                {
+                    return Err(format!(
+                        "{KIT_JSON}: inbox source `{}`: a `{INBOX_KIND_STUDIO}` source has no \
+                         `query`, `path`, `title` or `workspace_field`: Studio reads it",
+                        s.id
+                    ));
+                }
+            }
             other => {
                 return Err(format!(
-                    "{KIT_JSON}: inbox source `{}` is a `{other}`; a source is a `{INBOX_KIND_QUERY}` \
-                     or an `{INBOX_KIND_ENDPOINT}`",
+                    "{KIT_JSON}: inbox source `{}` is a `{other}`; a source is a `{INBOX_KIND_QUERY}`, \
+                     an `{INBOX_KIND_ENDPOINT}` or a `{INBOX_KIND_STUDIO}`",
                     s.id
                 ));
             }

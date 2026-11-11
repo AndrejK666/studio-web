@@ -657,5 +657,12 @@
         }
       }
     ]
-  }
+  },
+  "inbox": [
+    {
+      "id": "review-requests",
+      "label": "Reviews waiting on your verdict",
+      "kind": "studio"
+    }
+  ]
 }
