@@ -658,6 +658,11 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             },
             ..KitContents::default()
         },
+        // `project-git`: a Git host's workflow (ADR-0070 phase 5, #1036): the
+        // pull requests of a project's repositories, `repository.hosts`. No
+        // screen of its own yet; its Inbox source and status signal follow
+        // with #1039. The model comes from its `kit.json`.
+        "project-git" => KitContents::default(),
         "project-domain-model" => KitContents {
             screens: vec![project_tab("Project domain model", Some("/domain-model"))],
             permissions: KitPermissions {

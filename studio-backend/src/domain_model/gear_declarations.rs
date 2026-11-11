@@ -68,7 +68,12 @@ impl Ontology {
                 .and_then(|e| e.pointer("/meta/kit"))
                 .filter(|v| v.is_string())
                 .cloned()
-                .or_else(|| Ontology::running_moves().get(&need.id).map(|k| json!(k)));
+                .or_else(|| {
+                    Ontology::running_moves()
+                        .get(&need.id)
+                        .filter(|k| k.as_str() != super::ontology::LEFT_BY_STUDIO)
+                        .map(|k| json!(k))
+                });
             if let Some(owner) = owner {
                 self.entity_mut(&need.id)?["meta"]["kit"] = owner;
             }

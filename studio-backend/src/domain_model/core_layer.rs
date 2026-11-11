@@ -875,6 +875,55 @@ mod tests {
     }
 
     #[test]
+    fn what_the_core_dropped_is_left_by_studio_and_a_new_organization_never_has_it() {
+        let moves = Ontology::running_moves();
+        assert_eq!(
+            moves.get("gears").map(String::as_str),
+            Some(super::super::ontology::LEFT_BY_STUDIO)
+        );
+        assert_eq!(
+            moves.get("kit.packages_9").map(String::as_str),
+            Some(super::super::ontology::LEFT_BY_STUDIO)
+        );
+        let fresh = Ontology::load();
+        assert!(!fresh.has_entity("gears"));
+        assert!(property(&fresh, "kit", "packages_9").is_none());
+
+        // A legacy organization whose old core had `gears` and the packaging
+        // relation to it keeps both, read-only, left by Studio.
+        let mut o = legacy(Ontology::load());
+        o.doc["entities"].as_array_mut().unwrap().push(json!({
+            "id": "gears",
+            "name": "Gears",
+            "meta": {"kit": null, "retired": true},
+            "properties": [{"name": "id", "type": "string"}]
+        }));
+        o.entity_mut("kit").unwrap()["properties"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "name": "packages_9", "type": "Gears", "relation": "gears",
+                "relationType": "references", "extends": "link"
+            }));
+        let change = o
+            .sync_core_layer(&Ontology::running_core(), &moves)
+            .unwrap()
+            .unwrap();
+        assert!(change.moved.contains(&("gears".into(), "studio".into())));
+        assert_eq!(o.left_by("gears"), Some("studio"));
+        assert_eq!(
+            property(&o, "kit", "packages_9").unwrap()["left_by"]["kit"],
+            "studio"
+        );
+        assert!(
+            o.sync_core_layer(&Ontology::running_core(), &moves)
+                .unwrap()
+                .is_none(),
+            "the next start changes nothing"
+        );
+    }
+
+    #[test]
     fn a_new_organization_gets_the_moved_type_whole_from_its_kit_and_loses_it_with_the_kit() {
         use crate::domain_model::kit_overlay::sync;
         let mut o = Ontology::load();

@@ -213,6 +213,8 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
     // `report` and the organization's Reports tab, moved out of the core
     // (ADR-0070 phase 5): declared with their existing ids.
     ("org-reports", include_str!("builtin/org-reports.kit.json")),
+    ("assistant", include_str!("builtin/assistant.kit.json")),
+    ("project-git", include_str!("builtin/project-git.kit.json")),
     (
         "org-infrastructure",
         include_str!("builtin/org-infrastructure.kit.json"),

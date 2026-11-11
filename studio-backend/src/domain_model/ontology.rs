@@ -26,6 +26,10 @@ const STUDIO_MODEL_JSON: &str = include_str!("ontology.studio.json");
 #[cfg(test)]
 pub(crate) const PRODUCT_MODEL_JSON: &str = include_str!("ontology.core.json");
 
+/// Who left what the core dropped with no kit to take it (`dropped_from_core`):
+/// Studio itself, as `meta.left_by.kit`. Never a kit's slug.
+pub(crate) const LEFT_BY_STUDIO: &str = "studio";
+
 fn studio_model() -> Value {
     serde_json::from_str(STUDIO_MODEL_JSON).expect("Studio's own model is valid JSON")
 }
@@ -116,13 +120,28 @@ impl Ontology {
     /// What has moved out of the running core into a kit (ADR-0070 phase
     /// 5): a type by its id, or a field as `type.field`, to the kit's slug.
     pub(in crate::domain_model) fn running_moves() -> std::collections::BTreeMap<String, String> {
-        studio_model()
+        let seed = studio_model();
+        let mut moves: std::collections::BTreeMap<String, String> = seed
             .get("moved_to_kits")
             .and_then(Value::as_object)
             .into_iter()
             .flatten()
             .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
-            .collect()
+            .collect();
+        // What the core dropped with no kit to take it (`gears`, the numbered
+        // packaging relations): Studio itself left it. An organization that
+        // holds objects of it keeps them, read-only, until an admin removes
+        // what was left.
+        for key in seed
+            .get("dropped_from_core")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            moves.insert(key.to_owned(), LEFT_BY_STUDIO.to_owned());
+        }
+        moves
     }
 }
 
@@ -1765,18 +1784,11 @@ mod tests {
                     .then(|| format!("{}.{} -> {target}", r.source, r.name))
             })
             .collect();
-        // ADR-0070 / domain-model-split §5: each incoming relation follows
-        // its target's owner; the numbered package relations are retired.
-        let expected = [
-            "person.authors -> message",
-            "project.tracks -> risk",
-            "repository.hosts -> pull-request",
-            "kit.packages_12 -> tool",
-            "kit.packages_9 -> gears",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
+        // ADR-0070 / domain-model-split §5: each incoming relation followed
+        // its target's owner into that kit, and the numbered package
+        // relations were dropped (#1035-#1038). The queue is empty: a new
+        // one means a core type started depending on a kit type.
+        let expected = std::collections::BTreeSet::<String>::new();
         assert_eq!(
             actual, expected,
             "new core-to-kit dependencies must be assigned to their kit"
@@ -1807,7 +1819,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!((core, kit, retired), (44, 8, 1));
+        assert_eq!((core, kit, retired), (44, 0, 0));
     }
 
     #[test]

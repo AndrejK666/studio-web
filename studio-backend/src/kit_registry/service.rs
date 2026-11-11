@@ -840,6 +840,12 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "Studio AI: the chat assistant docked beside every screen, answering on the person's own model key.",
             &["organization", "workspace", "project"],
         ),
+        kit(
+            "project-git",
+            "Git",
+            "A project's Git host workflow: the pull requests of its repositories and what waits on review.",
+            &["organization", "project"],
+        ),
     ]
 }
 
@@ -1185,7 +1191,8 @@ mod tests {
                 "org-connections",
                 "project-team",
                 "constructor-research",
-                "assistant"
+                "assistant",
+                "project-git"
             ]
         );
         for kit in &kits {
