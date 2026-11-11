@@ -80,6 +80,10 @@ export default defineConfig(({ command, mode }) => {
           find: /^use-sync-external-store(\/shim)?(\/index|\/with-selector)?(\.js)?$/,
           replacement: path.resolve(__dirname, './src-app/app/lib/syncExternalStore.ts'),
         },
+        // CommonJS lodash does not tree-shake: two named imports in
+        // @gears-frontx/studio pulled in the whole library. Bare `lodash`
+        // only — `lodash/clamp` and the like stay what they are.
+        { find: /^lodash$/, replacement: path.resolve(__dirname, './src-app/app/lib/lodash.ts') },
       ],
       dedupe: ['@gears-frontx/api', '@gears-frontx/framework', '@gears-frontx/react'],
     },

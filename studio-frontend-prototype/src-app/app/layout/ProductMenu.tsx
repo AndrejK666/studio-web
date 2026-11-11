@@ -16,11 +16,10 @@ import {
   DropdownMenuTrigger,
 } from '@gears-frontx/ui-kit/dropdown-menu';
 import { Check, ChevronDown, LayoutGrid, Shield } from 'lucide-react';
-import { DynamicIcon, iconNames } from 'lucide-react/dynamic';
 import { useShellText } from '@/app/i18n/shellTranslations';
 import { useMountedExtensions } from '@/app/mfe/domainOccupancy';
 import { placementOf, resolveLevelMenu, type StudioScreenExtension } from '@/app/mfe/screenLevels';
-import { levelIconName } from './levelIcon';
+import { ManifestIcon } from './ManifestIcon';
 import { screenShows, useInstalledKits } from './useInstalledKits';
 
 /** The screens kits put in the product menu, in their order. */
@@ -66,13 +65,12 @@ export const ProductMenu: React.FC = () => {
           {inStudio && <Check className="ml-auto" aria-hidden="true" />}
         </DropdownMenuItem>
         {products.map((screen) => {
-          const icon = levelIconName(screen.presentation.icon, iconNames);
           return (
             <DropdownMenuItem
               key={screen.id}
               onClick={() => eventBus.emit('app/context/screen/requested', { extensionId: screen.id })}
             >
-              {icon && <DynamicIcon name={icon} aria-hidden="true" />}
+              <ManifestIcon declared={screen.presentation.icon} />
               {screen.presentation.label}
               {mounted?.id === screen.id && <Check className="ml-auto" aria-hidden="true" />}
             </DropdownMenuItem>

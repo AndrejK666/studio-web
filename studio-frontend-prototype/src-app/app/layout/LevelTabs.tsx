@@ -17,7 +17,6 @@ import {
   NavigationMenuList,
 } from '@gears-frontx/ui-kit/navigation-menu';
 import { Skeleton } from '@gears-frontx/ui-kit/skeleton';
-import { DynamicIcon, iconNames } from 'lucide-react/dynamic';
 import { RotateCcw, Star } from 'lucide-react';
 import {
   MFE_BOOTSTRAP_SLICE_KEY,
@@ -34,7 +33,7 @@ import { isPinned } from '@/app/pins/pins';
 import { cn } from '@/app/lib/utils';
 import { SHELL_SLOTS } from '@/app/mfe/slots';
 import { KitSlot } from './KitSlot';
-import { levelIconName } from './levelIcon';
+import { ManifestIcon } from './ManifestIcon';
 import { useScreenLevel } from './useScreenLevel';
 import { screenShows, typesNeeded, useInstalledKits, useInstalledTypes } from './useInstalledKits';
 import { modelNameOf, screenIdOf, visibleTabs, withModelTabs } from './modelTabs';
@@ -160,7 +159,6 @@ export const LevelTabs: React.FC = () => {
     <NavigationMenu aria-label={t('level_tabs')} className={styles.row}>
       <NavigationMenuList className={styles.list}>
         {ordered.map(({ id, extension: ext }, index) => {
-          const icon = levelIconName(ext.presentation.icon, iconNames);
           return (
             <NavigationMenuItem key={ext.id}>
               <NavigationMenuLink
@@ -204,7 +202,7 @@ export const LevelTabs: React.FC = () => {
                   dragging && marker === order.length && index === order.length - 1 && styles.dropAfter
                 )}
               >
-                {icon && <DynamicIcon name={icon} className={styles.glyph} aria-hidden="true" />}
+                <ManifestIcon declared={ext.presentation.icon} className={styles.glyph} />
                 {ext.presentation?.label}
                 {ext.presentation?.experimental && (
                   <span className={styles.exp} title={t('level_tab_experimental')}>
