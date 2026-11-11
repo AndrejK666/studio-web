@@ -1313,13 +1313,19 @@ async fn activity_feed(
     }
     let service = ingest.get()?;
 
-    let findings = scoped_entries(service, &ctx, "spec_finding", project_id).await?;
-    let comments = scoped_entries(service, &ctx, "comment", project_id).await?;
-
-    // The names the bindings gave these files. Best-effort on purpose: losing
-    // them leaves rows reading by path, which is worse than a name and very
-    // much better than no feed.
-    let names = ingest.binding_names(&ctx, project_id).await;
+    // Three independent reads, at once: one after another they were three
+    // round trips through the model and the documents gear on every open of
+    // the feed.
+    //
+    // The names the bindings gave these files are best-effort on purpose:
+    // losing them leaves rows reading by path, which is worse than a name and
+    // very much better than no feed.
+    let (findings, comments, names) = tokio::join!(
+        scoped_entries(service, &ctx, "spec_finding", project_id),
+        scoped_entries(service, &ctx, "comment", project_id),
+        ingest.binding_names(&ctx, project_id),
+    );
+    let (findings, comments) = (findings?, comments?);
     let name_of = |id: &str| names.get(id).cloned();
 
     let items: Vec<ActivityEventDto> =

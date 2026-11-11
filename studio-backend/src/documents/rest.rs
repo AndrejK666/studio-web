@@ -1541,14 +1541,14 @@ async fn list_project_documents(
     Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
     Query(page): Query<PageQuery>,
 ) -> ApiResult<JsonBody<DocumentListDto>> {
-    service
-        .authorize(&ctx, workspace_id)
-        .await
-        .map_err(no_tenant)?;
-    service
-        .authorize(&ctx, project_id)
-        .await
-        .map_err(no_tenant)?;
+    // Both guards at once: each is its own account-management round trip.
+    // Nothing is read until both have passed.
+    let (in_workspace, in_project) = tokio::join!(
+        service.authorize(&ctx, workspace_id),
+        service.authorize(&ctx, project_id),
+    );
+    in_workspace.map_err(no_tenant)?;
+    in_project.map_err(no_tenant)?;
     let (items, total) = service
         .list_documents(&ctx, workspace_id, Some(project_id), page)
         .await
@@ -8629,7 +8629,13 @@ async fn list_spec_rows(
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
 
-    let (bindings, authored) = read_both(&ctx, &service, workspace_id, project_id).await?;
+    // The project's documents and its members' decisions are independent
+    // reads: asked together, the screen waits for the slower, not the sum.
+    let (both, decisions) = tokio::join!(
+        read_both(&ctx, &service, workspace_id, project_id),
+        service.spec_decisions(&ctx, workspace_id, project_id),
+    );
+    let (bindings, authored) = both?;
 
     // The never-classified files, their provenance and the recorded verdicts.
     // Absent when no ingest gear is here, which costs one queue and the review
@@ -8637,9 +8643,7 @@ async fn list_spec_rows(
     let scope = project_id.to_string();
     let mut known = super::spec_rows::Known::default();
     // A finding a member dismissed (✗) is not counted against its document.
-    let dismissed: std::collections::BTreeSet<String> = service
-        .spec_decisions(&ctx, workspace_id, project_id)
-        .await
+    let dismissed: std::collections::BTreeSet<String> = decisions
         .map_err(internal)?
         .into_iter()
         .filter(|d| d.decision == "dismissed")
@@ -8804,14 +8808,13 @@ async fn read_both(
     // The whole set, not a page: `PageQuery::limit()` clamps to 200, so a
     // paged read here showed a project with more files than that as mostly
     // "not scanned" -- its bindings existed, the page just did not reach them.
-    let bindings = service
-        .all_bindings(ctx, workspace_id, Some(project_id))
-        .await
-        .map_err(internal)?;
-    let documents = service
-        .all_documents(ctx, workspace_id, Some(project_id))
-        .await
-        .map_err(internal)?;
+    // Both reads are independent, so they are asked together.
+    let (bindings, documents) = tokio::join!(
+        service.all_bindings(ctx, workspace_id, Some(project_id)),
+        service.all_documents(ctx, workspace_id, Some(project_id)),
+    );
+    let bindings = bindings.map_err(internal)?;
+    let documents = documents.map_err(internal)?;
 
     let bindings = bindings
         .into_iter()
