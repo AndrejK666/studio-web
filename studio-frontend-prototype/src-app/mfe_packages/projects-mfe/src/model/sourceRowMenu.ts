@@ -18,7 +18,11 @@ export type SourceMenuItem =
   | { kind: 'open_specs' }
   | { kind: 'open_in'; url: string; provider: string }
   | { kind: 'open_uploads' }
-  | { kind: 'disconnect' };
+  /**
+   * A repository detaches through the backend's one durable run (#1042);
+   * the uploaded files are no source and cannot be.
+   */
+  | { kind: 'disconnect'; disabled: boolean };
 
 function cancelSyncItem(sync: Extract<SourceSync, { kind: 'in_flight' }>): SourceMenuItem {
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-2
@@ -81,7 +85,7 @@ export function sourceRowMenu(row: SourceRow, connectionsRead: boolean): SourceM
   }
   // @cpt-end:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-9
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-10
-  items.push({ kind: 'disconnect' });
+  items.push({ kind: 'disconnect', disabled: false });
   // @cpt-end:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-10
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-11
   return items;
@@ -89,5 +93,5 @@ export function sourceRowMenu(row: SourceRow, connectionsRead: boolean): SourceM
 }
 
 export function uploadsRowMenu(): SourceMenuItem[] {
-  return [{ kind: 'open_uploads' }, { kind: 'disconnect' }];
+  return [{ kind: 'open_uploads' }, { kind: 'disconnect', disabled: true }];
 }

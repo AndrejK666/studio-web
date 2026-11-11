@@ -11,6 +11,7 @@ import { syncPlan } from '../model/syncRequest';
 import { showSourceSpecs } from '../slices/specsFilterSlice';
 import { cancelRepoSync, retryRepoSync } from './useArtifactImport';
 import { useSourceConnections } from './useConnections';
+import { useSourceDetach } from './useSourceDetach';
 import '../events/artifactEvents';
 import '../events/sourcesConnectEvents';
 
@@ -23,6 +24,10 @@ export interface SourceRowActions {
   openUploads: () => void;
   /** Write how "Share with the team" lands edits in the row's repository. */
   changeShareMode: (row: SourceRow, mode: ShareMode) => void;
+  /** Detach the row's repository from the project, as one backend run (#1042). */
+  detach: (row: SourceRow) => void;
+  /** Rows whose detach is running, by row id. */
+  detaching: ReadonlySet<string>;
 }
 
 export function useSourceRowActions(
@@ -32,7 +37,8 @@ export function useSourceRowActions(
 ): SourceRowActions {
   const dispatch = useAppDispatch();
   const bridge = useMfeBridge();
-  const { byId, loading, failed, providerName } = useSourceConnections(orgId);
+  const { byId, loading, failed, providerName } = useSourceConnections(orgId, projectId);
+  const { detach, detaching } = useSourceDetach(projectId);
 
   const syncNow = useCallback(
     (row: SourceRow, retry: boolean) => {
@@ -93,7 +99,19 @@ export function useSourceRowActions(
       openSpecs,
       openUploads,
       changeShareMode,
+      detach,
+      detaching,
     }),
-    [connectionsRead, providerName, syncNow, cancelSync, openSpecs, openUploads, changeShareMode]
+    [
+      connectionsRead,
+      providerName,
+      syncNow,
+      cancelSync,
+      openSpecs,
+      openUploads,
+      changeShareMode,
+      detach,
+      detaching,
+    ]
   );
 }

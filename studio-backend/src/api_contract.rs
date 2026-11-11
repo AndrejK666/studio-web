@@ -100,7 +100,7 @@ const VERBS: &[&str] = &[
     // synonyms: `save`, `set`, `put` and `edit` all mean `update` or `upsert`,
     // `add` means `create`, `remove` means `delete`.
     "accept", "analyze", "assign", "backfill", "cancel", "claim", "classify", "close", "confirm",
-    "count", "decide",
+    "count", "decide", "detach",
     "enqueue", "export", "import", "invite", "leave", "materialize", "merge", "open", "probe",
     "pull", "push", "query", "reconcile", "resolve", "retry", "revert", "revoke", "run",
     "scaffold", "search", "send", "start", "stream", "sync", "test", "validate",

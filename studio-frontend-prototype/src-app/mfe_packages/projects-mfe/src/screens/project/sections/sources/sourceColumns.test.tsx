@@ -48,6 +48,8 @@ const actions: SourceRowActions = {
   openSpecs: vi.fn(),
   openUploads: vi.fn(),
   changeShareMode: vi.fn(),
+  detach: vi.fn(),
+  detaching: new Set<string>(),
 };
 
 const WEEK = { open: 2, merged: 1, commits: 5, days: [0, 0, 1, 0, 0, 1, 0] };

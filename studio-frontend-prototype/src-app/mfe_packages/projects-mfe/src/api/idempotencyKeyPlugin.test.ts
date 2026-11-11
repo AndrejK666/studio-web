@@ -11,6 +11,7 @@ import {
   ARTIFACT_INGEST_API_BASE_URL,
   ArtifactIngestApiService,
   startsSync,
+  startsWork,
 } from './ArtifactIngestApiService';
 import type { SyncBody } from './artifactTypes';
 import {
@@ -61,6 +62,14 @@ describe('IdempotencyKeyPlugin', () => {
     expect(plugin.onRequest(request('GET', SYNC_URL)).headers).toEqual({});
     expect(plugin.onRequest(request('POST', `${ARTIFACT_INGEST_API_BASE_URL}/nodes`, {})).headers).toEqual({});
     expect(plugin.onRequest(request('POST', '/cf/other-gear/v1/sync', {})).headers).toEqual({});
+  });
+});
+
+describe('startsWork', () => {
+  it('names a sync and a detach, nothing else', () => {
+    expect(startsWork(SYNC_URL)).toBe(true);
+    expect(startsWork(`${ARTIFACT_INGEST_API_BASE_URL}/sources/detach?project_id=p`)).toBe(true);
+    expect(startsWork(`${ARTIFACT_INGEST_API_BASE_URL}/reconcile`)).toBe(false);
   });
 });
 

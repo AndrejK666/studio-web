@@ -15,7 +15,7 @@ describe('the row menu', () => {
       { kind: 'sync_now', retry: false, disabled: null },
       { kind: 'open_specs' },
       { kind: 'open_in', url: 'https://github.com/acme/api', provider: 'github' },
-      { kind: 'disconnect' },
+      { kind: 'disconnect', disabled: false },
     ]);
   });
 
@@ -30,7 +30,7 @@ describe('the row menu', () => {
 
 describe("the uploads row's menu", () => {
   it('opens the uploaded documents, and offers Disconnect', () => {
-    expect(uploadsRowMenu()).toEqual([{ kind: 'open_uploads' }, { kind: 'disconnect' }]);
+    expect(uploadsRowMenu()).toEqual([{ kind: 'open_uploads' }, { kind: 'disconnect', disabled: true }]);
   });
 });
 

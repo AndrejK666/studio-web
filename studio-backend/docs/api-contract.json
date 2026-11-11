@@ -3450,6 +3450,7 @@
       ],
       "errors": [
         "401",
+        "403",
         "500"
       ]
     },
@@ -4675,6 +4676,24 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-artifact-ingest/v1/sources/detach",
+      "operation_id": "studio_artifact_ingest.detach_source",
+      "tag": "StudioArtifactIngest",
+      "summary": "Detach a source from a project, durably",
+      "authenticated": true,
+      "request": "DetachSourceRequest",
+      "responses": [
+        "SourceDetachQueued"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -6675,6 +6694,7 @@
       "errors": [
         "400",
         "401",
+        "403",
         "500"
       ]
     },

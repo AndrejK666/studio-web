@@ -1,6 +1,14 @@
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu:p1
-import React from 'react';
+import React, { useState } from 'react';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
   Button,
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +36,8 @@ export interface SourceRowMenuProps {
 
 export const SourceRowMenu: React.FC<SourceRowMenuProps> = ({ row, actions, container }) => {
   const t = useSourcesText();
+  const [confirming, setConfirming] = useState(false);
+  const detaching = actions.detaching.has(row.id);
 
   const disabledTitle = (disabled: SyncDisabled): string => {
     switch (disabled.reason) {
@@ -103,19 +113,30 @@ export const SourceRowMenu: React.FC<SourceRowMenuProps> = ({ row, actions, cont
         return (
           <React.Fragment key="disconnect">
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className={styles.item}
-              disabled
-              title={t('menu_disconnect_unavailable')}
-            >
-              {t('menu_disconnect')}
-            </DropdownMenuItem>
+            {entry.disabled || row.kind !== 'repository' ? (
+              <DropdownMenuItem
+                className={styles.item}
+                disabled
+                title={t('menu_disconnect_unavailable')}
+              >
+                {t('menu_disconnect')}
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem
+                className={styles.item}
+                disabled={detaching}
+                onClick={() => setConfirming(true)}
+              >
+                {detaching ? t('menu_detaching') : t('menu_disconnect')}
+              </DropdownMenuItem>
+            )}
           </React.Fragment>
         );
     }
   };
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
@@ -137,6 +158,28 @@ export const SourceRowMenu: React.FC<SourceRowMenuProps> = ({ row, actions, cont
         ).map(item)}
       </DropdownMenuContent>
     </DropdownMenu>
+    {row.kind === 'repository' && (
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent container={container ?? undefined}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('detach_title', { name: row.name })}</AlertDialogTitle>
+            <AlertDialogDescription>{t('detach_body', { name: row.fullPath })}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('detach_cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirming(false);
+                actions.detach(row);
+              }}
+            >
+              {t('detach_confirm')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    )}
+    </>
   );
 };
 

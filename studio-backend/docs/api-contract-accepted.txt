@@ -237,6 +237,7 @@ request	POST /studio-artifact-ingest/v1/reconcile	project_id	String	optional
 request	POST /studio-artifact-ingest/v1/reconcile	workspace_id	String	optional
 request	POST /studio-artifact-ingest/v1/search	limit	u32	optional
 request	POST /studio-artifact-ingest/v1/search	text	String	required
+request	POST /studio-artifact-ingest/v1/sources/detach	clone_url	String	required
 request	POST /studio-artifact-ingest/v1/sync	base_url	String	optional
 request	POST /studio-artifact-ingest/v1/sync	project_id	String	optional
 request	POST /studio-artifact-ingest/v1/sync	provider	String	required
@@ -2114,6 +2115,7 @@ response	GET /studio-connector/v1/connections	items.account	String	always
 response	GET /studio-connector/v1/connections	items.base_url	String	always
 response	GET /studio-connector/v1/connections	items.created_at_epoch_secs	u64	always
 response	GET /studio-connector/v1/connections	items.id	Uuid	always
+response	GET /studio-connector/v1/connections	items.inherited	bool	always
 response	GET /studio-connector/v1/connections	items.label	String	always
 response	GET /studio-connector/v1/connections	items.mine	bool	always
 response	GET /studio-connector/v1/connections	items.options	BTreeMap<String,String>	always
@@ -5283,6 +5285,7 @@ response	PATCH /studio-connector/v1/connections/{}	connection.account	String	alw
 response	PATCH /studio-connector/v1/connections/{}	connection.base_url	String	always
 response	PATCH /studio-connector/v1/connections/{}	connection.created_at_epoch_secs	u64	always
 response	PATCH /studio-connector/v1/connections/{}	connection.id	Uuid	always
+response	PATCH /studio-connector/v1/connections/{}	connection.inherited	bool	always
 response	PATCH /studio-connector/v1/connections/{}	connection.label	String	always
 response	PATCH /studio-connector/v1/connections/{}	connection.mine	bool	always
 response	PATCH /studio-connector/v1/connections/{}	connection.options	BTreeMap<String,String>	always
@@ -5367,6 +5370,8 @@ response	POST /studio-artifact-ingest/v1/search	nodes.instance_id	String	always
 response	POST /studio-artifact-ingest/v1/search	nodes.type_id	String	always
 response	POST /studio-artifact-ingest/v1/search	nodes.value	Value	always
 response	POST /studio-artifact-ingest/v1/search	total	u32	always
+response	POST /studio-artifact-ingest/v1/sources/detach	run_id	String	always
+response	POST /studio-artifact-ingest/v1/sources/detach	status	String	always
 response	POST /studio-artifact-ingest/v1/sync	run_id	String	always
 response	POST /studio-artifact-ingest/v1/sync	status	String	always
 response	POST /studio-components-catalog/v1/components/{}/profile	instance_id	String	always
@@ -5686,6 +5691,7 @@ response	POST /studio-connector/v1/connections	connection.account	String	always
 response	POST /studio-connector/v1/connections	connection.base_url	String	always
 response	POST /studio-connector/v1/connections	connection.created_at_epoch_secs	u64	always
 response	POST /studio-connector/v1/connections	connection.id	Uuid	always
+response	POST /studio-connector/v1/connections	connection.inherited	bool	always
 response	POST /studio-connector/v1/connections	connection.label	String	always
 response	POST /studio-connector/v1/connections	connection.mine	bool	always
 response	POST /studio-connector/v1/connections	connection.options	BTreeMap<String,String>	always
@@ -5732,6 +5738,7 @@ response	POST /studio-connector/v1/connections/{}/test	connection.account	String
 response	POST /studio-connector/v1/connections/{}/test	connection.base_url	String	always
 response	POST /studio-connector/v1/connections/{}/test	connection.created_at_epoch_secs	u64	always
 response	POST /studio-connector/v1/connections/{}/test	connection.id	Uuid	always
+response	POST /studio-connector/v1/connections/{}/test	connection.inherited	bool	always
 response	POST /studio-connector/v1/connections/{}/test	connection.label	String	always
 response	POST /studio-connector/v1/connections/{}/test	connection.mine	bool	always
 response	POST /studio-connector/v1/connections/{}/test	connection.options	BTreeMap<String,String>	always
@@ -5750,6 +5757,7 @@ response	POST /studio-connector/v1/oauth/complete	connection.account	String	alwa
 response	POST /studio-connector/v1/oauth/complete	connection.base_url	String	always
 response	POST /studio-connector/v1/oauth/complete	connection.created_at_epoch_secs	u64	always
 response	POST /studio-connector/v1/oauth/complete	connection.id	Uuid	always
+response	POST /studio-connector/v1/oauth/complete	connection.inherited	bool	always
 response	POST /studio-connector/v1/oauth/complete	connection.label	String	always
 response	POST /studio-connector/v1/oauth/complete	connection.mine	bool	always
 response	POST /studio-connector/v1/oauth/complete	connection.options	BTreeMap<String,String>	always
@@ -8270,6 +8278,7 @@ route	POST /studio-artifact-ingest/v1/files
 route	POST /studio-artifact-ingest/v1/quality
 route	POST /studio-artifact-ingest/v1/reconcile
 route	POST /studio-artifact-ingest/v1/search
+route	POST /studio-artifact-ingest/v1/sources/detach
 route	POST /studio-artifact-ingest/v1/sync
 route	POST /studio-components-catalog/v1/components/{}/profile
 route	POST /studio-components-catalog/v1/gearbox/corpus/git-upload-pack

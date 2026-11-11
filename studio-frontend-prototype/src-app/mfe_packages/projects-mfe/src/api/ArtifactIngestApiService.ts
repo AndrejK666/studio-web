@@ -7,6 +7,8 @@ import {
 } from '@gears-frontx/react';
 import type {
   ArtifactNodeListDto,
+  DetachSourceBody,
+  SourceDetachQueuedDto,
   ReconcileRequest,
   ReconcileResponse,
   SourceActivityListDto,
@@ -20,9 +22,17 @@ export const ARTIFACT_INGEST_API_BASE_URL = '/cf/studio-artifact-ingest/v1';
 /** `POST /sync`: the one route here that starts a run. */
 export const SYNC_PATH = '/sync';
 
+/** `POST /sources/detach?project_id=`: a source taken out as one run (#1042). */
+export const DETACH_PATH = '/sources/detach';
+
 /** Whether a request URL, as the plugins see it (base included), is `POST /sync`'s. */
 export function startsSync(url: string): boolean {
   return url.split('?')[0] === `${ARTIFACT_INGEST_API_BASE_URL}${SYNC_PATH}`;
+}
+
+/** Whether a request URL starts a run here: a sync, or a source's detach. */
+export function startsWork(url: string): boolean {
+  return startsSync(url) || url.split('?')[0] === `${ARTIFACT_INGEST_API_BASE_URL}${DETACH_PATH}`;
 }
 
 /**
@@ -56,8 +66,9 @@ export class ArtifactIngestApiService extends BaseApiService {
   constructor() {
     const restProtocol = new RestProtocol({ timeout: 30000 });
     const restEndpoints = new RestEndpointProtocol(restProtocol);
-    // `POST /sync` starts a run (202 + run_id): its retry must answer that run.
-    restProtocol.plugins.add(new IdempotencyKeyPlugin(startsSync));
+    // `POST /sync` and `POST /sources/detach` start a run (202 + run_id): a
+    // retry must answer that run.
+    restProtocol.plugins.add(new IdempotencyKeyPlugin(startsWork));
 
     super({ baseURL: ARTIFACT_INGEST_API_BASE_URL }, restProtocol, restEndpoints);
   }
@@ -83,6 +94,18 @@ export class ArtifactIngestApiService extends BaseApiService {
     SourceActivityListDto,
     { scope: string }
   >(({ scope }) => `/source-activity?${new URLSearchParams({ scope })}`);
+
+  /**
+   * Takes a source out of the project and forgets what was synced from it, as
+   * one durable run the backend owns (#1042): the config write and the prune
+   * that the browser used to make one after the other.
+   */
+  detachSource(projectId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<SourceDetachQueuedDto, DetachSourceBody>(
+      'POST',
+      `${DETACH_PATH}?${new URLSearchParams({ project_id: projectId })}`
+    );
+  }
 
   /** Forgets every repository synced into the scope that `keep` does not name. */
   readonly reconcile = this.protocol(RestEndpointProtocol).mutation<

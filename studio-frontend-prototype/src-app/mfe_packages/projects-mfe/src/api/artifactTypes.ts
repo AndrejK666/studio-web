@@ -76,6 +76,17 @@ export interface SyncEnqueuedDto {
   status: string;
 }
 
+/** Mirrors `DetachSourceRequest`: the source of `?project_id=` to detach. */
+export interface DetachSourceBody {
+  clone_url: string;
+}
+
+/** Mirrors `SourceDetachQueued`: the `artifact.source_detach` run. */
+export interface SourceDetachQueuedDto {
+  run_id: string;
+  status: string;
+}
+
 /** Mirrors `RepoActivityDto`: one repository's movement over the window. */
 export interface RepoActivityDto {
   /** The repo node's instance id. */

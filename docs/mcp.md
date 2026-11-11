@@ -196,6 +196,7 @@ without the portal; each step is the REST route the portal calls for it.
 | --- | --- | --- |
 | Sources | `project_sources` | the repositories the project is made of |
 | | `project_sources_set` | *changes:* replaces the list (only `sources`; the rest of the config is kept) |
+| | `project_source_detach` | *changes:* takes one repository out of the sources and forgets what was synced from it, as one run (`task_run` reads it) |
 | | `project_connections` | the connections the project can read through |
 | | `connection_repositories` | the repositories one connection reaches |
 | Product | `product_description` | the latest description revision: text, number, `sources_lock` |

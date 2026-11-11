@@ -26,6 +26,8 @@ const actions = (): SourceRowActions => ({
   openSpecs: vi.fn(),
   openUploads: vi.fn(),
   changeShareMode: vi.fn(),
+  detach: vi.fn(),
+  detaching: new Set<string>(),
 });
 
 async function openMenu(row: SourceRow, given: SourceRowActions) {
@@ -37,7 +39,7 @@ async function openMenu(row: SourceRow, given: SourceRowActions) {
 afterEach(() => vi.restoreAllMocks());
 
 describe('the row menu', () => {
-  it('lists Sync now, Open specs, Open in and, after a separator, Disconnect, disabled', async () => {
+  it('lists Sync now, Open specs, Open in and, after a separator, Disconnect', async () => {
     const menu = await openMenu(ROW, actions());
     const items = within(menu).getAllByRole('menuitem');
     expect(items.map((item) => item.textContent)).toEqual([
@@ -46,9 +48,26 @@ describe('the row menu', () => {
       'menu_open_in {"provider":"GitHub"}',
       'menu_disconnect',
     ]);
-    expect(items[3].getAttribute('aria-disabled')).toBe('true');
-    expect(items[3].getAttribute('title')).toBe('menu_disconnect_unavailable');
+    expect(items[3].getAttribute('aria-disabled')).not.toBe('true');
     expect(within(menu).getByRole('separator')).toBeTruthy();
+  });
+
+  it('Disconnect asks first, naming what goes, and detaches only on confirmation', async () => {
+    const given = actions();
+    const menu = await openMenu(ROW, given);
+    fireEvent.click(within(menu).getByText('menu_disconnect'));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('detach_body {"name":"acme/api"}')).toBeTruthy();
+    expect(given.detach).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByText('detach_confirm'));
+    expect(given.detach).toHaveBeenCalledWith(expect.objectContaining({ fullPath: 'acme/api' }));
+  });
+
+  it('a running detach reads Detaching… and cannot be asked twice', async () => {
+    const given = { ...actions(), detaching: new Set([ROW.id]) };
+    const menu = await openMenu(ROW, given);
+    const item = within(menu).getByText('menu_detaching');
+    expect(item.closest('[role="menuitem"]')?.getAttribute('aria-disabled')).toBe('true');
   });
 
   it('Sync now retries a stopped run that can be retried', async () => {

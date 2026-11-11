@@ -144,7 +144,7 @@ pub struct KeptRepo {
 }
 
 /// What a prune forgot.
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PruneSummary {
     /// Repository nodes.
     pub repos: usize,
@@ -1928,6 +1928,25 @@ impl IngestService {
             .collect();
         self.prune_repos(ctx, workspace_id, project_id, |repo| {
             !kept.contains(&repo.instance_id)
+        })
+        .await
+    }
+
+    /// Forget one repository of a project, by its path, through whichever
+    /// connection it was synced: the second half of detaching a source
+    /// (`artifact.source_detach`). The path is matched without regard to case,
+    /// as providers treat it.
+    pub async fn prune_repository(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        repo_full_path: &str,
+    ) -> anyhow::Result<PruneSummary> {
+        self.prune_repos(ctx, None, Some(project_id), |repo| {
+            repo.value
+                .get("full_path")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|p| p.eq_ignore_ascii_case(repo_full_path))
         })
         .await
     }
@@ -4097,6 +4116,42 @@ mod prune_tests {
             *classifier.forgot.lock().expect("forgot"),
             vec![(Some(Uuid::parse_str(PROJECT).expect("uuid")), forgotten)]
         );
+    }
+
+    #[tokio::test]
+    async fn detaching_forgets_one_repository_through_every_connection_and_nothing_else() {
+        let (svc, graph, _) = service();
+        let mut nodes = Vec::new();
+        let current = synced(&mut nodes, Some(PROJECT), "conn-new", "org/studio-web");
+        let older = synced(&mut nodes, Some(PROJECT), "conn-old", "org/studio-web");
+        let other = synced(&mut nodes, Some(PROJECT), "conn-new", "org/other");
+        let sibling = synced(
+            &mut nodes,
+            Some(OTHER_PROJECT),
+            "conn-new",
+            "org/studio-web",
+        );
+        graph.upsert_nodes(&ctx(), &nodes).await.expect("upsert");
+
+        let summary = svc
+            .prune_repository(&ctx(), PROJECT, "Org/Studio-Web")
+            .await
+            .expect("prune");
+
+        assert_eq!((summary.repos, summary.nodes), (2, 2));
+        let left = ids(&graph).await;
+        for id in [&other.0, &other.1, &sibling.0, &sibling.1] {
+            assert!(left.contains(id), "{id} should have stayed");
+        }
+        for id in [&current.0, &current.1, &older.0, &older.1] {
+            assert!(!left.contains(id), "{id} should be gone");
+        }
+        // Asked again (a retried run), there is nothing left to forget.
+        let again = svc
+            .prune_repository(&ctx(), PROJECT, "org/studio-web")
+            .await
+            .expect("prune");
+        assert_eq!(again, PruneSummary::default());
     }
 
     #[tokio::test]

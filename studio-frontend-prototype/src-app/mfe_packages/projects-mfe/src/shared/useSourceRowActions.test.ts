@@ -4,12 +4,13 @@ import type { ConnectionDto } from '@constructor-studio/mfe-shared';
 
 /** What the row menu's items do (DoDs `...-sources-menu-sync`, `...-sources-menu-specs`). */
 
-const { connections, emit, dispatch, bridge, announceSection } = vi.hoisted(() => ({
+const { connections, emit, dispatch, bridge, announceSection, detachView } = vi.hoisted(() => ({
   connections: { current: { connections: [] as ConnectionDto[], loading: false, failed: false } },
   emit: vi.fn(),
   dispatch: vi.fn(),
   bridge: { id: 'bridge' },
   announceSection: vi.fn(),
+  detachView: { detach: () => undefined, detaching: new Set<string>() },
 }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
@@ -33,6 +34,9 @@ vi.mock('./useConnections', () => ({
   },
 }));
 vi.mock('../actions/projectsActions', () => ({ announceSection }));
+vi.mock('./useSourceDetach', () => ({
+  useSourceDetach: () => detachView,
+}));
 
 import { sourceRow } from '../model/sourceRows.fixture';
 import { showSourceSpecs } from '../slices/specsFilterSlice';
