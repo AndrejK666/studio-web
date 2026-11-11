@@ -205,13 +205,20 @@ async fn project_lifecycle_brings_its_model_and_takes_it_away() {
     assert_eq!(rows[0].0, PROJECT.to_string());
     assert_eq!(rows[0].1, "discovery");
 
-    // A kit that brings a model is the organization's, never one project's.
-    assert!(matches!(
-        installer
-            .install_for_project(&admin, PROJECT, SLUG, None)
-            .await,
-        Err(Refusal::ModelKitNotForProject(_))
-    ));
+    // A kit that brings a model is the organization's: the organization's
+    // model already carries this one, so a project may take its screens,
+    // and the model stays as it was.
+    let before = port.kit_models(&org).await.unwrap();
+    installer
+        .install_for_project(&admin, PROJECT, SLUG, None)
+        .await
+        .expect("the organization's model carries the kit");
+    assert_eq!(port.kit_models(&org).await.unwrap(), before);
+    installer
+        .uninstall_for_project(&admin, PROJECT, SLUG)
+        .await
+        .unwrap();
+    assert_eq!(port.kit_models(&org).await.unwrap(), before);
 
     // The platform takes the base kit away: the model loses the fields.
     let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
