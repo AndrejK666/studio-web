@@ -2062,30 +2062,12 @@
           "description": "A tab of the project: what it shows."
         },
         {
-          "name": "components",
-          "type": "project-product",
-          "relation": "project-product",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Product",
-          "description": "A tab of the project: what it shows."
-        },
-        {
           "name": "parts",
           "type": "gear",
           "relation": "gear",
           "extends": "edge",
           "relationType": "shows",
           "relationLabel": "Components",
-          "description": "A tab of the project: what it shows."
-        },
-        {
-          "name": "releases",
-          "type": "deployment",
-          "relation": "deployment",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Releases",
           "description": "A tab of the project: what it shows."
         },
         {
@@ -7510,10 +7492,12 @@
     "policy": "project-specs",
     "project.activity": "project-activity",
     "project.artifacts": "project-artifacts",
+    "project.components": "product-releases",
     "project.documented_by": "project-specs",
     "project.issues": "project-issues",
     "project.model": "project-domain-model",
     "project.people": "project-team",
+    "project.releases": "product-releases",
     "project.scopes": "project-issues",
     "project.specs": "project-specs",
     "project.tests": "project-tests",
