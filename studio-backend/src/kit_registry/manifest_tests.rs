@@ -54,7 +54,7 @@ fn project_lifecycle_is_a_built_in_kit_that_brings_a_model() {
         contents_of(&m).types[0].gts,
         "gts.cf.studio.kit.project_lifecycle.phase.v1~"
     );
-    assert!(builtin_manifest("project-tests").is_none());
+    assert!(builtin_manifest("studio-api-docs").is_none());
     // And one Inbox source: a project waiting in its phase on its owner.
     let source = &m.inbox[0];
     assert_eq!(source.id, "phase-waiting");

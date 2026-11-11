@@ -809,8 +809,8 @@ pub fn sync(
                     // as it is: a field it removed stays removed (ADR-0070 §7,
                     // decision 6).
                     let mut next = e.clone();
-                    let gear_made = e.pointer("/meta/origin").and_then(Value::as_str)
-                        == Some("gear");
+                    let gear_made =
+                        e.pointer("/meta/origin").and_then(Value::as_str) == Some("gear");
                     let theirs: Vec<Value> = want
                         .get("properties")
                         .and_then(Value::as_array)
@@ -823,7 +823,10 @@ pub fn sync(
                         let props = next["properties"].as_array_mut().expect("made above");
                         for p in theirs {
                             let name = str_of(&p, "name").unwrap_or_default().to_owned();
-                            if !props.iter().any(|q| str_of(q, "name") == Some(name.as_str())) {
+                            if !props
+                                .iter()
+                                .any(|q| str_of(q, "name") == Some(name.as_str()))
+                            {
                                 props.push(p);
                             }
                         }

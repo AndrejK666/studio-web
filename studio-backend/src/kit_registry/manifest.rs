@@ -213,18 +213,48 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
     // `report` and the organization's Reports tab, moved out of the core
     // (ADR-0070 phase 5): declared with their existing ids.
     ("org-reports", include_str!("builtin/org-reports.kit.json")),
-    ("org-infrastructure", include_str!("builtin/org-infrastructure.kit.json")),
+    (
+        "org-infrastructure",
+        include_str!("builtin/org-infrastructure.kit.json"),
+    ),
     ("org-costs", include_str!("builtin/org-costs.kit.json")),
-    ("product-releases", include_str!("builtin/product-releases.kit.json")),
-    ("project-domain-model", include_str!("builtin/project-domain-model.kit.json")),
-    ("org-connections", include_str!("builtin/org-connections.kit.json")),
-    ("project-artifacts", include_str!("builtin/project-artifacts.kit.json")),
-    ("project-activity", include_str!("builtin/project-activity.kit.json")),
-    ("project-team", include_str!("builtin/project-team.kit.json")),
+    (
+        "product-releases",
+        include_str!("builtin/product-releases.kit.json"),
+    ),
+    (
+        "project-domain-model",
+        include_str!("builtin/project-domain-model.kit.json"),
+    ),
+    (
+        "org-connections",
+        include_str!("builtin/org-connections.kit.json"),
+    ),
+    (
+        "project-artifacts",
+        include_str!("builtin/project-artifacts.kit.json"),
+    ),
+    (
+        "project-activity",
+        include_str!("builtin/project-activity.kit.json"),
+    ),
+    (
+        "project-team",
+        include_str!("builtin/project-team.kit.json"),
+    ),
     ("components", include_str!("builtin/components.kit.json")),
-    ("project-specs", include_str!("builtin/project-specs.kit.json")),
-    ("project-issues", include_str!("builtin/project-issues.kit.json")),
-    ("project-tests", include_str!("builtin/project-tests.kit.json")),
+    (
+        "project-specs",
+        include_str!("builtin/project-specs.kit.json"),
+    ),
+    (
+        "project-issues",
+        include_str!("builtin/project-issues.kit.json"),
+    ),
+    (
+        "project-tests",
+        include_str!("builtin/project-tests.kit.json"),
+    ),
     (
         "constructor-research",
         include_str!("builtin/constructor-research.kit.json"),

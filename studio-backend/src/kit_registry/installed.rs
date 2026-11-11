@@ -381,11 +381,24 @@ impl KitInstaller {
         let record = record_for(&kit, version, ctx, now_rfc3339()?)?;
         // The model is the organization's (ADR-0067 §6, ADR-0068 §5): a kit
         // that brings one is installed for the organization, never for one
-        // project.
+        // project, unless the organization's model already carries it (a
+        // base kit, or the organization's own): the project then adds the
+        // kit's screens and nothing of the model changes (ADR-0070 phase 5
+        // moved every project tab's types into such kits).
         if let super::models::KitModel::Overlay(_) =
             self.model_of(org, &kit, &record.version).await?
         {
-            return Err(Refusal::ModelKitNotForProject(slug));
+            let carried = match self.models() {
+                Some(port) => port
+                    .kit_models(&service_context(org).map_err(Refusal::Internal)?)
+                    .await
+                    .map_err(Refusal::Internal)?
+                    .contains_key(&slug),
+                None => false,
+            };
+            if !carried {
+                return Err(Refusal::ModelKitNotForProject(slug));
+            }
         }
         let installed = self
             .store

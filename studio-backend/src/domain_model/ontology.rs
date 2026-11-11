@@ -1769,15 +1769,8 @@ mod tests {
         // its target's owner; the numbered package relations are retired.
         let expected = [
             "person.authors -> message",
-            "project.scopes -> work-item",
-            "project.documented_by -> document",
             "project.tracks -> risk",
-            "project.issues -> finding",
-            "project.specs -> document",
-            "project.tests -> check",
             "repository.hosts -> pull-request",
-            "actor.authors -> comment",
-            "kit.introduces_type_22 -> finding",
             "kit.packages_12 -> tool",
             "kit.packages_9 -> gears",
         ]
@@ -1814,7 +1807,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!((core, kit, retired), (44, 18, 1));
+        assert_eq!((core, kit, retired), (44, 8, 1));
     }
 
     #[test]

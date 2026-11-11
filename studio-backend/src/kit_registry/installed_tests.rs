@@ -581,7 +581,7 @@ async fn only_a_project_level_kit_goes_in_a_project() {
     assert!(store.docs.lock().unwrap().is_empty(), "a refusal wrote");
     // A kit whose levels name `project` does.
     installer
-        .install_for_project(&admin, PROJECT, "project-tests", None)
+        .install_for_project(&admin, PROJECT, "assistant", None)
         .await
         .unwrap();
     // Unless it brings a model, which is the organization's (ADR-0067 §6).
