@@ -71,7 +71,7 @@ impl Ontology {
                 .or_else(|| {
                     Ontology::running_moves()
                         .get(&need.id)
-                        .filter(|k| k.as_str() != super::ontology::LEFT_BY_STUDIO)
+                        .filter(|k| k.as_str() != crate::domain_model::ontology::LEFT_BY_STUDIO)
                         .map(|k| json!(k))
                 });
             if let Some(owner) = owner {
