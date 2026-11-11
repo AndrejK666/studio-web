@@ -16,7 +16,7 @@ import {
   responseStatus,
   type Tenant,
 } from '@constructor-studio/mfe-shared';
-import { IdentityApiService, PLATFORM_ROOT_TENANT_ID } from '@/app/api';
+import { IdentityApiService, PLATFORM_ROOT_TENANT_ID, type Membership } from '@/app/api';
 import {
   readAppContext,
   setContextAccess,
@@ -82,11 +82,27 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
     return children.filter(isOrganization);
   };
 
-  const memberOrganizations = async (): Promise<Tenant[]> => {
-    if (!apiRegistry.has(IdentityApiService)) return [];
+  /**
+   * The caller's memberships, asked for at once — beside `/me`, not after it:
+   * every caller who is not the platform administrator needs them, so waiting
+   * for `/me` to say so put one more round trip in front of the first screen.
+   * A failure is the caller's to see, and only if it reads the answer.
+   */
+  const startMemberships = (): Promise<Membership[]> | null => {
+    if (!apiRegistry.has(IdentityApiService)) return null;
     const identity = apiRegistry.getService(IdentityApiService);
+    const read = Promise.resolve()
+      .then(() => identity.myMemberships.fetch())
+      .then((page) => page?.items ?? []);
+    // The platform administrator never reads it: no unhandled rejection then.
+    read.catch(() => undefined);
+    return read;
+  };
+
+  const memberOrganizations = async (membershipsRead: Promise<Membership[]> | null): Promise<Tenant[]> => {
+    if (!membershipsRead) return [];
     const accounts = apiRegistry.getService(AccountsApiService);
-    const memberships = (await identity.myMemberships.fetch())?.items ?? [];
+    const memberships = await membershipsRead;
     const resolved = await Promise.all(
       memberships.map(async (membership) => {
         try {
@@ -150,6 +166,7 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
     const accounts = apiRegistry.getService(AccountsApiService);
     dispatch(setContextLoading(true));
     try {
+      const membershipsRead = startMemberships();
       const me = await accounts.getMe.fetch();
       const homeTenantId = me?.subject_tenant_id;
       // The home tenant no longer decides WHICH organizations are on offer —
@@ -158,7 +175,7 @@ export function createContextCatalogs(app: FrontXApp, onChange: () => void): Con
       const organizations =
         homeTenantId === PLATFORM_ROOT_TENANT_ID
           ? await platformOrganizations(homeTenantId)
-          : await memberOrganizations();
+          : await memberOrganizations(membershipsRead);
       const items = organizations.map(toEntity);
       dispatch(setContextOrganizations(items));
       // An authenticated person with no organization is a supported state, and

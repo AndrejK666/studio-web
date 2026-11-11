@@ -63,6 +63,9 @@ export function registerBootstrapEffects(app: FrontXApp): void {
       dispatch(setHeaderLoading(true));
       headerLoadingStarted = true;
 
+      // The person Studio keeps is asked for beside `/me`, not after it: it
+      // does not depend on it, and it never fails (null instead).
+      const personRead = personSummary();
       // Get accounts service using class-based registration
       const accountsService = apiRegistry.getService(AccountsApiService);
       const me = await accountsService.getMe.fetch();
@@ -77,7 +80,7 @@ export function registerBootstrapEffects(app: FrontXApp): void {
       // The account button shows the person Studio keeps — the name and photo they
       // chose in Profile, or the picture a GitHub sign-in brought — as the prototype's
       // did. Without studio-user it stays on the token's words.
-      void personSummary().then((person) => {
+      void personRead.then((person) => {
         const avatarUrl = person?.avatar_url?.trim();
         const name = person?.display_name?.trim();
         if (avatarUrl || name) {

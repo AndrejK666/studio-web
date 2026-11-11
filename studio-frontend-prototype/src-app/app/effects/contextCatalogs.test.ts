@@ -103,7 +103,32 @@ describe('createContextCatalogs', () => {
     await createContextCatalogs(app, onChange).loadOrganizations();
 
     expect(dispatch).toHaveBeenCalledWith(setContextOrganizations([{ id: 'o1', name: 'Org', count: 0 }]));
-    expect(identity.myMemberships.fetch).not.toHaveBeenCalled();
+    // The memberships were asked for beside /me, but nothing of them is used.
+    expect(accounts.getTenant).not.toHaveBeenCalled();
+  });
+
+  it('asks for the memberships beside /me, not after it', async () => {
+    let answerMe: (me: unknown) => void = () => undefined;
+    accounts.getMe.fetch.mockReturnValue(new Promise((resolve) => (answerMe = resolve)));
+    identity.myMemberships.fetch.mockResolvedValue({ items: [{ org_id: 'o1' }] });
+    accounts.getTenant.mockReturnValue({ fetch: () => Promise.resolve(tenant('o1', 'Org', TENANT_TYPES.organization)) });
+
+    const loading = createContextCatalogs(app, onChange).loadOrganizations();
+    await vi.waitFor(() => expect(identity.myMemberships.fetch).toHaveBeenCalled());
+    answerMe({ subject_tenant_id: 'home' });
+    await loading;
+
+    expect(dispatch).toHaveBeenCalledWith(setContextOrganizations([{ id: 'o1', name: 'Org', count: 0 }]));
+  });
+
+  it('lets a failed memberships read go unnoticed by the platform administrator', async () => {
+    accounts.getMe.fetch.mockResolvedValue({ subject_tenant_id: PLATFORM_ROOT_TENANT_ID });
+    identity.myMemberships.fetch.mockRejectedValue(new Error('403'));
+    accounts.getChildren.mockReturnValue({ fetch: () => Promise.resolve({ items: [tenant('o1', 'Org', TENANT_TYPES.organization)] }) });
+
+    await createContextCatalogs(app, onChange).loadOrganizations();
+
+    expect(dispatch).toHaveBeenCalledWith(setContextAccess('ready'));
   });
 
   // Reviewer finding (vasylcf): the old suite pinned the difference between

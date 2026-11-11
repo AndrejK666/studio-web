@@ -88,6 +88,22 @@ describe('registerBootstrapEffects', () => {
     );
   });
 
+  it('asks for the person beside /me, not after it', async () => {
+    const myPerson = { fetch: vi.fn().mockResolvedValue({ id: 'p1', display_name: 'Ada Lovelace' }) };
+    let answerMe: (me: unknown) => void = () => undefined;
+    mockGetService.mockReturnValue({
+      getMe: { fetch: vi.fn().mockReturnValue(new Promise((resolve) => (answerMe = resolve))) },
+      myPerson,
+    });
+    const running = emit('app/user/fetch');
+    expect(myPerson.fetch).toHaveBeenCalled();
+    answerMe({ subject_id: 'abcdef12-3456' });
+    await running;
+    await vi.waitFor(() =>
+      expect(dispatch).toHaveBeenCalledWith(setUser({ displayName: 'Ada Lovelace', email: 'ada@example.com' }))
+    );
+  });
+
   it('keeps the token words when the person read fails', async () => {
     mockGetService.mockReturnValue({
       getMe: { fetch: vi.fn().mockResolvedValue({ subject_id: 'abcdef12-3456' }) },
