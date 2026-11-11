@@ -34,5 +34,18 @@
         }
       }
     ]
+  },
+  "inbox": [
+    {
+      "id": "deploys-awaiting-approval",
+      "label": "Deploys waiting for your decision",
+      "kind": "endpoint",
+      "path": "/studio-environments/v1/inbox/deploys-awaiting-approval"
+    }
+  ],
+  "permissions": {
+    "reads": [
+      "GET /studio-environments/v1/inbox/deploys-awaiting-approval"
+    ]
   }
 }
