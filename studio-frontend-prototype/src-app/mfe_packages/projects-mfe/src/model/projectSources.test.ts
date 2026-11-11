@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectSource } from '@constructor-studio/mfe-shared';
-import { repositoryKey, repositoryWebUrl, withSources, withoutSource } from './projectSources';
+import {
+  repositoryKey,
+  repositoryWebUrl,
+  supportsPullRequests,
+  withShareMode,
+  withSources,
+  withoutSource,
+} from './projectSources';
 
 const source = (connection: string, fullPath: string): ProjectSource => ({
   connection_id: connection,
@@ -73,5 +80,30 @@ describe('withoutSource', () => {
 
   it('matches the connection as well as the path', () => {
     expect(withoutSource([API], { connection_id: 'c-2', full_path: 'acme/api' })).toEqual([API]);
+  });
+});
+
+describe('withShareMode', () => {
+  it('changes the one entry and nothing else of it', () => {
+    expect(
+      withShareMode([API, WEB, DOCS], { connection_id: 'c-1', full_path: 'acme/api' }, 'pull_request')
+    ).toEqual([{ ...API, share_mode: 'pull_request' }, WEB, DOCS]);
+    expect(withShareMode([WEB], { connection_id: 'c-1', full_path: 'acme/web' }, 'branch')).toEqual([
+      { ...WEB, share_mode: 'branch' },
+    ]);
+  });
+
+  it('leaves the sources as they were when the entry is gone', () => {
+    expect(
+      withShareMode([API], { connection_id: 'c-2', full_path: 'acme/api' }, 'pull_request')
+    ).toEqual([API]);
+  });
+});
+
+describe('supportsPullRequests', () => {
+  it('is GitHub only', () => {
+    expect(supportsPullRequests('github')).toBe(true);
+    expect(supportsPullRequests('gitlab')).toBe(false);
+    expect(supportsPullRequests(null)).toBe(false);
   });
 });

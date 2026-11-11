@@ -164,6 +164,22 @@ describe('Integrations: the list', () => {
     expect(picker.querySelector('[data-provider="github"]')).toBeNull();
   });
 
+  it('keeps its search and kind in the address, and opens on them', async () => {
+    window.history.replaceState(null, '', '/connections?conn.f.kind=ai');
+    const view = render(<IntegrationsSection />);
+    // Opened on the address: the AI kind chosen, so the GitHub row is filtered out.
+    await screen.findByText('Shared key');
+    expect(screen.queryByText('Acme GitHub')).toBeNull();
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'int_search' }), { target: { value: 'shared' } });
+    expect(new URLSearchParams(window.location.search).get('conn.q')).toBe('shared');
+    expect(new URLSearchParams(window.location.search).get('conn.f.kind')).toBe('ai');
+
+    // Leaving the screen takes the list's part out of the address.
+    view.unmount();
+    expect(window.location.search).toBe('');
+  });
+
   it('says plainly when this build has no connector driver', async () => {
     serve({
       connectorProviders: read(

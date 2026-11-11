@@ -47,6 +47,7 @@ import { ProductKindStep } from './flow/ProductKindStep';
 import { ProductFrontend } from './frontend/ProductFrontend';
 import { ProductInfrastructure } from './infra/ProductInfrastructure';
 import { ProductMap } from './map/ProductMap';
+import { SourceRoles } from './SourceRoles';
 import styles from '../product.module.css';
 
 /** The section this member last looked at for the project; storage may be
@@ -248,6 +249,7 @@ export function ProductPage() {
         onSteps={setSteps}
       />
       <ProductSources key={round} />
+      <SourceRoles round={round} />
       <div data-product-tabs>
         <Segmented
           label={t('tabs_label')}

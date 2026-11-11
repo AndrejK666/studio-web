@@ -97,6 +97,20 @@ it('Open specs filters Specs to the path and asks the shell for the section', ()
   expect(announceSection).toHaveBeenCalledWith(bridge, 'specs');
 });
 
+it("Changes asks for the row's share mode to be written, and nothing when it is unchanged", () => {
+  render().changeShareMode(ROW, 'pull_request');
+  expect(emit).toHaveBeenCalledWith('mfe/projects/source-share-mode-requested', {
+    projectId: 'p-1',
+    rowId: 'c-github:acme/api',
+    connectionId: 'c-github',
+    fullPath: 'acme/api',
+    mode: 'pull_request',
+  });
+  emit.mockClear();
+  render().changeShareMode(ROW, 'branch');
+  expect(emit).not.toHaveBeenCalled();
+});
+
 it('says whether the connections were read', () => {
   expect(render().connectionsRead).toBe(true);
   connections.current = { ...connections.current, failed: true };

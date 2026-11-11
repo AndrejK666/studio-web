@@ -26,7 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from '@gears-frontx/ui-kit';
-import type { OrganizationRef, ScreenText } from '@constructor-studio/mfe-shared';
+import { useListState, type OrganizationRef, type ScreenText } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../../api/AdminApiService';
 import type { ConnectorProvider, StoredConnection } from '../../../api/types';
 import {
@@ -65,6 +65,9 @@ export function ago(at: number, now: number, t: ScreenText): string {
 
 type SortKey = 'connection' | 'kind';
 
+/** Where the connection list keeps its search, filters and sort in the address. */
+export const CONNECTIONS_LIST_PREFIX = 'conn.';
+
 export function ConnectionTable({
   org,
   providers,
@@ -98,10 +101,19 @@ export function ConnectionTable({
   const [ask, confirmDialog] = useConfirm();
   const [open, setOpen] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [kind, setKind] = useState<string | null>(null);
-  const [provider, setProvider] = useState('');
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean } | null>(null);
+  // Search, kind, connector and sort in the address under `conn.`, as the prototype's
+  // `DataTable list="connections" urlPrefix="conn."` kept them: shared, and back on Back.
+  const [list, listCtl] = useListState(CONNECTIONS_LIST_PREFIX);
+  const query = list.q;
+  const kind = list.filters.kind ?? null;
+  const provider = list.filters.provider ?? '';
+  const sort: { key: SortKey; desc: boolean } | null =
+    list.sort && (list.sort.key === 'connection' || list.sort.key === 'kind')
+      ? { key: list.sort.key, desc: list.sort.dir === 'desc' }
+      : null;
+  const setQuery = listCtl.setQ;
+  const setKind = (value: string | null) => listCtl.setFilter('kind', value);
+  const setProvider = (value: string) => listCtl.setFilter('provider', value);
   const [health, setHealth] = useState<Record<string, Health>>(() => Object.fromEntries(healthCache.entries()));
   // "checked 3 min ago" moves on without a re-read: the instant is state, ticked every 30 s.
   const [now, setNow] = useState(() => Date.now());
@@ -179,10 +191,9 @@ export function ConnectionTable({
         : (a: StoredConnection, b: StoredConnection) => categoryTitle(a.provider).localeCompare(categoryTitle(b.provider));
     return [...kept].sort((a, b) => (sort.desc ? by(b, a) : by(a, b)));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the helpers read `providers`, listed
-  }, [connections, providers, kind, provider, q, sort]);
+  }, [connections, providers, kind, provider, q, sort?.key, sort?.desc]);
 
-  const sortBy = (key: SortKey) =>
-    setSort((s) => (s?.key !== key ? { key, desc: false } : s.desc ? null : { key, desc: true }));
+  const sortBy = (key: SortKey) => listCtl.toggleSort(key);
   const sortMark = (key: SortKey) => (sort?.key === key ? (sort.desc ? ' ↓' : ' ↑') : '');
 
   const usedBy = (c: StoredConnection) => {

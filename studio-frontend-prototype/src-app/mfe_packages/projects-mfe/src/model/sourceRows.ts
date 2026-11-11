@@ -49,6 +49,8 @@ export interface SourceRow {
   fullPath: string;
   cloneUrl: string;
   branch: string | null;
+  /** How "Share with the team" in the IDE lands edits here; `branch` when the config says nothing. */
+  shareMode: 'branch' | 'pull_request';
   nodeId: string | null;
   specs: number | null;
   activity: SourceActivity | null;
@@ -194,6 +196,7 @@ export function buildSourceRows(answers: SourcesAnswers): SourcesTableRow[] {
       cloneUrl: source.clone_url,
       branch: source.branch ?? null,
       // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-5
+      shareMode: source.share_mode === 'pull_request' ? 'pull_request' : 'branch',
       nodeId: node?.instance_id ?? null,
       specs,
       activity,
@@ -263,4 +266,13 @@ export function sourcesFooter(
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-footer:p2:inst-5
   return footer;
   // @cpt-end:cpt-studiofrontend-algo-project-sources-footer:p2:inst-5
+}
+
+/**
+ * The repositories that could sync and never have — the prototype's "N never
+ * synced" beside the sources. A source whose connection is gone or whose
+ * provider cannot sync is not counted: Sync would not help it.
+ */
+export function neverSynced(rows: readonly SourcesTableRow[]): number {
+  return rows.filter((row) => row.kind === 'repository' && row.lastSync.kind === 'not_synced').length;
 }

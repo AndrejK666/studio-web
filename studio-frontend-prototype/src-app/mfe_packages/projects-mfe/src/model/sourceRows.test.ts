@@ -10,6 +10,7 @@ import {
   activityScale,
   buildSourceRows,
   filterSourceRows,
+  neverSynced,
   sourcesFooter,
   type SourceImportLine,
   type SourceRow,
@@ -91,6 +92,7 @@ describe('a source in the config is a row', () => {
       fullPath: 'acme/api',
       cloneUrl: 'https://example.test/acme/api.git',
       branch: 'main',
+      shareMode: 'branch',
       nodeId: 'n-api',
       specs: 12,
       activity: { open: 3, merged: 4, commits: 9, days: [0, 1, 0, 2, 0, 0, 1] },
@@ -111,6 +113,24 @@ describe('a source in the config is a row', () => {
 
   it('shows the branch only when the config has one', () => {
     expect(only(answers({ sources: [source('acme/api')] })).branch).toBeNull();
+  });
+
+  it('carries how shared edits land, a branch when the config says nothing', () => {
+    expect(only(answers({ sources: [{ ...source('acme/api'), share_mode: 'pull_request' }] })).shareMode).toBe(
+      'pull_request'
+    );
+    expect(only(answers({ sources: [source('acme/api')] })).shareMode).toBe('branch');
+  });
+
+  it('counts the repositories that could sync and never have', () => {
+    const rows = buildSourceRows(
+      answers({
+        sources: [source('acme/api'), source('acme/web'), source('acme/gone', 'c-missing')],
+        nodes: [repoNode('n-api', 'acme/api', { synced_at: '2026-10-14T10:52:00Z' })],
+      })
+    );
+    // acme/web: never synced; acme/gone: its connection is gone, Sync would not help.
+    expect(neverSynced(rows)).toBe(1);
   });
 
   it('with no repository node reads Not synced, its numbers missing, the provider its connection’s', () => {

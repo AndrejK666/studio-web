@@ -11,6 +11,7 @@ export function sourceRow(overrides: Partial<SourceRow> = {}): SourceRow {
     fullPath: 'acme/api',
     cloneUrl: 'https://github.com/acme/api.git',
     branch: 'main',
+    shareMode: 'branch',
     nodeId: 'n-api',
     specs: 12,
     activity: null,

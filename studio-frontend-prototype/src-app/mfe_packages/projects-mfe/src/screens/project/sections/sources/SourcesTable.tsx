@@ -19,7 +19,8 @@ import {
 import { useSourcesText } from '../../../../i18n';
 import { openSourcesConnect } from '../../../../actions/sourcesConnectActions';
 import { ReadFailed, SectionSkeleton } from '../../../../components/SectionStates';
-import { activityScale, type SourcesTableRow } from '../../../../model/sourceRows';
+import { activityScale, neverSynced, type SourcesTableRow } from '../../../../model/sourceRows';
+import { SOURCE_SHARE_SLICE_KEY } from '../../../../slices/sourceShareSlice';
 import { useSourcesLoad } from '../../../../shared/useSourcesLoad';
 import { useSourceRowActions } from '../../../../shared/useSourceRowActions';
 import { useThemedRoot } from '../../../../shared/useThemedRoot';
@@ -95,10 +96,19 @@ export const SourcesTable: React.FC<SourcesTableProps> = ({
   const actions = useSourceRowActions(projectId, workspaceId, orgId);
   const [container, findThemedRoot] = useThemedRoot();
 
+  const shareSaves = useAppSelector((state) => state[SOURCE_SHARE_SLICE_KEY].saves);
+
   const scale = React.useMemo(() => activityScale(sources.rows), [sources.rows]);
+  const unsynced = React.useMemo(
+    () => ({
+      repositories: sources.rows.filter((row) => row.kind === 'repository').length,
+      neverSynced: neverSynced(sources.rows),
+    }),
+    [sources.rows]
+  );
   const columns = React.useMemo(
-    () => sourceColumns({ t, windowDays: sources.windowDays, actions, scale, container }),
-    [t, sources.windowDays, actions, scale, container]
+    () => sourceColumns({ t, windowDays: sources.windowDays, actions, scale, container, shareSaves }),
+    [t, sources.windowDays, actions, scale, container, shareSaves]
   );
 
   if (!sources.ready) return <SectionSkeleton />;
@@ -126,7 +136,7 @@ export const SourcesTable: React.FC<SourcesTableProps> = ({
           {sources.rowsBridge}
         </DataGrid>
       </div>
-      <SourcesFooter footer={sources.footer} />
+      <SourcesFooter footer={sources.footer} synced={unsynced} />
     </div>
   );
 };

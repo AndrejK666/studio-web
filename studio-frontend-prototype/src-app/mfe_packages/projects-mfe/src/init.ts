@@ -26,6 +26,8 @@ import { initWizardEffects } from './effects/wizardEffects';
 import { initWorkspaceEffects } from './effects/workspaceEffects';
 import { initArtifactEffects } from './effects/artifactEffects';
 import { initSourcesConnectEffects } from './effects/sourcesConnectEffects';
+import { initSourceShareEffects } from './effects/sourceShareEffects';
+import { sourceShareSlice } from './slices/sourceShareSlice';
 import { initTypeDecisionEffects } from './effects/typeDecisionEffects';
 import { initSpecsCheckEffects } from './effects/specsCheckEffects';
 import { initDocumentUploadEffects } from './effects/documentUploadEffects';
@@ -80,6 +82,8 @@ registerSlice(workspaceCreateSlice, initWorkspaceEffects);
 // app-bound QueryClient.
 registerSlice(artifactSyncSlice, (dispatch) => initArtifactEffects(dispatch, mfeApp));
 registerSlice(sourcesConnectSlice, (dispatch) => initSourcesConnectEffects(dispatch, mfeApp));
+// A source's "Changes" writes the config and drops its cached read, on the app-bound QueryClient.
+registerSlice(sourceShareSlice, (dispatch) => initSourceShareEffects(dispatch, mfeApp));
 // A type decision drops the Sources section's cached Specs counts, on the app-bound QueryClient.
 registerSlice(typeDecisionSlice, (dispatch) => initTypeDecisionEffects(dispatch, mfeApp));
 // Check's runs, followed here so a check outlives a switch of section or project.

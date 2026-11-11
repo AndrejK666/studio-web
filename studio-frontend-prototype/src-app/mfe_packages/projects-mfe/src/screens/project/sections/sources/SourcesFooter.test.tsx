@@ -49,6 +49,32 @@ describe('SourcesFooter', () => {
     );
   });
 
+  it('says how many repositories never synced, or that all did', () => {
+    dictionary.current = { words: en, language: 'en' };
+    const counts = { sources: 3, specs: 12, openPullRequests: 2 };
+    expect(
+      render(<SourcesFooter footer={counts} synced={{ repositories: 3, neverSynced: 2 }} />).container.textContent
+    ).toBe('3 sources · 12 specs from sources · 2 open pull requests · 2 never synced');
+    cleanup();
+    expect(
+      render(<SourcesFooter footer={counts} synced={{ repositories: 3, neverSynced: 0 }} />).container.textContent
+    ).toBe('3 sources · 12 specs from sources · 2 open pull requests · all synced');
+    cleanup();
+    // Uploaded files alone: nothing to sync, nothing said about syncing.
+    expect(
+      render(<SourcesFooter footer={counts} synced={{ repositories: 0, neverSynced: 0 }} />).container.textContent
+    ).toBe('3 sources · 12 specs from sources · 2 open pull requests');
+  });
+
+  it('takes the Russian forms of never synced', () => {
+    dictionary.current = { words: ru, language: 'ru' };
+    expect(
+      render(
+        <SourcesFooter footer={{ sources: 1, specs: 0, openPullRequests: 0 }} synced={{ repositories: 1, neverSynced: 1 }} />
+      ).container.textContent
+    ).toContain('1 ни разу не синхронизирован');
+  });
+
   it('shows a number that could not be read as missing, never as zero', () => {
     expect(footer({ sources: 0, specs: null, openPullRequests: null })).toBe(
       '0 sources · — specs from sources · Pull request activity unavailable'

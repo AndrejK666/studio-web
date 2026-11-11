@@ -86,3 +86,32 @@ export function sourceOf(pick: RepositoryPick): ProjectSource {
     share_mode: 'branch',
   };
 }
+
+/** How the IDE's "Share with the team" lands edits in a source. */
+export type ShareMode = NonNullable<ProjectSource['share_mode']>;
+
+/**
+ * Whether shares through a connection of `provider` can open a pull request:
+ * GitHub only for now (the prototype's `supportsPullRequests`, mirroring the
+ * backend's `ConnectorDriver::supports_pull_requests`). Change both together.
+ */
+export function supportsPullRequests(provider: string | null | undefined): boolean {
+  return provider === 'github';
+}
+
+/**
+ * `sources` with the entry attached through that connection at that path
+ * shared as `mode`; every other entry, and every other field of that one, as
+ * it was. An entry the config no longer lists changes nothing.
+ */
+export function withShareMode(
+  sources: readonly ProjectSource[],
+  entry: Pick<ProjectSource, 'connection_id' | 'full_path'>,
+  mode: ShareMode
+): ProjectSource[] {
+  return sources.map((source) =>
+    source.connection_id === entry.connection_id && source.full_path === entry.full_path
+      ? { ...source, share_mode: mode }
+      : source
+  );
+}

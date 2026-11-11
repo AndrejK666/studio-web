@@ -24,5 +24,15 @@
   "tab_parts": "Parts",
   "sources": "Sources:",
   "sources_none": "revision {revision} pins none — save again to pin them",
-  "not_pinned": "not pinned"
+  "not_pinned": "not pinned",
+  "roles_title": "Sources are for:",
+  "roles_hint": "Gears: \"Create a gear\" puts new gears in this source. Publish: a published product.gdl goes to this source; with none marked, Studio keeps the revisions only. Neither decides what a build clones.",
+  "roles_gears": "gears",
+  "roles_gears_title": "\"Create a gear\" puts new gears here",
+  "roles_publish": "publish",
+  "roles_publish_title": "A published product.gdl goes here",
+  "roles_home": "home",
+  "roles_home_title": "The description travels with this source: its path(...) sources resolve here",
+  "roles_pinned": "pinned {commit}",
+  "roles_not_saved": "not saved"
 }

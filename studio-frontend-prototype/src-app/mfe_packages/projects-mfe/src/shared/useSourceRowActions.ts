@@ -5,12 +5,14 @@
 import { useCallback, useMemo } from 'react';
 import { eventBus, useAppDispatch, useMfeBridge } from '@gears-frontx/react';
 import { announceSection } from '../actions/projectsActions';
+import type { ShareMode } from '../model/projectSources';
 import type { SourceRow } from '../model/sourceRows';
 import { syncPlan } from '../model/syncRequest';
 import { showSourceSpecs } from '../slices/specsFilterSlice';
 import { cancelRepoSync, retryRepoSync } from './useArtifactImport';
 import { useSourceConnections } from './useConnections';
 import '../events/artifactEvents';
+import '../events/sourcesConnectEvents';
 
 export interface SourceRowActions {
   connectionsRead: boolean;
@@ -19,6 +21,8 @@ export interface SourceRowActions {
   cancelSync: (row: SourceRow) => void;
   openSpecs: (row: SourceRow) => void;
   openUploads: () => void;
+  /** Write how "Share with the team" lands edits in the row's repository. */
+  changeShareMode: (row: SourceRow, mode: ShareMode) => void;
 }
 
 export function useSourceRowActions(
@@ -65,9 +69,31 @@ export function useSourceRowActions(
 
   const openUploads = useCallback(() => announceSection(bridge, 'artifacts'), [bridge]);
 
+  const changeShareMode = useCallback(
+    (row: SourceRow, mode: ShareMode) => {
+      if (mode === row.shareMode) return;
+      eventBus.emit('mfe/projects/source-share-mode-requested', {
+        projectId,
+        rowId: row.id,
+        connectionId: row.connectionId,
+        fullPath: row.fullPath,
+        mode,
+      });
+    },
+    [projectId]
+  );
+
   const connectionsRead = !loading && !failed;
   return useMemo(
-    () => ({ connectionsRead, providerName, syncNow, cancelSync, openSpecs, openUploads }),
-    [connectionsRead, providerName, syncNow, cancelSync, openSpecs, openUploads]
+    () => ({
+      connectionsRead,
+      providerName,
+      syncNow,
+      cancelSync,
+      openSpecs,
+      openUploads,
+      changeShareMode,
+    }),
+    [connectionsRead, providerName, syncNow, cancelSync, openSpecs, openUploads, changeShareMode]
   );
 }

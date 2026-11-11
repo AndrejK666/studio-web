@@ -35,7 +35,10 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useFormatters: () => ({ formatRelative: () => 'recently' }),
   useTranslation: () => ({ t: (key: string) => key, language: 'en' }),
   useAppSelector: (select: (state: unknown) => unknown) =>
-    select({ 'projects/nav': { projectId: 'p-1', section: 'sources' } }),
+    select({
+      'projects/nav': { projectId: 'p-1', section: 'sources' },
+      'projects/sourceShare': { saves: {} },
+    }),
 }));
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
@@ -89,6 +92,7 @@ vi.mock('../../../../shared/useSourceRowActions', () => ({
     cancelSync: vi.fn(),
     openSpecs: vi.fn(),
     openUploads: vi.fn(),
+    changeShareMode: vi.fn(),
   }),
 }));
 vi.mock('../../../../shared/useSyncRefusals', () => ({ useSyncRefusals: () => undefined }));
@@ -111,7 +115,7 @@ const section = () => render(<SourcesSection projectId="p-1" projectName="Billin
 
 const shownRows = () => screen.queryAllByRole('button', { name: /^Actions for / }).length;
 const search = () => screen.getByPlaceholderText('Search sources');
-const FOOTER = /sources · 3 specs from sources · 0 open pull requests$/;
+const FOOTER = /sources · 3 specs from sources · 0 open pull requests( · all synced)?$/;
 
 beforeEach(() => {
   stubResizeObserver();

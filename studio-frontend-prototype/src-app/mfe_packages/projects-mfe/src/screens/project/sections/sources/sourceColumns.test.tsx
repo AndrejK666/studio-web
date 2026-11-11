@@ -6,7 +6,7 @@ import en from './i18n/en.json';
 import ru from './i18n/ru.json';
 import projectEn from '../../i18n/en.json';
 import { sourceRow } from '../../../../model/sourceRows.fixture';
-import type { SourceRow } from '../../../../model/sourceRows';
+import type { SourceRow, SourcesTableRow } from '../../../../model/sourceRows';
 import type { SourceRowActions } from '../../../../shared/useSourceRowActions';
 
 /** Each cell of the Sources table (#688). */
@@ -47,6 +47,7 @@ const actions: SourceRowActions = {
   cancelSync: vi.fn(),
   openSpecs: vi.fn(),
   openUploads: vi.fn(),
+  changeShareMode: vi.fn(),
 };
 
 const WEEK = { open: 2, merged: 1, commits: 5, days: [0, 0, 1, 0, 0, 1, 0] };
@@ -73,10 +74,11 @@ afterEach(() => {
 });
 
 describe('the headers', () => {
-  it('name the seven columns, in order, with the activity window', () => {
+  it('name the eight columns, in order, with the activity window', () => {
     expect(columns().map((entry) => [entry.id, entry.label])).toEqual([
       ['source', 'Source'],
       ['role', 'Role'],
+      ['share', 'Changes'],
       ['specs', 'Specs'],
       ['pull_requests', 'Pull requests · 7 days'],
       ['commits', 'Commits · 7 days'],
@@ -160,6 +162,58 @@ describe('the Role cell', () => {
   it('is a dash when the provider is not known', () => {
     const { container } = cell('role', sourceRow({ provider: null }));
 
+    expect(container.textContent).toBe('—');
+  });
+});
+
+describe('the Changes cell', () => {
+  const shareCell = (row: SourceRow, saves: Record<string, { mode: 'branch' | 'pull_request'; failed: boolean }> = {}) => {
+    const entry = sourceColumns({ t: dictionaryText(en), windowDays: 7, actions, scale: 3, shareSaves: saves }).find(
+      (c) => c.id === 'share'
+    ) as DataGridTableColumn<SourceRow>;
+    return render(<>{typeof entry.render === 'function' ? entry.render(row) : null}</>);
+  };
+
+  it("shows the source's share mode and writes a change", () => {
+    const row = sourceRow();
+    shareCell(row);
+    const select = screen.getByRole('combobox', { name: 'How changes to api are shared' }) as HTMLSelectElement;
+    expect(select.value).toBe('branch');
+    fireEvent.change(select, { target: { value: 'pull_request' } });
+    expect(actions.changeShareMode).toHaveBeenCalledWith(row, 'pull_request');
+  });
+
+  it('offers a pull request only on GitHub, keeping one already chosen', () => {
+    shareCell(sourceRow({ provider: 'gitlab' }));
+    const option = screen.getByRole('option', { name: 'Through a pull request (GitHub only)' }) as HTMLOptionElement;
+    expect(option.disabled).toBe(true);
+    cleanup();
+
+    shareCell(sourceRow({ provider: 'gitlab', shareMode: 'pull_request' }));
+    expect((screen.getByRole('option', { name: 'Through a pull request (GitHub only)' }) as HTMLOptionElement).disabled).toBe(
+      false
+    );
+  });
+
+  it('shows the mode being saved, disabled, and says when it was not saved', () => {
+    const row = sourceRow();
+    shareCell(row, { [row.id]: { mode: 'pull_request', failed: false } });
+    const select = screen.getByRole('combobox') as HTMLSelectElement;
+    expect(select.value).toBe('pull_request');
+    expect(select.disabled).toBe(true);
+    expect(screen.getByText('Saving…')).toBeTruthy();
+    cleanup();
+
+    shareCell(row, { [row.id]: { mode: 'pull_request', failed: true } });
+    expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(false);
+    expect(screen.getByRole('status').textContent).toBe('Not saved');
+  });
+
+  it('is a dash on the uploaded files', () => {
+    const entry = columns().find((c) => c.id === 'share') as DataGridTableColumn<SourcesTableRow>;
+    const { container } = render(
+      <>{typeof entry.render === 'function' ? entry.render({ kind: 'uploads', id: 'uploads', specs: 1, lastAt: null }) : null}</>
+    );
     expect(container.textContent).toBe('—');
   });
 });

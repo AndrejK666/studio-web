@@ -104,6 +104,13 @@ button.specsLink {
 
 .prMerged,
 .prsUnavailable,
+.share {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
 .syncLine {
   font-size: var(--text-meta-size);
   line-height: var(--text-meta-line-height);

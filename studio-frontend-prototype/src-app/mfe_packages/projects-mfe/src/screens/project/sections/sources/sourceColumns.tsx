@@ -1,7 +1,15 @@
 import React from 'react';
 import { Cloud, Upload } from 'lucide-react';
 import { useFormatters } from '@gears-frontx/react';
-import { Button, VisuallyHidden, type DataGridTableColumn } from '@gears-frontx/ui-kit';
+import {
+  Button,
+  NativeSelect,
+  NativeSelectOption,
+  VisuallyHidden,
+  type DataGridTableColumn,
+} from '@gears-frontx/ui-kit';
+import { supportsPullRequests, type ShareMode } from '../../../../model/projectSources';
+import type { ShareSave } from '../../../../slices/sourceShareSlice';
 import type { Refusal, ScreenText } from '@constructor-studio/mfe-shared';
 import { useProjectText, useSourcesText } from '../../../../i18n';
 import type { SourceRow, SourcesTableRow, UploadsRow } from '../../../../model/sourceRows';
@@ -21,6 +29,8 @@ export interface SourceColumnDeps {
   actions: SourceRowActions;
   scale: number;
   container?: HTMLElement | null;
+  /** The "Changes" saves out or failed, by row id. */
+  shareSaves?: Readonly<Record<string, ShareSave>>;
 }
 
 const SourceCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({
@@ -82,6 +92,50 @@ const RoleCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({ row
   );
 
 RoleCell.displayName = 'RoleCell';
+
+/**
+ * The prototype's `SourceShareMode`: how "Share with the team" in the IDE
+ * lands edits in this repository, changed in place and saved on change. A
+ * pull request is offered only where the source's provider can open one (a
+ * source already set to it keeps the choice).
+ */
+const ShareModeCell: React.FC<{
+  row: SourceRow;
+  actions: SourceRowActions;
+  save: ShareSave | undefined;
+}> = ({ row, actions, save }) => {
+  const t = useSourcesText();
+  const pullRequests = supportsPullRequests(row.provider);
+  const saving = !!save && !save.failed;
+  return (
+    <span className={styles.share}>
+      <NativeSelect
+        size="sm"
+        aria-label={t('share_label', { name: row.name })}
+        title={t('share_title')}
+        value={saving ? save.mode : row.shareMode}
+        disabled={saving}
+        onChange={(event) => actions.changeShareMode(row, event.target.value as ShareMode)}
+      >
+        <NativeSelectOption value="branch">{t('share_branch')}</NativeSelectOption>
+        <NativeSelectOption
+          value="pull_request"
+          disabled={!pullRequests && row.shareMode !== 'pull_request'}
+        >
+          {pullRequests ? t('share_pull_request') : t('share_pull_request_github_only')}
+        </NativeSelectOption>
+      </NativeSelect>
+      {saving && <span className={styles.syncLine}>{t('share_saving')}</span>}
+      {save?.failed && (
+        <span className={styles.syncLine} role="status">
+          {t('share_not_saved')}
+        </span>
+      )}
+    </span>
+  );
+};
+
+ShareModeCell.displayName = 'ShareModeCell';
 
 const SpecsCell: React.FC<{ row: SourcesTableRow; actions: SourceRowActions }> = ({
   row,
@@ -227,6 +281,7 @@ export function sourceColumns({
   actions,
   scale,
   container,
+  shareSaves,
 }: SourceColumnDeps): DataGridTableColumn<SourcesTableRow>[] {
   const windowed = (key: string) =>
     windowDays === null ? t(key) : t.count(`${key}_window`, windowDays);
@@ -247,6 +302,17 @@ export function sourceColumns({
           <span className={styles.muted}>{MISSING}</span>
         ) : (
           <RoleCell row={row} actions={actions} />
+        ),
+    },
+    {
+      id: 'share',
+      label: t('col_share'),
+      width: '14rem',
+      render: (row) =>
+        row.kind === 'uploads' ? (
+          <span className={styles.muted}>{MISSING}</span>
+        ) : (
+          <ShareModeCell row={row} actions={actions} save={shareSaves?.[row.id]} />
         ),
     },
     {
