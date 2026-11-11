@@ -1596,6 +1596,20 @@ async fn query_objects(
             group_by: a.group_by,
         }),
     };
+    // A type whose kit is not installed here is absent for everybody: say
+    // which kit brings it rather than "unknown type" (ADR-0070 §6).
+    if let Some(kit) = handle
+        .0
+        .absent_kit(&ctx, &query.type_ref)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+    {
+        let refused = anyhow::Error::from(super::access::AccessError::NotInstalled {
+            entity: query.type_ref.clone(),
+            kit,
+        });
+        return Err(access_problem(&refused).expect("an access error"));
+    }
     // A type a kit left dormant is not installed for a member; an
     // administrator still reads its objects (ADR-0070 §4).
     if let Some(kit) = handle

@@ -1106,6 +1106,25 @@ impl DomainModelService {
             .and_then(|id| ontology.left_by(&id).map(str::to_owned)))
     }
 
+    /// The kit an absent type comes with (ADR-0070 §6): a type the running
+    /// core handed over to a kit (`moved_to_kits`) that the caller's
+    /// organization's model does not have, because the kit is not installed
+    /// there. `None` for a type the model has, and for a name no kit brings.
+    pub async fn absent_kit(
+        &self,
+        ctx: &SecurityContext,
+        type_ref: &str,
+    ) -> anyhow::Result<Option<String>> {
+        if type_ref.contains('.') {
+            return Ok(None);
+        }
+        let ontology = self.model(ctx).await?;
+        if ontology.resolve_entity_id(type_ref).is_some() {
+            return Ok(None);
+        }
+        Ok(Ontology::running_moves().remove(type_ref))
+    }
+
     /// The whole ontology document — the source the frontend regenerates from.
     pub async fn ontology_document(&self, ctx: &SecurityContext) -> anyhow::Result<Value> {
         Ok(self.model_current(ctx).await?.document().clone())
