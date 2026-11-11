@@ -132,6 +132,33 @@ describe('RuntimeKits', () => {
     expect(kits.settle).toHaveBeenCalledWith('project:p-1');
   });
 
+  it('unloads the kits of the scope left when the new scope’s kits cannot be read', async () => {
+    // Project p-1's kits were loaded; the person moves to p-2, whose read fails.
+    state.installed = { organization_id: 'o-1', project_id: 'p-1', effective: [{ kit_slug: 'hello-kit', version: '0.1.0' }] };
+    fetchManifests.mockResolvedValue({ items: [item] });
+    const { rerender } = render(<RuntimeKits />);
+    await waitFor(() => expect(kits.sync).toHaveBeenCalledWith([item], window.location.origin));
+    kits.sync.mockClear();
+    state.project = 'p-2';
+    state.installedError = true;
+    rerender(<RuntimeKits />);
+    await waitFor(() => expect(kits.sync).toHaveBeenCalledWith([], window.location.origin));
+    expect(kits.settle).toHaveBeenCalledWith('project:p-2');
+  });
+
+  it('keeps what is loaded when a read again of the same scope fails', async () => {
+    state.installed = { organization_id: 'o-1', project_id: 'p-1', effective: [{ kit_slug: 'hello-kit', version: '0.1.0' }] };
+    fetchManifests.mockResolvedValue({ items: [item] });
+    const { rerender } = render(<RuntimeKits />);
+    await waitFor(() => expect(kits.sync).toHaveBeenCalledWith([item], window.location.origin));
+    kits.sync.mockClear();
+    // A refetch that failed keeps its last answer: still this scope's.
+    state.installedError = true;
+    rerender(<RuntimeKits />);
+    await act(async () => undefined);
+    expect(kits.sync).not.toHaveBeenCalledWith([], expect.anything());
+  });
+
   it('keeps the shell going when the list cannot be read, and settles the scope', async () => {
     state.installed = { organization_id: 'o-1', project_id: 'p-1', effective: [{ kit_slug: 'hello-kit', version: '0.1.0' }] };
     fetchManifests.mockRejectedValue(new Error('404'));

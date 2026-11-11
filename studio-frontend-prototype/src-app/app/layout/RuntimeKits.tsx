@@ -76,10 +76,17 @@ export function useRuntimeKitLoader(): RuntimeKitsStore | null {
     if (registry && scopeKey) runtimeKitsOf(registry).begin(scopeKey);
   }, [registry, scopeKey]);
 
-  // No answer about the installed kits: no kit screens to wait for.
+  // No answer about the installed kits: no kit screens to wait for. And none
+  // about this scope at all (a switch to another organization or project
+  // whose read failed): the kits registered for the scope before are not
+  // this one's, so they go — they would show here, unknown hiding nothing.
+  const answered = signature !== null;
   useEffect(() => {
-    if (registry && scopeKey && isError) runtimeKitsOf(registry).settle(scopeKey);
-  }, [registry, scopeKey, isError]);
+    if (!registry || !scopeKey || !isError) return;
+    const kits = runtimeKitsOf(registry);
+    kits.settle(scopeKey);
+    if (!answered) void kits.sync([], window.location.origin);
+  }, [registry, scopeKey, isError, answered]);
 
   useStudioEvents((event) => {
     if (mayChangeInstalledKits(event)) void refetch();
