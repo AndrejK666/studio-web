@@ -2290,15 +2290,6 @@
           "description": "A tab of the organization: what it shows."
         },
         {
-          "name": "connectors",
-          "type": "connector",
-          "relation": "connector",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Connections",
-          "description": "A tab of the organization: what it shows."
-        },
-        {
           "name": "environments",
           "type": "deployment-environment",
           "relation": "deployment-environment",
@@ -7523,6 +7514,7 @@
     "document": "project-specs",
     "finding": "project-issues",
     "kit.introduces_type_22": "project-issues",
+    "organization.connectors": "org-connections",
     "organization.reports": "org-reports",
     "policy": "project-specs",
     "project.activity": "project-activity",
