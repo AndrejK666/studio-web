@@ -38,7 +38,8 @@ const KEY_STATE = 'studio.oidc.state';
 const KEY_REFRESH = 'studio.oidc.refresh';
 const KEY_ID_TOKEN = 'studio.oidc.id';
 
-const DEFAULT_ISSUER = 'https://localhost:8443/realms/studio';
+/** The issuer without configuration (a local stand's); the desktop link names it too. */
+export const DEFAULT_ISSUER = 'https://localhost:8443/realms/studio';
 const DEFAULT_CLIENT_ID = 'studio-portal';
 
 /** Renew this long before the token actually expires. */

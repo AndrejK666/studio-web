@@ -49,6 +49,11 @@ export class StudioSessionApiService extends BaseApiService {
     LaunchStudioSessionBody
   >('POST', '/sessions');
 
+  /** Stops the session and releases what it holds; unsaved work in it is lost. */
+  stop(sessionId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<void, void>('DELETE', sessionPath({ sessionId }));
+  }
+
   /** One session; the read probes a starting one. Read with `staleTime: 0`. */
   readonly session = this.protocol(RestEndpointProtocol).queryWith<
     StudioSession,

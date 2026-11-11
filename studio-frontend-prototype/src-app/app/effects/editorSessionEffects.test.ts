@@ -172,7 +172,8 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
     })),
   };
   const launch = vi.fn();
-  const sessions = { launch: { fetch: launch }, session: vi.fn() };
+  const stopFetch = vi.fn().mockResolvedValue(undefined);
+  const sessions = { launch: { fetch: launch }, session: vi.fn(), stop: vi.fn(() => ({ fetch: stopFetch })) };
   const tasks = { run: vi.fn(), retry: vi.fn() };
   const accounts = {
     getTenantMetadata: vi.fn(() => ({
@@ -283,6 +284,38 @@ describe('createEditorSession', () => {
     expect(published()).toEqual([ADDRESS]);
     expect(h.events.streamFrom).not.toHaveBeenCalled();
     expect(h.tasks.run).not.toHaveBeenCalled();
+  });
+
+  it('Reload draws a fresh frame on the same session, and launches nothing', async () => {
+    const h = harness();
+    h.launch.mockResolvedValue(session('running'));
+    h.open();
+    await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+    h.editor.reload();
+    expect(published()).toEqual([ADDRESS, null, ADDRESS]);
+    expect(h.launch).toHaveBeenCalledTimes(1);
+    expect(h.frames).toHaveLength(2);
+  });
+
+  it('Stop ends the session it shows, takes the frame away and says so; Try again starts a new one', async () => {
+    const h = harness();
+    h.launch.mockResolvedValue(session('running'));
+    h.open();
+    await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+    await h.editor.stop();
+    expect(h.sessions.stop).toHaveBeenCalledWith('s1');
+    expect(published()).toEqual([ADDRESS, null]);
+    expect(h.state()).toMatchObject({ phase: 'failed', failure: { kind: 'ended' } });
+    h.editor.retry();
+    await vi.waitFor(() => expect(h.launch).toHaveBeenCalledTimes(2));
+  });
+
+  it('Reload and Stop do nothing before a session is up', async () => {
+    const h = harness();
+    h.editor.reload();
+    await h.editor.stop();
+    expect(published()).toEqual([]);
+    expect(h.sessions.stop).not.toHaveBeenCalled();
   });
 
   it('launches: follows the run from the cursor, stays launching until task.succeeded, then publishes', async () => {

@@ -19,6 +19,8 @@ export type EditorSessionFailure =
   /** The readiness run failed or was cancelled. */
   | { kind: 'run'; error: string | null }
   | { kind: 'stopped' }
+  /** The person stopped it from the editor's bar; Try again starts a new one. */
+  | { kind: 'ended' }
   /** No run, and the record did not say running within one probe attempt. */
   | { kind: 'timeout' }
   /** The run or the record could not be read several times in a row (401, 403, 5xx); the console has the first. */

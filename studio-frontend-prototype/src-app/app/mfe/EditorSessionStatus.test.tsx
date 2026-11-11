@@ -61,6 +61,7 @@ describe('EditorSessionStatus', () => {
     ['a run that ended with nothing said', { kind: 'run', error: null }, 'editor_session_reason_run'],
     ['a project out of reach', { kind: 'unavailable' }, 'editor_session_reason_unavailable'],
     ['a session that stopped', { kind: 'stopped' }, 'editor_session_reason_stopped'],
+    ['a session the person stopped', { kind: 'ended' }, 'editor_session_reason_ended'],
     ['a record that never said running', { kind: 'timeout' }, 'editor_session_reason_timeout'],
     ['a state that could not be read', { kind: 'read' }, 'editor_session_reason_read'],
     ['an IDE that never answered', { kind: 'unanswered' }, 'editor_session_reason_unanswered'],

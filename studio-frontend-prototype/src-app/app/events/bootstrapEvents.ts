@@ -67,5 +67,9 @@ declare module '@gears-frontx/react' {
     'app/context/place/requested': { organizationId: string; workspaceId?: string; projectId?: string };
     /** "Try again" on the editor whose session failed to come up. */
     'app/editor/session/retry': void;
+    /** The editor bar's Reload: a fresh frame, the session keeps running. */
+    'app/editor/session/reload': void;
+    /** The editor bar's Stop: the session ends; `done` once it has. */
+    'app/editor/session/stop': { done?: () => void };
   }
 }

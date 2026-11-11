@@ -84,12 +84,16 @@ export interface EditorScope {
 export interface EditorSession {
   sync(scope: EditorScope): void;
   retry(): void;
+  /** A fresh frame on the same session: the IDE reloads, the session keeps running. */
+  reload(): void;
+  /** Stops the project's session (DELETE) and releases what it holds; Try again starts a new one. */
+  stop(): Promise<void>;
   /** `MfeHandlerIframe`'s `onFrame`: attaches the bridge to the editor's frame. */
   frame: FrameHook;
 }
 
 type Outcome = { ready: true } | { ready: false; failure: EditorSessionFailure };
-type Launched = { ready: true; url: string } | { ready: false; failure: EditorSessionFailure };
+type Launched = { ready: true; url: string; sessionId: string } | { ready: false; failure: EditorSessionFailure };
 /** What the IDE is told to open: a file, or a Studio document with the workspace that addresses it. */
 type Opened = { artifact: StudioArtifact; workspaceId?: string };
 
@@ -141,6 +145,8 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   let answered = false;
   let answerTimer: ReturnType<typeof setTimeout> | undefined;
   let token: string | undefined;
+  /** The session the frame shows, and its address: kept for Reload and Stop, never in the store. */
+  let live: { sessionId: string; url: string } | null = null;
 
   /** `gone` for a 404; `null` for any other failure, its message kept for the one log line. */
   let lastReadError: string | null = null;
@@ -291,14 +297,15 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     if (superseded()) return null;
 
     const { url } = session;
-    if (session.state === 'running') return { ready: true, url };
+    const sessionId = session.id;
+    if (session.state === 'running') return { ready: true, url, sessionId };
     if (session.state !== 'starting') return { ready: false, failure: { kind: 'stopped' } };
     dispatch(editorSessionLaunching());
     const waited = session.ready_run_id
       ? await followRun(session.ready_run_id, cursor, retrying, superseded)
       : await waitForRecord(session.id, superseded);
     if (!waited) return null;
-    return waited.ready ? { ready: true, url } : waited;
+    return waited.ready ? { ready: true, url, sessionId } : waited;
   };
 
   const launch = async (projectId: string, orgId: string, retrying: boolean): Promise<void> => {
@@ -313,6 +320,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
       const outcome = await reuseOrLaunch(projectId, orgId, retrying, superseded);
       if (!outcome || superseded()) return;
       if (outcome.ready) {
+        live = { sessionId: outcome.sessionId, url: outcome.url };
         publishFrameUrl(app, outcome.url);
         // Up for the backend; ready once the IDE in the frame says so.
         awaitAnswer();
@@ -488,6 +496,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   const sync = ({ projectId, orgId, editor, artifact }: EditorScope): void => {
     if (projectId !== project) {
       if (project !== null) publishFrameUrl(app, null);
+      live = null;
       abandon();
       project = projectId;
       entered = false;
@@ -513,5 +522,26 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     void launch(project, org, true);
   };
 
-  return { sync, retry, frame };
+  const reload = (): void => {
+    if (!live) return;
+    // The frame handler draws a new frame for an address after `null`.
+    publishFrameUrl(app, null);
+    publishFrameUrl(app, live.url);
+  };
+
+  const stop = async (): Promise<void> => {
+    if (!live) return;
+    const { sessionId } = live;
+    abandon();
+    live = null;
+    publishFrameUrl(app, null);
+    try {
+      await sessions().stop(sessionId).fetch(undefined);
+    } finally {
+      // Stopped or not, this frame is gone; the person starts the next one.
+      dispatch(editorSessionFailed({ kind: 'ended' }));
+    }
+  };
+
+  return { sync, retry, reload, stop, frame };
 }

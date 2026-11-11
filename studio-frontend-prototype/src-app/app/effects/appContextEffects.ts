@@ -24,6 +24,10 @@ import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
 import { entryTokenOf, groupOfToken, tokenOf } from '@/app/routing/screenTokens';
 import { EDITOR_SCREEN_TOKEN, type ShellRoute } from '@/app/routing/route';
+import { openOnMyDesktop } from '@/app/desktop/openOnMyDesktop';
+import { showNotice } from '@/app/mfe/notifyAction';
+import { readSessionProfile } from '@/app/slices/appSessionSlice';
+import { readEditorSession } from '@/app/slices/editorSessionSlice';
 import {
   addContextWorkspace,
   readAppContext,
@@ -192,8 +196,21 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
   });
 
   // @cpt-dod:cpt-studiofrontend-dod-shell-levels-artifact-address:p1
-  eventBus.on('app/context/artifact/requested', ({ projectId, artifactId, repository, path, kind }) => {
+  eventBus.on('app/context/artifact/requested', async ({ projectId, artifactId, repository, path, kind }) => {
     if (!routing) return;
+    // A file of a project the member has open on their own desktop opens there
+    // (ADR-0027 §5), unless this tab's editor already has the project up: that
+    // is the editor they are at, and the desktop is a minute faster than a session.
+    const editor = readEditorSession(app);
+    const editorUp = editor.phase === 'ready' && context().project?.id === projectId;
+    if (kind === 'file' && path && !editorUp) {
+      const device = await openOnMyDesktop(projectId, path, readSessionProfile(app)?.id);
+      if (device) {
+        showNotice({ kind: 'info', text: app.i18nRegistry.t('shell:editor_desktop_opened', { device }) });
+        return;
+      }
+      if (!routing) return;
+    }
     if (!groupOfToken(routing.groups(), EDITOR_SCREEN_TOKEN)) {
       console.warn(`[shell] artifact open: no screen answers to "${EDITOR_SCREEN_TOKEN}"`);
       return;
@@ -263,6 +280,16 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
   });
 
   eventBus.on('app/editor/session/retry', () => editorSession.retry());
+  eventBus.on('app/editor/session/reload', () => editorSession.reload());
+  eventBus.on('app/editor/session/stop', ({ done }) => {
+    void editorSession.stop().then(
+      () => done?.(),
+      (error: unknown) => {
+        console.warn('[editor-session] stop failed:', error);
+        done?.();
+      }
+    );
+  });
 
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-5

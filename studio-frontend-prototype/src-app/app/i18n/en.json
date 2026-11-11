@@ -87,5 +87,20 @@
   "screen_unknown_body": "No kit installed here brings a screen at “{screen}”. The link may be old, or the kit that brings it is not installed here.",
   "screen_unknown_kit": "{screen} comes from kit {kit}, which is not installed here or was removed.",
   "screen_unknown_home": "Open this level’s home",
-  "kit_slot_failed": "{label} could not be shown"
+  "kit_slot_failed": "{label} could not be shown",
+  "editor_session_reason_ended": "You stopped the session. Try again starts a new one.",
+  "editor_reload": "Reload",
+  "editor_reload_title": "Reload the IDE without stopping its session",
+  "editor_stop": "Stop",
+  "editor_stop_title": "Stop the IDE session and release its resources",
+  "editor_stop_confirm": "Stop the session? Unsaved work in the IDE is lost.",
+  "editor_stop_cancel": "Keep it",
+  "editor_desktop": "Desktop app",
+  "editor_desktop_title": "Open this project in the Constructor Studio app on your machine: it signs you in, clones the sources and opens them",
+  "editor_desktop_open_on": "Open on {count} desktop(s): {names}",
+  "editor_desktop_unnamed": "a desktop",
+  "editor_desktop_you": "{device} (you)",
+  "editor_desktop_missing": "Nothing opened? Install the desktop app —",
+  "editor_desktop_get": "get Constructor Studio, then try again",
+  "editor_desktop_opened": "Opened on {device}, where the project is open."
 }

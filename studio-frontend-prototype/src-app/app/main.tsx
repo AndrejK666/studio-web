@@ -21,6 +21,7 @@ import '@/app/events/bootstrapEvents'; // Register app-level events (type augmen
 import { registerBootstrapEffects } from '@/app/effects/bootstrapEffects'; // Register app-level effects
 import { registerAppContextEffects } from '@/app/effects/appContextEffects'; // Top-bar context slot
 import { createEditorSession } from '@/app/effects/editorSessionEffects';
+import { DesktopApiService } from '@/app/api/DesktopApiService';
 import { registerLiveChannel } from '@/app/live/liveChannel';
 import { mfeBootstrapSlice } from '@/app/slices/mfeBootstrapSlice';
 import { appContextSlice } from '@/app/slices/appContextSlice';
@@ -52,6 +53,8 @@ apiRegistry.register(StudioEventsApiService);
 // The editor's session: its launch, the run that says it is ready, and the
 // sources and connections it clones from.
 apiRegistry.register(StudioSessionApiService);
+// The desktops a project is open on, and a file handed to one (ADR-0027 §5–6).
+apiRegistry.register(DesktopApiService);
 apiRegistry.register(StudioTasksApiService);
 apiRegistry.register(ConnectorsApiService);
 // The Studio domain model: the `shows` relations a level draws as tabs (ADR-0066).

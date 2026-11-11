@@ -24,6 +24,8 @@ function reason(failure: EditorSessionFailure, t: ScreenText): string {
       return t('editor_session_reason_unavailable');
     case 'stopped':
       return t('editor_session_reason_stopped');
+    case 'ended':
+      return t('editor_session_reason_ended');
     case 'timeout':
       return t('editor_session_reason_timeout');
     case 'read':

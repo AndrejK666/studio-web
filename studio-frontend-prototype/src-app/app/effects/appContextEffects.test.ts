@@ -35,6 +35,12 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 }));
 vi.mock('@/app/routing/startRouting', () => ({ startRouting: mockStartRouting }));
 vi.mock('@/app/effects/contextCatalogs', () => ({ createContextCatalogs: vi.fn(() => catalogs) }));
+const { openOnMyDesktop, showNotice } = vi.hoisted(() => ({
+  openOnMyDesktop: vi.fn(async (..._args: unknown[]): Promise<string | undefined> => undefined),
+  showNotice: vi.fn(),
+}));
+vi.mock('@/app/desktop/openOnMyDesktop', () => ({ openOnMyDesktop }));
+vi.mock('@/app/mfe/notifyAction', () => ({ showNotice }));
 
 import { screen } from '@frontx-test-utils/screenFixture';
 import { levelOf } from '@/app/mfe/screenLevels';
@@ -68,8 +74,9 @@ describe('registerAppContextEffects', () => {
   const app = {
     store: { dispatch, getState: () => state },
     mfeRegistry: { getExtensionsForDomain: vi.fn(() => screens) },
+    i18nRegistry: { t: (key: string, params?: Record<string, string>) => `${key}:${params?.device ?? ''}` },
   } as unknown as FrontXApp;
-  const editorSession = { sync: vi.fn(), retry: vi.fn(), frame: vi.fn() };
+  const editorSession = { sync: vi.fn(), retry: vi.fn(), reload: vi.fn(), stop: vi.fn(async () => undefined), frame: vi.fn() };
 
   beforeEach(async () => {
     state['app/context'] = {
@@ -98,6 +105,15 @@ describe('registerAppContextEffects', () => {
   });
 
   // The session is main.tsx's, the one whose hook the iframe handler calls: routing and Try again use no other.
+  it('hands the editor bar’s Reload and Stop to the session, and says when the stop is done', async () => {
+    await emit('app/editor/session/reload');
+    expect(editorSession.reload).toHaveBeenCalledTimes(1);
+    const done = vi.fn();
+    await emit('app/editor/session/stop', { done });
+    await vi.waitFor(() => expect(done).toHaveBeenCalled());
+    expect(editorSession.stop).toHaveBeenCalledTimes(1);
+  });
+
   it('routes with the editor session it is given, and asks it to try again', async () => {
     expect(mockStartRouting).toHaveBeenCalledWith(app, catalogs, undefined, editorSession);
     await emit('app/editor/session/retry');
@@ -296,6 +312,31 @@ describe('registerAppContextEffects', () => {
         'push'
       );
       expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('opens a file on the member’s own desktop when the project is open there, and says where', async () => {
+      handle.groups.mockReturnValue(
+        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden' })])
+      );
+      (state as Record<string, unknown>)['app/session'] = { profile: { id: 'me' } };
+      openOnMyDesktop.mockResolvedValueOnce('ThinkPad');
+      await emit('app/context/artifact/requested', REQUEST);
+      expect(openOnMyDesktop).toHaveBeenCalledWith('p1', 'docs/a.md', 'me');
+      expect(handle.navigation.navigate).not.toHaveBeenCalled();
+      expect(showNotice).toHaveBeenCalledWith({ kind: 'info', text: 'shell:editor_desktop_opened:ThinkPad' });
+      delete (state as Record<string, unknown>)['app/session'];
+    });
+
+    it('asks no desktop when this tab’s editor already has the project up', async () => {
+      handle.groups.mockReturnValue(
+        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden' })])
+      );
+      state['app/context'].project = { id: 'p1', name: 'P' };
+      (state as Record<string, unknown>)['app/editor-session'] = { phase: 'ready', failure: null, shown: true };
+      await emit('app/context/artifact/requested', REQUEST);
+      expect(openOnMyDesktop).not.toHaveBeenCalled();
+      expect(handle.navigation.navigate).toHaveBeenCalled();
+      delete (state as Record<string, unknown>)['app/editor-session'];
     });
 
     it('does not navigate when no screen answers to the editor token', async () => {
