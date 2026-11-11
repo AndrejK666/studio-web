@@ -2062,15 +2062,6 @@
           "description": "A tab of the project: what it shows."
         },
         {
-          "name": "model",
-          "type": "object-type",
-          "relation": "object-type",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Domain model",
-          "description": "A tab of the project: what it shows."
-        },
-        {
           "name": "components",
           "type": "project-product",
           "relation": "project-product",
@@ -7521,6 +7512,7 @@
     "project.artifacts": "project-artifacts",
     "project.documented_by": "project-specs",
     "project.issues": "project-issues",
+    "project.model": "project-domain-model",
     "project.people": "project-team",
     "project.scopes": "project-issues",
     "project.specs": "project-specs",
