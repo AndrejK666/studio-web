@@ -3757,7 +3757,19 @@ response	GET /studio-environments/v1/images/{}	source_ref	String	optional
 response	GET /studio-environments/v1/images/{}	state	String	always
 response	GET /studio-environments/v1/images/{}	tags	Vec<String>	always
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items	Vec<{}>	always
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause	{}	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.actions	Vec<{}>	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.actions.gear	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.actions.key	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.actions.kind	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.actions.label	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.code	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.gear	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.key	String	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.lines	Vec<String>	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.cause.summary	String	optional
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.days_left	i64	optional
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.deployment_id	String	optional
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.detail	String	optional
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.due_at	String	optional
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.environment_name	String	optional
@@ -3766,6 +3778,7 @@ response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.overd
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.project_id	String	optional
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.project_name	String	optional
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.title	String	always
+response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.url	String	optional
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	total	u32	always
 response	GET /studio-environments/v1/infra-services	items	Vec<{}>	always
 response	GET /studio-environments/v1/infra-services	items.args	Vec<String>	always
@@ -4428,6 +4441,7 @@ response	GET /studio-organizations/v1/overview	delivery.merged	u32	optional
 response	GET /studio-organizations/v1/overview	delivery.open	u32	optional
 response	GET /studio-organizations/v1/overview	delivery.window_days	u32	always
 response	GET /studio-organizations/v1/overview	growth_alert	f64	always
+response	GET /studio-organizations/v1/overview	kits	Vec<String>	optional
 response	GET /studio-organizations/v1/overview	money	Vec<{}>	optional
 response	GET /studio-organizations/v1/overview	money.group_by	String	optional
 response	GET /studio-organizations/v1/overview	money.include_personal	bool	optional
@@ -4444,6 +4458,7 @@ response	GET /studio-organizations/v1/overview	needs.current	f64	optional
 response	GET /studio-organizations/v1/overview	needs.forecast	f64	optional
 response	GET /studio-organizations/v1/overview	needs.grower	String	optional
 response	GET /studio-organizations/v1/overview	needs.kind	String	always
+response	GET /studio-organizations/v1/overview	needs.kit	String	optional
 response	GET /studio-organizations/v1/overview	needs.people	u32	optional
 response	GET /studio-organizations/v1/overview	needs.previous	f64	optional
 response	GET /studio-organizations/v1/overview	needs.projects	Vec<String>	always
@@ -4520,12 +4535,14 @@ response	GET /studio-organizations/v1/project-creations/{}	steps.detail	String	o
 response	GET /studio-organizations/v1/project-creations/{}	steps.key	String	always
 response	GET /studio-organizations/v1/project-creations/{}	steps.state	String	always
 response	GET /studio-organizations/v1/project-creations/{}	workspace_id	String	always
+response	GET /studio-organizations/v1/project-status	kits	Vec<String>	optional
 response	GET /studio-organizations/v1/project-status	label	String	always
 response	GET /studio-organizations/v1/project-status	more	u32	always
 response	GET /studio-organizations/v1/project-status	next	String	optional
 response	GET /studio-organizations/v1/project-status	path	Vec<{}>	always
 response	GET /studio-organizations/v1/project-status	path.action	String	always
 response	GET /studio-organizations/v1/project-status	path.flow	String	always
+response	GET /studio-organizations/v1/project-status	path.kit	String	optional
 response	GET /studio-organizations/v1/project-status	path.state	String	always
 response	GET /studio-organizations/v1/project-status	path.status	String	always
 response	GET /studio-organizations/v1/project-status	path.step	String	always
@@ -4539,6 +4556,7 @@ response	GET /studio-organizations/v1/project-status	signals.action.label	String
 response	GET /studio-organizations/v1/project-status	signals.action.target	String	always
 response	GET /studio-organizations/v1/project-status	signals.detail	String	optional
 response	GET /studio-organizations/v1/project-status	signals.key	String	always
+response	GET /studio-organizations/v1/project-status	signals.kit	String	optional
 response	GET /studio-organizations/v1/project-status	signals.level	String	always
 response	GET /studio-organizations/v1/project-status	signals.phrase	String	always
 response	GET /studio-organizations/v1/project-status	unread	Vec<String>	always
