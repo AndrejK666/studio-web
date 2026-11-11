@@ -744,6 +744,18 @@ pub trait BuildRecords: Send + Sync + 'static {
         build_id: &str,
     ) -> anyhow::Result<Option<BuildRecord>>;
 
+    /// The project's builds -- not a deploy's runs -- newest first, at most
+    /// `limit`: what a project's path to running starts from (#1050). A
+    /// deployment that keeps none answers none.
+    async fn builds(
+        &self,
+        _ctx: &toolkit_security::SecurityContext,
+        _project_id: &str,
+        _limit: usize,
+    ) -> anyhow::Result<Vec<BuildRecord>> {
+        Ok(Vec::new())
+    }
+
     /// Record a build Studio runs (`where: studio`): its start, then its end.
     async fn record(
         &self,

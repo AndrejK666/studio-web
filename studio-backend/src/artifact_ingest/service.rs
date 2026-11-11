@@ -3038,6 +3038,28 @@ impl super::port::BuildRecords for IngestService {
             .map(|n| super::port::BuildRecord::of(&n.value)))
     }
 
+    async fn builds(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<super::port::BuildRecord>> {
+        let mut nodes: Vec<serde_json::Value> = self
+            .graph
+            .list_in_scope(ctx, Some(super::gts::BUILD_TYPE), project_id)
+            .await?
+            .into_iter()
+            .map(|n| n.value)
+            .filter(|v| v.get("action").and_then(|a| a.as_str()) != Some("run"))
+            .collect();
+        nodes.sort_by_key(|v| std::cmp::Reverse(build_time(v)));
+        Ok(nodes
+            .iter()
+            .take(limit)
+            .map(super::port::BuildRecord::of)
+            .collect())
+    }
+
     async fn record(
         &self,
         ctx: &SecurityContext,
@@ -3072,6 +3094,16 @@ impl super::port::BuildRecords for IngestService {
             .map(|_| ())
             .map_err(|e| anyhow!("the build could not be recorded: {e:?}"))
     }
+}
+
+/// When a build node last moved, RFC 3339 (which sorts as text): its end,
+/// else its start, else nothing, which sorts last.
+fn build_time(v: &serde_json::Value) -> String {
+    ["finished_at", "started_at", "updated_at"]
+        .iter()
+        .find_map(|k| v.get(*k).and_then(|t| t.as_str()))
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// The same store read and the same scope rule as the count beside it — the

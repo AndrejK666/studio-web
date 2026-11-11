@@ -227,6 +227,7 @@ without the portal; each step is the REST route the portal calls for it.
 | | `image_import` | *changes:* copies an external image or chart into the project's path |
 | | `image_get` | one image: where, by digest, its state |
 | | `project_images` | the project's images and charts |
+| Path | `project_path` | where the project stands from its product to running: each step's state, why, what is missing, the next action, a failure's cause |
 | Build | `build_plan` | what a build would do and why it would be refused; starts nothing |
 | | `build_start` | *changes:* builds in an environment's cluster |
 | | `build_list` | the project's builds, newest first, with status and failure |

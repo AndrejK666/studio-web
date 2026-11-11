@@ -595,6 +595,27 @@ pub fn tools() -> Vec<Tool> {
             experimental: false,
             run: Run::Get("/studio-environments/v1/deployments/{deployment_id}/logs"),
         },
+        Tool {
+            name: "project_path",
+            description: "Where a project stands from its product to running (#1050): the \
+                steps product, build, image, environment and running, each with its state \
+                (`done`, `active`, `failed`, `blocked`, `next`, `later`), why, a checklist of \
+                what is missing before a deploy (a bound profile, configuration secrets, the \
+                caller's Research sign-in), the one action that moves it on, and for a failed \
+                build or deploy its cause with the actions that fix it. Read from Studio's \
+                records; the cluster is not asked.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": { "type": "string", "description": "The project." }
+                    }),
+                    &["project_id"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-environments/v1/project-path"),
+        },
         // The Constructor Research kit's own (docs/design/studio-kits.md
         // §3.13): what a Research environment is made on. Its build, deploy
         // and rollback are `build_start` and `deploy_request` on a Research

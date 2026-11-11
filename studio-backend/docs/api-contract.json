@@ -2748,6 +2748,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/project-path",
+      "operation_id": "studio_environments.get_project_path",
+      "tag": "",
+      "summary": "Where a project stands on its way from a product to running",
+      "authenticated": true,
+      "responses": [
+        "ProjectPathDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/registries",
       "operation_id": "studio_environments.list_registries",
       "tag": "",
@@ -2843,6 +2859,40 @@
       "errors": [
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/research/my-projects",
+      "operation_id": "studio_environments.list_my_research_projects",
+      "tag": "",
+      "summary": "The Research projects the caller's own sign-in may run a project's product in",
+      "authenticated": true,
+      "responses": [
+        "MyResearchProjectListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/research/my-projects/{research_project}/hardware",
+      "operation_id": "studio_environments.list_my_research_hardware",
+      "tag": "",
+      "summary": "The hardware one of the caller's Research projects may run on",
+      "authenticated": true,
+      "responses": [
+        "MyResearchHardwareListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },

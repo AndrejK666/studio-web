@@ -33,6 +33,10 @@ mod infra_routes;
 #[path = "rest_pipeline.rs"]
 mod pipeline_routes;
 
+#[path = "rest_path.rs"]
+mod path_routes;
+pub use path_routes::FailureCauseDto;
+
 /// Errors attributable to an environment or a deployment as a resource.
 #[resource_error(gts_id!("cf.studio.environments.environment.v1~"))]
 pub struct StudioEnvironmentsError;
@@ -775,6 +779,13 @@ pub struct DeploymentDto {
     /// message` each (`CONFIG_SECRET_SHADOWED_BY_DESCRIPTION`,
     /// `INFRA_ISSUER_UNREACHABLE_IN_CLUSTER`).
     pub warnings: Vec<String>,
+    /// Whether it runs in Constructor Research (ADR-0049).
+    pub research: bool,
+    /// Where the application answers: a Research application's public
+    /// address, a preview's host.
+    pub public_url: Option<String>,
+    /// Why it failed and what fixes it; only for a failed deploy (#1054).
+    pub cause: Option<FailureCauseDto>,
 }
 
 #[derive(Debug)]
@@ -792,7 +803,31 @@ pub struct PreviewDto {
 }
 
 fn deployment_dto(d: Deployment) -> DeploymentDto {
+    let research = d.research.is_some();
+    let public_url = d
+        .preview
+        .as_ref()
+        .and_then(|p| p.host.as_ref().map(|h| format!("https://{h}")))
+        .or_else(|| {
+            research
+                .then(|| d.outcome.as_deref().and_then(super::failure::public_url))
+                .flatten()
+        });
+    let cause = (d.state == super::model::DeploymentState::Failed).then(|| {
+        path_routes::cause_dto(super::failure::explain(
+            super::failure::Of::Deploy,
+            d.outcome
+                .as_deref()
+                .or(d.reason.as_deref())
+                .unwrap_or_default(),
+            None,
+            research,
+        ))
+    });
     DeploymentDto {
+        research,
+        public_url,
+        cause,
         id: d.id,
         project_id: d.project_id,
         project_name: d.project_name,
@@ -1305,6 +1340,13 @@ pub struct ResearchInboxItemDto {
     pub days_left: Option<i64>,
     /// What else there is to read: why the deploy failed.
     pub detail: Option<String>,
+    /// Where the portal opens it: the deploy itself on Project › Releases,
+    /// with its log and cause (#1054).
+    pub url: Option<String>,
+    /// The deploy, for a deploy's item.
+    pub deployment_id: Option<String>,
+    /// Why the deploy failed and what fixes it.
+    pub cause: Option<FailureCauseDto>,
 }
 
 #[derive(Debug)]
@@ -1325,27 +1367,17 @@ async fn research_inbox_deploys(
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
 ) -> ApiResult<JsonBody<ResearchInboxItemListDto>> {
-    let items = envs
+    let org = ctx.subject_tenant_id();
+    let failed = envs
         .0
-        .research_failed_deploys(&ctx, ctx.subject_tenant_id())
+        .research_failed_deploys(&ctx, org)
         .await
-        .map_err(problem)?
-        .into_iter()
-        .map(|d| ResearchInboxItemDto {
-            id: d.id.to_string(),
-            title: format!(
-                "{}: the deploy to {} in Constructor Research failed",
-                d.project_name, d.environment_name
-            ),
-            project_id: Some(d.project_id.to_string()),
-            project_name: Some(d.project_name),
-            environment_name: Some(d.environment_name),
-            due_at: None,
-            overdue: false,
-            days_left: None,
-            detail: d.outcome,
-        })
-        .collect();
+        .map_err(problem)?;
+    let mut items = Vec::with_capacity(failed.len());
+    for d in failed {
+        let url = envs.0.deployment_link(&ctx, org, d.project_id, d.id).await;
+        items.push(research_inbox_item(d, url));
+    }
     Ok(Json(inbox_list(items)))
 }
 
@@ -1379,9 +1411,43 @@ async fn inbox_deploys_awaiting_approval(
             overdue: false,
             days_left: None,
             detail: Some(format!("asked {}", d.requested_at)),
+            url: None,
+            deployment_id: Some(d.id.to_string()),
+            cause: None,
         })
         .collect();
     Ok(Json(inbox_list(items)))
+}
+
+/// A failed Research deploy as the Inbox shows it: what failed, its cause,
+/// and the deploy itself to open, not a list (#1054).
+fn research_inbox_item(d: Deployment, url: String) -> ResearchInboxItemDto {
+    let cause = path_routes::cause_dto(super::failure::explain(
+        super::failure::Of::Deploy,
+        d.outcome
+            .as_deref()
+            .or(d.reason.as_deref())
+            .unwrap_or_default(),
+        None,
+        true,
+    ));
+    ResearchInboxItemDto {
+        id: d.id.to_string(),
+        title: format!(
+            "{}: the deploy to {} in Constructor Research failed: {}",
+            d.project_name, d.environment_name, cause.summary
+        ),
+        project_id: Some(d.project_id.to_string()),
+        project_name: Some(d.project_name),
+        environment_name: Some(d.environment_name),
+        due_at: None,
+        overdue: false,
+        days_left: None,
+        detail: d.outcome,
+        url: Some(url),
+        deployment_id: Some(d.id.to_string()),
+        cause: Some(cause),
+    }
 }
 
 async fn research_inbox_sign_in(
@@ -1421,6 +1487,9 @@ async fn research_inbox_sign_in(
                 overdue: due.days_left == 0,
                 days_left: Some(due.days_left),
                 detail: None,
+                url: None,
+                deployment_id: None,
+                cause: None,
             }
         })
         .into_iter()
@@ -2557,6 +2626,7 @@ pub fn register_routes(
     router = infra_routes::register(router, openapi);
     // One build, one deployment, an environment's secret keys (docs/mcp.md).
     router = pipeline_routes::register(router, openapi);
+    router = path_routes::register(router, openapi);
 
     router.layer(Extension(Environments(service)))
 }

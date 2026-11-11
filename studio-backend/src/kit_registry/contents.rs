@@ -523,6 +523,14 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     "GET /studio-components-catalog/v1/screen-previews",
                     "GET /studio-components-catalog/v1/project-components",
                     "GET /studio-environments/v1/targets",
+                    // The project's path to running (#1050), one read.
+                    "GET /studio-environments/v1/project-path",
+                    "GET /studio-environments/v1/config-secrets",
+                    "GET /studio-environments/v1/deployments/{deployment_id}",
+                    // The Research targets of the one deploy dialog (#1053),
+                    // answered only where constructor-research applies.
+                    "GET /studio-environments/v1/research/my-projects",
+                    "GET /studio-environments/v1/research/my-projects/{research_project}/hardware",
                     "GET /studio-environments/v1/environments",
                     "GET /studio-environments/v1/environments/{environment_id}/infra-plan",
                     "GET /studio-environments/v1/project-environments",
@@ -600,7 +608,10 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         // of `infrastructure-mfe`; a project's build, deploy and rollback to
         // Research stay on its Releases tab (product-releases), and
         // studio-environments refuses them with `KIT_NOT_INSTALLED` where
-        // this kit is not installed.
+        // this kit is not installed. Where it applies, the project's path
+        // answers `research_kit` and the one "Deploy to…" dialog of
+        // product-releases lists the caller's Research projects as a target
+        // (#1053); without it the target is absent.
         "constructor-research" => KitContents {
             // Its Inbox sources, MCP tools and the routes behind the sources
             // are in its compiled-in kit.json
@@ -616,14 +627,24 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     "POST /studio-environments/v1/environments/{environment_id}/test",
                     "GET /studio-environments/v1/research/projects",
                     "GET /studio-environments/v1/research/projects/{project}/hardware",
+                    // The Research target it adds to product-releases' one
+                    // deploy dialog (#1053): the caller's own projects and
+                    // hardware, the deploy, its log and where it answers.
+                    "GET /studio-environments/v1/research/my-projects",
+                    "GET /studio-environments/v1/research/my-projects/{research_project}/hardware",
                     "GET /studio-environments/v1/deployments",
+                    "GET /studio-environments/v1/deployments/{deployment_id}",
                     "GET /studio-environments/v1/deployments/{deployment_id}/status",
                     "GET /studio-environments/v1/deployments/{deployment_id}/logs",
+                    "GET /studio-environments/v1/builds/{build_id}/log",
                     "GET /studio-connector/v1/connections",
                 ]),
                 writes: owned(&[
                     "POST /studio-environments/v1/environments",
                     "PUT /studio-environments/v1/environments/{environment_id}",
+                    "POST /studio-environments/v1/project-environments",
+                    "POST /studio-environments/v1/builds",
+                    "POST /studio-environments/v1/deployments",
                 ]),
                 ..KitPermissions::default()
             },

@@ -42,6 +42,11 @@ pub use infra_service::InfraPlan;
 mod pipeline_service;
 pub use pipeline_service::{BuildView, SecretKeys};
 
+// A project's path to running, and the caller's own Research targets
+// (#1050, #1053).
+#[path = "service_path.rs"]
+mod path_service;
+
 /// The privilege that manages an organization's environments and decides
 /// about deploys to its protected ones (ADR-0043 §1, §3).
 pub const MANAGE_PRIVILEGE: &str = "environment.manage";
