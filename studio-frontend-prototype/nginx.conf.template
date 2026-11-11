@@ -45,9 +45,16 @@ gzip_types
 # an `assets/` directory is Vite-hashed — the host app's own and each MFE's
 # (`/mfes/<name>/assets/`), which is why the pattern allows a prefix — so its
 # name changes whenever its bytes do and it can be cached forever.
+#
+# Each MFE's `shared/` (react, the FrontX packages: ~0.8 MB, the same bytes in
+# every MFE) has stable, unhashed names, so it cannot be immutable — but
+# `no-store` made every page load download it again. `no-cache` keeps a copy
+# and asks each time: an unchanged file costs a 304 against its ETag, a
+# changed one is fetched, so it is never stale.
 map $uri $frontend_cache_control {
     default                "no-store, no-cache, must-revalidate";
     ~^/(.*/)?assets/       "public, max-age=31536000, immutable";
+    ~^/mfes/[^/]+/shared/  "no-cache";
 }
 
 # Content Security Policy: none is set here today. One added later must keep
