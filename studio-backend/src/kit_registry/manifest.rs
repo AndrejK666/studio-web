@@ -313,7 +313,8 @@ pub fn overlay_of(m: &KitManifest) -> Result<Option<KitOverlay>, String> {
         && overlay.fields.is_empty()
         && overlay.relations.is_empty()
         && overlay.tabs.is_empty()
-        && overlay.lifecycles.is_empty();
+        && overlay.lifecycles.is_empty()
+        && overlay.properties.is_empty();
     Ok((!empty).then_some(overlay))
 }
 
