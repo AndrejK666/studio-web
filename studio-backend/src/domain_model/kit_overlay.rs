@@ -802,8 +802,33 @@ pub fn sync(
             Some(e) => {
                 let mut next = if declared.contains(id) {
                     // A type the kit declares by its existing id stays as the
-                    // model has it; only the marks change.
-                    e.clone()
+                    // model has it; only the marks change. A type that moved
+                    // out of the core (its whole `entity` in the overlay), that
+                    // a gear declared first with only what it writes, gains the
+                    // fields it lacks. An organization's own definition is left
+                    // as it is: a field it removed stays removed (ADR-0070 §7,
+                    // decision 6).
+                    let mut next = e.clone();
+                    let gear_made = e.pointer("/meta/origin").and_then(Value::as_str)
+                        == Some("gear");
+                    let theirs: Vec<Value> = want
+                        .get("properties")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    if gear_made && !theirs.is_empty() {
+                        if !next.get("properties").is_some_and(Value::is_array) {
+                            next["properties"] = json!([]);
+                        }
+                        let props = next["properties"].as_array_mut().expect("made above");
+                        for p in theirs {
+                            let name = str_of(&p, "name").unwrap_or_default().to_owned();
+                            if !props.iter().any(|q| str_of(q, "name") == Some(name.as_str())) {
+                                props.push(p);
+                            }
+                        }
+                    }
+                    next
                 } else {
                     let mut next = want.clone();
                     next["properties"] = e.get("properties").cloned().unwrap_or_else(|| json!([]));
