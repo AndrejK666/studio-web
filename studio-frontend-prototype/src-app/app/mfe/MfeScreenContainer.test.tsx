@@ -126,8 +126,10 @@ describe('MfeScreenContainer', () => {
       const slot = screen.getByTestId('extension-domain-slot');
       expect(slot.dataset.domainId).toBe(mockScreenDomain.id);
       expect(slot.dataset.registryPresent).toBe('yes');
-      // It fills what the kits' panels above it leave.
-      expect(slot.dataset.className).toContain('flex-1');
+      // It fills its frame, which takes what the kits' panels and the editor's
+      // bar above it leave.
+      expect(slot.dataset.className).toContain('h-full');
+      expect(slot.parentElement?.className).toContain('flex-1');
     });
   });
 
