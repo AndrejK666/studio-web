@@ -127,9 +127,17 @@ a signal, not a log — a screen that needs every event of one run in order
 (the editor's session, an import) still follows it with `streamFrom` or
 `createRunFollower`, as below.
 
-The channel listens to the person's home tenant (no `?organization_id=`), as
-the prototype's bell did. A platform administrator looking at another
-organization hears their home's events, not that organization's.
+The channel listens to the organization on screen — the path bar's
+organization, `eventsFor(organizationId)`, `/stream?organization_id=` — and
+to the person's home tenant only while no organization is in scope. A
+platform administrator, or a member of several organizations, hears the
+runs and domain changes of the one they are looking at; the server answers
+404 for an organization the caller does not reach. A reconnect replays its
+gap from the same tenant (`/events?organization_id=`: the transport hands
+the stream's URL to the resume policy). Switching organizations closes the
+old stream and opens the new one: `seq` is per tenant, so the channel's
+cursor starts over and it relays `null` first, which tells
+`useStudioEventRefresh` that the next, lower `seq` is news.
 
 ## Watch every background run
 
