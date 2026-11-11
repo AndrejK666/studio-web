@@ -31,7 +31,13 @@ import {
   TableRow,
   Textarea,
 } from '@gears-frontx/ui-kit';
-import { AccountsApiService, useOrganization, type OrganizationRef } from '@constructor-studio/mfe-shared';
+import {
+  AccountsApiService,
+  refusalReason,
+  useOrganization,
+  type OrganizationRef,
+  type ScreenText,
+} from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../api/AdminApiService';
 import type { ConnectorProvider, NotifyTarget, PresenceEntry, StoredConnection } from '../../api/types';
 import {
@@ -49,6 +55,22 @@ import {
   type NotifyLevel,
 } from '../../model/system';
 import { ErrorLine, Header, errText, shortId, useAdmin, when } from './common';
+
+/**
+ * A refusal of the online list or of a notification, said as who may (#1044):
+ * the gears refuse with a reason token, and the screen names the role. Anything
+ * else in the gear's own words.
+ */
+export function systemRefusal(e: unknown, t: ScreenText): string {
+  switch (refusalReason(e)) {
+    case 'PLATFORM_ADMIN_REQUIRED':
+      return t('sys_refused_platform_admin');
+    case 'ORG_ADMIN_REQUIRED':
+      return t('sys_refused_org_admin');
+    default:
+      return errText(e);
+  }
+}
 import styles from './Admin.module.css';
 
 /** How often people report in, and so how often the list is worth asking again. */
@@ -84,7 +106,9 @@ function WhoIsOnline() {
   const accounts = apiRegistry.getService(AccountsApiService);
   const [people, setPeople] = useState<PresenceEntry[] | null>(null);
   const [ttl, setTtl] = useState(90_000);
-  const [err, setErr] = useState<string | null>(null);
+  // The refusal itself, said at render time in the reader's language.
+  const [failure, setFailure] = useState<{ error: unknown } | null>(null);
+  const err = failure ? systemRefusal(failure.error, t) : null;
   const [meId, setMeId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [writingTo, setWritingTo] = useState<PresenceEntry | null>(null);
@@ -103,11 +127,11 @@ function WhoIsOnline() {
           if (!live) return;
           setPeople(r.items ?? []);
           if (typeof r.online_ttl_ms === 'number') setTtl(r.online_ttl_ms);
-          setErr(null);
+          setFailure(null);
         },
         (e: unknown) => {
           if (!live) return;
-          setErr(errText(e));
+          setFailure({ error: e });
           setPeople((current) => current ?? []);
         }
       );
@@ -446,7 +470,7 @@ function ChatNotifier({
         setResult(t('sys_queued', { run: shortId(queued.run_id) }));
       }
     } catch (e) {
-      setError(errText(e));
+      setError(systemRefusal(e, t));
     } finally {
       setBusy(null);
     }
@@ -553,7 +577,7 @@ function EditorNotifier({ org }: { org: OrganizationRef }) {
       setResult(t('sys_editor_queued', { run: shortId(queued.run_id) }));
     } catch (e) {
       // No live session: refused here rather than queued for nobody.
-      setError(errText(e));
+      setError(systemRefusal(e, t));
     } finally {
       setBusy(false);
     }

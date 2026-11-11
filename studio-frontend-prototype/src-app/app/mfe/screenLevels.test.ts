@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { entryPointOf, placementOf, resolveLevelMenu, type StudioScreenExtension } from './screenLevels';
+import { entryPointOf, offeredTo, placementOf, resolveLevelMenu, type StudioScreenExtension } from './screenLevels';
 
 function screen(
   id: string,
@@ -48,5 +48,21 @@ describe('entryPointOf', () => {
 
   it('has no entry point for a level whose only screen is hidden', () => {
     expect(entryPointOf([editor], 'project')).toBeUndefined();
+  });
+});
+
+describe('offeredTo', () => {
+  const screen = (audience?: string) =>
+    ({ presentation: { route: '/admin/system', level: 'admin', audience } }) as unknown as Parameters<
+      typeof offeredTo
+    >[0];
+
+  it('offers a platform administrator\'s screen to them alone', () => {
+    expect(offeredTo(screen('platform-admin'), true)).toBe(true);
+    expect(offeredTo(screen('platform-admin'), false)).toBe(false);
+  });
+
+  it('offers a screen without an audience to everybody', () => {
+    expect(offeredTo(screen(), false)).toBe(true);
   });
 });

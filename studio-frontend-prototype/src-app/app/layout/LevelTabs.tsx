@@ -23,7 +23,13 @@ import {
   type MfeBootstrapState,
 } from '@/app/slices/mfeBootstrapSlice';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
-import { parentSectionOf, resolveLevelMenu, sectionOf, type StudioScreenExtension } from '@/app/mfe/screenLevels';
+import {
+  offeredTo,
+  parentSectionOf,
+  resolveLevelMenu,
+  sectionOf,
+  type StudioScreenExtension,
+} from '@/app/mfe/screenLevels';
 import { useShellText } from '@/app/i18n/shellTranslations';
 import { usePreference } from '@/app/preferences/uiPreferences';
 import { orderLevelTabs, tabOrderKey } from '@/app/preferences/levelTabOrder';
@@ -39,6 +45,7 @@ import { screenShows, typesNeeded, useInstalledKits, useInstalledTypes } from '.
 import { modelNameOf, screenIdOf, visibleTabs, withModelTabs } from './modelTabs';
 import { useHiddenTabs, useLevelModelTabs, useLevelTenant } from './useModelTabs';
 import { LevelTabsEditor } from './LevelTabsEditor';
+import { useDecidesRequests } from './OrganizationRequests';
 import styles from './LevelTabs.module.css';
 
 function isActiveItem(
@@ -63,6 +70,8 @@ export const LevelTabs: React.FC = () => {
   const level = useScreenLevel();
   const registered = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const installed = useInstalledKits();
+  // A platform administrator's screens (Admin › System) for them alone.
+  const platformAdmin = useDecidesRequests();
   // The manifests' tabs (a tab whose kit or needed type is not installed here
   // left out), then the ones the Studio domain model adds (ADR-0066), then
   // without what the level's settings hide.
@@ -70,7 +79,7 @@ export const LevelTabs: React.FC = () => {
   const types = useInstalledTypes(leveled.some((ext) => typesNeeded(ext).length > 0));
   const modelTabs = useLevelModelTabs(level);
   const all = withModelTabs(
-    leveled.filter((ext) => screenShows(ext, installed, types)),
+    leveled.filter((ext) => screenShows(ext, installed, types) && offeredTo(ext, platformAdmin)),
     registered,
     level,
     modelTabs

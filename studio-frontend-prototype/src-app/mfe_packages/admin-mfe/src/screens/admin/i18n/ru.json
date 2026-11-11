@@ -901,5 +901,7 @@
   "model_card_relations": "Связи",
   "model_show_related": "Показать",
   "model_none_related": "Связанных объектов нет.",
-  "model_create_type": "Создать тип {type}"
+  "model_create_type": "Создать тип {type}",
+  "sys_refused_platform_admin": "Кто сейчас в Studio, видит только администратор платформы.",
+  "sys_refused_org_admin": "Отправлять уведомления отсюда может только администратор этой организации или платформы."
 }

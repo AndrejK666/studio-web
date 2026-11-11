@@ -47,6 +47,19 @@ export function parseProblemDetails(error: unknown): ProblemDetails {
   };
 }
 
+/**
+ * The machine-readable reason a gear refused with (`context.reason` of a
+ * `permission_denied`, such as `PLATFORM_ADMIN_REQUIRED`), or null when it gave
+ * none. What a screen branches on to say who may do this.
+ */
+export function refusalReason(error: unknown): string | null {
+  const data = responseData(error);
+  if (typeof data !== 'object' || data === null) return null;
+  const context = (data as { context?: unknown }).context;
+  if (typeof context !== 'object' || context === null) return null;
+  return text((context as { reason?: unknown }).reason);
+}
+
 /** The violation the caller knows how to act on, or null if the gear sent none. */
 export function violationOfType(error: unknown, type: string): Violation | null {
   return parseProblemDetails(error).violations.find((entry) => entry.type === type) ?? null;

@@ -145,6 +145,7 @@ vi.mock('@/app/i18n/shellTranslations', () => ({ useShellText: () => (key: strin
 vi.mock('./useScreenLevel', () => ({ useScreenLevel: () => level.value }));
 // The kits' slot at the end of the row has its own suite (KitSlot.test.tsx).
 vi.mock('./KitSlot', () => ({ KitSlot: () => null }));
+vi.mock('./OrganizationRequests', () => ({ useDecidesRequests: () => false }));
 
 import { LevelTabs } from './LevelTabs';
 import { setPreferenceStoreForTests, type PreferenceStore } from '@/app/preferences/uiPreferences';

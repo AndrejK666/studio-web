@@ -61,6 +61,21 @@ export interface LeveledPresentation {
    * level's `hidden_tabs` names the tab by it.
    */
   modelTab?: string;
+  /**
+   * Who the screen is for: `platform-admin` is offered only to a platform
+   * administrator (Admin › System, whose reads refuse anybody else, #1044).
+   * Absent: everybody the level is offered to. Not an authority: the gears
+   * behind the screen refuse for themselves.
+   */
+  audience?: string;
+}
+
+/** The audience a platform administrator's screen declares. */
+export const PLATFORM_ADMIN_AUDIENCE = 'platform-admin';
+
+/** Whether `extension` is offered to this person, by its `audience`. */
+export function offeredTo(extension: StudioScreenExtension, platformAdmin: boolean): boolean {
+  return extension.presentation.audience !== PLATFORM_ADMIN_AUDIENCE || platformAdmin;
 }
 
 /** Whether `extension` answers `section`: its own, or one under its prefix. */

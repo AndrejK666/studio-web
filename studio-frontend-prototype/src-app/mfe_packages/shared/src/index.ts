@@ -119,6 +119,7 @@ export type {
 export {
   parseProblemDetails,
   refusalFrom,
+  refusalReason,
   refusalText,
   violationOfType,
   type ProblemDetails,
@@ -192,7 +193,7 @@ export {
   type StudioRunList,
   type StudioRunState,
 } from './tasks/StudioTasksApiService';
-export { runCount, runUpdateFromRun, type RunUpdate } from './tasks/runs';
+export { isRunSettled, runCount, runUpdateFromRun, type RunUpdate } from './tasks/runs';
 export {
   LIVE_REFRESH_DELAY_MS,
   domainChanged,

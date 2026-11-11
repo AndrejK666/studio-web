@@ -165,7 +165,8 @@
         "route": "/admin/system",
         "order": 105,
         "level": "admin",
-        "section": "system"
+        "section": "system",
+        "audience": "platform-admin"
       }
     },
     {

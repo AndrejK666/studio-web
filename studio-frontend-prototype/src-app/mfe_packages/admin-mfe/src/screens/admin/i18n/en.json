@@ -875,5 +875,7 @@
   "model_card_relations": "Relations",
   "model_show_related": "Show",
   "model_none_related": "Nothing related.",
-  "model_create_type": "Create the {type} type"
+  "model_create_type": "Create the {type} type",
+  "sys_refused_platform_admin": "Only a platform administrator sees who is in Studio.",
+  "sys_refused_org_admin": "Only an administrator of this organization, or a platform administrator, sends notifications from here."
 }
