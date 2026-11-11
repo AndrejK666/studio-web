@@ -75,6 +75,21 @@ export const STUDIO_ACTION_NOTIFY =
 export const STUDIO_ACTION_SCREEN_OPEN =
   'gts.frontx.mfes.comm.action.v1~constructor_studio.shell.screen.open.v1~';
 
+/**
+ * Screen or overlay domain: go to a place — an organization, a workspace in it,
+ * or a project in that workspace (what Search finds). The shell opens the
+ * deepest level named, on its entry screen, as a pick in the path bar does.
+ */
+export const STUDIO_ACTION_PLACE_OPEN =
+  'gts.frontx.mfes.comm.action.v1~constructor_studio.shell.place.open.v1~';
+
+/** A place to go to: a project needs its workspace, a workspace its organization. */
+export interface StudioPlace {
+  organizationId: string;
+  workspaceId?: string;
+  projectId?: string;
+}
+
 /** `loading` stays up until a notice with its `id` replaces it, so a `loading` notice needs an `id`. */
 export const STUDIO_NOTICE_KINDS = ['error', 'success', 'info', 'loading'] as const;
 
@@ -131,6 +146,11 @@ export function requestFromHost(bridge: ChildMfeBridge | null, action: HostActio
 /** Open the shell's screen whose manifest route is `route` (STUDIO_ACTION_SCREEN_OPEN). */
 export function openScreen(bridge: ChildMfeBridge | null, route: string): void {
   sendToHost(bridge, { type: STUDIO_ACTION_SCREEN_OPEN, target: FRONTX_SCREEN_DOMAIN, payload: { route } });
+}
+
+/** Go to `place` (STUDIO_ACTION_PLACE_OPEN), from the domain the MFE is mounted in. */
+export function openPlace(bridge: ChildMfeBridge | null, place: StudioPlace, domain: string = FRONTX_SCREEN_DOMAIN): void {
+  sendToHost(bridge, { type: STUDIO_ACTION_PLACE_OPEN, target: domain, payload: { ...place } });
 }
 
 export function notify(bridge: ChildMfeBridge | null, notice: StudioNotice): void {

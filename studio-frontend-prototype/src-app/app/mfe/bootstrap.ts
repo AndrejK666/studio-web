@@ -49,6 +49,7 @@ import {
   STUDIO_ACTION_CHAIN_FAILED,
   STUDIO_ACTION_CONTEXT_PUBLISH,
   STUDIO_ACTION_NOTIFY,
+  STUDIO_ACTION_PLACE_OPEN,
   STUDIO_ACTION_SCREEN_OPEN,
   STUDIO_ACTION_WORKSPACES_PUBLISH,
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
@@ -64,6 +65,7 @@ import {
 import {
   createArtifactOpenHandler,
   createContextPublishHandler,
+  createPlaceOpenHandler,
   createWorkspacePublishHandler,
 } from '@/app/mfe/contextActions';
 import { createNotifyHandler } from '@/app/mfe/notifyAction';
@@ -234,6 +236,7 @@ class ScreenDomainImpl extends ExtensionDomainImplementation {
     ctx.registerHandler(STUDIO_ACTION_WORKSPACES_PUBLISH, createWorkspacePublishHandler());
     ctx.registerHandler(STUDIO_ACTION_ARTIFACT_OPEN, createArtifactOpenHandler());
     ctx.registerHandler(STUDIO_ACTION_NOTIFY, createNotifyHandler());
+    ctx.registerHandler(STUDIO_ACTION_PLACE_OPEN, createPlaceOpenHandler());
     ctx.registerHandler(
       STUDIO_ACTION_SCREEN_OPEN,
       createScreenOpenHandler(() => registry.getExtensionsForDomain(screenDomain.id) as StudioScreenExtension[])
@@ -526,6 +529,7 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_ACTION_ARTIFACT_OPEN,
       STUDIO_ACTION_NOTIFY,
       STUDIO_ACTION_SCREEN_OPEN,
+      STUDIO_ACTION_PLACE_OPEN,
       STUDIO_ACTION_CHAIN_DONE,
       STUDIO_ACTION_CHAIN_FAILED,
     ],
@@ -539,6 +543,36 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
       STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
       STUDIO_SHARED_PROPERTY_LIVE_EVENT,
+    ],
+  });
+}
+
+/**
+ * The overlay domain carries the studio context too, and it has to be stated
+ * here: the framework's `overlayDomain` declares theme and language only, and
+ * a domain that does not declare a property cannot deliver it — an entry
+ * asking for one fails registration instead.
+ */
+export function buildStudioOverlayDomain(): ExtensionDomain {
+  return unrouted({
+    ...overlayDomain,
+    // The overlay that creates a workspace hands it back through this action —
+    // it is mounted here, and an action reaches only the domain it targets, so
+    // the screen domain above declares it too.
+    // Search, an overlay, goes to the place or the file it found: the same
+    // place and artifact requests a screen makes.
+    actions: [
+      ...overlayDomain.actions,
+      STUDIO_ACTION_WORKSPACES_PUBLISH,
+      STUDIO_ACTION_PLACE_OPEN,
+      STUDIO_ACTION_ARTIFACT_OPEN,
+    ],
+    sharedProperties: [
+      ...overlayDomain.sharedProperties,
+      STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
+      STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
+      STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
+      STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
     ],
   });
 }
@@ -584,26 +618,7 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
   }
 
   const studioScreenDomain: ExtensionDomain = buildStudioScreenDomain();
-  /*
-   * The overlay domain carries the studio context too, and it has to be stated
-   * here: the framework's `overlayDomain` declares theme and language only, and
-   * a domain that does not declare a property cannot deliver it — an entry
-   * asking for one fails registration instead.
-   */
-  const studioOverlayDomain: ExtensionDomain = unrouted({
-    ...overlayDomain,
-    // The overlay that creates a workspace hands it back through this action —
-    // it is mounted here, and an action reaches only the domain it targets, so
-    // the screen domain above declares it too.
-    actions: [...overlayDomain.actions, STUDIO_ACTION_WORKSPACES_PUBLISH],
-    sharedProperties: [
-      ...overlayDomain.sharedProperties,
-      STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
-      STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
-      STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
-      STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
-    ],
-  });
+  const studioOverlayDomain: ExtensionDomain = buildStudioOverlayDomain();
   registry.registerDomain(studioScreenDomain, new ScreenDomainFactory(registry));
   registry.registerDomain(buildStudioSidebarDomain(), new OptionalDomainFactory(registry, sidebarDomain.id));
   // Framed domains: the extension states its own footprint, the shell only clamps it.
@@ -612,6 +627,8 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
     studioOverlayDomain,
     new OptionalDomainFactory(registry, overlayDomain.id, false, {
       [STUDIO_ACTION_WORKSPACES_PUBLISH]: createWorkspacePublishHandler(),
+      [STUDIO_ACTION_PLACE_OPEN]: createPlaceOpenHandler(),
+      [STUDIO_ACTION_ARTIFACT_OPEN]: createArtifactOpenHandler(),
     }),
   );
   // The named slots a kit contributes into (mfe/slots.ts): registered before

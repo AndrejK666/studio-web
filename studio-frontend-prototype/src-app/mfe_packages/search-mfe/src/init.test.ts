@@ -1,79 +1,38 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-const build = vi.fn();
+const build = vi.fn(() => ({ id: 'search-mfe-app' }));
 const use = vi.fn();
-const createFrontX = vi.fn(() => ({
-  use,
-}));
-const registerSlice = vi.fn();
+const createFrontX = vi.fn(() => ({ use }));
 const register = vi.fn();
 const initialize = vi.fn();
-const effects = vi.fn(() => 'effects-plugin');
 const queryCacheShared = vi.fn(() => 'query-cache-shared-plugin');
-const mock = vi.fn(() => 'mock-plugin');
 const i18n = vi.fn(() => 'i18n-plugin');
+use.mockImplementation(() => ({ use, build }));
 
 vi.mock('@gears-frontx/react', () => ({
   createFrontX,
-  registerSlice,
-  apiRegistry: {
-    register,
-    initialize,
-  },
-  effects,
+  apiRegistry: { register, initialize },
   i18n,
-  mock,
   queryCacheShared,
 }));
 
-vi.mock('./api/_BlankApiService', () => ({
-  _BlankApiService: class BlankApiService {
-    static {
-      void 0;
-    }
-  },
+const { authShared, AccountsApiService } = vi.hoisted(() => ({
+  authShared: vi.fn(() => 'auth-shared-plugin'),
+  AccountsApiService: class AccountsApiService {},
 }));
+vi.mock('@constructor-studio/mfe-shared', () => ({ authShared, AccountsApiService }));
+vi.mock('./api/SearchApiService', () => ({ SearchApiService: class SearchApiService {} }));
 
-vi.mock('./slices/homeSlice', () => ({
-  homeSlice: { name: '_blank/home' },
-}));
-
-vi.mock('./effects/homeEffects', () => ({
-  initHomeEffects: vi.fn(),
-}));
-
-describe('_blank-mfe init', () => {
-  afterEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    use.mockImplementation(() => ({ use, build }));
-    build.mockReturnValue({ id: 'blank-mfe-app' });
-  });
-
-  it('registers services before build and registers slices after build', async () => {
-    use.mockImplementation(() => ({ use, build }));
-    const expectedApp = { id: 'blank-mfe-app' };
-    build.mockReturnValue(expectedApp);
-
-    const { initHomeEffects } = await import('./effects/homeEffects');
+describe('search-mfe init', () => {
+  it('registers the services it reads and builds the app with the shared session', async () => {
     const module = await import('./init');
-
-    expect(register).toHaveBeenCalledTimes(1);
+    expect(register.mock.calls.map(([service]) => (service as { name: string }).name)).toEqual([
+      'AccountsApiService',
+      'SearchApiService',
+    ]);
     expect(initialize).toHaveBeenCalledTimes(1);
-    expect(createFrontX).toHaveBeenCalledTimes(1);
-    expect(effects).toHaveBeenCalledTimes(1);
-    expect(queryCacheShared).toHaveBeenCalledTimes(1);
-    expect(mock).toHaveBeenCalledTimes(1);
-    // The home screen reads its text through the framework's i18n.
-    expect(i18n).toHaveBeenCalledTimes(1);
-    expect(use.mock.calls).toEqual(expect.arrayContaining([
-      ['effects-plugin'],
-      ['i18n-plugin'],
-      ['query-cache-shared-plugin'],
-      ['mock-plugin'],
-    ]));
-    expect(build).toHaveBeenCalledTimes(1);
-    expect(registerSlice).toHaveBeenCalledWith({ name: '_blank/home' }, initHomeEffects);
-    expect(module.mfeApp).toBe(expectedApp);
+    // authShared last: without it every read goes out with no bearer (401).
+    expect(use.mock.calls).toEqual([['i18n-plugin'], ['query-cache-shared-plugin'], ['auth-shared-plugin']]);
+    expect(module.mfeApp).toEqual({ id: 'search-mfe-app' });
   });
 });

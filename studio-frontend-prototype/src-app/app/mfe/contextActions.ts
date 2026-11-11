@@ -94,6 +94,35 @@ export function createWorkspacePublishHandler(): ActionHandler {
   });
 }
 
+const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+
+/** The place-open payload, or `null` when it is not one: a project needs its workspace. */
+export function placeRequestOf(
+  payload: Record<string, unknown> | undefined
+): { organizationId: string; workspaceId?: string; projectId?: string } | null {
+  const { organizationId, workspaceId, projectId } = payload ?? {};
+  if (!nonEmpty(organizationId)) return null;
+  if (projectId !== undefined && (!nonEmpty(projectId) || !nonEmpty(workspaceId))) return null;
+  if (workspaceId !== undefined && !nonEmpty(workspaceId)) return null;
+  return {
+    organizationId,
+    ...(nonEmpty(workspaceId) ? { workspaceId } : {}),
+    ...(nonEmpty(projectId) ? { projectId } : {}),
+  };
+}
+
+/** Go to a place an MFE found (Search): the shell moves the address. */
+export function createPlaceOpenHandler(): ActionHandler {
+  return ActionHandler.fromFunction(async (_actionTypeId, payload) => {
+    const place = placeRequestOf(payload);
+    if (!place) {
+      console.warn('[shell] place open: payload refused', payload);
+      return;
+    }
+    eventBus.emit('app/context/place/requested', place);
+  });
+}
+
 /** The open-artifact payload as the schema names it, or `null` when it is not one. */
 export function artifactRequestOf(payload: Record<string, unknown> | undefined): StudioArtifactRequest | null {
   const { projectId, artifactId, repository, path, kind } = payload ?? {};

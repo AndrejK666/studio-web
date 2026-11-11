@@ -14,8 +14,11 @@ import {
   artifactRequestOf,
   createArtifactOpenHandler,
   createContextPublishHandler,
+  createPlaceOpenHandler,
   createWorkspacePublishHandler,
+  placeRequestOf,
 } from './contextActions';
+import placeOpenSchema from './schemas/action_shell_place_open.v1.json';
 
 /**
  * What an MFE's action turns into on the shell's event bus. This is the seam
@@ -23,6 +26,37 @@ import {
  * that still has the MFE's payload, and the guard on the other side cannot
  * check a claim that was never sent.
  */
+
+describe('place open (Search goes to what it found)', () => {
+  beforeEach(() => mockEmit.mockReset());
+
+  it('takes an organization, a workspace in it, or a project with its workspace', () => {
+    expect(placeRequestOf({ organizationId: 'o' })).toEqual({ organizationId: 'o' });
+    expect(placeRequestOf({ organizationId: 'o', workspaceId: 'w' })).toEqual({ organizationId: 'o', workspaceId: 'w' });
+    expect(placeRequestOf({ organizationId: 'o', workspaceId: 'w', projectId: 'p' })).toEqual({
+      organizationId: 'o',
+      workspaceId: 'w',
+      projectId: 'p',
+    });
+  });
+
+  it('refuses a project without its workspace, and a place without an organization', () => {
+    expect(placeRequestOf({ organizationId: 'o', projectId: 'p' })).toBeNull();
+    expect(placeRequestOf({ workspaceId: 'w' })).toBeNull();
+    expect(placeRequestOf({ organizationId: '' })).toBeNull();
+  });
+
+  it('turns an accepted request into the shell event, and drops a refused one', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await createPlaceOpenHandler().handleAction('action', { organizationId: 'o', workspaceId: 'w' });
+    await createPlaceOpenHandler().handleAction('action', { projectId: 'p' });
+    expect(emitted('app/context/place/requested')).toEqual([{ organizationId: 'o', workspaceId: 'w' }]);
+  });
+
+  it('has a schema that requires the organization', () => {
+    expect(placeOpenSchema.properties.payload.required).toEqual(['organizationId']);
+  });
+});
 
 const WORKSPACE = { id: 'ws-1', name: 'Platform' };
 const PROJECT = { id: 'p1', name: 'Atlas' };

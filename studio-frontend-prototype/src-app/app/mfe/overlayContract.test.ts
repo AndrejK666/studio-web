@@ -32,7 +32,7 @@ import {
 import { validateContract } from '@gears-frontx/mfes';
 import { helloKitManifest } from '@frontx-test-utils/helloKitManifest';
 import { SHELL_SCHEMAS } from './schemas';
-import { buildStudioScreenDomain, buildStudioSidebarDomain } from './bootstrap';
+import { buildStudioOverlayDomain, buildStudioScreenDomain, buildStudioSidebarDomain } from './bootstrap';
 import { toManifestConfig } from './runtimeKits';
 import { resolveLevelMenu, type StudioScreenExtension } from './screenLevels';
 import {
@@ -230,10 +230,10 @@ describe('generated MFE manifest', () => {
       expect(searchExtension!.id).toContain('frontx.screensets.layout.overlay.v1~');
     });
 
-    it('satisfies the overlay domain contract, so registration admits it', () => {
+    it('satisfies the overlay domain the shell declares (place and artifact requests), so registration admits it', () => {
       const entry = entriesById.get(searchExtension!.entry);
       expect(entry).toBeDefined();
-      const result = validateContract(entry!, overlayDomain, gtsPlugin);
+      const result = validateContract(entry!, buildStudioOverlayDomain() as typeof overlayDomain, gtsPlugin);
       // Surface the reason rather than a bare `false`.
       expect(result.errors ?? []).toEqual([]);
       expect(result.valid).toBe(true);
@@ -320,9 +320,10 @@ describe('generated MFE manifest', () => {
         value,
       } as never);
 
-    it('is declared as a domain action by projects-mfe and issues-mfe, and by no other entry', () => {
+    it('is declared as a domain action by projects-mfe, issues-mfe and Search, and by no other entry', () => {
       // #319: the MFE asks; the answer below is the shell's (#320). The Issues
-      // kit opens a passage's document in the editor, as the prototype's tab did.
+      // kit opens a passage's document in the editor, as the prototype's tab did;
+      // Search opens a file it found, from the overlay domain.
       const entries = manifests.flatMap((config) => config.entries);
       const declaring = entries.filter((entry) =>
         (entry.domainActions ?? []).includes(STUDIO_ACTION_ARTIFACT_OPEN)
@@ -330,6 +331,7 @@ describe('generated MFE manifest', () => {
       expect(declaring.map((entry) => entry.id).sort()).toEqual([
         expect.stringContaining('constructor_studio.issues.mfe.main'),
         expect.stringContaining('constructor_studio.projects.mfe.main'),
+        expect.stringContaining('constructor_studio.search.mfe.main'),
       ]);
     });
 

@@ -249,6 +249,19 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
     routing.navigation.navigate({ ...route }, 'push');
   });
 
+  // A place found elsewhere (Search): the whole address is known, so it is
+  // one navigation, and `materialize` resolves the names and the level.
+  eventBus.on('app/context/place/requested', ({ organizationId, workspaceId, projectId }) => {
+    if (!routing) return;
+    const level: ScreenLevel = projectId ? 'project' : workspaceId ? 'workspace' : 'organization';
+    const token = entryTokenOf(screens(), level);
+    if (!token) return;
+    const route: ShellRoute = { token, org: organizationId };
+    if (workspaceId) route.workspace = workspaceId;
+    if (projectId) route.project = projectId;
+    routing.navigation.navigate(route, 'push');
+  });
+
   eventBus.on('app/editor/session/retry', () => editorSession.retry());
 
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-section:p1:inst-4

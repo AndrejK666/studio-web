@@ -63,6 +63,8 @@ declare module '@gears-frontx/react' {
     'app/pins/open': {
       route: { token: string; org?: string; workspace?: string; project?: string; section?: string };
     };
+    /** Go to a place an MFE found (Search): the deepest level named, on its entry screen. */
+    'app/context/place/requested': { organizationId: string; workspaceId?: string; projectId?: string };
     /** "Try again" on the editor whose session failed to come up. */
     'app/editor/session/retry': void;
   }

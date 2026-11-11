@@ -120,6 +120,22 @@ describe('registerAppContextEffects', () => {
     expect(handle.navigation.navigate).toHaveBeenCalledWith(route, 'push');
   });
 
+  it('a place Search found is one navigation to its deepest level, whatever is in scope now', async () => {
+    await emit('app/context/place/requested', { organizationId: 'o2', workspaceId: 'w9', projectId: 'p7' });
+    expect(handle.navigation.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ org: 'o2', workspace: 'w9', project: 'p7' }),
+      'push'
+    );
+    vi.mocked(handle.navigation.navigate).mockClear();
+    await emit('app/context/place/requested', { organizationId: 'o2', workspaceId: 'w9' });
+    expect(handle.navigation.navigate).toHaveBeenCalledWith({ token: 'projects', org: 'o2', workspace: 'w9' }, 'push');
+    vi.mocked(handle.navigation.navigate).mockClear();
+    await emit('app/context/place/requested', { organizationId: 'o2' });
+    const [route] = vi.mocked(handle.navigation.navigate).mock.calls[0] as [Record<string, unknown>, string];
+    expect(route).toEqual({ token: route.token, org: 'o2' });
+    expect(route.token).toBeTruthy();
+  });
+
   it('a tab click on a project section keeps the project and names the section', async () => {
     await emit('app/context/screen/requested', { extensionId: 'projects.artifacts' });
     expect(handle.navigation.navigate).toHaveBeenCalledWith(
