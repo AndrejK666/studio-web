@@ -7,18 +7,19 @@ import type { StudioEvent } from '@constructor-studio/mfe-shared';
  * again on a review event and every two minutes; unknown on a failed read.
  */
 
-const { mockEventBus, screens, channel, fetchCount } = vi.hoisted(() => ({
+const { mockEventBus, screens, channel, fetchCount, store } = vi.hoisted(() => ({
   mockEventBus: { emit: vi.fn() },
   screens: [] as Array<{ id: string; presentation: { label: string; route: string } }>,
   channel: { listeners: new Set<(event: unknown) => void>() },
   fetchCount: vi.fn(),
+  store: { state: {} as Record<string, unknown> },
 }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   eventBus: mockEventBus,
   useDomainExtensions: () => screens,
-  useAppSelector: () => null,
+  useAppSelector: (select: (state: Record<string, unknown>) => unknown) => select(store.state),
   apiRegistry: { getService: () => ({ count: { fetch: fetchCount } }) },
 }));
 vi.mock('@/app/live/liveChannel', () => ({
@@ -30,7 +31,13 @@ vi.mock('@/app/live/liveChannel', () => ({
   }),
 }));
 
-import { INBOX_REREAD_MS, INBOX_ROUTE, movesInbox, useInboxEntry } from './useInboxEntry';
+import { APP_CONTEXT_SLICE_KEY } from '@/app/slices/appContextSlice';
+import { INBOX_FRESH_MS, INBOX_REREAD_MS, INBOX_ROUTE, movesInbox, useInboxEntry } from './useInboxEntry';
+
+/** The person is on `section`. */
+function onSection(section: string | null) {
+  store.state = { [APP_CONTEXT_SLICE_KEY]: { section } };
+}
 
 function hear(subject_type: string) {
   const event: StudioEvent = { seq: 1, at_ms: 1, kind: 'x', subject_type, subject_id: 's', source: 'x', payload: {} };
@@ -45,6 +52,7 @@ describe('useInboxEntry', () => {
     screens.push({ id: 'ext.inbox', presentation: { label: 'Inbox', route: INBOX_ROUTE } });
     fetchCount.mockReset();
     fetchCount.mockResolvedValue({ total: 4, unread: [] });
+    onSection(null);
   });
   afterEach(() => {
     cleanup();
@@ -81,6 +89,42 @@ describe('useInboxEntry', () => {
     hear('review_request');
     await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(2));
     expect(movesInbox({ subject_type: 'workspace' } as StudioEvent)).toBe(false);
+  });
+
+  it('reads again on leaving the Inbox, where items are marked', async () => {
+    onSection('inbox');
+    const { rerender } = renderHook(() => useInboxEntry());
+    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(1));
+    onSection('workspaces');
+    rerender();
+    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(2));
+  });
+
+  it('asks nothing for a click between two other tabs while the count is fresh', async () => {
+    vi.useFakeTimers();
+    onSection('workspaces');
+    const { rerender } = renderHook(() => useInboxEntry());
+    expect(fetchCount).toHaveBeenCalledTimes(1);
+    onSection('people');
+    rerender();
+    onSection('settings');
+    rerender();
+    await act(async () => {});
+    expect(fetchCount).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads again on a move once the count is older than INBOX_FRESH_MS', async () => {
+    vi.useFakeTimers();
+    onSection('workspaces');
+    const { rerender } = renderHook(() => useInboxEntry());
+    expect(fetchCount).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      vi.advanceTimersByTime(INBOX_FRESH_MS);
+    });
+    onSection('people');
+    rerender();
+    await act(async () => {});
+    expect(fetchCount).toHaveBeenCalledTimes(2);
   });
 
   it('reads again every two minutes', async () => {
