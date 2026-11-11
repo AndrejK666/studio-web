@@ -285,6 +285,31 @@ describe('LevelTabs (the level navigation)', () => {
       expect(tab('Artifacts').getAttribute('aria-current')).toBe('page');
       expect(tab('Overview').getAttribute('aria-current')).toBeNull();
     });
+
+    // project-team's Team: a tab under the projects token, in its own
+    // micro-frontend, named by the section it declares (routing mounts it).
+    const team = {
+      id: 'ext.team',
+      domain: SCREEN_DOMAIN,
+      entry: 'entry.team',
+      presentation: { label: 'Team', route: '/projects/team', order: 60, level: 'project', section: 'team', kit: 'project-team' },
+    };
+
+    it('asks for a kit’s tab in a micro-frontend of its own by its section', () => {
+      registered.value = [overview, artifacts, team];
+      render(<LevelTabs />);
+      fireEvent.click(tab('Team'));
+      expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/screen/requested', { extensionId: 'ext.team' });
+    });
+
+    it('marks the kit’s tab, and only it, while its micro-frontend shows', () => {
+      registered.value = [overview, artifacts, team];
+      mounted.value = [team];
+      section.value = 'team';
+      render(<LevelTabs />);
+      expect(tab('Team').getAttribute('aria-current')).toBe('page');
+      expect(tab('Overview').getAttribute('aria-current')).toBeNull();
+    });
   });
 
   it('holds a placeholder while the manifest is still in flight', () => {

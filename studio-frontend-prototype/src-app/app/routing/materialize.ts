@@ -51,6 +51,26 @@ function impliedLevel(route: ShellRoute): ScreenLevel {
   return 'organization';
 }
 
+/**
+ * The screen an address of `group` opens. A group's members usually share one
+ * micro-frontend, which switches by the published section, and the group's
+ * owner is mounted for all of them. A kit may add a tab under a token another
+ * micro-frontend owns (project-activity's `/projects/activity`,
+ * project-team's `/projects/team`): that member is mounted itself, or the
+ * owner would draw a section it has never heard of.
+ */
+export function screenFor(
+  group: ScreenGroup,
+  level: ScreenLevel,
+  section: string | undefined
+): StudioScreenExtension {
+  const target =
+    section === undefined
+      ? undefined
+      : group.members.find((member) => levelOf(member) === level && answersSection(member, section));
+  return target && target.entry !== group.owner.entry ? target : group.owner;
+}
+
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-artifact-address:p1
 function artifactOf(route: ShellRoute): StudioArtifact | null {
   if (!route.artifact || !isStudioArtifactKind(route.kind)) return null;
@@ -200,18 +220,31 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     });
   };
 
-  const isMounted = (registry: MfeRegistry, group: ScreenGroup): boolean => {
+  /**
+   * Whether the screen domain already shows `target`: the extension itself,
+   * or another member of its group in the same micro-frontend, which switches
+   * by the section it is published (the owner answers its group's sections).
+   */
+  const isMounted = (registry: MfeRegistry, group: ScreenGroup, target: StudioScreenExtension): boolean => {
     const [mountedId] = occupancyOf(registry).mounted(screenDomain.id);
-    return groupOfExtension(deps.groups(), mountedId)?.token === group.token;
+    if (!mountedId) return false;
+    if (mountedId === target.id) return true;
+    const mounted = group.members.find((member) => member.id === mountedId);
+    return mounted !== undefined && mounted.entry === target.entry;
   };
 
   // @cpt-begin:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
-  const mountFailed = (registry: MfeRegistry, group: ScreenGroup, reason: string): void => {
+  const mountFailed = (
+    registry: MfeRegistry,
+    group: ScreenGroup,
+    target: StudioScreenExtension,
+    reason: string
+  ): void => {
     // The requests of one visit join one runtime entry and fail together: the
     // first has already said so and stuck the visit or moved the address.
     if (stuckIn === visit || navigation.currentRoute()?.token !== group.token) return;
     // The runtime keeps the cause to itself, so this names what was asked for.
-    const { id, presentation } = group.owner;
+    const { id, presentation } = target;
     // A kit's screen loaded at run time (ADR-0068 phase 5) says so on its tile.
     runtimeKitsOf(registry).mountFailed(id, reason);
     warn(
@@ -238,23 +271,24 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
   // @cpt-end:cpt-studiofrontend-flow-shell-levels-descend:p1:inst-7
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
-  const mount = (registry: MfeRegistry, group: ScreenGroup): void => {
+  const mount = (registry: MfeRegistry, group: ScreenGroup, target: StudioScreenExtension): void => {
     if (stuckIn === visit) return;
     const startedIn = visit;
-    void mountScreen(registry, group.owner).then(
+    void mountScreen(registry, target).then(
       () => {
         // A mount from a visit the person has left, done or replaced, says
         // nothing about this one: the current address only gets its own pass.
         if (startedIn !== visit) return materialize();
-        if (isMounted(registry, group)) {
+        if (isMounted(registry, group, target)) {
           fallbackTo = null;
           stuckIn = null;
           materialize();
           return;
         }
-        mountFailed(registry, group, 'the actions chain did not complete');
+        mountFailed(registry, group, target, 'the actions chain did not complete');
       },
-      (error: unknown) => (startedIn !== visit ? materialize() : mountFailed(registry, group, errorMessage(error)))
+      (error: unknown) =>
+        startedIn !== visit ? materialize() : mountFailed(registry, group, target, errorMessage(error))
     );
   };
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-7
@@ -271,6 +305,13 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     // nothing asks for it after that. The runtime answers a mounted screen at
     // once and makes a new mount wait out a release.
     pass(true);
+  };
+
+  /** Whether a kit's screen may still be registered for `route`'s scope in this visit. */
+  const mayStillArrive = (route: ShellRoute): boolean => {
+    if (!deps.runtime || waitedOutIn === visit) return false;
+    const scope = runtimeScopeKey({ project: route.project, org: route.org });
+    return scope !== null && !deps.runtime.isSettled(scope);
   };
 
   /**
@@ -409,17 +450,26 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     const sections = inScope
       .map((member) => sectionOf(member))
       .filter((section): section is string => section !== undefined);
+    /** The address names a section a kit not registered yet may bring to this group: it waits for it. */
+    let sectionWaits = false;
     if (sections.length > 0) {
       // A member may answer a family of sections (`type:` for the tabs the
       // Studio domain model adds, ADR-0066).
       const wantedSection = wanted.section;
       if (wantedSection && !inScope.some((member) => answersSection(member, wantedSection))) {
-        warn(`"${wanted.section}" is not a section of ${route.token}; opening its first one`);
-        wanted.section = undefined;
+        if (mayStillArrive(next)) {
+          // A cold deep link to a kit's tab under a token the shell already
+          // has (`/projects/<kit section>`): kept until the kits of the scope
+          // are registered, then judged like any other section.
+          sectionWaits = true;
+        } else {
+          warn(`"${wanted.section}" is not a section of ${route.token}; opening its first one`);
+          wanted.section = undefined;
+        }
       }
       const entry = entryPointOf(group?.members ?? [], levelInScope);
       next.section = wanted.section ?? (entry ? sectionOf(entry) : undefined) ?? sections[0];
-      if (readAppContext(app).section !== next.section) dispatch(setContextSection(next.section));
+      if (!sectionWaits && readAppContext(app).section !== next.section) dispatch(setContextSection(next.section));
     } else if (!group && wanted.section) {
       // Nobody can say yet whether it is a section of the screen being waited for: kept.
       next.section = wanted.section;
@@ -472,15 +522,16 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
 
     if (!routesEqual(next, address)) navigation.navigate(next, 'replace');
 
-    if (!group) {
-      holdUnresolved(registry, next, ownerLevel);
+    if (!group || sectionWaits) {
+      holdUnresolved(registry, next, group ? levelInScope : ownerLevel);
       return;
     }
     unresolvedScreenOf(registry).set(null);
 
     // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
     // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-6
-    if (remount || !isMounted(registry, group)) mount(registry, group);
+    const target = screenFor(group, levelInScope, next.section);
+    if (remount || !isMounted(registry, group, target)) mount(registry, group, target);
     // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-6
     // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-3
   };
