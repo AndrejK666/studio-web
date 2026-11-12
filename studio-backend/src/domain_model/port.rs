@@ -634,6 +634,14 @@ impl DomainObjects for KeptByGear {
         self.0.query(&as_gear(ctx)?, body).await
     }
 
+    async fn aggregate(
+        &self,
+        ctx: &SecurityContext,
+        body: Value,
+    ) -> anyhow::Result<(Vec<(Vec<Value>, u64)>, usize)> {
+        self.0.aggregate(&as_gear(ctx)?, body).await
+    }
+
     async fn entity_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<(String, bool)>> {
         self.0.entity_types(&as_gear(ctx)?).await
     }

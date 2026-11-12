@@ -109,3 +109,44 @@ async fn a_member_without_a_grant_gets_a_gears_records_through_the_gear() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].payload["path"], "epics/GRN-6.md");
 }
+
+/// A `DomainObjects` method `KeptByGear` does not forward falls to the
+/// trait's default, which answers "not offered here" or nothing at all: the
+/// gear's call then fails or comes back empty without a word. Every method the
+/// trait declares is forwarded.
+#[test]
+fn every_port_method_is_forwarded_as_the_gear() {
+    let src = include_str!("port.rs");
+    let fns = |block: &str| -> std::collections::BTreeSet<String> {
+        block
+            .split("async fn ")
+            .skip(1)
+            .filter_map(|rest| rest.split(['(', '<']).next())
+            .map(|name| name.trim().to_owned())
+            .collect()
+    };
+    let body = |start: &str| -> &str {
+        let at = src
+            .find(start)
+            .unwrap_or_else(|| panic!("no `{start}` in port.rs"));
+        let rest = &src[at..];
+        &rest[..rest
+            .find(
+                "
+}
+",
+            )
+            .unwrap_or(rest.len())]
+    };
+    let declared = fns(body("pub trait DomainObjects"));
+    let forwarded = fns(body("impl DomainObjects for KeptByGear"));
+    let missing: Vec<_> = declared.difference(&forwarded).collect();
+    assert!(
+        declared.len() > 10,
+        "the scan found the trait: {declared:?}"
+    );
+    assert!(
+        missing.is_empty(),
+        "KeptByGear does not forward {missing:?}"
+    );
+}
