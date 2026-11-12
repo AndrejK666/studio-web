@@ -183,6 +183,20 @@ pub trait DomainObjects: Send + Sync {
         anyhow::bail!("queries are not offered here")
     }
 
+    /// Run a query for its counts: the body `POST /query` takes, with an
+    /// `aggregate`, answered as the groups `(key, count)` and how many
+    /// matched. Send `"limit": 0` to read no rows at all: the read model then
+    /// answers with one `GROUP BY` over the matches.
+    ///
+    /// What a gear counts with instead of fetching the rows to count them.
+    async fn aggregate(
+        &self,
+        _ctx: &SecurityContext,
+        _body: Value,
+    ) -> anyhow::Result<(Vec<(Vec<Value>, u64)>, usize)> {
+        anyhow::bail!("aggregates are not offered here")
+    }
+
     /// Every type of the tenant's model, and whether it is abstract.
     async fn entity_types(&self, _ctx: &SecurityContext) -> anyhow::Result<Vec<(String, bool)>> {
         Ok(Vec::new())
@@ -399,6 +413,29 @@ impl DomainObjects for Objects {
                     instance_id: r.id,
                     payload: r.value,
                 })
+                .collect(),
+            out.rows.total,
+        ))
+    }
+
+    async fn aggregate(
+        &self,
+        ctx: &SecurityContext,
+        body: Value,
+    ) -> anyhow::Result<(Vec<(Vec<Value>, u64)>, usize)> {
+        let q = super::query::Query::from_json(body).map_err(|e| anyhow::anyhow!(e))?;
+        if q.aggregate.is_none() {
+            anyhow::bail!("an aggregate query names its `aggregate`");
+        }
+        let out = self.0.query_bulk(ctx, &q).await.map_err(|e| match e {
+            super::query::QueryError::Invalid(m) => anyhow::anyhow!(m),
+            super::query::QueryError::Failed(e) => e,
+        })?;
+        Ok((
+            out.groups
+                .unwrap_or_default()
+                .into_iter()
+                .map(|g| (g.key, g.count))
                 .collect(),
             out.rows.total,
         ))

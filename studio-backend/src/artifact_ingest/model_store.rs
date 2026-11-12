@@ -649,6 +649,19 @@ fn scope_where(scope: &str) -> Value {
     json!({"_or": [{"workspace_id": {"_eq": scope}}, {"project_id": {"_eq": scope}}]})
 }
 
+/// [`scope_where`] for any of several projects.
+///
+/// Sent with `project_ids`, which narrows by the indexed `scope` column
+/// first: an artifact's scope is its project, else its workspace
+/// ([`scope_of`]), so every artifact naming one of these projects is in
+/// it, and so is one whose workspace field names it without a project. What
+/// the column leaves out is an artifact whose workspace field names one of
+/// these projects while its project field names another: a project is never
+/// a workspace, so no sync writes one.
+fn projects_where(projects: &[String]) -> Value {
+    json!({"_or": [{"workspace_id": {"_in": projects}}, {"project_id": {"_in": projects}}]})
+}
+
 /// The listing's order ([`page_of_nodes`]): newest `updated_at` first, an
 /// absent one last, ties by id; or by id alone.
 fn sort_as_listed(nodes: &mut [GtsNode], by_updated: bool) {
@@ -859,6 +872,81 @@ impl GraphStore for ModelGraph {
             .await?;
         let n: usize = answers.iter().map(|(_, _, n)| *n).sum();
         Ok(u64::try_from(n).unwrap_or(u64::MAX))
+    }
+
+    async fn list_in_projects(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+        projects: &[String],
+    ) -> anyhow::Result<HashMap<String, Vec<GtsNode>>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.list_in_projects(ctx, type_filter, projects).await;
+        }
+        // One query per type for every project, by the indexed `scope`
+        // column, then split here by the same rule `scope_where` asks.
+        let answers = s
+            .query_types(ctx, type_filter, |entity| {
+                json!({"type": entity, "project_ids": projects, "where": projects_where(projects)})
+            })
+            .await?;
+        let mut out: HashMap<String, Vec<GtsNode>> =
+            projects.iter().map(|p| (p.clone(), Vec::new())).collect();
+        for node in answers.into_iter().flat_map(|(_, nodes, _)| nodes) {
+            for p in projects {
+                if super::rest::node_in_scope(&node.value, Some(p))
+                    && let Some(list) = out.get_mut(p)
+                {
+                    list.push(node.clone());
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    async fn count_in_projects(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+        projects: &[String],
+    ) -> anyhow::Result<HashMap<String, u64>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.count_in_projects(ctx, type_filter, projects).await;
+        }
+        let port = s.port()?;
+        // One `GROUP BY` per type for every project: no row is read.
+        let reads = gts::resolve_listable_types(type_filter)
+            .into_iter()
+            .filter_map(entity_of)
+            .map(|entity| {
+                let port = Arc::clone(&port);
+                let body = json!({
+                    "type": entity,
+                    "project_ids": projects,
+                    "where": projects_where(projects),
+                    "aggregate": {"group_by": ["project_id", "workspace_id"]},
+                    "limit": 0,
+                });
+                async move { port.aggregate(ctx, body).await }
+            });
+        let mut out: HashMap<String, u64> = projects.iter().map(|p| (p.clone(), 0)).collect();
+        for (groups, _) in futures_util::future::try_join_all(reads).await? {
+            for (key, count) in groups {
+                let names = |i: usize, p: &str| key.get(i).and_then(Value::as_str) == Some(p);
+                for p in projects {
+                    // The same rule as `scope_where`: its project or its
+                    // workspace, counted once when it is both.
+                    if (names(0, p) || names(1, p))
+                        && let Some(n) = out.get_mut(p)
+                    {
+                        *n = n.saturating_add(count);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     async fn files_in_scope(

@@ -161,6 +161,47 @@ pub trait GraphStore: Send + Sync {
         Ok(u64::try_from(n).unwrap_or(u64::MAX))
     }
 
+    /// [`GraphStore::list_in_scope`] for several projects at once, keyed by
+    /// project: what a table of projects reads, so it asks once per type
+    /// rather than once per type and project. A node naming two of them is
+    /// listed under both, as two separate reads would list it.
+    ///
+    /// Defaulted to one read per project. The domain model overrides it
+    /// with one query per type, narrowed by the indexed `scope` column, which
+    /// holds an artifact's project (else its workspace) — so these must be
+    /// projects, not workspaces: a workspace's artifacts sit under its
+    /// projects there.
+    async fn list_in_projects(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+        projects: &[String],
+    ) -> anyhow::Result<std::collections::HashMap<String, Vec<GtsNode>>> {
+        let mut out = std::collections::HashMap::new();
+        for p in projects {
+            let nodes = self.list_in_scope(ctx, type_filter, p).await?;
+            out.insert(p.clone(), nodes);
+        }
+        Ok(out)
+    }
+
+    /// [`GraphStore::count_in_scope`] for several projects at once, keyed by
+    /// project; every project asked for has an entry. Same rules as
+    /// [`GraphStore::list_in_projects`].
+    async fn count_in_projects(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+        projects: &[String],
+    ) -> anyhow::Result<std::collections::HashMap<String, u64>> {
+        let mut out = std::collections::HashMap::new();
+        for p in projects {
+            let n = self.count_in_scope(ctx, type_filter, p).await?;
+            out.insert(p.clone(), n);
+        }
+        Ok(out)
+    }
+
     /// The scope's files, as the documents gear lists them.
     async fn files_in_scope(
         &self,
