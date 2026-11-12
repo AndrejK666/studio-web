@@ -1626,6 +1626,43 @@ impl ConnectorService {
     }
 }
 
+/// The account-management client this gear reads its catalogue through:
+/// account-management wrapped so the catalogue comes from wherever
+/// `storage.metadata` keeps it (ADR-0066 §8a). Set once at `init`.
+///
+/// The free lookups below ([`connection_by_id`], [`own_connection`], …) are
+/// called by other gears with *their* client, which is the raw one. Once a
+/// tenant's catalogue has moved into the domain model, the raw client finds
+/// no row, every connection lookup answers "none", and a private source is
+/// then cloned and synced without its token — silently, because nothing asks
+/// for a token it does not know about (#1067). So the catalogue is always
+/// read through this gear's own client; the caller's is the fallback before
+/// `init` (tests, tools). Only the free lookups pick it, through
+/// [`catalogue_client`]: the service already holds it, and tests bring their
+/// own.
+static CATALOGUE_READER: std::sync::OnceLock<Arc<dyn AccountManagementClient>> =
+    std::sync::OnceLock::new();
+
+/// Record the client the catalogue is read through (see [`CATALOGUE_READER`]).
+pub(super) fn keep_catalogue_reader(am: Arc<dyn AccountManagementClient>) {
+    let _ = CATALOGUE_READER.set(am);
+}
+
+fn kept_reader() -> Option<&'static dyn AccountManagementClient> {
+    CATALOGUE_READER.get().map(|am| am.as_ref())
+}
+
+/// The client a free lookup reads the catalogue through: `kept` (this gear's
+/// own, see [`CATALOGUE_READER`]) when there is one, else the caller's. The
+/// kept one passes `get_tenant` through unchanged, so the walk up the tree
+/// asks it too.
+fn catalogue_client<'a>(
+    kept: Option<&'a dyn AccountManagementClient>,
+    caller: &'a dyn AccountManagementClient,
+) -> &'a dyn AccountManagementClient {
+    kept.unwrap_or(caller)
+}
+
 /// The connection catalogue visible from `tenant`: its own row, or the
 /// nearest ancestor's when it has none.
 async fn load_catalogue(
@@ -1791,7 +1828,19 @@ pub async fn connection_by_id(
     from: Uuid,
     id: Uuid,
 ) -> Option<(Uuid, Connection)> {
-    nearest_in(am, ctx, from, |c| c.id == id).await
+    connection_by_id_via(kept_reader(), am, ctx, from, id).await
+}
+
+/// [`connection_by_id`] with the kept reader passed in, so a test can give
+/// one without touching the process-wide [`CATALOGUE_READER`].
+async fn connection_by_id_via(
+    kept: Option<&dyn AccountManagementClient>,
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    from: Uuid,
+    id: Uuid,
+) -> Option<(Uuid, Connection)> {
+    nearest_in(catalogue_client(kept, am), ctx, from, |c| c.id == id).await
 }
 
 /// The caller's own `provider` connection: a personal one they created,
@@ -1805,6 +1854,7 @@ pub async fn own_connection(
     from: &[Uuid],
     provider: &str,
 ) -> Option<(Uuid, Connection)> {
+    let am = catalogue_client(kept_reader(), am);
     let me = ctx.subject_id().to_string();
     for &start in from {
         // Tenant by tenant: the newest in the nearest tenant that has one,
