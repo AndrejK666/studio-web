@@ -37,6 +37,51 @@ export function useInstalledKits(): ReadonlySet<string> | null {
   return new Set(read.data.effective.map((k) => k.kit_slug));
 }
 
+/** A kit's icon as the installer lists it: a lucide name, or the URL of an SVG in its bundle. */
+export interface KitIconRef {
+  icon: string | null;
+  url: string | null;
+}
+
+/**
+ * The icons of the kits installed where the person is, by slug (#1081); empty
+ * while unknown. Reads the same cache entry as `useInstalledKits`.
+ */
+export function useKitIcons(): ReadonlyMap<string, KitIconRef> {
+  const orgId = useAppSelector(
+    (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.org?.id ?? null
+  );
+  const projectId = useAppSelector(
+    (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.project?.id ?? null
+  );
+  const scope = projectId ? { projectId } : { organizationId: orgId ?? '' };
+  const read = useApiQuery(apiRegistry.getService(InstalledKitsApiService).installed(scope), {
+    enabled: !!orgId || !!projectId,
+  });
+  const effective = read.data?.effective;
+  return useMemo(
+    () =>
+      new Map(
+        (effective ?? []).map((k) => [k.kit_slug, { icon: k.icon ?? null, url: k.icon_url ?? null }] as const)
+      ),
+    [effective]
+  );
+}
+
+/**
+ * What a screen's tab shows as its icon: the screen's own (`presentation.icon`)
+ * when it names one, else its kit's, a lucide name or a bundled SVG's URL.
+ */
+export function screenIcon(
+  screen: StudioScreenExtension,
+  kits: ReadonlyMap<string, KitIconRef>
+): { declared: string | undefined; url: string | undefined } {
+  const own = screen.presentation.icon;
+  if (own) return { declared: own, url: undefined };
+  const kit = screen.presentation.kit ? kits.get(screen.presentation.kit) : undefined;
+  return { declared: kit?.icon ?? undefined, url: kit?.url ?? undefined };
+}
+
 /** The domain types a screen needs to show (`presentation.needs`); empty for most. */
 export function typesNeeded(screen: StudioScreenExtension): readonly string[] {
   const needs = screen.presentation.needs;

@@ -112,13 +112,15 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useDomainExtensions: () => registered.value,
   eventBus: mockEventBus,
 }));
-const { installedKits } = vi.hoisted(() => ({
+const { installedKits, kitIcons } = vi.hoisted(() => ({
   installedKits: { value: null as ReadonlySet<string> | null },
+  kitIcons: { value: new Map<string, { icon: string | null; url: string | null }>() },
 }));
 vi.mock('./useInstalledKits', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./useInstalledKits')>()),
   useInstalledKits: () => installedKits.value,
   useInstalledTypes: () => installedTypes.value,
+  useKitIcons: () => kitIcons.value,
 }));
 const { installedTypes } = vi.hoisted(() => ({
   installedTypes: { value: null as ReadonlySet<string> | null },
@@ -601,5 +603,42 @@ describe('LevelTabs and kits (ADR-0069 §4)', () => {
     render(<LevelTabs />);
     expect(screen.queryByText('Timeline')).not.toBeNull();
     installedTypes.value = null;
+  });
+
+  it("puts the kit's icon on a tab whose screen names none, and the screen's own where it does (#1081)", () => {
+    level.value = 'project';
+    const named = {
+      id: 'ext.tests',
+      domain: SCREEN_DOMAIN,
+      entry: 'entry.tests',
+      presentation: { label: 'Tests', icon: 'lucide:flask-conical', route: '/projects/tests', order: 60, level: 'project', section: 'tests', kit: 'project-tests' },
+    };
+    const unnamed = {
+      id: 'ext.runbooks',
+      domain: SCREEN_DOMAIN,
+      entry: 'entry.runbooks',
+      presentation: { label: 'Runbooks', route: '/projects/runbooks', order: 61, level: 'project', section: 'runbooks', kit: 'ops-runbooks' },
+    };
+    registered.value = [named, unnamed];
+    kitIcons.value = new Map([
+      ['project-tests', { icon: 'lucide:package', url: null }],
+      ['ops-runbooks', { icon: 'mfe/runbooks/kit.svg', url: '/cf/studio-kits/v1/kits/ops-runbooks/1/mfe/g/runbooks/kit.svg' }],
+    ]);
+    render(<LevelTabs />);
+    const img = screen.getByText('Runbooks').querySelector('img[data-kit-icon-url]');
+    expect(img?.getAttribute('src')).toBe('/cf/studio-kits/v1/kits/ops-runbooks/1/mfe/g/runbooks/kit.svg');
+    expect(screen.getByText('Tests').querySelector('img')).toBeNull();
+    kitIcons.value = new Map();
+  });
+
+  it("reads the screen's own icon first, then its kit's", async () => {
+    const { screenIcon } = await import('./useInstalledKits');
+    const kits = new Map([['k', { icon: 'lucide:package', url: null }]]);
+    const own = { presentation: { label: 'A', route: '/a', icon: 'lucide:users', kit: 'k' } };
+    const none = { presentation: { label: 'B', route: '/b', kit: 'k' } };
+    const shell = { presentation: { label: 'C', route: '/c' } };
+    expect(screenIcon(own as never, kits)).toEqual({ declared: 'lucide:users', url: undefined });
+    expect(screenIcon(none as never, kits)).toEqual({ declared: 'lucide:package', url: undefined });
+    expect(screenIcon(shell as never, kits)).toEqual({ declared: undefined, url: undefined });
   });
 });

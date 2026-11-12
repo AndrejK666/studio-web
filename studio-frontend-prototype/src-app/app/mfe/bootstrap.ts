@@ -50,6 +50,7 @@ import {
   STUDIO_ACTION_CONTEXT_PUBLISH,
   STUDIO_ACTION_NOTIFY,
   STUDIO_ACTION_PLACE_OPEN,
+  STUDIO_ACTION_PREFERENCE_SET,
   STUDIO_ACTION_SCREEN_OPEN,
   STUDIO_ACTION_WORKSPACES_PUBLISH,
   STUDIO_SHARED_PROPERTY_CONTEXT_ARTIFACT,
@@ -61,8 +62,10 @@ import {
   STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
   STUDIO_SHARED_PROPERTY_LIVE_EVENT,
   STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
+  STUDIO_SHARED_PROPERTY_UI_PREFERENCES,
   prewarmShadowStyles,
 } from '@constructor-studio/mfe-shared';
+import { createPreferenceSetHandler, publishMfePreferences } from '@/app/mfe/preferenceActions';
 import {
   createArtifactOpenHandler,
   createContextPublishHandler,
@@ -243,6 +246,7 @@ class ScreenDomainImpl extends ExtensionDomainImplementation {
     ctx.registerHandler(STUDIO_ACTION_ARTIFACT_OPEN, createArtifactOpenHandler());
     ctx.registerHandler(STUDIO_ACTION_NOTIFY, createNotifyHandler());
     ctx.registerHandler(STUDIO_ACTION_PLACE_OPEN, createPlaceOpenHandler());
+    ctx.registerHandler(STUDIO_ACTION_PREFERENCE_SET, createPreferenceSetHandler());
     ctx.registerHandler(
       STUDIO_ACTION_SCREEN_OPEN,
       createScreenOpenHandler(() => registry.getExtensionsForDomain(screenDomain.id) as StudioScreenExtension[])
@@ -536,11 +540,13 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_ACTION_NOTIFY,
       STUDIO_ACTION_SCREEN_OPEN,
       STUDIO_ACTION_PLACE_OPEN,
+      STUDIO_ACTION_PREFERENCE_SET,
       STUDIO_ACTION_CHAIN_DONE,
       STUDIO_ACTION_CHAIN_FAILED,
     ],
     sharedProperties: [
       ...screenDomain.sharedProperties,
+      STUDIO_SHARED_PROPERTY_UI_PREFERENCES,
       STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
       STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
       STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
@@ -658,6 +664,8 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
   publishLiveEvent(app, null);
   // Not known before the screens are registered (app/layout/AvailableScreens.tsx).
   publishAvailableScreens(app, null);
+  // The MFEs' remembered choices (Kits' table or tiles), kept current for the session.
+  publishMfePreferences(app);
 
   console.info(`[MFE Bootstrap] Fetching MFE manifests from ${MFE_MANIFESTS_URL}`);
   const response = await fetch(MFE_MANIFESTS_URL);
