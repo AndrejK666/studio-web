@@ -134,7 +134,7 @@ impl ConnectorDriver for SignedIn {
 type Row = (String, SharingMode, Vec<u8>);
 
 #[derive(Default)]
-struct Secrets {
+pub(super) struct Secrets {
     /// By reference.
     rows: Mutex<HashMap<String, Row>>,
 }
@@ -241,8 +241,18 @@ impl CredStoreClientV1 for Secrets {
 /* ── account-management: one catalogue document per tenant ── */
 
 #[derive(Default)]
-struct Catalogues {
-    docs: Mutex<HashMap<Uuid, Value>>,
+pub(super) struct Catalogues {
+    pub(super) docs: Mutex<HashMap<Uuid, Value>>,
+    /// Each tenant's parent; one not listed has none.
+    pub(super) parents: HashMap<Uuid, Uuid>,
+    /// Every account-management call made, by method name, in order.
+    pub(super) calls: Mutex<Vec<&'static str>>,
+}
+
+impl Catalogues {
+    fn called(&self, method: &'static str) {
+        self.calls.lock().unwrap().push(method);
+    }
 }
 
 fn entry(value: Value) -> MetadataEntry {
@@ -263,8 +273,26 @@ impl AccountManagementClient for Catalogues {
     ) -> Result<Tenant, CanonicalError> {
         unimplemented!()
     }
-    async fn get_tenant(&self, _: &SecurityContext, _: Uuid) -> Result<Tenant, CanonicalError> {
-        unimplemented!()
+    async fn get_tenant(&self, _: &SecurityContext, id: Uuid) -> Result<Tenant, CanonicalError> {
+        self.called("get_tenant");
+        let now = OffsetDateTime::now_utc();
+        Ok(Tenant {
+            id: account_management_sdk::TenantId(id),
+            name: "t".to_owned(),
+            status: account_management_sdk::TenantStatus::Active,
+            tenant_type: None,
+            parent_id: self
+                .parents
+                .get(&id)
+                .copied()
+                .map(account_management_sdk::TenantId),
+            self_managed: false,
+            depth: 1,
+            child_count: 0,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+        })
     }
     async fn list_children(
         &self,
@@ -374,6 +402,7 @@ impl AccountManagementClient for Catalogues {
         tenant: Uuid,
         _: GtsTypeId,
     ) -> Result<MetadataEntry, CanonicalError> {
+        self.called("get_metadata");
         self.docs
             .lock()
             .unwrap()
@@ -388,7 +417,18 @@ impl AccountManagementClient for Catalogues {
         tenant: Uuid,
         _: GtsTypeId,
     ) -> Result<Option<MetadataEntry>, CanonicalError> {
-        Ok(self.docs.lock().unwrap().get(&tenant).cloned().map(entry))
+        self.called("resolve_metadata");
+        // The nearest row wins whole, as account-management resolves it: one
+        // call, however far up it looks.
+        let docs = self.docs.lock().unwrap();
+        let mut at = Some(tenant);
+        while let Some(t) = at {
+            if let Some(doc) = docs.get(&t) {
+                return Ok(Some(entry(doc.clone())));
+            }
+            at = self.parents.get(&t).copied();
+        }
+        Ok(None)
     }
     async fn list_metadata(
         &self,
