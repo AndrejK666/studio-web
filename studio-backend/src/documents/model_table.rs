@@ -184,7 +184,11 @@ impl ModelTable {
         if let Some(port) = &self.fixed {
             return Some(Arc::clone(port));
         }
-        self.hub.as_ref()?.get::<dyn DomainObjects>().ok()
+        self.hub
+            .as_ref()?
+            .get::<dyn DomainObjects>()
+            .ok()
+            .map(crate::domain_model::port::KeptByGear::wrap)
     }
 
     /// The model's port, when rows are kept there and it is available.
@@ -195,7 +199,12 @@ impl ModelTable {
         if let Some(port) = &self.fixed {
             return Some(Arc::clone(port));
         }
-        let port = self.hub.as_ref()?.get::<dyn DomainObjects>().ok();
+        let port = self
+            .hub
+            .as_ref()?
+            .get::<dyn DomainObjects>()
+            .ok()
+            .map(crate::domain_model::port::KeptByGear::wrap);
         if port.is_none() {
             warn!(
                 "studio-documents: rows are kept in the domain model, but it is not available — using the tables"

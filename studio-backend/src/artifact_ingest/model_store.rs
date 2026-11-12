@@ -323,6 +323,7 @@ impl ModelGraphStore {
     fn port(&self) -> anyhow::Result<Arc<dyn DomainObjects>> {
         self.hub
             .get::<dyn DomainObjects>()
+            .map(crate::domain_model::port::KeptByGear::wrap)
             .map_err(|e| anyhow::anyhow!("the domain model is not available: {e}"))
     }
 
