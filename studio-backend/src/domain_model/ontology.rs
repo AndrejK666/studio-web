@@ -30,6 +30,45 @@ pub(crate) const PRODUCT_MODEL_JSON: &str = include_str!("ontology.core.json");
 /// Studio itself, as `meta.left_by.kit`. Never a kit's slug.
 pub(crate) const LEFT_BY_STUDIO: &str = "studio";
 
+/// The model document's keys stored packed (see [`Ontology::model_document`]).
+const PACKED_KEYS: &[&str] = &["core_layer", "kit_property_layers"];
+/// The one field of a packed key: its JSON, gzipped, in standard base64.
+const PACKED: &str = "gzip_base64";
+
+/// `value` as stored: `{"gzip_base64": "…"}`.
+fn pack(value: &Value) -> Value {
+    use base64::Engine;
+    use std::io::Write;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    // Writing to a Vec cannot fail.
+    let _ = gz.write_all(value.to_string().as_bytes());
+    let bytes = gz.finish().unwrap_or_default();
+    json!({ PACKED: base64::engine::general_purpose::STANDARD.encode(bytes) })
+}
+
+/// What [`pack`] stored, or `value` itself when it was stored unpacked (a
+/// model written before packing). `None` when the packed form does not read.
+fn unpack(value: &Value) -> Option<Value> {
+    use base64::Engine;
+    use std::io::Read;
+    let Some(data) = value
+        .as_object()
+        .filter(|o| o.len() == 1)
+        .and_then(|o| o.get(PACKED))
+        .and_then(Value::as_str)
+    else {
+        return Some(value.clone());
+    };
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(bytes.as_slice())
+        .read_to_string(&mut text)
+        .ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 fn studio_model() -> Value {
     serde_json::from_str(STUDIO_MODEL_JSON).expect("Studio's own model is valid JSON")
 }
@@ -373,10 +412,20 @@ impl Ontology {
     /// other top-level key a model carries). Stored as the single
     /// [`gts::META_MODEL`] node so the entities are not the only thing that
     /// survives a round trip through the graph.
+    ///
+    /// The layers ([`PACKED_KEYS`]) go in packed: graph-storage takes at most
+    /// 64 KiB in one node's payload, and the core layer alone pins the source
+    /// of every core type (ADR-0070 §5), more than that. [`Self::from_parts`]
+    /// unpacks them, so the document in memory is the same either way.
     pub fn model_document(&self) -> Value {
         let mut head = self.doc.clone();
         if let Some(obj) = head.as_object_mut() {
             obj.remove("entities");
+            for key in PACKED_KEYS {
+                if let Some(layer) = obj.get_mut(*key) {
+                    *layer = pack(layer);
+                }
+            }
         }
         head
     }
@@ -397,6 +446,13 @@ impl Ontology {
             Value::Object(_) => model_document,
             _ => json!({}),
         };
+        if let Some(obj) = doc.as_object_mut() {
+            for key in PACKED_KEYS {
+                if let Some(layer) = obj.get_mut(*key) {
+                    *layer = unpack(layer).ok_or(OntologyError::Malformed)?;
+                }
+            }
+        }
         doc.as_object_mut()
             .ok_or(OntologyError::Malformed)?
             .insert("entities".to_string(), Value::Array(entities));
@@ -2130,6 +2186,28 @@ mod tests {
         // the same order — so a boot off the graph is a boot off the model.
         let back = Ontology::from_parts(head, entities).expect("reassembles");
         assert_eq!(back.document(), o.document());
+    }
+
+    #[test]
+    fn the_layers_are_stored_packed_and_a_model_stored_before_reads_as_it_was() {
+        let o = Ontology::load();
+        assert!(o.has_core_layer());
+        let head = o.model_document();
+        let layer = &head["core_layer"];
+        assert!(layer[PACKED].is_string(), "the core layer is packed");
+        assert!(
+            head.to_string().len() < o.document()["core_layer"].to_string().len(),
+            "packing makes the model node smaller than the layer alone"
+        );
+        // A model stored before packing: the layer as plain JSON.
+        let mut plain = head.clone();
+        plain["core_layer"] = o.document()["core_layer"].clone();
+        let back = Ontology::from_parts(plain, o.entities().to_vec()).expect("reads");
+        assert_eq!(back.document(), o.document());
+        // A packed layer that does not read is a malformed model, not an empty one.
+        let mut broken = head;
+        broken["core_layer"] = json!({ PACKED: "not base64" });
+        assert!(Ontology::from_parts(broken, o.entities().to_vec()).is_err());
     }
 
     /// The entity documents in model order, the way a reload reconstructs them
