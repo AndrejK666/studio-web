@@ -315,6 +315,7 @@ impl ReviewStore {
             .hub
             .as_ref()
             .and_then(|h| h.get::<dyn DomainObjects>().ok())
+            .map(crate::domain_model::port::KeptByGear::wrap)
         else {
             warn!(
                 "studio-documents: reviews are kept in the model, but the domain model is not available — using the tables"
@@ -434,6 +435,7 @@ impl ReviewStore {
             .hub
             .as_ref()
             .and_then(|h| h.get::<dyn DomainObjects>().ok())
+            .map(crate::domain_model::port::KeptByGear::wrap)
         else {
             return;
         };
