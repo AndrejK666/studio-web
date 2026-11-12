@@ -294,3 +294,92 @@ fn a_studio_source_is_one_studio_reads_and_its_kit_declares() {
     assert!(declares("project-git", "pull-requests"));
     assert!(declares("project-specs", "review-requests"));
 }
+
+/// OPS with `icon` and, when given, the bundles it declares.
+fn with_icon(icon: &str, mfe: &[&str]) -> Result<KitManifest, String> {
+    let mut v: serde_json::Value = serde_json::from_str(OPS).unwrap();
+    v["icon"] = icon.into();
+    if !mfe.is_empty() {
+        v["mfe"] = mfe.to_vec().into();
+    }
+    read_kit_json(&v.to_string())
+}
+
+#[test]
+fn a_kit_names_its_icon_by_lucide_name() {
+    let m = with_icon("lucide:book-open", &[]).unwrap();
+    assert_eq!(m.icon.as_deref(), Some("lucide:book-open"));
+    assert_eq!(
+        kit_icon("lucide:book-open", &[]),
+        Ok(KitIcon::Lucide("book-open"))
+    );
+    for bad in [
+        "lucide:",
+        "lucide:Book",
+        "lucide:book open",
+        "lucide:-x",
+        "iconify:mdi-home",
+    ] {
+        assert!(with_icon(bad, &[]).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_kit_names_an_svg_in_a_bundle_it_declares() {
+    let m = with_icon("mfe/runbooks/icons/kit.svg", &["mfe/runbooks"]).unwrap();
+    assert_eq!(
+        kit_icon(m.icon.as_deref().unwrap(), &m.mfe),
+        Ok(KitIcon::Bundled {
+            package: "runbooks",
+            file: "icons/kit.svg"
+        })
+    );
+    // A bundle the kit does not declare, or a file that is not an SVG.
+    assert!(with_icon("mfe/other/kit.svg", &["mfe/runbooks"]).is_err());
+    assert!(with_icon("mfe/runbooks/kit.svg", &[]).is_err());
+    assert!(with_icon("mfe/runbooks/kit.png", &["mfe/runbooks"]).is_err());
+    assert!(with_icon("mfe/runbooks/remoteEntry.js", &["mfe/runbooks"]).is_err());
+    assert!(with_icon("runbooks/kit.svg", &["mfe/runbooks"]).is_err());
+}
+
+#[test]
+fn a_bundled_icon_never_leaves_its_bundle() {
+    for escaping in [
+        "mfe/runbooks/../../kit.json.svg",
+        "mfe/runbooks/../secret.svg",
+        "mfe/runbooks//kit.svg",
+        "mfe/runbooks/.hidden/kit.svg",
+        "mfe/runbooks/%2e%2e/kit.svg",
+        "/mfe/runbooks/kit.svg",
+        "mfe/../runbooks/kit.svg",
+        "mfe/runbooks/",
+    ] {
+        assert!(
+            with_icon(escaping, &["mfe/runbooks"]).is_err(),
+            "{escaping} is refused"
+        );
+    }
+}
+
+#[test]
+fn builtin_kits_name_their_icon_once() {
+    for kit in super::super::service::builtin_catalogue() {
+        let icon = kit
+            .icon
+            .as_deref()
+            .unwrap_or_else(|| panic!("`{}` has an icon", kit.slug));
+        assert!(
+            matches!(kit_icon(icon, &[]), Ok(KitIcon::Lucide(_))),
+            "`{}`: {icon}",
+            kit.slug
+        );
+        if let Some(manifest) = builtin_manifest(&kit.slug) {
+            assert_eq!(
+                manifest.icon.as_deref(),
+                Some(icon),
+                "`{}`: its kit.json and the catalogue name one icon",
+                kit.slug
+            );
+        }
+    }
+}

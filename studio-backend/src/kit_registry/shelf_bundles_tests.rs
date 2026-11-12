@@ -71,6 +71,11 @@ fn fake(org: Uuid) -> Arc<Fake> {
                 "kits/hello/mfe/hello/assets/font-1.woff2".into(),
                 vec![0, 159, 146, 150],
             ),
+            // The kit's icon (#1081).
+            (
+                "kits/hello/mfe/hello/icons/kit.svg".into(),
+                ICON.as_bytes().to_vec(),
+            ),
         ],
         reads: AtomicUsize::new(0),
         lookups: AtomicUsize::new(0),
@@ -81,6 +86,56 @@ fn bundles(source: Arc<Fake>) -> KitBundles {
     let b = KitBundles::new(Vec::new(), b"a key of sixteen bytes or more".to_vec());
     b.add_source(Arc::new(ShelfBundles::new(source)));
     b
+}
+
+const ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"/>"#;
+
+/// `hello-kit` on an organization's shelf at [`COMMIT`], naming `icon`.
+fn shelf_entry(icon: &str) -> super::super::service::KitDescriptor {
+    super::super::service::KitDescriptor {
+        slug: "hello-kit".into(),
+        name: "Hello".into(),
+        description: String::new(),
+        publisher: "Acme".into(),
+        visibility: "private".into(),
+        source: "github".into(),
+        repository_url: "https://github.com/acme/kits".into(),
+        default_version: COMMIT.into(),
+        manifest_path: "kits/hello/kit.json".into(),
+        shelf: super::super::service::SHELF_ORGANIZATION.into(),
+        levels: vec!["organization".into()],
+        icon: Some(icon.into()),
+    }
+}
+
+#[tokio::test]
+async fn a_shelf_kits_bundled_icon_is_served_through_the_bundle_route() {
+    let org = Uuid::new_v4();
+    let b = bundles(fake(org));
+    let kit = shelf_entry("mfe/hello/icons/kit.svg");
+    let url = b
+        .icon_url(&kit, Some(org))
+        .expect("a bundled icon has a URL");
+    let grant = b.org_grant(org, "hello-kit", COMMIT);
+    assert_eq!(
+        url,
+        format!("/cf/studio-kits/v1/kits/hello-kit/{COMMIT}/mfe/{grant}/hello/icons/kit.svg")
+    );
+    // What the anonymous file route answers for that URL: the SVG, as an SVG.
+    let (file, bytes) = b
+        .file("hello-kit", COMMIT, &grant, "hello", "icons/kit.svg")
+        .await
+        .unwrap()
+        .expect("the icon is served");
+    assert_eq!(file.content_type(), "image/svg+xml");
+    assert_eq!(bytes, ICON.as_bytes());
+    // Without the organization there is no grant to name; a lucide icon has no URL.
+    assert_eq!(b.icon_url(&kit, None), None);
+    assert_eq!(b.icon_url(&shelf_entry("lucide:package"), Some(org)), None);
+    assert_eq!(
+        b.icon_url(&shelf_entry("mfe/hello/../x.svg"), Some(org)),
+        None
+    );
 }
 
 #[tokio::test]

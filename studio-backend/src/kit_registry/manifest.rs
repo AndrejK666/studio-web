@@ -64,6 +64,12 @@ pub struct KitManifest {
     pub version: Option<String>,
     #[serde(default)]
     pub levels: Vec<String>,
+    /// The kit's icon (#1081): `lucide:<name>`, as a screen's `mfe.json`
+    /// names one, or an SVG inside one of its bundles,
+    /// `mfe/<package>/<file>.svg`, served through the kit bundle route
+    /// ([`kit_icon`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     /// The kit's built micro-frontends, each a directory beside the manifest,
     /// `mfe/<package>` (as `kit.gdl`'s `mfe = [path(...)]`): served to the
     /// shell from the repository at the pinned commit
@@ -393,6 +399,10 @@ fn check(m: &KitManifest) -> Result<(), String> {
     if m.mfe.len() > 16 {
         return Err(format!("{KIT_JSON}: at most 16 `mfe` packages"));
     }
+    if let Some(icon) = m.icon.as_deref() {
+        kit_icon(icon, &m.mfe)
+            .map_err(|why| format!("{KIT_JSON}: icon \"{icon}\" is not {why}"))?;
+    }
     for f in &m.functions {
         if !matches!(f.runtime.as_str(), "wasm" | "agent") {
             return Err(format!(
@@ -513,6 +523,65 @@ fn check(m: &KitManifest) -> Result<(), String> {
     // checked against it when the kit is installed.
     overlay_of(m)?;
     Ok(())
+}
+
+/// A lucide icon's prefix, as a screen's `presentation.icon` takes it.
+pub const LUCIDE_ICON_PREFIX: &str = "lucide:";
+
+/// A kit's icon, read ([`kit_icon`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KitIcon<'a> {
+    /// A lucide glyph by name (`package`), which the shell draws itself.
+    Lucide(&'a str),
+    /// An SVG file in one of the kit's bundles: the `<package>` of
+    /// `mfe/<package>` and the file's path inside it.
+    Bundled { package: &'a str, file: &'a str },
+}
+
+/// Read a kit's `icon` against the bundles the kit declares (`mfe`):
+/// `lucide:<name>` (lowercase letters, digits and `-`), or
+/// `mfe/<package>/<path>.svg` where `mfe/<package>` is one of `mfe` and the
+/// path is one the bundle route serves (relative, no `..`, no hidden part).
+/// The error says what an icon is.
+pub fn kit_icon<'a>(icon: &'a str, mfe: &[String]) -> Result<KitIcon<'a>, String> {
+    if let Some(name) = icon.strip_prefix(LUCIDE_ICON_PREFIX) {
+        let ok = !name.is_empty()
+            && name.len() <= 64
+            && name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        return if ok {
+            Ok(KitIcon::Lucide(name))
+        } else {
+            Err("a lucide name: `lucide:` and lowercase letters, digits and `-`".to_owned())
+        };
+    }
+    let bundled =
+        "`lucide:<name>` or an SVG in one of the kit's bundles, `mfe/<package>/<file>.svg`";
+    let Some((package_path, file)) = icon
+        .strip_prefix("mfe/")
+        .and_then(|rest| rest.split_once('/'))
+        .map(|(package, file)| (&icon[..4 + package.len()], file))
+    else {
+        return Err(bundled.to_owned());
+    };
+    let Some(package) = super::bundles::package_name(package_path) else {
+        return Err(bundled.to_owned());
+    };
+    if !mfe.iter().any(|p| p == package_path) {
+        return Err(format!(
+            "in a bundle the kit declares: `mfe` does not name \"{package_path}\""
+        ));
+    }
+    match super::bundles::BundleFile::parse(file) {
+        Some(parsed) if parsed.content_type() == "image/svg+xml" => {
+            Ok(KitIcon::Bundled { package, file })
+        }
+        _ => Err(format!(
+            "{bundled}: \"{file}\" is not a relative `.svg` path without `..` or hidden parts"
+        )),
+    }
 }
 
 /// The kits a `.cf-studio-kit.toml` names, `(slug, name)` in its order.

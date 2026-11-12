@@ -331,6 +331,34 @@ impl KitBundles {
         hex::encode(&mac[..16])
     }
 
+    /// Where `kit`'s bundled icon is served (#1081): the kit bundle route
+    /// with the kit's grant, through the gateway. `None` for a kit whose icon
+    /// is a lucide name or is not there, and for an organization's own kit
+    /// when `org` is unknown: its grant names the organization. A shelf kit's
+    /// icon is read at its pinned commit, so its URL never goes stale.
+    pub fn icon_url(&self, kit: &KitDescriptor, org: Option<Uuid>) -> Option<String> {
+        let icon = kit.icon.as_deref()?;
+        let package_paths: Vec<String> = icon
+            .strip_prefix("mfe/")
+            .and_then(|rest| rest.split_once('/'))
+            .map(|(package, _)| vec![format!("mfe/{package}")])
+            .unwrap_or_default();
+        let super::manifest::KitIcon::Bundled { package, file } =
+            super::manifest::kit_icon(icon, &package_paths).ok()?
+        else {
+            return None;
+        };
+        let (slug, version) = (&kit.slug, &kit.default_version);
+        let grant = if kit.shelf == SHELF_ORGANIZATION && kit.source != SOURCE_BUNDLE_DIR {
+            self.org_grant(org?, slug, version)
+        } else {
+            self.grant(slug, version)
+        };
+        Some(format!(
+            "{GATEWAY_PREFIX}/studio-kits/v1/kits/{slug}/{version}/mfe/{grant}/{package}/{file}"
+        ))
+    }
+
     /// The packages of each kit in `kits` (slug, version) that has bundles
     /// where `org` is, with where their files are served.
     pub async fn manifests(&self, org: Uuid, kits: &[(String, String)]) -> Vec<KitMfeManifest> {
@@ -606,6 +634,8 @@ fn read_kit(root: &Path) -> Result<DirKit> {
             manifest_path: KIT_GDL_FILE.to_owned(),
             shelf: SHELF_ORGANIZATION.to_owned(),
             levels: passport.levels.clone(),
+            // A passport (`kit.gdl`) has no icon yet; `kit.json` names one.
+            icon: None,
             slug,
         },
         root: root.to_path_buf(),

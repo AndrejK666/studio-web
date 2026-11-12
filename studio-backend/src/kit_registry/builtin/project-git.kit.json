@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "project-git",
+  "icon": "lucide:git-pull-request",
   "name": "Git",
   "description": "A project's Git host workflow: the pull requests of its repositories and what waits on review.",
   "publisher": "Constructor Fabric",

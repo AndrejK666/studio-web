@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "components",
+  "icon": "lucide:package",
   "name": "Components",
   "description": "The platform's and the organization's component catalogue and registry, their gear repositories and publication requests.",
   "publisher": "Constructor Fabric",
