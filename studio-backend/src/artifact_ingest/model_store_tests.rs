@@ -28,6 +28,29 @@ struct Model {
     failing: std::sync::atomic::AtomicBool,
     /// How many rows the queries have handed back, all told.
     rows_read: std::sync::atomic::AtomicUsize,
+    /// How many queries and aggregates were asked, all told: what a read
+    /// model answers with a statement (or a few) each.
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+impl Model {
+    /// The objects of the body's type its `where` and `project_ids` admit.
+    fn admitted(&self, body: &Value) -> Vec<(String, Value)> {
+        let ty = body["type"].as_str().unwrap();
+        let w = body.get("where").cloned().unwrap_or(Value::Null);
+        let scopes: Option<Vec<String>> = body
+            .get("project_ids")
+            .map(|v| serde_json::from_value(v.clone()).unwrap());
+        self.objects
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(id, (e, scope, v))| {
+                e == ty && matches(&w, id, v) && scopes.as_ref().is_none_or(|s| s.contains(scope))
+            })
+            .map(|(id, (_, _, v))| (id.clone(), v.clone()))
+            .collect()
+    }
 }
 
 fn matches(w: &Value, id: &str, v: &Value) -> bool {
@@ -114,17 +137,13 @@ impl DomainObjects for Model {
         if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
             anyhow::bail!("pool timed out while waiting for an open connection");
         }
-        let ty = body["type"].as_str().unwrap();
-        let w = body.get("where").cloned().unwrap_or(Value::Null);
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut rows: Vec<StoredObject> = self
-            .objects
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(id, (e, _, v))| e == ty && matches(&w, id, v))
-            .map(|(id, (_, _, v))| StoredObject {
-                instance_id: id.clone(),
-                payload: v.clone(),
+            .admitted(&body)
+            .into_iter()
+            .map(|(instance_id, payload)| StoredObject {
+                instance_id,
+                payload,
             })
             .collect();
         // As the read model orders: each key with an absent value last, then
@@ -172,6 +191,28 @@ impl DomainObjects for Model {
         self.rows_read
             .fetch_add(rows.len(), std::sync::atomic::Ordering::SeqCst);
         Ok((rows, n))
+    }
+    async fn aggregate(
+        &self,
+        _: &SecurityContext,
+        body: Value,
+    ) -> anyhow::Result<(Vec<(Vec<Value>, u64)>, usize)> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let by: Vec<String> =
+            serde_json::from_value(body["aggregate"]["group_by"].clone()).unwrap();
+        let admitted = self.admitted(&body);
+        let mut groups: Vec<(Vec<Value>, u64)> = Vec::new();
+        for (_, v) in &admitted {
+            let key: Vec<Value> = by
+                .iter()
+                .map(|f| v.get(f).cloned().unwrap_or(Value::Null))
+                .collect();
+            match groups.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, n)) => *n += 1,
+                None => groups.push((key, 1)),
+            }
+        }
+        Ok((groups, admitted.len()))
     }
     async fn relations(
         &self,
@@ -507,5 +548,119 @@ async fn a_page_of_one_type_reads_the_page_not_the_scope() {
     assert!(
         model.rows_read.load(Ordering::SeqCst) <= 1,
         "a count reads at most one row"
+    );
+}
+
+// ── A table of projects: one read per type, not one per type and project ──
+
+const P1: &str = "aaaaaaaa-0000-0000-0000-000000000001";
+const P2: &str = "aaaaaaaa-0000-0000-0000-000000000002";
+const P3: &str = "aaaaaaaa-0000-0000-0000-000000000003";
+const ELSEWHERE: &str = "aaaaaaaa-0000-0000-0000-000000000009";
+
+/// Findings in three projects of one workspace, one in a project nobody
+/// asks about, one on the workspace itself; and an issue in the first.
+async fn projects_fixture(store: &ModelGraph, ctx: &SecurityContext) {
+    store.list(ctx, None).await.unwrap();
+    moved(store, ctx).await;
+    let finding = |id: &str, project: Option<&str>| {
+        let mut value =
+            json!({"subject": id, "workspace_id": WS, "recorded_at": "2026-11-01T00:00:00Z"});
+        if let Some(p) = project {
+            value["project_id"] = json!(p);
+        }
+        node(gts::SPEC_FINDING_TYPE, id, value)
+    };
+    store
+        .upsert_nodes(
+            ctx,
+            &[
+                finding("f1", Some(P1)),
+                finding("f2", Some(P1)),
+                finding("f3", Some(P2)),
+                finding("f4", Some(ELSEWHERE)),
+                finding("f5", None),
+                node(
+                    gts::ISSUE_TYPE,
+                    "i1",
+                    json!({"title": "Bug", "workspace_id": WS, "project_id": P1}),
+                ),
+            ],
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn projects_are_listed_with_one_read_per_type() {
+    use std::sync::atomic::Ordering;
+    let (_legacy, model, store) = setup();
+    let ctx = ctx();
+    projects_fixture(&store, &ctx).await;
+    let projects = [P1.to_string(), P2.to_string(), P3.to_string()];
+
+    model.asked.store(0, Ordering::SeqCst);
+    model.rows_read.store(0, Ordering::SeqCst);
+    let listed = store
+        .list_in_projects(&ctx, Some("spec_finding"), &projects)
+        .await
+        .unwrap();
+    assert_eq!(
+        model.asked.load(Ordering::SeqCst),
+        1,
+        "one query for three projects, not three"
+    );
+    assert_eq!(
+        model.rows_read.load(Ordering::SeqCst),
+        3,
+        "only the asked projects' rows: not the workspace's, not another project's"
+    );
+
+    // The same answer three reads of one project each give.
+    for p in &projects {
+        let one = store
+            .list_in_scope(&ctx, Some("spec_finding"), p)
+            .await
+            .unwrap();
+        let ids = |nodes: &[GtsNode]| {
+            let mut ids: Vec<String> = nodes.iter().map(|n| n.instance_id.clone()).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(ids(&listed[p]), ids(&one), "{p}");
+    }
+    assert!(listed[P3].is_empty(), "a project with none is listed empty");
+}
+
+#[tokio::test]
+async fn projects_are_counted_without_reading_a_row() {
+    use std::sync::atomic::Ordering;
+    let (_legacy, model, store) = setup();
+    let ctx = ctx();
+    projects_fixture(&store, &ctx).await;
+    let projects = [P1.to_string(), P2.to_string(), P3.to_string()];
+
+    model.asked.store(0, Ordering::SeqCst);
+    model.rows_read.store(0, Ordering::SeqCst);
+    let counted = store
+        .count_in_projects(&ctx, Some("spec_finding"), &projects)
+        .await
+        .unwrap();
+    assert_eq!(model.asked.load(Ordering::SeqCst), 1, "one aggregate");
+    assert_eq!(model.rows_read.load(Ordering::SeqCst), 0, "no row read");
+    for p in &projects {
+        assert_eq!(
+            counted[p],
+            store
+                .count_in_scope(&ctx, Some("spec_finding"), p)
+                .await
+                .unwrap(),
+            "{p}"
+        );
+    }
+    assert_eq!(
+        (counted[P1], counted[P2], counted[P3]),
+        (2, 1, 0),
+        "every project asked for is answered"
     );
 }

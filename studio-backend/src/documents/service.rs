@@ -2002,6 +2002,101 @@ impl crate::documents::port::DocumentCounter for DocumentsService {
             documents.into_iter().map(|d| d.conforms),
         ))
     }
+
+    async fn project_documents(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        projects: &[Uuid],
+    ) -> std::collections::HashMap<Uuid, crate::documents::port::ProjectDocumentCounts> {
+        use crate::documents::port::{DocumentCounter, ProjectDocumentCounts};
+        match self.data.project_groups(ctx, workspace_id, projects).await {
+            Ok(Some(groups)) => projects
+                .iter()
+                .map(|p| (*p, project_documents_of(&groups, *p)))
+                .collect(),
+            // The tables answer per project, as they always have.
+            Ok(None) => {
+                let mut out = std::collections::HashMap::new();
+                for p in projects {
+                    let (bindings, specs) = tokio::join!(
+                        DocumentCounter::count_bindings(self, ctx, workspace_id, *p),
+                        DocumentCounter::spec_summary(self, ctx, workspace_id, *p),
+                    );
+                    out.insert(
+                        *p,
+                        ProjectDocumentCounts {
+                            bindings: bindings.ok(),
+                            specs: specs.ok(),
+                        },
+                    );
+                }
+                out
+            }
+            Err(e) => {
+                tracing::warn!(workspace = %workspace_id, error = %format!("{e:#}"), "studio-documents: the projects' documents could not be counted");
+                projects
+                    .iter()
+                    .map(|p| (*p, ProjectDocumentCounts::default()))
+                    .collect()
+            }
+        }
+    }
+}
+
+/// One project's numbers out of the workspace's groups: the groups whose
+/// project is this one or none (the workspace's own rows, which every
+/// project sees), folded by the rules [`DocumentCounter::count_bindings`]
+/// and [`DocumentCounter::spec_summary`] read the rows by.
+///
+/// [`DocumentCounter::count_bindings`]: crate::documents::port::DocumentCounter::count_bindings
+/// [`DocumentCounter::spec_summary`]: crate::documents::port::DocumentCounter::spec_summary
+pub(super) fn project_documents_of(
+    groups: &super::data::ProjectGroups,
+    project: Uuid,
+) -> crate::documents::port::ProjectDocumentCounts {
+    let project = project.to_string();
+    let sees = |key: &[serde_json::Value]| match key.first() {
+        Some(serde_json::Value::String(p)) => *p == project,
+        Some(serde_json::Value::Null) | None => true,
+        Some(_) => false,
+    };
+    let bindings: Vec<(&[serde_json::Value], u64)> = groups
+        .bindings
+        .iter()
+        .filter(|(k, _)| sees(k.as_slice()))
+        .map(|(k, n)| (k.as_slice(), *n))
+        .collect();
+    let count: u64 = bindings.iter().map(|(_, n)| *n).sum();
+    // A state nobody knows fails the whole read, as reading the rows does.
+    let states: Option<Vec<(super::spec_rows::BindingState, Option<bool>, u64)>> = bindings
+        .iter()
+        .map(|(k, n)| {
+            let state = k
+                .get(1)
+                .and_then(serde_json::Value::as_str)
+                .and_then(super::spec_rows::BindingState::parse)?;
+            Some((state, k.get(2).and_then(serde_json::Value::as_bool), *n))
+        })
+        .collect();
+    let authored = groups
+        .documents
+        .iter()
+        .filter(|(k, _)| sees(k.as_slice()))
+        .filter_map(|(k, n)| Some((k.get(1)?.as_bool()?, *n)));
+    let repeat = |n: u64| usize::try_from(n).unwrap_or(usize::MAX);
+    let specs = states.map(|states| {
+        super::spec_rows::summary(
+            states
+                .into_iter()
+                .flat_map(|(s, c, n)| std::iter::repeat_n((s, c), repeat(n))),
+            authored.flat_map(|(c, n)| std::iter::repeat_n(c, repeat(n))),
+        )
+    });
+    crate::documents::port::ProjectDocumentCounts {
+        bindings: Some(u32::try_from(count).unwrap_or(u32::MAX)),
+        specs,
+    }
 }
 
 #[async_trait::async_trait]

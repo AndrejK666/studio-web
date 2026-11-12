@@ -1583,6 +1583,7 @@ async fn query_objects(
     let query = Query {
         type_ref: req.type_ref,
         scope: req.project_id,
+        scopes: None,
         offset: req.offset,
         cursor: req.cursor,
         selection: Selection {

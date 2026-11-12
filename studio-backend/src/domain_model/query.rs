@@ -126,6 +126,16 @@ impl Query {
         let scope = obj
             .remove("project_id")
             .and_then(|v| v.as_str().map(str::to_string));
+        let scopes = match obj.remove("project_ids") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(
+                serde_json::from_value::<Vec<String>>(v)
+                    .map_err(|e| format!("`project_ids`: {e}"))?,
+            ),
+        };
+        if scope.is_some() && scopes.is_some() {
+            return Err("send `project_id` or `project_ids`, not both".into());
+        }
         let offset = obj
             .remove("offset")
             .and_then(|v| v.as_u64())
@@ -141,6 +151,7 @@ impl Query {
         Ok(Self {
             type_ref,
             scope,
+            scopes,
             offset,
             cursor,
             selection,
@@ -163,6 +174,12 @@ pub struct Query {
     pub type_ref: String,
     /// The workspace/project scope objects were created in, as on `GET /objects`.
     pub scope: Option<String>,
+    /// Several scopes at once (`project_ids`): objects created in any of
+    /// them. Not with `scope`. An empty list matches nothing.
+    ///
+    /// What lets a gear read many projects in one statement per type, by the
+    /// indexed `scope` column, instead of one read per project.
+    pub scopes: Option<Vec<String>>,
     pub offset: Option<usize>,
     /// Where the previous page ended: its `next_cursor`.
     pub cursor: Option<String>,
@@ -719,12 +736,17 @@ fn binding(entity: &str, q: &Query, order_by: &[(Vec<String>, Direction)]) -> St
         .iter()
         .map(|(path, dir)| json!([path.join("."), *dir == Direction::Desc]))
         .collect();
-    let of = json!({
+    let mut of = json!({
         "type": entity,
         "scope": q.scope,
         "where": q.selection.filter,
         "order_by": order,
     });
+    // Only when sent, so a cursor issued before `project_ids` existed still
+    // belongs to its query.
+    if let Some(scopes) = &q.scopes {
+        of["scopes"] = json!(scopes);
+    }
     hex::encode(&Sha256::digest(of.to_string().as_bytes())[..8])
 }
 
@@ -1012,6 +1034,10 @@ fn groups_of(matched: &[ObjectNode], paths: &[Vec<String>]) -> Vec<Group> {
 /// [`BULK_LIMIT`] for the root (relations keep theirs), or the `limit` it
 /// sends. On the graph the scan bound is [`BULK_LIMIT`] whatever the page,
 /// so the answer is complete either way.
+///
+/// `limit: 0` reads no rows: only `total` and the aggregate's groups. A gear
+/// that wants counts asks for them so, and the read model answers with one
+/// `GROUP BY` (or one `COUNT`) instead of a page and a count.
 pub(super) async fn run_bulk(
     store: &dyn DomainStore,
     ontology: &Ontology,
@@ -1025,7 +1051,7 @@ pub(super) async fn run_bulk(
         ctx,
         q,
         access,
-        Some(q.selection.limit.unwrap_or(BULK_LIMIT).clamp(1, BULK_LIMIT)),
+        Some(q.selection.limit.unwrap_or(BULK_LIMIT).min(BULK_LIMIT)),
     )
     .await
 }
@@ -1061,8 +1087,10 @@ async fn run_with(
         &q.selection,
         0,
     )?;
+    // A gear's `limit: 0`: counts and groups, no rows.
+    let counts_only = bulk == Some(0);
     if let Some(limit) = bulk {
-        plan.limit = limit;
+        plan.limit = limit.max(1);
     }
     // A gear's read scans as far as a bulk answer can reach whatever page it
     // asks for: a page of 50 still needs every match ordered and counted, or
@@ -1070,7 +1098,27 @@ async fn run_with(
     // lists.
     let scan_limit = bulk.map_or(SCAN_LIMIT, |_| BULK_LIMIT);
     let group_by = group_paths(ontology, &entity, q.aggregate.as_ref())?;
-    let scope = q.scope.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    // One scope or several; each executor narrows by them the same way: the
+    // object's `_scope`, which the read model keeps as its `scope` column.
+    let scopes: Option<Vec<String>> = match (&q.scope, &q.scopes) {
+        (Some(_), Some(_)) => {
+            return Err(invalid("send `project_id` or `project_ids`, not both"));
+        }
+        (Some(s), None) => Some(s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| vec![s.to_string()]),
+        (None, Some(list)) => {
+            let mut list: Vec<String> = list
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            list.sort();
+            list.dedup();
+            Some(list)
+        }
+        (None, None) => None,
+    };
     let type_ids = vec![gts::node_type_id(&entity)];
     if q.cursor.is_some() && q.offset.is_some_and(|o| o > 0) {
         return Err(invalid(
@@ -1102,7 +1150,7 @@ async fn run_with(
             None
         } else {
             let mut admitted = Vec::new();
-            for owner in mirror.owners(tenant, &type_ids, scope).await? {
+            for owner in mirror.owners(tenant, &type_ids, scopes.as_deref()).await? {
                 if access.admits_owner(ctx, owner).await {
                     admitted.push(owner);
                 }
@@ -1111,25 +1159,35 @@ async fn run_with(
         };
         let root = super::mirror::RootSelect {
             type_ids,
-            scope: scope.map(str::to_string),
+            scopes,
             filter: plan.filter.as_ref().map(sql::condition),
             order: sql::order(&plan.order_by),
             owners,
         };
-        let offset = u64::try_from(q.offset.unwrap_or(0)).unwrap_or(u64::MAX);
-        let past = after
-            .as_ref()
-            .map(|c| sql::after(&plan.order_by, &c.keys, &c.id));
-        let (mut nodes, total) = mirror
-            .root(tenant, &root, past, offset, plan.limit as u64 + 1)
-            .await?;
-        let next_cursor = next_of(&mut nodes);
         let groups = match &group_by {
             Some(paths) => Some(sorted(
                 mirror.groups(tenant, &root, sql::group_key(paths)).await?,
             )),
             None => None,
         };
+        let (mut nodes, total) = if counts_only {
+            // Every match falls in exactly one group, so the groups already
+            // say how many there are.
+            let total = match &groups {
+                Some(groups) => groups.iter().map(|g| g.count).sum(),
+                None => mirror.count(tenant, &root).await?,
+            };
+            (Vec::new(), total)
+        } else {
+            let offset = u64::try_from(q.offset.unwrap_or(0)).unwrap_or(u64::MAX);
+            let past = after
+                .as_ref()
+                .map(|c| sql::after(&plan.order_by, &c.keys, &c.id));
+            mirror
+                .root(tenant, &root, past, offset, plan.limit as u64 + 1)
+                .await?
+        };
+        let next_cursor = next_of(&mut nodes);
         let mut rows: Vec<Row> = nodes.into_iter().map(|n| row(ontology, n, &plan)).collect();
         expand(&*mirror, ctx, ontology, access, &mut rows, &plan.include).await?;
         return Ok(Outcome {
@@ -1146,11 +1204,31 @@ async fn run_with(
     }
 
     // One over the bound: if it comes back, the read did not see everything.
-    let mut found = store
-        .list_objects(ctx, &type_ids, scope, Some(scan_limit + 1))
-        .await?;
-    let complete = found.len() <= scan_limit;
-    found.truncate(scan_limit);
+    // Several scopes are read one by one, each narrowed in the graph the way
+    // a single scope is, and each under the same bound.
+    let (found, complete) = match &scopes {
+        None => {
+            let mut found = store
+                .list_objects(ctx, &type_ids, None, Some(scan_limit + 1))
+                .await?;
+            let complete = found.len() <= scan_limit;
+            found.truncate(scan_limit);
+            (found, complete)
+        }
+        Some(list) => {
+            let mut all = Vec::new();
+            let mut complete = true;
+            for s in list {
+                let mut found = store
+                    .list_objects(ctx, &type_ids, Some(s), Some(scan_limit + 1))
+                    .await?;
+                complete &= found.len() <= scan_limit;
+                found.truncate(scan_limit);
+                all.extend(found);
+            }
+            (all, complete)
+        }
+    };
     // Before `where` and `total`: a count that included rows the caller cannot
     // see would say they exist (ADR-0035 §5).
     let found = access.retain(ctx, found).await;
@@ -1159,6 +1237,7 @@ async fn run_with(
     let total = matched.len();
     let groups = group_by.as_deref().map(|paths| groups_of(&matched, paths));
     let start = match &after {
+        _ if counts_only => total,
         Some(c) => matched
             .iter()
             .position(|n| c.is_before(n, &plan.order_by))
