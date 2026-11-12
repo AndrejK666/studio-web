@@ -1,0 +1,38 @@
+/* A list tab's grid and the states around it, over the kit's semantic tokens. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.empty {
+  padding-block: var(--space-6);
+  white-space: normal;
+}
+
+.failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.error {
+  margin: 0;
+  color: var(--destructive);
+}
+
+.footer {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta-size);
+  line-height: var(--text-meta-line-height);
+}
+
+.noData,
+.muted {
+  color: var(--muted-foreground);
+}

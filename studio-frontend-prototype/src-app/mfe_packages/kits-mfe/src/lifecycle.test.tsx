@@ -6,6 +6,10 @@ import {
 } from '@gears-frontx/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMfeBridgeFixture } from '../../../__test-utils__/createMfeBridgeFixture';
+import { stubResizeObserver } from '../../../__test-utils__/stubResizeObserver';
+
+// The kit's DataGrid measures its table.
+stubResizeObserver();
 
 type BridgeFixture = ReturnType<typeof createMfeBridgeFixture>;
 type TestBridge = BridgeFixture['bridge'];
@@ -80,7 +84,8 @@ describe('blank-mfe lifecycle', () => {
     vi.clearAllMocks();
   });
 
-  it('binds the shared MFE app to the lifecycle instance', async () => {
+  // The first import compiles the kit's DataGrid and its plugins: more than the default 15 s on a cold run.
+  it('binds the shared MFE app to the lifecycle instance', { timeout: 60_000 }, async () => {
     const module = await import('./lifecycle');
     const lifecycle = module.default;
 

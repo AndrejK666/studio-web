@@ -4164,6 +4164,8 @@ response	GET /studio-insight/v1/health	reachable	bool	always
 response	GET /studio-kits/v1/catalog	items	Vec<{}>	always
 response	GET /studio-kits/v1/catalog	items.default_version	String	always
 response	GET /studio-kits/v1/catalog	items.description	String	always
+response	GET /studio-kits/v1/catalog	items.icon	String	optional
+response	GET /studio-kits/v1/catalog	items.icon_url	String	optional
 response	GET /studio-kits/v1/catalog	items.levels	Vec<String>	always
 response	GET /studio-kits/v1/catalog	items.manifest_path	String	always
 response	GET /studio-kits/v1/catalog	items.name	String	always
@@ -4218,6 +4220,8 @@ response	GET /studio-kits/v1/catalog/{}	contents.types.name	String	always
 response	GET /studio-kits/v1/catalog/{}	kit	{}	always
 response	GET /studio-kits/v1/catalog/{}	kit.default_version	String	always
 response	GET /studio-kits/v1/catalog/{}	kit.description	String	always
+response	GET /studio-kits/v1/catalog/{}	kit.icon	String	optional
+response	GET /studio-kits/v1/catalog/{}	kit.icon_url	String	optional
 response	GET /studio-kits/v1/catalog/{}	kit.levels	Vec<String>	always
 response	GET /studio-kits/v1/catalog/{}	kit.manifest_path	String	always
 response	GET /studio-kits/v1/catalog/{}	kit.name	String	always
@@ -4256,6 +4260,8 @@ response	GET /studio-kits/v1/inbox-sources	items.workspace_field	String	optional
 response	GET /studio-kits/v1/inbox-sources	total	u32	always
 response	GET /studio-kits/v1/installed-kits	base	Vec<{}>	always
 response	GET /studio-kits/v1/installed-kits	base.by_default	bool	always
+response	GET /studio-kits/v1/installed-kits	base.icon	String	optional
+response	GET /studio-kits/v1/installed-kits	base.icon_url	String	optional
 response	GET /studio-kits/v1/installed-kits	base.installed_at	String	optional
 response	GET /studio-kits/v1/installed-kits	base.installed_by	String	optional
 response	GET /studio-kits/v1/installed-kits	base.kind	String	always
@@ -4264,6 +4270,8 @@ response	GET /studio-kits/v1/installed-kits	base.shelf	String	always
 response	GET /studio-kits/v1/installed-kits	base.version	String	always
 response	GET /studio-kits/v1/installed-kits	effective	Vec<{}>	always
 response	GET /studio-kits/v1/installed-kits	effective.by_default	bool	always
+response	GET /studio-kits/v1/installed-kits	effective.icon	String	optional
+response	GET /studio-kits/v1/installed-kits	effective.icon_url	String	optional
 response	GET /studio-kits/v1/installed-kits	effective.installed_at	String	optional
 response	GET /studio-kits/v1/installed-kits	effective.installed_by	String	optional
 response	GET /studio-kits/v1/installed-kits	effective.kind	String	always
@@ -4272,6 +4280,8 @@ response	GET /studio-kits/v1/installed-kits	effective.shelf	String	always
 response	GET /studio-kits/v1/installed-kits	effective.version	String	always
 response	GET /studio-kits/v1/installed-kits	organization	Vec<{}>	always
 response	GET /studio-kits/v1/installed-kits	organization.by_default	bool	always
+response	GET /studio-kits/v1/installed-kits	organization.icon	String	optional
+response	GET /studio-kits/v1/installed-kits	organization.icon_url	String	optional
 response	GET /studio-kits/v1/installed-kits	organization.installed_at	String	optional
 response	GET /studio-kits/v1/installed-kits	organization.installed_by	String	optional
 response	GET /studio-kits/v1/installed-kits	organization.kind	String	always
@@ -4281,6 +4291,8 @@ response	GET /studio-kits/v1/installed-kits	organization.version	String	always
 response	GET /studio-kits/v1/installed-kits	organization_id	String	always
 response	GET /studio-kits/v1/installed-kits	project	Vec<{}>	always
 response	GET /studio-kits/v1/installed-kits	project.by_default	bool	always
+response	GET /studio-kits/v1/installed-kits	project.icon	String	optional
+response	GET /studio-kits/v1/installed-kits	project.icon_url	String	optional
 response	GET /studio-kits/v1/installed-kits	project.installed_at	String	optional
 response	GET /studio-kits/v1/installed-kits	project.installed_by	String	optional
 response	GET /studio-kits/v1/installed-kits	project.kind	String	always
@@ -4343,6 +4355,8 @@ response	GET /studio-kits/v1/organization-shelf	items.contents.types.name	String
 response	GET /studio-kits/v1/organization-shelf	items.kit	{}	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.default_version	String	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.description	String	always
+response	GET /studio-kits/v1/organization-shelf	items.kit.icon	String	optional
+response	GET /studio-kits/v1/organization-shelf	items.kit.icon_url	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.kit.levels	Vec<String>	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.manifest_path	String	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.name	String	always
@@ -6832,6 +6846,8 @@ response	POST /studio-kits/v1/organization-shelf	contents.types.name	String	alwa
 response	POST /studio-kits/v1/organization-shelf	kit	{}	always
 response	POST /studio-kits/v1/organization-shelf	kit.default_version	String	always
 response	POST /studio-kits/v1/organization-shelf	kit.description	String	always
+response	POST /studio-kits/v1/organization-shelf	kit.icon	String	optional
+response	POST /studio-kits/v1/organization-shelf	kit.icon_url	String	optional
 response	POST /studio-kits/v1/organization-shelf	kit.levels	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	kit.manifest_path	String	always
 response	POST /studio-kits/v1/organization-shelf	kit.name	String	always
@@ -6897,6 +6913,8 @@ response	POST /studio-kits/v1/organization-shelf/preview	contents.types.name	Str
 response	POST /studio-kits/v1/organization-shelf/preview	kit	{}	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.default_version	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.description	String	always
+response	POST /studio-kits/v1/organization-shelf/preview	kit.icon	String	optional
+response	POST /studio-kits/v1/organization-shelf/preview	kit.icon_url	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	kit.levels	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.manifest_path	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.name	String	always
@@ -6962,6 +6980,8 @@ response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.types.name	
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit	{}	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.default_version	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.description	String	always
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.icon	String	optional
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.icon_url	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.levels	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.manifest_path	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.name	String	always
@@ -7822,6 +7842,8 @@ response	PUT /studio-environments/v1/project-environments/{}	updated_by	String	a
 response	PUT /studio-environments/v1/project-environments/{}	warning_codes	Vec<String>	always
 response	PUT /studio-environments/v1/project-environments/{}	warnings	Vec<String>	always
 response	PUT /studio-kits/v1/base-kits/{}	by_default	bool	always
+response	PUT /studio-kits/v1/base-kits/{}	icon	String	optional
+response	PUT /studio-kits/v1/base-kits/{}	icon_url	String	optional
 response	PUT /studio-kits/v1/base-kits/{}	installed_at	String	optional
 response	PUT /studio-kits/v1/base-kits/{}	installed_by	String	optional
 response	PUT /studio-kits/v1/base-kits/{}	kind	String	always
@@ -7829,6 +7851,8 @@ response	PUT /studio-kits/v1/base-kits/{}	kit_slug	String	always
 response	PUT /studio-kits/v1/base-kits/{}	shelf	String	always
 response	PUT /studio-kits/v1/base-kits/{}	version	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	by_default	bool	always
+response	PUT /studio-kits/v1/organization-kits/{}	icon	String	optional
+response	PUT /studio-kits/v1/organization-kits/{}	icon_url	String	optional
 response	PUT /studio-kits/v1/organization-kits/{}	installed_at	String	optional
 response	PUT /studio-kits/v1/organization-kits/{}	installed_by	String	optional
 response	PUT /studio-kits/v1/organization-kits/{}	kind	String	always
@@ -7836,6 +7860,8 @@ response	PUT /studio-kits/v1/organization-kits/{}	kit_slug	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	shelf	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	version	String	always
 response	PUT /studio-kits/v1/project-kits/{}	by_default	bool	always
+response	PUT /studio-kits/v1/project-kits/{}	icon	String	optional
+response	PUT /studio-kits/v1/project-kits/{}	icon_url	String	optional
 response	PUT /studio-kits/v1/project-kits/{}	installed_at	String	optional
 response	PUT /studio-kits/v1/project-kits/{}	installed_by	String	optional
 response	PUT /studio-kits/v1/project-kits/{}	kind	String	always

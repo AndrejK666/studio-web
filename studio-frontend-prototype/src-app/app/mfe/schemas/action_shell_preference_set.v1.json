@@ -1,0 +1,26 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.action.v1~constructor_studio.shell.preference.set.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Shell-owned action an MFE executes against the screen domain to remember one of the person's UI choices (`/me/ui-preferences`), such as the Kits screen's table or tiles. The shell's preference store is the only writer of that record, so an MFE never overwrites the shell's own keys or loses its key to a later save of the shell's. Only keys under `mfe.` are an MFE's; `''` forgets one. See preferenceSetHandler in preferenceActions.ts.",
+  "allOf": [
+    {
+      "$ref": "gts://gts.frontx.mfes.comm.action.v1~"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^mfe\\.[a-z0-9][a-z0-9._-]{0,59}$"
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": ["key", "value"]
+    }
+  }
+}

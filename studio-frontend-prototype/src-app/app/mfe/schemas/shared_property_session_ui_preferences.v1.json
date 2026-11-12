@@ -1,0 +1,12 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.shared_property.v1~constructor_studio.session.ui.preferences.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Shell-owned: the person's remembered UI choices that belong to the MFEs, the keys under `mfe.` of `/me/ui-preferences`, kept current as they change. An MFE changes one with the preference.set action. The shell's own keys (tab order, theme) are not published.",
+  "allOf": [{ "$ref": "gts://gts.frontx.mfes.comm.shared_property.v1~" }],
+  "properties": {
+    "value": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

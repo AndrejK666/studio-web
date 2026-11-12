@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "project-team",
+  "icon": "lucide:users",
   "name": "Team",
   "description": "A project's Team tab: who works on it and in which role.",
   "publisher": "Constructor Fabric",

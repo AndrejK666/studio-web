@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "project-activity",
+  "icon": "lucide:history",
   "name": "Activity",
   "description": "The project's Activity tab, beyond the shell's own run list.",
   "publisher": "Constructor Fabric",

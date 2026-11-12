@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "project-issues",
+  "icon": "lucide:circle-dot",
   "name": "Issues",
   "description": "The project's Issues tab: the issues of its repositories.",
   "publisher": "Constructor Fabric",

@@ -25,7 +25,14 @@ export interface KitMfeManifest {
 export interface InstalledKitsSummary {
   organization_id: string;
   project_id?: string | null;
-  effective: { kit_slug: string; version?: string }[];
+  effective: {
+    kit_slug: string;
+    version?: string;
+    /** The kit's icon (#1081): `lucide:<name>`, or a path in its bundle served at `icon_url`. */
+    icon?: string | null;
+    /** Where a bundled icon is served; null for a lucide one. */
+    icon_url?: string | null;
+  }[];
 }
 
 export interface KitMfeManifestList {

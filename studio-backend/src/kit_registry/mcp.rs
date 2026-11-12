@@ -33,7 +33,9 @@ pub fn tools() -> Vec<Tool> {
             description: "The kit library: every kit a person may install, each with its \
                 `shelf` (`builtin`: shipped in Studio; `official`: Constructor's, from its own \
                 repository; `organization`: an organization's own), the `levels` it may be \
-                installed on, and its `default_version`. Optionally one shelf.",
+                installed on, its `default_version`, and its `icon` (`lucide:<name>`, or an SVG \
+                in its bundle, `mfe/<package>/<file>.svg`, served at `icon_url`). Optionally one \
+                shelf.",
             input_schema: || {
                 object(
                     json!({
@@ -76,7 +78,8 @@ pub fn tools() -> Vec<Tool> {
                 organization cannot uninstall these), `organization` (installed by the \
                 organization for itself), `project` (installed for that project alone; empty \
                 without `project_id`) and `effective` (all together, one entry per kit at the \
-                newest version).",
+                newest version). Each entry carries the kit's `icon` and, for a bundled one, \
+                its `icon_url`.",
             input_schema: || {
                 object(
                     json!({ "organization_id": organization_id(), "project_id": project_id() }),

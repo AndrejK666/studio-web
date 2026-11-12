@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "constructor-research",
+  "icon": "lucide:atom",
   "name": "Constructor Research",
   "description": "Build a project's product in Constructor Research and run it there as one of its applications.",
   "publisher": "Constructor Fabric",

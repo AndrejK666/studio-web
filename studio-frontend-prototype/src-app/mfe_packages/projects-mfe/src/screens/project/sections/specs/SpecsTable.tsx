@@ -11,12 +11,6 @@ import {
   DataGridPaginationPlugin,
   DataGridRowSelectPlugin,
   DataGridTextSearchPlugin,
-  Empty,
-  EmptyActions,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
   filterTagGroup,
   useDataGrid,
   type DataGridFiltersPluginApi,
@@ -28,9 +22,15 @@ import { requestOpenSpec } from '../../../../actions/artifactActions';
 import { openSourcesConnect } from '../../../../actions/sourcesConnectActions';
 import { documentTypeOptions, specsFooter, type SpecRow } from '../../../../model/specRows';
 import { isSpecsFilter, SPECS_FILTERS } from '../../../../model/specsFilter';
-import { tagGroupChoice } from '../../../../shared/dataGridFilters';
+import {
+  GRID_PAGE_LIMITS,
+  GridEmpty,
+  GridFailed,
+  GridFooter,
+  tagGroupChoice,
+  useThemedRoot,
+} from '@constructor-studio/mfe-shared/grid';
 import { SPECS_FILTER_KEYS, useSpecsLoad } from '../../../../shared/useSpecsLoad';
-import { useThemedRoot } from '../../../../shared/useThemedRoot';
 import { specsSelected, specsShown } from '../../../../slices/specsCheckSlice';
 import {
   SPECS_FILTER_SLICE_KEY,
@@ -42,8 +42,6 @@ import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
 import { UploadPanel } from '../../upload/UploadPanel';
 import { SpecsCellsContext, specsColumns, type SpecsCells } from './specsColumns';
 import styles from './SpecsTable.module.css';
-
-const PAGE_LIMITS = [25, 50, 100];
 
 /** Only a row Check can send gets a checkbox (#879). */
 const checkable = (row: SpecRow): boolean => row.checkable;
@@ -97,32 +95,21 @@ const SpecsEmpty: React.FC = () => {
   const t = useSpecsText();
   const bridge = useMfeBridge();
   const cells = useContext(SpecsCellsContext);
-  const searching = useDataGrid().useStore((state) => state.hasActiveFilters);
-  if (searching) {
-    return (
-      <Empty className={styles.empty}>
-        <EmptyHeader>
-          <EmptyDescription>{t('no_matches')}</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
-  }
   return (
-    <Empty className={styles.empty}>
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <FileText />
-        </EmptyMedia>
-        <EmptyTitle>{t('empty_title')}</EmptyTitle>
-        <EmptyDescription>{t('empty_note')}</EmptyDescription>
-      </EmptyHeader>
-      <EmptyActions>
-        {cells && <UploadDocumentsButton projectId={cells.projectId} />}
-        <Button size="sm" icon={<Plug />} onClick={() => openSourcesConnect(bridge)}>
-          {t('empty_connect')}
-        </Button>
-      </EmptyActions>
-    </Empty>
+    <GridEmpty
+      noMatches={t('no_matches')}
+      icon={<FileText />}
+      title={t('empty_title')}
+      note={t('empty_note')}
+      actions={
+        <>
+          {cells && <UploadDocumentsButton projectId={cells.projectId} />}
+          <Button size="sm" icon={<Plug />} onClick={() => openSourcesConnect(bridge)}>
+            {t('empty_connect')}
+          </Button>
+        </>
+      }
+    />
   );
 };
 
@@ -199,16 +186,7 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
 
   // The kit's own error view is English and has no retry, and a failed reload has none at all.
   if (snapshot?.failed) {
-    return (
-      <div className={styles.failed}>
-        <p className={styles.error} role="alert">
-          {t('read_failed')}
-        </p>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          {t('retry')}
-        </Button>
-      </div>
-    );
+    return <GridFailed message={t('read_failed')} retry={t('retry')} onRetry={onRetry} />;
   }
 
   const footer =
@@ -234,21 +212,19 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
           <FiltersFromSlice read={snapshot !== null && !snapshot.failed} />
           <DataGridRowSelectPlugin<SpecRow> visible={checkable} onSelectionChange={select} />
           <DataGridOrderPlugin />
-          <DataGridPaginationPlugin defaultLimit={PAGE_LIMITS[0]} limits={PAGE_LIMITS} />
+          <DataGridPaginationPlugin defaultLimit={GRID_PAGE_LIMITS[0]} limits={[...GRID_PAGE_LIMITS]} />
           <DataGridEmptyStatePlugin component={SpecsEmpty} />
           {reloadBridge}
         </DataGrid>
       </SpecsCellsContext.Provider>
       {snapshot && footer && footer.total > 0 && (
-        <p className={styles.footer}>
-          {[
+        <GridFooter
+          parts={[
             t.count('footer_of', footer.total, { shown: snapshot.shown.length }),
             footer.findings !== null && t.count('footer_findings', footer.findings),
             projectName,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </p>
+          ]}
+        />
       )}
     </div>
   );

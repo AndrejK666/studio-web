@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import {
   apiRegistry,
@@ -7,7 +7,7 @@ import {
   FRONTX_SHARED_PROPERTY_THEME,
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
-import { Badge, Button, Empty, EmptyDescription, Skeleton } from '@gears-frontx/ui-kit';
+import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
 import {
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
@@ -16,6 +16,7 @@ import { KitsApiService, type CatalogKit, type InstalledKits, type KitDetail } f
 import { KitDetailView, contentsSummary } from './KitDetailView';
 import { AddFromRepository } from './AddFromRepository';
 import { IdeKits } from './IdeKits';
+import { KitsGrid, kitRows, type KitCells } from './KitsGrid';
 import { useHomeTranslations } from '../../i18n';
 import styles from './HomeScreen.module.css';
 
@@ -99,11 +100,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   /** The organization's own kits (its shelf), each with where it came from. */
   const [shelf, setShelf] = useState<KitDetail[]>([]);
   const [adding, setAdding] = useState(false);
-  const library: CatalogKit[] = catalog.data?.items ?? [];
-  const kits: CatalogKit[] = [
-    ...library,
-    ...shelf.map((d) => d.kit).filter((k) => !library.some((l) => l.slug === k.slug)),
-  ];
+  const library: CatalogKit[] = useMemo(() => catalog.data?.items ?? [], [catalog.data]);
+  // One array while nothing changed: the grid reloads on every new one.
+  const kits: CatalogKit[] = useMemo(
+    () => [...library, ...shelf.map((d) => d.kit).filter((k) => !library.some((l) => l.slug === k.slug))],
+    [library, shelf]
+  );
   const organization = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION, { bridge }) as
     | { id: string; name: string }
     | null
@@ -247,7 +249,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   );
   const open = selected ? kits.find((k) => k.slug === selected) : undefined;
   // A project lists only what may be installed in a project.
-  const shown = scope === 'project' ? kits.filter((k) => !k.levels || k.levels.includes('project')) : kits;
+  const rows = useMemo(
+    () =>
+      kitRows(scope === 'project' ? kits.filter((k) => !k.levels || k.levels.includes('project')) : kits, installed),
+    [kits, scope, installed]
+  );
+  const cells: KitCells = {
+    t,
+    open: setSelected,
+    controls: controlsFor,
+    summary: (slug) => {
+      const detail = detailOf(slug);
+      return detail ? contentsSummary(detail.contents, t) || t('sum_nothing') : null;
+    },
+  };
 
   // Show skeleton while translations are loading
   if (loading) {
@@ -298,54 +313,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
           onBack={() => setSelected(null)}
           t={t}
         />
-      ) : shown.length === 0 ? (
-        <Empty className={styles.empty}>
-          <EmptyDescription>{t('empty')}</EmptyDescription>
-        </Empty>
       ) : (
-        <ul className={styles.grid}>
-          {shown.map((kit) => (
-            <li key={kit.slug} className={styles.card} data-kit={kit.slug}>
-              <h3 className={styles.cardTitle}>
-                <button type="button" className={styles.cardLink} onClick={() => setSelected(kit.slug)}>
-                  {kit.name}
-                </button>
-              </h3>
-              <p className={styles.cardText}>{kit.description}</p>
-              <dl className={styles.facts}>
-                <dt>{t('publisher')}</dt>
-                <dd>{kit.publisher}</dd>
-                <dt>{t('version')}</dt>
-                <dd>{kit.default_version}</dd>
-                {kit.repository_url && (
-                  <>
-                    <dt>{t('repository')}</dt>
-                    <dd>
-                      <a href={kit.repository_url} target="_blank" rel="noreferrer">
-                        {kit.repository_url.replace('https://', '')}
-                      </a>
-                    </dd>
-                  </>
-                )}
-                {kit.levels && kit.levels.length > 0 && (
-                  <>
-                    <dt>{t('levels')}</dt>
-                    <dd>{kit.levels.join(', ')}</dd>
-                  </>
-                )}
-              </dl>
-              {detailOf(kit.slug) && (
-                <p className={styles.summary} data-kit-summary>
-                  {contentsSummary(detailOf(kit.slug)!.contents, t) || t('sum_nothing')}
-                </p>
-              )}
-              <button type="button" className={styles.inside} onClick={() => setSelected(kit.slug)}>
-                {t('inside')}
-              </button>
-              {controlsFor(kit)}
-            </li>
-          ))}
-        </ul>
+        <KitsGrid rows={rows} cells={cells} bridge={bridge} />
       )}
       {/* What the project's IDE has: the official kits `cfs` writes into its checkouts. */}
       {scope === 'project' && projectId && !open && <IdeKits projectId={projectId} t={t} />}

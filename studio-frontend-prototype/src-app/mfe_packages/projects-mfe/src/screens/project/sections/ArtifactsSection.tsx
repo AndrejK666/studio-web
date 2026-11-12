@@ -19,11 +19,11 @@ import {
 } from '@gears-frontx/ui-kit';
 import { useFormatters, useMfeBridge } from '@gears-frontx/react';
 import { useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
+import { useThemedRoot } from '@constructor-studio/mfe-shared/grid';
 import { Files, Search } from 'lucide-react';
 import { useProjectText } from '../../../i18n';
 import { ARTIFACTS_PAGE_SIZE, useArtifacts } from '../../../shared/useArtifacts';
 import { useArtifactImport, useProjectImport } from '../../../shared/useArtifactImport';
-import { useThemedRoot } from '../../../shared/useThemedRoot';
 import { ReadFailed, SectionSkeleton } from '../../../components/SectionStates';
 import { requestOpenArtifact, requestOpenDocument } from '../../../actions/artifactActions';
 import { clampOffset, type ArtifactRow } from '../../../model/artifact';

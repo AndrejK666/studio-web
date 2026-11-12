@@ -25,6 +25,10 @@ export interface CatalogKit {
   shelf?: string;
   /** The levels the kit places screens on. */
   levels?: string[];
+  /** The kit's icon (#1081): `lucide:<name>`, or an SVG in its bundle (`mfe/<package>/<file>.svg`). */
+  icon?: string | null;
+  /** Where a bundled `icon` is served (the kit bundle route); null for a lucide one. */
+  icon_url?: string | null;
 }
 
 export interface CatalogPage {

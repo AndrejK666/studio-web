@@ -250,6 +250,7 @@ pub fn shelf_kit(
             manifest_path,
             shelf: SHELF_ORGANIZATION.to_owned(),
             levels,
+            icon: manifest.icon.clone(),
         },
         origin: KitOrigin {
             connection_id: input.connection_id,
@@ -280,6 +281,12 @@ impl KitInstaller {
             return Ok(Vec::new());
         }
         Ok(self.store().read(&service_context(org)?, org).await?.shelf)
+    }
+
+    /// The organization whose shelf `tenant` reads: what a shelf kit's
+    /// bundle grant names ([`super::bundles::KitBundles::org_grant`]).
+    pub async fn shelf_organization(&self, ctx: &SecurityContext, tenant: Uuid) -> Uuid {
+        self.store().organization_of(ctx, tenant).await
     }
 
     /// One kit of `org`'s shelf.

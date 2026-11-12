@@ -17,6 +17,7 @@ import actionContextArtifactOpenSchemaJson from './action_context_artifact_open.
 import actionShellNotificationShowSchemaJson from './action_shell_notification_show.v1.json';
 import actionShellScreenOpenSchemaJson from './action_shell_screen_open.v1.json';
 import actionShellPlaceOpenSchemaJson from './action_shell_place_open.v1.json';
+import actionShellPreferenceSetSchemaJson from './action_shell_preference_set.v1.json';
 import actionChainOutcomeDoneSchemaJson from './action_chain_outcome_done.v1.json';
 import actionChainOutcomeFailedSchemaJson from './action_chain_outcome_failed.v1.json';
 import sharedPropertyContextArtifactSchemaJson from './shared_property_context_artifact.v1.json';
@@ -28,6 +29,7 @@ import sharedPropertySessionProfileSchemaJson from './shared_property_session_us
 import sharedPropertySpaceFrameUrlSchemaJson from './shared_property_space_frame_url.v1.json';
 import sharedPropertyLiveStudioEventSchemaJson from './shared_property_live_studio_event.v1.json';
 import sharedPropertyScreensAvailableSchemaJson from './shared_property_screens_available.v1.json';
+import sharedPropertySessionUiPreferencesSchemaJson from './shared_property_session_ui_preferences.v1.json';
 import entryIframeSchemaJson from './entry_iframe.v1.json';
 
 export const SHELL_SCHEMAS: readonly JSONSchema[] = [
@@ -70,6 +72,8 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   actionShellScreenOpenSchemaJson as JSONSchema,
   // Go to an organization, workspace or project (Search's results).
   actionShellPlaceOpenSchemaJson as JSONSchema,
+  // Remember one of the person's UI choices for an MFE (Kits' table or tiles).
+  actionShellPreferenceSetSchemaJson as JSONSchema,
   // The replies that say how a request ended: see chainOutcome in mfe-shared.
   actionChainOutcomeDoneSchemaJson as JSONSchema,
   actionChainOutcomeFailedSchemaJson as JSONSchema,
@@ -97,6 +101,7 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   // Which screens a row may send the person to: a kit's only where it is
   // installed (app/layout/AvailableScreens.tsx).
   sharedPropertyScreensAvailableSchemaJson as JSONSchema,
+  sharedPropertySessionUiPreferencesSchemaJson as JSONSchema,
   // A frame is an entry the host loads into an iframe. Registered before any
   // package declaring one: GTS refuses to register an instance whose type has
   // no schema, and the refusal takes bootstrapMFE down with it.

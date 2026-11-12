@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "org-reports",
+  "icon": "lucide:chart-column",
   "name": "Reports",
   "description": "Every report Studio draws, configured once for the organization.",
   "publisher": "Constructor Fabric",
