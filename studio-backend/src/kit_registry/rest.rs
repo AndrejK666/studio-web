@@ -779,7 +779,7 @@ async fn get_installed(
     // organization's model when the organization is first read after it
     // changed (docs/design/studio-kits.md §3.10). What cannot be applied is
     // logged; the read does not fail for it.
-    if let Err(refusal) = installer.reconcile_models(installed.organization_id).await {
+    if let Err(refusal) = installer.models_in_step(installed.organization_id).await {
         tracing::warn!(organization_id = %installed.organization_id, ?refusal, "studio-kits: kit models not reconciled");
     }
     let list = |kits: Vec<InstalledKit>| kits.into_iter().map(Into::into).collect();

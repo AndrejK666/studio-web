@@ -1251,8 +1251,28 @@ async fn get_my_inbox(
     // them: their subject (what `phase_owner` and other kit fields record).
     let me = ctx.subject_id().to_string();
     let org = query.organization_id.map(|o| o.to_string());
+    // The organization's workspaces, from the tenant tree alone: the Inbox
+    // used to ask `GET /rollups` for them and threw every count away, which
+    // made it 10 s at the median on Dev (#1077). The same walk and the same
+    // check that the caller reaches the organization as `/rollups` makes.
+    let am = service.account_management();
+    let workspaces = async {
+        let access = crate::studio_session::sdk::TenantMembership::new(Arc::clone(&am));
+        let in_org = crate::org_scope::resolve(&access, &ctx, query.organization_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        crate::organizations::sdk::portfolio_workspaces(am.as_ref(), &in_org)
+            .await
+            .map(|spaces| {
+                spaces
+                    .into_iter()
+                    .map(|(id, name)| (id.to_string(), name))
+                    .collect()
+            })
+            .map_err(|e| format!("{e:#}"))
+    };
     let (read, marks) = tokio::join!(
-        super::inbox::read(&api, &me, org.as_deref()),
+        super::inbox::read(&api, &me, org.as_deref(), workspaces),
         service.inbox_marks(&user_id)
     );
     let marks: Vec<super::inbox::Mark> = marks

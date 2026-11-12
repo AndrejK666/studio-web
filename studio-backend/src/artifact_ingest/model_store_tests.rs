@@ -28,6 +28,10 @@ struct Model {
     failing: std::sync::atomic::AtomicBool,
     /// How many rows the queries have handed back, all told.
     rows_read: std::sync::atomic::AtomicUsize,
+    /// How many queries were asked, all told.
+    queries: std::sync::atomic::AtomicUsize,
+    /// Declaring a type is refused, as it is to a person.
+    refuse_types: std::sync::atomic::AtomicBool,
 }
 
 fn matches(w: &Value, id: &str, v: &Value) -> bool {
@@ -68,6 +72,9 @@ impl DomainObjects for Model {
         unreachable!()
     }
     async fn ensure_type(&self, _: &SecurityContext, need: &TypeNeed) -> anyhow::Result<()> {
+        if self.refuse_types.load(std::sync::atomic::Ordering::SeqCst) {
+            anyhow::bail!("not permitted on domain objects");
+        }
         self.types.lock().unwrap().push(need.id.clone());
         Ok(())
     }
@@ -111,6 +118,8 @@ impl DomainObjects for Model {
         _: &SecurityContext,
         body: Value,
     ) -> anyhow::Result<(Vec<StoredObject>, usize)> {
+        self.queries
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
             anyhow::bail!("pool timed out while waiting for an open connection");
         }
@@ -216,14 +225,13 @@ fn setup() -> (Arc<InMemoryGraphStore>, Arc<Model>, ModelGraph) {
     (legacy, model, store)
 }
 
+/// The sweep's step for `ctx`'s tenant: the one place the move runs.
 async fn moved(store: &ModelGraph, ctx: &SecurityContext) {
-    for _ in 0..100 {
-        if store.0.ready(ctx).await {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("the move never finished");
+    assert!(
+        store.0.make_ready(ctx).await.expect("the move"),
+        "the move never finished"
+    );
+    assert!(store.0.ready(ctx).await, "reads now answer from the model");
 }
 
 #[tokio::test]
@@ -256,7 +264,7 @@ async fn what_the_old_store_held_moves_and_reads_back_the_same() {
         .await
         .unwrap();
 
-    // The first read is the old store's, and starts the move.
+    // The first read is the old store's; the sweep then moves the tenant.
     let first = store
         .list(&ctx, Some(gts::PULL_REQUEST_TYPE))
         .await
@@ -382,12 +390,123 @@ async fn a_marker_that_cannot_be_read_does_not_start_the_move() {
         1
     );
 
-    // Once the marker reads again, the move runs as before.
+    // Once the marker reads again, the sweep's move runs as before.
     model
         .failing
         .store(false, std::sync::atomic::Ordering::SeqCst);
     moved(&store, &ctx).await;
     assert!(!model.objects.lock().unwrap().is_empty());
+}
+
+/// What Dev showed (#1077): every artifact read started the move as the
+/// person reading, failed "not permitted", and asked the model for the
+/// marker each time. A read asks once, then remembers, and moves nothing.
+#[tokio::test]
+async fn a_read_never_starts_the_move_and_asks_for_the_marker_once() {
+    use crate::artifact_ingest::graph::{NodePageQuery, PageStart};
+    use std::sync::atomic::Ordering;
+
+    let (legacy, model, store) = setup();
+    let ctx = ctx();
+    legacy
+        .upsert_nodes(
+            &ctx,
+            &[node(
+                gts::REPO_TYPE,
+                "r1",
+                json!({"full_path": "acme/web", "workspace_id": WS}),
+            )],
+        )
+        .await
+        .unwrap();
+    // A person may not declare the model's types: were the move tried as
+    // them, it would fail here.
+    model.refuse_types.store(true, Ordering::SeqCst);
+    for _ in 0..3 {
+        assert_eq!(
+            store.list(&ctx, Some(gts::REPO_TYPE)).await.unwrap().len(),
+            1
+        );
+        assert_eq!(
+            store
+                .list_in_scope(&ctx, Some(gts::REPO_TYPE), WS)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .count_in_scope(&ctx, Some(gts::REPO_TYPE), WS)
+                .await
+                .unwrap(),
+            1
+        );
+        store.list_relations(&ctx).await.unwrap();
+        store
+            .page(
+                &ctx,
+                &NodePageQuery {
+                    type_filter: Some("repo"),
+                    scope: Some(WS),
+                    repo: None,
+                    subject: None,
+                    needle: None,
+                    by_updated: false,
+                    start: PageStart::Offset(0),
+                    limit: 10,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        store.0.moves_started.load(Ordering::SeqCst),
+        0,
+        "no move was started"
+    );
+    assert!(
+        model.types.lock().unwrap().is_empty(),
+        "no type was declared"
+    );
+    assert!(
+        model.objects.lock().unwrap().is_empty(),
+        "nothing was moved"
+    );
+    assert_eq!(
+        model.queries.load(Ordering::SeqCst),
+        1,
+        "the marker was asked once, not on every read"
+    );
+}
+
+/// A move that fails waits for its back-off: the next sweep does not list
+/// the whole old store again at once, and reads stay on the old store.
+#[tokio::test]
+async fn a_failed_move_is_not_retried_before_its_back_off() {
+    use std::sync::atomic::Ordering;
+
+    let (legacy, model, store) = setup();
+    let ctx = ctx();
+    legacy
+        .upsert_nodes(
+            &ctx,
+            &[node(
+                gts::REPO_TYPE,
+                "r1",
+                json!({"full_path": "acme/web", "workspace_id": WS}),
+            )],
+        )
+        .await
+        .unwrap();
+    model.refuse_types.store(true, Ordering::SeqCst);
+    assert!(store.0.make_ready(&ctx).await.is_err(), "the move failed");
+    assert_eq!(store.0.moves_started.load(Ordering::SeqCst), 1);
+    model.refuse_types.store(false, Ordering::SeqCst);
+    assert!(!store.0.make_ready(&ctx).await.unwrap(), "not tried yet");
+    assert_eq!(store.0.moves_started.load(Ordering::SeqCst), 1);
+    assert!(!store.0.ready(&ctx).await, "reads stay on the old store");
 }
 
 /// A scope's artifacts of the four listed types, some with no date, and a
