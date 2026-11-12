@@ -530,7 +530,7 @@ admitted on `project_nodes`.
 
 ## 9. Let a traversal go one way
 
-*Filed: constructorfabric/gears-rust#5239, spun out of the `direction` line in #5012.*
+*Filed: constructorfabric/gears-rust#5239, spun out of the `direction` line in #5012. Closed 2026-11-09.*
 
 **Today.** `TraverseRequest` has seeds, depth, edge and node type patterns and
 `max_nodes`. The walk always expands `Direction::Either` (`domain/traversal.rs`:
@@ -559,7 +559,7 @@ no edge. With `Incoming`: A. With `None`: A, as today.
 
 ## 10. Say which relation a traversed edge is
 
-*Filed: constructorfabric/gears-rust#5240.*
+*Filed: constructorfabric/gears-rust#5240. Closed 2026-11-09.*
 
 **Today.** `EdgeSpec` and `EdgeView` carry `discriminator`, the value that keeps
 parallel edges of one type between one pair apart. `EdgeRef`, which `traverse`,
@@ -630,7 +630,7 @@ with 3. Per-seed limit 5 and a filter on an indexed path: each seed gets at most
 
 ## 12. Report what the gear does as metrics
 
-*Added 2026-11-12, from a read regression on Studio's Dev stand.*
+*Added 2026-11-12, from a read regression on Studio's Dev stand. Filed: constructorfabric/gears-rust#5960.*
 
 **Today.** weftgraph 0.3.0-rc.2 emits no metrics. Studio runs it in-process,
 and everything we can see on a dashboard is either one level above it (our
