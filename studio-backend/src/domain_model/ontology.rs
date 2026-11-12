@@ -2211,7 +2211,11 @@ mod tests {
         let head = o.model_document();
         assert!(head[PACKED_HEAD][PACKED].is_string(), "the head is packed");
         assert!(head.get("core_layer").is_none() && head.get("buckets").is_none());
-        assert_eq!(head["model"], o.document()["model"], "the name stays readable");
+        assert_eq!(
+            head["model"],
+            o.document()["model"],
+            "the name stays readable"
+        );
         assert!(
             head.to_string().len() < o.document()["core_layer"].to_string().len(),
             "packing makes the model node smaller than the layer alone"

@@ -315,3 +315,124 @@ async fn project_lifecycle_brings_its_model_and_takes_it_away() {
         .unwrap();
     assert!(!port.kit_models(&org).await.unwrap().contains_key(SLUG));
 }
+
+/// The model port, counting what the kits ask of it.
+struct Counting {
+    inner: Arc<dyn crate::domain_model::port::DomainObjects>,
+    syncs: std::sync::atomic::AtomicUsize,
+    model_reads: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl crate::domain_model::port::DomainObjects for Counting {
+    async fn upsert(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        key: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<String> {
+        self.inner.upsert(ctx, entity, key, payload).await
+    }
+    async fn list(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+    ) -> anyhow::Result<Vec<crate::domain_model::port::StoredObject>> {
+        self.inner.list(ctx, entity).await
+    }
+    async fn query(
+        &self,
+        ctx: &SecurityContext,
+        body: serde_json::Value,
+    ) -> anyhow::Result<(Vec<crate::domain_model::port::StoredObject>, usize)> {
+        self.inner.query(ctx, body).await
+    }
+    async fn sync_kit_model(
+        &self,
+        ctx: &SecurityContext,
+        slug: &str,
+        version: &str,
+        overlay: Option<&crate::domain_model::port::KitOverlay>,
+    ) -> anyhow::Result<crate::domain_model::port::KitModelChange> {
+        self.syncs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.sync_kit_model(ctx, slug, version, overlay).await
+    }
+    async fn kit_models(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+        self.model_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.kit_models(ctx).await
+    }
+}
+
+/// What Dev showed (#1077): every read of the kits synced every kit's model
+/// (a model read, a type listing per kit, a warning per conflict). A read
+/// that finds the kits the model was last brought in step with touches the
+/// model not at all; a base kit's change still reaches it on the next read.
+#[tokio::test]
+async fn reading_the_kits_twice_with_nothing_changed_writes_nothing() {
+    use crate::domain_model::port::DomainObjects;
+    use std::sync::atomic::Ordering;
+
+    let mut library = builtin_catalogue();
+    library.extend(official_catalogue());
+    let counting = Arc::new(Counting {
+        inner: crate::domain_model::port::in_memory(),
+        syncs: Default::default(),
+        model_reads: Default::default(),
+    });
+    let installer = KitInstaller::new(library, Arc::new(Memory::default()), Arc::new(Admins))
+        .with_models(Arc::new(FixedModels(counting.clone())));
+    let org = service_context(ORG).unwrap();
+    let member = caller(Uuid::from_u128(0x3e), ORG);
+    let admin = caller(ADMIN, ORG);
+
+    // The first read brings the base kits' models in.
+    installer.inbox_sources(&member, ORG).await.unwrap();
+    assert!(counting.syncs.load(Ordering::SeqCst) > 0);
+    assert!(counting.kit_models(&org).await.unwrap().contains_key(SLUG));
+
+    // Every read after it, of whatever kind, leaves the model alone.
+    counting.syncs.store(0, Ordering::SeqCst);
+    counting.model_reads.store(0, Ordering::SeqCst);
+    installer.models_in_step(ORG).await.unwrap();
+    installer.inbox_sources(&member, ORG).await.unwrap();
+    installer.project_phase(&admin, PROJECT).await.unwrap();
+    assert_eq!(
+        counting.syncs.load(Ordering::SeqCst),
+        0,
+        "nothing was written"
+    );
+    assert_eq!(
+        counting.model_reads.load(Ordering::SeqCst),
+        0,
+        "the model was not even read"
+    );
+
+    // The platform takes a base kit away: the next read takes its model out
+    // of the organization's (ADR-0070), and the one after leaves it again.
+    let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
+    installer.uninstall_base(&platform, SLUG).await.unwrap();
+    installer.models_in_step(ORG).await.unwrap();
+    assert!(counting.syncs.load(Ordering::SeqCst) > 0);
+    assert!(!counting.kit_models(&org).await.unwrap().contains_key(SLUG));
+    counting.syncs.store(0, Ordering::SeqCst);
+    installer.models_in_step(ORG).await.unwrap();
+    assert_eq!(counting.syncs.load(Ordering::SeqCst), 0);
+
+    // Concurrent first reads of another organization reconcile once.
+    let other = Uuid::from_u128(0x0e2);
+    let before = counting.model_reads.load(Ordering::SeqCst);
+    let reads = (0..6).map(|_| installer.models_in_step(other));
+    for r in futures_util::future::join_all(reads).await {
+        r.unwrap();
+    }
+    assert_eq!(
+        counting.model_reads.load(Ordering::SeqCst) - before,
+        1,
+        "one reconciliation, not one per read"
+    );
+}

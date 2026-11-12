@@ -446,7 +446,12 @@ Current implementation (2026-11-10; the layered replacement is required by ADR-0
    a sweep over every organization, so an organization nobody opens is not
    written. Organizations created later get the base kits' overlays on their
    first read the same way. An organization's own install or uninstall is
-   applied at once.
+   applied at once. A read reconciles only when the kits that apply (slug and
+   version) differ from the ones the organization's model was last brought in
+   step with in this process, or that was more than 30 minutes ago (5 when
+   something could not be applied); otherwise it neither reads the model nor
+   writes it (`KitInstaller::models_in_step`). Reconciling on every read made
+   `GET /installed-kits` 1 s at the median on Dev (#1077).
 2. **A kit that brings a model is not installed for one project.** The model
    is the organization's (ADR-0067 §6, ADR-0068 §5). `PUT /project-kits/…`
    refuses it with 400 `failed_precondition` `MODEL_KIT_NOT_FOR_PROJECT`;
@@ -559,8 +564,9 @@ A screen may say which domain types another kit brings it shows,
 detail lists it, and the shell hides the screen where one is not installed.
 
 `GET /studio-user/v1/me/inbox?organization_id=` reads the organization on
-screen (its workspaces through `/rollups?organization_id=`, its kits' sources
-with the same scope); without it, the caller's home. Beside the sources it
+screen (its workspaces from the tenant tree, the walk `/rollups` makes but
+none of its counts; its kits' sources with the same scope); without it, the
+caller's home. Beside the sources it
 answers `members_known` (whether pull requests' accounts were matched to
 members) and `workspaces` (how many were read), and the shell's own
 `failed-runs` source: the person's background runs that failed in the last 7
