@@ -685,6 +685,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-artifact-ingest/v1/sources/clone-status",
+      "operation_id": "studio_artifact_ingest.list_source_clone_status",
+      "tag": "StudioArtifactIngest",
+      "summary": "Whether each of a project's repositories could be cloned, and why not",
+      "authenticated": true,
+      "responses": [
+        "SourceCloneStatusListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-assembly/v1/manifest",
       "operation_id": "studio_assembly.get_manifest",
       "tag": "StudioAssembly",

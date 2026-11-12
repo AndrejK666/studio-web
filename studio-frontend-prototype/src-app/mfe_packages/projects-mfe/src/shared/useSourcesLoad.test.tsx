@@ -6,7 +6,7 @@ import { ARTIFACT_NODE_TYPES } from '../api/artifactTypes';
 /** The Sources rows and the load the table calls (#685, DoD `...-sources-reads`). */
 
 type Query = { data?: unknown; isLoading: boolean; isError: boolean };
-type Key = 'config' | 'nodes' | 'connections' | 'activity' | 'specs' | 'documents';
+type Key = 'config' | 'nodes' | 'connections' | 'activity' | 'specs' | 'documents' | 'clones';
 
 const { queries, asked, config, lines, studio, invalidate, triggerLoad } = vi.hoisted(() => ({
   queries: { current: {} as Record<string, Query> },
@@ -30,6 +30,7 @@ vi.mock('@gears-frontx/react', () => ({
       connections: descriptor('connections'),
       sourceActivity: descriptor('activity'),
       specsPerSource: descriptor('specs'),
+      cloneStatus: descriptor('clones'),
     }),
   },
   // A key that is not one of the services' is the hook's own read with nothing to ask.
@@ -106,6 +107,28 @@ function answerAll() {
       days: 7,
     }),
     specs: answered({ items: [{ repo: 'n-api', specs: 12 }], total: 1, files_known: true }),
+    clones: answered({
+      items: [
+        {
+          clone_url: 'https://example.test/acme/api.git',
+          full_path: 'acme/api',
+          state: 'failed',
+          at: '2026-11-12T09:30:00Z',
+          by: 'ide_session',
+          cause: 'connection_not_found',
+          action: 'reconnect',
+        },
+        { clone_url: 'https://example.test/acme/web.git', full_path: 'acme/web', state: 'never' },
+        {
+          clone_url: 'https://example.test/lab/tool.git',
+          full_path: 'lab/tool',
+          state: 'cloned',
+          at: '2026-11-12T09:00:00Z',
+          by: 'desktop',
+        },
+      ],
+      total: 3,
+    }),
   };
   studio.current = { own: [], loading: false, failed: false };
 }
@@ -165,6 +188,30 @@ describe('useSourcesLoad', () => {
     ]);
     expect(view.footer).toEqual({ sources: 3, specs: 12, openPullRequests: 2 });
     expect(view.windowDays).toBe(7);
+  });
+
+  it('reads whether each source could be cloned, and says nothing of it when that read fails (#1071)', () => {
+    const sources = mount();
+    expect(asked).toContainEqual('clones');
+    expect(repositories(sources.view.rows).map((row) => [row.fullPath, row.clone.kind])).toEqual([
+      ['acme/api', 'failed'],
+      ['acme/web', 'never'],
+      ['lab/tool', 'cloned'],
+    ]);
+    expect(repositories(sources.view.rows)[0].clone).toMatchObject({
+      cause: 'connection_not_found',
+      action: 'reconnect',
+      by: 'ide_session',
+    });
+
+    queries.current.clones = failedQuery;
+    sources.rerender();
+    expect(sources.view.failed).toBe(false);
+    expect(repositories(sources.view.rows).map((row) => row.clone.kind)).toEqual([
+      'unknown',
+      'unknown',
+      'unknown',
+    ]);
   });
 
   it('searches and pages the rows it built, and the footer still counts them all', async () => {

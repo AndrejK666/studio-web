@@ -764,3 +764,32 @@ pub trait BuildRecords: Send + Sync + 'static {
         outcome: &BuildOutcome,
     ) -> anyhow::Result<()>;
 }
+
+pub use super::clone_status::{CloneCause, CloneChannel, CloneFailure, CloneOutcome};
+
+/// Where the code paths that clone a project's sources say how it went
+/// (#1071): `studio-git` for a desktop's clone or fetch, `studio-session` for
+/// an IDE session's launch. Only the last outcome per (project, repository)
+/// is kept. Absent where the gear has no database; a writer that resolves
+/// nothing records nothing.
+#[async_trait]
+pub trait CloneOutcomes: Send + Sync + 'static {
+    /// Record the outcome of a clone or fetch of `clone_url`, a source of
+    /// `project`. The URL is reduced to host and path; no credential in it is
+    /// kept.
+    async fn record(
+        &self,
+        project: uuid::Uuid,
+        clone_url: &str,
+        outcome: CloneOutcome,
+    ) -> anyhow::Result<()>;
+
+    /// Forget a failure `channel` recorded for `clone_url`, now that it no
+    /// longer holds. Anything else recorded is kept.
+    async fn clear_failure(
+        &self,
+        project: uuid::Uuid,
+        clone_url: &str,
+        channel: CloneChannel,
+    ) -> anyhow::Result<()>;
+}

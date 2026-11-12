@@ -12,6 +12,7 @@ import type {
   ArtifactNodeDto,
   RepoActivityDto,
   SourceActivityListDto,
+  SourceCloneStatusDto,
 } from '../api/artifactTypes';
 import type { DocumentDto, SpecsPerSourceListDto } from '../api/documentTypes';
 import { canCancel, canRetry, inFlight, type RepoImportStatus } from './repoImport';
@@ -31,6 +32,48 @@ export type SourceSync =
       status: 'failed' | 'cancelled' | 'lost';
       reason: Refusal | null;
       canRetry: boolean;
+    };
+
+/** The causes a failed clone names; anything else is shown by the backend's own sentence. */
+export const CLONE_CAUSES = [
+  'no_connection',
+  'connection_not_found',
+  'connection_personal',
+  'held_outside',
+  'token_unreadable',
+  'provider_refused',
+  'repository_not_found',
+  'unreachable',
+  'provider_error',
+  'not_http',
+] as const;
+export type CloneCause = (typeof CLONE_CAUSES)[number];
+
+/** What fixes a failed clone. */
+export const CLONE_ACTIONS = ['connect', 'reconnect', 'ask_admin', 'check_repository', 'retry'] as const;
+export type CloneAction = (typeof CLONE_ACTIONS)[number];
+
+/** Who cloned: a desktop through Studio's Git remote, or an IDE session's launch. */
+export type CloneChannel = 'desktop' | 'ide_session' | null;
+
+/**
+ * The last clone or fetch of a source (#1071). `unknown` when the clone
+ * status could not be read: it says nothing about the source.
+ */
+export type SourceClone =
+  | { kind: 'unknown' }
+  | { kind: 'never' }
+  | { kind: 'cloned'; at: string | null; by: CloneChannel }
+  | {
+      kind: 'failed';
+      at: string | null;
+      by: CloneChannel;
+      cause: CloneCause | null;
+      /** The backend's sentence, for a cause this screen has no words for. */
+      causeText: string | null;
+      action: CloneAction | null;
+      actionText: string | null;
+      detail: string | null;
     };
 
 export interface SourceActivity {
@@ -56,6 +99,7 @@ export interface SourceRow {
   activity: SourceActivity | null;
   lastSync: SourceLastSync;
   sync: SourceSync;
+  clone: SourceClone;
 }
 
 /** The project's own Studio documents (#693), as the design's "Uploaded files" row. */
@@ -86,6 +130,8 @@ export interface SourcesAnswers {
   lines: readonly SourceImportLine[];
   /** The project's own Studio documents; `null` when they could not be read. */
   uploads: readonly Pick<DocumentDto, 'created_at'>[] | null;
+  /** The last clone of each source; `null` when it could not be read. */
+  clones?: readonly SourceCloneStatusDto[] | null;
 }
 
 export interface SourcesFooter {
@@ -143,6 +189,39 @@ function syncOf(line: SourceImportLine | undefined): SourceSync {
     return { kind: 'stopped', status: line.status, reason: line.reason, canRetry: canRetry(line) };
   }
   return NO_SYNC;
+}
+
+function oneOf<T extends string>(known: readonly T[], value: string | null | undefined): T | null {
+  return value != null && (known as readonly string[]).includes(value) ? (value as T) : null;
+}
+
+function channelOf(by: string | null | undefined): CloneChannel {
+  return by === 'desktop' || by === 'ide_session' ? by : null;
+}
+
+/** A source's clone as the clone status reports it, matched by clone URL, else by path. */
+export function cloneOf(
+  clones: SourcesAnswers['clones'],
+  source: Pick<ProjectSource, 'clone_url' | 'full_path'>
+): SourceClone {
+  if (!clones) return { kind: 'unknown' };
+  const status =
+    clones.find((item) => item.clone_url === source.clone_url) ??
+    clones.find((item) => pathKey(item.full_path) === pathKey(source.full_path));
+  if (!status || status.state === 'never') return { kind: 'never' };
+  const at = status.at ?? null;
+  const by = channelOf(status.by);
+  if (status.state === 'cloned') return { kind: 'cloned', at, by };
+  return {
+    kind: 'failed',
+    at,
+    by,
+    cause: oneOf(CLONE_CAUSES, status.cause),
+    causeText: status.cause_text ?? null,
+    action: oneOf(CLONE_ACTIONS, status.action),
+    actionText: status.action_text ?? null,
+    detail: status.detail ?? null,
+  };
 }
 
 function uploadsRow(uploads: SourcesAnswers['uploads']): UploadsRow | null {
@@ -207,6 +286,7 @@ export function buildSourceRows(answers: SourcesAnswers): SourcesTableRow[] {
       // @cpt-begin:cpt-studiofrontend-algo-project-sources-rows:p2:inst-9
       sync: syncOf(lines.get(pathKey(source.full_path))),
       // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-9
+      clone: cloneOf(answers.clones, source),
     });
   }
   // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-1

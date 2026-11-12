@@ -4,6 +4,7 @@ import {
   ARTIFACT_NODE_TYPES,
   type ArtifactNodeDto,
   type SourceActivityListDto,
+  type SourceCloneStatusDto,
 } from '../api/artifactTypes';
 import type { SpecsPerSourceListDto } from '../api/documentTypes';
 import {
@@ -98,6 +99,7 @@ describe('a source in the config is a row', () => {
       activity: { open: 3, merged: 4, commits: 9, days: [0, 1, 0, 2, 0, 0, 1] },
       lastSync: { kind: 'synced', at: '2026-10-14T10:52:00Z' },
       sync: { kind: 'none' },
+      clone: { kind: 'unknown' },
     });
   });
 
@@ -184,6 +186,81 @@ describe('a source in the config is a row', () => {
       nodeId: null,
       lastSync: { kind: 'not_synced' },
     });
+  });
+});
+
+describe('whether a source could be cloned (#1071)', () => {
+  const status = (
+    full_path: string,
+    overrides: Partial<SourceCloneStatusDto> = {}
+  ): SourceCloneStatusDto => ({
+    clone_url: `https://example.test/${full_path}.git`,
+    full_path,
+    state: 'never',
+    ...overrides,
+  });
+
+  it('is unknown when the clone status could not be read', () => {
+    expect(only(answers({ clones: null })).clone).toEqual({ kind: 'unknown' });
+  });
+
+  it('was never cloned when nothing is recorded, or the status does not list it', () => {
+    expect(only(answers({ clones: [status('acme/api')] })).clone).toEqual({ kind: 'never' });
+    expect(only(answers({ clones: [] })).clone).toEqual({ kind: 'never' });
+  });
+
+  it('was cloned, with when and by what', () => {
+    const clones = [status('acme/api', { state: 'cloned', at: '2026-11-12T09:30:00Z', by: 'desktop' })];
+    expect(only(answers({ clones })).clone).toEqual({
+      kind: 'cloned',
+      at: '2026-11-12T09:30:00Z',
+      by: 'desktop',
+    });
+  });
+
+  it('failed, with its cause, the action that fixes it and the detail', () => {
+    const clones = [
+      status('acme/api', {
+        state: 'failed',
+        at: '2026-11-12T09:30:00Z',
+        by: 'ide_session',
+        cause: 'connection_not_found',
+        cause_text: 'The connection was not found.',
+        action: 'reconnect',
+        action_text: 'Reconnect it.',
+        detail: null,
+      }),
+    ];
+    expect(only(answers({ clones })).clone).toEqual({
+      kind: 'failed',
+      at: '2026-11-12T09:30:00Z',
+      by: 'ide_session',
+      cause: 'connection_not_found',
+      causeText: 'The connection was not found.',
+      action: 'reconnect',
+      actionText: 'Reconnect it.',
+      detail: null,
+    });
+  });
+
+  it('keeps a cause or a channel it does not know as no code, with the sentence', () => {
+    const clones = [
+      status('acme/api', { state: 'failed', by: 'robot', cause: 'new_cause', cause_text: 'New.' }),
+    ];
+    expect(only(answers({ clones })).clone).toMatchObject({
+      kind: 'failed',
+      by: null,
+      cause: null,
+      causeText: 'New.',
+      action: null,
+    });
+  });
+
+  it('is matched by clone URL, else by path whatever its case', () => {
+    const clones = [
+      { ...status('ACME/API', { state: 'cloned', by: 'desktop' }), clone_url: 'https://other.test/x.git' },
+    ];
+    expect(only(answers({ clones })).clone.kind).toBe('cloned');
   });
 });
 

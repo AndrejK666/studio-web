@@ -385,6 +385,7 @@ and unscoped listings.
 | `POST` | `/studio-artifact-ingest/v1/search` | Hybrid retrieval when embeddings exist, else lexical | unstable |
 | `POST` | `/studio-artifact-ingest/v1/files` | Register a file-storage object reference as a `file` node, idempotent by (project, path) | unstable |
 | `POST` | `/studio-artifact-ingest/v1/builds` | Record a build the IDE ran in the project `?project_id=` names: its start, or its end over its start (ADR-0045 phase 2); 404 when the caller does not reach the project | unstable |
+| `GET` | `/studio-artifact-ingest/v1/sources/clone-status` | `?project_id=`: one item per source in the project's config, in its order -- the last clone or fetch of it (`cloned`, `failed`, `never`), `at`, `by` (`desktop` through studio-git, `ide_session` at a session's launch), and for a failure its `cause` and the `action` that fixes it, each also as a sentence. 404 when the caller does not reach the project's config, 503 without the gear's database. The Sources tab's Clone column and the `project_sources` MCP tool. Issue #1071 | unstable |
 | `POST` | `/studio-artifact-ingest/v1/builds/dispatch` | Build in CI: start the `?project_id=` project's build workflow (`project.config` `build`) or the one named, through that repository's connection -- only one the organization owns (`CONNECTION_NOT_OWNED`); a provider's refusal is 400 `CI_REFUSED` (ADR-0045 phase 3) | unstable |
 
 Without a connector driver linked the routes stay mounted and answer 503 with
@@ -396,7 +397,11 @@ rollups), `ProjectWork` (a scope's issues, pull requests and commits with their
 text, which the documents gear links to the identifiers its documents define),
 `SpecFindingWriter` (where a Spec Quality run records findings), and
 `MappingDecisionStore` (where `cpt-studio-component-spec-mapping` keeps a
-member's mapping decisions).
+member's mapping decisions). With its database it also publishes
+`CloneOutcomes` (`clone_status.rs`), where `cpt-studio-component-git-proxy`
+records a desktop's clone or fetch of a project source and
+`cpt-studio-component-session` a launch that clones a source without the token
+its connection should lend (#1071).
 
 ### 3.4 Internal Dependencies
 
@@ -519,6 +524,38 @@ go to the graph until a fill writes the row.
 | tenant_id | nodes |
 |--------|--------|
 | a tenant id | `24000` |
+
+#### Table: studio_source_clone_status
+
+**ID**: `cpt-studio-dbtable-source-clone-status`
+
+**Schema**:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `tenant_id` | UUID | the project |
+| `repository` | TEXT | the clone URL reduced to `host/path`, lower case, without scheme, credentials or `.git` |
+| `state` | TEXT | `cloned` or `failed` |
+| `at_ms` | BIGINT | when |
+| `channel` | TEXT | `desktop` or `ide_session` |
+| `cause` | TEXT | why it failed; NULL when it did not |
+| `upstream_status` | INTEGER | the source host's status, when it answered one |
+| `detail` | TEXT | what else is known, credentials redacted |
+
+**PK**: `(tenant_id, repository)`
+
+**Constraints**: none beyond the key.
+
+**Additional info**: The last outcome only, overwritten, never a history
+(#1071). No token and no URL is stored. A launch that has its token again
+deletes the failure an earlier launch recorded, and nothing else. The server's
+own sync is not recorded here: it is the repository node's `synced_at`.
+
+**Example**:
+
+| repository | state | channel | cause |
+|--------|--------|--------|--------|
+| `github.com/acme/web` | `failed` | `ide_session` | `connection_not_found` |
 
 ### 3.8 Deployment Topology
 

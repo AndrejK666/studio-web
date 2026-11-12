@@ -121,6 +121,35 @@ fn a_shared_connection_lends_its_token_to_the_clone() {
     assert_eq!(got.token_ref.as_deref(), Some("studio-connection-1"));
 }
 
+/// What a failed clone names as its cause (#1071): why the source went
+/// upstream without a token, and nothing when it carries one.
+#[test]
+fn a_source_without_a_token_says_why() {
+    use crate::git_proxy::sources::NoToken;
+    assert_eq!(
+        to_git_source(resolved(Some("studio-connection-1"), false)).no_token,
+        None
+    );
+    assert_eq!(
+        to_git_source(resolved(Some("studio-connection-1"), true)).no_token,
+        Some(NoToken::Personal)
+    );
+    assert_eq!(
+        to_git_source(resolved(None, false)).no_token,
+        Some(NoToken::NoConnection)
+    );
+    let mut lost = resolved(None, false);
+    lost.source.connection_id = Some(Uuid::from_u128(7));
+    assert_eq!(
+        to_git_source(lost).no_token,
+        Some(NoToken::ConnectionNotFound)
+    );
+    let root = Uuid::from_u128(1);
+    let mut outside = resolved(Some("studio-connection-root"), false);
+    outside.held_outside = Some(root);
+    assert_eq!(to_git_source(outside).no_token, Some(NoToken::HeldOutside));
+}
+
 #[test]
 fn a_personal_connection_does_not() {
     assert_eq!(
