@@ -11,7 +11,68 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m0001::Migration)]
+        vec![Box::new(m0001::Migration), Box::new(m0002::Migration)]
+    }
+}
+
+/// The last clone or fetch of each project source (#1071, see
+/// [`super::clone_status`]).
+mod m0002 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const ONLY_POSTGRES: &str =
+        "studio-artifact-ingest migrations: only PostgreSQL is supported (see the module docs)";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0002_studio_source_clone_status"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"
+-- One row per (project, repository): the last outcome, overwritten, never a
+-- history. `repository` is the clone URL reduced to host and path, so no
+-- credential a URL might carry is ever stored.
+CREATE TABLE IF NOT EXISTS studio_source_clone_status (
+    tenant_id       UUID    NOT NULL,
+    repository      TEXT    NOT NULL,
+    state           TEXT    NOT NULL,
+    at_ms           BIGINT  NOT NULL,
+    channel         TEXT    NOT NULL,
+    cause           TEXT,
+    upstream_status INTEGER,
+    detail          TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (tenant_id, repository)
+)
+",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_source_clone_status")
+                .await?;
+            Ok(())
+        }
     }
 }
 

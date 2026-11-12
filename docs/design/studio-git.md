@@ -212,6 +212,36 @@ Does not ingest; `cpt-studio-component-artifact-ingest` does, as a run.
 - `cpt-studio-component-artifact-ingest` — queues its run
 - `cpt-studio-component-connector` — reads the connection catalogue of
 
+#### Clone outcome
+
+##### Why this component exists
+
+A clone that fails at the source host (no token, a refused one, a missing
+repository) was visible only to the person running `git`. The project's
+Sources tab showed the source as healthy (#1071).
+
+##### Responsibility scope
+
+`outcome.rs` and `GitProxy::note_clone`: every upload-pack `info/refs` that
+reaches a project source records the last outcome of that source through
+`artifact_ingest::port::CloneOutcomes`: cloned when the host served it, failed
+with a cause when the host or the proxy refused (connection held outside the
+organization, token unreadable, not http(s), 401/403, 404, another status,
+unreachable). A request that went upstream without a token names why
+(`sources::NoToken`: no connection, connection not found, personal) instead of
+blaming the host. A failed `git-upload-pack` records too; a push does not.
+Recorded in the background; `git` never waits on it.
+
+##### Responsibility boundaries
+
+Does not store anything itself; studio-artifact-ingest keeps the row and serves
+it. A request refused before its source is found (bad sign-in, unknown project
+or source) records nothing.
+
+##### Related components (by ID)
+
+- `cpt-studio-component-artifact-ingest` — records into
+
 ### 3.3 API Contracts
 
 - [x] `p2` - **ID**: `cpt-studio-interface-git-rest`
