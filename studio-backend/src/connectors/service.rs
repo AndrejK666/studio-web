@@ -459,6 +459,62 @@ pub(super) async fn same_person(
     Ok(recorded_person == people.resolve_caller(ctx).await?)
 }
 
+/// How many recorded subjects [`mine_of`] looks up at once.
+const SUBJECT_LOOKUPS_IN_FLIGHT: usize = 4;
+
+/// [`same_person`] for every subject in `recorded`, in order -- the answer a
+/// list gives row by row, without asking row by row (#1077). Each distinct
+/// subject is looked up once, a few at a time, and the caller is resolved
+/// once, and only when one of them turned out to be a known person, as
+/// [`same_person`] does. A lookup that fails answers "not the caller's", the
+/// same refusal a failed [`same_person`] gives.
+pub(super) async fn mine_of(
+    ctx: &SecurityContext,
+    recorded: &[&str],
+    people: Option<&dyn PersonResolver>,
+) -> Vec<bool> {
+    use futures_util::StreamExt as _;
+    let me = ctx.subject_id().to_string();
+    let mut persons: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    if let Some(people) = people {
+        // Owned: a stream of futures borrowing `&str` is not `Send` for every
+        // lifetime the router's handler bound asks of it.
+        let others: std::collections::BTreeSet<String> = recorded
+            .iter()
+            .filter(|s| **s != me)
+            .map(|s| (*s).to_owned())
+            .collect();
+        persons = futures_util::stream::iter(others)
+            .map(|subject: String| async move {
+                let person = people
+                    .resolve_recorded_subject(&subject)
+                    .await
+                    .ok()
+                    .flatten();
+                (subject, person)
+            })
+            .buffer_unordered(SUBJECT_LOOKUPS_IN_FLIGHT)
+            .collect()
+            .await;
+    }
+    let caller = match people {
+        Some(people) if persons.values().any(Option::is_some) => {
+            people.resolve_caller(ctx).await.ok()
+        }
+        _ => None,
+    };
+    recorded
+        .iter()
+        .map(|subject| {
+            *subject == me
+                || caller.as_ref().is_some_and(|caller| {
+                    persons.get(*subject).and_then(Option::as_ref) == Some(caller)
+                })
+        })
+        .collect()
+}
+
 impl ConnectorService {
     pub fn new(
         am: Arc<dyn AccountManagementClient>,
@@ -570,8 +626,18 @@ impl ConnectorService {
         ctx: &SecurityContext,
         tenant: Uuid,
     ) -> anyhow::Result<Vec<Connection>> {
-        let own = self.list(ctx, tenant).await?;
-        let reachable = reachable_connections(self.am.as_ref(), ctx, tenant).await;
+        // One walk answers both halves: its first level is exactly what
+        // `list` reads, so that catalogue is not asked for twice (#1077).
+        let mut levels = reachable_catalogues(self.am.as_ref(), ctx, tenant)
+            .await
+            .into_iter();
+        let own = levels
+            .next()
+            .unwrap_or_else(|| Ok(Catalogue::default()))?
+            .items;
+        let reachable = flatten_reachable(
+            std::iter::once(own.clone()).chain(levels.flatten().map(|c| c.items)),
+        );
         Ok(merge_reachable(tenant, own, reachable))
     }
 
@@ -1716,24 +1782,60 @@ async fn reachable_connections(
     ctx: &SecurityContext,
     from: Uuid,
 ) -> Vec<Connection> {
-    let mut out: Vec<Connection> = Vec::new();
-    let mut tenant = Some(from);
-    // Project → workspace → organization; nothing Studio keeps is deeper.
-    for _ in 0..3 {
-        let Some(current) = tenant else { break };
-        if let Ok(catalogue) = load_catalogue(am, ctx, current).await {
-            for c in catalogue.items {
-                if !out.iter().any(|seen| seen.id == c.id) {
-                    out.push(c);
-                }
-            }
-        }
-        tenant = am
-            .get_tenant(ctx, current)
+    flatten_reachable(
+        reachable_catalogues(am, ctx, from)
+            .await
+            .into_iter()
+            .flatten()
+            .map(|c| c.items),
+    )
+}
+
+/// The catalogue each of `from`, its parent and its grandparent sees
+/// ([`load_catalogue`] at each), nearest first: project → workspace →
+/// organization, nothing Studio keeps is deeper. A tenant whose parent cannot
+/// be read ends the walk; a level that cannot be read is its error, in place.
+///
+/// Concurrent (#1077): a level's catalogue is asked for as soon as its tenant
+/// is known, while the walk asks for the next parent. A project costs two
+/// parent lookups and three catalogue reads, at most three in flight, where
+/// it used to cost one after another -- and the grandparent's own parent,
+/// which nothing reads, is no longer asked for.
+async fn reachable_catalogues(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    from: Uuid,
+) -> Vec<anyhow::Result<Catalogue>> {
+    let parent_of = |tenant: Uuid| async move {
+        am.get_tenant(ctx, tenant)
             .await
             .ok()
             .and_then(|t| t.parent_id)
-            .map(|p| p.0);
+            .map(|p| p.0)
+    };
+    let above = async {
+        let Some(parent) = parent_of(from).await else {
+            return Vec::new();
+        };
+        let (at_parent, grandparent) =
+            futures_util::join!(load_catalogue(am, ctx, parent), parent_of(parent));
+        let mut out = vec![at_parent];
+        if let Some(grandparent) = grandparent {
+            out.push(load_catalogue(am, ctx, grandparent).await);
+        }
+        out
+    };
+    let (at_from, above) = futures_util::join!(load_catalogue(am, ctx, from), above);
+    std::iter::once(at_from).chain(above).collect()
+}
+
+/// The connections of `catalogues`, in order, each once.
+fn flatten_reachable(catalogues: impl IntoIterator<Item = Vec<Connection>>) -> Vec<Connection> {
+    let mut out: Vec<Connection> = Vec::new();
+    for c in catalogues.into_iter().flatten() {
+        if !out.iter().any(|seen| seen.id == c.id) {
+            out.push(c);
+        }
     }
     out
 }
@@ -3220,3 +3322,7 @@ mod publish_tests {
 #[cfg(test)]
 #[path = "oauth_flow_tests.rs"]
 mod oauth_flow_tests;
+
+#[cfg(test)]
+#[path = "connections_list_tests.rs"]
+mod connections_list_tests;

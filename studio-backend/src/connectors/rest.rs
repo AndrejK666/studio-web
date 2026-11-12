@@ -719,19 +719,15 @@ async fn list_connections(
         svc.list(&ctx, tenant).await
     }
     .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    // Whose each row is, side by side: one identity lookup per row whose
-    // creator is not the caller's current sign-in.
-    let mine = futures_util::future::join_all(
-        items
-            .iter()
-            .map(|c| super::service::same_person(&ctx, &c.created_by, people.0.as_deref())),
-    )
-    .await;
+    // Whose each row is: one identity lookup per distinct creator that is not
+    // the caller's current sign-in, and the caller resolved once (#1077).
+    let created_by: Vec<&str> = items.iter().map(|c| c.created_by.as_str()).collect();
+    let mine = super::service::mine_of(&ctx, &created_by, people.0.as_deref()).await;
     Ok(Json(ConnectionListDto {
         items: items
             .into_iter()
             .zip(mine)
-            .map(|(c, mine)| to_dto(c, mine.unwrap_or(false), Some(tenant)))
+            .map(|(c, mine)| to_dto(c, mine, Some(tenant)))
             .collect(),
     }))
 }
