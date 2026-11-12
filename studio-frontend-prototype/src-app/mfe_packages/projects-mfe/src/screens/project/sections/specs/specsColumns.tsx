@@ -4,7 +4,7 @@ import { FilePenLine, FileText } from 'lucide-react';
 import type { DocumentTypeDto } from '../../../../api/documentTypes';
 import type { SpecRow } from '../../../../model/specRows';
 import { useSpecsText } from '../../../../i18n';
-import { NameCell } from '../../../../components/NameCell';
+import { NameCell } from '@constructor-studio/mfe-shared';
 import { TypeCell } from './TypeCell';
 import styles from './SpecsTable.module.css';
 

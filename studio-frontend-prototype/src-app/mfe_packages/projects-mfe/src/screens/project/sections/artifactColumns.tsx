@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import type { ArtifactKind } from '../../../api/artifactTypes';
 import { opensInEditor, type ArtifactRow } from '../../../model/artifact';
-import { NameCell } from '../../../components/NameCell';
+import { NameCell } from '@constructor-studio/mfe-shared';
 import styles from './ArtifactsSection.module.css';
 
 const KIND_ICON: Record<ArtifactKind | 'document', React.ReactNode> = {

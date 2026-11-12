@@ -17,7 +17,7 @@ import {
   type SpecsQuery,
 } from '../model/specRows';
 import { isSpecsFilter, type SpecsFilter } from '../model/specsFilter';
-import { TEXT_SEARCH_FILTER_KEY, tagGroupChoice } from './dataGridFilters';
+import { TEXT_SEARCH_FILTER_KEY, tagGroupChoice } from '@constructor-studio/mfe-shared';
 
 /** Where the table's plugins put each filter in `DataGridLoadContext.filters` (#692, #878). */
 export const SPECS_FILTER_KEYS = {

@@ -56,6 +56,13 @@ export {
   type ChainOutcomes,
 } from './host/chainOutcome';
 export { useNotify } from './host/useNotify';
+export {
+  MFE_PREFERENCE_KEY,
+  MFE_PREFERENCE_MAX_LENGTH,
+  STUDIO_ACTION_PREFERENCE_SET,
+  STUDIO_SHARED_PROPERTY_UI_PREFERENCES,
+  useHostPreference,
+} from './host/preferences';
 export { StudioMfeLifecycle } from './mfe/StudioMfeLifecycle';
 export { authShared } from './auth/authShared';
 export {
@@ -296,3 +303,33 @@ export {
 } from './domain/DomainModelApiService';
 // People and teams (people-mfe, team-mfe).
 export * from './people';
+
+// A list on the kit's DataGrid, as Specs draws one (#1076): see README, "Lists on DataGrid".
+export {
+  GRID_PAGE_LIMITS,
+  ListGrid,
+  createGridCells,
+  type ListGridProps,
+} from './lists/grid/ListGrid';
+export {
+  GridEmpty,
+  GridFailed,
+  GridFooter,
+  NoData,
+  type GridEmptyProps,
+} from './lists/grid/GridStates';
+export { NameCell } from './lists/grid/NameCell';
+export {
+  pageOfRows,
+  shownRows,
+  useLocalGridLoad,
+  type LocalGridLoad,
+  type LocalGridOptions,
+} from './lists/grid/localGridLoad';
+export {
+  TEXT_SEARCH_FILTER_KEY,
+  listChoices,
+  searchQuery,
+  tagGroupChoice,
+} from './lists/grid/dataGridFilters';
+export { useThemedRoot } from './lists/grid/useThemedRoot';

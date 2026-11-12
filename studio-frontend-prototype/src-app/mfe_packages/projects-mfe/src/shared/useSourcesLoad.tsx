@@ -5,7 +5,7 @@ import {
   type DataGridLoadContext,
   type DataGridLoadResult,
 } from '@gears-frontx/ui-kit';
-import { AccountsApiService, ConnectorsApiService } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, ConnectorsApiService, TEXT_SEARCH_FILTER_KEY } from '@constructor-studio/mfe-shared';
 import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
 import { DocumentsApiService } from '../api/DocumentsApiService';
 import { inFlight } from '../model/repoImport';
@@ -18,7 +18,6 @@ import {
   type SourcesFooter,
   type SourcesTableRow,
 } from '../model/sourceRows';
-import { TEXT_SEARCH_FILTER_KEY } from './dataGridFilters';
 import { useProjectImport } from './useArtifactImport';
 import { repositoryNodesParams } from './useArtifacts';
 import { projectConnectionsParams } from './useConnections';

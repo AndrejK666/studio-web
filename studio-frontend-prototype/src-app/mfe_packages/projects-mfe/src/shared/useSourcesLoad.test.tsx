@@ -46,6 +46,7 @@ vi.mock('@constructor-studio/mfe-shared', () => ({
   AccountsApiService: class {},
   ConnectorsApiService: class {},
   PROJECT_CONFIG_TYPE: 'project-config',
+  TEXT_SEARCH_FILTER_KEY: 'textSearch',
 }));
 vi.mock('../api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: class {} }));
 vi.mock('../api/DocumentsApiService', () => ({ DocumentsApiService: class {} }));
