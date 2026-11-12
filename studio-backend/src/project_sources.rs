@@ -550,6 +550,20 @@ pub async fn resolve(
     .await;
     let mut out = Vec::with_capacity(sources.len());
     for (source, found) in sources.into_iter().zip(lookups) {
+        if found.is_none()
+            && let Some(id) = source.connection_id
+        {
+            // The source names a connection nobody can find from here: it
+            // goes on without a token, and a private repository then fails at
+            // the provider with a reason ("could not read Username") that
+            // points nowhere near this. Say so where it happens (#1067).
+            tracing::warn!(
+                %project,
+                repo = %source.full_path,
+                connection = %id,
+                "project source: its connection is not found from this project — it is used without a token"
+            );
+        }
         let holder = found.as_ref().map(|(at, c)| holder_of_row(c, *at));
         let connection = found.map(|(_, c)| c);
         out.push(Resolved {

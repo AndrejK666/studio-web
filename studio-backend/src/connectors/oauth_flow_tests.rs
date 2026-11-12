@@ -628,3 +628,48 @@ async fn the_provider_list_says_which_providers_sign_in() {
     assert!(p.sign_in);
     assert_eq!(p.category, "compute");
 }
+
+/* ── A connection read from where this gear keeps it (#1067) ── */
+
+/// The organization's catalogue, holding one GitHub connection.
+fn org_catalogue(id: Uuid) -> Catalogues {
+    let catalogue = Catalogues::default();
+    catalogue.docs.lock().unwrap().insert(
+        ORG,
+        serde_json::json!({ "items": [{
+            "id": id,
+            "owner_tenant_id": ORG,
+            "provider": "github",
+            "label": "org repositories",
+            "base_url": "https://api.github.com",
+            "secret_ref": "studio-connection-org",
+            "scope": "organization",
+            "created_at_epoch_secs": 1,
+        }]}),
+    );
+    catalogue
+}
+
+#[tokio::test]
+async fn another_gears_lookup_reads_the_catalogue_where_this_gear_keeps_it() {
+    // The catalogue has moved into the domain model: this gear's own client
+    // finds it, the raw account-management one another gear holds does not.
+    let id = Uuid::from_u128(0xc0);
+    let kept = org_catalogue(id);
+    let raw = Catalogues::default();
+    let ctx = person(1);
+
+    let (at, c) = connection_by_id_via(Some(&kept), &raw, &ctx, ORG, id)
+        .await
+        .expect("the connection is found through the kept reader");
+    assert_eq!(at, ORG);
+    assert_eq!(c.secret_ref, "studio-connection-org");
+}
+
+#[tokio::test]
+async fn without_a_kept_reader_the_callers_client_is_asked() {
+    let id = Uuid::from_u128(0xc1);
+    let caller = org_catalogue(id);
+    let found = connection_by_id_via(None, &caller, &person(1), ORG, id).await;
+    assert_eq!(found.map(|(_, c)| c.id), Some(id));
+}

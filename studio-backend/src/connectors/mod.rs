@@ -273,6 +273,7 @@ impl Gear for StudioConnectorGear {
                     .map(|am| crate::model_metadata::client_for(ctx, am, gts::MODEL_KINDS)),
                 ctx.client_hub().get::<dyn CredStoreClientV1>(),
             ) {
+                service::keep_catalogue_reader(Arc::clone(&am));
                 ctx.client_hub()
                     .register::<ConnectorService>(ConnectorService::new(am, credstore, drivers));
             }
@@ -284,6 +285,7 @@ impl Gear for StudioConnectorGear {
             ctx.client_hub().get::<dyn AccountManagementClient>()?,
             gts::MODEL_KINDS,
         );
+        service::keep_catalogue_reader(Arc::clone(&am));
         let credstore = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
         let service = ConnectorService::new(am, credstore, drivers);
         // The one connector service of the process: the other gears hold a
