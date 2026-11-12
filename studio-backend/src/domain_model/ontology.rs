@@ -30,7 +30,10 @@ pub(crate) const PRODUCT_MODEL_JSON: &str = include_str!("ontology.core.json");
 /// Studio itself, as `meta.left_by.kit`. Never a kit's slug.
 pub(crate) const LEFT_BY_STUDIO: &str = "studio";
 
-/// The model document's keys stored packed (see [`Ontology::model_document`]).
+/// The key the model document's head is stored under, packed (see
+/// [`Ontology::model_document`]).
+const PACKED_HEAD: &str = "packed";
+/// The keys a model stored before [`PACKED_HEAD`] packed one by one; still read.
 const PACKED_KEYS: &[&str] = &["core_layer", "kit_property_layers"];
 /// The one field of a packed key: its JSON, gzipped, in standard base64.
 const PACKED: &str = "gzip_base64";
@@ -39,7 +42,7 @@ const PACKED: &str = "gzip_base64";
 fn pack(value: &Value) -> Value {
     use base64::Engine;
     use std::io::Write;
-    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
     // Writing to a Vec cannot fail.
     let _ = gz.write_all(value.to_string().as_bytes());
     let bytes = gz.finish().unwrap_or_default();
@@ -419,14 +422,19 @@ impl Ontology {
     /// unpacks them, so the document in memory is the same either way.
     pub fn model_document(&self) -> Value {
         let mut head = self.doc.clone();
-        if let Some(obj) = head.as_object_mut() {
-            obj.remove("entities");
-            for key in PACKED_KEYS {
-                if let Some(layer) = obj.get_mut(*key) {
-                    *layer = pack(layer);
-                }
-            }
+        let Some(obj) = head.as_object_mut() else {
+            return head;
+        };
+        obj.remove("entities");
+        // Everything but the model's name goes in one packed blob: the layers
+        // and the buckets name the same types and fields over and over, so one
+        // stream compresses far better than each key on its own.
+        let name = obj.remove("model");
+        let rest = Value::Object(std::mem::take(obj));
+        if let Some(name) = name {
+            obj.insert("model".to_owned(), name);
         }
+        obj.insert(PACKED_HEAD.to_owned(), pack(&rest));
         head
     }
 
@@ -447,6 +455,14 @@ impl Ontology {
             _ => json!({}),
         };
         if let Some(obj) = doc.as_object_mut() {
+            if let Some(packed) = obj.remove(PACKED_HEAD) {
+                let Value::Object(rest) = unpack(&packed).ok_or(OntologyError::Malformed)? else {
+                    return Err(OntologyError::Malformed);
+                };
+                obj.extend(rest);
+            }
+            // A model stored with only its layers packed, before the whole
+            // head was.
             for key in PACKED_KEYS {
                 if let Some(layer) = obj.get_mut(*key) {
                     *layer = unpack(layer).ok_or(OntologyError::Malformed)?;
@@ -2177,7 +2193,7 @@ mod tests {
         // What the sync stores: the document's non-entity part as one node,
         // and one entity document per object_type node.
         let head = o.model_document();
-        assert!(head.get("buckets").is_some());
+        assert!(head.get("packed").is_some(), "the head goes packed");
         assert!(head.get("entities").is_none());
         let entities = ordered_entities(&o);
         assert_eq!(entities.len(), o.entities().len());
@@ -2193,20 +2209,28 @@ mod tests {
         let o = Ontology::load();
         assert!(o.has_core_layer());
         let head = o.model_document();
-        let layer = &head["core_layer"];
-        assert!(layer[PACKED].is_string(), "the core layer is packed");
+        assert!(head[PACKED_HEAD][PACKED].is_string(), "the head is packed");
+        assert!(head.get("core_layer").is_none() && head.get("buckets").is_none());
+        assert_eq!(head["model"], o.document()["model"], "the name stays readable");
         assert!(
             head.to_string().len() < o.document()["core_layer"].to_string().len(),
             "packing makes the model node smaller than the layer alone"
         );
-        // A model stored before packing: the layer as plain JSON.
-        let mut plain = head.clone();
-        plain["core_layer"] = o.document()["core_layer"].clone();
-        let back = Ontology::from_parts(plain, o.entities().to_vec()).expect("reads");
+        let back = Ontology::from_parts(head.clone(), o.entities().to_vec()).expect("reads");
         assert_eq!(back.document(), o.document());
-        // A packed layer that does not read is a malformed model, not an empty one.
+        // A model stored before packing: every key as plain JSON.
+        let mut plain = o.document().clone();
+        plain.as_object_mut().unwrap().remove("entities");
+        let back = Ontology::from_parts(plain.clone(), o.entities().to_vec()).expect("reads");
+        assert_eq!(back.document(), o.document());
+        // A model stored with only its layers packed, one by one.
+        let mut layered = plain;
+        layered["core_layer"] = pack(&o.document()["core_layer"]);
+        let back = Ontology::from_parts(layered, o.entities().to_vec()).expect("reads");
+        assert_eq!(back.document(), o.document());
+        // A packed head that does not read is a malformed model, not an empty one.
         let mut broken = head;
-        broken["core_layer"] = json!({ PACKED: "not base64" });
+        broken[PACKED_HEAD] = json!({ PACKED: "not base64" });
         assert!(Ontology::from_parts(broken, o.entities().to_vec()).is_err());
     }
 
