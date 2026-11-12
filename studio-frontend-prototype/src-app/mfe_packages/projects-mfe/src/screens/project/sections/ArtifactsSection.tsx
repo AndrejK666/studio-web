@@ -18,7 +18,8 @@ import {
   Skeleton,
 } from '@gears-frontx/ui-kit';
 import { useFormatters, useMfeBridge } from '@gears-frontx/react';
-import { useOrganization, useThemedRoot, useWorkspace } from '@constructor-studio/mfe-shared';
+import { useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
+import { useThemedRoot } from '@constructor-studio/mfe-shared/grid';
 import { Files, Search } from 'lucide-react';
 import { useProjectText } from '../../../i18n';
 import { ARTIFACTS_PAGE_SIZE, useArtifacts } from '../../../shared/useArtifacts';

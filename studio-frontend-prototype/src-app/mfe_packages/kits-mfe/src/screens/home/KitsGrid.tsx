@@ -17,14 +17,14 @@ import {
   type DataGridTableColumn,
 } from '@gears-frontx/ui-kit';
 import { LayoutGrid } from 'lucide-react';
+import { useHostPreference } from '@constructor-studio/mfe-shared';
 import {
   GridEmpty,
   ListGrid,
   createGridCells,
   listChoices,
-  useHostPreference,
   useLocalGridLoad,
-} from '@constructor-studio/mfe-shared';
+} from '@constructor-studio/mfe-shared/grid';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import type { CatalogKit, InstalledKits } from '../../api/KitsApiService';
 import type { useHomeTranslations } from '../../i18n';

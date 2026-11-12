@@ -5,7 +5,8 @@ import {
   type DataGridLoadContext,
   type DataGridLoadResult,
 } from '@gears-frontx/ui-kit';
-import { AccountsApiService, ConnectorsApiService, TEXT_SEARCH_FILTER_KEY } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, ConnectorsApiService } from '@constructor-studio/mfe-shared';
+import { TEXT_SEARCH_FILTER_KEY } from '@constructor-studio/mfe-shared/grid';
 import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
 import { DocumentsApiService } from '../api/DocumentsApiService';
 import { inFlight } from '../model/repoImport';

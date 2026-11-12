@@ -9,10 +9,7 @@ vi.mock('@gears-frontx/react', () => ({
   useFormatters: () => ({ formatRelative: () => '' }),
   useMfeBridge: () => ({}),
 }));
-vi.mock('@constructor-studio/mfe-shared', async () => ({
-  // The name cell and the themed root, from the module itself: the package's index would need the whole framework.
-  ...(await import('../../../../../shared/src/lists/grid/NameCell')),
-  ...(await import('../../../../../shared/src/lists/grid/useThemedRoot')),
+vi.mock('@constructor-studio/mfe-shared', () => ({
   useOrganization: () => ({ org: { id: 'org-1', name: 'Acme' } }),
   useWorkspace: () => ({ workspace: null }),
 }));

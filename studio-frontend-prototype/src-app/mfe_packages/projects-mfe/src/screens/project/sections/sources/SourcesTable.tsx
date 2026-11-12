@@ -23,7 +23,7 @@ import { activityScale, neverSynced, type SourcesTableRow } from '../../../../mo
 import { SOURCE_SHARE_SLICE_KEY } from '../../../../slices/sourceShareSlice';
 import { useSourcesLoad } from '../../../../shared/useSourcesLoad';
 import { useSourceRowActions } from '../../../../shared/useSourceRowActions';
-import { useThemedRoot } from '@constructor-studio/mfe-shared';
+import { useThemedRoot } from '@constructor-studio/mfe-shared/grid';
 import { NAV_SLICE_KEY } from '../../../../slices/navSlice';
 import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
 import { UploadPanel } from '../../upload/UploadPanel';

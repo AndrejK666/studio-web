@@ -15,7 +15,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@gears-frontx/ui-kit';
-import { useEverLoaded, useThemedRoot, useWorkspace } from '@constructor-studio/mfe-shared';
+import { useEverLoaded, useWorkspace } from '@constructor-studio/mfe-shared';
+import { useThemedRoot } from '@constructor-studio/mfe-shared/grid';
 import { SpecQualityApiService } from '../../../../api/SpecQualityApiService';
 import { useSpecsSectionTranslations, useSpecsText } from '../../../../i18n';
 import { CHECK_CONFIRM_ABOVE, checkTargets } from '../../../../model/specsCheck';

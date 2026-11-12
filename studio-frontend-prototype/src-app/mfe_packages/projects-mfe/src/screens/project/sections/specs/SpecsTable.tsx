@@ -29,7 +29,7 @@ import {
   GridFooter,
   tagGroupChoice,
   useThemedRoot,
-} from '@constructor-studio/mfe-shared';
+} from '@constructor-studio/mfe-shared/grid';
 import { SPECS_FILTER_KEYS, useSpecsLoad } from '../../../../shared/useSpecsLoad';
 import { specsSelected, specsShown } from '../../../../slices/specsCheckSlice';
 import {

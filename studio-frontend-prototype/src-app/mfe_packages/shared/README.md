@@ -52,7 +52,11 @@ pick it up, through the `type-check` script above.
 ## Lists on DataGrid (#1076)
 
 Every list tab draws its rows with the kit's `DataGrid`, the way the project's
-Specs tab does. `lists/grid/` holds what they share. It carries CSS modules:
+Specs tab does. `lists/grid/` holds what they share, imported from its own
+entry, `@constructor-studio/mfe-shared/grid` (`src/grid.ts`): the package's
+main entry stays free of the kit's DataGrid, so the shell and the MFEs without
+a list do not load it (a test that re-imports the package per case would pay
+for it every time). It carries CSS modules:
 each MFE's build bundles them into its own stylesheet, as it does its own.
 
 - **`ListGrid`**: the grid with the plugins every list has, in one place: text

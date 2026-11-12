@@ -26,7 +26,8 @@ import {
   SelectValue,
   Spinner,
 } from '@gears-frontx/ui-kit';
-import { useEverLoaded, useThemedRoot, useWorkspace } from '@constructor-studio/mfe-shared';
+import { useEverLoaded, useWorkspace } from '@constructor-studio/mfe-shared';
+import { useThemedRoot } from '@constructor-studio/mfe-shared/grid';
 import { DocumentsApiService } from '../../../api/DocumentsApiService';
 import type { DocumentTypeDto } from '../../../api/documentTypes';
 import { requestOpenDocument } from '../../../actions/artifactActions';
