@@ -29,6 +29,8 @@ Ordered by how much it would help us, most first.
 
 ## 1. Let one bad type in a batch fail on its own
 
+*Filed: constructorfabric/gears-rust#5961 (2026-11-12). Still all-or-nothing in weftgraph 0.3.0-rc.2.*
+
 **Today.** `register_types` takes a batch and commits it whole. If one type in
 it is refused, the whole call fails and nothing is registered.
 
@@ -182,6 +184,8 @@ so for us the update does not exist yet. That is item 8.
 ---
 
 ## 4. Make removing something possible
+
+*Filed: constructorfabric/gears-rust#5962 (2026-11-12), for the tombstoned key and its refusal reason. Checked against weftgraph 0.3.0-rc.2: `replace_scope` now removes what a batch did not name (`scope::remove_stale`); a tombstoned key is still not reusable and the SDK has no purge.*
 
 Three smaller limits that add up to the same thing: our model can grow but not
 shrink.
