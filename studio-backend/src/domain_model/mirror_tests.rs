@@ -654,3 +654,170 @@ async fn totals_match_at_every_page_shape() {
         .await;
     assert_eq!(narrowed["total"], json!(3));
 }
+
+// ── Several scopes at once, and a gear's counts without rows ───────────────
+
+const SCOPE_A: Uuid = Uuid::from_u128(0xd0d2);
+const SCOPE_B: Uuid = Uuid::from_u128(0xd0d3);
+const SCOPE_C: Uuid = Uuid::from_u128(0xd0d4);
+
+/// Risks in three projects and one in the organization.
+async fn scoped(tenant: Uuid) -> Pair {
+    let p = Pair::new(tenant).await;
+    p.write(json!([
+        {"op": "upsert", "type": "risk", "key": "a1", "project_id": SCOPE_A.to_string(), "value": {"title": "A1", "impact": "high"}},
+        {"op": "upsert", "type": "risk", "key": "a2", "project_id": SCOPE_A.to_string(), "value": {"title": "A2", "impact": "low"}},
+        {"op": "upsert", "type": "risk", "key": "b1", "project_id": SCOPE_B.to_string(), "value": {"title": "B1", "impact": "high"}},
+        {"op": "upsert", "type": "risk", "key": "c1", "project_id": SCOPE_C.to_string(), "value": {"title": "C1", "impact": "high"}},
+        {"op": "upsert", "type": "risk", "key": "o1", "value": {"title": "Org", "impact": "high"}},
+    ]))
+    .await;
+    p.fill().await;
+    p
+}
+
+impl Pair {
+    /// A gear's read (`query_bulk`, what the port runs) from both readers,
+    /// compared.
+    async fn same_bulk(&self, body: Value) -> Value {
+        let q = Query::from_json(body.clone()).expect("query");
+        let g = self
+            .graph
+            .query_bulk(&self.ctx, &q)
+            .await
+            .unwrap_or_else(|e| panic!("graph: {e:?}"));
+        let s = self
+            .sql
+            .query_bulk(&self.ctx, &q)
+            .await
+            .unwrap_or_else(|e| panic!("sql: {e:?}"));
+        assert_eq!((g.source, s.source), ("graph", "read_model"));
+        let (g, s) = (shape(&g), shape(&s));
+        assert_eq!(g, s, "graph and read model differ on {body}");
+        s
+    }
+}
+
+#[tokio::test]
+async fn several_scopes_answer_the_same_as_one_at_a_time() {
+    let p = scoped(Uuid::from_u128(0xd0d1)).await;
+    let (a, b) = (SCOPE_A.to_string(), SCOPE_B.to_string());
+    let order = json!([{"field": "title"}]);
+
+    let both = p
+        .same_bulk(json!({"type": "risk", "project_ids": [a, b], "order_by": order}))
+        .await;
+    assert_eq!(names(&both), ["A1", "A2", "B1"]);
+    assert_eq!(both["total"], json!(3));
+
+    // One scope in a list is the scope alone.
+    let listed = p
+        .same_bulk(json!({"type": "risk", "project_ids": [a], "order_by": order}))
+        .await;
+    let alone = p
+        .same_bulk(json!({"type": "risk", "project_id": a, "order_by": order}))
+        .await;
+    assert_eq!(listed, alone);
+
+    // Repeated and blank entries are one scope and none.
+    let repeated = p
+        .same_bulk(json!({"type": "risk", "project_ids": [a, " ", a], "order_by": order}))
+        .await;
+    assert_eq!(repeated, alone);
+
+    // No scope at all matches nothing, not everything.
+    let none = p
+        .same_bulk(json!({"type": "risk", "project_ids": []}))
+        .await;
+    assert_eq!(none["total"], json!(0));
+
+    let refused = Query::from_json(json!({"type": "risk", "project_id": a, "project_ids": [b]}));
+    assert!(refused.is_err(), "one or the other");
+}
+
+#[tokio::test]
+async fn counts_without_rows_answer_the_same() {
+    let p = scoped(Uuid::from_u128(0xd0d5)).await;
+    let (a, b) = (SCOPE_A.to_string(), SCOPE_B.to_string());
+
+    let grouped = p
+        .same_bulk(json!({
+            "type": "risk",
+            "project_ids": [a, b],
+            "aggregate": {"group_by": ["impact"]},
+            "limit": 0,
+        }))
+        .await;
+    assert_eq!(grouped["items"], json!([]), "no row is read");
+    assert_eq!(grouped["total"], json!(3), "the groups' sum");
+    assert_eq!(
+        grouped["groups"],
+        json!([{"key": ["high"], "count": 2}, {"key": ["low"], "count": 1}])
+    );
+
+    // Without an aggregate the count stands alone.
+    let counted = p
+        .same_bulk(json!({"type": "risk", "project_ids": [a], "limit": 0}))
+        .await;
+    assert_eq!(counted["items"], json!([]));
+    assert_eq!(counted["total"], json!(2));
+
+    // Over the whole tenant, every scope and none.
+    let all = p
+        .same_bulk(json!({"type": "risk", "aggregate": {"group_by": []}, "limit": 0}))
+        .await;
+    assert_eq!(all["total"], json!(5));
+    assert_eq!(all["groups"], json!([{"key": [], "count": 5}]));
+}
+
+/// What made a project's read slow (studio-web#1077): the PDP was asked
+/// about every owner of the type in the organization, and the read then
+/// went through all their rows. Scopes narrow the owners first.
+#[tokio::test]
+async fn scopes_narrow_the_owners_the_pdp_is_asked_about() {
+    let tenant = Uuid::from_u128(0xd0d6);
+    let p = scoped(tenant).await;
+    let model = p.graph.tenant_model(&p.ctx).await.expect("model");
+    let entity = model.resolve_entity_id("risk").expect("risk");
+    let types = vec![super::super::gts::node_type_id(&entity)];
+
+    let mut every = p.mirror.owners(tenant, &types, None).await.unwrap();
+    every.sort();
+    let mut expected = vec![SCOPE_A, SCOPE_B, SCOPE_C, tenant];
+    expected.sort();
+    assert_eq!(every, expected);
+
+    let asked = [SCOPE_A.to_string(), SCOPE_B.to_string()];
+    let mut narrowed = p.mirror.owners(tenant, &types, Some(&asked)).await.unwrap();
+    narrowed.sort();
+    assert_eq!(narrowed, [SCOPE_A, SCOPE_B]);
+}
+
+/// A project grant still decides over several scopes: the rows of a project
+/// the caller may not read are neither listed nor counted.
+#[tokio::test]
+async fn a_project_grant_narrows_several_scopes_too() {
+    let p = Pair::new(ORG).await;
+    p.write(json!([
+        {"op": "upsert", "type": "project", "key": "apollo", "project_id": MINE.to_string(), "value": {"name": "apollo"}},
+        {"op": "upsert", "type": "project", "key": "gemini", "project_id": THEIRS.to_string(), "value": {"name": "gemini"}},
+    ]))
+    .await;
+    p.fill().await;
+    let narrowed = DomainModelService::new(Arc::new(IndexedDomainStore::new(
+        p.inner.clone(),
+        p.mirror.clone(),
+    )))
+    .with_policy(Arc::new(OneProject));
+    let q = Query::from_json(json!({
+        "type": "project",
+        "project_ids": [MINE.to_string(), THEIRS.to_string()],
+        "aggregate": {"group_by": []},
+        "limit": 0,
+    }))
+    .unwrap();
+    let out = narrowed.query_bulk(&p.ctx, &q).await.unwrap();
+    assert_eq!(out.source, "read_model");
+    assert_eq!(out.rows.total, 1);
+    assert_eq!(out.groups.unwrap()[0].count, 1);
+}

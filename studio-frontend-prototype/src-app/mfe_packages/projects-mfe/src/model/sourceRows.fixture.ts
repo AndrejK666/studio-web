@@ -17,6 +17,7 @@ export function sourceRow(overrides: Partial<SourceRow> = {}): SourceRow {
     activity: null,
     lastSync: { kind: 'synced', at: '2026-10-14T10:52:00Z' },
     sync: { kind: 'none' },
+    clone: { kind: 'unknown' },
     ...overrides,
   };
 }

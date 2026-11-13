@@ -491,17 +491,13 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       next.repository = artifact.repository;
       next.path = artifact.path;
       next.kind = artifact.kind;
-    } else if (group && isEditor) {
-      const level: ScreenLevel = next.project ? 'project' : 'workspace';
-      const reason = !next.project
-        ? 'The editor needs a project'
-        : wanted.artifact && !artifactOf(wanted)
-          ? `Artifact ${wanted.artifact} is not one the editor can open`
-          : 'The editor has nothing to open';
+    } else if (group && isEditor && !next.project) {
+      // The IDE opens a project's workspace: without a project there is none.
+      const level: ScreenLevel = 'workspace';
+      const reason = 'The editor needs a project';
       const fallback = entryRoute(registry, level, next);
       if (fallback && fallback.token !== group.token) {
         warn(`${reason}; opening the ${level} entry point instead`);
-        if (next.project) fallback.project = next.project;
         navigation.navigate(fallback, 'replace');
         materialize();
         return;
@@ -510,6 +506,10 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
         warn(`${reason}, and the ${level} level has no entry point to fall back to`);
         editorStrandedIn = visit;
       }
+    } else if (group && isEditor && wanted.artifact) {
+      // The project's IDE tab: an artifact it cannot open is dropped, and the
+      // IDE opens on the project's workspace.
+      warn(`Artifact ${wanted.artifact} is not one the editor can open; opening the project's IDE without it`);
     } else if (wanted.artifact) {
       warn(`Artifact ${wanted.artifact} belongs on the editor, not on ${route.token}; dropping it`);
     }

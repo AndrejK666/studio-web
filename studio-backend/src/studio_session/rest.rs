@@ -214,6 +214,50 @@ fn to_dto(svc: &SessionService, s: Session) -> SessionDto {
 
 /* ── Handlers ── */
 
+/// Record what a launch knows for certain about its project sources' clones
+/// (#1071): since #1095 only a source the Git proxy will refuse
+/// ([`super::launch_sources::LaunchClone`]); the proxy records every clone
+/// itself. In the background and best effort: the launch does not wait on
+/// it, and a deployment where studio-artifact-ingest keeps no clone status
+/// records nothing.
+fn note_launch_clones(
+    hub: &ClientHub,
+    project_id: Uuid,
+    clones: Vec<(String, super::launch_sources::LaunchClone)>,
+) {
+    use super::launch_sources::LaunchClone;
+    use crate::artifact_ingest::port::{CloneChannel, CloneFailure, CloneOutcome, CloneOutcomes};
+
+    if clones.iter().all(|(_, c)| *c == LaunchClone::Nothing) {
+        return;
+    }
+    let Ok(outcomes) = hub.get::<dyn CloneOutcomes>() else {
+        return;
+    };
+    tokio::spawn(async move {
+        for (url, clone) in clones {
+            let done = match clone {
+                LaunchClone::Nothing => continue,
+                LaunchClone::Failed(cause) => {
+                    outcomes
+                        .record(
+                            project_id,
+                            &url,
+                            CloneOutcome::failed(
+                                CloneChannel::IdeSession,
+                                CloneFailure::new(cause),
+                            ),
+                        )
+                        .await
+                }
+            };
+            if let Err(error) = done {
+                tracing::warn!(%project_id, error = %format!("{error:#}"), "studio-session: a launch's clone status was not recorded");
+            }
+        }
+    });
+}
+
 async fn create_session(
     Extension(ctx): Extension<SecurityContext>,
     Extension(sessions): Extension<Sessions>,
@@ -236,6 +280,7 @@ async fn create_session(
                 token_ref: r.token_ref,
                 // `plan` decides.
                 route: super::launch_sources::ProxyRoute::None,
+                no_token: None,
             })
             .collect(),
     );
@@ -243,6 +288,8 @@ async fn create_session(
     // host's key (#1095). Every Git source is cloned through the Git proxy,
     // which attaches the key the organization's connection holds.
     let mut repos = Vec::with_capacity(planned.len());
+    // What the launch says on the project's Sources tab, by clone URL.
+    let mut clones = Vec::new();
     for r in planned {
         let kind = match r.kind.as_str() {
             "git" => RepoKind::Git,
@@ -255,6 +302,9 @@ async fn create_session(
                 .create());
             }
         };
+        if let Some(url) = r.url.clone() {
+            clones.push((url, super::launch_sources::launch_clone(&r)));
+        }
         repos.push(RepoSpec {
             name: r.name,
             kind,
@@ -325,6 +375,10 @@ async fn create_session(
     } else {
         StatusCode::CREATED
     };
+    // A session already running cloned nothing now.
+    if !existed {
+        note_launch_clones(&sessions.hub, req.workspace_id, clones);
+    }
     // A running session needs no probe (`create` has probed a reused one); one
     // that is starting gets a run, so it comes up whether or not the caller
     // stays to watch.

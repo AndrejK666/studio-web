@@ -394,8 +394,9 @@ describe('generated MFE manifest', () => {
         screens
           .filter((ext) => ext.presentation?.level === level && ext.presentation?.placement !== 'hidden')
           .map((ext) => ext.presentation?.section);
+      // None does today: the editor, which did, is the project's IDE tab now
+      // (#1074). The rule still holds for the next one.
       const named = screens.filter((ext) => ext.presentation?.parentSection !== undefined);
-      expect(named.length).toBeGreaterThan(0);
       for (const ext of named) {
         expect(ext.presentation?.placement).toBe('hidden');
         expect(sectionsOf(ext.presentation?.level)).toContain(ext.presentation?.parentSection);
@@ -424,6 +425,9 @@ describe('generated MFE manifest', () => {
         // where the prototype put it — what to decide comes before the work.
         'Issues',
         'Artifacts',
+        // The editor (space-mfe, order 25): the project's IDE, right after the
+        // artifacts it opens (#1074).
+        'IDE',
         'Specs',
         // The Project domain model kit's screen (domain-model-mfe, order 31):
         // right after Specs, as in the prototype — it is made of the specs.

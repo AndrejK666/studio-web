@@ -30,7 +30,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::git_proxy::sdk::{Source, source_path};
+use crate::artifact_ingest::port::CloneCause;
+use crate::git_proxy::sdk::{NoToken, Source, source_path};
 use crate::project_sources::same_repository;
 
 /// The proxy's name for the workspace root: `_` keeps it out of the source
@@ -72,6 +73,36 @@ pub struct Planned {
     /// organization's connection holds it.
     pub token_ref: Option<String>,
     pub route: ProxyRoute,
+    /// Why a project source's connection lends no key, when it lends none
+    /// (`project_sources`): what the launch can already say about it.
+    pub no_token: Option<NoToken>,
+}
+
+/// What a launch says on the project's Sources tab about one source (#1071).
+///
+/// Since #1095 a session's clones go through Studio's Git proxy, which
+/// records each one's outcome itself, as it happens: cloned, or failed with
+/// its cause (an unreadable key, a connection not found, a host refusal).
+/// So the launch no longer reports a token it could not lend, nor clears a
+/// failure because it lent one. It says only the one thing that is certain
+/// before any clone and that no clone will change: a project source whose
+/// connection is held outside the organization, which the proxy refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchClone {
+    /// The proxy will refuse it; the session cannot clone it.
+    Failed(CloneCause),
+    /// Nothing certain yet: the proxy records how the clone goes.
+    Nothing,
+}
+
+/// What the launch of `planned` says before any clone (see [`LaunchClone`]).
+pub fn launch_clone(planned: &Planned) -> LaunchClone {
+    match (&planned.route, planned.no_token) {
+        (ProxyRoute::Project, Some(NoToken::HeldOutside)) => {
+            LaunchClone::Failed(CloneCause::HeldOutside)
+        }
+        _ => LaunchClone::Nothing,
+    }
 }
 
 /// The project's sources, then each requested source that is not one of
@@ -92,6 +123,7 @@ pub fn plan(project: Vec<Source>, requested: Vec<Planned>) -> Vec<Planned> {
             target: s.target,
             branch: s.branch,
             token_ref: None,
+            no_token: s.no_token,
         })
         .collect();
     let project_urls: Vec<String> = out.iter().filter_map(|p| p.url.clone()).collect();
@@ -206,6 +238,12 @@ pub fn into_sources(extras: Vec<ExtraSource>) -> Vec<Source> {
         .into_iter()
         .filter(|e| !e.name.trim().is_empty() && !e.url.trim().is_empty())
         .map(|e| Source {
+            // Without a reference it goes upstream with no key, and a host
+            // that then asks for one is told on the Sources tab why (#1071).
+            no_token: e
+                .token_ref
+                .is_none()
+                .then_some(NoToken::NoConnection),
             name: e.name,
             url: e.url,
             branch: e.branch,
@@ -228,6 +266,7 @@ mod tests {
             target: None,
             token_ref: Some(format!("ref-{name}")),
             held_outside: None,
+            no_token: None,
         }
     }
 
@@ -241,7 +280,67 @@ mod tests {
             branch: None,
             token_ref: token_ref.map(str::to_owned),
             route: ProxyRoute::None,
+            no_token: None,
         }
+    }
+
+    fn lost(no_token: Option<NoToken>) -> Planned {
+        let mut source = project("api", "https://github.com/org/api.git");
+        source.token_ref = None;
+        source.no_token = no_token;
+        plan(vec![source], vec![]).remove(0)
+    }
+
+    /// #1067 named a launch that cloned without the token its connection
+    /// should lend. No launch lends a token any more (#1095): what it can
+    /// still say for certain is a project source the proxy will refuse, held
+    /// outside the organization, and it says that as a failed clone.
+    #[test]
+    fn a_launch_says_a_source_held_outside_the_organization_will_not_clone() {
+        assert_eq!(
+            launch_clone(&lost(Some(NoToken::HeldOutside))),
+            LaunchClone::Failed(CloneCause::HeldOutside)
+        );
+    }
+
+    /// Everything else is the proxy's to record when the clone happens: a
+    /// lost connection may still serve a public repository, an unreadable
+    /// key is only found out when the proxy reads it, and a source with its
+    /// connection is cloned or not by the host. The launch says nothing, and
+    /// clears nothing either: the proxy's "cloned" replaces an old failure.
+    #[test]
+    fn a_launch_leaves_every_other_source_to_the_proxys_record() {
+        for no_token in [
+            None,
+            Some(NoToken::NoConnection),
+            Some(NoToken::ConnectionNotFound),
+            Some(NoToken::Personal),
+        ] {
+            assert_eq!(
+                launch_clone(&lost(no_token)),
+                LaunchClone::Nothing,
+                "{no_token:?}"
+            );
+        }
+        let with_connection = plan(
+            vec![project("api", "https://github.com/org/api.git")],
+            vec![],
+        )
+        .remove(0);
+        assert_eq!(launch_clone(&with_connection), LaunchClone::Nothing);
+        // What the caller added is not the project's to report on, even when
+        // its reference would be refused: the proxy records that clone too.
+        let extra = plan(
+            vec![],
+            vec![asked(
+                "corpus",
+                "git",
+                Some("https://github.com/org/corpus.git"),
+                Some("ref-outside"),
+            )],
+        )
+        .remove(0);
+        assert_eq!(launch_clone(&extra), LaunchClone::Nothing);
     }
 
     #[test]

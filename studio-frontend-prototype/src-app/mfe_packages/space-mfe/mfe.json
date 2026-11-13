@@ -17,13 +17,11 @@
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1",
       "presentation": {
-        "label": "Editor",
+        "label": "IDE",
         "icon": "lucide:file-code",
         "route": "/space",
-        "order": 900,
-        "level": "project",
-        "placement": "hidden",
-        "parentSection": "artifacts"
+        "order": 25,
+        "level": "project"
       }
     }
   ]

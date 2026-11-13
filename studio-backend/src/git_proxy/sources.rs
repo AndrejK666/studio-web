@@ -22,6 +22,22 @@ pub struct Source {
     /// and the proxy refuses the source rather than reach the host as the
     /// platform (`cpt-studio-constraint-connector-own-connections`).
     pub held_outside: Option<uuid::Uuid>,
+    /// Why `token_ref` is `None`, when it is: what a failed clone names as its
+    /// cause when the source host then asks for credentials (#1071).
+    pub no_token: Option<NoToken>,
+}
+
+/// Why a source goes upstream without a token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoToken {
+    /// The source names no connection.
+    NoConnection,
+    /// It names one that is not found from the project.
+    ConnectionNotFound,
+    /// The connection is one person's, and a shared session does not carry it.
+    Personal,
+    /// The connection is held outside the project's organization.
+    HeldOutside,
 }
 
 /// Where the proxy serves a workspace's source, gateway-rooted: what a
@@ -89,6 +105,19 @@ pub enum ExtraKey {
     Unknown,
     /// The catalogue cannot be asked right now.
     Unavailable,
+}
+
+/// The clone-status cause of a refused extra's key (#1071), or `None` when
+/// the refusal says nothing about the source (the catalogue was down).
+pub fn extra_key_cause(
+    verdict: ExtraKey,
+) -> Option<crate::artifact_ingest::port::CloneCause> {
+    use crate::artifact_ingest::port::CloneCause;
+    match verdict {
+        ExtraKey::Owned | ExtraKey::Unavailable => None,
+        ExtraKey::NotOwned(_) => Some(CloneCause::HeldOutside),
+        ExtraKey::Unknown => Some(CloneCause::ConnectionNotFound),
+    }
 }
 
 /// The refusal `git` prints for an extra source's key, or `None` to go on.
@@ -252,7 +281,23 @@ mod tests {
             target: None,
             token_ref: token_ref.map(str::to_owned),
             held_outside: None,
+            no_token: None,
         }
+    }
+
+    #[test]
+    fn a_refused_extras_key_is_said_on_the_sources_tab() {
+        use crate::artifact_ingest::port::CloneCause;
+        assert_eq!(extra_key_cause(ExtraKey::Owned), None);
+        assert_eq!(
+            extra_key_cause(ExtraKey::NotOwned(uuid::Uuid::nil())),
+            Some(CloneCause::HeldOutside)
+        );
+        assert_eq!(
+            extra_key_cause(ExtraKey::Unknown),
+            Some(CloneCause::ConnectionNotFound)
+        );
+        assert_eq!(extra_key_cause(ExtraKey::Unavailable), None, "transient, not the source's fault");
     }
 
     #[test]

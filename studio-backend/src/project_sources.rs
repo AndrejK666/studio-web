@@ -187,7 +187,7 @@ pub fn parse(config: &Value) -> Vec<ProjectSource> {
 
 /// A clone URL reduced to what names the repository: host and path, without
 /// the scheme, credentials, a trailing slash or `.git`, in lower case.
-fn repository_key(url: &str) -> Option<String> {
+pub fn repository_key(url: &str) -> Option<String> {
     let (_, rest) = url.trim().split_once("://")?;
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
     let host = authority
@@ -550,6 +550,20 @@ pub async fn resolve(
     .await;
     let mut out = Vec::with_capacity(sources.len());
     for (source, found) in sources.into_iter().zip(lookups) {
+        if found.is_none()
+            && let Some(id) = source.connection_id
+        {
+            // The source names a connection nobody can find from here: it
+            // goes on without a token, and a private repository then fails at
+            // the provider with a reason ("could not read Username") that
+            // points nowhere near this. Say so where it happens (#1067).
+            tracing::warn!(
+                %project,
+                repo = %source.full_path,
+                connection = %id,
+                "project source: its connection is not found from this project — it is used without a token"
+            );
+        }
         let holder = found.as_ref().map(|(at, c)| holder_of_row(c, *at));
         let connection = found.map(|(_, c)| c);
         out.push(Resolved {
@@ -571,8 +585,23 @@ pub async fn resolve(
 /// outside the project's organization, whose token is not the
 /// organization's to use.
 pub fn to_git_source(resolved: Resolved) -> Source {
+    use crate::git_proxy::sources::NoToken;
     let lends = !resolved.personal && resolved.held_outside.is_none();
+    let no_token = if resolved.held_outside.is_some() {
+        Some(NoToken::HeldOutside)
+    } else if resolved.secret_ref.is_none() {
+        Some(if resolved.source.connection_id.is_none() {
+            NoToken::NoConnection
+        } else {
+            NoToken::ConnectionNotFound
+        })
+    } else if resolved.personal {
+        Some(NoToken::Personal)
+    } else {
+        None
+    };
     Source {
+        no_token,
         name: resolved.source.dir,
         url: resolved.source.clone_url,
         branch: resolved.source.branch,

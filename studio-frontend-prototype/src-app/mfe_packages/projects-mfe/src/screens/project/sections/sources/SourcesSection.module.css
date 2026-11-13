@@ -125,6 +125,18 @@ button.specsLink {
   color: var(--muted-foreground);
 }
 
+/* A clone that failed, and what fixes it (#1071). */
+.cloneFailed {
+  color: var(--destructive);
+  font-weight: 500;
+}
+
+.cloneAction {
+  font-size: var(--text-meta-size);
+  line-height: var(--text-meta-line-height);
+  color: var(--foreground);
+}
+
 .role {
   display: inline-flex;
   align-items: center;

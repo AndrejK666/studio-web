@@ -32,13 +32,14 @@ use uuid::Uuid;
 
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, NotifyMessage,
-    NotifyTarget, OpenedPullRequest, RemoteRepo, SentMessage, WrittenFile, platform_auth,
+    NotifyTarget, OPTION_PLATFORM_AUTH, OpenedPullRequest, RemoteRepo, SentMessage, WrittenFile,
+    platform_auth,
 };
 use super::gts::CONNECTIONS_METADATA_TYPE;
 use super::ownership::{NotOwned, Tree, within};
 use super::url_guard::check_url;
 use crate::project_sources::{self, ProjectSource, ShareMode};
-use crate::user_profile::PersonResolver;
+use crate::user_profile::{OrganizationReader, PersonResolver};
 
 /// Visibility of a connection, mapped onto credstore sharing modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,6 +353,66 @@ fn direct_base_url(
     }
 }
 
+/// Why a create or an edit was refused: it turns `platform_auth` on or off,
+/// and the caller is not a platform administrator.
+///
+/// A connection with `platform_auth` reads GitHub with the platform's
+/// credential through the GitHub mirror, so turning it on is a platform act
+/// until the mirror reads with each connection's own credential (#1094).
+#[derive(Debug)]
+pub struct PlatformAuthRefused;
+
+impl std::fmt::Display for PlatformAuthRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "only a platform administrator may turn `{OPTION_PLATFORM_AUTH}` on or off for a \
+             connection"
+        )
+    }
+}
+
+impl std::error::Error for PlatformAuthRefused {}
+
+/// Does going from `before` (`None` for a new connection) to `after` set or
+/// change `platform_auth`? Its value, not its spelling: an explicit `false`
+/// on a new connection is the same as leaving it out.
+fn changes_platform_auth(
+    before: Option<&BTreeMap<String, String>>,
+    after: &BTreeMap<String, String>,
+) -> bool {
+    platform_auth(after) != before.is_some_and(platform_auth)
+}
+
+/// Refuse a change to `platform_auth` unless the caller is a platform
+/// administrator; let everything else through untouched.
+///
+/// `admins` is studio-user's answer (`OrganizationReader::is_platform_admin`),
+/// the one rule every platform route uses. Without it, or when it cannot say,
+/// nobody is an administrator: the failure narrows, never widens.
+async fn guard_platform_auth(
+    ctx: &SecurityContext,
+    admins: Option<&dyn OrganizationReader>,
+    before: Option<&BTreeMap<String, String>>,
+    after: &BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    if !changes_platform_auth(before, after) {
+        return Ok(());
+    }
+    let admin = match admins {
+        Some(reader) => reader
+            .is_platform_admin(&ctx.subject_id().to_string())
+            .await
+            .unwrap_or(false),
+        None => false,
+    };
+    if admin {
+        Ok(())
+    } else {
+        Err(PlatformAuthRefused.into())
+    }
+}
+
 /// Marking a gear repository where "Create a gear" writes unmarks the
 /// tenant's other gear repositories: there is one such place. `keep` is the
 /// connection being marked.
@@ -471,6 +532,62 @@ pub(super) async fn same_person(
     Ok(recorded_person == people.resolve_caller(ctx).await?)
 }
 
+/// How many recorded subjects [`mine_of`] looks up at once.
+const SUBJECT_LOOKUPS_IN_FLIGHT: usize = 4;
+
+/// [`same_person`] for every subject in `recorded`, in order -- the answer a
+/// list gives row by row, without asking row by row (#1077). Each distinct
+/// subject is looked up once, a few at a time, and the caller is resolved
+/// once, and only when one of them turned out to be a known person, as
+/// [`same_person`] does. A lookup that fails answers "not the caller's", the
+/// same refusal a failed [`same_person`] gives.
+pub(super) async fn mine_of(
+    ctx: &SecurityContext,
+    recorded: &[&str],
+    people: Option<&dyn PersonResolver>,
+) -> Vec<bool> {
+    use futures_util::StreamExt as _;
+    let me = ctx.subject_id().to_string();
+    let mut persons: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    if let Some(people) = people {
+        // Owned: a stream of futures borrowing `&str` is not `Send` for every
+        // lifetime the router's handler bound asks of it.
+        let others: std::collections::BTreeSet<String> = recorded
+            .iter()
+            .filter(|s| **s != me)
+            .map(|s| (*s).to_owned())
+            .collect();
+        persons = futures_util::stream::iter(others)
+            .map(|subject: String| async move {
+                let person = people
+                    .resolve_recorded_subject(&subject)
+                    .await
+                    .ok()
+                    .flatten();
+                (subject, person)
+            })
+            .buffer_unordered(SUBJECT_LOOKUPS_IN_FLIGHT)
+            .collect()
+            .await;
+    }
+    let caller = match people {
+        Some(people) if persons.values().any(Option::is_some) => {
+            people.resolve_caller(ctx).await.ok()
+        }
+        _ => None,
+    };
+    recorded
+        .iter()
+        .map(|subject| {
+            *subject == me
+                || caller.as_ref().is_some_and(|caller| {
+                    persons.get(*subject).and_then(Option::as_ref) == Some(caller)
+                })
+        })
+        .collect()
+}
+
 impl ConnectorService {
     pub fn new(
         am: Arc<dyn AccountManagementClient>,
@@ -582,8 +699,18 @@ impl ConnectorService {
         ctx: &SecurityContext,
         tenant: Uuid,
     ) -> anyhow::Result<Vec<Connection>> {
-        let own = self.list(ctx, tenant).await?;
-        let reachable = reachable_connections(self.am.as_ref(), ctx, tenant).await;
+        // One walk answers both halves: its first level is exactly what
+        // `list` reads, so that catalogue is not asked for twice (#1077).
+        let mut levels = reachable_catalogues(self.am.as_ref(), ctx, tenant)
+            .await
+            .into_iter();
+        let own = levels
+            .next()
+            .unwrap_or_else(|| Ok(Catalogue::default()))?
+            .items;
+        let reachable = flatten_reachable(
+            std::iter::once(own.clone()).chain(levels.flatten().map(|c| c.items)),
+        );
         Ok(merge_reachable(tenant, own, reachable))
     }
 
@@ -825,9 +952,13 @@ impl ConnectorService {
     /// where metadata inheritance makes it visible to every workspace under
     /// it, or a single workspace. That choice belongs to the caller — the
     /// gear must not guess it from the session's tenant.
+    ///
+    /// `admins` answers whether the caller is a platform administrator, asked
+    /// only when the connection would carry `platform_auth`.
     pub async fn create(
         &self,
         ctx: &SecurityContext,
+        admins: Option<&dyn OrganizationReader>,
         req: NewConnection<'_>,
     ) -> anyhow::Result<(Connection, DriverIdentity)> {
         let NewConnection {
@@ -857,6 +988,7 @@ impl ConnectorService {
         let base_url = resolve_base_url(driver.as_ref(), base_url)?;
         let scope = ConnectionScope::parse(scope)?;
         let options = driver.check_options(&base_url, &options)?;
+        guard_platform_auth(ctx, admins, None, &options).await?;
         let mut catalogue = self.load_own(ctx, owner_tenant).await?;
         unique_source_id(&catalogue.items, provider, &options, None)?;
 
@@ -1193,6 +1325,9 @@ impl ConnectorService {
         // its own confirmation ceremony, and owning each other is how two
         // services stop being constructible in either order.
         people: Option<&dyn PersonResolver>,
+        // Whether the caller is a platform administrator, asked only when the
+        // edit turns `platform_auth` on or off.
+        admins: Option<&dyn OrganizationReader>,
         edit: ConnectionEdit<'_>,
     ) -> anyhow::Result<(Connection, DriverIdentity)> {
         let ConnectionEdit {
@@ -1253,6 +1388,7 @@ impl ConnectorService {
             Some(o) => driver.check_options(&base_url, &o)?,
             None => existing.options.clone(),
         };
+        guard_platform_auth(ctx, admins, Some(&existing.options), &options).await?;
 
         // No new token: verify the change against the credential already
         // stored, so relocating an installation cannot quietly leave a
@@ -1655,6 +1791,43 @@ impl ConnectorService {
     }
 }
 
+/// The account-management client this gear reads its catalogue through:
+/// account-management wrapped so the catalogue comes from wherever
+/// `storage.metadata` keeps it (ADR-0066 §8a). Set once at `init`.
+///
+/// The free lookups below ([`connection_by_id`], [`own_connection`], …) are
+/// called by other gears with *their* client, which is the raw one. Once a
+/// tenant's catalogue has moved into the domain model, the raw client finds
+/// no row, every connection lookup answers "none", and a private source is
+/// then cloned and synced without its token — silently, because nothing asks
+/// for a token it does not know about (#1067). So the catalogue is always
+/// read through this gear's own client; the caller's is the fallback before
+/// `init` (tests, tools). Only the free lookups pick it, through
+/// [`catalogue_client`]: the service already holds it, and tests bring their
+/// own.
+static CATALOGUE_READER: std::sync::OnceLock<Arc<dyn AccountManagementClient>> =
+    std::sync::OnceLock::new();
+
+/// Record the client the catalogue is read through (see [`CATALOGUE_READER`]).
+pub(super) fn keep_catalogue_reader(am: Arc<dyn AccountManagementClient>) {
+    let _ = CATALOGUE_READER.set(am);
+}
+
+fn kept_reader() -> Option<&'static dyn AccountManagementClient> {
+    CATALOGUE_READER.get().map(|am| am.as_ref())
+}
+
+/// The client a free lookup reads the catalogue through: `kept` (this gear's
+/// own, see [`CATALOGUE_READER`]) when there is one, else the caller's. The
+/// kept one passes `get_tenant` through unchanged, so the walk up the tree
+/// asks it too.
+fn catalogue_client<'a>(
+    kept: Option<&'a dyn AccountManagementClient>,
+    caller: &'a dyn AccountManagementClient,
+) -> &'a dyn AccountManagementClient {
+    kept.unwrap_or(caller)
+}
+
 /// The connection catalogue visible from `tenant`: its own row, or the
 /// nearest ancestor's when it has none.
 async fn load_catalogue(
@@ -1708,24 +1881,60 @@ async fn reachable_connections(
     ctx: &SecurityContext,
     from: Uuid,
 ) -> Vec<Connection> {
-    let mut out: Vec<Connection> = Vec::new();
-    let mut tenant = Some(from);
-    // Project → workspace → organization; nothing Studio keeps is deeper.
-    for _ in 0..3 {
-        let Some(current) = tenant else { break };
-        if let Ok(catalogue) = load_catalogue(am, ctx, current).await {
-            for c in catalogue.items {
-                if !out.iter().any(|seen| seen.id == c.id) {
-                    out.push(c);
-                }
-            }
-        }
-        tenant = am
-            .get_tenant(ctx, current)
+    flatten_reachable(
+        reachable_catalogues(am, ctx, from)
+            .await
+            .into_iter()
+            .flatten()
+            .map(|c| c.items),
+    )
+}
+
+/// The catalogue each of `from`, its parent and its grandparent sees
+/// ([`load_catalogue`] at each), nearest first: project → workspace →
+/// organization, nothing Studio keeps is deeper. A tenant whose parent cannot
+/// be read ends the walk; a level that cannot be read is its error, in place.
+///
+/// Concurrent (#1077): a level's catalogue is asked for as soon as its tenant
+/// is known, while the walk asks for the next parent. A project costs two
+/// parent lookups and three catalogue reads, at most three in flight, where
+/// it used to cost one after another -- and the grandparent's own parent,
+/// which nothing reads, is no longer asked for.
+async fn reachable_catalogues(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    from: Uuid,
+) -> Vec<anyhow::Result<Catalogue>> {
+    let parent_of = |tenant: Uuid| async move {
+        am.get_tenant(ctx, tenant)
             .await
             .ok()
             .and_then(|t| t.parent_id)
-            .map(|p| p.0);
+            .map(|p| p.0)
+    };
+    let above = async {
+        let Some(parent) = parent_of(from).await else {
+            return Vec::new();
+        };
+        let (at_parent, grandparent) =
+            futures_util::join!(load_catalogue(am, ctx, parent), parent_of(parent));
+        let mut out = vec![at_parent];
+        if let Some(grandparent) = grandparent {
+            out.push(load_catalogue(am, ctx, grandparent).await);
+        }
+        out
+    };
+    let (at_from, above) = futures_util::join!(load_catalogue(am, ctx, from), above);
+    std::iter::once(at_from).chain(above).collect()
+}
+
+/// The connections of `catalogues`, in order, each once.
+fn flatten_reachable(catalogues: impl IntoIterator<Item = Vec<Connection>>) -> Vec<Connection> {
+    let mut out: Vec<Connection> = Vec::new();
+    for c in catalogues.into_iter().flatten() {
+        if !out.iter().any(|seen| seen.id == c.id) {
+            out.push(c);
+        }
     }
     out
 }
@@ -1820,7 +2029,19 @@ pub async fn connection_by_id(
     from: Uuid,
     id: Uuid,
 ) -> Option<(Uuid, Connection)> {
-    nearest_in(am, ctx, from, |c| c.id == id).await
+    connection_by_id_via(kept_reader(), am, ctx, from, id).await
+}
+
+/// [`connection_by_id`] with the kept reader passed in, so a test can give
+/// one without touching the process-wide [`CATALOGUE_READER`].
+async fn connection_by_id_via(
+    kept: Option<&dyn AccountManagementClient>,
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    from: Uuid,
+    id: Uuid,
+) -> Option<(Uuid, Connection)> {
+    nearest_in(catalogue_client(kept, am), ctx, from, |c| c.id == id).await
 }
 
 /// The caller's own `provider` connection: a personal one they created,
@@ -1834,6 +2055,7 @@ pub async fn own_connection(
     from: &[Uuid],
     provider: &str,
 ) -> Option<(Uuid, Connection)> {
+    let am = catalogue_client(kept_reader(), am);
     let me = ctx.subject_id().to_string();
     for &start in from {
         // Tenant by tenant: the newest in the nearest tenant that has one,
@@ -3199,3 +3421,11 @@ mod publish_tests {
 #[cfg(test)]
 #[path = "oauth_flow_tests.rs"]
 mod oauth_flow_tests;
+
+#[cfg(test)]
+#[path = "connections_list_tests.rs"]
+mod connections_list_tests;
+
+#[cfg(test)]
+#[path = "platform_auth_tests.rs"]
+mod platform_auth_tests;

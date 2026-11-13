@@ -16,6 +16,8 @@ jest.mock('./artifact-graph-contribution', () => ({
 import * as fs from 'fs';
 import * as path from 'path';
 import { CommandService } from '@theia/core/lib/common';
+import type { ThemeService } from '@theia/core/lib/browser/theming';
+import type { Theme } from '@theia/core/lib/common/theme';
 import type { NotifyEditorFrontendController } from './notify-editor-controller';
 import {
     GEARBOX_OPEN_GEAR_COMMAND_ID,
@@ -62,6 +64,14 @@ class TestBridge extends PortalBridgeContribution {
 
     openComponent(name: string | undefined): boolean {
         return this.openComponentInPortal(name);
+    }
+
+    useThemes(themes: ThemeService): void {
+        (this as unknown as { themeService: ThemeService }).themeService = themes;
+    }
+
+    portalTheme(theme: string): void {
+        this.applyPortalTheme(theme);
     }
 }
 
@@ -502,5 +512,72 @@ describe('PortalBridgeContribution portal origins', () => {
 
         expect(listener).toBeUndefined();
         expect(warn).toHaveBeenCalledWith('[studio] portal bridge disabled: session unavailable', expect.any(Error));
+    });
+});
+
+describe('PortalBridgeContribution portal theme (#1073)', () => {
+    const STOCK: Theme[] = [
+        { id: 'dark', type: 'dark', label: 'Dark (Theia)' },
+        { id: 'light', type: 'light', label: 'Light (Theia)' },
+        { id: 'hc-theia', type: 'hc', label: 'High Contrast (Theia)' },
+    ];
+    const STUDIO: Theme[] = [
+        { id: 'studio-light', type: 'light', label: 'Studio Light' },
+        { id: 'studio-dark', type: 'dark', label: 'Studio Dark' },
+    ];
+
+    function bridgeWith(themes: Theme[], current: string): { bridge: TestBridge; set: Array<[string, boolean | undefined]> } {
+        const set: Array<[string, boolean | undefined]> = [];
+        let active = themes.find(t => t.id === current)!;
+        const service = {
+            getThemes: () => themes,
+            getCurrentTheme: () => active,
+            setCurrentTheme: (id: string, persist?: boolean) => {
+                set.push([id, persist]);
+                active = themes.find(t => t.id === id)!;
+            },
+        } as unknown as ThemeService;
+        const bridge = new TestBridge();
+        bridge.useThemes(service);
+        return { bridge, set };
+    }
+
+    it('applies Studio Light for a light portal, not the first stock light theme', () => {
+        const { bridge, set } = bridgeWith([...STOCK, ...STUDIO], 'dark');
+        bridge.portalTheme('light');
+        expect(set).toEqual([['studio-light', true]]);
+    });
+
+    it('applies Studio Dark for a dark portal, and for any portal theme that is not light', () => {
+        for (const portal of ['dark', 'dracula']) {
+            const { bridge, set } = bridgeWith([...STOCK, ...STUDIO], 'light');
+            bridge.portalTheme(portal);
+            expect(set).toEqual([['studio-dark', true]]);
+        }
+    });
+
+    it('moves a stock theme of the right type onto the Studio one', () => {
+        const { bridge, set } = bridgeWith([...STOCK, ...STUDIO], 'light');
+        bridge.portalTheme('light');
+        expect(set).toEqual([['studio-light', true]]);
+    });
+
+    it('does nothing when the Studio theme of that mode is already on', () => {
+        const { bridge, set } = bridgeWith([...STOCK, ...STUDIO], 'studio-dark');
+        bridge.portalTheme('dark');
+        expect(set).toEqual([]);
+    });
+
+    it('follows the portal both ways without a reload', () => {
+        const { bridge, set } = bridgeWith([...STOCK, ...STUDIO], 'studio-light');
+        bridge.portalTheme('dark');
+        bridge.portalTheme('light');
+        expect(set.map(([id]) => id)).toEqual(['studio-dark', 'studio-light']);
+    });
+
+    it('falls back to a theme of the right type in a build without the Studio themes', () => {
+        const { bridge, set } = bridgeWith(STOCK, 'dark');
+        bridge.portalTheme('light');
+        expect(set).toEqual([['light', true]]);
     });
 });

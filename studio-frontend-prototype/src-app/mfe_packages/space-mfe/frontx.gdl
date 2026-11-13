@@ -24,7 +24,7 @@ mfe(
     # The permissions its screen needs: none, it calls no gear.
     roles = [],
 
-    # No route worth a screenshot: its screen is hidden (mfe.json's
-    # placement), opened on an artifact, and frames an editor session.
+    # No route worth a screenshot: its screen (the project's IDE tab) frames
+    # an editor session, which a screenshot cannot start.
     preview = [],
 )

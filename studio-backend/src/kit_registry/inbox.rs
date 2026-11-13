@@ -56,7 +56,7 @@ impl KitInstaller {
     ) -> Result<Vec<KitInboxSource>, Refusal> {
         let installed = self.installed(ctx, org).await?;
         let org = installed.organization_id;
-        self.reconcile_models(org).await?;
+        self.models_in_step(org).await?;
         let mut out = Vec::new();
         for kit in &installed.effective {
             let Ok(descriptor) = self.kit_for(org, &kit.kit_slug).await else {

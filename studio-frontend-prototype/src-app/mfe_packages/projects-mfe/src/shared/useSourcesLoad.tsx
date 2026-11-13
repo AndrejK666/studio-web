@@ -92,6 +92,8 @@ export function useSourcesLoad(
   const connections = useApiQuery(connectors.connections(projectConnectionsParams(projectId)));
   const activity = useApiQuery(ingest.sourceActivity({ scope: projectId }));
   const specs = useApiQuery(documents.specsPerSource({ scope: projectId }));
+  // Whether each source could be cloned (#1071). Extra: unread, the rows say nothing of it.
+  const clones = useApiQuery(ingest.cloneStatus({ project_id: projectId }));
   const studio = useProjectDocuments(workspaceId, projectId);
   const { repos: lines } = useProjectImport(projectId);
 
@@ -105,6 +107,7 @@ export function useSourcesLoad(
       lines,
       // Without a workspace they cannot be read either.
       uploads: workspaceId === null || studio.failed ? null : studio.own,
+      clones: clones.isError ? null : (clones.data?.items ?? null),
     }),
     [
       config.config,
@@ -119,6 +122,8 @@ export function useSourcesLoad(
       workspaceId,
       studio.failed,
       studio.own,
+      clones.isError,
+      clones.data,
     ]
   );
   const rows = useMemo(() => buildSourceRows(answers), [answers]);

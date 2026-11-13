@@ -17,8 +17,12 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::outcome::{self, Upstream as HostAnswer};
 use super::refresh::{self, Upstream};
 use super::sources::{self, Service, Source};
+use crate::artifact_ingest::port::{
+    CloneCause, CloneChannel, CloneFailure, CloneOutcome, CloneOutcomes,
+};
 use crate::connectors::sdk::Connectors;
 use crate::pagination::{PageQuery, page_of};
 
@@ -89,6 +93,32 @@ impl GitProxy {
 }
 
 impl GitProxy {
+    /// Record how a desktop's or a session's clone or fetch went, for
+    /// the project's Sources tab (#1071). In the background and best effort:
+    /// `git` is not kept waiting on it, and a deployment where
+    /// studio-artifact-ingest keeps no clone status records nothing.
+    fn note_clone(
+        &self,
+        channel: CloneChannel,
+        project_id: Uuid,
+        clone_url: &str,
+        failure: Option<CloneFailure>,
+    ) {
+        let Ok(outcomes) = self.hub.get::<dyn CloneOutcomes>() else {
+            return;
+        };
+        let clone_url = clone_url.to_owned();
+        let outcome = match failure {
+            Some(failure) => CloneOutcome::failed(channel, failure),
+            None => CloneOutcome::cloned(channel),
+        };
+        tokio::spawn(async move {
+            if let Err(error) = outcomes.record(project_id, &clone_url, outcome).await {
+                tracing::warn!(%project_id, error = %format!("{error:#}"), "studio-git: a clone's outcome was not recorded");
+            }
+        });
+    }
+
     /// Ask the organization's component registry to read the pushed project
     /// again (ADR-0041): a `catalog.registry` walk of that one project, which
     /// reads only the repositories whose files moved. Best effort, like the
@@ -341,12 +371,13 @@ pub(crate) fn refuse(status: StatusCode, message: &str) -> Response {
 /// presenting the credential minted for it at launch (#1095), acting for its
 /// own workspace only, or else a member with their Studio token.
 /// For a session, also the sources beyond its project's that its launch
-/// recorded (the workspace root, the gear corpus); a member has none.
+/// recorded (the workspace root, the gear corpus); a member has none. The
+/// channel is where a clone's outcome is said to come from (#1071).
 async fn authenticate(
     proxy: &GitProxy,
     headers: &HeaderMap,
     workspace_id: Uuid,
-) -> Result<(SecurityContext, Vec<Source>), Response> {
+) -> Result<(SecurityContext, Vec<Source>, CloneChannel), Response> {
     let presented = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
@@ -359,7 +390,7 @@ async fn authenticate(
     {
         let identity = access.identity;
         return sources::session_context(&identity, workspace_id)
-            .map(|ctx| (ctx, access.extra_sources))
+            .map(|ctx| (ctx, access.extra_sources, CloneChannel::IdeSession))
             .ok_or_else(|| {
                 tracing::warn!(session = %identity.session_id, %workspace_id, "studio-git: a session asked for another workspace; refused");
                 refuse(
@@ -370,7 +401,7 @@ async fn authenticate(
     }
     authenticate_member(proxy.authn.as_ref(), headers)
         .await
-        .map(|ctx| (ctx, Vec::new()))
+        .map(|ctx| (ctx, Vec::new(), CloneChannel::Desktop))
 }
 
 impl GitProxy {
@@ -435,7 +466,7 @@ async fn forward(
     service: Service,
     request: Request,
 ) -> Response {
-    let (ctx, extras) = match authenticate(proxy, request.headers(), workspace_id).await {
+    let (ctx, extras, channel) = match authenticate(proxy, request.headers(), workspace_id).await {
         Ok(found) => found,
         Err(response) => return response,
     };
@@ -451,6 +482,17 @@ async fn forward(
             "The workspace has no Git source by that name.",
         );
     };
+    // A clone or fetch says how it went on the project's Sources tab (#1071),
+    // a session's as well as a desktop's (#1095): every session clone comes
+    // here, the root and the sources its launch added included. A push does
+    // not, and neither does the pack after a served `info/refs`, which
+    // already said "cloned".
+    let fetches = service == Service::UploadPack;
+    let note = |failure: Option<CloneFailure>| {
+        if fetches && (failure.is_some() || protocol_path == "info/refs") {
+            proxy.note_clone(channel, workspace_id, &found.url, failure);
+        }
+    };
     // A session's own extra lends a key only when the organization's
     // connection holds it; otherwise the clone fails and says why, rather
     // than going upstream anonymously or with someone else's key.
@@ -458,6 +500,9 @@ async fn forward(
         let verdict = proxy.extra_key(&ctx, workspace_id, reference).await;
         if let Some((status, text)) = sources::extra_key_refusal(verdict) {
             tracing::warn!(%workspace_id, source, ?verdict, "studio-git: a session's source names a key the organization does not hold; refused");
+            if let Some(cause) = sources::extra_key_cause(verdict) {
+                note(Some(CloneFailure::new(cause)));
+            }
             return refuse(status, &text);
         }
     }
@@ -466,9 +511,11 @@ async fn forward(
     // token nor without it.
     if let Some(holder) = found.held_outside {
         tracing::warn!(%workspace_id, source, %holder, "studio-git: the source's connection is not the organization's; refused");
+        note(Some(CloneFailure::new(CloneCause::HeldOutside)));
         return refuse(StatusCode::FORBIDDEN, &sources::not_owned_text(holder));
     }
     let Some(url) = sources::upstream_url(&found.url, protocol_path) else {
+        note(Some(CloneFailure::new(CloneCause::NotHttp)));
         return refuse(
             StatusCode::NOT_FOUND,
             "This source is not an http(s) repository, so it cannot be cloned through Studio.",
@@ -480,12 +527,19 @@ async fn forward(
             Ok(token) => Some(token),
             Err(error) => {
                 tracing::warn!(%workspace_id, source, %error, "studio-git: source token unavailable");
+                note(Some(CloneFailure::new(CloneCause::TokenUnreadable)));
                 return refuse(
                     StatusCode::FORBIDDEN,
                     "The workspace's token for this source is not readable by you.",
                 );
             }
         },
+    };
+    // Why no token went upstream, when none did.
+    let no_token = if token.is_none() {
+        found.no_token.or(Some(sources::NoToken::NoConnection))
+    } else {
+        None
     };
 
     let (status, response, answer) = match send_upstream(
@@ -502,9 +556,18 @@ async fn forward(
         Ok(sent) => sent,
         Err(refused) => {
             tracing::warn!(%workspace_id, source, "studio-git: the source host did not serve the request");
+            // `send_upstream` answers 403 for a refused credential and 502
+            // for a host it could not reach.
+            let answer = if refused.status() == StatusCode::FORBIDDEN {
+                HostAnswer::Refused
+            } else {
+                HostAnswer::Unreachable
+            };
+            note(outcome::failure_of(answer, no_token));
             return refused;
         }
     };
+    note(outcome::failure_of(HostAnswer::Answered(status), no_token));
     let stream = answer.bytes_stream();
     let body = if refresh::reports_a_push(protocol_path, status) {
         // The push report is the last thing the source host sends, after its
