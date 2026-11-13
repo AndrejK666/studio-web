@@ -53,10 +53,10 @@ pub struct RepoSpec {
     /// e.g. `.workspace-sources/hypotheses/csh_hypotheses_back`.
     pub target: Option<String>,
     pub branch: Option<String>,
-    /// Cloned through Studio's Git proxy under `name` (#1095): a project
-    /// source whose connection is the organization's. No source host's key
-    /// ever reaches the session; the proxy attaches it upstream.
-    pub via_proxy: bool,
+    /// How it reaches its host (#1095): through Studio's Git proxy, as a
+    /// project source or as one this session's launch records. No source
+    /// host's key ever reaches the session; the proxy attaches it upstream.
+    pub route: super::launch_sources::ProxyRoute,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +201,10 @@ pub struct Session {
     /// host's key. Minted per launch, lives in the runtime's env only, and
     /// names this session alone ([`SessionService::resolve_git_proxy_token`]).
     pub git_token: String,
+    /// The sources the proxy serves to this session beyond the project's:
+    /// its workspace root and what its launch added (the gear corpus), with
+    /// the key reference each was launched with. Read back from the runtime.
+    pub proxy_extras: Vec<crate::git_proxy::sdk::Source>,
 }
 
 impl Session {
@@ -354,6 +358,7 @@ impl SessionService {
                     session_token: a.session_token,
                     control_token: a.control_token,
                     git_token: a.git_token,
+                    proxy_extras: a.proxy_extras,
                 };
                 (id, session)
             })
@@ -942,6 +947,15 @@ impl SessionService {
                 "STUDIO_ROOT_URL={}",
                 root.url.as_deref().unwrap_or("").trim()
             ));
+            if root.route.is_proxied()
+                && let Some(clone_url) = super::launch_sources::proxy_clone_url(
+                    &self.cfg.gateway_url,
+                    workspace_id,
+                    super::launch_sources::ROOT_SOURCE,
+                )
+            {
+                env.push(format!("STUDIO_ROOT_CLONE_URL={clone_url}"));
+            }
             if let Some(b) = root
                 .branch
                 .as_deref()
@@ -965,10 +979,40 @@ impl SessionService {
                     target: r.target.as_deref(),
                     url: r.url.as_deref().unwrap_or(""),
                     branch: r.branch.as_deref(),
-                    via_proxy: r.via_proxy,
+                    via_proxy: r.route.is_proxied(),
                 })
                 .collect::<Vec<_>>(),
         );
+        // What the proxy serves to this session alone: the root and every
+        // source that is not the project's, with the key reference it was
+        // launched with (a name in credstore, not a key).
+        let proxy_extras: Vec<super::launch_sources::ExtraSource> = root_repo
+            .iter()
+            .map(|r| (super::launch_sources::ROOT_SOURCE, r))
+            .chain(repos.iter().map(|r| (r.name.as_str(), r)))
+            .filter_map(|(name, r)| match &r.route {
+                super::launch_sources::ProxyRoute::Extra { token_ref } => {
+                    Some(super::launch_sources::ExtraSource {
+                        name: name.to_owned(),
+                        url: r.url.as_deref().unwrap_or("").trim().to_owned(),
+                        branch: r
+                            .branch
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|b| !b.is_empty())
+                            .map(str::to_owned),
+                        token_ref: token_ref.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .filter(|e| !e.url.is_empty())
+            .collect();
+        env.push(format!(
+            "STUDIO_GIT_PROXY_EXTRAS={}",
+            super::launch_sources::extras_env(&proxy_extras)
+        ));
+        let proxy_extras = super::launch_sources::into_sources(proxy_extras);
         if !git_sources.is_empty() {
             env.push(format!(
                 "STUDIO_SOURCES={}",
@@ -1052,6 +1096,7 @@ impl SessionService {
             session_token,
             control_token,
             git_token,
+            proxy_extras,
             sources: root_repo
                 .iter()
                 .map(|_| "workspace root (git)".to_string())
@@ -1347,7 +1392,7 @@ impl SessionService {
     pub async fn resolve_git_proxy_token(
         &self,
         token: &str,
-    ) -> Option<crate::studio_session::sdk::SessionIdentity> {
+    ) -> Option<crate::studio_session::sdk::SessionGitAccess> {
         if token.is_empty() {
             return None;
         }
@@ -1359,10 +1404,13 @@ impl SessionService {
                         && !s.git_token.is_empty()
                         && constant_time_eq(s.git_token.as_bytes(), token.as_bytes())
                 })
-                .map(|s| crate::studio_session::sdk::SessionIdentity {
-                    session_id: s.id,
-                    tenant_id: s.tenant_id,
-                    workspace_id: s.workspace_id,
+                .map(|s| crate::studio_session::sdk::SessionGitAccess {
+                    identity: crate::studio_session::sdk::SessionIdentity {
+                        session_id: s.id,
+                        tenant_id: s.tenant_id,
+                        workspace_id: s.workspace_id,
+                    },
+                    extra_sources: s.proxy_extras,
                 })
         };
         if let Some(found) = find(self.snapshot().await) {
@@ -1786,6 +1834,7 @@ mod tests {
             session_token: "gate".into(),
             control_token: "s2s".into(),
             git_token: "git-proxy".into(),
+            proxy_extras: Vec::new(),
             sources: vec!["docs (git)".into()],
         }
     }
@@ -2457,14 +2506,32 @@ mod tests {
     #[tokio::test]
     async fn a_git_proxy_token_resolves_on_a_service_that_never_minted_it() {
         let ws = Uuid::from_u128(0xAA);
-        let elsewhere = service(FakeRuntime::with(vec![running_session(ws, 41000)])).await;
+        // As the runtime lists it: the launch's extras ride on its env.
+        let launched = AdoptedSession {
+            proxy_extras: super::super::launch_sources::parse_extras(Some(
+                r#"[{"name":"_root","url":"https://github.com/acme/root","token_ref":"ref-root"},
+                    {"name":"gears-rust","url":"https://github.com/acme/gears-rust"}]"#,
+            )),
+            ..running_session(ws, 41000)
+        };
+        let elsewhere = service(FakeRuntime::with(vec![launched])).await;
 
-        let identity = elsewhere
+        let access = elsewhere
             .resolve_git_proxy_token("git-proxy")
             .await
             .unwrap();
-        assert_eq!(identity.workspace_id, ws);
-        assert_eq!(identity.tenant_id, TENANT);
+        assert_eq!(access.identity.workspace_id, ws);
+        assert_eq!(access.identity.tenant_id, TENANT);
+        let extras: Vec<_> = access
+            .extra_sources
+            .iter()
+            .map(|s| (s.name.as_str(), s.token_ref.as_deref()))
+            .collect();
+        assert_eq!(
+            extras,
+            [("_root", Some("ref-root")), ("gears-rust", None)],
+            "the proxy learns the root and the corpus from the session"
+        );
         for forged in ["forged", "", "s2s", "gate", "git-proxy "] {
             assert!(
                 elsewhere.resolve_git_proxy_token(forged).await.is_none(),
@@ -2492,14 +2559,15 @@ mod tests {
         service
             .set_workspace_access(Arc::new(Reachable(true)))
             .await;
-        let git = |name: &str, via_proxy: bool| super::RepoSpec {
+        use super::super::launch_sources::ProxyRoute;
+        let git = |name: &str, route: ProxyRoute| super::RepoSpec {
             name: name.into(),
             kind: super::RepoKind::Git,
             url: Some(format!("https://github.com/acme/{name}")),
             path: None,
             target: None,
             branch: Some("main".into()),
-            via_proxy,
+            route,
         };
         let ws = Uuid::from_u128(0xD3);
         service
@@ -2509,9 +2577,17 @@ mod tests {
                 None,
                 Some(super::RepoSpec {
                     name: "workspace-root".into(),
-                    ..git("root", false)
+                    ..git(
+                        "root",
+                        ProxyRoute::Extra {
+                            token_ref: Some("ref-root".into()),
+                        },
+                    )
                 }),
-                vec![git("api", true), git("corpus", false)],
+                vec![
+                    git("api", ProxyRoute::Project),
+                    git("corpus", ProxyRoute::Extra { token_ref: None }),
+                ],
             )
             .await
             .expect("the session launches");
@@ -2529,7 +2605,11 @@ mod tests {
             format!("http://gateway.test/cf/studio-git/v1/workspaces/{ws}/sources/api")
         );
         assert_eq!(sources[0]["url"], "https://github.com/acme/api");
-        assert!(sources[1].get("clone_url").is_none(), "not the project's");
+        assert_eq!(
+            sources[1]["clone_url"],
+            format!("http://gateway.test/cf/studio-git/v1/workspaces/{ws}/sources/corpus"),
+            "the corpus goes through the proxy as well"
+        );
         assert!(
             !sources.to_string().contains("token"),
             "no credential in the sources: {sources}"
@@ -2539,6 +2619,23 @@ mod tests {
             value("STUDIO_ROOT_URL").as_deref(),
             Some("https://github.com/acme/root")
         );
+        assert_eq!(
+            value("STUDIO_ROOT_CLONE_URL"),
+            Some(format!(
+                "http://gateway.test/cf/studio-git/v1/workspaces/{ws}/sources/_root"
+            )),
+            "the root goes through the proxy"
+        );
+        // The root and the corpus are this session's extras, the root with
+        // the key reference it was launched with; the project source is not
+        // among them (the proxy reads it from the config).
+        let extras =
+            super::super::launch_sources::parse_extras(value("STUDIO_GIT_PROXY_EXTRAS").as_deref());
+        let named: Vec<_> = extras
+            .iter()
+            .map(|e| (e.name.as_str(), e.token_ref.as_deref()))
+            .collect();
+        assert_eq!(named, [("_root", Some("ref-root")), ("corpus", None)]);
 
         let token = value("STUDIO_GIT_PROXY_TOKEN").expect("a proxy credential");
         assert_eq!(token.len(), 64, "256 random bits, hex");

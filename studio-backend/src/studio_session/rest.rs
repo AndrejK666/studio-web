@@ -121,10 +121,11 @@ pub struct RepoSpecDto {
     pub target: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
-    /// Ignored since #1095: a session holds no source host's key. A project
-    /// source is cloned through Studio's Git proxy with its connection's key;
-    /// anything else is cloned without credentials. Kept so older portals'
-    /// requests still parse.
+    /// credstore reference of the key for a source that is not the project's.
+    /// Never resolved into the session (#1095): the source is cloned through
+    /// Studio's Git proxy, which attaches the key only when a connection of
+    /// the organization holds this reference, and refuses the clone, saying
+    /// why, when not. A project source's key comes from its config instead.
     #[serde(default)]
     pub token_ref: Option<String>,
 }
@@ -147,9 +148,10 @@ pub struct CreateSessionRequest {
     pub root_repo_url: Option<String>,
     #[serde(default)]
     pub root_branch: Option<String>,
-    /// Ignored since #1095: a session holds no source host's key, so the
-    /// workspace repository is cloned without credentials. Kept so older
-    /// portals' requests still parse.
+    /// credstore reference of the key for the workspace repository. Never
+    /// resolved into the session (#1095): the root is cloned through Studio's
+    /// Git proxy, which attaches the key only when a connection of the
+    /// organization holds this reference.
     #[serde(default)]
     pub root_token_ref: Option<String>,
     /// Sources beyond the project's own. The project's repositories are read
@@ -224,29 +226,22 @@ async fn create_session(
         svc.project_git_sources(&ctx, req.workspace_id).await,
         req.repos
             .into_iter()
-            .map(|r| {
-                if r.token_ref.as_deref().is_some_and(|t| !t.trim().is_empty()) {
-                    tracing::info!(
-                        source = %r.name,
-                        "studio-session: token_ref is ignored; a session holds no source host's key (#1095)"
-                    );
-                }
-                super::launch_sources::Planned {
-                    name: r.name,
-                    kind: r.kind,
-                    url: r.url,
-                    path: r.path,
-                    target: r.target,
-                    branch: r.branch,
-                    // `plan` decides: only a project source goes through the proxy.
-                    via_proxy: false,
-                }
+            .map(|r| super::launch_sources::Planned {
+                name: r.name,
+                kind: r.kind,
+                url: r.url,
+                path: r.path,
+                target: r.target,
+                branch: r.branch,
+                token_ref: r.token_ref,
+                // `plan` decides.
+                route: super::launch_sources::ProxyRoute::None,
             })
             .collect(),
     );
     // Map them to specs. No token is resolved: a session holds no source
-    // host's key (#1095). The project's sources are cloned through the Git
-    // proxy, which attaches the connection's key; the rest without one.
+    // host's key (#1095). Every Git source is cloned through the Git proxy,
+    // which attaches the key the organization's connection holds.
     let mut repos = Vec::with_capacity(planned.len());
     for r in planned {
         let kind = match r.kind.as_str() {
@@ -267,19 +262,11 @@ async fn create_session(
             path: r.path,
             target: r.target,
             branch: r.branch,
-            via_proxy: r.via_proxy,
+            route: r.route,
         });
     }
-    if req
-        .root_token_ref
-        .as_deref()
-        .is_some_and(|t| !t.trim().is_empty())
-    {
-        tracing::info!(
-            "studio-session: root_token_ref is ignored; a session holds no source host's key (#1095)"
-        );
-    }
-    // Workspace root repository (optional), cloned without credentials.
+    // Workspace root repository (optional), through the proxy too, with the
+    // key its reference names when the organization's connection holds it.
     let root_repo = req
         .root_repo_url
         .as_deref()
@@ -292,7 +279,14 @@ async fn create_session(
             path: None,
             target: None,
             branch: req.root_branch.clone(),
-            via_proxy: false,
+            route: super::launch_sources::ProxyRoute::Extra {
+                token_ref: req
+                    .root_token_ref
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_owned),
+            },
         });
 
     let (session, existed) = svc

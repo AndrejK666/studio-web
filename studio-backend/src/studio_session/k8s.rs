@@ -45,6 +45,7 @@ const SESSION_TOKEN_ENV: &str = "STUDIO_SESSION_TOKEN";
 /// restarted backend can still reach the node it launched.
 const CONTROL_TOKEN_ENV: &str = "STUDIO_THEIA_S2S_TOKEN";
 const GIT_TOKEN_ENV: &str = "STUDIO_GIT_PROXY_TOKEN";
+const GIT_EXTRAS_ENV: &str = "STUDIO_GIT_PROXY_EXTRAS";
 /// The two variables a session's source summary is rebuilt from.
 const ROOT_URL_ENV: &str = "STUDIO_ROOT_URL";
 const SOURCES_ENV: &str = "STUDIO_SOURCES";
@@ -680,6 +681,7 @@ impl SessionDriver for KubernetesDriver {
             let session_token = env_value(SESSION_TOKEN_ENV).unwrap_or_default().to_string();
             let control_token = env_value(CONTROL_TOKEN_ENV).unwrap_or_default().to_string();
             let git_token = env_value(GIT_TOKEN_ENV).unwrap_or_default().to_string();
+            let proxy_extras = super::launch_sources::parse_extras(env_value(GIT_EXTRAS_ENV));
             let sources =
                 super::driver::adopted_sources(env_value(ROOT_URL_ENV), env_value(SOURCES_ENV));
             out.push(AdoptedSession {
@@ -700,6 +702,7 @@ impl SessionDriver for KubernetesDriver {
                 session_token,
                 control_token,
                 git_token,
+                proxy_extras,
                 sources,
             });
         }

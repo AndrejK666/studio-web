@@ -144,17 +144,25 @@ carry the entrypoint's neutral author. `agent_env` and `git_identity_env` stay
 in the code for the one-person desktop and the connection-scoped path that
 replaces them.
 
-No source host's key enters the container either (#1095). A project source
-whose connection is the organization's is cloned through Studio's Git proxy
-(`studio-git`): its `STUDIO_SOURCES` entry carries the repository's own `url`
-and a `clone_url` on the proxy, and the session authenticates to the proxy
-with `STUDIO_GIT_PROXY_TOKEN`, 256 random bits minted per launch, kept only in
-the runtime's environment and resolved back to the session by
-`SessionGitAccessV1` (on any replica). The proxy attaches the connection's
-key upstream, so clones, fetches and pushes all go through it. A source that
-is not the project's, one whose connection is held outside the organization,
-and a workspace root are cloned without credentials; `token_ref` and
-`root_token_ref` in the launch request are ignored.
+No source host's key enters the container either (#1095). Every Git source,
+and the workspace root, is cloned through Studio's Git proxy (`studio-git`):
+a `STUDIO_SOURCES` entry carries the repository's own `url` and a `clone_url`
+on the proxy (the root: `STUDIO_ROOT_CLONE_URL`, as source `_root`), and the
+session authenticates to the proxy with `STUDIO_GIT_PROXY_TOKEN`, 256 random
+bits minted per launch, kept only in the runtime's environment and resolved
+back to the session by `SessionGitAccessV1` (on any replica). Clones, fetches
+and pushes all go through the proxy, which attaches the key upstream:
+
+- a project source's from its connection, read from the project's config; one
+  whose connection is held outside the organization is refused, and the clone
+  fails with the proxy's reason;
+- the root's and an added source's (the gear corpus) from the key reference
+  the launch named (`root_token_ref`, `repos[].token_ref`), which the launch
+  records in `STUDIO_GIT_PROXY_EXTRAS` (references, never keys). The proxy
+  serves these to that session alone and lends the key only when a
+  connection of the organization holds the reference; otherwise it refuses
+  the clone and says why. Without a reference the source is relayed without
+  credentials, as the public corpus always was.
 
 **ADRs**: `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves`
 

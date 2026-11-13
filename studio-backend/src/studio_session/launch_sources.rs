@@ -7,21 +7,55 @@
 //! a product project builds against — and anything it lists that the project
 //! already has is the project's entry, cloned once.
 //!
-//! No source host's key reaches a session (#1095). A project source whose
-//! connection is the organization's is cloned through Studio's Git proxy
-//! (`studio-git`), which attaches the connection's key upstream and records
-//! the clone; the session proves itself to the proxy with its own credential
-//! (`STUDIO_GIT_PROXY_TOKEN`), never with a provider's token. Anything else is
-//! cloned straight from its host, without credentials.
+//! No source host's key reaches a session (#1095). Every Git source, and the
+//! workspace root, is cloned through Studio's Git proxy (`studio-git`), which
+//! attaches the right key upstream and records the clone; the session proves
+//! itself to the proxy with its own credential (`STUDIO_GIT_PROXY_TOKEN`).
+//!
+//! - **A project source** ([`ProxyRoute::Project`]) is served by name from the
+//!   project's config, with its connection's key. One whose connection is held
+//!   outside the organization is refused by the proxy, and the clone fails
+//!   saying so: it is never cloned anonymously behind the person's back.
+//! - **Anything else** ([`ProxyRoute::Extra`]): the workspace root (as
+//!   [`ROOT_SOURCE`]) and a source the caller adds (the gear corpus). The
+//!   session's launch records it with the key reference it was launched with
+//!   ([`extras_env`]); the proxy serves it to that session alone, attaching
+//!   the key only when a connection of the organization holds it. Without a
+//!   reference it is relayed without credentials, as it was cloned before.
 //!
 //! Plain functions, so the rules have their tests; `rest::create_session`
-//! hands the plan to the service, which writes [`sources_env`] into the
-//! session's environment.
+//! hands the plan to the service, which writes [`sources_env`] and
+//! [`extras_env`] into the session's environment.
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::git_proxy::sdk::{Source, source_path};
 use crate::project_sources::same_repository;
+
+/// The proxy's name for the workspace root: `_` keeps it out of the source
+/// directory names (`[a-z0-9_-]+` from a repository's last path segment never
+/// starts with one), and the desktop listing already calls it this.
+pub const ROOT_SOURCE: &str = "_root";
+
+/// How a Git source reaches its host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProxyRoute {
+    /// Not cloned: a local folder.
+    None,
+    /// One of the project's sources: the proxy reads it, and its key, from
+    /// the project's config by name.
+    Project,
+    /// Not the project's: the proxy serves it to this session from what the
+    /// launch recorded, with this key reference when there is one.
+    Extra { token_ref: Option<String> },
+}
+
+impl ProxyRoute {
+    pub fn is_proxied(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
 
 /// One source to launch with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,10 +67,11 @@ pub struct Planned {
     pub path: Option<String>,
     pub target: Option<String>,
     pub branch: Option<String>,
-    /// Cloned through `studio-git` under this name. Only a project source
-    /// whose connection the organization holds: the proxy serves the
-    /// project's sources by name and refuses one held outside it.
-    pub via_proxy: bool,
+    /// The credstore reference the caller named, for a source that is not
+    /// the project's. Never resolved here: the proxy decides whether the
+    /// organization's connection holds it.
+    pub token_ref: Option<String>,
+    pub route: ProxyRoute,
 }
 
 /// The project's sources, then each requested source that is not one of
@@ -47,13 +82,16 @@ pub fn plan(project: Vec<Source>, requested: Vec<Planned>) -> Vec<Planned> {
     let mut out: Vec<Planned> = project
         .into_iter()
         .map(|s| Planned {
-            via_proxy: s.held_outside.is_none(),
+            // Held outside the organization or not: the proxy decides, and
+            // refuses that one out loud.
+            route: ProxyRoute::Project,
             name: s.name,
             kind: "git".to_owned(),
             url: Some(s.url),
             path: None,
             target: s.target,
             branch: s.branch,
+            token_ref: None,
         })
         .collect();
     let project_urls: Vec<String> = out.iter().filter_map(|p| p.url.clone()).collect();
@@ -66,8 +104,18 @@ pub fn plan(project: Vec<Source>, requested: Vec<Planned>) -> Vec<Planned> {
         if duplicate {
             continue;
         }
-        // Not the project's: the proxy does not know it by any name.
-        asked.via_proxy = false;
+        asked.route = if asked.kind == "git" {
+            ProxyRoute::Extra {
+                token_ref: asked
+                    .token_ref
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_owned),
+            }
+        } else {
+            ProxyRoute::None
+        };
         let base = asked.name.clone();
         let mut suffix = 2;
         while out.iter().any(|p| p.name == asked.name) {
@@ -88,16 +136,21 @@ pub struct GitSourceEnv<'a> {
     pub via_proxy: bool,
 }
 
+/// The proxy's address for one of this workspace's sources, as the container
+/// reaches the gateway. `None` without a gateway.
+pub fn proxy_clone_url(gateway_url: &str, workspace_id: Uuid, name: &str) -> Option<String> {
+    let gateway = gateway_url.trim().trim_end_matches('/');
+    (!gateway.is_empty()).then(|| format!("{gateway}{}", source_path(workspace_id, name)))
+}
+
 /// The `STUDIO_SOURCES` entries: `url` is the repository's own address (what
-/// the workspace manifest records), `clone_url` the proxy's address for it,
-/// as the container reaches the gateway, when it goes through the proxy.
-/// There is no credential in any entry.
+/// the workspace manifest records), `clone_url` the proxy's address for it.
+/// There is no credential, and no key reference, in any entry.
 pub fn sources_env(
     gateway_url: &str,
     workspace_id: Uuid,
     sources: &[GitSourceEnv<'_>],
 ) -> Vec<serde_json::Value> {
-    let gateway = gateway_url.trim().trim_end_matches('/');
     sources
         .iter()
         .map(|s| {
@@ -107,13 +160,58 @@ pub fn sources_env(
                 "url": s.url.trim(),
                 "branch": s.branch.map(str::trim).filter(|b| !b.is_empty()),
             });
-            if s.via_proxy && !gateway.is_empty() {
-                entry["clone_url"] = serde_json::Value::String(format!(
-                    "{gateway}{}",
-                    source_path(workspace_id, s.name)
-                ));
+            if s.via_proxy
+                && let Some(clone_url) = proxy_clone_url(gateway_url, workspace_id, s.name)
+            {
+                entry["clone_url"] = serde_json::Value::String(clone_url);
             }
             entry
+        })
+        .collect()
+}
+
+/// A source the proxy serves to one session only, as its launch recorded it
+/// (`STUDIO_GIT_PROXY_EXTRAS`). The key reference is a credstore name, not a
+/// key: reading it needs the organization's connection, which the proxy
+/// checks on every request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtraSource {
+    pub name: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_ref: Option<String>,
+}
+
+/// The extras as the launch writes them into the session's environment.
+pub fn extras_env(extras: &[ExtraSource]) -> String {
+    serde_json::to_string(extras).unwrap_or_else(|_| "[]".to_owned())
+}
+
+/// The extras read back from a session's environment, as the proxy's
+/// sources. Unreadable means none: the proxy then serves the project's
+/// sources only, and anything else fails to clone, saying it is not there.
+pub fn parse_extras(raw: Option<&str>) -> Vec<Source> {
+    into_sources(
+        raw.and_then(|raw| serde_json::from_str::<Vec<ExtraSource>>(raw).ok())
+            .unwrap_or_default(),
+    )
+}
+
+/// The extras as the proxy's sources; one without a name or an address is
+/// nothing the proxy could serve.
+pub fn into_sources(extras: Vec<ExtraSource>) -> Vec<Source> {
+    extras
+        .into_iter()
+        .filter(|e| !e.name.trim().is_empty() && !e.url.trim().is_empty())
+        .map(|e| Source {
+            name: e.name,
+            url: e.url,
+            branch: e.branch,
+            target: None,
+            token_ref: e.token_ref,
+            held_outside: None,
         })
         .collect()
 }
@@ -133,7 +231,7 @@ mod tests {
         }
     }
 
-    fn asked(name: &str, kind: &str, url: Option<&str>) -> Planned {
+    fn asked(name: &str, kind: &str, url: Option<&str>, token_ref: Option<&str>) -> Planned {
         Planned {
             name: name.to_owned(),
             kind: kind.to_owned(),
@@ -141,12 +239,13 @@ mod tests {
             path: (kind == "local").then(|| "/srv/x".to_owned()),
             target: None,
             branch: None,
-            via_proxy: false,
+            token_ref: token_ref.map(str::to_owned),
+            route: ProxyRoute::None,
         }
     }
 
     #[test]
-    fn a_launch_that_lists_nothing_clones_the_projects_repositories_through_the_proxy() {
+    fn a_project_source_goes_through_the_proxy_by_name_and_carries_no_key() {
         let got = plan(
             vec![project(
                 "studio-web",
@@ -156,21 +255,20 @@ mod tests {
         );
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "studio-web");
-        assert_eq!(got[0].kind, "git");
-        assert!(got[0].via_proxy);
+        assert_eq!(got[0].route, ProxyRoute::Project);
+        assert_eq!(got[0].token_ref, None, "the proxy reads it from the config");
         assert_eq!(got[0].branch.as_deref(), Some("main"));
     }
 
+    /// Held outside the organization: still the proxy's to decide, so the
+    /// clone fails with the proxy's reason instead of going anonymous.
     #[test]
-    fn a_source_held_outside_the_organization_is_not_proxied() {
+    fn a_source_held_outside_the_organization_goes_to_the_proxy_too() {
         let mut outside = project("api", "https://github.com/org/api");
         outside.token_ref = None;
         outside.held_outside = Some(Uuid::nil());
         let got = plan(vec![outside], vec![]);
-        assert!(
-            !got[0].via_proxy,
-            "the proxy refuses it, so it is cloned openly"
-        );
+        assert_eq!(got[0].route, ProxyRoute::Project);
     }
 
     #[test]
@@ -184,32 +282,47 @@ mod tests {
                 "web",
                 "git",
                 Some("https://github.com/Org/studio-web"),
+                Some("someone-elses-ref"),
             )],
         );
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "studio-web");
-        assert!(got[0].via_proxy);
+        assert_eq!(got[0].route, ProxyRoute::Project);
+        assert_eq!(got[0].token_ref, None);
     }
 
     #[test]
-    fn what_is_not_the_projects_is_added_after_it_and_never_proxied() {
-        let mut corpus = asked(
-            "gears-rust",
-            "git",
-            Some("https://github.com/org/gears-rust"),
-        );
-        // Whatever the caller says: the proxy knows only the project's sources.
-        corpus.via_proxy = true;
+    fn the_corpus_and_other_added_sources_are_proxied_as_extras_with_their_own_reference() {
         let got = plan(
             vec![project("api", "https://github.com/org/api")],
-            vec![corpus, asked("scratch", "local", None)],
+            vec![
+                asked(
+                    "gears-rust",
+                    "git",
+                    Some("https://github.com/org/gears-rust"),
+                    None,
+                ),
+                asked(
+                    "private",
+                    "git",
+                    Some("https://github.com/org/private"),
+                    Some(" ref-private "),
+                ),
+                asked("scratch", "local", None, None),
+            ],
         );
         let names: Vec<_> = got.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["api", "gears-rust", "scratch"]);
-        assert_eq!(got[2].path.as_deref(), Some("/srv/x"));
-        assert!(got[0].via_proxy);
-        assert!(!got[1].via_proxy);
-        assert!(!got[2].via_proxy);
+        assert_eq!(names, ["api", "gears-rust", "private", "scratch"]);
+        assert_eq!(got[0].route, ProxyRoute::Project);
+        assert_eq!(got[1].route, ProxyRoute::Extra { token_ref: None });
+        assert_eq!(
+            got[2].route,
+            ProxyRoute::Extra {
+                token_ref: Some("ref-private".to_owned())
+            }
+        );
+        assert_eq!(got[3].route, ProxyRoute::None);
+        assert_eq!(got[3].path.as_deref(), Some("/srv/x"));
     }
 
     #[test]
@@ -217,8 +330,8 @@ mod tests {
         let got = plan(
             vec![project("api", "https://github.com/org/api")],
             vec![
-                asked("api", "git", Some("https://github.com/other/api")),
-                asked("api", "local", None),
+                asked("api", "git", Some("https://github.com/other/api"), None),
+                asked("api", "local", None, None),
             ],
         );
         let names: Vec<_> = got.iter().map(|p| p.name.as_str()).collect();
@@ -244,7 +357,7 @@ mod tests {
                     target: None,
                     url: "https://github.com/org/gears-rust",
                     branch: Some(" "),
-                    via_proxy: false,
+                    via_proxy: true,
                 },
             ],
         );
@@ -260,16 +373,61 @@ mod tests {
                 ),
             })
         );
+        assert_eq!(got[1]["branch"], serde_json::Value::Null);
         assert_eq!(
-            got[1],
-            serde_json::json!({
-                "name": "corpus",
-                "dir": "corpus",
-                "url": "https://github.com/org/gears-rust",
-                "branch": null,
-            })
+            got[1]["clone_url"],
+            format!(
+                "http://host.docker.internal:8090/cf/studio-git/v1/workspaces/{ws}/sources/corpus"
+            )
         );
         let text = serde_json::Value::Array(got).to_string();
         assert!(!text.contains("token"), "{text}");
+    }
+
+    #[test]
+    fn without_a_gateway_nothing_has_a_proxy_address() {
+        let got = sources_env(
+            " ",
+            Uuid::nil(),
+            &[GitSourceEnv {
+                name: "api",
+                target: None,
+                url: "https://github.com/org/api",
+                branch: None,
+                via_proxy: true,
+            }],
+        );
+        assert!(got[0].get("clone_url").is_none());
+        assert_eq!(proxy_clone_url("", Uuid::nil(), ROOT_SOURCE), None);
+    }
+
+    #[test]
+    fn the_extras_round_trip_through_the_environment_as_proxy_sources() {
+        let raw = extras_env(&[
+            ExtraSource {
+                name: ROOT_SOURCE.to_owned(),
+                url: "https://github.com/org/root".to_owned(),
+                branch: Some("main".to_owned()),
+                token_ref: Some("ref-root".to_owned()),
+            },
+            ExtraSource {
+                name: "gears-rust".to_owned(),
+                url: "https://github.com/org/gears-rust".to_owned(),
+                branch: None,
+                token_ref: None,
+            },
+        ]);
+        let got = parse_extras(Some(&raw));
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "_root");
+        assert_eq!(got[0].token_ref.as_deref(), Some("ref-root"));
+        assert_eq!(
+            got[0].held_outside, None,
+            "the proxy checks ownership itself"
+        );
+        assert_eq!(got[1].token_ref, None);
+        assert!(parse_extras(Some("{not json")).is_empty());
+        assert!(parse_extras(None).is_empty());
+        assert!(parse_extras(Some(r#"[{"name":"","url":"x"}]"#)).is_empty());
     }
 }

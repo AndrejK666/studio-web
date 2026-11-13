@@ -179,15 +179,23 @@ clone_workspace_sources() {
 # repository in and check the tree out over whatever was there. The guard is
 # an `origin` remote: a directory we initialized ourselves has none, a real
 # clone does — so this runs once and never touches an adopted workspace again.
+# The root is cloned through Studio's Git proxy (STUDIO_ROOT_CLONE_URL, #1095),
+# which attaches the key its connection holds; the session helper presents
+# the session's own credential. Without a proxy address, from STUDIO_ROOT_URL.
 if [ -n "${STUDIO_ROOT_URL:-}" ]; then
+    ROOT_FROM=${STUDIO_ROOT_CLONE_URL:-$STUDIO_ROOT_URL}
+    if [ -d "$WORKSPACE/.git" ] && [ -n "${STUDIO_ROOT_CLONE_URL:-}" ] \
+        && [ "$(git -C "$WORKSPACE" remote get-url origin 2>/dev/null)" = "$STUDIO_ROOT_URL" ]; then
+        # Adopted by a launch before the proxy: fetch and push through it now.
+        git -C "$WORKSPACE" remote set-url origin "$STUDIO_ROOT_CLONE_URL"
+        echo "[entrypoint] workspace root origin now goes through Studio"
+    fi
     if [ ! -d "$WORKSPACE/.git" ] || ! git -C "$WORKSPACE" remote get-url origin >/dev/null 2>&1; then
-        echo "[entrypoint] adopting workspace root ${STUDIO_ROOT_URL}"
+        echo "[entrypoint] adopting workspace root ${ROOT_FROM}"
         ROOT_TMP=$(mktemp -d)
-        # No credentials: a session holds no source host's key (#1095), so a
-        # root repository is cloned only when its host serves it openly.
         if git clone \
             ${STUDIO_ROOT_BRANCH:+--branch "$STUDIO_ROOT_BRANCH"} \
-            "$STUDIO_ROOT_URL" "$ROOT_TMP/repo"
+            "$ROOT_FROM" "$ROOT_TMP/repo"
         then
             rm -rf "$WORKSPACE/.git"
             mv "$ROOT_TMP/repo/.git" "$WORKSPACE/.git"

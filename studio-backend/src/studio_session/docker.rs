@@ -249,6 +249,10 @@ impl SessionDriver for DockerDriver {
                 git_token: env_value(&env, "STUDIO_GIT_PROXY_TOKEN")
                     .unwrap_or_default()
                     .to_string(),
+                proxy_extras: super::launch_sources::parse_extras(env_value(
+                    &env,
+                    "STUDIO_GIT_PROXY_EXTRAS",
+                )),
                 sources: super::driver::adopted_sources(
                     env_value(&env, "STUDIO_ROOT_URL"),
                     env_value(&env, "STUDIO_SOURCES"),

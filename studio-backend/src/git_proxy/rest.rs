@@ -340,11 +340,13 @@ pub(crate) fn refuse(status: StatusCode, message: &str) -> Response {
 /// Who a protocol request on `workspace_id` comes from: a container session
 /// presenting the credential minted for it at launch (#1095), acting for its
 /// own workspace only, or else a member with their Studio token.
+/// For a session, also the sources beyond its project's that its launch
+/// recorded (the workspace root, the gear corpus); a member has none.
 async fn authenticate(
     proxy: &GitProxy,
     headers: &HeaderMap,
     workspace_id: Uuid,
-) -> Result<SecurityContext, Response> {
+) -> Result<(SecurityContext, Vec<Source>), Response> {
     let presented = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
@@ -353,17 +355,47 @@ async fn authenticate(
         && let Ok(sessions) = proxy
             .hub
             .get::<dyn crate::studio_session::sdk::SessionGitAccessV1>()
-        && let Some(identity) = sessions.resolve_git_proxy_token(&token).await
+        && let Some(access) = sessions.resolve_git_proxy_token(&token).await
     {
-        return sources::session_context(&identity, workspace_id).ok_or_else(|| {
-            tracing::warn!(session = %identity.session_id, %workspace_id, "studio-git: a session asked for another workspace; refused");
-            refuse(
-                StatusCode::NOT_FOUND,
-                "No such workspace, or you are not a member of it.",
-            )
-        });
+        let identity = access.identity;
+        return sources::session_context(&identity, workspace_id)
+            .map(|ctx| (ctx, access.extra_sources))
+            .ok_or_else(|| {
+                tracing::warn!(session = %identity.session_id, %workspace_id, "studio-git: a session asked for another workspace; refused");
+                refuse(
+                    StatusCode::NOT_FOUND,
+                    "No such workspace, or you are not a member of it.",
+                )
+            });
     }
-    authenticate_member(proxy.authn.as_ref(), headers).await
+    authenticate_member(proxy.authn.as_ref(), headers)
+        .await
+        .map(|ctx| (ctx, Vec::new()))
+}
+
+impl GitProxy {
+    /// Whether the organization may lend the key `reference` names to a
+    /// session's extra source (#1095): a connection of the organization, one
+    /// of its workspaces or projects must hold it, the same rule a repository
+    /// sync and a project source follow.
+    async fn extra_key(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        reference: &str,
+    ) -> sources::ExtraKey {
+        let Some(connectors) = self.connectors.get() else {
+            return sources::ExtraKey::Unavailable;
+        };
+        match connectors
+            .ensure_secret_owned(ctx, workspace_id, workspace_id, reference)
+            .await
+        {
+            Ok(Some(_)) => sources::ExtraKey::Owned,
+            Ok(None) => sources::ExtraKey::Unknown,
+            Err(refused) => sources::ExtraKey::NotOwned(refused.holder),
+        }
+    }
 }
 
 /// The member a Git request comes from: the Studio token it carries (see
@@ -403,22 +435,32 @@ async fn forward(
     service: Service,
     request: Request,
 ) -> Response {
-    let ctx = match authenticate(proxy, request.headers(), workspace_id).await {
-        Ok(ctx) => ctx,
+    let (ctx, extras) = match authenticate(proxy, request.headers(), workspace_id).await {
+        Ok(found) => found,
         Err(response) => return response,
     };
-    let Some(found) = proxy.sources(&ctx, workspace_id).await else {
+    let Some(project) = proxy.sources(&ctx, workspace_id).await else {
         return refuse(
             StatusCode::NOT_FOUND,
             "No such workspace, or you are not a member of it.",
         );
     };
-    let Some(found) = found.into_iter().find(|s| s.name == source) else {
+    let Some((found, extra)) = sources::pick(project, extras, source) else {
         return refuse(
             StatusCode::NOT_FOUND,
             "The workspace has no Git source by that name.",
         );
     };
+    // A session's own extra lends a key only when the organization's
+    // connection holds it; otherwise the clone fails and says why, rather
+    // than going upstream anonymously or with someone else's key.
+    if extra && let Some(reference) = found.token_ref.as_deref() {
+        let verdict = proxy.extra_key(&ctx, workspace_id, reference).await;
+        if let Some((status, text)) = sources::extra_key_refusal(verdict) {
+            tracing::warn!(%workspace_id, source, ?verdict, "studio-git: a session's source names a key the organization does not hold; refused");
+            return refuse(status, &text);
+        }
+    }
     // Never as the platform: a source connected through a connection held
     // above the project's organization is not proxied, neither with that
     // token nor without it.

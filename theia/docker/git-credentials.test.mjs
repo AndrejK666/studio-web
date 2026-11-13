@@ -52,6 +52,22 @@ const proxied = { protocol: 'https', host: 'studio.example.com', path: 'cf/studi
   assert.equal(withSuffix.password, PROXY_TOKEN, 'git may add .git to the path');
 }
 
+// ── The workspace root and the gear corpus go through the proxy as well ──
+{
+  const root = { ...proxied, path: 'cf/studio-git/v1/workspaces/0b0b/sources/_root' };
+  const env = { STUDIO_ROOT_CLONE_URL: `${PROXY}/_root` };
+  assert.equal(ask(root, env).answer.password, PROXY_TOKEN, 'the root gets the session credential');
+  assert.equal(ask(root).stdout.trim(), '', 'but only when it was cloned through the proxy');
+  const corpus = { ...proxied, path: 'cf/studio-git/v1/workspaces/0b0b/sources/gears-rust' };
+  const withCorpus = JSON.stringify([
+    ...JSON.parse(SOURCES),
+    { name: 'gears-rust', url: 'https://github.com/org/gears-rust', clone_url: `${PROXY}/gears-rust` },
+  ]);
+  assert.equal(ask(corpus, { STUDIO_SOURCES: withCorpus }).answer.password, PROXY_TOKEN);
+  // A malformed STUDIO_SOURCES loses its sources, not the root.
+  assert.equal(ask(root, { ...env, STUDIO_SOURCES: '{not json' }).answer.password, PROXY_TOKEN);
+}
+
 // ── Refusals ──
 for (const [what, request, env] of [
   ['the source host itself', { protocol: 'https', host: 'github.com', path: 'acme/studio-web' }, {}],

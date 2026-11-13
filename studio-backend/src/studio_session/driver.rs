@@ -178,6 +178,9 @@ pub struct AdoptedSession {
     /// credential to Studio's Git proxy (#1095). Empty for a session launched
     /// before it existed; such a session cannot clone through the proxy.
     pub git_token: String,
+    /// `STUDIO_GIT_PROXY_EXTRAS` read back the same way
+    /// ([`super::launch_sources::parse_extras`]).
+    pub proxy_extras: Vec<crate::git_proxy::sdk::Source>,
     /// Human-readable source summaries, rebuilt from the session's env by
     /// [`adopted_sources`].
     pub sources: Vec<String>,

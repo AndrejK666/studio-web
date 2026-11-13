@@ -9,7 +9,8 @@
 // working when the session stops.
 //
 // The rule is deliberately narrow: answer only for the proxy addresses this
-// workspace was cloned from (STUDIO_SOURCES' `clone_url`), host AND path, so
+// workspace was cloned from (STUDIO_SOURCES' `clone_url`, and the root's
+// STUDIO_ROOT_CLONE_URL), host AND path, so
 // the session credential is never handed to some other host or repository a
 // repository's config, a submodule or an agent decides to contact. Anything
 // else gets no answer at all: git then fails without a prompt
@@ -47,23 +48,28 @@ function normalizePath(value) {
 /** The proxy addresses this workspace's sources are cloned from. */
 function proxyRemotes() {
     const remotes = [];
+    const add = (address) => {
+        if (typeof address !== 'string' || !address) return;
+        try {
+            const url = new URL(address);
+            remotes.push({
+                protocol: url.protocol.replace(/:$/, ''),
+                host: url.host,
+                path: normalizePath(url.pathname),
+            });
+        } catch {
+            // Not a URL: nothing to answer for.
+        }
+    };
     try {
         for (const source of JSON.parse(process.env.STUDIO_SOURCES ?? '[]')) {
-            if (typeof source?.clone_url !== 'string') continue;
-            try {
-                const url = new URL(source.clone_url);
-                remotes.push({
-                    protocol: url.protocol.replace(/:$/, ''),
-                    host: url.host,
-                    path: normalizePath(url.pathname),
-                });
-            } catch {
-                // Not a URL: nothing to answer for.
-            }
+            add(source?.clone_url);
         }
     } catch {
-        // A malformed STUDIO_SOURCES answers for nothing.
+        // A malformed STUDIO_SOURCES answers for none of its sources.
     }
+    // The workspace root, cloned through the proxy as well.
+    add(process.env.STUDIO_ROOT_CLONE_URL);
     return remotes;
 }
 

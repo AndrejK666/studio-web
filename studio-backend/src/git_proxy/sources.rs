@@ -65,6 +65,52 @@ pub fn session_context(
         .ok()
 }
 
+/// The source a request names: one of the project's, else one of the
+/// session's own extras (`true` in the answer). A project source wins a name
+/// both have; the launch never gives an extra a project source's name.
+pub fn pick(project: Vec<Source>, extras: Vec<Source>, name: &str) -> Option<(Source, bool)> {
+    if let Some(found) = project.into_iter().find(|s| s.name == name) {
+        return Some((found, false));
+    }
+    extras
+        .into_iter()
+        .find(|s| s.name == name)
+        .map(|found| (found, true))
+}
+
+/// What the connection catalogue says about the key an extra source names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtraKey {
+    /// A connection of the organization holds it.
+    Owned,
+    /// A connection held outside the organization holds it.
+    NotOwned(uuid::Uuid),
+    /// No connection the workspace sees holds it.
+    Unknown,
+    /// The catalogue cannot be asked right now.
+    Unavailable,
+}
+
+/// The refusal `git` prints for an extra source's key, or `None` to go on.
+pub fn extra_key_refusal(verdict: ExtraKey) -> Option<(axum::http::StatusCode, String)> {
+    match verdict {
+        ExtraKey::Owned => None,
+        ExtraKey::NotOwned(holder) => {
+            Some((axum::http::StatusCode::FORBIDDEN, not_owned_text(holder)))
+        }
+        ExtraKey::Unknown => Some((
+            axum::http::StatusCode::FORBIDDEN,
+            "No connection of this organization holds the key this source was launched with; \
+             connect the repository to the project, or relaunch without the key for a public one."
+                .to_owned(),
+        )),
+        ExtraKey::Unavailable => Some((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "Studio cannot check whose key this source uses right now; try again.".to_owned(),
+        )),
+    }
+}
+
 /// The two Git services the smart-HTTP protocol names in `info/refs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Service {
@@ -196,6 +242,57 @@ mod tests {
         assert_eq!(ctx.subject_type(), Some("service"));
         assert!(ctx.bearer_token().is_none(), "no person's token travels");
         assert!(session_context(&identity, uuid::Uuid::from_u128(0xb1)).is_none());
+    }
+
+    fn src(name: &str, token_ref: Option<&str>) -> Source {
+        Source {
+            name: name.to_owned(),
+            url: format!("https://github.com/acme/{name}"),
+            branch: None,
+            target: None,
+            token_ref: token_ref.map(str::to_owned),
+            held_outside: None,
+        }
+    }
+
+    #[test]
+    fn a_project_source_is_found_before_a_sessions_extra() {
+        let project = vec![src("api", Some("ref-api"))];
+        let extras = vec![
+            src("_root", Some("ref-root")),
+            src("gears-rust", None),
+            src("api", Some("ref-other")),
+        ];
+        let (api, extra) = pick(project.clone(), extras.clone(), "api").expect("api");
+        assert!(!extra);
+        assert_eq!(api.token_ref.as_deref(), Some("ref-api"));
+        let (root, extra) = pick(project.clone(), extras.clone(), "_root").expect("root");
+        assert!(extra);
+        assert_eq!(root.token_ref.as_deref(), Some("ref-root"));
+        let (corpus, extra) = pick(project.clone(), extras.clone(), "gears-rust").expect("corpus");
+        assert!(extra && corpus.token_ref.is_none());
+        assert!(pick(project, extras, "elsewhere").is_none());
+        assert!(
+            pick(vec![], vec![], "_root").is_none(),
+            "a member has no extras"
+        );
+    }
+
+    #[test]
+    fn an_extras_key_is_lent_only_when_the_organization_holds_it() {
+        assert_eq!(extra_key_refusal(ExtraKey::Owned), None);
+        let holder = uuid::Uuid::from_u128(0x1);
+        let (status, text) = extra_key_refusal(ExtraKey::NotOwned(holder)).expect("refused");
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(text, not_owned_text(holder), "says whose and what to do");
+        let (status, text) = extra_key_refusal(ExtraKey::Unknown).expect("refused");
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+        assert!(
+            text.contains("No connection of this organization"),
+            "{text}"
+        );
+        let (status, _) = extra_key_refusal(ExtraKey::Unavailable).expect("refused");
+        assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[test]

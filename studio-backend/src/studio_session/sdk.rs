@@ -95,6 +95,16 @@ impl StudioSessionDiscoveryClientV1 for StudioSessionDiscoveryLocalClient {
     }
 }
 
+/// What a session may clone through Studio's Git proxy (#1095): whose it is,
+/// and the sources beyond its project's that its launch recorded (the
+/// workspace root as `_root`, the gear corpus), each with the key reference
+/// it was launched with.
+#[derive(Debug, Clone)]
+pub struct SessionGitAccess {
+    pub identity: SessionIdentity,
+    pub extra_sources: Vec<crate::git_proxy::sdk::Source>,
+}
+
 /// A container session, as Studio's Git proxy authenticates it (#1095): the
 /// session presents the credential minted for it at launch instead of any
 /// source host's key, and the proxy acts for that session's workspace.
@@ -103,7 +113,7 @@ pub trait SessionGitAccessV1: Send + Sync {
     /// The live session that holds `token` as its Git proxy credential.
     /// Unauthenticated by design: the token IS the credential. `None` when no
     /// live session holds it (stopped, forged, or launched before #1095).
-    async fn resolve_git_proxy_token(&self, token: &str) -> Option<SessionIdentity>;
+    async fn resolve_git_proxy_token(&self, token: &str) -> Option<SessionGitAccess>;
 }
 
 /// In-process implementation backed by the live [`SessionService`] registry.
@@ -119,7 +129,7 @@ impl SessionGitAccessLocalClient {
 
 #[async_trait]
 impl SessionGitAccessV1 for SessionGitAccessLocalClient {
-    async fn resolve_git_proxy_token(&self, token: &str) -> Option<SessionIdentity> {
+    async fn resolve_git_proxy_token(&self, token: &str) -> Option<SessionGitAccess> {
         self.service.resolve_git_proxy_token(token).await
     }
 }

@@ -123,7 +123,11 @@ if (!hasBash) {
     }
 
     assert.match(output, /source 'already' already materialized/);
+    // A source the proxy refuses (a connection held outside the organization)
+    // fails like this one: loudly, with git's own reason beside the warning,
+    // never by quietly cloning something else.
     assert.match(output, /WARNING: clone of 'broken' failed/);
+    assert.match(output, /fatal: /, "git's reason reaches the session log");
     assert.equal(
       git(['remote', 'get-url', 'origin'], path.join(workspace, 'b')),
       path.join(upstream, 'b'),
