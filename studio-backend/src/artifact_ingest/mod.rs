@@ -28,6 +28,7 @@ mod ingest_task;
 pub mod sdk;
 pub(crate) use ingest_task::{IngestPayload, TASK_TYPE as INGEST_TASK_TYPE};
 mod migrations;
+mod mirror_identity; // who the sync is to the GitHub mirror (#1094)
 mod model_store;
 mod outputs; // what the builds produced: CI artifacts and releases
 pub mod port;
@@ -198,10 +199,17 @@ fn platform_client(ctx: &GearCtx) -> anyhow::Result<Option<service::PlatformClie
         .client_hub()
         .get::<dyn authn_resolver_sdk::AuthNResolverClient>()?;
     info!(client_id = %creds.client_id, "studio-artifact-ingest: a connection with platform_auth reads with this client's token");
-    Ok(Some(service::PlatformClient {
+    let identity = Arc::new(mirror_identity::MirrorSyncIdentity::new(
         authn,
-        client_id: creds.client_id,
-        client_secret: creds.client_secret,
+        creds.client_id,
+        creds.client_secret,
+    ));
+    // Published for the Studio PDP, which lets this identity, and no person,
+    // reach the GitHub mirror's resources (#1094).
+    ctx.client_hub()
+        .register::<mirror_identity::MirrorSyncIdentity>(Arc::clone(&identity));
+    Ok(Some(service::PlatformClient {
+        identity,
         mirror_base_url,
     }))
 }

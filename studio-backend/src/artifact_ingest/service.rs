@@ -17,9 +17,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use authn_resolver_sdk::{AuthNResolverClient, ClientCredentialsRequest};
 use credstore_sdk::{CredStoreClientV1, SecretRef};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::ExposeSecret;
 use toolkit_security::SecurityContext;
 
 use super::comment_threads;
@@ -282,9 +281,8 @@ pub struct IngestService {
 }
 
 pub struct PlatformClient {
-    pub authn: Arc<dyn AuthNResolverClient>,
-    pub client_id: String,
-    pub client_secret: String,
+    /// The configured OAuth client; the Studio PDP recognises the sync by it.
+    pub identity: Arc<super::mirror_identity::MirrorSyncIdentity>,
     pub mirror_base_url: String,
 }
 
@@ -390,17 +388,10 @@ impl IngestService {
                  client_credentials configured"
             )
         })?;
-        let result = platform
-            .authn
-            .exchange_client_credentials(&ClientCredentialsRequest {
-                client_id: platform.client_id.clone(),
-                client_secret: SecretString::from(platform.client_secret.clone()),
-                scopes: Vec::new(),
-            })
-            .await
-            .map_err(|e| anyhow!("client credentials exchange failed: {e}"))?;
-        result
-            .security_context
+        platform
+            .identity
+            .exchange()
+            .await?
             .bearer_token()
             .map(|t| t.expose_secret().to_string())
             .ok_or_else(|| anyhow!("the client credentials exchange returned no bearer token"))
