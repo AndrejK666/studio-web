@@ -362,7 +362,7 @@ pub async fn run_cli() -> Result<()> {
 /// The toolkit loader reads the YAML verbatim; only database DSNs were ever
 /// expanded (toolkit-db wires `var_expand` into the DB layer, not into the
 /// loader). Every other placeholder — the OIDC trusted issuer, the
-/// file-storage signing seed, the keycloak-idp and mini-chat secrets —
+/// file-storage signing key, the keycloak-idp and mini-chat secrets —
 /// travelled into the runtime as a literal `${...}` string, which is exactly
 /// what a Kubernetes deployment feeds through Secret-backed env vars.
 ///
@@ -463,7 +463,7 @@ mod config_expansion_tests {
         "STUDIO_PG_PASSWORD",
         "STUDIO_PG_DBNAME",
         "STUDIO_OIDC_ISSUER",
-        "STUDIO_FS_SIGNING_SEED",
+        "STUDIO_FS_SIGNING_KEY",
         "STUDIO_FS_FINALIZE_SECRET",
         "STUDIO_IDP_ADMIN_BASE_URL",
         "STUDIO_IDP_ADMIN_SECRET",

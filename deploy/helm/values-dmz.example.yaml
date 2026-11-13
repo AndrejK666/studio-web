@@ -9,7 +9,8 @@
 #   studio-web-idp        issuer_url, client_id, client_secret
 #       (OIDC realm the portal + backend validate against)
 #   studio-web-app        llm_api_key           [required: mini-chat (Ask AI) only]
-#                         fs_signing_seed       [required, e.g. `openssl rand -base64 32 | tr '+/' '-_'`]
+#                         fs_signing_key        [required, from `py deploy/scripts/generate-file-storage-keypair.py`:
+#                                                the FILE_STORAGE_SIGNING_SEED value it prints]
 #                         credstore_key         [strongly recommended: `openssl rand -base64 32`;
 #                                                without it user-typed secrets (repo PATs) die
 #                                                with every pod restart — #66]
@@ -20,6 +21,16 @@
 #                                                activity as unavailable]
 #   ghcr-pull             kubernetes.io/dockerconfigjson for ghcr.io
 #       (the ghcr packages start private; skip if they are made public)
+#
+# Upgrading from a chart that read fs_signing_seed: add fs_signing_key to
+# studio-web-app BEFORE `helm upgrade`. The reference is not optional, so
+# without the key Kubernetes cannot create the backend container and the
+# backend stays down. The old 32-byte seed is not a valid P-256 key; generate
+# a new one with the script above. Add the key to the existing Secret rather
+# than recreate it, so the other keys stay:
+#
+#   kubectl -n <ns> patch secret studio-web-app --type merge \
+#     -p '{"stringData":{"fs_signing_key":"<FILE_STORAGE_SIGNING_SEED value>"}}'
 #
 # Databases: auto_provision does NOT create Postgres databases (it only
 # provisions SQLite paths). Every per-gear database in config/k8s.yaml must

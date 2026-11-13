@@ -398,9 +398,9 @@ gears:
       server: "pg_main"
       dbname: "studio_file_storage"
     config:
-      # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
+      # Dev-only P-256 PKCS#8 key so signed URLs survive restarts (generate your
       # own for any shared environment).
-      signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
+      signing_key_pkcs8: "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgPDmDKoH2hy_dzjhnRIngLEYosaKbrfCEV7Q1D1RHgVChRANCAASLxl9hRjDPXIJL9OlTvVlrVNnsG8uGeqaQaLAGCaewgjm9ZkOxkbTKF97LYRQaPbdZ0oXSkGEv8QxXU_Kb-UMg"
       # Dev-only: the token a sidecar would send on its finalize callbacks
       # (FS_SIDECAR_INTERNAL_TOKEN); file-storage >= 0.4 refuses to start
       # without one.
@@ -417,6 +417,8 @@ gears:
       dbname: "studio_oagw"
     config:
       proxy_timeout_secs: 120
+      proxy_cache:
+        enabled: false
 
   credstore:
     database:

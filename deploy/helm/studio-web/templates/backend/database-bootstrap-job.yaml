@@ -60,11 +60,11 @@ spec:
               value: {{ .Values.backend.idpAdmin.baseUrl | quote }}
             - name: STUDIO_IDP_ADMIN_SECRET
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: idp_admin_secret, optional: true } }
-            - name: STUDIO_FS_SIGNING_SEED
+            - name: STUDIO_FS_SIGNING_KEY
               {{- if .Values.backend.fileStorage.enabled }}
-              valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: signing_seed } }
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.fileStorage.secrets.signingExistingSecret }}, key: signing_key } }
               {{- else }}
-              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_signing_seed } }
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: fs_signing_key } }
               {{- end }}
             # file-storage >= 0.4: the token the sidecar sends on its finalize
             # callbacks. The sidecar gets the same key as FS_SIDECAR_INTERNAL_TOKEN.

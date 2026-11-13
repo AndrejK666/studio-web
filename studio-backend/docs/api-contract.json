@@ -2506,7 +2506,7 @@
       "summary": "One deployment, as Studio records it",
       "authenticated": true,
       "responses": [
-        "DeploymentDto"
+        "EnvironmentDeploymentDto"
       ],
       "errors": [
         "401",
@@ -6231,7 +6231,7 @@
       "authenticated": true,
       "request": "CreateDeploymentRequest",
       "responses": [
-        "DeploymentDto"
+        "EnvironmentDeploymentDto"
       ],
       "errors": [
         "400",
@@ -6250,7 +6250,7 @@
       "authenticated": true,
       "request": "DeploymentDecisionRequest",
       "responses": [
-        "DeploymentDto"
+        "EnvironmentDeploymentDto"
       ],
       "errors": [
         "400",

@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, NotifyMessage,
-    NotifyTarget, OpenedPullRequest, RemoteRepo, SentMessage, WrittenFile,
+    NotifyTarget, OpenedPullRequest, RemoteRepo, SentMessage, WrittenFile, platform_auth,
 };
 use super::gts::CONNECTIONS_METADATA_TYPE;
 use super::ownership::{NotOwned, Tree, within};
@@ -338,6 +338,18 @@ fn resolve_base_url(
     // normalised the host, and what the driver joins paths onto should be what
     // was checked, not the string beside it.
     Ok(url.as_str().trim_end_matches('/').to_string())
+}
+
+fn direct_base_url(
+    driver: &dyn ConnectorDriver,
+    base_url: &str,
+    options: &BTreeMap<String, String>,
+) -> String {
+    if platform_auth(options) {
+        driver.default_base_url().to_string()
+    } else {
+        base_url.to_string()
+    }
 }
 
 /// Marking a gear repository where "Create a gear" writes unmarks the
@@ -716,6 +728,17 @@ impl ConnectorService {
         Ok(Some(holder))
     }
 
+    pub async fn platform_auth(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        secret_ref: &str,
+    ) -> bool {
+        self.nearest(ctx, tenant, |c| c.secret_ref == secret_ref)
+            .await
+            .is_some_and(|(_, c)| platform_auth(&c.options))
+    }
+
     async fn nearest(
         &self,
         ctx: &SecurityContext,
@@ -741,10 +764,11 @@ impl ConnectorService {
 
     /// Assemble driver credentials for a stored connection.
     async fn auth(&self, ctx: &SecurityContext, c: &Connection) -> anyhow::Result<ConnectionAuth> {
+        let base_url = direct_base_url(self.driver(&c.provider)?.as_ref(), &c.base_url, &c.options);
         // Stored without a credential (a public gear repository).
         if c.secret_ref.is_empty() {
             return Ok(ConnectionAuth {
-                base_url: c.base_url.clone(),
+                base_url,
                 token: String::new(),
             });
         }
@@ -788,7 +812,7 @@ impl ConnectorService {
                 })?;
         }
         Ok(ConnectionAuth {
-            base_url: c.base_url.clone(),
+            base_url,
             token: access.token,
         })
     }
@@ -839,7 +863,7 @@ impl ConnectorService {
         let identity = driver
             .test_with_options(
                 &ConnectionAuth {
-                    base_url: base_url.clone(),
+                    base_url: direct_base_url(driver.as_ref(), &base_url, &options),
                     token: token.to_string(),
                 },
                 &options,
@@ -1225,10 +1249,19 @@ impl ConnectorService {
             None => existing.base_url.clone(),
         };
 
+        let options = match options {
+            Some(o) => driver.check_options(&base_url, &o)?,
+            None => existing.options.clone(),
+        };
+
         // No new token: verify the change against the credential already
         // stored, so relocating an installation cannot quietly leave a
         // connection that has never been proven to work.
-        address_change_needs_token(&base_url, &existing.base_url, token)?;
+        address_change_needs_token(
+            &direct_base_url(driver.as_ref(), &base_url, &options),
+            &direct_base_url(driver.as_ref(), &existing.base_url, &existing.options),
+            token,
+        )?;
 
         let rotating = token.is_some();
         // A connection stored without a credential has no secret to rotate.
@@ -1247,15 +1280,11 @@ impl ConnectorService {
             }
             None => self.auth(ctx, &existing).await?.token,
         };
-        let options = match options {
-            Some(o) => driver.check_options(&base_url, &o)?,
-            None => existing.options.clone(),
-        };
 
         let identity = driver
             .test_with_options(
                 &ConnectionAuth {
-                    base_url: base_url.clone(),
+                    base_url: direct_base_url(driver.as_ref(), &base_url, &options),
                     token: token.clone(),
                 },
                 &options,

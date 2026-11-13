@@ -180,6 +180,24 @@ impl TaskHandler for IngestTask {
             }
         };
 
+        let platform_base_url = if self
+            .service
+            .platform_auth(
+                &ctx.security,
+                payload.tenant(ctx.tenant),
+                &payload.secret_ref,
+            )
+            .await
+        {
+            match self.service.platform_base_url() {
+                Ok(url) => Some(url),
+                Err(e) => return TaskOutcome::Failed(format!("{e:#}")),
+            }
+        } else {
+            None
+        };
+        let base_url = platform_base_url.as_deref().or(payload.base_url.as_deref());
+
         let (progress, drain) = ctx.progress_bridge();
         // Held until the sync returns. A closed semaphore cannot happen -- it is
         // a static nobody closes -- so an error just runs unguarded. A run that
@@ -191,16 +209,29 @@ impl TaskHandler for IngestTask {
                 INGEST_SLOT.acquire().await.ok()
             }
         };
+        let platform_token = if platform_base_url.is_some() {
+            match self.service.platform_token().await {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    drop(progress);
+                    let _ = drain.await;
+                    return TaskOutcome::Retry(format!("{e:#}"));
+                }
+            }
+        } else {
+            None
+        };
         let outcome = self
             .service
             .run_sync(
                 &ctx.security,
                 &payload.provider,
-                payload.base_url.as_deref(),
+                base_url,
                 &payload.secret_ref,
                 &payload.repo_full_path,
                 payload.since.as_deref(),
                 &token,
+                platform_token.as_deref(),
                 payload.workspace_id.as_deref(),
                 payload.project_id.as_deref(),
                 payload.repo_dir.as_deref(),
