@@ -2567,6 +2567,7 @@ dependencies = [
  "cf-gears-event-broker-sdk",
  "cf-gears-file-storage",
  "cf-gears-github-mirror",
+ "cf-gears-github-mirror-sdk",
  "cf-gears-graph-storage",
  "cf-gears-graph-storage-sdk",
  "cf-gears-grpc-hub",

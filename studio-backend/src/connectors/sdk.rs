@@ -22,14 +22,12 @@ use toolkit::client_hub::ClientHub;
 pub(crate) use super::clone as git_checkout;
 pub use super::driver::CommitStatus;
 #[cfg(test)]
-pub use super::driver::RemoteReleaseAsset;
-#[cfg(test)]
 pub use super::driver::RemoteReview;
 pub use super::driver::{
     ConnectionAuth, ConnectorDriver, CreatedRepository, DownloadTarget, FileToWrite, NotifyMessage,
     PullRequestThreads, RemoteBuildArtifact, RemoteComment, RemoteCommit, RemoteFile,
-    RemoteFileList, RemoteIssue, RemotePullRequest, RemoteRelease, RemoteWorkflowJob,
-    RemoteWorkflowRun,
+    RemoteFileList, RemoteIssue, RemotePullRequest, RemoteRelease, RemoteReleaseAsset,
+    RemoteWorkflow, RemoteWorkflowJob, RemoteWorkflowRun,
 };
 /// What another gear's test needs to stand in for a provider.
 #[cfg(test)]

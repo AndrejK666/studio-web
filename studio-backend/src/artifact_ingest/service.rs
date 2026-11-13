@@ -17,14 +17,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use authn_resolver_sdk::{AuthNResolverClient, ClientCredentialsRequest};
 use credstore_sdk::{CredStoreClientV1, SecretRef};
-use secrecy::{ExposeSecret, SecretString};
 use toolkit_security::SecurityContext;
 
 use super::comment_threads;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
+use super::mirror::{self, Metadata, Mirror, MirrorRepo};
 use crate::connectors::sdk::git_checkout;
 use crate::connectors::sdk::{
     ConnectionAuth, ConnectorDriver, DownloadTarget, Mention, NumberRef, PullRequestThreads,
@@ -278,14 +277,9 @@ pub struct IngestService {
     /// reads with (`connectors::sdk::ownership`). `None` refuses every
     /// sync that names a token: nothing could say it is the organization's.
     connectors: Option<crate::connectors::sdk::Connectors>,
-    platform: Option<PlatformClient>,
-}
-
-pub struct PlatformClient {
-    pub authn: Arc<dyn AuthNResolverClient>,
-    pub client_id: String,
-    pub client_secret: String,
-    pub mirror_base_url: String,
+    /// The GitHub Mirror gear, for a connection with `platform_auth`
+    /// ([`mirror`]). `None` refuses such a sync: nothing else may read it.
+    mirror: Option<Mirror>,
 }
 
 /// Why a sync may not read with the token it names.
@@ -361,14 +355,19 @@ impl IngestService {
             work_root_failure: None,
             clone_failures: std::sync::Mutex::new(HashMap::new()),
             connectors: None,
-            platform: None,
+            mirror: None,
         }
     }
 
     #[must_use]
-    pub fn with_platform(mut self, platform: Option<PlatformClient>) -> Self {
-        self.platform = platform;
+    pub fn with_mirror(mut self, mirror: Option<Mirror>) -> Self {
+        self.mirror = mirror;
         self
+    }
+
+    /// Whether a `platform_auth` connection can be read here at all.
+    pub fn mirror_linked(&self) -> bool {
+        self.mirror.is_some()
     }
 
     pub async fn platform_auth(
@@ -380,39 +379,6 @@ impl IngestService {
         match self.connectors.as_ref().and_then(|c| c.get()) {
             Some(connectors) => connectors.platform_auth(ctx, tenant, secret_ref).await,
             None => false,
-        }
-    }
-
-    pub async fn platform_token(&self) -> anyhow::Result<String> {
-        let platform = self.platform.as_ref().ok_or_else(|| {
-            anyhow!(
-                "the connection reads with a platform token, but studio-artifact-ingest has no \
-                 client_credentials configured"
-            )
-        })?;
-        let result = platform
-            .authn
-            .exchange_client_credentials(&ClientCredentialsRequest {
-                client_id: platform.client_id.clone(),
-                client_secret: SecretString::from(platform.client_secret.clone()),
-                scopes: Vec::new(),
-            })
-            .await
-            .map_err(|e| anyhow!("client credentials exchange failed: {e}"))?;
-        result
-            .security_context
-            .bearer_token()
-            .map(|t| t.expose_secret().to_string())
-            .ok_or_else(|| anyhow!("the client credentials exchange returned no bearer token"))
-    }
-
-    pub fn platform_base_url(&self) -> anyhow::Result<String> {
-        match self.platform.as_ref() {
-            Some(p) if !p.mirror_base_url.is_empty() => Ok(p.mirror_base_url.clone()),
-            _ => Err(anyhow!(
-                "the connection reads with a platform token, but studio-artifact-ingest has no \
-                 mirror_base_url configured; the platform token is sent nowhere else"
-            )),
         }
     }
 
@@ -529,7 +495,7 @@ impl IngestService {
         repo_full_path: &str,
         since: Option<&str>,
         token: &str,
-        platform_token: Option<&str>,
+        through_mirror: bool,
         workspace_id: Option<&str>,
         project_id: Option<&str>,
         repo_dir: Option<&str>,
@@ -540,21 +506,34 @@ impl IngestService {
             .get(provider)
             .ok_or_else(|| anyhow!("no driver for provider '{provider}' (plugin not linked?)"))?;
 
+        // A connection that reads through the mirror reaches github.com for
+        // everything else, whatever address the request named, as the
+        // connector service sends its calls (`ConnectorService::auth`).
         let base_url = match base_url.map(str::trim).filter(|s| !s.is_empty()) {
-            Some(b) => b.to_string(),
-            None => driver.default_base_url().to_string(),
+            Some(b) if !through_mirror => b.to_string(),
+            _ => driver.default_base_url().to_string(),
         };
-        let auth = ConnectionAuth {
-            base_url: base_url.clone(),
-            token: platform_token.unwrap_or(token).to_string(),
-        };
-        let clone_base_url = match platform_token {
-            Some(_) => driver.default_base_url(),
-            None => base_url.as_str(),
-        };
+        let clone_base_url = base_url.as_str();
+        // The connection's own key: for the clone, the file listing, the
+        // downloads and the review threads, and for the metadata too unless
+        // the mirror serves it.
         let download_auth = ConnectionAuth {
-            base_url: clone_base_url.to_string(),
+            base_url: base_url.clone(),
             token: token.to_string(),
+        };
+        let metadata = if through_mirror {
+            let mirror = self
+                .mirror
+                .as_ref()
+                .ok_or_else(|| anyhow!(mirror::NOT_LINKED))?;
+            let repo = MirrorRepo::new(mirror, ctx, repo_full_path)?;
+            repo.refresh(progress).await;
+            Metadata::Mirror(repo)
+        } else {
+            Metadata::Provider {
+                driver: driver.as_ref(),
+                auth: &download_auth,
+            }
         };
 
         // What the walk turns up, kept for the classification pass at the end.
@@ -658,8 +637,8 @@ impl IngestService {
         progress.set("pulling issues…");
         let mut issues = 0usize;
         for page in 1..=MAX_PAGES {
-            let batch = driver
-                .list_issues(&auth, repo_full_path, since, page, PER_PAGE)
+            let batch = metadata
+                .list_issues(repo_full_path, since, page, PER_PAGE)
                 .await?;
             if batch.is_empty() {
                 break;
@@ -732,8 +711,8 @@ impl IngestService {
         progress.set("pulling pull requests…");
         let mut pull_requests = 0usize;
         for page in 1..=MAX_PAGES {
-            let batch = driver
-                .list_pull_requests(&auth, repo_full_path, since, page, PER_PAGE)
+            let batch = metadata
+                .list_pull_requests(repo_full_path, since, page, PER_PAGE)
                 .await?;
             if batch.is_empty() {
                 break;
@@ -1144,10 +1123,7 @@ impl IngestService {
         if !pr_refs.is_empty() && !file_paths.is_empty() {
             progress.set("linking pull requests to files…");
             for (number, pr_id) in &pr_refs {
-                match driver
-                    .pull_request_files(&auth, repo_full_path, *number)
-                    .await
-                {
+                match metadata.pull_request_files(repo_full_path, *number).await {
                     Ok(paths) => {
                         for path in paths {
                             if file_paths.contains(&path) {
@@ -1178,8 +1154,8 @@ impl IngestService {
         progress.set("pulling comments…");
         let mut comments = 0usize;
         for page in 1..=MAX_PAGES {
-            let batch = match driver
-                .list_comments(&auth, repo_full_path, since, page, PER_PAGE)
+            let batch = match metadata
+                .list_comments(repo_full_path, since, page, PER_PAGE)
                 .await
             {
                 Ok(b) => b,
@@ -1239,8 +1215,8 @@ impl IngestService {
         progress.set("pulling commits…");
         let mut commits = 0usize;
         for page in 1..=MAX_PAGES {
-            let batch = match driver
-                .list_commits(&auth, repo_full_path, since, page, PER_PAGE)
+            let batch = match metadata
+                .list_commits(repo_full_path, since, page, PER_PAGE)
                 .await
             {
                 Ok(b) => b,
@@ -1309,10 +1285,7 @@ impl IngestService {
         let mut ci_error: Option<String> = None;
         // Completed runs, for their jobs: (created_at, run node, run id, attempt).
         let mut finished_runs: Vec<(Option<String>, String, i64, Option<i64>)> = Vec::new();
-        let reads: Vec<(Option<i64>, u32)> = match driver
-            .list_workflows(&auth, repo_full_path)
-            .await
-        {
+        let reads: Vec<(Option<i64>, u32)> = match metadata.list_workflows(repo_full_path).await {
             Ok(workflows) if !workflows.is_empty() => workflows
                 .iter()
                 .filter(|w| w.state.as_deref().is_none_or(|s| s == "active"))
@@ -1331,8 +1304,8 @@ impl IngestService {
         };
         'reads: for (workflow, pages) in reads {
             for page in 1..=pages {
-                let batch = match driver
-                    .list_workflow_runs(&auth, repo_full_path, workflow, page, PER_PAGE)
+                let batch = match metadata
+                    .list_workflow_runs(repo_full_path, workflow, page, PER_PAGE)
                     .await
                 {
                     Ok(b) => b,
@@ -1402,8 +1375,8 @@ impl IngestService {
         // Pipelines' manifests (ADR-0048 §4): read after the listing.
         let mut manifests: Vec<RemoteBuildArtifact> = Vec::new();
         'artifacts: for page in 1..=MAX_OUTPUT_PAGES {
-            let batch = match driver
-                .list_build_artifacts(&auth, repo_full_path, page, PER_PAGE)
+            let batch = match metadata
+                .list_build_artifacts(repo_full_path, page, PER_PAGE)
                 .await
             {
                 Ok(b) => b,
@@ -1451,10 +1424,7 @@ impl IngestService {
             .await;
         }
         'releases: for page in 1..=MAX_OUTPUT_PAGES {
-            let batch = match driver
-                .list_releases(&auth, repo_full_path, page, PER_PAGE)
-                .await
-            {
+            let batch = match metadata.list_releases(repo_full_path, page, PER_PAGE).await {
                 Ok(b) => b,
                 Err(e) => {
                     tracing::warn!(
@@ -1528,10 +1498,7 @@ impl IngestService {
                 .filter(|(_, run, _, attempt)| !known.contains(&(run.clone(), *attempt)))
                 .take(MAX_JOB_RUNS)
             {
-                let batch = match driver
-                    .list_workflow_jobs(&auth, repo_full_path, external)
-                    .await
-                {
+                let batch = match metadata.list_workflow_jobs(repo_full_path, external).await {
                     Ok(b) => b,
                     Err(e) => {
                         tracing::warn!(
@@ -3931,7 +3898,7 @@ mod prune_tests {
                 "acme/app",
                 None,
                 "token",
-                None,
+                false,
                 Some(WS),
                 Some("p1"),
                 None,

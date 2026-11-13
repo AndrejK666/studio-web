@@ -636,10 +636,6 @@ gears:
         idle_timeout: "5m"
         max_lifetime: "30m"
     config:
-      client_credentials:
-        client_id: "mini-chat"
-        client_secret: "mini-chat-dev-secret"
-      mirror_base_url: "http://127.0.0.1:8090/cf"
       # The artifact graph as domain objects (ADR-0066 §8a): `model`, or
       # `graph` for the gear's own graph types and the index above.
       storage:
