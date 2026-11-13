@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::contents::{
-    KitContents, KitFunction, KitInboxSource, KitMaterial, KitNamed, KitPermissions, KitScreen,
-    KitType,
+    KitContents, KitField, KitFunction, KitInboxSource, KitMaterial, KitModel, KitModelTab,
+    KitNamed, KitPermissions, KitRelation, KitScreen, KitType, ORIGIN_CORE, ORIGIN_KIT,
 };
 use super::service::normalize_slug;
 use crate::domain_model::port::{KitOverlay, OverlayType, validate_kit_overlay};
@@ -684,30 +684,7 @@ pub fn contents_of(m: &KitManifest) -> KitContents {
             })
             .collect()
     };
-    let types = m
-        .model
-        .as_ref()
-        .and_then(|model| model.get("types"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|t| {
-            let declared: Option<OverlayType> = serde_json::from_value(t.clone()).ok();
-            let name = t.get("name")?.as_str()?;
-            Some(KitType {
-                gts: declared.map_or_else(|| kit_type_gts(&m.slug, name), |d| d.gts(&m.slug)),
-                name: t
-                    .get("label")
-                    .and_then(Value::as_str)
-                    .unwrap_or(name)
-                    .to_owned(),
-                description: t
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-            })
-        })
-        .collect();
+    let (types, model) = model_contents(&m.slug, m.model.as_ref());
     KitContents {
         screens: m
             .screens
@@ -767,7 +744,169 @@ pub fn contents_of(m: &KitManifest) -> KitContents {
         kinds: m.kinds.clone(),
         docs: m.docs.clone(),
         mfe: m.mfe.clone(),
+        model,
     }
+}
+
+/// The relation type of a tab in Studio's model (ADR-0066).
+const SHOWS: &str = "shows";
+
+/// `key` of `v` as text, `None` when absent or blank.
+fn text<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
+    v.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// What a manifest's model overlay brings, read as leniently as its types
+/// always were (a model that does not validate still describes): its types
+/// with their fields, and the fields, relations and tabs it adds elsewhere.
+/// `on` and `target` name one of the kit's types by its `name` and any other
+/// by its model id; both come out as model ids.
+fn model_contents(slug: &str, model: Option<&Value>) -> (Vec<KitType>, KitModel) {
+    let mut out = KitModel::default();
+    let Some(model) = model else {
+        return (Vec::new(), out);
+    };
+    let list = |key: &str| -> &[Value] {
+        model
+            .get(key)
+            .and_then(Value::as_array)
+            .map_or(&[], Vec::as_slice)
+    };
+    let ids: Vec<(String, String)> = list("types")
+        .iter()
+        .filter_map(|t| {
+            let name = text(t, "name")?;
+            // A kit's own type is the entity `<slug>-<name>` (kit_overlay).
+            let id = text(t, "id").map_or_else(|| format!("{slug}-{name}"), str::to_owned);
+            Some((name.to_owned(), id))
+        })
+        .collect();
+    let resolve = |x: &str| {
+        ids.iter()
+            .find(|(name, _)| name == x)
+            .map_or_else(|| x.to_owned(), |(_, id)| id.clone())
+    };
+
+    let mut types = Vec::new();
+    for t in list("types") {
+        let Some(name) = t.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let declared: Option<OverlayType> = serde_json::from_value(t.clone()).ok();
+        let id = resolve(name);
+        let mut fields: Vec<KitField> = t
+            .get("fields")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|f| field(None, f, ORIGIN_KIT))
+            .collect();
+        // A type moved out of the core carries its whole definition.
+        let moved = t
+            .get("entity")
+            .and_then(|e| e.get("properties"))
+            .and_then(Value::as_array);
+        for p in moved.into_iter().flatten() {
+            if let Some(f) = property(&id, p, ORIGIN_CORE, &mut out) {
+                fields.push(KitField { on: None, ..f });
+            }
+        }
+        types.push(KitType {
+            gts: declared.map_or_else(|| kit_type_gts(slug, name), |d| d.gts(slug)),
+            name: text(t, "label").unwrap_or(name).to_owned(),
+            description: text(t, "description").map(str::to_owned),
+            adopts: text(t, "id").is_some(),
+            id,
+            fields,
+        });
+    }
+    for f in list("fields") {
+        let Some(on) = text(f, "on") else { continue };
+        out.fields.extend(field(Some(resolve(on)), f, ORIGIN_KIT));
+    }
+    for r in list("relations") {
+        let (Some(on), Some(name), Some(target)) =
+            (text(r, "on"), text(r, "name"), text(r, "target"))
+        else {
+            continue;
+        };
+        out.relations.push(KitRelation {
+            on: resolve(on),
+            name: name.to_owned(),
+            target: resolve(target),
+            label: text(r, "label").map(str::to_owned),
+            verb: Some(text(r, "verb").unwrap_or("references").to_owned()),
+            origin: ORIGIN_KIT,
+        });
+    }
+    for tab in list("tabs") {
+        let (Some(level), Some(name), Some(target)) =
+            (text(tab, "level"), text(tab, "name"), text(tab, "target"))
+        else {
+            continue;
+        };
+        out.tabs.push(KitModelTab {
+            level: level.to_owned(),
+            name: name.to_owned(),
+            label: text(tab, "label").unwrap_or(name).to_owned(),
+            target: resolve(target),
+        });
+    }
+    for p in list("properties") {
+        let (Some(on), Some(written)) = (text(p, "on"), p.get("property")) else {
+            continue;
+        };
+        let on = resolve(on);
+        if let Some(f) = property(&on, written, ORIGIN_CORE, &mut out) {
+            out.fields.push(f);
+        }
+    }
+    (types, out)
+}
+
+/// A field as an overlay or a type declares it (`name`, `type`, ...).
+fn field(on: Option<String>, f: &Value, origin: &'static str) -> Option<KitField> {
+    Some(KitField {
+        on,
+        name: text(f, "name")?.to_owned(),
+        type_name: text(f, "type").unwrap_or_default().to_owned(),
+        description: text(f, "description").map(str::to_owned),
+        required: f.get("required").and_then(Value::as_bool).unwrap_or(false),
+        origin,
+    })
+}
+
+/// A property of type `on` as Studio's model writes it: a `shows` relation
+/// is a tab of the level `on`, another relation an edge (both go into
+/// `model`), anything else a field, returned.
+fn property(on: &str, p: &Value, origin: &'static str, model: &mut KitModel) -> Option<KitField> {
+    let name = text(p, "name")?;
+    let Some(target) = text(p, "relation") else {
+        return field(Some(on.to_owned()), p, origin);
+    };
+    let label = text(p, "relationLabel");
+    let verb = text(p, "relationType");
+    if verb == Some(SHOWS) {
+        model.tabs.push(KitModelTab {
+            level: on.to_owned(),
+            name: name.to_owned(),
+            label: label.unwrap_or(name).to_owned(),
+            target: target.to_owned(),
+        });
+    } else {
+        model.relations.push(KitRelation {
+            on: on.to_owned(),
+            name: name.to_owned(),
+            target: target.to_owned(),
+            label: label.map(str::to_owned),
+            verb: verb.map(str::to_owned),
+            origin,
+        });
+    }
+    None
 }
 
 #[cfg(test)]

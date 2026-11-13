@@ -16,6 +16,25 @@
           "type": ["array", "null"],
           "items": { "type": "string" },
           "$comment": "The slugs of the kits installed where the person is, or null while unknown."
+        },
+        "tabs": {
+          "type": "array",
+          "$comment": "Every registered screen that is a tab on a level's bar, installed or not, each level's main tabs then its settings ones by order: what a kit's page draws the shell's tabs from (#1099).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "level": { "type": "string" },
+              "route": { "type": "string" },
+              "label": { "type": "string" },
+              "icon": { "type": ["string", "null"] },
+              "placement": { "enum": ["main", "settings"] },
+              "order": { "type": "number" },
+              "kit": { "type": ["string", "null"] },
+              "modelTab": { "type": "string" },
+              "entry": { "type": "string" }
+            },
+            "required": ["level", "route", "label", "placement", "order", "kit", "modelTab", "entry"]
+          }
         }
       },
       "required": ["routes", "kits"]

@@ -19,9 +19,11 @@ export {
   isAvailableScreens,
   kitAvailable,
   routeAvailable,
+  shellTabsOf,
   useScreenAvailability,
   type AvailableScreens,
   type ScreenAvailability,
+  type ShellTab,
 } from './host/screens';
 export { STUDIO_MFE_ENTRY_IFRAME } from './host/hostTypes';
 export {

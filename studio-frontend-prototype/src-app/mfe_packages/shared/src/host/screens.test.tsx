@@ -7,6 +7,7 @@ import {
   isAvailableScreens,
   kitAvailable,
   routeAvailable,
+  shellTabsOf,
   useScreenAvailability,
   type AvailableScreens,
   type ScreenAvailability,
@@ -38,6 +39,23 @@ describe('routeAvailable / kitAvailable', () => {
     expect(isAvailableScreens({ routes: [], kits: null })).toBe(true);
     expect(isAvailableScreens({ routes: '/x', kits: null })).toBe(false);
     expect(isAvailableScreens(null)).toBe(false);
+  });
+
+  it("reads the shell's registered tabs, and none from a shell that publishes none", () => {
+    const tab = {
+      level: 'project',
+      route: '/issues',
+      label: 'Issues',
+      icon: null,
+      placement: 'main',
+      order: 30,
+      kit: 'project-issues',
+      modelTab: 'issues',
+      entry: 'gts.x~constructor_studio.issues.mfe.main.v1',
+    };
+    expect(shellTabsOf({ ...known, tabs: [tab, { route: 7 }] })).toEqual([tab]);
+    expect(shellTabsOf(known)).toBeNull();
+    expect(shellTabsOf(null)).toBeNull();
   });
 });
 

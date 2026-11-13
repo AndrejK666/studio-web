@@ -1,0 +1,305 @@
+/*
+ * A kit's page (#1099): over ui-kit's semantic tokens only, so it follows the
+ * portal theme in light and dark. Sizes in rem or tokens; no literal colour.
+ */
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 0.5rem);
+  background: var(--card);
+  color: var(--card-foreground, var(--foreground));
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.blockHint {
+  margin: 0;
+  font-size: var(--text-meta-size, 0.75rem);
+  color: var(--muted-foreground);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── What installing changes ── */
+
+.changes {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--border-strong, var(--border));
+  border-radius: var(--radius-md, 0.375rem);
+}
+
+.changes dt {
+  font-size: var(--text-meta-size, 0.75rem);
+  color: var(--muted-foreground);
+}
+
+.changes dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+/* ── Level map ── */
+
+.level {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.levelName {
+  margin: 0;
+  font-size: var(--text-label-size, 0.8125rem);
+  font-weight: var(--text-label-weight, 600);
+  color: var(--muted-foreground);
+  text-transform: capitalize;
+}
+
+.tabBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 0.25rem);
+  font: inherit;
+  font-size: 0.8125rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+.tabSettings {
+  margin-inline-start: auto;
+}
+
+.tabMine {
+  opacity: 1;
+  cursor: pointer;
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--accent);
+  font-weight: 600;
+}
+
+.tabMine[aria-selected='true'] {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.tabMine:focus-visible,
+.node:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.tabNew {
+  border-style: dashed;
+}
+
+.panel {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.preview {
+  margin: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.preview img {
+  display: block;
+  max-inline-size: 100%;
+  max-block-size: 22rem;
+  inline-size: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.375rem);
+  object-fit: contain;
+  object-position: left top;
+  background: var(--muted);
+}
+
+.caption {
+  font-size: var(--text-meta-size, 0.75rem);
+  color: var(--muted-foreground);
+}
+
+.placeholder {
+  display: grid;
+  place-items: center;
+  gap: var(--space-1);
+  min-block-size: 8rem;
+  padding: var(--space-4);
+  border: 1px dashed var(--border-strong, var(--border));
+  border-radius: var(--radius-md, 0.375rem);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  text-align: center;
+  font-size: 0.8125rem;
+}
+
+.sections {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+
+/* ── Model diagram ── */
+
+.diagram {
+  inline-size: 100%;
+  max-inline-size: 44rem;
+  block-size: auto;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--muted-foreground);
+  stroke-width: 1.25;
+  opacity: 0.6;
+}
+
+.edgeLabel {
+  font-size: 10px;
+  fill: var(--muted-foreground);
+  paint-order: stroke;
+  stroke: var(--card);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.node {
+  cursor: pointer;
+}
+
+.node rect {
+  fill: var(--muted);
+  stroke: var(--border-strong, var(--border));
+  stroke-width: 1;
+}
+
+.node text {
+  font-size: 12px;
+  fill: var(--foreground);
+}
+
+.nodeKit rect {
+  fill: var(--accent);
+  stroke: var(--primary);
+}
+
+.nodeKit text {
+  fill: var(--accent-foreground, var(--foreground));
+  font-weight: 600;
+}
+
+.node[aria-pressed='true'] rect {
+  stroke-width: 2.5;
+  stroke: var(--ring);
+}
+
+.mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+}
+
+/* ── People and agents ── */
+
+.note {
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}
+
+.gears {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: var(--space-3);
+}
+
+.gear {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.375rem);
+}
+
+.gearName {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.access {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.access li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: var(--space-4);
+}
+
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  text-align: start;
+}
+
+.linkButton[aria-pressed='true'] {
+  text-decoration: underline;
+}
+
+.linkButton:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.collapsed {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+}

@@ -1,21 +1,39 @@
 /**
- * What is inside one kit, before anyone installs it (ADR-0068 §3, §8): the
- * sections of its manifest, each said once — the screens it puts on which
- * level, the types it adds to the Studio domain model, its rules and functions, the
- * services it deploys, what it adds to the Inbox, its MCP tools, the
- * permissions an administrator approves, and the files it writes into a
- * project. An empty section says "nothing", so a kit that brings only files
- * reads as one.
+ * A kit's page (ADR-0068 §3, §8; #1099): what it is and what it would do,
+ * read at a glance.
+ *
+ * - The header: its icon, where it is installed and the action this level may
+ *   take, and what installing it changes — the tabs that appear, the types
+ *   that become active, the ones of Studio's core it adopts.
+ * - Where it appears: each level's tab bar with the kit's tabs among the
+ *   shell's, and a picture of the screen a tab opens.
+ * - What it adds to the model: its types and the types they relate to.
+ * - What it lets people and agents do: Inbox sources, MCP tools, and the
+ *   permissions by gear and by read or write.
+ * - Everything else it brings (rules, functions, services, files, artifact
+ *   kinds), and one line for every section it has nothing for.
  */
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
-import type { CatalogKit, KitContents, KitDetail } from '../../api/KitsApiService';
-import type { useHomeTranslations } from '../../i18n';
+import type { ModelTab, ShellTab } from '@constructor-studio/mfe-shared';
+import type { CatalogKit, KitContents, KitDetail, ScreenPreview } from '../../api/KitsApiService';
+import {
+  emptySections,
+  installChanges,
+  levelMaps,
+  modelGraph,
+  type SectionKey,
+} from '../../model/kitPage';
+import type { KitStatus } from './KitsGrid';
 import { KitIcon } from './KitIcon';
+import { LevelMap } from './kit/LevelMap';
+import { ModelDiagram } from './kit/ModelDiagram';
+import { AgentItems, Permissions } from './kit/PeopleAndAgents';
+import { ItemsGrid, type ItemRow } from './kit/ItemsGrid';
+import type { Text } from './kit/text';
 import styles from './HomeScreen.module.css';
-
-type Text = ReturnType<typeof useHomeTranslations>['t'];
+import page from './kit/KitPage.module.css';
 
 /** The card's one line: how much of each kind the kit brings. */
 export function contentsSummary(c: KitContents, t: Text): string {
@@ -32,34 +50,174 @@ export function contentsSummary(c: KitContents, t: Text): string {
   return parts.join(' · ');
 }
 
-function Section({ title, hint, empty, children }: { title: string; hint: string; empty: boolean; children: React.ReactNode }) {
+/** "No rules, services or project files": the sections a kit has nothing for, in one line. */
+export function noneLine(empty: readonly SectionKey[], t: Text): string | null {
+  if (empty.length === 0) return null;
+  const names = empty.map((k) => t(`none_${k}`));
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} ${t('none_or')} ${names[names.length - 1]}`;
+  return t('none_line', { list });
+}
+
+/** Everything else the kit brings, one row each: rules, functions, services, files, artifact kinds, docs. */
+export function moreRows(c: KitContents, t: Text): ItemRow[] {
+  const note = (s: string | null | undefined) => s ?? '';
+  return [
+    ...c.rules.map((r) => ({ id: `rule:${r.name}`, kind: t('rule'), name: r.name, note: note(r.description) })),
+    ...c.functions.map((f) => ({
+      id: `fn:${f.name}`,
+      kind: t('item_function', { runtime: f.runtime }),
+      name: f.name,
+      note: note(f.description),
+    })),
+    ...c.services.map((s) => ({ id: `svc:${s.name}`, kind: t('item_service'), name: s.name, note: note(s.description) })),
+    ...c.material.map((m) => ({ id: `file:${m.path}`, kind: t('item_file'), name: m.path, note: note(m.description) })),
+    ...c.kinds.map((k) => ({ id: `kind:${k}`, kind: t('item_kind'), name: k, note: '' })),
+    ...c.docs.map((d) => ({ id: `doc:${d}`, kind: t('item_doc'), name: d, note: '' })),
+  ];
+}
+
+function Block({ title, hint, id, children }: { title: string; hint: string; id: string; children: React.ReactNode }) {
   return (
-    <section className={styles.detailSection}>
-      <h4 className={styles.detailTitle} title={hint}>
+    <section className={page.block} aria-labelledby={`kit-block-${id}`} data-kit-block={id}>
+      <h4 id={`kit-block-${id}`} className={page.blockTitle}>
         {title}
       </h4>
-      <p className={styles.detailHint}>{hint}</p>
-      {empty ? <p className={styles.detailEmpty}>—</p> : children}
+      <p className={page.blockHint}>{hint}</p>
+      {children}
     </section>
   );
 }
 
-function Named({ items }: { items: { name: string; note?: string | null; tag?: string }[] }) {
+/** What the page reads beside the kit's contents: the shell's tabs, the model's, and the pictures. */
+export interface KitPageContext {
+  shellTabs: ShellTab[] | null;
+  routes: string[] | null;
+  modelTabs: Record<string, ModelTab[]> | null;
+  loadPreviews: (component: string) => Promise<ScreenPreview[]>;
+}
+
+const NO_CONTEXT: KitPageContext = {
+  shellTabs: null,
+  routes: null,
+  modelTabs: null,
+  loadPreviews: () => Promise.resolve([]),
+};
+
+function Changes({ contents, installed, t }: { contents: KitContents; installed: boolean; t: Text }) {
+  const changes = installChanges(contents);
+  if (!changes.tabs.length && !changes.types.length && !changes.adopts.length && !changes.extends.length) return null;
   return (
-    <ul className={styles.detailList}>
-      {items.map((i) => (
-        <li key={i.name}>
-          <code>{i.name}</code>
-          {i.tag && (
+    <div data-kit-changes>
+      <p className={page.blockHint}>{installed ? t('changes_installed') : t('changes_install')}</p>
+      <dl className={page.changes}>
+        {changes.tabs.length > 0 && (
+          <>
+            <dt>{t('changes_tabs')}</dt>
+            <dd>
+              {changes.tabs.map((tab) => (
+                <Badge key={`${tab.level}:${tab.label}`} variant="info">
+                  {tab.label} · {t(`level_${tab.level}`)}
+                </Badge>
+              ))}
+            </dd>
+          </>
+        )}
+        {changes.types.length > 0 && (
+          <>
+            <dt>{t('changes_types')}</dt>
+            <dd>
+              {changes.types.map((name) => (
+                <Badge key={name} variant="secondary">
+                  {name}
+                </Badge>
+              ))}
+            </dd>
+          </>
+        )}
+        {changes.adopts.length > 0 && (
+          <>
+            <dt title={t('changes_adopts_hint')}>{t('changes_adopts')}</dt>
+            <dd>
+              {changes.adopts.map((name) => (
+                <Badge key={name} variant="outline">
+                  {name}
+                </Badge>
+              ))}
+            </dd>
+          </>
+        )}
+        {changes.extends.length > 0 && (
+          <>
+            <dt>{t('changes_extends')}</dt>
+            <dd>
+              {changes.extends.map((name) => (
+                <Badge key={name} variant="outline">
+                  {name}
+                </Badge>
+              ))}
+            </dd>
+          </>
+        )}
+      </dl>
+    </div>
+  );
+}
+
+function Contents({ kit, c, context, t }: { kit: CatalogKit; c: KitContents; context: KitPageContext; t: Text }) {
+  const levels = useMemo(
+    () =>
+      levelMaps({
+        slug: kit.slug,
+        contents: c,
+        shellTabs: context.shellTabs,
+        routes: context.routes,
+        modelTabs: context.modelTabs,
+      }),
+    [kit.slug, c, context.shellTabs, context.routes, context.modelTabs]
+  );
+  const graph = useMemo(() => modelGraph(c, kit.slug), [c, kit.slug]);
+  const more = useMemo(() => moreRows(c, t), [c, t]);
+  const empty = emptySections(c);
+  const has = (k: SectionKey) => !empty.includes(k);
+  const permissions = c.permissions;
+  const others = (['handlers', 'services', 'material', 'kinds'] as const).filter(has);
+  const none = noneLine(empty, t);
+  return (
+    <div className={styles.detail}>
+      {has('screens') && (
+        <Block id="screens" title={t('sec_screens')} hint={t('sec_screens_hint')}>
+          <LevelMap levels={levels} loadPreviews={context.loadPreviews} t={t} />
+        </Block>
+      )}
+      {has('model') && (
+        <Block id="model" title={t('sec_types')} hint={t('sec_types_hint')}>
+          <ModelDiagram graph={graph} t={t} />
+        </Block>
+      )}
+      {(has('agents') || has('permissions')) && (
+        <Block id="agents" title={t('sec_agents')} hint={t('sec_agents_hint')}>
+          {has('agents') && <AgentItems contents={c} t={t} />}
+          {has('permissions') && (
             <>
-              {' '}
-              <Badge variant="secondary">{i.tag}</Badge>
+              <h5 className={page.gearName} title={t('sec_permissions_hint')}>
+                {t('sec_permissions')}
+              </h5>
+              <Permissions permissions={permissions} t={t} />
             </>
           )}
-          {i.note && <span className={styles.detailNote}> — {i.note}</span>}
-        </li>
-      ))}
-    </ul>
+        </Block>
+      )}
+      {others.length > 0 && (
+        <Block id="more" title={t('sec_more')} hint={t('sec_more_hint')}>
+          <ItemsGrid name="kit-more" label={t('sec_more')} rows={more} t={t} />
+        </Block>
+      )}
+      {none && (
+        <p className={page.collapsed} data-kit-none>
+          {none}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -70,6 +228,8 @@ export function KitDetailView({
   controls,
   onBack,
   t,
+  status = 'unknown',
+  context = NO_CONTEXT,
 }: {
   kit: CatalogKit;
   detail: KitDetail | null;
@@ -79,6 +239,9 @@ export function KitDetailView({
   controls: React.ReactNode;
   onBack: () => void;
   t: Text;
+  /** Whether it is installed where the page is open. */
+  status?: KitStatus;
+  context?: KitPageContext;
 }) {
   const c = detail?.contents;
   return (
@@ -92,6 +255,8 @@ export function KitDetailView({
           {kit.name}
         </h3>
         <p className={styles.description}>{kit.description}</p>
+        {controls}
+        {c && <Changes contents={c} installed={status === 'base' || status === 'installed'} t={t} />}
         <dl className={styles.facts}>
           <dt>{t('publisher')}</dt>
           <dd>{kit.publisher}</dd>
@@ -99,12 +264,6 @@ export function KitDetailView({
           <dd>
             <code>{kit.default_version}</code>
           </dd>
-          {kit.levels && kit.levels.length > 0 && (
-            <>
-              <dt>{t('levels')}</dt>
-              <dd>{kit.levels.join(', ')}</dd>
-            </>
-          )}
           {kit.repository_url && (
             <>
               <dt>{t('repository')}</dt>
@@ -136,7 +295,6 @@ export function KitDetailView({
             </>
           )}
         </dl>
-        {controls}
       </header>
 
       {failed ? (
@@ -144,81 +302,7 @@ export function KitDetailView({
       ) : !c ? (
         <Skeleton className={styles.skeletonLine} />
       ) : (
-        <div className={styles.detailGrid}>
-          <Section title={t('sec_screens')} hint={t('sec_screens_hint')} empty={c.screens.length === 0}>
-            <ul className={styles.detailList}>
-              {c.screens.map((s) => (
-                <li key={`${s.level}:${s.label}:${s.slot ?? ''}`}>
-                  <Badge variant="info">{s.level}</Badge> <b>{s.label}</b>{' '}
-                  <span className={styles.detailNote}>
-                    {s.kind === 'section' ? t('screen_section', { slot: s.slot ?? '' }) : t('screen_tab')}
-                    {s.route ? ` · ${s.route}` : ` · ${t('screen_not_here')}`}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Section>
-          <Section title={t('sec_types')} hint={t('sec_types_hint')} empty={c.types.length === 0}>
-            <Named items={c.types.map((x) => ({ name: x.name, note: x.description ?? x.gts }))} />
-          </Section>
-          <Section
-            title={t('sec_handlers')}
-            hint={t('sec_handlers_hint')}
-            empty={c.rules.length + c.functions.length === 0}
-          >
-            <Named
-              items={[
-                ...c.rules.map((r) => ({ name: r.name, note: r.description, tag: t('rule') })),
-                ...c.functions.map((f) => ({ name: f.name, note: f.description, tag: f.runtime })),
-              ]}
-            />
-          </Section>
-          <Section title={t('sec_services')} hint={t('sec_services_hint')} empty={c.services.length === 0}>
-            <Named items={c.services.map((x) => ({ name: x.name, note: x.description }))} />
-          </Section>
-          <Section title={t('sec_inbox')} hint={t('sec_inbox_hint')} empty={c.inbox.length === 0}>
-            <Named items={c.inbox.map((x) => ({ name: x.id, note: x.label }))} />
-          </Section>
-          <Section title={t('sec_tools')} hint={t('sec_tools_hint')} empty={c.mcp_tools.length === 0}>
-            <Named items={c.mcp_tools.map((x) => ({ name: x.name, note: x.description }))} />
-          </Section>
-          <Section
-            title={t('sec_permissions')}
-            hint={t('sec_permissions_hint')}
-            empty={c.permissions.reads.length + c.permissions.writes.length + c.permissions.listens.length === 0}
-          >
-            <dl className={styles.facts}>
-              {(['reads', 'writes', 'listens'] as const).map(
-                (k) =>
-                  c.permissions[k].length > 0 && (
-                    <React.Fragment key={k}>
-                      <dt>{t(`perm_${k}`)}</dt>
-                      <dd>
-                        {c.permissions[k].map((p) => (
-                          <div key={p}>
-                            <code>{p}</code>
-                          </div>
-                        ))}
-                      </dd>
-                    </React.Fragment>
-                  )
-              )}
-            </dl>
-          </Section>
-          <Section title={t('sec_material')} hint={t('sec_material_hint')} empty={c.material.length === 0}>
-            <Named items={c.material.map((x) => ({ name: x.path, note: x.description }))} />
-          </Section>
-          <Section title={t('sec_kinds')} hint={t('sec_kinds_hint')} empty={c.kinds.length + c.docs.length === 0}>
-            <div className={styles.badges}>
-              {c.kinds.map((k) => (
-                <Badge key={k} variant="secondary">
-                  {k}
-                </Badge>
-              ))}
-            </div>
-            {c.docs.length > 0 && <Named items={c.docs.map((d) => ({ name: d }))} />}
-          </Section>
-        </div>
+        <Contents kit={kit} c={c} context={context} t={t} />
       )}
     </article>
   );

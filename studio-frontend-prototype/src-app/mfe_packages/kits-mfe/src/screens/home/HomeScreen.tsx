@@ -11,12 +11,26 @@ import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
 import {
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
+  STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
+  TAB_LEVELS,
+  isAvailableScreens,
+  modelOf,
+  modelTabs,
+  shellTabsOf,
+  type ModelTab,
 } from '@constructor-studio/mfe-shared';
-import { KitsApiService, type CatalogKit, type InstalledKits, type KitDetail } from '../../api/KitsApiService';
-import { KitDetailView, contentsSummary } from './KitDetailView';
+import {
+  KitPageApiService,
+  KitsApiService,
+  type CatalogKit,
+  type InstalledKits,
+  type KitDetail,
+  type ScreenPreview,
+} from '../../api/KitsApiService';
+import { KitDetailView, contentsSummary, type KitPageContext } from './KitDetailView';
 import { AddFromRepository } from './AddFromRepository';
 import { IdeKits } from './IdeKits';
-import { KitsGrid, kitRows, type KitCells } from './KitsGrid';
+import { KitsGrid, kitRows, statusOf, type KitCells } from './KitsGrid';
 import { useHomeTranslations } from '../../i18n';
 import styles from './HomeScreen.module.css';
 
@@ -95,7 +109,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   }
 
   const { t, loading } = useHomeTranslations();
-  const api = apiRegistry.getService(KitsApiService);
+  // One instance for the screen's life: the effects below read it as a dependency.
+  const [api] = useState(() => apiRegistry.getService(KitsApiService));
   const catalog = useApiQuery(api.catalog);
   /** The organization's own kits (its shelf), each with where it came from. */
   const [shelf, setShelf] = useState<KitDetail[]>([]);
@@ -248,6 +263,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     />
   );
   const open = selected ? kits.find((k) => k.slug === selected) : undefined;
+
   // A project lists only what may be installed in a project.
   const rows = useMemo(
     () =>
@@ -305,13 +321,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
           {t('loading_failed', { error: String(catalog.error) })}
         </p>
       ) : open ? (
-        <KitDetailView
+        <KitPage
+          bridge={bridge}
+          organizationId={orgId}
           kit={open}
           detail={detailOf(open.slug)}
           failed={!onShelf(open.slug) && open.slug in details && details[open.slug] === null}
           controls={controlsFor(open)}
           onBack={() => setSelected(null)}
           t={t}
+          status={statusOf(open, installed)}
         />
       ) : (
         <KitsGrid rows={rows} cells={cells} bridge={bridge} />
@@ -323,6 +342,64 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
 };
 
 HomeScreen.displayName = 'HomeScreen';
+
+/**
+ * What a kit's page reads beside the kit's contents (#1099): the shell's
+ * registered tabs, the tabs the organization's model adds to each level, and
+ * the pictures builds took of the screens. Read only while a page is open.
+ */
+function useKitPageContext(bridge: ChildMfeBridge, orgId: string | null): KitPageContext {
+  const [pageApi] = useState(() => apiRegistry.getService(KitPageApiService));
+  const available = useSharedProperty(STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE, { bridge });
+  // By content: the bridge hands a new object on every publish.
+  const availableKey = isAvailableScreens(available) ? JSON.stringify(available) : '';
+  const [levelModelTabs, setLevelModelTabs] = useState<{ orgId: string; tabs: Record<string, ModelTab[]> } | null>(
+    null
+  );
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    // Through a promise, so a backend or a test without the service is an absent answer, not a throw.
+    Promise.resolve()
+      .then(() => pageApi.modelTypes({ organizationId: orgId }).fetch())
+      .then(
+        (res) => {
+          const model = modelOf(res);
+          const tabs = Object.fromEntries(TAB_LEVELS.map((level) => [level, modelTabs(model, level)]));
+          if (alive) setLevelModelTabs({ orgId, tabs });
+        },
+        () => alive && setLevelModelTabs(null)
+      );
+    return () => {
+      alive = false;
+    };
+  }, [pageApi, orgId]);
+  return useMemo<KitPageContext>(() => {
+    const value = availableKey ? JSON.parse(availableKey) : null;
+    return {
+      shellTabs: shellTabsOf(value),
+      routes: value?.routes ?? null,
+      modelTabs: levelModelTabs && levelModelTabs.orgId === orgId ? levelModelTabs.tabs : null,
+      loadPreviews: (component: string) =>
+        Promise.resolve()
+          .then(() => pageApi.screenPreviews({ component, organizationId: orgId }).fetch())
+          .then((r): ScreenPreview[] => r?.items ?? []),
+    };
+  }, [availableKey, levelModelTabs, orgId, pageApi]);
+}
+
+/** One kit's page, with what it reads beside the kit's contents. */
+function KitPage({
+  bridge,
+  organizationId,
+  ...props
+}: Omit<React.ComponentProps<typeof KitDetailView>, 'context'> & {
+  bridge: ChildMfeBridge;
+  organizationId: string | null;
+}) {
+  const context = useKitPageContext(bridge, organizationId);
+  return <KitDetailView {...props} context={context} />;
+}
 
 type Text = ReturnType<typeof useHomeTranslations>['t'];
 
