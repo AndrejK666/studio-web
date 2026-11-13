@@ -109,9 +109,7 @@ pub enum ExtraKey {
 
 /// The clone-status cause of a refused extra's key (#1071), or `None` when
 /// the refusal says nothing about the source (the catalogue was down).
-pub fn extra_key_cause(
-    verdict: ExtraKey,
-) -> Option<crate::artifact_ingest::port::CloneCause> {
+pub fn extra_key_cause(verdict: ExtraKey) -> Option<crate::artifact_ingest::port::CloneCause> {
     use crate::artifact_ingest::port::CloneCause;
     match verdict {
         ExtraKey::Owned | ExtraKey::Unavailable => None,
@@ -297,7 +295,11 @@ mod tests {
             extra_key_cause(ExtraKey::Unknown),
             Some(CloneCause::ConnectionNotFound)
         );
-        assert_eq!(extra_key_cause(ExtraKey::Unavailable), None, "transient, not the source's fault");
+        assert_eq!(
+            extra_key_cause(ExtraKey::Unavailable),
+            None,
+            "transient, not the source's fault"
+        );
     }
 
     #[test]

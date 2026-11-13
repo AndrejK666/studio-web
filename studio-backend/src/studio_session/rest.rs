@@ -215,7 +215,8 @@ fn to_dto(svc: &SessionService, s: Session) -> SessionDto {
 /* ── Handlers ── */
 
 /// Record what a launch knows for certain about its project sources' clones
-/// (#1071): since #1095 only a source the Git proxy will refuse
+/// (#1071): since #1095 a source the Git proxy will refuse, and the end of
+/// an earlier session's failure for the rest
 /// ([`super::launch_sources::LaunchClone`]); the proxy records every clone
 /// itself. In the background and best effort: the launch does not wait on
 /// it, and a deployment where studio-artifact-ingest keeps no clone status
@@ -238,6 +239,11 @@ fn note_launch_clones(
         for (url, clone) in clones {
             let done = match clone {
                 LaunchClone::Nothing => continue,
+                LaunchClone::Clear => {
+                    outcomes
+                        .clear_failure(project_id, &url, CloneChannel::IdeSession)
+                        .await
+                }
                 LaunchClone::Failed(cause) => {
                     outcomes
                         .record(
