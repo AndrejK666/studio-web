@@ -3425,5 +3425,7 @@ mod oauth_flow_tests;
 #[cfg(test)]
 #[path = "connections_list_tests.rs"]
 mod connections_list_tests;
+
+#[cfg(test)]
 #[path = "platform_auth_tests.rs"]
 mod platform_auth_tests;
