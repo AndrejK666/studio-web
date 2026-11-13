@@ -466,7 +466,7 @@ default `studio-web-app`) under the key **`insight_api_key`**, and injects it as
 
 The Secret already exists and holds other keys, so add to it rather than
 recreate it — `create --dry-run | apply` would replace the whole object and take
-`llm_api_key` and `fs_signing_seed` with it:
+`llm_api_key` and `fs_signing_key` with it:
 
 ```bash
 kubectl -n <ns> patch secret studio-web-app --type merge \

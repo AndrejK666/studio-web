@@ -732,7 +732,7 @@ pub struct ImageDto {
 
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
-pub struct DeploymentDto {
+pub struct EnvironmentDeploymentDto {
     #[schema(value_type = String)]
     pub id: Uuid,
     #[schema(value_type = String)]
@@ -802,7 +802,7 @@ pub struct PreviewDto {
     pub removal_error: Option<String>,
 }
 
-fn deployment_dto(d: Deployment) -> DeploymentDto {
+fn deployment_dto(d: Deployment) -> EnvironmentDeploymentDto {
     let research = d.research.is_some();
     let public_url = d
         .preview
@@ -824,7 +824,7 @@ fn deployment_dto(d: Deployment) -> DeploymentDto {
             research,
         ))
     });
-    DeploymentDto {
+    EnvironmentDeploymentDto {
         research,
         public_url,
         cause,
@@ -876,7 +876,7 @@ fn deployment_dto(d: Deployment) -> DeploymentDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct DeploymentListDto {
-    pub items: Vec<DeploymentDto>,
+    pub items: Vec<EnvironmentDeploymentDto>,
     pub total: u32,
 }
 
@@ -975,7 +975,7 @@ pub struct WorkloadDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct DeploymentStatusDto {
-    pub deployment: DeploymentDto,
+    pub deployment: EnvironmentDeploymentDto,
     pub workloads: Vec<WorkloadDto>,
     /// Hosts the release's ingresses answer on.
     pub hosts: Vec<String>,
@@ -1720,7 +1720,7 @@ async fn create_deployment(
     Extension(envs): Extension<Environments>,
     Query(q): Query<ProjectQuery>,
     Json(body): Json<CreateDeploymentRequest>,
-) -> ApiResult<(StatusCode, JsonBody<DeploymentDto>)> {
+) -> ApiResult<(StatusCode, JsonBody<EnvironmentDeploymentDto>)> {
     let req = DeployRequest {
         environment_id: body.environment_id,
         profile: body.profile,
@@ -1808,7 +1808,7 @@ async fn decide_deployment(
     Extension(envs): Extension<Environments>,
     Path(deployment_id): Path<Uuid>,
     Json(body): Json<DeploymentDecisionRequest>,
-) -> ApiResult<JsonBody<DeploymentDto>> {
+) -> ApiResult<JsonBody<EnvironmentDeploymentDto>> {
     let approve = match body.action.trim() {
         "approve" => true,
         "decline" => false,
@@ -2497,7 +2497,11 @@ pub fn register_routes(
         .query_param_typed("project_id", true, "The project", "string")
         .json_request::<CreateDeploymentRequest>(openapi, "The deploy")
         .handler(create_deployment)
-        .json_response_with_schema::<DeploymentDto>(openapi, StatusCode::ACCEPTED, "Accepted")
+        .json_response_with_schema::<EnvironmentDeploymentDto>(
+            openapi,
+            StatusCode::ACCEPTED,
+            "Accepted",
+        )
         .error_400(openapi)
         .error_401(openapi)
         .error_403(openapi)
@@ -2567,7 +2571,11 @@ pub fn register_routes(
             .query_param_typed("organization_id", false, "The organization", "string")
             .json_request::<DeploymentDecisionRequest>(openapi, "The decision")
             .handler(decide_deployment)
-            .json_response_with_schema::<DeploymentDto>(openapi, StatusCode::OK, "Decided")
+            .json_response_with_schema::<EnvironmentDeploymentDto>(
+                openapi,
+                StatusCode::OK,
+                "Decided",
+            )
             .error_400(openapi)
             .error_401(openapi)
             .error_403(openapi)

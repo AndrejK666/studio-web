@@ -17,7 +17,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use authn_resolver_sdk::{AuthNResolverClient, ClientCredentialsRequest};
 use credstore_sdk::{CredStoreClientV1, SecretRef};
+use secrecy::{ExposeSecret, SecretString};
 use toolkit_security::SecurityContext;
 
 use super::comment_threads;
@@ -276,6 +278,14 @@ pub struct IngestService {
     /// reads with (`connectors::sdk::ownership`). `None` refuses every
     /// sync that names a token: nothing could say it is the organization's.
     connectors: Option<crate::connectors::sdk::Connectors>,
+    platform: Option<PlatformClient>,
+}
+
+pub struct PlatformClient {
+    pub authn: Arc<dyn AuthNResolverClient>,
+    pub client_id: String,
+    pub client_secret: String,
+    pub mirror_base_url: String,
 }
 
 /// Why a sync may not read with the token it names.
@@ -351,6 +361,58 @@ impl IngestService {
             work_root_failure: None,
             clone_failures: std::sync::Mutex::new(HashMap::new()),
             connectors: None,
+            platform: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_platform(mut self, platform: Option<PlatformClient>) -> Self {
+        self.platform = platform;
+        self
+    }
+
+    pub async fn platform_auth(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        secret_ref: &str,
+    ) -> bool {
+        match self.connectors.as_ref().and_then(|c| c.get()) {
+            Some(connectors) => connectors.platform_auth(ctx, tenant, secret_ref).await,
+            None => false,
+        }
+    }
+
+    pub async fn platform_token(&self) -> anyhow::Result<String> {
+        let platform = self.platform.as_ref().ok_or_else(|| {
+            anyhow!(
+                "the connection reads with a platform token, but studio-artifact-ingest has no \
+                 client_credentials configured"
+            )
+        })?;
+        let result = platform
+            .authn
+            .exchange_client_credentials(&ClientCredentialsRequest {
+                client_id: platform.client_id.clone(),
+                client_secret: SecretString::from(platform.client_secret.clone()),
+                scopes: Vec::new(),
+            })
+            .await
+            .map_err(|e| anyhow!("client credentials exchange failed: {e}"))?;
+        result
+            .security_context
+            .bearer_token()
+            .map(|t| t.expose_secret().to_string())
+            .ok_or_else(|| anyhow!("the client credentials exchange returned no bearer token"))
+    }
+
+    pub fn platform_base_url(&self) -> anyhow::Result<String> {
+        match self.platform.as_ref() {
+            Some(p) if !p.mirror_base_url.is_empty() => Ok(p.mirror_base_url.clone()),
+            _ => Err(anyhow!(
+                "the connection reads with a platform token, but studio-artifact-ingest has no \
+                 mirror_base_url configured; the platform token is sent nowhere else"
+            )),
         }
     }
 
@@ -467,6 +529,7 @@ impl IngestService {
         repo_full_path: &str,
         since: Option<&str>,
         token: &str,
+        platform_token: Option<&str>,
         workspace_id: Option<&str>,
         project_id: Option<&str>,
         repo_dir: Option<&str>,
@@ -483,6 +546,14 @@ impl IngestService {
         };
         let auth = ConnectionAuth {
             base_url: base_url.clone(),
+            token: platform_token.unwrap_or(token).to_string(),
+        };
+        let clone_base_url = match platform_token {
+            Some(_) => driver.default_base_url(),
+            None => base_url.as_str(),
+        };
+        let download_auth = ConnectionAuth {
+            base_url: clone_base_url.to_string(),
             token: token.to_string(),
         };
 
@@ -633,7 +704,7 @@ impl IngestService {
         // errors, leaves the metric unset and costs the sync nothing else.
         progress.set("reading review threads…");
         let threads = match driver
-            .open_review_threads(&auth, repo_full_path, MAX_THREAD_PULLS)
+            .open_review_threads(&download_auth, repo_full_path, MAX_THREAD_PULLS)
             .await
         {
             Ok(v) => v,
@@ -804,7 +875,7 @@ impl IngestService {
                     work_root,
                     connector_id,
                     repo_full_path,
-                    &base_url,
+                    clone_base_url,
                     token,
                 )
                 .await
@@ -922,7 +993,10 @@ impl IngestService {
             None => {
                 // No checkout available — fall back to connector metadata.
                 progress.set("listing files…");
-                match driver.list_files(&auth, repo_full_path, None).await {
+                match driver
+                    .list_files(&download_auth, repo_full_path, None)
+                    .await
+                {
                     Ok(listing) => {
                         let blobs: Vec<_> =
                             listing.files.into_iter().filter(|f| !f.is_dir).collect();
@@ -1368,7 +1442,7 @@ impl IngestService {
             self.record_pipeline_builds(
                 ctx,
                 driver.as_ref(),
-                &auth,
+                &download_auth,
                 repo_full_path,
                 project,
                 workspace_id,
@@ -3971,6 +4045,7 @@ mod prune_tests {
                 "acme/app",
                 None,
                 "token",
+                None,
                 Some(WS),
                 Some("p1"),
                 None,

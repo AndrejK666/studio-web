@@ -3,6 +3,25 @@
 Use this checklist after the code changes have passed CI. Complete dev first;
 promote the same release to test only after the dev upload/download smoke test.
 
+**Backend first after the P-256 key switch.** The first deploy to each
+environment of a release with the P-256 signing key
+(`studio-web-file-storage-signing-p256`) must put a P-256 backend image in
+place. A frontend-only deploy at that point keeps the old backend image but
+applies the new chart, which gives it `STUDIO_FS_SIGNING_KEY` instead of the
+`STUDIO_FS_SIGNING_SEED` it reads, so the backend Pod does not start.
+
+- Use `Deploy existing images` with component `backend` or `all` and an image
+  tag built from a commit that has the P-256 change.
+- `Build, publish and deploy` with component `all` keeps the running backend
+  image when its build did not rebuild the backend, so use it for this first
+  deploy only when the backend was rebuilt.
+- After the deploy, confirm the backend container runs the new tag before any
+  frontend-only deploy.
+- After a rollback to a release from before the P-256 switch, repeat this
+  backend-first deploy before the next frontend-only deploy.
+
+Once the backend runs a P-256 image, frontend-only deploys are safe again.
+
 ## 1. Prepare Virtuozzo S3
 
 - [ ] `dev-webstudio` exists in region `eu3`.

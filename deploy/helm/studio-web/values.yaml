@@ -96,7 +96,7 @@ backend:
   # (keys: issuer_url, client_id, client_secret).
   auth:
     existingSecret: "studio-web-idp"
-  # Application secrets (keys: llm_api_key [required; mini-chat only], fs_signing_seed
+  # Application secrets (keys: llm_api_key [required; mini-chat only], fs_signing_key
   # and fs_finalize_secret [required only when fileStorage.enabled=false], credstore_key [strongly recommended: base64 of 32 bytes,
   # `openssl rand -base64 32`; without it user-typed secrets die with every
   # pod restart], s2s_client_secret [optional], idp_admin_secret [optional],
@@ -104,6 +104,7 @@ backend:
   # insight_api_key [optional; enables Constructor Insight analytics — without it the
   # Components page reports delivery activity as unavailable],
   # embed_api_key [required when embedding.provider=remote],
+  # github_token [optional; the GitHub Mirror's read-only GitHub token],
   # research_client_secret [optional; the `constructor-studio` client's secret at
   # the Constructor identity provider, see `research` below]).
   appSecrets:
@@ -275,10 +276,10 @@ backend:
       pathStyle: true
     secrets:
       s3ExistingSecret: "studio-web-file-storage-s3"
-      # Keys: signing_seed, sidecar_public_key, finalize_internal_secret (the
+      # Keys: signing_key, sidecar_public_key, finalize_internal_secret (the
       # sidecar's finalize-callback token, file-storage >= 0.4; deploy.yml
-      # derives it from the signing seed).
-      signingExistingSecret: "studio-web-file-storage-signing"
+      # derives it from the signing key).
+      signingExistingSecret: "studio-web-file-storage-signing-p256"
     # Non-secret digest supplied by deploy.yml. A rotation rolls the Pod.
     secretRevision: ""
     resources:

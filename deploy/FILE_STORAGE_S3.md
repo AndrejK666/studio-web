@@ -10,7 +10,7 @@ Dev and test are isolated:
 | Dev | `studio-dev` | `dev-webstudio` | `https://studio-dev.cfabric.org` |
 | Test | `studio-test` | `test-webstudio` | `https://studio-test.cfabric.org` |
 
-Each environment has its own S3 credentials and Ed25519 signing pair. No secret
+Each environment has its own S3 credentials and P-256 signing pair. No secret
 value, rendered Kubernetes Secret, or kubeconfig belongs in Git.
 
 ## Architecture
@@ -82,8 +82,8 @@ Create these four secrets independently in both GitHub Environments (`dev` and
 | --- | --- |
 | `FILE_STORAGE_S3_ACCESS_KEY_ID` | Access key restricted to this environment's bucket |
 | `FILE_STORAGE_S3_SECRET_ACCESS_KEY` | Matching S3 secret key |
-| `FILE_STORAGE_SIGNING_SEED` | 32-byte Ed25519 seed, base64url without padding |
-| `FILE_STORAGE_SIDECAR_PUBLIC_KEY` | Matching raw Ed25519 public key, base64url without padding |
+| `FILE_STORAGE_SIGNING_SEED` | P-256 private key, PKCS#8 DER, base64url without padding |
+| `FILE_STORAGE_SIDECAR_PUBLIC_KEY` | Matching 65-byte uncompressed P-256 public point, base64url without padding |
 
 Generate a new signing pair for each environment:
 
@@ -103,8 +103,15 @@ Revoke any S3 access key that has previously appeared in chat or a ticket.
 `Deploy Services` performs the secret synchronization before Helm:
 
 - creates or updates `studio-web-file-storage-s3` in the target namespace;
-- creates or updates `studio-web-file-storage-signing`;
-- validates the signing values as 32-byte unpadded base64url;
+- creates or updates `studio-web-file-storage-signing-p256` (the P-256 keys);
+  the older `studio-web-file-storage-signing` (32-byte seed) is left as it is,
+  so a Helm rollback to a chart from before the P-256 switch still finds its
+  keys;
+- checks only that both signing values use the unpadded base64url characters
+  and that the sidecar public key is 87 characters long; it does not parse the
+  keys or check that they belong together. The required formats are a P-256
+  PKCS#8 DER private key and its 65-byte uncompressed public point, so always
+  generate the pair together with `deploy/scripts/generate-file-storage-keypair.py`;
 - injects a non-secret digest into the Pod template so secret rotation causes a
   rollout;
 - checks that the matching sidecar image exists before changing the release.

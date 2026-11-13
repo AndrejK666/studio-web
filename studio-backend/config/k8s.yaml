@@ -7,7 +7,7 @@
 #     provisioning: the official keycloak-idp-plugin is active — see its block
 #     below; add `enabled: false` there + idp.vendor "cf" to run without invites)
 #   STUDIO_LLM_API_KEY / STUDIO_LLM_HOST  (mini-chat only; the IDE uses people's keys)
-#   STUDIO_FS_SIGNING_SEED             (URL-signing key, per environment)
+#   STUDIO_FS_SIGNING_KEY              (URL-signing key, per environment)
 # IDE sessions use the Kubernetes Pod driver (ADR-0003) when the Helm
 # backend.sessions.enabled flag injects STUDIO_SESSION_ENABLED=true. The image
 # is injected too, so every backend snapshot launches the matching immutable
@@ -39,12 +39,12 @@ database:
         # therefore not "three connections to pg_main" — it is three PER GEAR,
         # and eight gear databases below inherit it: 8 x 3 = 24, plus six
         # quiet gears at 2 (12) and the gears with their own larger `pool`
-        # (26), 62 per replica. Two replicas need 124, and 144 with Keycloak,
-        # the bootstrap Job, the operator and the reserved slots, against
-        # `max_connections: 160`; deploy/k8s/cloudnative-pg/README.md carries
-        # the table. It was 4, and two replicas then needed 172. Raising it
-        # by one raises the ceiling by eight per replica, so give a busy gear
-        # its own `pool` instead.
+        # (28, github-mirror's 2 among them), 64 per replica. Two replicas need
+        # 128, and 148 with Keycloak, the bootstrap Job, the operator and the
+        # reserved slots, against `max_connections: 160`;
+        # deploy/k8s/cloudnative-pg/README.md carries the table. It was 4, and
+        # two replicas then needed 172. Raising it by one raises the ceiling by
+        # eight per replica, so give a busy gear its own `pool` instead.
         #
         # Keep a run of comment lines under 32: the config's YAML parser
         # (granit-parser) refuses more before the next entry, and the backend
@@ -580,9 +580,9 @@ gears:
         idle_timeout: "5m"
         max_lifetime: "30m"
     config:
-      # Stable Ed25519 seed; Helm loads it from the environment-specific
+      # Stable P-256 PKCS#8 key; Helm loads it from the environment-specific
       # file-storage signing Secret. The value is base64url without padding.
-      signing_key_seed: "${STUDIO_FS_SIGNING_SEED}"
+      signing_key_pkcs8: "${STUDIO_FS_SIGNING_KEY}"
       # The token the sidecar sends on its finalize callbacks (its
       # FS_SIDECAR_INTERNAL_TOKEN, the same Secret key); file-storage >= 0.4
       # refuses to start without it.
@@ -611,6 +611,8 @@ gears:
         max_lifetime: "30m"
     config:
       proxy_timeout_secs: 120
+      proxy_cache:
+        enabled: false
       # The deployment's generation (Helm .Release.Revision): a pod of an
       # older release does not revert what a newer one reconciled. Unset
       # (null) turns the guard off, with a startup warning.
@@ -849,6 +851,10 @@ gears:
         idle_timeout: "5m"
         max_lifetime: "30m"
     config:
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "${STUDIO_OIDC_S2S_CLIENT_SECRET:-mini-chat-dev-secret}"
+      mirror_base_url: "http://127.0.0.1:8090/cf"
       # The artifact graph as domain objects (ADR-0066 §8a): `model`, or
       # `graph` for the gear's own graph types and the index above.
       storage:
@@ -878,6 +884,22 @@ gears:
         idle_timeout: "5m"
         max_lifetime: "30m"
     config: {}
+
+  github-mirror:
+    database:
+      server: "pg_main"
+      dbname: "studio_github_mirror"
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
+    config:
+      api_base_url: "https://api.github.com"
+      github_token_secret:
+        tenant_id: "00000000-0000-0000-0000-000000000001"
+        key: "github-token"
 
   # ── studio-scheduler (cron/interval schedules) ──
   # Owns schedules and nothing else: each tick it enqueues due runs into
@@ -1174,6 +1196,9 @@ gears:
         - ref: "studio-assistant-llm-key"
           value_env: "STUDIO_LLM_API_KEY"
           sharing: "shared"
+        - ref: "github-token"
+          value_env: "GITHUB_TOKEN"
+          sharing: "tenant"
 
   # This plugin is linked into the binary and therefore must be configured.
   # Keep it empty and deprioritized so OIDC is the only selected AuthN provider.

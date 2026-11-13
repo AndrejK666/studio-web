@@ -40,9 +40,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use axum::Router;
 use credstore_sdk::CredStoreClientV1;
+use serde::Deserialize;
 use toolkit::api::OpenApiRegistry;
 use toolkit::client_hub::ClientScope;
 use toolkit::contracts::{DatabaseCapability, RestApiCapability};
@@ -183,6 +185,67 @@ fn resolve_dir(env: &str) -> Option<PathBuf> {
     Some(PathBuf::from(raw))
 }
 
+#[derive(Default, Deserialize)]
+struct IngestGearConfig {
+    #[serde(default)]
+    client_credentials: ClientCredentialsConfig,
+    #[serde(default)]
+    mirror_base_url: String,
+}
+
+#[derive(Default, Deserialize)]
+struct ClientCredentialsConfig {
+    #[serde(default)]
+    client_id: String,
+    #[serde(default)]
+    client_secret: String,
+}
+
+fn platform_client(ctx: &GearCtx) -> anyhow::Result<Option<service::PlatformClient>> {
+    let cfg: IngestGearConfig = ctx.config_or_default()?;
+    let creds = cfg.client_credentials;
+    if creds.client_id.trim().is_empty() {
+        return Ok(None);
+    }
+    let mirror_base_url = checked_mirror_base_url(&cfg.mirror_base_url)?;
+    let authn = ctx
+        .client_hub()
+        .get::<dyn authn_resolver_sdk::AuthNResolverClient>()?;
+    info!(client_id = %creds.client_id, "studio-artifact-ingest: a connection with platform_auth reads with this client's token");
+    Ok(Some(service::PlatformClient {
+        authn,
+        client_id: creds.client_id,
+        client_secret: creds.client_secret,
+        mirror_base_url,
+    }))
+}
+
+fn checked_mirror_base_url(raw: &str) -> anyhow::Result<String> {
+    let raw = raw.trim().trim_end_matches('/');
+    if raw.is_empty() {
+        return Ok(String::new());
+    }
+    let url = reqwest::Url::parse(raw)
+        .with_context(|| format!("studio-artifact-ingest.mirror_base_url `{raw}` is not a URL"))?;
+    let host = url
+        .host_str()
+        .unwrap_or_default()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    match url.scheme() {
+        "https" => Ok(raw.to_string()),
+        "http" if loopback => Ok(raw.to_string()),
+        scheme => Err(anyhow!(
+            "studio-artifact-ingest.mirror_base_url `{raw}` must be https:// unless it points at \
+             this host (localhost, 127.0.0.1 or ::1); the platform token must not travel over {scheme}"
+        )),
+    }
+}
+
 /// `$HOME/<rel>`, or `None` when `$HOME` is unset.
 fn resolve_home_relative(rel: &str) -> Option<PathBuf> {
     std::env::var("HOME")
@@ -314,7 +377,8 @@ impl RestApiCapability for StudioArtifactIngestGear {
                     work_root,
                 )
                 .with_work_root_failure(work_root_failure)
-                .with_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub())),
+                .with_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub()))
+                .with_platform(platform_client(ctx)?),
             ))
         };
 
@@ -392,5 +456,71 @@ impl RestApiCapability for StudioArtifactIngestGear {
             self.clone_status.get().cloned().flatten(),
             ctx.client_hub(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checked_mirror_base_url;
+
+    #[test]
+    fn mirror_base_url_empty_stays_empty() {
+        assert_eq!(checked_mirror_base_url("").unwrap(), "");
+        assert_eq!(checked_mirror_base_url("   ").unwrap(), "");
+    }
+
+    #[test]
+    fn mirror_base_url_accepts_https_anywhere() {
+        assert_eq!(
+            checked_mirror_base_url("https://studio.example.com/cf/").unwrap(),
+            "https://studio.example.com/cf"
+        );
+        assert_eq!(
+            checked_mirror_base_url("https://10.1.2.3/cf").unwrap(),
+            "https://10.1.2.3/cf"
+        );
+    }
+
+    #[test]
+    fn mirror_base_url_accepts_http_on_loopback() {
+        for (raw, expected) in [
+            (" http://127.0.0.1:8090/cf/ ", "http://127.0.0.1:8090/cf"),
+            ("http://localhost:8090/cf", "http://localhost:8090/cf"),
+            ("http://LOCALHOST:8090/cf", "http://LOCALHOST:8090/cf"),
+            ("http://[::1]:8090/cf", "http://[::1]:8090/cf"),
+            ("http://127.1.2.3:8090/cf", "http://127.1.2.3:8090/cf"),
+        ] {
+            assert_eq!(checked_mirror_base_url(raw).unwrap(), expected, "{raw}");
+        }
+    }
+
+    #[test]
+    fn mirror_base_url_refuses_http_off_loopback() {
+        for raw in [
+            "http://studio.example.com/cf",
+            "http://10.1.2.3:8090/cf",
+            "http://0.0.0.0:8090/cf",
+            "http://localhost.example.com/cf",
+            "http://studio-web-backend.studio.svc.cluster.local:8090/cf",
+        ] {
+            let err = checked_mirror_base_url(raw).unwrap_err().to_string();
+            assert!(err.contains("must be https://"), "{raw}: {err}");
+        }
+    }
+
+    #[test]
+    fn mirror_base_url_refuses_other_schemes_and_garbage() {
+        for raw in [
+            "ftp://127.0.0.1/cf",
+            "file:///tmp/cf",
+            "ws://127.0.0.1:8090/cf",
+        ] {
+            let err = checked_mirror_base_url(raw).unwrap_err().to_string();
+            assert!(err.contains("must be https://"), "{raw}: {err}");
+        }
+        for raw in ["127.0.0.1:8090/cf", "not a url", "https://"] {
+            let err = checked_mirror_base_url(raw).unwrap_err().to_string();
+            assert!(err.contains("is not a URL"), "{raw}: {err}");
+        }
     }
 }

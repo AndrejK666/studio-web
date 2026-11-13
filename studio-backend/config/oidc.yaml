@@ -461,9 +461,9 @@ gears:
       server: "pg_main"
       dbname: "studio_file_storage"
     config:
-      # Dev-only Ed25519 seed so signed URLs survive restarts (generate your
+      # Dev-only P-256 PKCS#8 key so signed URLs survive restarts (generate your
       # own for any shared environment).
-      signing_key_seed: "ej5FEOW2E1emMKbKUNBKALhdHb-VLvLNM-n4FcuDREY"
+      signing_key_pkcs8: "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgPDmDKoH2hy_dzjhnRIngLEYosaKbrfCEV7Q1D1RHgVChRANCAASLxl9hRjDPXIJL9OlTvVlrVNnsG8uGeqaQaLAGCaewgjm9ZkOxkbTKF97LYRQaPbdZ0oXSkGEv8QxXU_Kb-UMg"
       # Dev-only: the token a sidecar would send on its finalize callbacks
       # (FS_SIDECAR_INTERNAL_TOKEN); file-storage >= 0.4 refuses to start
       # without one.
@@ -480,6 +480,8 @@ gears:
       dbname: "studio_oagw"
     config:
       proxy_timeout_secs: 120
+      proxy_cache:
+        enabled: false
 
   credstore:
     database:
@@ -685,6 +687,10 @@ gears:
         idle_timeout: "5m"
         max_lifetime: "30m"
     config:
+      client_credentials:
+        client_id: "mini-chat"
+        client_secret: "mini-chat-dev-secret"
+      mirror_base_url: "http://127.0.0.1:8090/cf"
       # The artifact graph as domain objects (ADR-0066 §8a): `model`, or
       # `graph` for the gear's own graph types and the index above.
       storage:
@@ -708,6 +714,16 @@ gears:
         idle_timeout: "5m"
         max_lifetime: "30m"
     config: {}
+
+  github-mirror:
+    database:
+      server: "pg_main"
+      dbname: "studio_github_mirror"
+    config:
+      api_base_url: "https://api.github.com"
+      github_token_secret:
+        tenant_id: "00000000-0000-0000-0000-000000000001"
+        key: "github-token"
 
   # ── studio-scheduler (cron/interval schedules) ──
   # Owns schedules and nothing else: each tick it enqueues due runs into

@@ -20,8 +20,9 @@ implicit ceiling is one nobody can check. Per backend replica:
 | studio-backend, studio-product | 2 | that gear's own `pool` override (ADR-0053) |
 | studio-backend, studio-artifact-ingest | 2 | that gear's own `pool` override |
 | studio-backend, studio-environments | 1 | that gear's own `pool` override (ADR-0062) |
+| studio-backend, github-mirror | 2 | that gear's own `pool` override |
 | studio-backend, postgres-usage-collector-plugin | 3 | 1 on its toolkit `pool`, 2 on its own sqlx pool (`pool_size_max`) |
-| **One replica** | **62** | |
+| **One replica** | **64** | |
 
 And once, whatever the number of replicas:
 
@@ -44,10 +45,10 @@ The arithmetic for two replicas, which is the whole reason for the numbers:
 
 | Pools | per replica | two replicas | with everyone else | fits 160? |
 |---|---|---|---|---|
-| shared 4 (until 2026-11) | 80 | 160 | 180 | no |
-| shared 3, domain-model 6 (until #1077) | 66 | 132 | 152 | yes, 8 spare |
-| **shared 3, six quiet gears at 2, domain-model 8 (today)** | **62** | **124** | **144** | **yes, 16 spare** |
-| shared 2 everywhere | 52 | 104 | 124 | yes, but a queue |
+| shared 4 (until 2026-11) | 82 | 164 | 184 | no |
+| shared 3, domain-model 6 (until #1077) | 68 | 136 | 156 | yes, 4 spare |
+| **shared 3, six quiet gears at 2, domain-model 8 (today)** | **64** | **128** | **148** | **yes, 12 spare** |
+| shared 2 everywhere | 54 | 108 | 128 | yes, but a queue |
 
 The shared pool was 4 until the domain read model (ADR-0066), the product
 descriptions (ADR-0053) and the environments gear (ADR-0062) each took their
