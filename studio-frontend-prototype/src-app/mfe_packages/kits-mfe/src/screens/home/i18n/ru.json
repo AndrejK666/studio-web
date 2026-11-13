@@ -189,5 +189,7 @@
   "item_file": "файл проекта",
   "item_kind": "вид артефакта",
   "item_doc": "документ",
-  "model_fields_of": "Поля типа {type}"
+  "model_fields_of": "Поля типа {type}",
+  "item_inbox": "источник Inbox",
+  "item_tool": "MCP-инструмент"
 }

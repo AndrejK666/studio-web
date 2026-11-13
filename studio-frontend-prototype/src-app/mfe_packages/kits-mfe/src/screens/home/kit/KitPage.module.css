@@ -103,7 +103,8 @@
   cursor: pointer;
   color: var(--primary);
   border-color: var(--primary);
-  background: var(--accent);
+  /* Not --accent: in some themes it is the primary hue, and the label vanishes. */
+  background: transparent;
   font-weight: 600;
 }
 

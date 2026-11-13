@@ -20,10 +20,10 @@ import styles from './KitPage.module.css';
 export const AgentItems: React.FC<{ contents: KitContents; t: Text }> = ({ contents, t }) => {
   const rows = useMemo<ItemRow[]>(
     () => [
-      ...contents.inbox.map((s) => ({ id: `inbox:${s.id}`, kind: t('sec_inbox'), name: s.id, note: s.label })),
+      ...contents.inbox.map((s) => ({ id: `inbox:${s.id}`, kind: t('item_inbox'), name: s.id, note: s.label })),
       ...contents.mcp_tools.map((tool) => ({
         id: `tool:${tool.name}`,
-        kind: t('sec_tools'),
+        kind: t('item_tool'),
         name: tool.name,
         note: tool.description ?? '',
       })),

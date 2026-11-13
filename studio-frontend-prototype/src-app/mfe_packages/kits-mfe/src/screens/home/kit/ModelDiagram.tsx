@@ -219,7 +219,8 @@ const TypeFields: React.FC<{ node: ModelNode; graph: ModelGraph; t: Text }> = ({
         <p className={styles.note}>
           {t('model_relations', {
             list: relations
-              .map((e) => (e.from === node.id ? `${e.labels.join(', ')} → ${name(e.to)}` : `${name(e.from)} → ${e.labels.join(', ')}`))
+              // Every edge read the same way: from — what it is → to.
+              .map((e) => `${name(e.from)} — ${e.labels.join(', ')} → ${name(e.to)}`)
               .join('; '),
           })}
         </p>

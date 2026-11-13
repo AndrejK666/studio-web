@@ -189,5 +189,7 @@
   "item_file": "project file",
   "item_kind": "artifact kind",
   "item_doc": "doc",
-  "model_fields_of": "Fields of {type}"
+  "model_fields_of": "Fields of {type}",
+  "item_inbox": "Inbox source",
+  "item_tool": "MCP tool"
 }

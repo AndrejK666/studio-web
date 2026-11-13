@@ -320,8 +320,12 @@ export function layoutDiagram(graph: ModelGraph): DiagramLayout {
       const y2 = from === a ? by : ay;
       const mid = (x1 + x2) / 2;
       path = `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`;
-      lx = mid;
-      ly = (y1 + y2) / 2;
+      // The label three quarters along, near the right-hand type: edges into
+      // different types then carry their labels at different heights.
+      const at = (p0: number, p1: number, p2: number, p3: number, u: number) =>
+        (1 - u) ** 3 * p0 + 3 * (1 - u) ** 2 * u * p1 + 3 * (1 - u) * u ** 2 * p2 + u ** 3 * p3;
+      lx = at(x1, mid, mid, x2, 0.75);
+      ly = at(y1, y1, y2, y2, 0.75);
     }
     edges.push({ ...e, path, lx, ly });
   }
