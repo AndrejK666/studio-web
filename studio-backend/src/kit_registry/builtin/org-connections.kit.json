@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "org-connections",
+  "icon": "lucide:plug",
   "name": "Connections",
   "description": "An organization's connections to Git hosts, clusters, registries and model providers, and Admin's view of all of them.",
   "publisher": "Constructor Fabric",

@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "project-tests",
+  "icon": "lucide:flask-conical",
   "name": "Tests",
   "description": "The project's Tests tab: its test runs and their results.",
   "publisher": "Constructor Fabric",

@@ -27,6 +27,7 @@ import {
   Spinner,
 } from '@gears-frontx/ui-kit';
 import { useEverLoaded, useWorkspace } from '@constructor-studio/mfe-shared';
+import { useThemedRoot } from '@constructor-studio/mfe-shared/grid';
 import { DocumentsApiService } from '../../../api/DocumentsApiService';
 import type { DocumentTypeDto } from '../../../api/documentTypes';
 import { requestOpenDocument } from '../../../actions/artifactActions';
@@ -47,7 +48,6 @@ import {
   type UploadSection,
 } from '../../../model/documentUpload';
 import { useProjectDocuments } from '../../../shared/useProjectDocuments';
-import { useThemedRoot } from '../../../shared/useThemedRoot';
 import {
   DOCUMENT_UPLOAD_SLICE_KEY,
   uploadDismissed,

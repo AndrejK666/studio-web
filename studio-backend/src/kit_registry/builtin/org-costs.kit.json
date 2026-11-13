@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "org-costs",
+  "icon": "lucide:wallet",
   "name": "Costs",
   "description": "What an organization's model calls and IDE sessions cost, its price list and monthly budgets.",
   "publisher": "Constructor Fabric",

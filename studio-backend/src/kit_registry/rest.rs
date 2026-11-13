@@ -53,6 +53,30 @@ pub struct KitDto {
     /// The levels the kit may be installed on: `platform`, `organization`, `workspace`,
     /// `project`.
     pub levels: Vec<String>,
+    /// The kit's icon as its manifest names it: `lucide:<name>`, or an SVG in
+    /// one of its bundles, `mfe/<package>/<file>.svg`. Null when it names none.
+    pub icon: Option<String>,
+    /// Where a bundled `icon` is served: the kit bundle route, carrying the
+    /// grant that lets it answer. Null for a lucide icon, for none, and for
+    /// an organization's kit read without its organization.
+    pub icon_url: Option<String>,
+}
+
+/// A catalogue entry for a caller in `org`, with where its bundled icon is
+/// served.
+fn kit_dto(kit: KitDescriptor, bundles: &KitBundles, org: Option<Uuid>) -> KitDto {
+    let url = bundles.icon_url(&kit, org);
+    let mut dto: KitDto = kit.into();
+    dto.icon_url = url;
+    dto
+}
+
+/// A kit described for a caller in `org`.
+fn detail_dto(detail: KitDetail, bundles: &KitBundles, org: Option<Uuid>) -> KitDetailDto {
+    let url = bundles.icon_url(&detail.kit, org);
+    let mut dto: KitDetailDto = detail.into();
+    dto.kit.icon_url = url;
+    dto
 }
 
 #[derive(Debug)]
@@ -361,6 +385,8 @@ impl From<KitDescriptor> for KitDto {
             manifest_path: value.manifest_path,
             shelf: value.shelf,
             levels: value.levels,
+            icon: value.icon,
+            icon_url: None,
         }
     }
 }
@@ -462,9 +488,15 @@ impl From<super::shelf::KitOrigin> for KitOriginDto {
     }
 }
 
-/// A shelf kit as the library describes it, with where it came from.
-fn shelf_detail(kit: super::shelf::ShelfKit) -> KitDetailDto {
-    let mut dto: KitDetailDto = super::shelf::detail(&kit).into();
+/// A shelf kit as the library describes it, with where it came from. `org`
+/// is the organization whose shelf holds it, `None` for a preview, which is
+/// on no shelf yet, so its bundled icon is served nowhere.
+fn shelf_detail(
+    kit: super::shelf::ShelfKit,
+    bundles: &KitBundles,
+    org: Option<Uuid>,
+) -> KitDetailDto {
+    let mut dto = detail_dto(super::shelf::detail(&kit), bundles, org);
     dto.origin = Some(kit.origin.into());
     dto
 }
@@ -553,6 +585,11 @@ pub struct InstalledKitDto {
     pub installed_at: Option<String>,
     /// A built-in kit installed because nobody removed it.
     pub by_default: bool,
+    /// The kit's icon, as the catalogue lists it (`KitDto.icon`): what a tab
+    /// of the kit shows when its screen names no icon of its own.
+    pub icon: Option<String>,
+    /// Where a bundled `icon` is served at this version (`KitDto.icon_url`).
+    pub icon_url: Option<String>,
 }
 
 /// The kits that apply to one organization, or to one project of it.
@@ -657,8 +694,48 @@ impl From<InstalledKit> for InstalledKitDto {
             installed_by: value.installed_by,
             installed_at: value.installed_at,
             by_default: value.by_default,
+            icon: None,
+            icon_url: None,
         }
     }
+}
+
+/// The catalogue entry of each installed kit at the version installed, by
+/// `slug@version`: the shared library's, or the organization's shelf kit
+/// kept at that commit. A kit neither knows has no entry.
+async fn installed_entries(
+    service: &KitRegistryService,
+    installer: &KitInstaller,
+    installed: &super::installed::Installed,
+) -> std::collections::HashMap<String, KitDescriptor> {
+    let library = service.catalogue();
+    let mut entries = std::collections::HashMap::new();
+    let all = installed
+        .base
+        .iter()
+        .chain(&installed.organization)
+        .chain(&installed.project)
+        .chain(&installed.effective);
+    for kit in all {
+        let key = format!("{}@{}", kit.kit_slug, kit.version);
+        if entries.contains_key(&key) {
+            continue;
+        }
+        let entry = match library.iter().find(|k| k.slug == kit.kit_slug) {
+            Some(shared) => Some(shared.clone()),
+            None => installer
+                .shelf_kit_at(installed.organization_id, &kit.kit_slug, &kit.version)
+                .await
+                .ok()
+                .flatten()
+                .map(|k| k.kit),
+        };
+        if let Some(mut entry) = entry {
+            entry.default_version.clone_from(&kit.version);
+            entries.insert(key, entry);
+        }
+    }
+    entries
 }
 
 fn refused(refusal: Refusal) -> CanonicalError {
@@ -772,6 +849,7 @@ async fn get_installed(
     Extension(ctx): Extension<SecurityContext>,
     Extension(access): Extension<OrgAccess>,
     Extension(installer): Extension<Arc<KitInstaller>>,
+    Extension(service): Extension<Arc<KitRegistryService>>,
     Query(query): Query<InstalledQuery>,
 ) -> ApiResult<JsonBody<InstalledKitsDto>> {
     let installed = installed_for(&ctx, &access, &installer, &query).await?;
@@ -782,7 +860,22 @@ async fn get_installed(
     if let Err(refusal) = installer.reconcile_models(installed.organization_id).await {
         tracing::warn!(organization_id = %installed.organization_id, ?refusal, "studio-kits: kit models not reconciled");
     }
-    let list = |kits: Vec<InstalledKit>| kits.into_iter().map(Into::into).collect();
+    let entries = installed_entries(&service, &installer, &installed).await;
+    let bundles = service.bundles();
+    let org = Some(installed.organization_id);
+    let list = |kits: Vec<InstalledKit>| {
+        kits.into_iter()
+            .map(|kit| {
+                let entry = entries.get(&format!("{}@{}", kit.kit_slug, kit.version));
+                let mut dto: InstalledKitDto = kit.into();
+                if let Some(entry) = entry {
+                    dto.icon.clone_from(&entry.icon);
+                    dto.icon_url = bundles.icon_url(entry, org);
+                }
+                dto
+            })
+            .collect()
+    };
     Ok(Json(InstalledKitsDto {
         organization_id: installed.organization_id.to_string(),
         project_id: installed.project_id.map(|id| id.to_string()),
@@ -1256,16 +1349,23 @@ async fn catalogue(
 ) -> ApiResult<JsonBody<KitListDto>> {
     let page = query.page;
     let mut library = service.catalogue();
+    let mut org = None;
     // An organization's own kits are listed only for it, and only when it is
     // named: the IDE and other callers see the shared library as before.
-    if let Some(org) = query.organization_id {
-        let ctx = crate::org_scope::resolve(access.0.as_ref(), &ctx, Some(org)).await?;
+    if let Some(named) = query.organization_id {
+        let ctx = crate::org_scope::resolve(access.0.as_ref(), &ctx, Some(named)).await?;
         let shelf = installer
             .shelf(&ctx, ctx.subject_tenant_id())
             .await
             .map_err(refused)?;
         library.extend(shelf.into_iter().map(|k| k.kit));
+        org = Some(
+            installer
+                .shelf_organization(&ctx, ctx.subject_tenant_id())
+                .await,
+        );
     }
+    let bundles = service.bundles();
     let items: Vec<KitDto> = library
         .into_iter()
         .filter(|kit| {
@@ -1274,7 +1374,7 @@ async fn catalogue(
                 .as_deref()
                 .is_none_or(|shelf| kit.shelf == shelf)
         })
-        .map(Into::into)
+        .map(|kit| kit_dto(kit, &bundles, org))
         .collect();
     let (items, total) = page_of(items, page);
     Ok(Json(KitListDto { items, total }))
@@ -1286,9 +1386,16 @@ async fn get_kit(
     Extension(installer): Extension<Arc<KitInstaller>>,
     Path(kit_slug): Path<String>,
 ) -> ApiResult<JsonBody<KitDetailDto>> {
+    let bundles = service.bundles();
     if let Some(detail) = service.kit(&kit_slug) {
-        return Ok(Json(detail.into()));
+        // The shared library's kits are everybody's: their grant names no organization.
+        return Ok(Json(detail_dto(detail, &bundles, None)));
     }
+    let org = Some(
+        installer
+            .shelf_organization(&ctx, ctx.subject_tenant_id())
+            .await,
+    );
     // Not in the shared library: the organization's own shelf.
     let slug = kit_slug.trim().to_ascii_lowercase();
     match installer
@@ -1296,7 +1403,7 @@ async fn get_kit(
         .await
         .map_err(refused)?
     {
-        Some(kit) => Ok(Json(shelf_detail(kit))),
+        Some(kit) => Ok(Json(shelf_detail(kit, &bundles, org))),
         None => Err(
             KitRegistryError::not_found("the kit library does not hold this kit")
                 .with_resource(kit_slug)
@@ -1308,13 +1415,22 @@ async fn get_kit(
 async fn list_shelf(
     OrgCtx(ctx): OrgCtx,
     Extension(installer): Extension<Arc<KitInstaller>>,
+    Extension(bundles): Extension<Arc<KitBundles>>,
     Query(page): Query<PageQuery>,
 ) -> ApiResult<JsonBody<ShelfListDto>> {
     let shelf = installer
         .shelf(&ctx, ctx.subject_tenant_id())
         .await
         .map_err(refused)?;
-    let items: Vec<KitDetailDto> = shelf.into_iter().map(shelf_detail).collect();
+    let org = Some(
+        installer
+            .shelf_organization(&ctx, ctx.subject_tenant_id())
+            .await,
+    );
+    let items: Vec<KitDetailDto> = shelf
+        .into_iter()
+        .map(|kit| shelf_detail(kit, &bundles, org))
+        .collect();
     let (items, total) = page_of(items, page);
     Ok(Json(ShelfListDto { items, total }))
 }
@@ -1332,37 +1448,47 @@ fn source_of(body: ShelfSourceDto) -> super::shelf::SourceInput {
 async fn preview_shelf_kit(
     OrgCtx(ctx): OrgCtx,
     Extension(installer): Extension<Arc<KitInstaller>>,
+    Extension(bundles): Extension<Arc<KitBundles>>,
     Json(body): Json<ShelfSourceDto>,
 ) -> ApiResult<JsonBody<KitDetailDto>> {
     let kit = installer
         .preview_shelf_kit(&ctx, ctx.subject_tenant_id(), source_of(body))
         .await
         .map_err(refused)?;
-    Ok(Json(shelf_detail(kit)))
+    // On no shelf yet: nothing serves its files.
+    Ok(Json(shelf_detail(kit, &bundles, None)))
 }
 
 async fn add_shelf_kit(
     OrgCtx(ctx): OrgCtx,
     Extension(installer): Extension<Arc<KitInstaller>>,
+    Extension(bundles): Extension<Arc<KitBundles>>,
     Json(body): Json<ShelfSourceDto>,
 ) -> ApiResult<JsonBody<KitDetailDto>> {
     let kit = installer
         .add_shelf_kit(&ctx, ctx.subject_tenant_id(), source_of(body))
         .await
         .map_err(refused)?;
-    Ok(Json(shelf_detail(kit)))
+    let org = installer
+        .shelf_organization(&ctx, ctx.subject_tenant_id())
+        .await;
+    Ok(Json(shelf_detail(kit, &bundles, Some(org))))
 }
 
 async fn refresh_shelf_kit(
     OrgCtx(ctx): OrgCtx,
     Extension(installer): Extension<Arc<KitInstaller>>,
+    Extension(bundles): Extension<Arc<KitBundles>>,
     Path(kit_slug): Path<String>,
 ) -> ApiResult<JsonBody<KitDetailDto>> {
     let kit = installer
         .refresh_shelf_kit(&ctx, ctx.subject_tenant_id(), &kit_slug)
         .await
         .map_err(refused)?;
-    Ok(Json(shelf_detail(kit)))
+    let org = installer
+        .shelf_organization(&ctx, ctx.subject_tenant_id())
+        .await;
+    Ok(Json(shelf_detail(kit, &bundles, Some(org))))
 }
 
 async fn remove_shelf_kit(
@@ -2231,4 +2357,68 @@ pub fn register_routes(
         .layer(Extension(service))
         .layer(Extension(installer))
         .layer(Extension(access))
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    fn bundles() -> KitBundles {
+        KitBundles::new(Vec::new(), b"a key of sixteen bytes or more".to_vec())
+    }
+
+    #[test]
+    fn the_catalogue_entry_carries_the_kits_icon() {
+        let kit = super::super::service::builtin_catalogue()
+            .into_iter()
+            .find(|k| k.slug == "project-tests")
+            .unwrap();
+        let dto = kit_dto(kit, &bundles(), None);
+        assert_eq!(dto.icon.as_deref(), Some("lucide:flask-conical"));
+        assert_eq!(dto.icon_url, None, "a lucide icon is drawn by the shell");
+        let json = serde_json::to_value(&dto).unwrap();
+        assert_eq!(json["icon"], "lucide:flask-conical");
+    }
+
+    #[test]
+    fn a_described_kit_carries_its_icon_and_where_a_bundled_one_is_served() {
+        let org = Uuid::new_v4();
+        let b = bundles();
+        let mut kit = super::super::service::builtin_catalogue().remove(0);
+        kit.slug = "hello-kit".into();
+        kit.shelf = super::super::service::SHELF_ORGANIZATION.into();
+        kit.source = "github".into();
+        kit.icon = Some("mfe/hello/kit.svg".into());
+        let detail = KitDetail {
+            kit: kit.clone(),
+            contents: super::super::contents::KitContents::default(),
+            manifest: None,
+        };
+        let dto = detail_dto(detail, &b, Some(org));
+        assert_eq!(dto.kit.icon.as_deref(), Some("mfe/hello/kit.svg"));
+        let grant = b.org_grant(org, "hello-kit", &kit.default_version);
+        assert_eq!(
+            dto.kit.icon_url,
+            Some(format!(
+                "/cf/studio-kits/v1/kits/hello-kit/{}/mfe/{grant}/hello/kit.svg",
+                kit.default_version
+            ))
+        );
+    }
+
+    #[test]
+    fn an_installed_kit_starts_without_an_icon_until_its_entry_is_found() {
+        let dto: InstalledKitDto = InstalledKit {
+            kit_slug: "project-tests".into(),
+            version: "1".into(),
+            shelf: "builtin".into(),
+            kind: super::super::installed::KIND_BASE,
+            installed_by: None,
+            installed_at: None,
+            by_default: true,
+        }
+        .into();
+        assert_eq!(dto.icon, None);
+        assert_eq!(dto.icon_url, None);
+    }
 }

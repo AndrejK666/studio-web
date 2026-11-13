@@ -15,6 +15,8 @@ import { levelIconName } from './levelIcon';
 export interface ManifestIconProps {
   /** What the manifest declares, e.g. `lucide:users`. */
   declared: string | undefined;
+  /** Where a kit's own SVG icon is served (#1081); drawn instead of `declared`. */
+  url?: string;
   className?: string;
 }
 
@@ -27,7 +29,9 @@ const LucideByName = React.lazy(async () => {
   return { default: ByName };
 });
 
-export const ManifestIcon: React.FC<ManifestIconProps> = ({ declared, className }) => {
+export const ManifestIcon: React.FC<ManifestIconProps> = ({ declared, url, className }) => {
+  // A kit's SVG, served through the kit bundle route: an image, never inline markup.
+  if (url) return <img src={url} alt="" aria-hidden="true" className={className} data-kit-icon-url />;
   // Not a lucide name: nothing to load, nothing to draw.
   if (!declared?.startsWith('lucide:')) return null;
   return (

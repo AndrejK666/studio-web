@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "project-domain-model",
+  "icon": "lucide:shapes",
   "name": "Project domain model",
   "description": "What a project's documents say the application is, and the issues they leave to decide (not the Studio domain model).",
   "publisher": "Constructor Fabric",

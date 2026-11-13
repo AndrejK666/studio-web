@@ -41,7 +41,7 @@ import { SHELL_SLOTS } from '@/app/mfe/slots';
 import { KitSlot } from './KitSlot';
 import { ManifestIcon } from './ManifestIcon';
 import { useScreenLevel } from './useScreenLevel';
-import { screenShows, typesNeeded, useInstalledKits, useInstalledTypes } from './useInstalledKits';
+import { screenIcon, screenShows, typesNeeded, useInstalledKits, useInstalledTypes, useKitIcons } from './useInstalledKits';
 import { modelNameOf, screenIdOf, visibleTabs, withModelTabs } from './modelTabs';
 import { useHiddenTabs, useLevelModelTabs, useLevelTenant } from './useModelTabs';
 import { LevelTabsEditor } from './LevelTabsEditor';
@@ -70,6 +70,8 @@ export const LevelTabs: React.FC = () => {
   const level = useScreenLevel();
   const registered = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const installed = useInstalledKits();
+  // A tab whose screen names no icon shows its kit's (#1081).
+  const kitIcons = useKitIcons();
   // A platform administrator's screens (Admin › System) for them alone.
   const platformAdmin = useDecidesRequests();
   // The manifests' tabs (a tab whose kit or needed type is not installed here
@@ -211,7 +213,7 @@ export const LevelTabs: React.FC = () => {
                   dragging && marker === order.length && index === order.length - 1 && styles.dropAfter
                 )}
               >
-                <ManifestIcon declared={ext.presentation.icon} className={styles.glyph} />
+                <ManifestIcon {...screenIcon(ext, kitIcons)} className={styles.glyph} />
                 {ext.presentation?.label}
                 {ext.presentation?.experimental && (
                   <span className={styles.exp} title={t('level_tab_experimental')}>

@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "org-infrastructure",
+  "icon": "lucide:server",
   "name": "Infrastructure",
   "description": "The places an organization holds, the environments it defines on them, and what runs where.",
   "publisher": "Constructor Fabric",

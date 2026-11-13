@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "project-specs",
+  "icon": "lucide:file-text",
   "name": "Specs",
   "description": "A project's specifications and their quality, and the document types a workspace offers.",
   "publisher": "Constructor Fabric",

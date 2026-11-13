@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "product-releases",
+  "icon": "lucide:rocket",
   "name": "Product & Releases",
   "description": "A project's product (its map, configurator and frontend), its builds and its deploys up the environment ladder.",
   "publisher": "Constructor Fabric",

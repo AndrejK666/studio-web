@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "project-lifecycle",
+  "icon": "lucide:route",
   "name": "Project lifecycle",
   "description": "A project's phases, its phase chip, and what waits on its owner.",
   "publisher": "Constructor Fabric",

@@ -58,6 +58,11 @@ pub struct KitDescriptor {
     /// manifest is read in its repository rather than by this gear.
     #[serde(default)]
     pub levels: Vec<String>,
+    /// The kit's icon (#1081), as its manifest names it: `lucide:<name>`, or
+    /// `mfe/<package>/<file>.svg` in one of its bundles
+    /// ([`super::manifest::kit_icon`]). `None` for a kit that names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Shipped in Studio's image and versioned with it (ADR-0068 §4). Installed
@@ -724,6 +729,7 @@ pub(crate) fn official_catalogue() -> Vec<KitDescriptor> {
             manifest_path: ".cf-studio-kit.toml".to_owned(),
             shelf: SHELF_OFFICIAL.to_owned(),
             levels: vec!["project".to_owned()],
+            icon: Some("lucide:workflow".to_owned()),
         },
         // `studio-kits-pm` is a MULTI-kit repository: its root manifest holds one
         // `[[kits]]` entry per kit, and `cfs` reads it to offer a selector. So the
@@ -741,6 +747,7 @@ pub(crate) fn official_catalogue() -> Vec<KitDescriptor> {
             manifest_path: ".cf-studio-kit.toml".to_owned(),
             shelf: SHELF_OFFICIAL.to_owned(),
             levels: vec!["project".to_owned()],
+            icon: Some("lucide:scale".to_owned()),
         },
     ]
 }
@@ -748,6 +755,37 @@ pub(crate) fn official_catalogue() -> Vec<KitDescriptor> {
 /// The version every built-in kit carries: Studio's own, since a built-in kit
 /// is compiled into its image and changes only with a Studio release.
 pub const BUILTIN_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Each built-in kit's icon (#1081), a lucide glyph. A built-in kit with a
+/// `kit.json` names the same one there (`builtin_kits_name_their_icon_once`).
+pub const BUILTIN_ICONS: &[(&str, &str)] = &[
+    ("project-lifecycle", "lucide:route"),
+    ("project-issues", "lucide:circle-dot"),
+    ("project-tests", "lucide:flask-conical"),
+    ("project-artifacts", "lucide:files"),
+    ("project-activity", "lucide:history"),
+    ("org-costs", "lucide:wallet"),
+    ("org-reports", "lucide:chart-column"),
+    ("project-specs", "lucide:file-text"),
+    ("studio-api-docs", "lucide:book-open"),
+    ("components", "lucide:package"),
+    ("org-infrastructure", "lucide:server"),
+    ("product-releases", "lucide:rocket"),
+    ("project-domain-model", "lucide:shapes"),
+    ("org-connections", "lucide:plug"),
+    ("project-team", "lucide:users"),
+    (CONSTRUCTOR_RESEARCH_KIT, "lucide:atom"),
+    ("assistant", "lucide:sparkles"),
+    ("project-git", "lucide:git-pull-request"),
+];
+
+/// Built-in kit `slug`'s icon.
+pub fn builtin_icon(slug: &str) -> Option<&'static str> {
+    BUILTIN_ICONS
+        .iter()
+        .find(|(s, _)| *s == slug)
+        .map(|(_, icon)| *icon)
+}
 
 /// The kits shipped in Studio's image (ADR-0068 §7): today's tabs, each
 /// becoming a kit. No repository: their manifest is compiled in, so `cfs`
@@ -765,6 +803,7 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
         manifest_path: ".cf-studio-kit.toml".to_owned(),
         shelf: SHELF_BUILTIN.to_owned(),
         levels: levels.iter().map(|level| (*level).to_owned()).collect(),
+        icon: builtin_icon(slug).map(str::to_owned),
     };
     vec![
         kit(

@@ -56,6 +56,13 @@ export {
   type ChainOutcomes,
 } from './host/chainOutcome';
 export { useNotify } from './host/useNotify';
+export {
+  MFE_PREFERENCE_KEY,
+  MFE_PREFERENCE_MAX_LENGTH,
+  STUDIO_ACTION_PREFERENCE_SET,
+  STUDIO_SHARED_PROPERTY_UI_PREFERENCES,
+  useHostPreference,
+} from './host/preferences';
 export { StudioMfeLifecycle } from './mfe/StudioMfeLifecycle';
 export { authShared } from './auth/authShared';
 export {
@@ -296,3 +303,6 @@ export {
 } from './domain/DomainModelApiService';
 // People and teams (people-mfe, team-mfe).
 export * from './people';
+
+// A list on the kit's DataGrid (#1076) has its own entry, `@constructor-studio/mfe-shared/grid`
+// (`grid.ts`), so importing this one does not load the kit's DataGrid.

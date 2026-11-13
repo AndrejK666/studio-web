@@ -12,6 +12,7 @@ import React from 'react';
 import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
 import type { CatalogKit, KitContents, KitDetail } from '../../api/KitsApiService';
 import type { useHomeTranslations } from '../../i18n';
+import { KitIcon } from './KitIcon';
 import styles from './HomeScreen.module.css';
 
 type Text = ReturnType<typeof useHomeTranslations>['t'];
@@ -86,7 +87,10 @@ export function KitDetailView({
         ← {t('back')}
       </Button>
       <header className={styles.detailHeader}>
-        <h3 className={styles.title}>{kit.name}</h3>
+        <h3 className={styles.title}>
+          <KitIcon kit={kit} />
+          {kit.name}
+        </h3>
         <p className={styles.description}>{kit.description}</p>
         <dl className={styles.facts}>
           <dt>{t('publisher')}</dt>

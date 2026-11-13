@@ -78,9 +78,68 @@
 }
 
 .cardTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin: 0;
   font-size: var(--text-heading-3-size, 1.125rem);
   font-weight: 600;
+}
+
+/* A kit's icon (#1081): a lucide glyph or the SVG its bundle carries, one size everywhere. */
+.kitIcon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--icon-size-md, 1.25rem);
+  block-size: var(--icon-size-md, 1.25rem);
+  color: var(--primary);
+}
+
+.kitIcon svg,
+.kitIcon img {
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.detailTitle .kitIcon,
+.title .kitIcon {
+  inline-size: var(--icon-size-lg, 1.5rem);
+  block-size: var(--icon-size-lg, 1.5rem);
+}
+
+/* The table's name column: the icon, the name that opens the kit, its description under it. */
+.nameCell {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.nameStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.nameStack .cardLink {
+  font-weight: var(--text-label-weight, 500);
+}
+
+.rowNote {
+  font-size: var(--text-meta-size, 0.8125rem);
+  line-height: var(--text-meta-line-height, 1.25rem);
+  color: var(--muted-foreground);
+  white-space: normal;
+}
+
+.statusCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  white-space: normal;
 }
 
 .cardText {
@@ -160,6 +219,12 @@
 .detailHeader {
   display: flex;
   flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detailHeader .title {
+  display: flex;
+  align-items: center;
   gap: var(--space-2);
 }
 

@@ -1,6 +1,7 @@
 {
   "manifest_version": "1",
   "slug": "project-artifacts",
+  "icon": "lucide:files",
   "name": "Artifacts",
   "description": "The project's Artifacts tab: what its builds and documents produce.",
   "publisher": "Constructor Fabric",
