@@ -628,6 +628,7 @@ async fn a_signed_in_provider_takes_no_pasted_credential() {
         .svc
         .create(
             &person(1),
+            None,
             NewConnection {
                 owner_tenant: ORG,
                 provider: "research",

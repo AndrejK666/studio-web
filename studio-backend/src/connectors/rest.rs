@@ -81,6 +81,31 @@ impl Connectors {
 #[derive(Clone)]
 pub struct People(pub Option<Arc<dyn crate::user_profile::PersonResolver>>);
 
+/// studio-user's answer to "is this person a platform administrator", for the
+/// `platform_auth` guard (#1094). `None` when studio-user is not in this
+/// deployment, and then nobody may turn `platform_auth` on or off.
+#[derive(Clone)]
+pub struct Admins(pub Option<Arc<dyn crate::user_profile::OrganizationReader>>);
+
+/// The reason a caller who is not a platform administrator is refused a
+/// `platform_auth` change with (403), for the screen to say so.
+pub const PLATFORM_ADMIN_REQUIRED: &str = "PLATFORM_ADMIN_REQUIRED";
+
+/// A refused create or edit: 403 when it was the `platform_auth` guard, 400
+/// in the provider's own words for everything else.
+fn connection_write_error(e: &anyhow::Error) -> CanonicalError {
+    if e.downcast_ref::<super::service::PlatformAuthRefused>()
+        .is_some()
+    {
+        return StudioConnectorError::permission_denied()
+            .with_reason(PLATFORM_ADMIN_REQUIRED)
+            .create();
+    }
+    StudioConnectorError::invalid_argument()
+        .with_constraint(format!("{e:#}"))
+        .create()
+}
+
 /// The type exists in both builds so `register_routes` keeps one signature;
 /// without the `graph` feature it carries nothing and no route reads it.
 #[cfg(feature = "graph")]
@@ -736,6 +761,7 @@ async fn patch_connection(
     Extension(ctx): Extension<SecurityContext>,
     Extension(connectors): Extension<Connectors>,
     Extension(people): Extension<People>,
+    Extension(admins): Extension<Admins>,
     Path(id): Path<Uuid>,
     Query(q): Query<ScopeQuery>,
     Json(req): Json<PatchConnectionRequest>,
@@ -748,6 +774,7 @@ async fn patch_connection(
             tenant,
             id,
             people.0.as_deref(),
+            admins.0.as_deref(),
             ConnectionEdit {
                 label: req.label.as_deref(),
                 base_url: req.base_url.as_deref(),
@@ -758,12 +785,9 @@ async fn patch_connection(
         .await
         // A rejected credential, an unknown installation or an attempt to edit
         // an inherited row are all the caller's problem, reported in the
-        // provider's own words.
-        .map_err(|e| {
-            StudioConnectorError::invalid_argument()
-                .with_constraint(format!("{e:#}"))
-                .create()
-        })?;
+        // provider's own words; a `platform_auth` change by somebody other
+        // than a platform administrator is a 403.
+        .map_err(|e| connection_write_error(&e))?;
     // Whose it is, by the rule the list uses: another sign-in of the same
     // person counts as theirs.
     let mine = super::service::same_person(&ctx, &connection.created_by, people.0.as_deref())
@@ -775,12 +799,14 @@ async fn patch_connection(
 async fn create_connection(
     Extension(ctx): Extension<SecurityContext>,
     Extension(connectors): Extension<Connectors>,
+    Extension(admins): Extension<Admins>,
     Json(req): Json<CreateConnectionRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<ConnectionTestDto>)> {
     let svc = connectors.get()?;
     let (connection, identity) = svc
         .create(
             &ctx,
+            admins.0.as_deref(),
             NewConnection {
                 owner_tenant: req
                     .owner_tenant_id
@@ -795,12 +821,10 @@ async fn create_connection(
         )
         .await
         // A rejected credential or an unknown provider is the caller's
-        // problem, not ours — 400 with the provider's own words.
-        .map_err(|e| {
-            StudioConnectorError::invalid_argument()
-                .with_constraint(format!("{e:#}"))
-                .create()
-        })?;
+        // problem, not ours — 400 with the provider's own words; a
+        // `platform_auth` connection made by somebody other than a platform
+        // administrator is a 403.
+        .map_err(|e| connection_write_error(&e))?;
     Ok((
         StatusCode::CREATED,
         Json(to_test_dto(connection, identity, true, None)),
@@ -1174,6 +1198,7 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<ConnectorService>>,
     people: People,
+    admins: Admins,
     graph: GraphSink,
 ) -> Router {
     router = OperationBuilder::get("/studio-connector/v1/providers")
@@ -1240,6 +1265,8 @@ pub fn register_routes(
         )
         .error_400(openapi)
         .error_401(openapi)
+        // `platform_auth` set by somebody other than a platform administrator.
+        .error_403(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
@@ -1516,6 +1543,8 @@ pub fn register_routes(
         )
         .error_400(openapi)
         .error_401(openapi)
+        // `platform_auth` changed by somebody other than a platform administrator.
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
@@ -1581,6 +1610,7 @@ pub fn register_routes(
     router
         .layer(Extension(Connectors(service)))
         .layer(Extension(people))
+        .layer(Extension(admins))
         .layer(Extension(graph))
 }
 

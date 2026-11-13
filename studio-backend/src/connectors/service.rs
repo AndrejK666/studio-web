@@ -32,13 +32,14 @@ use uuid::Uuid;
 
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, NotifyMessage,
-    NotifyTarget, OpenedPullRequest, RemoteRepo, SentMessage, WrittenFile, platform_auth,
+    NotifyTarget, OPTION_PLATFORM_AUTH, OpenedPullRequest, RemoteRepo, SentMessage, WrittenFile,
+    platform_auth,
 };
 use super::gts::CONNECTIONS_METADATA_TYPE;
 use super::ownership::{NotOwned, Tree, within};
 use super::url_guard::check_url;
 use crate::project_sources::{self, ProjectSource, ShareMode};
-use crate::user_profile::PersonResolver;
+use crate::user_profile::{OrganizationReader, PersonResolver};
 
 /// Visibility of a connection, mapped onto credstore sharing modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,6 +350,66 @@ fn direct_base_url(
         driver.default_base_url().to_string()
     } else {
         base_url.to_string()
+    }
+}
+
+/// Why a create or an edit was refused: it turns `platform_auth` on or off,
+/// and the caller is not a platform administrator.
+///
+/// A connection with `platform_auth` reads GitHub with the platform's
+/// credential through the GitHub mirror, so turning it on is a platform act
+/// until the mirror reads with each connection's own credential (#1094).
+#[derive(Debug)]
+pub struct PlatformAuthRefused;
+
+impl std::fmt::Display for PlatformAuthRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "only a platform administrator may turn `{OPTION_PLATFORM_AUTH}` on or off for a \
+             connection"
+        )
+    }
+}
+
+impl std::error::Error for PlatformAuthRefused {}
+
+/// Does going from `before` (`None` for a new connection) to `after` set or
+/// change `platform_auth`? Its value, not its spelling: an explicit `false`
+/// on a new connection is the same as leaving it out.
+fn changes_platform_auth(
+    before: Option<&BTreeMap<String, String>>,
+    after: &BTreeMap<String, String>,
+) -> bool {
+    platform_auth(after) != before.is_some_and(platform_auth)
+}
+
+/// Refuse a change to `platform_auth` unless the caller is a platform
+/// administrator; let everything else through untouched.
+///
+/// `admins` is studio-user's answer (`OrganizationReader::is_platform_admin`),
+/// the one rule every platform route uses. Without it, or when it cannot say,
+/// nobody is an administrator: the failure narrows, never widens.
+async fn guard_platform_auth(
+    ctx: &SecurityContext,
+    admins: Option<&dyn OrganizationReader>,
+    before: Option<&BTreeMap<String, String>>,
+    after: &BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    if !changes_platform_auth(before, after) {
+        return Ok(());
+    }
+    let admin = match admins {
+        Some(reader) => reader
+            .is_platform_admin(&ctx.subject_id().to_string())
+            .await
+            .unwrap_or(false),
+        None => false,
+    };
+    if admin {
+        Ok(())
+    } else {
+        Err(PlatformAuthRefused.into())
     }
 }
 
@@ -891,9 +952,13 @@ impl ConnectorService {
     /// where metadata inheritance makes it visible to every workspace under
     /// it, or a single workspace. That choice belongs to the caller — the
     /// gear must not guess it from the session's tenant.
+    ///
+    /// `admins` answers whether the caller is a platform administrator, asked
+    /// only when the connection would carry `platform_auth`.
     pub async fn create(
         &self,
         ctx: &SecurityContext,
+        admins: Option<&dyn OrganizationReader>,
         req: NewConnection<'_>,
     ) -> anyhow::Result<(Connection, DriverIdentity)> {
         let NewConnection {
@@ -923,6 +988,7 @@ impl ConnectorService {
         let base_url = resolve_base_url(driver.as_ref(), base_url)?;
         let scope = ConnectionScope::parse(scope)?;
         let options = driver.check_options(&base_url, &options)?;
+        guard_platform_auth(ctx, admins, None, &options).await?;
         let mut catalogue = self.load_own(ctx, owner_tenant).await?;
         unique_source_id(&catalogue.items, provider, &options, None)?;
 
@@ -1259,6 +1325,9 @@ impl ConnectorService {
         // its own confirmation ceremony, and owning each other is how two
         // services stop being constructible in either order.
         people: Option<&dyn PersonResolver>,
+        // Whether the caller is a platform administrator, asked only when the
+        // edit turns `platform_auth` on or off.
+        admins: Option<&dyn OrganizationReader>,
         edit: ConnectionEdit<'_>,
     ) -> anyhow::Result<(Connection, DriverIdentity)> {
         let ConnectionEdit {
@@ -1319,6 +1388,7 @@ impl ConnectorService {
             Some(o) => driver.check_options(&base_url, &o)?,
             None => existing.options.clone(),
         };
+        guard_platform_auth(ctx, admins, Some(&existing.options), &options).await?;
 
         // No new token: verify the change against the credential already
         // stored, so relocating an installation cannot quietly leave a
@@ -3355,3 +3425,5 @@ mod oauth_flow_tests;
 #[cfg(test)]
 #[path = "connections_list_tests.rs"]
 mod connections_list_tests;
+#[path = "platform_auth_tests.rs"]
+mod platform_auth_tests;
