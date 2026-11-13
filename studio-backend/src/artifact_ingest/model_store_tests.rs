@@ -55,6 +55,7 @@ impl Model {
             .map(|(id, (_, _, v))| (id.clone(), v.clone()))
             .collect()
     }
+}
 
 fn matches(w: &Value, id: &str, v: &Value) -> bool {
     let Some(obj) = w.as_object() else {
