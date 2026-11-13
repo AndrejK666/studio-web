@@ -53,14 +53,22 @@ pub struct RepoSpec {
     /// e.g. `.workspace-sources/hypotheses/csh_hypotheses_back`.
     pub target: Option<String>,
     pub branch: Option<String>,
-    /// Resolved PAT (kind = Git, private repos). Never persisted.
-    pub token: Option<String>,
+    /// Cloned through Studio's Git proxy under `name` (#1095): a project
+    /// source whose connection is the organization's. No source host's key
+    /// ever reaches the session; the proxy attaches it upstream.
+    pub via_proxy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepoKind {
     Git,
     Local,
+}
+
+/// Byte equality that takes as long whichever byte differs, for comparing a
+/// presented credential with a minted one.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// What one reaping pass did. Reported as a `session.reap` run's summary, so
@@ -188,6 +196,11 @@ pub struct Session {
     /// adopted sessions. Never handed to the browser — distinct from
     /// `session_token`.
     pub control_token: String,
+    /// Per-session credential to Studio's Git proxy (#1095): what the
+    /// session's clones, fetches and pushes present instead of a source
+    /// host's key. Minted per launch, lives in the runtime's env only, and
+    /// names this session alone ([`SessionService::resolve_git_proxy_token`]).
+    pub git_token: String,
 }
 
 impl Session {
@@ -340,6 +353,7 @@ impl SessionService {
                     sources: a.sources,
                     session_token: a.session_token,
                     control_token: a.control_token,
+                    git_token: a.git_token,
                 };
                 (id, session)
             })
@@ -863,6 +877,13 @@ impl SessionService {
         } else {
             String::new()
         };
+        // The session's credential to the Git proxy (#1095), distinct from
+        // both: the proxy takes it instead of a source host's key.
+        let git_token = {
+            let a = Uuid::new_v4().simple().to_string();
+            let b = Uuid::new_v4().simple().to_string();
+            format!("{a}{b}")
+        };
 
         let mut env = vec![
             format!("STUDIO_WORKSPACE_ID={workspace_id}"),
@@ -873,6 +894,7 @@ impl SessionService {
             format!("STUDIO_ACTOR_ID={}", self.cfg.service_actor),
             format!("STUDIO_GIT_MODE={}", self.cfg.git_mode),
             format!("STUDIO_SESSION_TOKEN={session_token}"),
+            format!("STUDIO_GIT_PROXY_TOKEN={git_token}"),
             // Gateway URL as seen FROM the container — the session gate
             // proxies /studio-api/* here so the IDE frontend can call the
             // gears same-origin (no CORS, no token storage server-side).
@@ -928,25 +950,25 @@ impl SessionService {
             {
                 env.push(format!("STUDIO_ROOT_BRANCH={b}"));
             }
-            if let Some(t) = &root.token {
-                env.push(format!("STUDIO_ROOT_TOKEN={t}"));
-            }
         }
-        // Git sources for the entrypoint to clone (JSON; tokens included —
-        // env-only, never persisted in the registry or the toml).
-        let git_sources: Vec<serde_json::Value> = repos
-            .iter()
-            .filter(|r| r.kind == RepoKind::Git)
-            .map(|r| {
-                serde_json::json!({
-                    "name": r.name,
-                    "dir": r.target.as_deref().map(str::trim).filter(|t| !t.is_empty()).unwrap_or(&r.name),
-                    "url": r.url.as_deref().unwrap_or("").trim(),
-                    "branch": r.branch.as_deref().map(str::trim).filter(|b| !b.is_empty()),
-                    "token": r.token,
+        // Git sources for the entrypoint to clone. No credential in any of
+        // them (#1095): a project source carries the Git proxy's address, which
+        // the session reaches with STUDIO_GIT_PROXY_TOKEN.
+        let git_sources = super::launch_sources::sources_env(
+            &self.cfg.gateway_url,
+            workspace_id,
+            &repos
+                .iter()
+                .filter(|r| r.kind == RepoKind::Git)
+                .map(|r| super::launch_sources::GitSourceEnv {
+                    name: &r.name,
+                    target: r.target.as_deref(),
+                    url: r.url.as_deref().unwrap_or(""),
+                    branch: r.branch.as_deref(),
+                    via_proxy: r.via_proxy,
                 })
-            })
-            .collect();
+                .collect::<Vec<_>>(),
+        );
         if !git_sources.is_empty() {
             env.push(format!(
                 "STUDIO_SOURCES={}",
@@ -1029,6 +1051,7 @@ impl SessionService {
             launch_id: Some(launch_id),
             session_token,
             control_token,
+            git_token,
             sources: root_repo
                 .iter()
                 .map(|_| "workspace root (git)".to_string())
@@ -1310,6 +1333,42 @@ impl SessionService {
                 tenant_id: s.tenant_id,
                 workspace_id: s.workspace_id,
             })
+    }
+
+    /// Reverse-resolve a session's Git proxy credential (#1095) to the
+    /// session's trusted `(tenant, workspace)`. The token is the credential
+    /// (256 random bits, minted per launch, in the runtime's env only), so this
+    /// is what the proxy authenticates a session's clone, fetch or push with.
+    /// `None` for an empty, unknown, stopped or forged token.
+    ///
+    /// A session's first clone runs seconds after its launch, possibly on
+    /// another replica whose listing is older than the session: an unknown
+    /// token re-reads the runtime once before it is refused.
+    pub async fn resolve_git_proxy_token(
+        &self,
+        token: &str,
+    ) -> Option<crate::studio_session::sdk::SessionIdentity> {
+        if token.is_empty() {
+            return None;
+        }
+        let find = |sessions: HashMap<Uuid, Session>| {
+            sessions
+                .into_values()
+                .find(|s| {
+                    s.state != SessionState::Stopped
+                        && !s.git_token.is_empty()
+                        && constant_time_eq(s.git_token.as_bytes(), token.as_bytes())
+                })
+                .map(|s| crate::studio_session::sdk::SessionIdentity {
+                    session_id: s.id,
+                    tenant_id: s.tenant_id,
+                    workspace_id: s.workspace_id,
+                })
+        };
+        if let Some(found) = find(self.snapshot().await) {
+            return Some(found);
+        }
+        find(self.refresh().await.ok()?)
     }
 
     /// The sessions this caller reaches.
@@ -1726,6 +1785,7 @@ mod tests {
             launch_id: Some(LISTED_LAUNCH),
             session_token: "gate".into(),
             control_token: "s2s".into(),
+            git_token: "git-proxy".into(),
             sources: vec!["docs (git)".into()],
         }
     }
@@ -2389,6 +2449,100 @@ mod tests {
         assert_eq!(identity.workspace_id, ws);
         assert_eq!(identity.tenant_id, TENANT);
         assert!(elsewhere.resolve_control_token("forged").await.is_none());
+    }
+
+    /// The Git proxy's authentication primitive (#1095), resolved on a
+    /// service that never minted the token: a session's clone can land on any
+    /// replica.
+    #[tokio::test]
+    async fn a_git_proxy_token_resolves_on_a_service_that_never_minted_it() {
+        let ws = Uuid::from_u128(0xAA);
+        let elsewhere = service(FakeRuntime::with(vec![running_session(ws, 41000)])).await;
+
+        let identity = elsewhere
+            .resolve_git_proxy_token("git-proxy")
+            .await
+            .unwrap();
+        assert_eq!(identity.workspace_id, ws);
+        assert_eq!(identity.tenant_id, TENANT);
+        for forged in ["forged", "", "s2s", "gate", "git-proxy "] {
+            assert!(
+                elsewhere.resolve_git_proxy_token(forged).await.is_none(),
+                "{forged:?}"
+            );
+        }
+    }
+
+    /// NO SOURCE HOST KEY IN A SESSION (#1095). The project's repositories are
+    /// cloned through the Git proxy: the session is given the proxy's address
+    /// and its own credential to it, never a connection's token, and a
+    /// workspace root is cloned without one.
+    #[tokio::test]
+    async fn a_session_clones_through_the_git_proxy_and_holds_no_host_key() {
+        let root = std::env::temp_dir().join(format!("studio-session-proxy-{}", Uuid::new_v4()));
+        let runtime = Arc::new(LaunchingRuntime::default());
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                gateway_url: "http://gateway.test/cf/".into(),
+                ..config()
+            },
+            runtime.clone(),
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        let git = |name: &str, via_proxy: bool| super::RepoSpec {
+            name: name.into(),
+            kind: super::RepoKind::Git,
+            url: Some(format!("https://github.com/acme/{name}")),
+            path: None,
+            target: None,
+            branch: Some("main".into()),
+            via_proxy,
+        };
+        let ws = Uuid::from_u128(0xD3);
+        service
+            .create(
+                &person(0x7A5),
+                ws,
+                None,
+                Some(super::RepoSpec {
+                    name: "workspace-root".into(),
+                    ..git("root", false)
+                }),
+                vec![git("api", true), git("corpus", false)],
+            )
+            .await
+            .expect("the session launches");
+        let env = runtime.launched.lock().unwrap()[0].1.clone();
+        let _ = std::fs::remove_dir_all(&root);
+
+        let value = |name: &str| {
+            env.iter()
+                .find_map(|v| v.strip_prefix(&format!("{name}=")).map(str::to_owned))
+        };
+        let sources: serde_json::Value =
+            serde_json::from_str(&value("STUDIO_SOURCES").expect("sources")).expect("json");
+        assert_eq!(
+            sources[0]["clone_url"],
+            format!("http://gateway.test/cf/studio-git/v1/workspaces/{ws}/sources/api")
+        );
+        assert_eq!(sources[0]["url"], "https://github.com/acme/api");
+        assert!(sources[1].get("clone_url").is_none(), "not the project's");
+        assert!(
+            !sources.to_string().contains("token"),
+            "no credential in the sources: {sources}"
+        );
+        assert!(value("STUDIO_ROOT_TOKEN").is_none());
+        assert_eq!(
+            value("STUDIO_ROOT_URL").as_deref(),
+            Some("https://github.com/acme/root")
+        );
+
+        let token = value("STUDIO_GIT_PROXY_TOKEN").expect("a proxy credential");
+        assert_eq!(token.len(), 64, "256 random bits, hex");
+        assert_ne!(Some(&token), value("STUDIO_SESSION_TOKEN").as_ref());
     }
 
     /// EACH LAUNCH ITS OWN PROBE (#322). Keyed by the session id alone, a

@@ -246,6 +246,9 @@ impl SessionDriver for DockerDriver {
                 control_token: env_value(&env, "STUDIO_THEIA_S2S_TOKEN")
                     .unwrap_or_default()
                     .to_string(),
+                git_token: env_value(&env, "STUDIO_GIT_PROXY_TOKEN")
+                    .unwrap_or_default()
+                    .to_string(),
                 sources: super::driver::adopted_sources(
                     env_value(&env, "STUDIO_ROOT_URL"),
                     env_value(&env, "STUDIO_SOURCES"),

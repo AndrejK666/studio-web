@@ -44,6 +44,7 @@ const SESSION_TOKEN_ENV: &str = "STUDIO_SESSION_TOKEN";
 /// The Theia backend-control token (ADR-0022), recovered on adoption so a
 /// restarted backend can still reach the node it launched.
 const CONTROL_TOKEN_ENV: &str = "STUDIO_THEIA_S2S_TOKEN";
+const GIT_TOKEN_ENV: &str = "STUDIO_GIT_PROXY_TOKEN";
 /// The two variables a session's source summary is rebuilt from.
 const ROOT_URL_ENV: &str = "STUDIO_ROOT_URL";
 const SOURCES_ENV: &str = "STUDIO_SOURCES";
@@ -678,6 +679,7 @@ impl SessionDriver for KubernetesDriver {
             };
             let session_token = env_value(SESSION_TOKEN_ENV).unwrap_or_default().to_string();
             let control_token = env_value(CONTROL_TOKEN_ENV).unwrap_or_default().to_string();
+            let git_token = env_value(GIT_TOKEN_ENV).unwrap_or_default().to_string();
             let sources =
                 super::driver::adopted_sources(env_value(ROOT_URL_ENV), env_value(SOURCES_ENV));
             out.push(AdoptedSession {
@@ -697,6 +699,7 @@ impl SessionDriver for KubernetesDriver {
                     .and_then(|v| v.parse::<Uuid>().ok()),
                 session_token,
                 control_token,
+                git_token,
                 sources,
             });
         }

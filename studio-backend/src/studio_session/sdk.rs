@@ -95,6 +95,35 @@ impl StudioSessionDiscoveryClientV1 for StudioSessionDiscoveryLocalClient {
     }
 }
 
+/// A container session, as Studio's Git proxy authenticates it (#1095): the
+/// session presents the credential minted for it at launch instead of any
+/// source host's key, and the proxy acts for that session's workspace.
+#[async_trait]
+pub trait SessionGitAccessV1: Send + Sync {
+    /// The live session that holds `token` as its Git proxy credential.
+    /// Unauthenticated by design: the token IS the credential. `None` when no
+    /// live session holds it (stopped, forged, or launched before #1095).
+    async fn resolve_git_proxy_token(&self, token: &str) -> Option<SessionIdentity>;
+}
+
+/// In-process implementation backed by the live [`SessionService`] registry.
+pub struct SessionGitAccessLocalClient {
+    service: Arc<SessionService>,
+}
+
+impl SessionGitAccessLocalClient {
+    pub fn new(service: Arc<SessionService>) -> Self {
+        Self { service }
+    }
+}
+
+#[async_trait]
+impl SessionGitAccessV1 for SessionGitAccessLocalClient {
+    async fn resolve_git_proxy_token(&self, token: &str) -> Option<SessionIdentity> {
+        self.service.resolve_git_proxy_token(token).await
+    }
+}
+
 /// The desktop sessions (ADR-0027 §4–5), for the bridge: a desktop posts its
 /// events, and the portal sends it commands, under the member's own token and
 /// the lease's id — no S2S token exists for a session the backend never

@@ -307,10 +307,7 @@ async fn list_sources(
     let items: Vec<GitSourceDto> = found
         .into_iter()
         .map(|s| GitSourceDto {
-            clone_path: format!(
-                "/studio-git/v1/workspaces/{workspace_id}/sources/{}",
-                s.name
-            ),
+            clone_path: sources::source_path(workspace_id, &s.name),
             authenticated: s.token_ref.is_some(),
             name: s.name,
             branch: s.branch,
@@ -340,7 +337,32 @@ pub(crate) fn refuse(status: StatusCode, message: &str) -> Response {
     response
 }
 
-async fn authenticate(proxy: &GitProxy, headers: &HeaderMap) -> Result<SecurityContext, Response> {
+/// Who a protocol request on `workspace_id` comes from: a container session
+/// presenting the credential minted for it at launch (#1095), acting for its
+/// own workspace only, or else a member with their Studio token.
+async fn authenticate(
+    proxy: &GitProxy,
+    headers: &HeaderMap,
+    workspace_id: Uuid,
+) -> Result<SecurityContext, Response> {
+    let presented = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if let Some(token) = sources::presented_token(presented)
+        && sources::looks_like_session_credential(&token)
+        && let Ok(sessions) = proxy
+            .hub
+            .get::<dyn crate::studio_session::sdk::SessionGitAccessV1>()
+        && let Some(identity) = sessions.resolve_git_proxy_token(&token).await
+    {
+        return sources::session_context(&identity, workspace_id).ok_or_else(|| {
+            tracing::warn!(session = %identity.session_id, %workspace_id, "studio-git: a session asked for another workspace; refused");
+            refuse(
+                StatusCode::NOT_FOUND,
+                "No such workspace, or you are not a member of it.",
+            )
+        });
+    }
     authenticate_member(proxy.authn.as_ref(), headers).await
 }
 
@@ -381,7 +403,7 @@ async fn forward(
     service: Service,
     request: Request,
 ) -> Response {
-    let ctx = match authenticate(proxy, request.headers()).await {
+    let ctx = match authenticate(proxy, request.headers(), workspace_id).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };

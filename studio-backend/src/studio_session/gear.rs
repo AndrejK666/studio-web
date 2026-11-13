@@ -167,6 +167,13 @@ impl Gear for StudioSessionGear {
                 crate::studio_session::sdk::StudioSessionDiscoveryLocalClient::new(service.clone()),
             ));
 
+        // The Git proxy authenticates a session's clones and pushes with the
+        // credential minted at launch (#1095).
+        ctx.client_hub()
+            .register::<dyn crate::studio_session::sdk::SessionGitAccessV1>(Arc::new(
+                crate::studio_session::sdk::SessionGitAccessLocalClient::new(service.clone()),
+            ));
+
         // Reaping expired sessions is a `session.reap` run, fired by a
         // schedule — see `super::reap_task` for what that replaced. Registered
         // here because the service it needs is built here.

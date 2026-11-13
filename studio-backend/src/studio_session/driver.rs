@@ -174,6 +174,10 @@ pub struct AdoptedSession {
     /// Without it an adopted session keeps running but the backend can no
     /// longer issue control calls to its Theia node.
     pub control_token: String,
+    /// `STUDIO_GIT_PROXY_TOKEN` recovered the same way: the session's
+    /// credential to Studio's Git proxy (#1095). Empty for a session launched
+    /// before it existed; such a session cannot clone through the proxy.
+    pub git_token: String,
     /// Human-readable source summaries, rebuilt from the session's env by
     /// [`adopted_sources`].
     pub sources: Vec<String>,

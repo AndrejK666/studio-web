@@ -25,8 +25,9 @@ view, and how this gear sits among the others, is in
 
 ### 1.1 Architectural Vision
 
-The Git remote a desktop session clones from (ADR-0027 §3). A desktop must
-not hold a source host's token, so its clones do not point at the source host.
+The Git remote a desktop session and a container session clone from
+(ADR-0027 §3, #1095). Neither may hold a source host's token, so their clones
+do not point at the source host.
 They point here: a Git smart-HTTP proxy that authenticates the member's own
 Studio token, finds the repository among the workspace's sources under that
 member's identity, reads the repository's token from credstore and attaches it
@@ -95,6 +96,20 @@ the portal accepts is accepted here, and one it refuses is refused here. The
 token is the Basic password (the user name is ignored) or a Bearer token. A
 request without one is answered 401 with a `Basic` challenge, because without
 it `git` never asks its credential helper.
+
+#### A container session presents its own credential
+
+- [x] `p2` - **ID**: `cpt-studio-principle-git-session-credential`
+
+A container session has no person behind its clone: the entrypoint clones
+before anyone opens it, and several people push from it later. So it does not
+present a person's token. It presents `STUDIO_GIT_PROXY_TOKEN`, the credential
+studio-session minted for that launch, and the proxy asks studio-session
+(`SessionGitAccessV1`) which live session holds it. Only a token shaped like
+one (64 lowercase hex characters, never a JWT) is looked up. A session acts
+as itself, a service in its launcher's tenant, and only for the workspace it
+was launched for: any other workspace is a 404. The credential stops working
+when the session stops.
 
 #### Refusals are written for the person running `git`
 

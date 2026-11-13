@@ -1,10 +1,11 @@
 // The workspace-source clone phase of the session entrypoint.
 //
 // This phase is where startup time is won or lost, and it had no coverage at
-// all. Three things are asserted here, each one something that broke or could
-// break silently: field parsing (a source carrying a token but no branch used
-// to clone with `--branch <token>`, which fails and prints the token into the
-// container log), concurrency (sources are independent directories, so the
+// all. Four things are asserted here, each one something that broke or could
+// break silently: field parsing (a source with no branch must not shift the
+// next field into `--branch`), cloning through Studio's Git proxy (`clone_url`
+// is what is cloned and what `origin` points at; an older checkout is
+// repointed there, #1095), concurrency (sources are independent directories, so the
 // phase must cost the slowest repository rather than the sum), and its place
 // in the boot order — the phase runs BEHIND the IDE, and a change that quietly
 // put it back in front would restore the wait it exists to avoid.
@@ -83,14 +84,23 @@ if (!hasBash) {
     await mkdir(path.join(workspace, 'already'), { recursive: true });
     await writeFile(path.join(workspace, 'already', 'file.txt'), 'keep', 'utf8');
 
-    const token = 'clone-test-token';
+    // An earlier session's checkout of `e`, made straight from the source
+    // host: its origin is the repository's own address.
+    const hostAddress = path.join(upstream, 'c');
+    git(['clone', '-q', hostAddress, path.join(workspace, 'e')], directory);
+
+    // Through the proxy, `clone_url` is cloned and `url` is only the
+    // repository's identity. Here the "proxy" is another local repository,
+    // and `url` names one that does not exist, so a clone of `url` would fail.
+    const nowhere = path.join(upstream, 'not-the-clone-source');
     const sources = [
       { name: 'a', url: path.join(upstream, 'a') },
-      // The regression: a token with no branch. `branch` is empty, and a tab
-      // separator would collapse it and shift the token into its place.
-      { name: 'b', url: path.join(upstream, 'b'), token },
+      // The regression: a clone URL with no branch. `branch` is empty, and a
+      // tab separator would collapse it and shift the clone URL into its place.
+      { name: 'b', url: nowhere, clone_url: path.join(upstream, 'b') },
       { name: 'c', url: path.join(upstream, 'c') },
-      { name: 'd', url: withBranch, branch: 'feature', token },
+      { name: 'd', url: nowhere, clone_url: withBranch, branch: 'feature' },
+      { name: 'e', url: hostAddress, clone_url: path.join(upstream, 'a') },
       { name: 'already', url: path.join(upstream, 'a') },
       { name: 'broken', url: path.join(upstream, 'does-not-exist') },
     ];
@@ -114,9 +124,19 @@ if (!hasBash) {
 
     assert.match(output, /source 'already' already materialized/);
     assert.match(output, /WARNING: clone of 'broken' failed/);
-    assert.ok(!output.includes(token), 'a token must never reach the session log');
+    assert.equal(
+      git(['remote', 'get-url', 'origin'], path.join(workspace, 'b')),
+      path.join(upstream, 'b'),
+      'a proxied source is cloned from, and fetches and pushes through, its clone_url',
+    );
+    assert.equal(
+      git(['remote', 'get-url', 'origin'], path.join(workspace, 'e')),
+      path.join(upstream, 'a'),
+      "an older checkout's origin moves from the source host to the proxy",
+    );
+    assert.match(output, /source 'e' already materialized — origin now goes through Studio/);
     const config = await readFile(path.join(workspace, 'b', '.git', 'config'), 'utf8');
-    assert.ok(!config.includes(token), 'a token must never land in .git/config');
+    assert.doesNotMatch(config, /password|token/i, 'no credential lands in .git/config');
 
     // ── Concurrency ──
     // Four stubbed clones of two seconds each: sequentially that is eight

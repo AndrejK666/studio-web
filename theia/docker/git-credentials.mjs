@@ -1,26 +1,24 @@
 #!/usr/bin/env node
 // git credential helper for a session container.
 //
-// The credentials are already in this container: the studio-session gear
-// resolves repository tokens from credstore and passes them in STUDIO_SOURCES
-// (and STUDIO_ROOT_TOKEN), and a personal token in STUDIO_GIT_PAT. What was
-// missing was any git configuration that uses them, so a `git push` by a
-// person in a terminal — or by an agent in one of Orca's worktrees — failed
-// with "could not read Username" instead of authenticating.
+// A session holds no source host's key (#1095). Its project's repositories
+// are cloned through Studio's Git proxy (`studio-git`), which attaches the
+// connection's key upstream, and the session proves itself to the proxy with
+// the one credential the studio-session gear minted for it at launch:
+// STUDIO_GIT_PROXY_TOKEN. It names this session, nothing else, and stops
+// working when the session stops.
 //
-// The rule is deliberately narrow: answer only for hosts this workspace
-// actually uses, so a token cannot be handed to some unrelated host that a
-// repository's config, a submodule or an agent decides to contact.
-//
-//   1. a per-source token whose host AND path match the request wins;
-//   2. otherwise the personal token answers, but only for a known host;
-//   3. anything else gets no answer at all — git then fails without a prompt
-//      (GIT_TERMINAL_PROMPT=0), which is the correct outcome.
+// The rule is deliberately narrow: answer only for the proxy addresses this
+// workspace was cloned from (STUDIO_SOURCES' `clone_url`), host AND path, so
+// the session credential is never handed to some other host or repository a
+// repository's config, a submodule or an agent decides to contact. Anything
+// else gets no answer at all: git then fails without a prompt
+// (GIT_TERMINAL_PROMPT=0), or clones anonymously when the host allows it.
 //
 // `store` and `erase` do nothing: nothing is persisted, so every git
-// invocation re-reads the environment and a rotated token takes effect at
-// once. Nothing here writes to stdout except the credential protocol, and
-// errors are swallowed — a broken helper must not stall or spam a git command.
+// invocation re-reads the environment. Nothing here writes to stdout except
+// the credential protocol, and errors are swallowed: a broken helper must not
+// stall or spam a git command.
 
 const [action] = process.argv.slice(2);
 
@@ -41,68 +39,50 @@ async function readRequest() {
     return request;
 }
 
-/** A URL's host, or undefined when it is not one git would ask us about. */
-function hostOf(url) {
-    try {
-        return new URL(url).host || undefined;
-    } catch {
-        return undefined;
-    }
-}
-
-/** `/org/repo.git` and `org/repo` compare equal; git sends the latter. */
+/** `/cf/x/sources/api.git` and `cf/x/sources/api` compare equal; git sends the latter. */
 function normalizePath(value) {
-    return (value ?? '').replace(/^\/+/, '').replace(/\.git$/, '').toLowerCase();
+    return (value ?? '').replace(/^\/+/, '').replace(/\/+$/, '').replace(/\.git$/, '').toLowerCase();
 }
 
-/** Every remote this workspace was built from, with the token it carries. */
-function knownRemotes() {
+/** The proxy addresses this workspace's sources are cloned from. */
+function proxyRemotes() {
     const remotes = [];
-    const add = (url, token) => {
-        const host = hostOf(url);
-        if (host) {
-            remotes.push({ host, path: normalizePath(new URL(url).pathname), token });
-        }
-    };
     try {
         for (const source of JSON.parse(process.env.STUDIO_SOURCES ?? '[]')) {
-            add(source?.url, source?.token);
+            if (typeof source?.clone_url !== 'string') continue;
+            try {
+                const url = new URL(source.clone_url);
+                remotes.push({
+                    protocol: url.protocol.replace(/:$/, ''),
+                    host: url.host,
+                    path: normalizePath(url.pathname),
+                });
+            } catch {
+                // Not a URL: nothing to answer for.
+            }
         }
     } catch {
-        // A malformed STUDIO_SOURCES must not take the personal token with it.
-    }
-    if (process.env.STUDIO_ROOT_URL) {
-        add(process.env.STUDIO_ROOT_URL, process.env.STUDIO_ROOT_TOKEN);
+        // A malformed STUDIO_SOURCES answers for nothing.
     }
     return remotes;
 }
 
 function resolve(request) {
-    if (request.protocol && request.protocol !== 'https' && request.protocol !== 'http') {
-        return undefined; // ssh and friends do not use this path
-    }
-    const host = request.host;
-    if (!host) {
+    const token = process.env.STUDIO_GIT_PROXY_TOKEN?.trim();
+    if (!token || !request.host) {
         return undefined;
     }
-    const remotes = knownRemotes();
     const path = normalizePath(request.path);
-
-    // A source token is scoped to its own repository, so it is only offered
-    // when the request is for that repository. `credential.useHttpPath` is
-    // what makes git send the path at all; the entrypoint sets it.
-    const exact = remotes.find(
-        (remote) => remote.host === host && remote.token && path && remote.path === path,
+    // `credential.useHttpPath` is what makes git send the path at all; the
+    // entrypoint sets it. Without a path nothing matches.
+    const known = proxyRemotes().some(
+        (remote) =>
+            remote.protocol === (request.protocol ?? 'https') &&
+            remote.host === request.host &&
+            path &&
+            remote.path === path,
     );
-    if (exact) {
-        return exact.token;
-    }
-
-    const personal = process.env.STUDIO_GIT_PAT?.trim();
-    if (personal && remotes.some((remote) => remote.host === host)) {
-        return personal;
-    }
-    return undefined;
+    return known ? token : undefined;
 }
 
 async function main() {
@@ -113,9 +93,8 @@ async function main() {
     if (!token) {
         return;
     }
-    // "oauth2" satisfies both GitHub and GitLab personal access tokens; the
-    // token is the password in either case.
-    process.stdout.write(`username=oauth2\npassword=${token}\n`);
+    // The proxy reads the password and ignores the user name.
+    process.stdout.write(`username=studio-session\npassword=${token}\n`);
 }
 
 main().catch(() => {

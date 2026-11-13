@@ -24,6 +24,47 @@ pub struct Source {
     pub held_outside: Option<uuid::Uuid>,
 }
 
+/// Where the proxy serves a workspace's source, gateway-rooted: what a
+/// desktop's listing returns and what a session clones (#1095).
+pub fn source_path(workspace_id: uuid::Uuid, name: &str) -> String {
+    format!("/studio-git/v1/workspaces/{workspace_id}/sources/{name}")
+}
+
+/// Whether a presented token has the shape of a session's Git proxy
+/// credential (#1095): 64 lowercase hex characters, as studio-session mints
+/// it. A person's token is a JWT, with dots, so it is never mistaken for one,
+/// and only a token of this shape is looked up among the sessions.
+pub fn looks_like_session_credential(token: &str) -> bool {
+    token.len() == 64
+        && token
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Who a session's clone, fetch or push acts as (#1095): the session itself,
+/// as a service, in the tenant its launcher was in, and only for the
+/// workspace it was launched for. `None` for any other workspace: the
+/// credential is that one session's, so another workspace is not there to it.
+///
+/// The scopes are the task worker's (`*`): what the session may reach is
+/// still decided by the tenant clamp, and what it may read is the
+/// workspace's sources, read under this context like a member's.
+pub fn session_context(
+    identity: &crate::studio_session::sdk::SessionIdentity,
+    workspace_id: uuid::Uuid,
+) -> Option<toolkit_security::SecurityContext> {
+    if identity.workspace_id != workspace_id {
+        return None;
+    }
+    toolkit_security::SecurityContext::builder()
+        .subject_id(identity.session_id)
+        .subject_type("service")
+        .subject_tenant_id(identity.tenant_id)
+        .token_scopes(vec!["*".to_owned()])
+        .build()
+        .ok()
+}
+
 /// The two Git services the smart-HTTP protocol names in `info/refs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Service {
@@ -121,6 +162,40 @@ mod tests {
         );
         assert_eq!(upstream_url("ssh://github.com/acme/api", "info/refs"), None);
         assert_eq!(upstream_url("file:///etc", "info/refs"), None);
+    }
+
+    #[test]
+    fn only_a_minted_shape_is_taken_for_a_session_credential() {
+        let minted = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        assert!(looks_like_session_credential(&minted));
+        for not in [
+            "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln",
+            "",
+            &minted[..63],
+            &minted.to_uppercase(),
+            &format!("{minted}0"),
+        ] {
+            assert!(!looks_like_session_credential(not), "{not}");
+        }
+    }
+
+    #[test]
+    fn a_session_acts_for_its_own_workspace_only_and_as_a_service() {
+        let identity = crate::studio_session::sdk::SessionIdentity {
+            session_id: uuid::Uuid::from_u128(0x5e5),
+            tenant_id: uuid::Uuid::from_u128(0x0a),
+            workspace_id: uuid::Uuid::from_u128(0xb0),
+        };
+        let ctx = session_context(&identity, uuid::Uuid::from_u128(0xb0)).expect("its workspace");
+        assert_eq!(ctx.subject_id(), identity.session_id);
+        assert_eq!(ctx.subject_tenant_id(), identity.tenant_id);
+        assert_eq!(ctx.subject_type(), Some("service"));
+        assert!(ctx.bearer_token().is_none(), "no person's token travels");
+        assert!(session_context(&identity, uuid::Uuid::from_u128(0xb1)).is_none());
     }
 
     #[test]

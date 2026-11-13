@@ -58,7 +58,7 @@ when the heartbeats stop.
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
 | `cpt-studio-nfr-session-bounds` | Four-hour lifetime, bounded ports | `cpt-studio-component-session-reaper`, `SessionService::allocate_port` | `max_session_secs` (14400 by default) and `idle_session_secs` (900) are enforced by the `session.reap` run; the Docker driver allocates from `port_range_start`–`port_range_end` (41000–41099) | `studio_session` unit tests in the `test-backend` job |
-| `cpt-studio-nfr-credential-isolation` | No secret in a browser or an API response | `cpt-studio-component-session` | Repository tokens are resolved from credstore under the caller's identity and reach the container only as environment for its credential helper; provider keys are not injected (ADR-0030); no response carries a token except the session's own gate token in its URL | `test-theia-session-gate` job (`theia/docker/git-credentials.test.mjs`) |
+| `cpt-studio-nfr-credential-isolation` | No secret in a browser or an API response | `cpt-studio-component-session` | No source host's key reaches the container (#1095): the project's sources are cloned through `studio-git`, which the session reaches with its own per-launch credential; provider keys are not injected (ADR-0030); no response carries a token except the session's own gate token in its URL | `launch_sources` and `service` unit tests; `test-theia-session-gate` job (`theia/docker/git-credentials.test.mjs`, `clone-sources.test.mjs`) |
 
 #### Key ADRs
 
@@ -144,12 +144,17 @@ carry the entrypoint's neutral author. `agent_env` and `git_identity_env` stay
 in the code for the one-person desktop and the connection-scoped path that
 replaces them.
 
-What still enters the container is the repository tokens of the workspace's
-sources (`STUDIO_SOURCES`, `STUDIO_ROOT_TOKEN`), resolved from credstore under
-the caller's identity, for the in-container credential helper. A source whose
-connection is personal carries no token reference, so its token is never
-resolved into a shared container. A missing or unreadable token is a warning
-and the source is cloned without it.
+No source host's key enters the container either (#1095). A project source
+whose connection is the organization's is cloned through Studio's Git proxy
+(`studio-git`): its `STUDIO_SOURCES` entry carries the repository's own `url`
+and a `clone_url` on the proxy, and the session authenticates to the proxy
+with `STUDIO_GIT_PROXY_TOKEN`, 256 random bits minted per launch, kept only in
+the runtime's environment and resolved back to the session by
+`SessionGitAccessV1` (on any replica). The proxy attaches the connection's
+key upstream, so clones, fetches and pushes all go through it. A source that
+is not the project's, one whose connection is held outside the organization,
+and a workspace root are cloned without credentials; `token_ref` and
+`root_token_ref` in the launch request are ignored.
 
 **ADRs**: `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves`
 
@@ -396,7 +401,7 @@ caller's identity, and resolves an S2S token back to the session's
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|----------------|----------|
 | `cpt-studio-component-account-management` | `AccountManagementClient` | Workspace access; the project's sources from its config |
-| `credstore` (`cpt-studio-component-platform-feature-gears`) | `CredStoreClientV1` | Repository tokens, under the caller's identity |
+| `credstore` (`cpt-studio-component-platform-feature-gears`) | `CredStoreClientV1` | Provider keys for the one-person desktop path (`agent_env`); no repository token is read for a container session (#1095) |
 | `cpt-studio-component-tasks` | `TaskQueue` (resolved per request), `sdk::register` | `session.await_ready` and `session.reap` |
 | `cpt-studio-component-scheduler` | `platform_schedules()` | The `session-reaper` schedule |
 | `cpt-studio-component-theia-bridge` | consumes `StudioSessionDiscoveryClientV1` | Control endpoint and token discovery |
@@ -432,7 +437,6 @@ sequenceDiagram
     participant T as studio-tasks
     P->>S: POST /sessions {workspace_id, repos}
     S->>AM: project sources from its config
-    S->>C: repository tokens as the caller
     S->>AM: get_tenant(workspace) as the caller (the access decision)
     S->>D: list: a live session for this workspace?
     alt live

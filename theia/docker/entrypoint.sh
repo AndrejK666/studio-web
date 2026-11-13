@@ -82,25 +82,29 @@ git config --global --add safe.directory '*'
 git config --global user.name  "${STUDIO_GIT_AUTHOR_NAME:-Constructor Studio}"
 git config --global user.email "${STUDIO_GIT_AUTHOR_EMAIL:-studio@constructor.tech}"
 
-# Session git credentials. The tokens are already in this container — the
-# gear resolves them from credstore into STUDIO_SOURCES / STUDIO_ROOT_TOKEN,
-# and a personal one into STUDIO_GIT_PAT. This is the configuration that lets
-# git use them, so a person in a terminal, or an agent in one of Orca's
-# worktrees, can push instead of failing with "could not read Username".
-# useHttpPath is what makes git send the repository path, without which a
-# per-source token could not be confined to its own repository. The helper
-# answers only for hosts this workspace uses — see docker/git-credentials.mjs.
+# Session git credentials. No source host's key is in this container
+# (#1095): the project's sources are cloned through Studio's Git proxy, which
+# attaches the connection's key upstream, and the session proves itself to
+# the proxy with STUDIO_GIT_PROXY_TOKEN, minted for this session at launch.
+# This is the configuration that lets git present it, so a clone, a fetch and
+# a push (by a person in a terminal, or an agent in one of Orca's worktrees)
+# all authenticate. useHttpPath is what makes git send the repository path,
+# without which the credential could not be confined to the proxy addresses
+# this workspace was cloned from — see docker/git-credentials.mjs.
 git config --global credential.useHttpPath true
 git config --global credential.helper '!node /usr/local/lib/studio-git-credentials.mjs'
 
 # ── Workspace sources (multi-repo) ────────────────────────────────────────
-# STUDIO_SOURCES is a JSON array of {name, url, branch?, token?} injected by
-# the studio-session gear (tokens resolved from credstore, env-only). Each git
-# source is cloned into /workspace/<name> if missing; local sources arrive as
-# bind mounts and the canonical .cf-workspace.toml lists them all for the
-# Studio's Workspace Sources. Tokens go through an inline credential helper
-# (username "oauth2" satisfies both GitHub and GitLab PATs) and never land in
-# .git/config.
+# STUDIO_SOURCES is a JSON array of {name, dir?, url, clone_url?, branch?}
+# injected by the studio-session gear. `url` is the repository's own address
+# (what .cf-workspace.toml records); `clone_url` is Studio's Git proxy for it,
+# what is cloned and what `origin` points at, so fetches and pushes go through
+# the proxy too. A source without `clone_url` is not the project's own (or its
+# connection is not the organization's) and is cloned from `url` without
+# credentials. Each git source is cloned into /workspace/<dir> if missing;
+# local sources arrive as bind mounts and the canonical .cf-workspace.toml
+# lists them all for the Studio's Workspace Sources. Credentials come from the
+# session helper configured above and never land in .git/config.
 #
 # This phase runs BEHIND the IDE, not in front of it — see the call site below.
 # Defined between the markers because docker/clone-sources.test.mjs extracts it
@@ -108,22 +112,27 @@ git config --global credential.helper '!node /usr/local/lib/studio-git-credentia
 # ships.
 # >>> studio:clone-sources
 clone_source() {
-    local name=$1 dir=$2 url=$3 branch=$4 token=$5
+    local name=$1 dir=$2 url=$3 branch=$4 clone_url=$5
     local dest="$WORKSPACE/$dir"
-    if [ -e "$dest/.git" ] || { [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
+    if [ -e "$dest/.git" ]; then
+        # A checkout from before the proxy points `origin` at the source host,
+        # where this session holds no key any more: repoint it, so its fetches
+        # and pushes go through the proxy like a fresh clone's.
+        if [ -n "$clone_url" ] && [ "$(git -C "$dest" remote get-url origin 2>/dev/null)" = "$url" ]; then
+            git -C "$dest" remote set-url origin "$clone_url"
+            echo "[entrypoint] source '$name' already materialized — origin now goes through Studio"
+        else
+            echo "[entrypoint] source '$name' already materialized — skipping"
+        fi
+        return 0
+    fi
+    if [ -d "$dest" ] && [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
         echo "[entrypoint] source '$name' already materialized — skipping"
         return 0
     fi
-    echo "[entrypoint] cloning $url into $dest"
-    local opts=()
-    if [ -n "$token" ]; then
-        opts+=(-c "credential.helper=!f() { echo username=oauth2; echo password=\${STUDIO_GIT_TOKEN}; }; f")
-    fi
-    # The token reaches the helper through this command's own environment
-    # rather than a shell-wide export: concurrent clones would otherwise
-    # overwrite each other's credentials. It still never lands in .git/config.
-    if ! STUDIO_GIT_TOKEN="$token" git "${opts[@]}" \
-            clone ${branch:+--branch "$branch"} "$url" "$dest"; then
+    local from=${clone_url:-$url}
+    echo "[entrypoint] cloning $from into $dest"
+    if ! git clone ${branch:+--branch "$branch"} "$from" "$dest"; then
         echo "[entrypoint] WARNING: clone of '$name' failed — continuing"
     fi
 }
@@ -134,12 +143,11 @@ clone_workspace_sources() {
     if [ -n "${STUDIO_SOURCES:-}" ]; then
         # Fields are separated by US (0x1f), not a tab: a tab is IFS whitespace,
         # so `read` collapses runs of them and an absent `branch` would shift the
-        # token into its place — a source with a token and no branch then cloned
-        # with `--branch <token>`, which fails and prints the token into the log.
+        # next field into its place, cloning with `--branch <clone url>`.
         node -e '
             const sources = JSON.parse(process.env.STUDIO_SOURCES);
             for (const s of sources) {
-                console.log([s.name, s.dir ?? s.name, s.url, s.branch ?? "", s.token ?? ""].join("\u001f"));
+                console.log([s.name, s.dir ?? s.name, s.url, s.branch ?? "", s.clone_url ?? ""].join("\u001f"));
             }
         ' | {
             # Clones run concurrently. Several sources are the normal case and
@@ -148,8 +156,8 @@ clone_workspace_sources() {
             # phase the splash above exists to cover. STUDIO_CLONE_JOBS caps the
             # concurrency; the constraint is network and volume throughput.
             running=0
-            while IFS=$'\x1f' read -r name dir url branch token; do
-                clone_source "$name" "$dir" "$url" "$branch" "$token" &
+            while IFS=$'\x1f' read -r name dir url branch clone_url; do
+                clone_source "$name" "$dir" "$url" "$branch" "$clone_url" &
                 running=$((running + 1))
                 if [ "$running" -ge "${STUDIO_CLONE_JOBS:-4}" ]; then
                     wait -n || true
@@ -175,11 +183,9 @@ if [ -n "${STUDIO_ROOT_URL:-}" ]; then
     if [ ! -d "$WORKSPACE/.git" ] || ! git -C "$WORKSPACE" remote get-url origin >/dev/null 2>&1; then
         echo "[entrypoint] adopting workspace root ${STUDIO_ROOT_URL}"
         ROOT_TMP=$(mktemp -d)
-        ROOT_OPTS=()
-        if [ -n "${STUDIO_ROOT_TOKEN:-}" ]; then
-            ROOT_OPTS+=(-c "credential.helper=!f() { echo username=oauth2; echo password=\${STUDIO_ROOT_TOKEN}; }; f")
-        fi
-        if git "${ROOT_OPTS[@]}" clone \
+        # No credentials: a session holds no source host's key (#1095), so a
+        # root repository is cloned only when its host serves it openly.
+        if git clone \
             ${STUDIO_ROOT_BRANCH:+--branch "$STUDIO_ROOT_BRANCH"} \
             "$STUDIO_ROOT_URL" "$ROOT_TMP/repo"
         then

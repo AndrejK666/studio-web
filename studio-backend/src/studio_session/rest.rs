@@ -121,8 +121,10 @@ pub struct RepoSpecDto {
     pub target: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
-    /// credstore secret reference with a PAT for private repos. Resolved
-    /// server-side; the token value never travels through this API.
+    /// Ignored since #1095: a session holds no source host's key. A project
+    /// source is cloned through Studio's Git proxy with its connection's key;
+    /// anything else is cloned without credentials. Kept so older portals'
+    /// requests still parse.
     #[serde(default)]
     pub token_ref: Option<String>,
 }
@@ -145,7 +147,9 @@ pub struct CreateSessionRequest {
     pub root_repo_url: Option<String>,
     #[serde(default)]
     pub root_branch: Option<String>,
-    /// credstore secret reference with a PAT for the workspace repository.
+    /// Ignored since #1095: a session holds no source host's key, so the
+    /// workspace repository is cloned without credentials. Kept so older
+    /// portals' requests still parse.
     #[serde(default)]
     pub root_token_ref: Option<String>,
     /// Sources beyond the project's own. The project's repositories are read
@@ -220,19 +224,29 @@ async fn create_session(
         svc.project_git_sources(&ctx, req.workspace_id).await,
         req.repos
             .into_iter()
-            .map(|r| super::launch_sources::Planned {
-                name: r.name,
-                kind: r.kind,
-                url: r.url,
-                path: r.path,
-                target: r.target,
-                branch: r.branch,
-                token_ref: r.token_ref,
+            .map(|r| {
+                if r.token_ref.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+                    tracing::info!(
+                        source = %r.name,
+                        "studio-session: token_ref is ignored; a session holds no source host's key (#1095)"
+                    );
+                }
+                super::launch_sources::Planned {
+                    name: r.name,
+                    kind: r.kind,
+                    url: r.url,
+                    path: r.path,
+                    target: r.target,
+                    branch: r.branch,
+                    // `plan` decides: only a project source goes through the proxy.
+                    via_proxy: false,
+                }
             })
             .collect(),
     );
-    // Map them to specs, resolving per-repo PATs from credstore under the
-    // caller's tenant.
+    // Map them to specs. No token is resolved: a session holds no source
+    // host's key (#1095). The project's sources are cloned through the Git
+    // proxy, which attaches the connection's key; the rest without one.
     let mut repos = Vec::with_capacity(planned.len());
     for r in planned {
         let kind = match r.kind.as_str() {
@@ -246,23 +260,6 @@ async fn create_session(
                 .create());
             }
         };
-        // A missing/inaccessible secret must not block the launch: public
-        // repositories clone fine without it, and a private one fails later
-        // with git's own message in the session log.
-        let token = match r.token_ref.as_deref().filter(|t| !t.trim().is_empty()) {
-            Some(token_ref) => match svc.resolve_git_token(&ctx, token_ref.trim()).await {
-                Ok(t) => Some(t),
-                Err(e) => {
-                    tracing::warn!(
-                        source = %r.name,
-                        token_ref = %token_ref.trim(),
-                        "studio-session: repo token unavailable ({e:#}) — cloning without credentials"
-                    );
-                    None
-                }
-            },
-            None => None,
-        };
         repos.push(RepoSpec {
             name: r.name,
             kind,
@@ -270,47 +267,33 @@ async fn create_session(
             path: r.path,
             target: r.target,
             branch: r.branch,
-            token,
+            via_proxy: r.via_proxy,
         });
     }
-    // Workspace root repository (optional).
-    let root_repo = match req
+    if req
+        .root_token_ref
+        .as_deref()
+        .is_some_and(|t| !t.trim().is_empty())
+    {
+        tracing::info!(
+            "studio-session: root_token_ref is ignored; a session holds no source host's key (#1095)"
+        );
+    }
+    // Workspace root repository (optional), cloned without credentials.
+    let root_repo = req
         .root_repo_url
         .as_deref()
         .map(str::trim)
         .filter(|u| !u.is_empty())
-    {
-        Some(url) => {
-            let token = match req
-                .root_token_ref
-                .as_deref()
-                .map(str::trim)
-                .filter(|t| !t.is_empty())
-            {
-                Some(token_ref) => match svc.resolve_git_token(&ctx, token_ref).await {
-                    Ok(t) => Some(t),
-                    Err(e) => {
-                        tracing::warn!(
-                            token_ref = %token_ref,
-                            "studio-session: workspace-root token unavailable ({e:#}) — cloning without credentials"
-                        );
-                        None
-                    }
-                },
-                None => None,
-            };
-            Some(RepoSpec {
-                name: "workspace-root".to_string(),
-                kind: RepoKind::Git,
-                url: Some(url.to_string()),
-                path: None,
-                target: None,
-                branch: req.root_branch.clone(),
-                token,
-            })
-        }
-        None => None,
-    };
+        .map(|url| RepoSpec {
+            name: "workspace-root".to_string(),
+            kind: RepoKind::Git,
+            url: Some(url.to_string()),
+            path: None,
+            target: None,
+            branch: req.root_branch.clone(),
+            via_proxy: false,
+        });
 
     let (session, existed) = svc
         .create(&ctx, req.workspace_id, req.root_path, root_repo, repos)
