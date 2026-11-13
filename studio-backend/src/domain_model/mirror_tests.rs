@@ -52,7 +52,8 @@ async fn mirror() -> Arc<DomainMirror> {
 }
 
 /// A caller in a tenant of its own: the suite shares one database and keeps
-/// itself apart by tenant.
+/// itself apart by tenant, so every test makes its tenants anew
+/// (`Uuid::new_v4`) — two tests on one tenant clear and fill each other's rows.
 fn ctx_in(tenant: Uuid) -> SecurityContext {
     SecurityContext::builder()
         .subject_id(Uuid::from_u128(1))
@@ -199,8 +200,8 @@ fn names(v: &Value) -> Vec<String> {
 
 /// Risks with numbers, text, absent and null fields, and a list; teams that
 /// deliver projects.
-async fn seeded(tenant: u128) -> Pair {
-    let p = Pair::new(Uuid::from_u128(tenant)).await;
+async fn seeded() -> Pair {
+    let p = Pair::new(Uuid::new_v4()).await;
     p.write(json!([
         {"op": "upsert", "type": "risk", "key": "r1", "value": {"title": "DB outage", "score": 0.9, "impact": "critical", "status": "mitigating"}},
         {"op": "upsert", "type": "risk", "key": "r2", "value": {"title": "Late vendor", "score": 0.5, "impact": "high", "status": "identified"}},
@@ -240,7 +241,7 @@ async fn files_and_their_subtypes_share_fields_in_both_readers() {
 
 #[tokio::test]
 async fn filters_answer_the_same_from_postgres_as_from_the_graph() {
-    let p = seeded(0xd001).await;
+    let p = seeded().await;
     for w in [
         json!({}),
         json!({"score": {"_gt": 0.5}}),
@@ -281,7 +282,7 @@ async fn filters_answer_the_same_from_postgres_as_from_the_graph() {
 
 #[tokio::test]
 async fn orders_and_pages_answer_the_same() {
-    let p = seeded(0xd002).await;
+    let p = seeded().await;
     let by_title = p
         .same(
             "risk",
@@ -350,7 +351,7 @@ async fn walk(
 
 #[tokio::test]
 async fn cursors_walk_the_same_pages_from_postgres_as_from_the_graph() {
-    let p = seeded(0xd006).await;
+    let p = seeded().await;
     let no_text_score = json!({"_not": {"score": {"_eq": "unknown"}}});
     for (order, filter) in [
         (json!([{"field": "title"}]), json!({})),
@@ -414,7 +415,7 @@ async fn cursors_walk_the_same_pages_from_postgres_as_from_the_graph() {
 
 #[tokio::test]
 async fn relations_both_ways_and_nested_answer_the_same() {
-    let p = seeded(0xd003).await;
+    let p = seeded().await;
     let teams = p
         .same(
             "team",
@@ -450,7 +451,7 @@ async fn relations_both_ways_and_nested_answer_the_same() {
 
 #[tokio::test]
 async fn aggregates_answer_the_same() {
-    let p = seeded(0xd004).await;
+    let p = seeded().await;
     let by_impact = p
         .same(
             "risk",
@@ -474,7 +475,7 @@ async fn aggregates_answer_the_same() {
 
 #[tokio::test]
 async fn writes_after_the_fill_reach_the_read_model() {
-    let p = seeded(0xd005).await;
+    let p = seeded().await;
     p.write(json!([
         {"op": "upsert", "type": "risk", "key": "r8", "value": {"title": "New", "score": 0.7, "impact": "low"}, "as": "r8"},
         {"op": "patch", "id": "$r8", "set": {"impact": "critical"}},
@@ -521,7 +522,7 @@ async fn writes_after_the_fill_reach_the_read_model() {
 
 #[tokio::test]
 async fn an_unfilled_tenant_reads_the_graph_and_starts_a_fill() {
-    let tenant = Uuid::from_u128(0xd006);
+    let tenant = Uuid::new_v4();
     let inner = Arc::new(InMemoryDomainStore::default());
     let store = IndexedDomainStore::new(inner.clone(), mirror().await);
     let ctx = ctx_in(tenant);
@@ -543,19 +544,36 @@ async fn an_unfilled_tenant_reads_the_graph_and_starts_a_fill() {
 use super::super::access::{Access, AccessError, ObjectPolicy, TenantParents};
 use toolkit_security::{AccessScope, ScopeConstraint, ScopeFilter, pep_properties};
 
-const ORG: Uuid = Uuid::from_u128(0xd0a0);
-const MINE: Uuid = Uuid::from_u128(0xd0a1);
-const THEIRS: Uuid = Uuid::from_u128(0xd0a2);
+/// An organization with two projects, made anew by every test that needs one:
+/// the read model keeps tests apart only by tenant, and two tests filling the
+/// same organization see each other's rows.
+#[derive(Clone, Copy)]
+struct Org {
+    org: Uuid,
+    mine: Uuid,
+    theirs: Uuid,
+}
 
-struct Tree;
-#[async_trait::async_trait]
-impl TenantParents for Tree {
-    async fn parent_of(&self, _ctx: &SecurityContext, t: Uuid) -> Option<Uuid> {
-        (t == MINE || t == THEIRS).then_some(ORG)
+impl Org {
+    fn new() -> Self {
+        Self {
+            org: Uuid::new_v4(),
+            mine: Uuid::new_v4(),
+            theirs: Uuid::new_v4(),
+        }
     }
 }
 
-struct OneProject;
+struct Tree(Org);
+#[async_trait::async_trait]
+impl TenantParents for Tree {
+    async fn parent_of(&self, _ctx: &SecurityContext, t: Uuid) -> Option<Uuid> {
+        (t == self.0.mine || t == self.0.theirs).then_some(self.0.org)
+    }
+}
+
+/// The caller may read one project of the organization: `mine`.
+struct OneProject(Org);
 #[async_trait::async_trait]
 impl ObjectPolicy for OneProject {
     async fn access(
@@ -564,27 +582,29 @@ impl ObjectPolicy for OneProject {
         _action: &str,
         _entity: Option<&str>,
     ) -> Result<Access, AccessError> {
-        let only = ScopeFilter::in_uuids(pep_properties::OWNER_TENANT_ID, vec![MINE]);
+        let only = ScopeFilter::in_uuids(pep_properties::OWNER_TENANT_ID, vec![self.0.mine]);
         let subtree =
             ScopeFilter::InTenantSubtree(toolkit_security::InTenantSubtreeScopeFilter::new(
                 pep_properties::OWNER_TENANT_ID,
-                toolkit_security::ScopeValue::Uuid(ORG),
+                toolkit_security::ScopeValue::Uuid(self.0.org),
             ));
         Ok(Access::new(
             ctx,
             AccessScope::from_constraints(vec![ScopeConstraint::new(vec![subtree, only])]),
-            Some(Arc::new(Tree)),
+            Some(Arc::new(Tree(self.0))),
         ))
     }
 }
 
 #[tokio::test]
 async fn a_project_grant_narrows_the_sql_root_its_total_and_its_relations() {
-    let p = Pair::new(ORG).await;
+    let org = Org::new();
+    let (mine, theirs) = (org.mine, org.theirs);
+    let p = Pair::new(org.org).await;
     p.write(json!([
-        {"op": "upsert", "type": "team", "key": "core", "project_id": MINE.to_string(), "value": {"name": "core"}, "as": "core"},
-        {"op": "upsert", "type": "project", "key": "apollo", "project_id": MINE.to_string(), "value": {"name": "apollo"}, "as": "a"},
-        {"op": "upsert", "type": "project", "key": "gemini", "project_id": THEIRS.to_string(), "value": {"name": "gemini"}, "as": "g"},
+        {"op": "upsert", "type": "team", "key": "core", "project_id": mine.to_string(), "value": {"name": "core"}, "as": "core"},
+        {"op": "upsert", "type": "project", "key": "apollo", "project_id": mine.to_string(), "value": {"name": "apollo"}, "as": "a"},
+        {"op": "upsert", "type": "project", "key": "gemini", "project_id": theirs.to_string(), "value": {"name": "gemini"}, "as": "g"},
         {"op": "link", "relation": "team.delivers", "from": "$core", "to": "$a"},
         {"op": "link", "relation": "team.delivers", "from": "$core", "to": "$g"},
     ]))
@@ -594,7 +614,7 @@ async fn a_project_grant_narrows_the_sql_root_its_total_and_its_relations() {
         p.inner.clone(),
         p.mirror.clone(),
     )))
-    .with_policy(Arc::new(OneProject));
+    .with_policy(Arc::new(OneProject(org)));
 
     let out = narrowed
         .query(&p.ctx, &query("project", json!({})))
@@ -624,7 +644,7 @@ async fn a_project_grant_narrows_the_sql_root_its_total_and_its_relations() {
 /// total must be the graph's at every page shape, including past the end.
 #[tokio::test]
 async fn totals_match_at_every_page_shape() {
-    let p = seeded(0xd0c7).await;
+    let p = seeded().await;
     let order = json!([{"field": "title", "direction": "asc"}]);
     for (limit, offset) in [
         (1, 0),
@@ -700,7 +720,7 @@ impl Pair {
 
 #[tokio::test]
 async fn several_scopes_answer_the_same_as_one_at_a_time() {
-    let p = scoped(Uuid::from_u128(0xd0d1)).await;
+    let p = scoped(Uuid::new_v4()).await;
     let (a, b) = (SCOPE_A.to_string(), SCOPE_B.to_string());
     let order = json!([{"field": "title"}]);
 
@@ -737,7 +757,7 @@ async fn several_scopes_answer_the_same_as_one_at_a_time() {
 
 #[tokio::test]
 async fn counts_without_rows_answer_the_same() {
-    let p = scoped(Uuid::from_u128(0xd0d5)).await;
+    let p = scoped(Uuid::new_v4()).await;
     let (a, b) = (SCOPE_A.to_string(), SCOPE_B.to_string());
 
     let grouped = p
@@ -775,7 +795,7 @@ async fn counts_without_rows_answer_the_same() {
 /// went through all their rows. Scopes narrow the owners first.
 #[tokio::test]
 async fn scopes_narrow_the_owners_the_pdp_is_asked_about() {
-    let tenant = Uuid::from_u128(0xd0d6);
+    let tenant = Uuid::new_v4();
     let p = scoped(tenant).await;
     let model = p.graph.tenant_model(&p.ctx).await.expect("model");
     let entity = model.resolve_entity_id("risk").expect("risk");
@@ -797,10 +817,12 @@ async fn scopes_narrow_the_owners_the_pdp_is_asked_about() {
 /// the caller may not read are neither listed nor counted.
 #[tokio::test]
 async fn a_project_grant_narrows_several_scopes_too() {
-    let p = Pair::new(ORG).await;
+    let org = Org::new();
+    let (mine, theirs) = (org.mine, org.theirs);
+    let p = Pair::new(org.org).await;
     p.write(json!([
-        {"op": "upsert", "type": "project", "key": "apollo", "project_id": MINE.to_string(), "value": {"name": "apollo"}},
-        {"op": "upsert", "type": "project", "key": "gemini", "project_id": THEIRS.to_string(), "value": {"name": "gemini"}},
+        {"op": "upsert", "type": "project", "key": "apollo", "project_id": mine.to_string(), "value": {"name": "apollo"}},
+        {"op": "upsert", "type": "project", "key": "gemini", "project_id": theirs.to_string(), "value": {"name": "gemini"}},
     ]))
     .await;
     p.fill().await;
@@ -808,10 +830,10 @@ async fn a_project_grant_narrows_several_scopes_too() {
         p.inner.clone(),
         p.mirror.clone(),
     )))
-    .with_policy(Arc::new(OneProject));
+    .with_policy(Arc::new(OneProject(org)));
     let q = Query::from_json(json!({
         "type": "project",
-        "project_ids": [MINE.to_string(), THEIRS.to_string()],
+        "project_ids": [mine.to_string(), theirs.to_string()],
         "aggregate": {"group_by": []},
         "limit": 0,
     }))
