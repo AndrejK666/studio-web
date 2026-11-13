@@ -228,6 +228,27 @@ pub trait ArtifactCounter: Send + Sync + 'static {
         type_leaf: &str,
         scope: &str,
     ) -> anyhow::Result<u32>;
+
+    /// [`Self::count_nodes`] for several projects at once, as a table of
+    /// projects asks: one question per type, not one per type and project.
+    ///
+    /// A project missing from the answer is UNKNOWN, by the same rule as an
+    /// `Err` above. Defaulted to one count per project, which keeps the
+    /// projects whose count failed out of the answer.
+    async fn count_nodes_in_projects(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        type_leaf: &str,
+        projects: &[String],
+    ) -> std::collections::HashMap<String, u32> {
+        let mut out = std::collections::HashMap::new();
+        for p in projects {
+            if let Ok(n) = self.count_nodes(ctx, type_leaf, p).await {
+                out.insert(p.clone(), n);
+            }
+        }
+        out
+    }
 }
 
 /// One ingested file, as a screen listing a project's specs needs it.
@@ -317,6 +338,24 @@ pub trait ProjectSignalSource: Send + Sync + 'static {
         scope: &str,
         days: usize,
     ) -> anyhow::Result<ProjectSignals>;
+
+    /// [`Self::project_signals`] for several projects at once: four reads
+    /// for all of them rather than four per project. A project missing from
+    /// the answer is UNKNOWN. Defaulted to one read per project.
+    async fn project_signals_in(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        projects: &[String],
+        days: usize,
+    ) -> std::collections::HashMap<String, ProjectSignals> {
+        let mut out = std::collections::HashMap::new();
+        for p in projects {
+            if let Ok(s) = self.project_signals(ctx, p, days).await {
+                out.insert(p.clone(), s);
+            }
+        }
+        out
+    }
 }
 
 pub use super::service::{QualityFinding, QualityLink};
@@ -370,6 +409,19 @@ pub trait OpenPullRequests: Send + Sync + 'static {
         ctx: &toolkit_security::SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<OpenPull>>;
+
+    /// [`Self::open_pulls`] for several projects at once, in the order the
+    /// projects are given: one read for all of them. A project whose read
+    /// failed contributes nothing. Defaulted to one read per project.
+    async fn open_pulls_in(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        projects: &[String],
+    ) -> Vec<OpenPull> {
+        let reads =
+            futures_util::future::join_all(projects.iter().map(|p| self.open_pulls(ctx, p))).await;
+        reads.into_iter().filter_map(Result::ok).flatten().collect()
+    }
 }
 
 /// One piece of a project's work, as the sync keeps it: an issue, a pull
@@ -762,5 +814,34 @@ pub trait BuildRecords: Send + Sync + 'static {
         ctx: &toolkit_security::SecurityContext,
         project_id: &str,
         outcome: &BuildOutcome,
+    ) -> anyhow::Result<()>;
+}
+
+pub use super::clone_status::{CloneCause, CloneChannel, CloneFailure, CloneOutcome};
+
+/// Where the code paths that clone a project's sources say how it went
+/// (#1071): `studio-git` for a desktop's clone or fetch, `studio-session` for
+/// an IDE session's launch. Only the last outcome per (project, repository)
+/// is kept. Absent where the gear has no database; a writer that resolves
+/// nothing records nothing.
+#[async_trait]
+pub trait CloneOutcomes: Send + Sync + 'static {
+    /// Record the outcome of a clone or fetch of `clone_url`, a source of
+    /// `project`. The URL is reduced to host and path; no credential in it is
+    /// kept.
+    async fn record(
+        &self,
+        project: uuid::Uuid,
+        clone_url: &str,
+        outcome: CloneOutcome,
+    ) -> anyhow::Result<()>;
+
+    /// Forget a failure `channel` recorded for `clone_url`, now that it no
+    /// longer holds. Anything else recorded is kept.
+    async fn clear_failure(
+        &self,
+        project: uuid::Uuid,
+        clone_url: &str,
+        channel: CloneChannel,
     ) -> anyhow::Result<()>;
 }

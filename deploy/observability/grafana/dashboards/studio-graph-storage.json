@@ -1,0 +1,1133 @@
+{
+  "uid": "studio-graph-storage",
+  "title": "Studio — Graph storage database",
+  "description": "graph-storage, the node-and-edge store behind the domain model and artifact index, runs in-process in the backend and exports no metrics of its own yet. This board reads it from the outside: CloudNativePG's per-database statistics for `graph_storage`, next to the gear databases on the same cluster, and the backend's request latency for the gears that call it. Per-operation timings, walk sizes and pool waits need instrumentation in the backend and are not here.",
+  "tags": [
+    "studio",
+    "postgres",
+    "cnpg",
+    "graph-storage"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "Studio — Postgres",
+      "type": "link",
+      "url": "/d/studio-postgres",
+      "keepTime": true,
+      "includeVars": false
+    },
+    {
+      "title": "Studio — Resources",
+      "type": "link",
+      "url": "/d/studio-resources",
+      "keepTime": true,
+      "includeVars": false
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "vm"
+        },
+        "query": "label_values(cnpg_collector_up, env)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "dev",
+          "value": "dev"
+        }
+      },
+      {
+        "name": "cnpg_cluster",
+        "label": "Postgres cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "vm"
+        },
+        "query": "label_values(cnpg_pg_database_size_bytes{env=~\"$env\"}, cnpg_cluster)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "studio-postgres",
+          "value": "studio-postgres"
+        }
+      },
+      {
+        "name": "datname",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "vm"
+        },
+        "query": "label_values(cnpg_pg_database_size_bytes{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\"}, datname)",
+        "regex": "/^(?!template[01]$|postgres$).*/",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "text": [
+            "graph_storage"
+          ],
+          "value": [
+            "graph_storage"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Load — how much work the database is asked to do",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows read per second",
+      "description": "Rows the database handed back, per second. `returned` counts every row a sequential scan walked plus every index entry read; `fetched` counts the rows an index scan actually took from the table. Both rising together is more traffic; `returned` rising alone is scanning. graph-storage keeps nodes and edges in a few wide tables, so a projection or walk that misses an index shows here first.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rowsps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_tup_returned{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))",
+          "legendFormat": "returned · {{datname}} ({{env}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_tup_fetched{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))",
+          "legendFormat": "fetched · {{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Returned per fetched (whole-scan signal)",
+      "description": "Rows walked for every row an index lookup returned. Near 1 the reads are index-driven; tens or hundreds mean queries are scanning whole tables to find a few rows. Read it against the line above: a high ratio on a trickle of rows is harmless, a high ratio on a lot of rows is the slow page. Gaps are periods with no index reads at all.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_tup_returned{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m])) / (sum by (env, datname) (rate(cnpg_pg_stat_database_tup_fetched{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m])) > 0)",
+          "legendFormat": "{{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows written per second",
+      "description": "Inserts, updates and deletes. graph-storage writes in bursts — an artifact sync or a domain-model import upserts many nodes at once — so spikes here should line up with sync runs. Updates far above inserts on graph_storage mean nodes are being rewritten in place, which is what bloats the table and feeds autovacuum.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rowsps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_tup_inserted{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))",
+          "legendFormat": "insert · {{datname}} ({{env}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_tup_updated{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))",
+          "legendFormat": "update · {{datname}} ({{env}})"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_tup_deleted{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))",
+          "legendFormat": "delete · {{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Cache & IO — whether reads come from memory or from disk",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Buffer cache hit ratio",
+      "description": "Share of block reads served from shared buffers rather than from disk, over 5 minutes. Healthy is above 0.99. A drop that coincides with a rise in rows returned is a scan pushing the working set out of memory; a slow steady slide while the database grows means the data no longer fits.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_blks_hit{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m])) / ((sum by (env, datname) (rate(cnpg_pg_stat_database_blks_hit{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m])) + sum by (env, datname) (rate(cnpg_pg_stat_database_blks_read{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))) > 0)",
+          "legendFormat": "{{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Blocks read from disk per second",
+      "description": "Cache misses: 8 KiB blocks Postgres had to ask the operating system for. Some of them still come from the page cache, so this is an upper bound on real disk reads. Multiply by 8 KiB for bytes per second.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_blks_read{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))",
+          "legendFormat": "{{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Time spent reading blocks",
+      "description": "Seconds per second Postgres spent waiting on block reads — 1.0 means one backend was blocked on IO the whole time. Only measured when `track_io_timing` is on. It is off on studio-postgres today, so this panel stays at zero; turn the setting on in the cluster spec before reading anything into it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_blk_read_time{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m])) / 1000",
+          "legendFormat": "{{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Temporary files",
+      "description": "Sorts and hashes that did not fit in `work_mem` and spilled to disk. Bytes per second on the left, files created per hour on the right. Any steady spill on graph_storage points at a query sorting or grouping a large projection — a candidate for an index or a smaller page size.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_temp_bytes{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))",
+          "legendFormat": "bytes · {{datname}} ({{env}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (increase(cnpg_pg_stat_database_temp_files{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[1h]))",
+          "legendFormat": "files/h · {{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Connections — who holds the database and for how long",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Backends per database",
+      "description": "Server connections open on each database, split by state. `idle` is the pool keeping connections warm; `active` is work in flight; `idle in transaction` is a connection holding locks while the application does something else — on graph_storage that means a request opened a transaction and has not finished it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname, state) (cnpg_backends_total{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"})",
+          "legendFormat": "{{state}} · {{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Backends waiting on a lock (whole cluster)",
+      "description": "Connections blocked on a lock someone else holds. The exporter reports this per instance, not per database, so it covers every database on the cluster. Anything above zero for more than a scrape or two is contention: read it next to Longest transaction to find the holder.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, pod) (cnpg_backends_waiting_total{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\"})",
+          "legendFormat": "{{pod}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Longest open transaction",
+      "description": "Age of the oldest open transaction on each database, sampled at scrape time. Seconds are normal for a write; minutes hold back vacuum for the whole cluster and pin WAL. A long one on graph_storage is usually a sync or walk that kept its transaction open across many round trips.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "max by (env, datname) (cnpg_backends_max_tx_duration_seconds{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"})",
+          "legendFormat": "{{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Health — failures, maintenance and growth",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Deadlocks per hour",
+      "description": "Deadlocks Postgres detected and broke by aborting one side. The aborted request saw an error. Zero is the only healthy value; any at all on graph_storage means two writers lock nodes in different orders.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (increase(cnpg_pg_stat_database_deadlocks{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[1h]))",
+          "legendFormat": "{{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Commits and rollbacks per second",
+      "description": "Transactions ending each way. Rollbacks are not all errors — a read-only request that drops its transaction rolls back — so watch the shape, not the level: rollbacks jumping while commits hold steady is requests failing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_xact_commit{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))",
+          "legendFormat": "commit · {{datname}} ({{env}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, datname) (rate(cnpg_pg_stat_database_xact_rollback{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"}[5m]))",
+          "legendFormat": "rollback · {{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Checkpoints per hour (whole cluster)",
+      "description": "Timed checkpoints run on the schedule; requested ones are forced because WAL filled up between them. Requested checkpoints climbing means a write burst — on this cluster, most likely a graph-storage sync — is outrunning `max_wal_size`, and every forced checkpoint flushes shared buffers under load. Per instance, not per database.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, pod) (increase(cnpg_pg_stat_checkpointer_checkpoints_timed{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\"}[1h]))",
+          "legendFormat": "timed · {{pod}} ({{env}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, pod) (increase(cnpg_pg_stat_checkpointer_checkpoints_req{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\"}[1h]))",
+          "legendFormat": "requested · {{pod}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Database size",
+      "description": "On-disk size of each database, tables, indexes and TOAST together. The slope is the growth rate. A replica reports the same size as its primary, so the largest instance is shown rather than the sum.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "max by (env, datname) (cnpg_pg_database_size_bytes{env=~\"$env\", cnpg_cluster=~\"$cnpg_cluster\", datname=~\"$datname\"})",
+          "legendFormat": "{{datname}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Context — what people feel while the database does this",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Backend latency on the graph-storage routes",
+      "description": "p50 and p95 of the backend's own request duration, per gear, for the gears that read and write graph-storage: domain-model, artifact-ingest and organizations, over 15 minutes. If these climb while the database panels above stay flat, the time is spent in the backend, not in Postgres. Gaps mean no requests to that gear in the window.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 0,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.5, sum by (env, gear, le) (label_replace(rate(http_server_request_duration_seconds_bucket{env=~\"$env\", http_route=~\"/cf/(studio-domain-model|studio-artifact-ingest|studio-organizations)/.*\"}[15m]), \"gear\", \"$1\", \"http_route\", \"/cf/(studio-[a-z-]+)/.*\")))",
+          "legendFormat": "p50 · {{gear}} ({{env}})"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (env, gear, le) (label_replace(rate(http_server_request_duration_seconds_bucket{env=~\"$env\", http_route=~\"/cf/(studio-domain-model|studio-artifact-ingest|studio-organizations)/.*\"}[15m]), \"gear\", \"$1\", \"http_route\", \"/cf/(studio-[a-z-]+)/.*\")))",
+          "legendFormat": "p95 · {{gear}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per second on those routes",
+      "description": "How much traffic the latency next door is measured over. A p95 from a handful of requests is one slow request, not a trend.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 10,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, gear) (label_replace(rate(http_server_request_duration_seconds_count{env=~\"$env\", http_route=~\"/cf/(studio-domain-model|studio-artifact-ingest|studio-organizations)/.*\"}[15m]), \"gear\", \"$1\", \"http_route\", \"/cf/(studio-[a-z-]+)/.*\"))",
+          "legendFormat": "{{gear}} ({{env}})"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU throttling: backend and Postgres",
+      "description": "Share of CFS periods in which the container hit its CPU limit and was paused. graph-storage runs inside the backend process, so its query building and result decoding are throttled with the backend. Above 0.25 requests slow down regardless of what Postgres does; throttling on `postgres` slows every database on the cluster.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vm"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vm"
+          },
+          "editorMode": "code",
+          "expr": "sum by (env, container) (rate(container_cpu_cfs_throttled_periods_total{job=\"kubelet-cadvisor\", env=~\"$env\", container=~\"backend|postgres\"}[5m])) / (sum by (env, container) (rate(container_cpu_cfs_periods_total{job=\"kubelet-cadvisor\", env=~\"$env\", container=~\"backend|postgres\"}[5m])) > 0)",
+          "legendFormat": "{{container}} ({{env}})"
+        }
+      ]
+    }
+  ]
+}

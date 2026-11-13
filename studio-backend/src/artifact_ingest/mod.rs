@@ -14,6 +14,7 @@
 mod activity;
 mod builds; // builds the IDE reports, and Build in CI (ADR-0045)
 mod ci_runs;
+mod clone_status; // whether each project source could be cloned, and why not (#1071)
 mod comment_threads;
 mod entity;
 mod graph;
@@ -83,6 +84,10 @@ pub struct StudioArtifactIngestGear {
     /// The artifact index (see [`index`]). `None` = no database configured,
     /// and every listing reads the graph as it did before the index existed.
     index: std::sync::OnceLock<Option<Arc<index::ArtifactIndex>>>,
+    /// The last clone of each project source (see [`clone_status`]), kept in
+    /// the same database. `None` = no database: nothing is recorded and the
+    /// route answers 503.
+    clone_status: std::sync::OnceLock<Option<Arc<clone_status::CloneStatusStore>>>,
 }
 
 #[async_trait]
@@ -101,23 +106,32 @@ impl Gear for StudioArtifactIngestGear {
         // The index is optional in the same way studio-events' log is: without
         // a `database:` section nothing is lost but speed, so the gear says so
         // and carries on reading the graph.
-        let index = match ctx.db_required() {
+        let (index, clones) = match ctx.db_required() {
             Ok(db) => {
                 info!(
                     "studio-artifact-ingest: artifact index enabled — scoped listings read Postgres"
                 );
-                Some(Arc::new(index::ArtifactIndex::new(db.db())))
+                (
+                    Some(Arc::new(index::ArtifactIndex::new(db.db()))),
+                    Some(Arc::new(clone_status::CloneStatusStore::new(db.db()))),
+                )
             }
             Err(e) => {
                 warn!(
                     "studio-artifact-ingest: no database configured — no artifact index, every \
-                     listing walks the graph. Add a `database:` section (server + dbname) to \
-                     enable it: {e}"
+                     listing walks the graph, and no clone status is kept. Add a `database:` \
+                     section (server + dbname) to enable them: {e}"
                 );
-                None
+                (None, None)
             }
         };
         let _ = self.index.set(index);
+        // Where the code paths that clone a project's sources say how it went.
+        if let Some(clones) = &clones {
+            ctx.client_hub()
+                .register::<dyn port::CloneOutcomes>(clones.clone());
+        }
+        let _ = self.clone_status.set(clones);
         Ok(())
     }
 }
@@ -374,10 +388,11 @@ impl RestApiCapability for StudioArtifactIngestGear {
 
         // Retain for the process lifetime; the router also owns a clone.
         let _ = self.service.set(service.clone());
-        Ok(rest::register_routes(
+        let router = rest::register_routes(router, openapi, service, ctx.client_hub());
+        Ok(clone_status::register_routes(
             router,
             openapi,
-            service,
+            self.clone_status.get().cloned().flatten(),
             ctx.client_hub(),
         ))
     }

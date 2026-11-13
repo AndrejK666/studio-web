@@ -37,15 +37,14 @@ database:
         # toolkit-db caches one `Db` PER GEAR (manager.rs, `cache: DashMap<String, Db>`),
         # and a gear inherits this block unless it declares its own. This is
         # therefore not "three connections to pg_main" — it is three PER GEAR,
-        # and fourteen gear databases below inherit it: 14 x 3 = 42, plus the
-        # gears with their own `pool` (26), 68 per replica. Two replicas need
-        # 136, and 156 with Keycloak, the bootstrap Job, the operator and the
+        # and eight gear databases below inherit it: 8 x 3 = 24, plus six
+        # quiet gears at 2 (12) and the gears with their own larger `pool`
+        # (28, github-mirror's 2 among them), 64 per replica. Two replicas need
+        # 128, and 148 with Keycloak, the bootstrap Job, the operator and the
         # reserved slots, against `max_connections: 160`;
         # deploy/k8s/cloudnative-pg/README.md carries the table. It was 4, and
-        # two replicas then needed 172. Two replicas at 3 still give each gear
-        # 6 in all, more than one replica at 4 did. Raising it by one raises
-        # the ceiling by fourteen per replica, so give a busy gear its own
-        # `pool` instead.
+        # two replicas then needed 172. Raising it by one raises the ceiling by
+        # eight per replica, so give a busy gear its own `pool` instead.
         #
         # Keep a run of comment lines under 32: the config's YAML parser
         # (granit-parser) refuses more before the next entry, and the backend
@@ -478,12 +477,26 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_nodes_registry"
+      # Two, not the shared three: never above two on Dev or Test (#1077).
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
     config: {}
 
   resource-group:
     database:
       server: "pg_main"
       dbname: "studio_resource_group"
+      # Two, not the shared three: never above two on Dev or Test (#1077).
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
     config: {}
 
   account-management:
@@ -545,6 +558,13 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_settings"
+      # Two, not the shared three: never above two on Dev or Test (#1077).
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
     config:
       max_field_length: 200
 
@@ -552,6 +572,13 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_file_storage"
+      # Two, not the shared three: never above two on Dev or Test (#1077).
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
     config:
       # Stable P-256 PKCS#8 key; Helm loads it from the environment-specific
       # file-storage signing Secret. The value is base64url without padding.
@@ -575,6 +602,13 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_oagw"
+      # Two, not the shared three: never above two on Dev or Test (#1077).
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
     config:
       proxy_timeout_secs: 120
       proxy_cache:
@@ -834,9 +868,13 @@ gears:
       server: "pg_main"
       dbname: "studio_domain_model"
       pool:
-        # Six, not two: one screen of a project asks it a dozen reads at
-        # once, and two connections queued them past the 30 s gateway.
-        max_conns: 6
+        # Eight (#1077). Documents, artifacts, kits, reports and the PDP
+        # all read the model here, and six queued 1441 waits over 2 s in
+        # 47 minutes on Dev. Six for a screen's dozen parallel reads, two
+        # for the fills and sweeps that hold a connection for seconds.
+        # Not more: PostgreSQL has one CPU, and a ninth connection only
+        # queues there instead of here. It was 2 until 2026-11-10.
+        max_conns: 8
         min_conns: 0
         acquire_timeout: "10s"
         idle_timeout: "5m"
@@ -905,6 +943,13 @@ gears:
     database:
       server: "pg_main"
       dbname: "studio_mini_chat"
+      # Two, not the shared three: never above two on Dev or Test (#1077).
+      pool:
+        max_conns: 2
+        min_conns: 0
+        acquire_timeout: "10s"
+        idle_timeout: "5m"
+        max_lifetime: "30m"
     config:
       client_credentials:
         client_id: "mini-chat"

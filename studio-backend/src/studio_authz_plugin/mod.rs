@@ -19,6 +19,9 @@
 //! Safety: only Studio resources we explicitly map are role-gated. Every other
 //! resource (AM tenants/metadata, RG, …) takes the tenant clamp, so selecting
 //! this PDP — even with `model = "roles"` — never breaks platform operations.
+//! One exception: the GitHub mirror's resources (`github_mirror.*`) belong to
+//! the artifact sync's service identity alone and are refused to every person
+//! (#1094); the sync itself still gets only the tenant clamp.
 //! The metadata read is itself PEP-gated, so a recursion guard short-circuits
 //! authorizing reads of AM tenant-metadata to the tenant clamp.
 //!
@@ -732,6 +735,59 @@ fn resource_owner_tenant(request: &EvaluationRequest) -> Option<Uuid> {
         .and_then(|id| Uuid::parse_str(id).ok())
 }
 
+/* ── The GitHub mirror (#1094) ── */
+
+/// The prefix of every resource type the github-mirror gear authorizes
+/// (`cf-gears-github-mirror` 0.2.1, `domain/service.rs`): `github_mirror.sync`,
+/// `.sync_session`, `.repo_sync_status`, `.repo`, and one per mirrored entity
+/// (`.issue`, `.pull_request`, `.commit`, …). Matched as a family, so a type a
+/// later mirror adds is refused to people from the start.
+const MIRROR_RESOURCE_PREFIX: &str = "github_mirror.";
+
+/// The mirror's actions (`domain::service::actions`). An action outside this
+/// list is refused to everybody, the sync included, until it is looked at.
+const MIRROR_ACTIONS: [&str; 4] = ["list", "get", "upsert", "sync"];
+
+/// Who the artifact sync is to the mirror (#1095): one fixed service subject,
+/// which studio-artifact-ingest calls the mirror as, in-process, in the
+/// organization's tenant. No identity provider issues it and no token carries
+/// it, so a person cannot present it.
+use crate::artifact_ingest::sdk::{MIRROR_SYNC_SUBJECT_ID, SERVICE_SUBJECT_TYPE};
+
+fn is_mirror_resource(resource_type: &str) -> bool {
+    resource_type.starts_with(MIRROR_RESOURCE_PREFIX)
+}
+
+/// Could this caller be the artifact sync at all: a subject typed as a
+/// service, asking for an action the mirror has. The sync calls the mirror
+/// in-process with that type set (#1095), so an untyped subject, a user, or
+/// anything else is not the sync whoever it is.
+fn could_be_the_sync(request: &EvaluationRequest) -> bool {
+    request.subject.subject_type.as_deref() == Some(SERVICE_SUBJECT_TYPE)
+        && MIRROR_ACTIONS.contains(&request.action.name.as_str())
+}
+
+/// What the PDP answers for a GitHub mirror resource.
+#[derive(Debug, PartialEq, Eq)]
+enum MirrorDecision {
+    /// The artifact sync: the tenant clamp, which stays the outer bound.
+    Clamp,
+    /// Everybody else.
+    Deny,
+}
+
+/// The mirror reads GitHub with the platform's credential, so what it holds
+/// is not any one person's to read or to refresh: only the artifact sync, as
+/// [`MIRROR_SYNC_SUBJECT_ID`], reaches it. A person is refused whatever their
+/// roles or token scopes.
+fn decide_mirror(request: &EvaluationRequest) -> MirrorDecision {
+    if could_be_the_sync(request) && request.subject.id == MIRROR_SYNC_SUBJECT_ID {
+        MirrorDecision::Clamp
+    } else {
+        MirrorDecision::Deny
+    }
+}
+
 /// The family a GTS type id belongs to: everything before the first `~`.
 ///
 /// A GTS id is a `~`-terminated chain in which the first segment names the base
@@ -777,6 +833,9 @@ enum Plan {
     /// Answered by ownership of `organization` rather than by the clamp — see
     /// [`is_access_config_write`].
     AccessConfigWrite { tid: Uuid, organization: Uuid },
+    /// A GitHub mirror resource: the artifact sync's alone, never a person's.
+    /// See [`decide_mirror`].
+    Mirror(Uuid),
 }
 
 impl Plan {
@@ -786,6 +845,13 @@ impl Plan {
         };
         if tid == Uuid::default() {
             return Self::Deny;
+        }
+
+        // Before the service backstop, and deliberately: the portal's and the
+        // desktop's tokens are first-party, so a person signed in there carries
+        // `*` too, and the backstop would hand them the mirror (#1094).
+        if is_mirror_resource(&request.resource.resource_type) {
+            return Self::Mirror(tid);
         }
 
         // First-party / unrestricted token (`token_scopes` contains "*"): a
@@ -851,6 +917,23 @@ impl AuthZResolverPluginClient for Service {
                 return Ok(self
                     .decide_access_config_write(&request, tid, organization)
                     .await);
+            }
+            Plan::Mirror(tid) => {
+                return Ok(match decide_mirror(&request) {
+                    MirrorDecision::Clamp => {
+                        let tids = self.reachable_tenants(&request, tid).await;
+                        tenant_clamp(&request, &tids)
+                    }
+                    MirrorDecision::Deny => {
+                        warn!(
+                            subject = %request.subject.id,
+                            resource_type = %request.resource.resource_type,
+                            action = %request.action.name,
+                            "refused a GitHub mirror request: only the artifact sync reads the mirror"
+                        );
+                        deny()
+                    }
+                });
             }
             Plan::Roles { tid, privilege } => (tid, privilege),
         };
@@ -1628,6 +1711,158 @@ mod tests {
         assert!(
             !cached.is_fresh(t0, 8),
             "an allowed write moved the generation"
+        );
+    }
+
+    /* ── The GitHub mirror (#1094) ── */
+
+    /// Every resource type `cf-gears-github-mirror` 0.2.1 authorizes.
+    const MIRROR_RESOURCES: [&str; 30] = [
+        "github_mirror.sync",
+        "github_mirror.sync_session",
+        "github_mirror.repo_sync_status",
+        "github_mirror.repo",
+        "github_mirror.issue",
+        "github_mirror.pull_request",
+        "github_mirror.commit",
+        "github_mirror.comment",
+        "github_mirror.review_comment",
+        "github_mirror.review",
+        "github_mirror.label",
+        "github_mirror.milestone",
+        "github_mirror.release",
+        "github_mirror.branch",
+        "github_mirror.contributor",
+        "github_mirror.workflow_run",
+        "github_mirror.workflow_job",
+        "github_mirror.pull_request_file",
+        "github_mirror.pull_request_commit",
+        "github_mirror.tag",
+        "github_mirror.commit_file",
+        "github_mirror.commit_comment",
+        "github_mirror.commit_status",
+        "github_mirror.check_run",
+        "github_mirror.review_thread",
+        "github_mirror.issue_event",
+        "github_mirror.issue_reaction",
+        "github_mirror.issue_timeline",
+        "github_mirror.deployment",
+        "github_mirror.artifact",
+    ];
+
+    /// The artifact sync's fixed service subject (#1095).
+    const SYNC: Uuid = MIRROR_SYNC_SUBJECT_ID;
+
+    fn mirror_request(resource_type: &str, action: &str) -> EvaluationRequest {
+        let mut r = request(resource_type);
+        r.action.name = action.to_string();
+        r
+    }
+
+    /// The sync's in-process call: its fixed subject, typed as a service.
+    fn from_the_sync(resource_type: &str, action: &str) -> EvaluationRequest {
+        let mut r = mirror_request(resource_type, action);
+        r.subject.id = SYNC;
+        r.subject.subject_type = Some(SERVICE_SUBJECT_TYPE.to_string());
+        r
+    }
+
+    /// Every mirror request, whoever makes it, takes the mirror path — the
+    /// first-party backstop included, because a person signed in to the portal
+    /// carries `*` too.
+    #[test]
+    fn every_mirror_resource_takes_the_mirror_path_even_with_an_unrestricted_token() {
+        for resource_type in MIRROR_RESOURCES {
+            for action in MIRROR_ACTIONS {
+                let mut req = mirror_request(resource_type, action);
+                assert_eq!(Plan::for_request(&req), Plan::Mirror(TENANT));
+                req.context.token_scopes = vec!["*".to_string()];
+                assert_eq!(
+                    Plan::for_request(&req),
+                    Plan::Mirror(TENANT),
+                    "{resource_type}/{action} must not fall to the backstop"
+                );
+            }
+        }
+    }
+
+    /// A person's sync, listing or read of the mirror is refused, whatever
+    /// they hold — even a subject id that happened to equal the sync's.
+    #[test]
+    fn a_person_is_refused_every_mirror_resource_and_action() {
+        for resource_type in MIRROR_RESOURCES {
+            for action in MIRROR_ACTIONS {
+                let mut req = mirror_request(resource_type, action);
+                req.context.token_scopes = vec!["*".to_string()];
+                assert!(!could_be_the_sync(&req));
+                assert_eq!(
+                    decide_mirror(&req),
+                    MirrorDecision::Deny,
+                    "{resource_type}/{action}"
+                );
+                for person in ["user", "gts.cf.core.security.subject_user.v1~"] {
+                    req.subject.id = SYNC;
+                    req.subject.subject_type = Some(person.to_string());
+                    assert_eq!(
+                        decide_mirror(&req),
+                        MirrorDecision::Deny,
+                        "a {person} subject is a person, whatever its id"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The artifact sync, as its fixed service identity, is allowed — with
+    /// the tenant clamp, not more.
+    #[test]
+    fn the_sync_identity_is_allowed_every_mirror_resource_and_action() {
+        for resource_type in MIRROR_RESOURCES {
+            for action in MIRROR_ACTIONS {
+                let req = from_the_sync(resource_type, action);
+                assert!(could_be_the_sync(&req));
+                assert_eq!(
+                    decide_mirror(&req),
+                    MirrorDecision::Clamp,
+                    "{resource_type}/{action}"
+                );
+            }
+        }
+    }
+
+    /// Another service is not the sync, nor is the sync's id without the
+    /// service type (the gateway path that sent it untyped is gone, #1095),
+    /// nor the task worker's plain `service` type; and an action the mirror
+    /// did not have is refused to all.
+    #[test]
+    fn only_the_sync_identity_and_a_known_action_pass() {
+        let mut other = from_the_sync("github_mirror.issue", "list");
+        other.subject.id = Uuid::from_u128(0x0c1);
+        assert_eq!(decide_mirror(&other), MirrorDecision::Deny);
+
+        for subject_type in [None, Some("service")] {
+            let mut untyped = from_the_sync("github_mirror.sync", "sync");
+            untyped.subject.subject_type = subject_type.map(str::to_string);
+            assert!(!could_be_the_sync(&untyped), "{subject_type:?}");
+            assert_eq!(decide_mirror(&untyped), MirrorDecision::Deny);
+        }
+
+        let unknown = from_the_sync("github_mirror.repo", "delete");
+        assert!(!could_be_the_sync(&unknown));
+        assert_eq!(decide_mirror(&unknown), MirrorDecision::Deny);
+    }
+
+    /// Only the mirror's own family is caught: a Studio type whose name
+    /// mentions the mirror keeps the clamp.
+    #[test]
+    fn only_the_mirror_family_is_caught() {
+        for resource_type in STUDIO_RESOURCES {
+            assert!(!is_mirror_resource(resource_type));
+        }
+        assert!(!is_mirror_resource("gts.cf.studio.github_mirror.v1~"));
+        assert_eq!(
+            Plan::for_request(&request("gts.cf.studio.github_mirror.v1~")),
+            Plan::Clamp(TENANT)
         );
     }
 }

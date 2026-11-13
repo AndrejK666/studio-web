@@ -19,7 +19,9 @@
 //! with its origin), not layered over a shared one. See
 //! `docs/design/studio-kits.md` §3.10 for why, and for the gap it leaves.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 
 use toolkit::client_hub::ClientHub;
 use toolkit_security::SecurityContext;
@@ -72,6 +74,72 @@ pub enum KitModel {
     /// Not known here (an organization's kit whose shelf now pins another
     /// commit than the one installed): what the model carries stays.
     Unknown,
+}
+
+/// How long an organization's model counts as in step with the kits it was
+/// last reconciled for, when that reconciliation applied everything. A
+/// backstop for a model changed some other way (an upload, a revert): after
+/// this long the next read reconciles again.
+pub const IN_STEP_FOR: Duration = Duration::from_secs(30 * 60);
+
+/// The same, when something could not be applied: a conflict stays until
+/// somebody resolves it, and a timeout under load is worth another try, but
+/// neither on every read.
+pub const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
+
+/// The kits as [`InStep::key`] names them, when they were reconciled, and
+/// whether everything was applied.
+type Reconciled = (Vec<(String, String)>, Instant, bool);
+
+/// Which kits each organization's model was last reconciled for, in this
+/// process: the cheap check before a read reads the model or writes to it.
+#[derive(Default)]
+pub struct InStep {
+    /// Per organization.
+    done: StdMutex<HashMap<Uuid, Reconciled>>,
+    /// One reconciliation per organization at a time.
+    flights: StdMutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+impl InStep {
+    /// The kits that apply, as what their models depend on: slug and
+    /// version, in a stable order.
+    pub fn key(effective: &[InstalledKit]) -> Vec<(String, String)> {
+        let mut key: Vec<(String, String)> = effective
+            .iter()
+            .map(|k| (k.kit_slug.clone(), k.version.clone()))
+            .collect();
+        key.sort();
+        key
+    }
+
+    /// Whether `org`'s model was reconciled for exactly `key`, recently
+    /// enough.
+    pub fn holds(&self, org: Uuid, key: &[(String, String)]) -> bool {
+        self.done
+            .lock()
+            .ok()
+            .and_then(|d| {
+                d.get(&org).map(|(k, at, clean)| {
+                    let fresh_for = if *clean { IN_STEP_FOR } else { RETRY_AFTER };
+                    k.as_slice() == key && at.elapsed() < fresh_for
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn record(&self, org: Uuid, key: Vec<(String, String)>, clean: bool) {
+        if let Ok(mut d) = self.done.lock() {
+            d.insert(org, (key, Instant::now(), clean));
+        }
+    }
+
+    fn flight(&self, org: Uuid) -> Arc<tokio::sync::Mutex<()>> {
+        self.flights
+            .lock()
+            .map(|mut f| f.entry(org).or_default().clone())
+            .unwrap_or_default()
+    }
 }
 
 /// Turn a model refusal into the installer's.
@@ -130,7 +198,29 @@ impl KitInstaller {
     /// whole organization (base and its own), at their versions, and nothing
     /// of a kit that no longer applies. Answers what could not be applied,
     /// one sentence each: a read of the installed kits does not fail for it.
+    ///
+    /// Always reads the model and syncs every kit: for an install, an
+    /// uninstall and the tests. A read of the kits asks
+    /// [`Self::models_in_step`] instead.
     pub async fn reconcile_models(&self, org: Uuid) -> Result<Vec<String>, Refusal> {
+        self.reconcile(org, false).await
+    }
+
+    /// [`Self::reconcile_models`] for a read of the kits (`GET
+    /// /installed-kits`, the Inbox's sources, a project's phase): nothing is
+    /// read from the model or written to it while the kits that apply to
+    /// `org` are the ones its model was last brought in step with, within
+    /// [`IN_STEP_FOR`]. A base kit's model still reaches every organization
+    /// (ADR-0070): the first read after the platform installs it finds
+    /// another set of kits.
+    ///
+    /// Reconciling on every read made `installed-kits` 1 s at the median and
+    /// 6 s at p95 on Dev, logging a warning per kit per call (#1077).
+    pub async fn models_in_step(&self, org: Uuid) -> Result<Vec<String>, Refusal> {
+        self.reconcile(org, true).await
+    }
+
+    async fn reconcile(&self, org: Uuid, unless_in_step: bool) -> Result<Vec<String>, Refusal> {
         let Some(port) = self.models() else {
             return Ok(Vec::new());
         };
@@ -139,10 +229,36 @@ impl KitInstaller {
         }
         let ctx = service_context(org)?;
         let installed = self.installed(&ctx, org).await?;
-        let carried = port.kit_models(&ctx).await.map_err(Refusal::Internal)?;
+        let applied = InStep::key(&installed.effective);
+        if unless_in_step && self.in_step().holds(org, &applied) {
+            return Ok(Vec::new());
+        }
+        // One reconciliation of an organization at a time: the shell reads
+        // the kits, the Inbox's sources and a project's phase at once, and
+        // the ones that waited find the model in step.
+        let flight = self.in_step().flight(org);
+        let _flight = flight.lock().await;
+        if unless_in_step && self.in_step().holds(org, &applied) {
+            return Ok(Vec::new());
+        }
+        let problems = self
+            .reconcile_with(port.as_ref(), &ctx, org, &installed.effective)
+            .await?;
+        self.in_step().record(org, applied, problems.is_empty());
+        Ok(problems)
+    }
+
+    async fn reconcile_with(
+        &self,
+        port: &dyn DomainObjects,
+        ctx: &SecurityContext,
+        org: Uuid,
+        effective: &[InstalledKit],
+    ) -> Result<Vec<String>, Refusal> {
+        let carried = port.kit_models(ctx).await.map_err(Refusal::Internal)?;
         let mut keep: Vec<String> = Vec::new();
         let mut problems = Vec::new();
-        for kit in &installed.effective {
+        for kit in effective {
             let Ok(descriptor) = self.kit_for(org, &kit.kit_slug).await else {
                 continue;
             };
@@ -153,7 +269,7 @@ impl KitInstaller {
                     // legacy property source before any future upgrade.
                     // It also captures organization tombstones after edits.
                     if let Err(e) = port
-                        .sync_kit_model(&ctx, &kit.kit_slug, &kit.version, Some(&overlay))
+                        .sync_kit_model(ctx, &kit.kit_slug, &kit.version, Some(&overlay))
                         .await
                     {
                         problems.push(format!("{}: {e:#}", kit.kit_slug));
@@ -164,7 +280,7 @@ impl KitInstaller {
             }
         }
         for slug in carried.keys().filter(|s| !keep.contains(*s)) {
-            if let Err(e) = port.sync_kit_model(&ctx, slug, "", None).await {
+            if let Err(e) = port.sync_kit_model(ctx, slug, "", None).await {
                 problems.push(format!("{slug}: {e:#}"));
             }
         }

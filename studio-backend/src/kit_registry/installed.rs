@@ -234,6 +234,10 @@ pub struct KitInstaller {
     reader: Arc<dyn super::shelf::KitSourceReader>,
     models: Option<Arc<dyn super::models::ModelPort>>,
     events: Option<Arc<dyn crate::studio_events::StudioEventPublisher>>,
+    /// Which kits each organization's model was last brought in step with
+    /// ([`super::models::InStep`]): a read that finds the same set writes
+    /// nothing.
+    in_step: super::models::InStep,
 }
 
 impl KitInstaller {
@@ -249,7 +253,12 @@ impl KitInstaller {
             reader: Arc::new(super::shelf::NoReader),
             models: None,
             events: None,
+            in_step: super::models::InStep::default(),
         }
+    }
+
+    pub(super) fn in_step(&self) -> &super::models::InStep {
+        &self.in_step
     }
 
     /// Publish `kit.installed` / `kit.uninstalled` through `events`

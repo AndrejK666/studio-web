@@ -273,6 +273,7 @@ impl Gear for StudioConnectorGear {
                     .map(|am| crate::model_metadata::client_for(ctx, am, gts::MODEL_KINDS)),
                 ctx.client_hub().get::<dyn CredStoreClientV1>(),
             ) {
+                service::keep_catalogue_reader(Arc::clone(&am));
                 ctx.client_hub()
                     .register::<ConnectorService>(ConnectorService::new(am, credstore, drivers));
             }
@@ -284,6 +285,7 @@ impl Gear for StudioConnectorGear {
             ctx.client_hub().get::<dyn AccountManagementClient>()?,
             gts::MODEL_KINDS,
         );
+        service::keep_catalogue_reader(Arc::clone(&am));
         let credstore = ctx.client_hub().get::<dyn CredStoreClientV1>()?;
         let service = ConnectorService::new(am, credstore, drivers);
         // The one connector service of the process: the other gears hold a
@@ -373,11 +375,29 @@ impl toolkit::contracts::RestApiCapability for StudioConnectorGear {
                 .ok(),
         );
 
+        // Who is a platform administrator, for the `platform_auth` guard
+        // (#1094). Published by studio-user in its `init`, like the resolver
+        // above. Absent, nobody may turn `platform_auth` on or off.
+        let admins = rest::Admins(
+            ctx.client_hub()
+                .get_scoped::<dyn crate::user_profile::OrganizationReader>(&ClientScope::gts_id(
+                    crate::user_profile::IDENTITY_INSTANCE_ID,
+                ))
+                .inspect_err(|_| {
+                    warn!(
+                        "studio-connector: studio-user organization reader not registered — \
+                         nobody may turn platform_auth on or off"
+                    );
+                })
+                .ok(),
+        );
+
         Ok(rest::register_routes(
             router,
             openapi,
             self.service.get().cloned(),
             people,
+            admins,
             graph,
         ))
     }

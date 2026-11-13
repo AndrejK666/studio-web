@@ -33,7 +33,11 @@ pub fn tools() -> Vec<Tool> {
                 `connection_id` (the connection it is read through), `full_path` \
                 (owner/repo), `clone_url`, `branch` (the repository's default when absent), \
                 `share_mode`, `gears_here` (new gears go here) and `publish_here` (a \
-                published product.gdl goes here). Empty for a project with none.",
+                published product.gdl goes here). Empty for a project with none. Each also \
+                carries `clone`, the last clone or fetch of it: `state` (`cloned`, `failed` \
+                or `never`), `at`, `by` (`desktop` or `ide_session`), and when it failed its \
+                `cause`, `cause_text`, `action` and `action_text` (what fixes it). `clone` is \
+                absent when the clone status cannot be read.",
             input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
             effect: Effect::Read,
             experimental: false,
@@ -120,11 +124,56 @@ fn sources_of(config: &Value) -> Value {
     json!({ "sources": sources })
 }
 
+/// Where the last clone of each source is read (`artifact_ingest::clone_status`).
+const CLONE_STATUS_PATH: &str = "/studio-artifact-ingest/v1/sources/clone-status";
+
 fn project_sources(api: Api, args: Map<String, Value>) -> ToolFuture {
     Box::pin(async move {
         let project = required_text(&args, "project_id")?;
-        Ok(sources_of(&read_config(&api, &project).await?))
+        let sources = sources_of(&read_config(&api, &project).await?);
+        // The clone status is extra: a deployment that keeps none still
+        // lists the sources.
+        let clones = api
+            .get_answer(CLONE_STATUS_PATH, &[("project_id".to_owned(), project)])
+            .await
+            .ok()
+            .filter(|answer| answer.ok())
+            .map(|answer| answer.body);
+        Ok(with_clones(sources, clones.as_ref()))
     })
+}
+
+/// `listed` (`{"sources": [...]}`) with each source's `clone` from the clone
+/// status' items, matched by `clone_url`. Unchanged without them.
+fn with_clones(mut listed: Value, clones: Option<&Value>) -> Value {
+    let Some(items) = clones
+        .and_then(|c| c.get("items"))
+        .and_then(Value::as_array)
+    else {
+        return listed;
+    };
+    let Some(sources) = listed.get_mut("sources").and_then(Value::as_array_mut) else {
+        return listed;
+    };
+    for source in sources.iter_mut() {
+        let Some(url) = source.get("clone_url").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(item) = items
+            .iter()
+            .find(|i| i.get("clone_url").and_then(Value::as_str) == Some(url))
+        else {
+            continue;
+        };
+        let mut clone = item.as_object().cloned().unwrap_or_default();
+        clone.remove("clone_url");
+        clone.remove("full_path");
+        clone.retain(|_, v| !v.is_null());
+        if let Some(entry) = source.as_object_mut() {
+            entry.insert("clone".into(), Value::Object(clone));
+        }
+    }
+    listed
 }
 
 /// `config` with `sources` replaced and nothing else touched.
@@ -179,6 +228,34 @@ mod tests {
             json!({"sources": []})
         );
         assert!(with_sources(json!({}), json!({"x": 1})).is_err());
+    }
+
+    /// #1071: an agent reads the same clone status as the Sources tab.
+    #[test]
+    fn each_source_carries_its_last_clone() {
+        let listed = json!({ "sources": [
+            { "full_path": "acme/api", "clone_url": "https://github.com/acme/api.git" },
+            { "full_path": "acme/web", "clone_url": "https://github.com/acme/web.git" }
+        ]});
+        let clones = json!({ "total": 2, "items": [
+            { "clone_url": "https://github.com/acme/api.git", "full_path": "acme/api",
+              "state": "failed", "at": "2026-11-12T10:00:00Z", "by": "ide_session",
+              "cause": "connection_not_found", "cause_text": "…", "action": "reconnect",
+              "action_text": "…", "upstream_status": null, "detail": null },
+            { "clone_url": "https://github.com/acme/web.git", "full_path": "acme/web",
+              "state": "never" }
+        ]});
+        let out = with_clones(listed.clone(), Some(&clones));
+        let api = &out["sources"][0]["clone"];
+        assert_eq!(api["state"], "failed");
+        assert_eq!(api["cause"], "connection_not_found");
+        assert_eq!(api["action"], "reconnect");
+        assert!(api.get("upstream_status").is_none());
+        assert!(api.get("clone_url").is_none());
+        assert_eq!(out["sources"][1]["clone"], json!({ "state": "never" }));
+        assert_eq!(out["sources"][1]["full_path"], "acme/web");
+        // No clone status, no `clone`.
+        assert_eq!(with_clones(listed.clone(), None), listed);
     }
 
     #[test]

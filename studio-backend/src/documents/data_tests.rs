@@ -387,3 +387,159 @@ async fn switching_back_to_tables_moves_the_rows_back_and_out_of_the_model() {
         .unwrap();
     assert!(left.is_empty(), "the model keeps no copy");
 }
+
+// ── A table of projects: counted together, the same as one by one ─────────
+
+/// The model, counting what the table asks it: each query and aggregate is
+/// a statement (or a few) the read model runs.
+struct Counting {
+    inner: Arc<dyn DomainObjects>,
+    asked: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl DomainObjects for Counting {
+    async fn upsert(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        key: &str,
+        payload: serde_json::Value,
+    ) -> anyhow::Result<String> {
+        self.inner.upsert(ctx, entity, key, payload).await
+    }
+    async fn list(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+    ) -> anyhow::Result<Vec<crate::domain_model::port::StoredObject>> {
+        self.inner.list(ctx, entity).await
+    }
+    async fn ensure_type(
+        &self,
+        ctx: &SecurityContext,
+        need: &crate::domain_model::port::TypeNeed,
+    ) -> anyhow::Result<()> {
+        self.inner.ensure_type(ctx, need).await
+    }
+    async fn put_objects(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        objects: Vec<crate::domain_model::port::OwnedObject>,
+    ) -> anyhow::Result<usize> {
+        self.inner.put_objects(ctx, entity, objects).await
+    }
+    async fn remove_objects(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        ids: Vec<String>,
+    ) -> anyhow::Result<usize> {
+        self.inner.remove_objects(ctx, entity, ids).await
+    }
+    async fn query(
+        &self,
+        ctx: &SecurityContext,
+        body: serde_json::Value,
+    ) -> anyhow::Result<(Vec<crate::domain_model::port::StoredObject>, usize)> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.query(ctx, body).await
+    }
+    async fn aggregate(
+        &self,
+        ctx: &SecurityContext,
+        body: serde_json::Value,
+    ) -> anyhow::Result<(Vec<(Vec<serde_json::Value>, u64)>, usize)> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.aggregate(ctx, body).await
+    }
+}
+
+#[tokio::test]
+async fn a_workspaces_projects_are_counted_together_as_one_by_one() {
+    use super::spec_rows::{BindingState, summary};
+    use std::sync::atomic::Ordering;
+
+    let repo = Arc::new(super::repo_tests::repo().await);
+    let counting = Arc::new(Counting {
+        inner: in_memory(),
+        asked: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let data = DocumentsData::with_port(Arc::clone(&repo), counting.clone());
+    let ws = Uuid::new_v4();
+    let (p1, p2, p3, p9) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    let bound = |node: &str, project: Option<Uuid>, state: &str, conforms: Option<bool>| {
+        let mut b = binding(ws, node, &format!("docs/{node}.md"), 0);
+        b.id = binding_row_id(ws, project, node);
+        b.project_id = project;
+        b.state = state.to_string();
+        b.conforms = conforms;
+        b
+    };
+    data.upsert_bindings(
+        &ctx(),
+        &[
+            // The workspace's own: every project sees it.
+            bound("w1", None, "confirmed", Some(true)),
+            bound("a1", Some(p1), "confirmed", Some(false)),
+            bound("a2", Some(p1), "detected", None),
+            bound("a3", Some(p1), "manual", None),
+            bound("b1", Some(p2), "manual", Some(false)),
+            bound("z1", Some(p9), "confirmed", Some(true)),
+        ],
+    )
+    .await
+    .unwrap();
+    let mut written = doc(ws, Some(p1), "P1 spec", "body", 1);
+    written.conforms = false;
+    data.upsert_doc(&ctx(), written).await.unwrap();
+    let mut shared = doc(ws, None, "Workspace spec", "body", 2);
+    shared.conforms = true;
+    data.upsert_doc(&ctx(), shared).await.unwrap();
+    data.upsert_doc(&ctx(), doc(ws, Some(p9), "Elsewhere", "body", 3))
+        .await
+        .unwrap();
+
+    let projects = [p1, p2, p3];
+    counting.asked.store(0, Ordering::SeqCst);
+    let groups = data
+        .project_groups(&ctx(), ws, &projects)
+        .await
+        .unwrap()
+        .expect("the model holds them");
+    assert_eq!(
+        counting.asked.load(Ordering::SeqCst),
+        2,
+        "one aggregate per type for every project, not two reads per project"
+    );
+
+    for p in projects {
+        let (bindings, total) = data
+            .list_bindings(&ctx(), ws, DocScope::Effective(p), 0, None)
+            .await
+            .unwrap();
+        let (docs, _) = data
+            .list_docs(&ctx(), ws, DocScope::Effective(p), 0, None)
+            .await
+            .unwrap();
+        let expected = summary(
+            bindings
+                .iter()
+                .map(|b| (BindingState::parse(&b.state).unwrap(), b.conforms)),
+            docs.iter().map(|d| d.conforms),
+        );
+        let got = super::service::project_documents_of(&groups, p);
+        assert_eq!(got.bindings, Some(u32::try_from(total).unwrap()), "{p}");
+        assert_eq!(got.specs, Some(expected), "{p}");
+    }
+    let p1_counts = super::service::project_documents_of(&groups, p1);
+    assert_eq!(p1_counts.bindings, Some(4), "its three and the workspace's");
+    let p3_counts = super::service::project_documents_of(&groups, p3);
+    assert_eq!(p3_counts.bindings, Some(1), "only the workspace's");
+}
