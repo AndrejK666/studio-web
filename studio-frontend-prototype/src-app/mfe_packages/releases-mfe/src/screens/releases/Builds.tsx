@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '@gears-frontx/ui-kit';
-import { isNotFound } from '@constructor-studio/mfe-shared';
+import { isNotFound, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { BuildLog, Deployment, DeployEnvironment, ProjectBuildConfig, ProjectImage } from '../../api/types';
 import {
   BUILD_STAGES,
@@ -51,6 +51,7 @@ import {
 } from '../../model/builds';
 import { recordFor, whereItRuns } from '../../model/images';
 import { buildsHint } from '../../model/pipeline';
+import { ROUTES } from '../../model/path';
 import { DeployBuildTo } from './DeployActions';
 import { ErrorLine, TONE_BADGE, When, errText, useApi, useReleases, type Tone } from './parts';
 import { NextLine } from './NextLine';
@@ -157,7 +158,8 @@ export function ProjectBuilds({
 
   // Building in Studio is not in this portal yet (parity.md): the line says
   // what it can without it.
-  const hint = buildsHint(builds, false, now);
+  const screens = useScreenAvailability();
+  const hint = buildsHint(builds, false, now, screens.route(ROUTES.infrastructure));
 
   return (
     <section className={styles.stack} data-release-builds>

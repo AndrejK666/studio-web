@@ -10,6 +10,7 @@
 
 import { useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
+import { useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { FailureCause, PathAction, PathCheck, PathStep, PathStepState } from '../../api/types';
 import { intentOf, type Intent } from '../../model/path';
 import { useReleases } from './parts';
@@ -41,8 +42,11 @@ export function ActionButton({
   variant?: 'default' | 'outline' | 'ghost';
 }) {
   const { t } = useReleases();
+  const screens = useScreenAvailability();
   const intent = intentOf(action, deploymentId);
   if (intent.kind === 'none') return null;
+  // A button to a screen that is not here (Organization › Infrastructure without its kit) leads nowhere.
+  if (intent.kind === 'screen' && !screens.route(intent.route)) return null;
   const key = `action_${action.kind}`;
   const label = t(key);
   return (
