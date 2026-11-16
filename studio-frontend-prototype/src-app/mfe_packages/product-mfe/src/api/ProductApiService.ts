@@ -496,6 +496,21 @@ export class ProductApiService extends BaseApiService {
 
   /* ── the graph (studio-artifact-ingest) ── */
 
+  /** Whether each of the project's sources could be cloned, and why not (#1071). */
+  readonly cloneStatus = this.protocol(RestEndpointProtocol).queryWith<
+    {
+      items: {
+        full_path: string;
+        state: 'cloned' | 'failed' | 'never';
+        cause?: string | null;
+        cause_text?: string | null;
+        action_text?: string | null;
+        detail?: string | null;
+      }[];
+    },
+    { projectId: string }
+  >(({ projectId }) => `/studio-artifact-ingest/v1/sources/clone-status?project_id=${enc(projectId)}`);
+
   readonly artifactNodes = this.protocol(RestEndpointProtocol).queryWith<ArtifactNodePage, { query: string }>(
     ({ query }) => `/studio-artifact-ingest/v1/nodes${query ? `?${query}` : ''}`
   );
