@@ -256,11 +256,21 @@ describe('whether a source could be cloned (#1071)', () => {
     });
   });
 
-  it('is matched by clone URL, else by path whatever its case', () => {
+  it('is matched by clone URL, else by path on the same host whatever its case', () => {
     const clones = [
-      { ...status('ACME/API', { state: 'cloned', by: 'desktop' }), clone_url: 'https://other.test/x.git' },
+      { ...status('ACME/API', { state: 'cloned', by: 'desktop' }), clone_url: 'https://EXAMPLE.test/old-name.git' },
     ];
     expect(only(answers({ clones })).clone.kind).toBe('cloned');
+  });
+
+  it('is not matched by path on another provider host', () => {
+    const clones = [
+      {
+        ...status('acme/api', { state: 'failed', cause: 'provider_refused', cause_text: 'Refused.' }),
+        clone_url: 'https://other.test/acme/api.git',
+      },
+    ];
+    expect(only(answers({ clones })).clone).toEqual({ kind: 'never' });
   });
 });
 

@@ -15,7 +15,7 @@ mfe(
 
     # What it brings, as mfe.json says: the label of its screen, then the
     # route of its extension (presentation.route).
-    screens = ["Editor"],
+    screens = ["IDE"],
     mounts = ["/space"],
 
     # No `frontx`: it pins no @gears-frontx/react (its package.json has only

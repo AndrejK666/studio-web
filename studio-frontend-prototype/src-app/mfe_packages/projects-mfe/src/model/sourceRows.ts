@@ -15,6 +15,7 @@ import type {
   SourceCloneStatusDto,
 } from '../api/artifactTypes';
 import type { DocumentDto, SpecsPerSourceListDto } from '../api/documentTypes';
+import { repositoryHost } from './projectSources';
 import { canCancel, canRetry, inFlight, type RepoImportStatus } from './repoImport';
 import { SYNCABLE_PROVIDERS, pathKey, repoNodeOf } from './syncRequest';
 
@@ -199,15 +200,25 @@ function channelOf(by: string | null | undefined): CloneChannel {
   return by === 'desktop' || by === 'ide_session' ? by : null;
 }
 
-/** A source's clone as the clone status reports it, matched by clone URL, else by path. */
+/**
+ * A source's clone as the clone status reports it, matched by clone URL, else
+ * by path on the same provider host: `acme/api` on another host is another
+ * repository.
+ */
 export function cloneOf(
   clones: SourcesAnswers['clones'],
   source: Pick<ProjectSource, 'clone_url' | 'full_path'>
 ): SourceClone {
   if (!clones) return { kind: 'unknown' };
+  const host = repositoryHost(source.clone_url);
   const status =
     clones.find((item) => item.clone_url === source.clone_url) ??
-    clones.find((item) => pathKey(item.full_path) === pathKey(source.full_path));
+    clones.find(
+      (item) =>
+        host !== null &&
+        repositoryHost(item.clone_url) === host &&
+        pathKey(item.full_path) === pathKey(source.full_path)
+    );
   if (!status || status.state === 'never') return { kind: 'never' };
   const at = status.at ?? null;
   const by = channelOf(status.by);
