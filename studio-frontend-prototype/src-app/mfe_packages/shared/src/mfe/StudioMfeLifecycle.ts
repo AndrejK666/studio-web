@@ -7,7 +7,15 @@
  * FrontX's own base resets, the MFE's CSS, `additionalStyles` (the kit theme on
  * `:host`), then a transparent host.
  */
-import { ThemeAwareReactLifecycle, type FrontXApp } from '@gears-frontx/react';
+import {
+  FRONTX_SHARED_PROPERTY_THEME,
+  ThemeAwareReactLifecycle,
+  type ChildMfeBridge,
+  type FrontXApp,
+  type MfeMountContext,
+} from '@gears-frontx/react';
+import { toKitTheme } from '../host/useHostChrome';
+import { KIT_THEME_HOST_ATTR } from './anchorKitThemeOnShadowHost';
 import {
   ADOPTED_HOST_STYLE_ATTR,
   constructedSheetsSupported,
@@ -42,11 +50,48 @@ export abstract class StudioMfeLifecycle extends ThemeAwareReactLifecycle {
    */
   private readonly adopted = new WeakMap<ShadowRoot, number>();
 
+  /** Per mounted shadow root, what stops its host following the portal theme. */
+  private readonly themeFollowers = new WeakMap<ShadowRoot, () => void>();
+
   constructor(
     app: FrontXApp,
     private readonly additionalStyles: string
   ) {
     super(app);
+  }
+
+  /**
+   * The shadow host carries the portal's palette (`data-kit-theme`), kept in
+   * step with the theme property, so the kit theme's palette blocks reach every
+   * node of the MFE (see `anchorKitThemeOnShadowHost`). Before #1075 a screen
+   * took the dark palette only when its own root carried `data-theme`, and a
+   * root that did not (the organization's Overview, Workspaces, Inbox) stayed
+   * light on a dark page.
+   */
+  override mount(container: Element | ShadowRoot, bridge: ChildMfeBridge, mountContext?: MfeMountContext): void {
+    if (container instanceof ShadowRoot) this.followPortalTheme(container, bridge);
+    super.mount(container, bridge, mountContext);
+  }
+
+  override async unmount(container: Element | ShadowRoot): Promise<void> {
+    if (container instanceof ShadowRoot) {
+      this.themeFollowers.get(container)?.();
+      this.themeFollowers.delete(container);
+    }
+    await super.unmount(container);
+  }
+
+  private followPortalTheme(shadowRoot: ShadowRoot, bridge: ChildMfeBridge): void {
+    this.themeFollowers.get(shadowRoot)?.();
+    const host = shadowRoot.host;
+    const paint = (value: unknown) => {
+      host.setAttribute(KIT_THEME_HOST_ATTR, toKitTheme(typeof value === 'string' ? value : 'default'));
+    };
+    paint(bridge.getProperty(FRONTX_SHARED_PROPERTY_THEME)?.value);
+    this.themeFollowers.set(
+      shadowRoot,
+      bridge.subscribeToProperty(FRONTX_SHARED_PROPERTY_THEME, (property) => paint(property.value))
+    );
   }
 
   protected override adoptHostStylesIntoShadowRoot(shadowRoot: ShadowRoot): void {

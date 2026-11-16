@@ -83,9 +83,12 @@ each MFE's build bundles them into its own stylesheet, as it does its own.
   the line under a list is `GridFooter`.
 - **Filters**: `TEXT_SEARCH_FILTER_KEY`, and `tagGroupChoice`, `listChoices`,
   `searchQuery` read what a stored filter holds, whatever shape it has.
-- **Theme**: `useThemedRoot` finds the screen's `[data-theme]` root for a
-  popup's `container`. A screen's root carries `data-theme` from
-  `useHostChrome`; without it the kit's tokens stay light.
+- **Theme**: `StudioMfeLifecycle` keeps `data-kit-theme` on the MFE's shadow
+  host in step with the portal theme, and `anchorKitThemeOnShadowHost` lets
+  the kit's light and dark palettes match it, so every node under the host
+  takes the portal's tokens, whatever its screen root carries (#1075).
+  `useThemedRoot` finds a popup's `container`: the screen's `[data-theme]`
+  root, or else the shadow root's top element.
 
 ## Remembered choices
 

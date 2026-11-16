@@ -14,7 +14,8 @@ import { OrganizationRoot } from './OrganizationRoot';
  *
  * The screen root keeps the kit's `[data-theme]` paint off deliberately, so the
  * shell's own ground shows through the host `StudioMfeLifecycle` keeps
- * transparent.
+ * transparent. The palette comes from the host, which `StudioMfeLifecycle`
+ * keeps on the portal's theme (#1075).
  */
 const KIT_THEME_ON_HOST = anchorKitThemeOnShadowHost(kitTheme);
 
