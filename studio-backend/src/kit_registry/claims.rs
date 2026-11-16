@@ -9,7 +9,7 @@
 //!   sets `meta.kit` on a gear-declared type from it, and the type is dormant
 //!   where that kit does not apply;
 //! - **whose a gear's MCP tool or write route is** ([`Claims::tool_claim`],
-//!   [`Claims::route_claim`]): called where that kit does not apply, it
+//!   [`Claims::route_match`]): called where that kit does not apply, it
 //!   answers `KIT_NOT_INSTALLED` (one shared check, `port`);
 //! - **whether a gear may skip a sync** ([`Claims::sync_kit`]): only for a
 //!   claim that opts in (`sync_only_with_kit`).
@@ -22,10 +22,6 @@
 //! Only the built-in kits' claims count here. An organization's own kit may
 //! not claim what a built-in kit or the shell already has
 //! ([`Claims::conflict_with`], `KIT_MODEL_CONFLICT`).
-
-// The tool and route lookups and the sync flag are read by the shared
-// `KIT_NOT_INSTALLED` check, which comes with step 2 (#1084).
-#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
@@ -252,6 +248,7 @@ impl Claims {
     /// prefix, such as the gateway's `/cf`, is ignored). A template's
     /// parameter matches any one segment; a literal segment wins over a
     /// parameter where two templates match.
+    #[cfg(test)]
     pub fn route_claim(&self, method: &str, path: &str) -> Option<&Claim> {
         self.route_match(method, path).map(|(c, _)| c)
     }
@@ -305,11 +302,13 @@ impl Claims {
     }
 
     /// Every claimed type, with its claim.
+    #[cfg(test)]
     pub fn types(&self) -> impl Iterator<Item = (&str, &Claim)> {
         self.types.iter().map(|(k, v)| (k.as_str(), v))
     }
 
     /// Every claimed route, `METHOD /path`, with its claim.
+    #[cfg(test)]
     pub fn routes(&self) -> impl Iterator<Item = (String, &Claim)> {
         self.routes
             .iter()
@@ -370,6 +369,7 @@ pub fn builtin_manifests() -> Vec<KitManifest> {
 }
 
 /// Whether `id` is a core gear type ([`CORE_GEAR_TYPES`]).
+#[cfg(test)]
 pub fn is_core_gear_type(id: &str) -> bool {
     CORE_GEAR_TYPES.iter().any(|(t, _)| *t == id)
 }

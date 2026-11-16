@@ -14,7 +14,7 @@ use super::installed::{
     BASE_KIT, InstalledKit, KitInstaller, NOT_A_PROJECT_KIT, ORGANIZATION_KIT, Refusal,
 };
 use super::models::{KIT_MODEL_CONFLICT, MODEL_KIT_NOT_FOR_PROJECT};
-use super::phase::{KIT_NOT_INSTALLED, NO_SUCH_TRANSITION};
+use super::phase::NO_SUCH_TRANSITION;
 use super::service::{
     KitDescriptor, KitInstallation, KitMaterialization, KitRegistryService, ProjectRepository,
 };
@@ -960,13 +960,8 @@ fn refused(refusal: Refusal) -> CanonicalError {
                 MODEL_KIT_NOT_FOR_PROJECT,
             )
             .create(),
-        Refusal::KitNotInstalled(slug) => KitRegistryError::failed_precondition()
-            .with_precondition_violation(
-                "kit",
-                format!("`{slug}` is not installed where this was asked"),
-                KIT_NOT_INSTALLED,
-            )
-            .create(),
+        // The one shared answer (ADR-0071 §4), as every gear gives it.
+        Refusal::KitNotInstalled(kit) => super::gate::KitRefusal::NotInstalled { kit }.problem(),
         Refusal::NoSuchTransition(detail) => KitRegistryError::failed_precondition()
             .with_precondition_violation("phase", detail, NO_SUCH_TRANSITION)
             .create(),

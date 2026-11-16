@@ -228,6 +228,13 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         // The engine reads the platform's gear repositories, listed on the way
         // into a route that may run it (ADR-0046).
         let router = crate::product::port::with_gear_roots(router, &ctx.client_hub());
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): studio-kits' one shared check.
+        let router = crate::kit_registry::port::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-components-catalog",
+        );
         // Without it, a request that names an organization is refused rather
         // than served from the caller's home tenant.
         Ok(match org_access {

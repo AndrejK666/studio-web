@@ -9,6 +9,7 @@ mod bundles;
 mod claims;
 mod contents;
 mod events;
+mod gate;
 mod inbox;
 pub(crate) mod installed;
 mod manifest;
@@ -117,7 +118,7 @@ impl Gear for StudioKitsGear {
 impl toolkit::contracts::RestApiCapability for StudioKitsGear {
     fn register_rest(
         &self,
-        _ctx: &GearCtx,
+        ctx: &GearCtx,
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
@@ -136,8 +137,13 @@ impl toolkit::contracts::RestApiCapability for StudioKitsGear {
             .get()
             .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?
             .clone();
-        Ok(rest::register_routes(
-            router, openapi, service, installer, access,
+        let router = rest::register_routes(router, openapi, service, installer, access);
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): Project lifecycle's `PUT /project-phase`.
+        Ok(gate::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-kits",
         ))
     }
 }

@@ -64,6 +64,28 @@ This README is what you need to work in the directory.
   route claimed twice, and on a claim of something no gear declares or
   serves. A shelf kit claiming a built-in kit's, the core's or the shell's
   is refused, `KIT_MODEL_CONFLICT`.
+- One shared `KIT_NOT_INSTALLED` (ADR-0071 §4, step 2), `gate.rs`, from the
+  claims. A gear puts `port::with_claimed_routes(router, hub, "<gear>")` on
+  its router as the last thing `register_rest` does (studio-environments,
+  -artifact-ingest, -product, -spec-mapping, -components-catalog,
+  -documents, -usage, -reports, -organizations, -kits): a claimed **write**
+  route of that gear, called where its kit does not apply, answers 400
+  `failed_precondition` `KIT_NOT_INSTALLED` with the kit's slug as the
+  violation's `subject`, before the handler. studio-mcp asks
+  `port::tool_refusal` before a claimed tool runs and answers the tool's
+  error `KIT_NOT_INSTALLED (kit <slug>): …`. Where: the most specific tenant
+  the call names (`project_id`, `workspace_id`, `organization_id`/`org_id`
+  in the path, the query, a JSON body or the tool's arguments), else the
+  caller's own; a named tenant the caller cannot reach is left to the
+  handler. Reads are never claimed. A gear checking something only a kit
+  brings inside its own logic (Research in studio-environments, a project's
+  phase here) asks `port::require_kit` and answers its `KitRefusal`; no gear
+  writes the answer itself. `port::sync_wanted`: a gear asks before an
+  expensive sync whether the claim on that type opted in to
+  `sync_only_with_kit` and its kit does not apply (studio-artifact-ingest
+  asks for its CI runs and jobs, build outputs and releases). Every built-in
+  claim leaves the flag off today, so every gear writes as before; a kit
+  that sets it says so in `GET /catalog/{slug}` (`gears[].note`).
 - What is inside a kit before anyone installs it (ADR-0068 §4), `contents.rs`:
   `GET /studio-kits/v1/catalog/{kit_slug}` (any signed-in user; 404 for a
   slug the library does not hold) answers `{kit, contents, manifest}`;
@@ -165,7 +187,8 @@ This README is what you need to work in the directory.
   before a build, deploy or rollback or a project's own Research environment,
   the organization's before an organization's Research environment or its
   Research projects/hardware listing (400 `failed_precondition`,
-  `KIT_NOT_INSTALLED`); status, logs, uninstall and removal stay. Design:
+  `KIT_NOT_INSTALLED`, through `port::require_kit`); status, logs, uninstall
+  and removal stay. Design:
   `docs/design/studio-kits.md` §3.13.
 - `project-lifecycle` is the first built-in kit with a model: the type
   `project-lifecycle-phase`, `project.phase` / `phase_owner` / `phase_since`,

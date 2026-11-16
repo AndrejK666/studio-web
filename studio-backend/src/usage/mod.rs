@@ -124,6 +124,13 @@ impl RestApiCapability for StudioUsageGear {
             ctx.client_hub(),
         ));
         let router = rest::register_routes(router, openapi, service);
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): studio-kits' one shared check.
+        let router = crate::kit_registry::port::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-usage",
+        );
         // `?organization_id=` resolves through it.
         Ok(router.layer(axum::Extension(access)))
     }

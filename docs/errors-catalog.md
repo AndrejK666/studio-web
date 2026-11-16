@@ -125,7 +125,7 @@ are stable; a screen may branch on them.
 | `studio-kits` | `KIT_INSTALLED` | An organization takes off its shelf a kit it has installed. |
 | `studio-kits` | `KIT_MODEL_CONFLICT` | A kit's model overlay would add a type, field, relation, tab or lifecycle the organization's model already has from somebody else. Nothing is installed. |
 | `studio-kits` | `MODEL_KIT_NOT_FOR_PROJECT` | A kit that brings a model is installed for one project; the model is the organization's. |
-| `studio-kits` | `KIT_NOT_INSTALLED` | A kit's function (a project's phase) is used where the kit does not apply. |
+| any gear (one shared check, `kit_registry/port.rs`) | `KIT_NOT_INSTALLED` | Something a kit brings is used where the kit does not apply to the project or organization the call acts in: a write route or MCP tool the kit claims (ADR-0071 §4), a kit's function (a project's phase), or Constructor Research in studio-environments. The violation's `subject` is the kit's slug; `description` names the kit and where to install it. Reads are never refused for a kit. An MCP tool answers it as its error text, `KIT_NOT_INSTALLED (kit <slug>): …`. |
 | `studio-kits` | `NO_SUCH_TRANSITION` | A project's phase is moved along a transition its lifecycle does not declare. |
 
 The `permission_denied` reasons of the same gear are `PLATFORM_ADMIN_REQUIRED`,

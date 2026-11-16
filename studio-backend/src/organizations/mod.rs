@@ -252,8 +252,15 @@ impl RestApiCapability for StudioOrganizationsGear {
                 hub: ctx.client_hub(),
             });
         let router = project_create_rest::register(router, openapi, creations);
-        Ok(rest::register_routes(
+        let router = rest::register_routes(
             router, openapi, service, creation, sources, overview, metrics, access,
+        );
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): Project lifecycle's project types.
+        Ok(crate::kit_registry::port::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-organizations",
         ))
     }
 }

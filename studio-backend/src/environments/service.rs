@@ -66,6 +66,9 @@ pub enum Refusal {
     Conflict(&'static str, String),
     /// 503: a gear this needs is missing.
     Unavailable(String),
+    /// 400 `KIT_NOT_INSTALLED` (or 503): what only a kit brings, where it
+    /// does not apply; answered as studio-kits answers it.
+    Kit(crate::kit_registry::port::KitRefusal),
     /// 500.
     Internal(String),
 }
@@ -2703,6 +2706,15 @@ impl EnvironmentService {
                 Refusal::Unavailable(why) => ("UNAVAILABLE".to_owned(), why),
                 Refusal::Conflict(code, why) => (code.to_owned(), why),
                 Refusal::Internal(why) => ("INTERNAL".to_owned(), why),
+                Refusal::Kit(r) => match &r {
+                    crate::kit_registry::port::KitRefusal::NotInstalled { .. } => (
+                        crate::kit_registry::port::KIT_NOT_INSTALLED.to_owned(),
+                        r.detail(),
+                    ),
+                    crate::kit_registry::port::KitRefusal::Unavailable(why) => {
+                        ("UNAVAILABLE".to_owned(), why.clone())
+                    }
+                },
             });
             return Ok(BuildAsked::Planned(Box::new(BuildPlan {
                 environment_id: env.id,
@@ -2844,9 +2856,13 @@ impl EnvironmentService {
     /// project the request is about (its effective kits), or the organization
     /// for the organization's own environments. What is already there stays
     /// readable and removable without it -- status, logs, an uninstall,
-    /// removing the environment.
+    /// removing the environment. The refusal is studio-kits' one shared
+    /// `KIT_NOT_INSTALLED` (ADR-0071 §4).
     async fn require_research_kit(&self, ctx: &SecurityContext, tenant: Uuid) -> Result<()> {
-        research_kit_gate(self.research_kit_applies(ctx, tenant).await?)
+        use crate::kit_registry::port::{CONSTRUCTOR_RESEARCH_KIT, require_kit};
+        require_kit(&self.hub, ctx, tenant, CONSTRUCTOR_RESEARCH_KIT)
+            .await
+            .map_err(Refusal::Kit)
     }
 
     /// The kit's Inbox source `deploy-failed` (`docs/design/studio-kits.md`
@@ -3742,33 +3758,11 @@ pub struct BuildLog {
     pub steps: Vec<build::StepLog>,
 }
 
-/// The refusal code for something only a kit that is not installed brings
-/// (ADR-0070 §7, decision 5).
-pub const KIT_NOT_INSTALLED: &str = "KIT_NOT_INSTALLED";
-
 /// Whether a deploy request to a Research environment needs the Constructor
 /// Research kit: everything but an uninstall, which takes away what an
 /// organization ran there before it removed the kit.
 fn research_needs_kit(action: DeploymentAction) -> bool {
     action != DeploymentAction::Uninstall
-}
-
-/// The answer when the organization has, or has not, the Constructor Research
-/// kit: a refusal that names the kit and how to get it.
-fn research_kit_gate(applies: bool) -> Result<()> {
-    if applies {
-        return Ok(());
-    }
-    Err(Refusal::Precondition(
-        KIT_NOT_INSTALLED,
-        format!(
-            "building and running a product in Constructor Research comes with the Constructor \
-             Research kit (`{}`), which is not installed here: an administrator installs it \
-             for the organization under Organization › Kits, or for this project under \
-             Project › Kits",
-            crate::kit_registry::port::CONSTRUCTOR_RESEARCH_KIT
-        ),
-    ))
 }
 
 /// How many days before a Research sign-in runs out the Inbox says so.
@@ -3922,15 +3916,6 @@ mod tests {
 
     #[test]
     fn research_needs_its_kit_except_to_take_away_what_runs() {
-        assert!(research_kit_gate(true).is_ok());
-        let Err(Refusal::Precondition(code, why)) = research_kit_gate(false) else {
-            panic!("refused as a precondition");
-        };
-        assert_eq!(code, KIT_NOT_INSTALLED);
-        assert!(
-            why.contains("constructor-research") && why.contains("Kits"),
-            "{why}"
-        );
         assert!(research_needs_kit(DeploymentAction::Install));
         assert!(!research_needs_kit(DeploymentAction::Uninstall));
     }

@@ -249,6 +249,21 @@ without the portal; each step is the REST route the portal calls for it.
 **Kits.** What Studio has for an organization comes from kits (ADR-0068,
 ADR-0069 §4); an agent installs one the way a person does.
 
+**A tool that comes with a kit.** Most tools above belong to a kit, which
+claims them (ADR-0071 §4; `kits_describe` lists them under `gears`): the
+`project_domain_model_*` tools and `project_capabilities`, `project_findings`,
+`project_plan`, `project_requirements` are Project domain model's;
+`review_requests`, `review_verdict`, `spec_check` and `spec_check_result`
+Specs'; `project_phase*` Project lifecycle's; the `product_*` tools,
+`gdl_file`, `build_list` and the environments tools Product & Releases';
+`research_*` Constructor Research's. The kit library, the Studio domain
+model, a project's creation, status and sources, connections, the Inbox and
+runs are the shell's and always answer. Where the claiming kit does not apply
+to the project (`project_id`) or organization the call acts in, the tool
+answers `KIT_NOT_INSTALLED` with the kit's slug, before it calls anything; an
+administrator installs the kit under Organization › Kits or Project › Kits.
+The tool list itself does not change with the kits.
+
 | Tool | What it answers or does |
 | --- | --- |
 | `kits_catalog` | the kit library, each kit with its shelf (`builtin`, `official`, `organization`) |
@@ -349,6 +364,7 @@ Things to ask:
 | `401` when connecting | the token expired or is not sent; check the variable the config reads |
 | a tool answers `Studio answered 403: …` | you may not do that in the portal either |
 | `Studio answered 503: … is not part of this deployment` | the gear the tool needs is not running here |
+| a tool answers `KIT_NOT_INSTALLED (kit …)` | the tool comes with that kit, which does not apply to the project or organization the call names; install the kit, or ask an administrator to |
 | `spec_check` fails with `upstream not configured` | the spec-quality service has no key on this deployment |
 | `you have reached the limit of 60 spec_check calls an hour` | the per-person limit; wait the minutes it names |
 | the agent's sign-in page says the client is unknown | the agent was not given `--client-id studio-mcp`, or the realm has no such client; see *Sign in* |

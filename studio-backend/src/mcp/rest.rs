@@ -144,9 +144,34 @@ async fn send_message(
     // checked again as the caller, by the route it reaches.
     let api = Api::new(state.client.clone(), &state.api_url, Some(auth))
         .acting_for(ctx.subject_id().to_string(), Arc::clone(&state.limits));
-    match protocol::handle_body(&body, &state.tools, &api).await {
+    let gate = KitGate {
+        hub: Arc::clone(&state.hub),
+        ctx,
+    };
+    match protocol::handle_body(&body, &state.tools, &api, &gate).await {
         Some(answer) => Json(answer).into_response(),
         None => StatusCode::ACCEPTED.into_response(),
+    }
+}
+
+/// The kits' gate for this caller: a tool a kit claims answers
+/// `KIT_NOT_INSTALLED` where that kit does not apply to the project or
+/// organization its arguments name (studio-kits' one shared check).
+struct KitGate {
+    hub: Arc<toolkit::client_hub::ClientHub>,
+    ctx: toolkit_security::SecurityContext,
+}
+
+#[async_trait::async_trait]
+impl protocol::Gate for KitGate {
+    async fn refuse(
+        &self,
+        tool: &str,
+        args: &serde_json::Map<String, serde_json::Value>,
+    ) -> Option<String> {
+        crate::kit_registry::port::tool_refusal(&self.hub, &self.ctx, tool, args)
+            .await
+            .map(|refusal| refusal.tool_text())
     }
 }
 
