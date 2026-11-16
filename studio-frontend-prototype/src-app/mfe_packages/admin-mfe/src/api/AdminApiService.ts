@@ -435,8 +435,11 @@ export class AdminApiService extends BaseApiService {
 
   /* ── System: the platform's raw state (the prototype's `SystemView`) ── */
 
-  /** The running gears (`gear-orchestrator`), raw. */
-  readonly gears = this.protocol(RestEndpointProtocol).query<unknown>('/gear-orchestrator/v1/gears');
+  /**
+   * The gears this backend assembles, raw (`studio-assembly`). The prototype read `gear-orchestrator/v1/gears`, a
+   * platform gear this backend does not run: that read answered 404 here.
+   */
+  readonly gears = this.protocol(RestEndpointProtocol).query<unknown>('/studio-assembly/v1/manifest');
 
   /** The outbound API gateway's upstreams (`oagw`), raw. */
   readonly oagwUpstreams = this.protocol(RestEndpointProtocol).query<unknown>('/oagw/v1/upstreams');

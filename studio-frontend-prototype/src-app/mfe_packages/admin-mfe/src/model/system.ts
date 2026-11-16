@@ -3,12 +3,17 @@
 // the entities by id pattern, the GTS entities as rows, which providers carry a message, and the ready-made test
 // messages. Titles and texts of the examples are in i18n (`sys_example_<key>_*`).
 
-/** A gear as `gear-orchestrator` reports it. */
+/**
+ * A gear as the backend's assembly manifest (`studio-assembly/v1/manifest`) names it: `depends_on` and `role` there.
+ * The prototype read `gear-orchestrator/v1/gears` (`dependencies`, `deployment_mode`, `instances`), a platform gear
+ * this backend does not run; both shapes are read.
+ */
 export interface GearRow {
   name: string;
   capabilities?: string[];
   dependencies?: string[];
   deployment_mode?: string;
+  /** Absent from the manifest: it says what is assembled, not how many run. */
   instances?: unknown[];
 }
 
@@ -40,11 +45,21 @@ export function countOf(value: unknown): number | null {
   return listOf(value)?.length ?? null;
 }
 
-/** The gears, from either a bare array or `{ gears: [...] }`. */
+/** The gears, from either a bare array or `{ gears: [...] }`, in the orchestrator's or the manifest's shape. */
 export function gearsOf(value: unknown): GearRow[] {
-  return (listOf(value) ?? []).filter(
-    (g): g is GearRow => !!g && typeof g === 'object' && typeof (g as GearRow).name === 'string'
-  );
+  return (listOf(value) ?? [])
+    .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object' && typeof (g as GearRow).name === 'string')
+    .map((g) => {
+      const strings = (v: unknown) => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : undefined);
+      const mode = g.deployment_mode ?? g.role;
+      return {
+        name: g.name as string,
+        capabilities: strings(g.capabilities),
+        dependencies: strings(g.dependencies ?? g.depends_on),
+        deployment_mode: typeof mode === 'string' ? mode : undefined,
+        instances: Array.isArray(g.instances) ? g.instances : undefined,
+      };
+    });
 }
 
 const PERMISSION = /gts\.cf\.toolkit\.authz\.permission\.v1~[a-zA-Z0-9_.]+\.v\d+/g;

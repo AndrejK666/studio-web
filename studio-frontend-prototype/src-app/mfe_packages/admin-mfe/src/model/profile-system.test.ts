@@ -95,6 +95,14 @@ describe('system', () => {
     expect(gearsOf([{ name: 'b' }]).map((g) => g.name)).toEqual(['b']);
   });
 
+  it('reads the assembly manifest the same as the orchestrator: depends_on and role', () => {
+    const [g] = gearsOf({ gears: [{ name: 'studio-documents', depends_on: ['studio-tasks'], role: 'gear', capabilities: ['docs'] }] });
+    expect(g.dependencies).toEqual(['studio-tasks']);
+    expect(g.deployment_mode).toBe('gear');
+    expect(g.capabilities).toEqual(['docs']);
+    expect(g.instances).toBeUndefined();
+  });
+
   it('reads the registered permissions by id pattern, once each and sorted', () => {
     const entities = {
       entities: [
