@@ -779,6 +779,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-components-catalog/v1/components/{name}",
+      "operation_id": "studio_components_catalog.get_component",
+      "tag": "StudioComponentsCatalog",
+      "summary": "One component's page: its type, what it provides and needs, and who stands for it",
+      "authenticated": true,
+      "responses": [
+        "ComponentDetailDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-components-catalog/v1/components/{name}/docs",
       "operation_id": "studio_components_catalog.get_component_doc",
       "tag": "StudioComponentsCatalog",

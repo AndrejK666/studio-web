@@ -40,27 +40,40 @@ use toolkit::{Gear, GearCtx};
 
 /// Every tool the server offers, in the order `tools/list` gives them.
 pub fn tools() -> Vec<sdk::Tool> {
+    tools_by_gear().into_iter().map(|(_, tool)| tool).collect()
+}
+
+/// Every tool the server offers with the gear that serves it, in the order
+/// `tools/list` gives them: what a component's page lists under the gear,
+/// and what the kits' claims test holds to the claims.
+pub fn tools_by_gear() -> Vec<(&'static str, sdk::Tool)> {
     let mut all = Vec::new();
-    all.extend(crate::domain_model::mcp_tools());
+    let mut add = |gear: &'static str, tools: Vec<sdk::Tool>| {
+        all.extend(tools.into_iter().map(|tool| (gear, tool)));
+    };
+    add("studio-domain-model", crate::domain_model::mcp_tools());
     // What the documents describe and what is left to decide before a build.
-    all.extend(crate::documents::mcp_tools());
-    all.extend(crate::spec_mapping::mcp_tools());
+    add("studio-documents", crate::documents::mcp_tools());
+    add("studio-spec-mapping", crate::spec_mapping::mcp_tools());
     // Where a project stands.
-    all.extend(crate::organizations::mcp_tools());
+    add("studio-organizations", crate::organizations::mcp_tools());
     // What waits on the person.
-    all.extend(crate::user_profile::mcp_tools());
-    all.extend(crate::spec_quality::mcp_tools());
+    add("studio-user", crate::user_profile::mcp_tools());
+    add("studio-spec-quality", crate::spec_quality::mcp_tools());
     // The pipeline, in the order a project goes through it: its sources and
     // the connections they are read through, the product's description,
     // then where it runs, its builds, and the runs they start.
-    all.extend(crate::project_sources::mcp_tools());
-    all.extend(crate::connectors::mcp_tools());
-    all.extend(crate::product::mcp_tools());
-    all.extend(crate::environments::mcp_tools());
-    all.extend(crate::artifact_ingest::mcp_tools());
-    all.extend(crate::tasks::mcp_tools());
+    add("studio-organizations", crate::project_sources::mcp_tools());
+    add("studio-connector", crate::connectors::mcp_tools());
+    add("studio-product", crate::product::mcp_tools());
+    add("studio-environments", crate::environments::mcp_tools());
+    add(
+        "studio-artifact-ingest",
+        crate::artifact_ingest::mcp_tools(),
+    );
+    add("studio-tasks", crate::tasks::mcp_tools());
     // The kit library, and installing kits for everyone or one organization.
-    all.extend(crate::kit_registry::mcp_tools());
+    add("studio-kits", crate::kit_registry::mcp_tools());
     all
 }
 

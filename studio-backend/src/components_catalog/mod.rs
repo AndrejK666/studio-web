@@ -10,6 +10,7 @@
 mod activity;
 mod candidates;
 mod catalogue_levels;
+mod component_detail;
 mod cratesio;
 pub(crate) mod field_schema;
 mod frontx_gdl;
