@@ -225,6 +225,15 @@ pub fn shelf_kit(
     if taken(&manifest.slug) {
         return Err(Refusal::SlugTaken(manifest.slug));
     }
+    // One type, tool or write route, one kit (ADR-0071 §1): what a built-in
+    // kit claims, the core's types and the shell's tools are not a shelf
+    // kit's to claim.
+    if let Some(why) = super::claims::Claims::builtin().conflict_with(&manifest) {
+        return Err(Refusal::ModelConflict(format!(
+            "`{}` claims what is not its own: {why}",
+            manifest.slug
+        )));
+    }
     let commit = normalize_version(&fetched.commit)
         .map_err(|e| Refusal::Internal(anyhow!("the pinned commit: {e}")))?;
     let manifest_path = if input.path.is_empty() {

@@ -24,6 +24,12 @@ pub(crate) mod gts;
 mod index;
 mod mcp;
 pub(crate) use mcp::tools as mcp_tools;
+
+/// Every type this gear declares in the model, for the kits' claims test.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    model_store::needs()
+}
 mod detach_task; // a source taken out of a project as one run (#1042)
 mod ingest_task;
 pub mod sdk;

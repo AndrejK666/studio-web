@@ -23,5 +23,93 @@
         }
       }
     ]
-  }
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-documents/v1/project-domain-model",
+      "GET /studio-documents/v1/project-domain-model/build-estimate",
+      "GET /studio-documents/v1/project-domain-model/findings",
+      "GET /studio-documents/v1/project-domain-model/reviews",
+      "GET /studio-documents/v1/project-domain-model/requirements",
+      "GET /studio-documents/v1/project-domain-model/related",
+      "GET /studio-documents/v1/project-domain-model/trace",
+      "GET /studio-documents/v1/project-domain-model/work",
+      "GET /studio-documents/v1/project-domain-model/check-methods",
+      "GET /studio-documents/v1/project-domain-model/glossary",
+      "GET /studio-documents/v1/project-domain-model/glossary/document",
+      "GET /studio-spec-mapping/v1/findings",
+      "GET /studio-spec-mapping/v1/plan",
+      "GET /studio-kits/v1/projects/{project_id}/installations",
+      "GET /studio-user/v1/organizations/{org_id}/members",
+      "GET /studio-user/v1/organizations/{org_id}/members/{user_id}/identities"
+    ],
+    "writes": [
+      "POST /studio-documents/v1/project-domain-model/builds",
+      "POST /studio-documents/v1/project-domain-model/entities",
+      "POST /studio-documents/v1/project-domain-model/reviews",
+      "POST /studio-documents/v1/project-domain-model/issues",
+      "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
+      "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/proposals",
+      "POST /studio-documents/v1/project-domain-model/files/proposals",
+      "POST /studio-documents/v1/project-domain-model/sentences/proposals",
+      "POST /studio-documents/v1/project-domain-model/glossary/decisions",
+      "POST /studio-documents/v1/project-domain-model/glossary/distinct",
+      "POST /studio-documents/v1/project-domain-model/glossary/proposals",
+      "POST /studio-documents/v1/project-domain-model/glossary/document/proposals",
+      "POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-documents",
+      "types": [
+        "spec-extraction",
+        "spec-judgement",
+        "fact-review",
+        "finding-decision",
+        "glossary-decision",
+        "application-part",
+        "capability"
+      ],
+      "mcp_tools": [
+        "project_domain_model_issues",
+        "project_domain_model_readiness",
+        "project_domain_model_doc_quality",
+        "project_domain_model_entity_save",
+        "project_domain_model_sentence_propose",
+        "project_domain_model_facts",
+        "project_domain_model_build",
+        "project_domain_model_build_status",
+        "project_domain_model_coverage",
+        "project_domain_model_uploads",
+        "project_domain_model_upload",
+        "project_domain_model_upload_remove",
+        "project_domain_model_fact_review",
+        "project_domain_model_finding_decide"
+      ],
+      "routes": [
+        "POST /studio-documents/v1/project-domain-model/builds",
+        "POST /studio-documents/v1/project-domain-model/entities",
+        "POST /studio-documents/v1/project-domain-model/reviews",
+        "POST /studio-documents/v1/project-domain-model/issues",
+        "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
+        "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/proposals",
+        "POST /studio-documents/v1/project-domain-model/files/proposals",
+        "POST /studio-documents/v1/project-domain-model/sentences/proposals",
+        "POST /studio-documents/v1/project-domain-model/glossary/decisions",
+        "POST /studio-documents/v1/project-domain-model/glossary/distinct",
+        "POST /studio-documents/v1/project-domain-model/glossary/proposals",
+        "POST /studio-documents/v1/project-domain-model/glossary/document/proposals"
+      ]
+    },
+    {
+      "gear": "studio-spec-mapping",
+      "mcp_tools": [
+        "project_capabilities",
+        "project_findings",
+        "project_plan",
+        "project_requirements"
+      ]
+    }
+  ]
 }

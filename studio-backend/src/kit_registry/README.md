@@ -42,23 +42,44 @@ This README is what you need to work in the directory.
   those in `OPT_IN_BUILTIN` (`service.rs`): `constructor-research` applies only
   where an organization installs it (or a platform administrator makes it a
   base kit). A feature ported into the portal is added here,
-  with its contents in `contents.rs`: its screens (a route only once the
-  portal has one) and, in `permissions`, the routes its screens call — a
-  test holds every one to `docs/api-contract.json`.
+  with its screens in `contents.rs` (a route only once the portal has one)
+  and everything else in its compiled-in `builtin/<slug>.kit.json` — every
+  built-in kit has one, `studio-api-docs` too: its model, what it claims
+  (`gears`) and, in `permissions`, the routes its screens call — a test
+  holds every one to `docs/api-contract.json`.
+- What a kit claims of the gears (ADR-0071 §1–§3, step 1), `claims.rs`: the
+  `gears` section of a `kit.json`, per gear `{gear, types, mcp_tools,
+  routes, sync_only_with_kit}`. The built-in kits claim under today's slugs
+  (`ci-run`/`ci-job` → `project-tests`, the environments types →
+  `org-infrastructure`, `deployment` and the builds → `product-releases`,
+  `budget`/`model-price` → `org-costs`, `report-source` → `org-reports`, the
+  catalogue types → `components`, the documents types → `project-specs`,
+  `project-domain-model` and `project-lifecycle`, `project-type` →
+  `project-lifecycle`). `Claims::builtin()` (also in `port`) is the one table:
+  the domain model sets `meta.kit` on a gear's type from it, and a claimed
+  type is dormant where its kit does not apply (`kit_overlay::sync`). What no
+  kit claims is the shell's: `CORE_GEAR_TYPES` (ADR-0071 §7) and
+  `SHELL_MCP_TOOLS`. The build tests (`claims_tests.rs`) fail on a gear type
+  or MCP tool no kit claims and the shell does not name, on a type, tool or
+  route claimed twice, and on a claim of something no gear declares or
+  serves. A shelf kit claiming a built-in kit's, the core's or the shell's
+  is refused, `KIT_MODEL_CONFLICT`.
 - What is inside a kit before anyone installs it (ADR-0068 §4), `contents.rs`:
   `GET /studio-kits/v1/catalog/{kit_slug}` (any signed-in user; 404 for a
   slug the library does not hold) answers `{kit, contents, manifest}`;
   `contents` holds every section of a kit manifest (`screens`, `types`,
-  `rules`, `functions`, `services`, `inbox`, `mcp_tools`, `permissions`,
-  `material`, `kinds`, `docs`), each present and possibly empty. The kit
+  `rules`, `functions`, `services`, `inbox`, `mcp_tools`, `gears`,
+  `permissions`, `material`, `kinds`, `docs`), each present and possibly
+  empty (`gears[].note` says when a claim's data starts from the next sync
+  after an install). The kit
   page draws its model from them (#1099): each of `types` names its model
   `id`, whether it `adopts` a type the core has, and its `fields` (`origin`
   `kit` or `core`); `model` lists the fields and relations it adds on other
   types and the tabs it shows (`shows` relations), all by model id
   (`manifest.rs`, `model_contents`). Where it comes from, in `manifest`:
-  - `built-in`: declared in `builtin_contents()`, only what Studio has today
-    (the tab, its route, the gears' routes its screen calls). Change it when
-    the screen changes.
+  - `built-in`: the screens in `builtin_contents()` and the rest from its
+    compiled-in `kit.json`, only what Studio has today (the tab, its route,
+    the gears' routes its screen calls). Change it when the screen changes.
   - `.cf-studio-kit.toml`: an official kit, read from the copy of its
     manifest in `manifests/` at the commit `official_catalogue()` pins
     (material = each resource's `install_path`, kinds = the

@@ -47,6 +47,15 @@ mod taxonomy;
 mod tiers;
 pub(crate) mod values;
 
+/// Every type this gear declares in the model, for the kits' claims test:
+/// the catalogue's and its publication requests.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    let mut out = crate::catalog_graph::needs_of("studio-components-catalog");
+    out.push(registry_curation::request_need());
+    out
+}
+
 /// The catalogue's node vocabulary lives beside the store it is written to.
 pub(crate) use crate::catalog_graph::gts;
 

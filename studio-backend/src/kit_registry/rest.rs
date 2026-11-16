@@ -258,6 +258,46 @@ pub struct KitMaterialDto {
     pub description: Option<String>,
 }
 
+/// What a kit claims of one gear (ADR-0071 §2): the gear's types whose
+/// state the kit decides, and the gear's MCP tools and write routes, which
+/// answer `KIT_NOT_INSTALLED` where the kit does not apply.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitGearClaimDto {
+    /// The gear's name (`studio-environments`).
+    pub gear: String,
+    pub types: Vec<String>,
+    pub mcp_tools: Vec<String>,
+    /// Write routes, `METHOD /path`.
+    pub routes: Vec<String>,
+    /// The gear skips its sync of these types where the kit does not apply:
+    /// after an install, their data starts from the next sync.
+    pub sync_only_with_kit: bool,
+    /// What installing means for these types, in a sentence for the install
+    /// summary; null when nothing needs saying.
+    pub note: Option<String>,
+}
+
+impl From<super::manifest::ManifestGearClaim> for KitGearClaimDto {
+    fn from(c: super::manifest::ManifestGearClaim) -> Self {
+        let note = c.sync_only_with_kit.then(|| {
+            format!(
+                "{} does not sync these types where this kit is not installed: after an \
+                 install, their data starts from the next sync",
+                c.gear
+            )
+        });
+        Self {
+            gear: c.gear,
+            types: c.types,
+            mcp_tools: c.mcp_tools,
+            routes: c.routes,
+            sync_only_with_kit: c.sync_only_with_kit,
+            note,
+        }
+    }
+}
+
 /// What a kit brings, by the sections of its manifest (ADR-0068 §3, §8).
 /// Every list is present, empty when the kit brings none.
 #[derive(Debug)]
@@ -270,6 +310,9 @@ pub struct KitContentsDto {
     pub services: Vec<KitNamedDto>,
     pub inbox: Vec<KitInboxSourceDto>,
     pub mcp_tools: Vec<KitNamedDto>,
+    /// What it claims of the gears it stands for (ADR-0071 §2): their types,
+    /// tools and write routes, one entry per gear.
+    pub gears: Vec<KitGearClaimDto>,
     pub permissions: KitPermissionsDto,
     pub material: Vec<KitMaterialDto>,
     /// The artifact kinds it brings templates and rules for (PRD, ADR, ...).
@@ -528,6 +571,7 @@ impl From<KitDetail> for KitDetailDto {
                     })
                     .collect(),
                 mcp_tools: named(c.mcp_tools),
+                gears: c.gears.into_iter().map(Into::into).collect(),
                 permissions: KitPermissionsDto {
                     reads: c.permissions.reads,
                     writes: c.permissions.writes,

@@ -93,7 +93,7 @@ pub fn need(
     }
 }
 
-fn chunk_need(gear: &str) -> TypeNeed {
+pub(super) fn chunk_need(gear: &str) -> TypeNeed {
     need(
         gear,
         CHUNK_TYPE,

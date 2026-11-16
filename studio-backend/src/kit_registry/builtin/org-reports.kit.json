@@ -184,5 +184,41 @@
         }
       }
     ]
-  }
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-reports/v1/reports",
+      "GET /studio-reports/v1/reports/{report_id}"
+    ],
+    "writes": [
+      "PUT /studio-reports/v1/reports/{report_id}/source",
+      "PUT /studio-reports/v1/reports/{report_id}/schedule",
+      "POST /studio-reports/v1/reports/{report_id}/sync",
+      "POST /studio-reports/v1/reports/{report_id}/plan/sync",
+      "PUT /studio-reports/v1/reports/{report_id}/plan/lanes",
+      "PUT /studio-reports/v1/reports/{report_id}/plan/needs",
+      "PUT /studio-reports/v1/reports/{report_id}/plan/people",
+      "PUT /studio-reports/v1/reports/{report_id}/plan/projects",
+      "PUT /studio-reports/v1/reports/{report_id}/plan/units"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-reports",
+      "types": [
+        "report-source"
+      ],
+      "routes": [
+        "PUT /studio-reports/v1/reports/{report_id}/source",
+        "PUT /studio-reports/v1/reports/{report_id}/schedule",
+        "POST /studio-reports/v1/reports/{report_id}/sync",
+        "POST /studio-reports/v1/reports/{report_id}/plan/sync",
+        "PUT /studio-reports/v1/reports/{report_id}/plan/lanes",
+        "PUT /studio-reports/v1/reports/{report_id}/plan/needs",
+        "PUT /studio-reports/v1/reports/{report_id}/plan/people",
+        "PUT /studio-reports/v1/reports/{report_id}/plan/projects",
+        "PUT /studio-reports/v1/reports/{report_id}/plan/units"
+      ]
+    }
+  ]
 }

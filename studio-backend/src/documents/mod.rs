@@ -68,6 +68,18 @@ use service::{DocumentsService, SyncAnalysis};
 
 pub(crate) use mcp::tools as mcp_tools;
 
+/// Every type this gear declares in the model, for the kits' claims test:
+/// its tables' rows, their chunks, the review records and the process's.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    let mut out = data::table_needs();
+    out.push(model_table::chunk_need("studio-documents"));
+    out.push(process_store::stage_need());
+    out.push(process_store::capability_need());
+    out.extend(review_store::needs());
+    out
+}
+
 /// `gears.studio-documents.config`.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default)]

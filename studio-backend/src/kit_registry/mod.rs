@@ -6,6 +6,7 @@
 //! kit files into a checkout.
 
 mod bundles;
+mod claims;
 mod contents;
 mod events;
 mod inbox;

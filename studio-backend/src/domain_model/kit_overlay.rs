@@ -55,6 +55,26 @@ use super::ontology::Ontology;
 
 /// `meta.origin` / `origin` of what a kit brought.
 pub const ORIGIN_KIT: &str = "kit";
+/// `meta.origin` of a type a gear declared (`TypeNeed`): a kit that claims
+/// it decides its `meta.kit` and whether it is installed (ADR-0071 §3).
+pub const ORIGIN_GEAR: &str = "gear";
+
+/// The kits whose claimed gear types the model marks, carried (`meta.kit`)
+/// on a type a gear declared: what an organization's reconciliation also
+/// syncs, so a claiming kit that does not apply leaves them dormant.
+pub fn claiming(o: &Ontology) -> Vec<String> {
+    let mut out: Vec<String> = o
+        .entities()
+        .iter()
+        .filter_map(|e| e.get("meta"))
+        .filter(|m| str_of(m, "origin") == Some(ORIGIN_GEAR))
+        .filter_map(|m| str_of(m, "kit"))
+        .map(str::to_owned)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -533,6 +553,7 @@ pub fn sync(
     overlay: Option<&KitOverlay>,
     inhabited: &dyn Fn(&str) -> bool,
 ) -> Result<KitModelChange, KitModelError> {
+    let uninstall = overlay.is_none();
     let empty = KitOverlay::default();
     let overlay = overlay.unwrap_or(&empty);
     validate(slug, overlay)?;
@@ -999,6 +1020,32 @@ pub fn sync(
             && leave(meta, slug, &at)
         {
             change.kept.push(id.clone());
+        }
+    }
+    // The gear's types the kit claims (ADR-0071 §3): the gear declares them
+    // and keeps writing them; the kit decides only whether they are
+    // installed. Without the kit they are dormant, left by it; with it, they
+    // are its again.
+    for e in entities.iter_mut() {
+        let id = str_of(e, "id").unwrap_or_default().to_owned();
+        let Some(meta) = e.get_mut("meta").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        if meta.get("origin").and_then(Value::as_str) != Some(ORIGIN_GEAR) {
+            continue;
+        }
+        let marked = meta.get("kit").and_then(Value::as_str) == Some(slug);
+        let left = meta
+            .get("left_by")
+            .and_then(|l| l.get("kit"))
+            .and_then(Value::as_str)
+            == Some(slug);
+        if uninstall && marked && leave(meta, slug, &at) {
+            change.kept.push(id);
+        } else if !uninstall && left {
+            meta.remove("left_by");
+            meta.insert("kit".into(), json!(slug));
+            change.updated.push(format!("type {id}"));
         }
     }
     let before_len = entities.len();

@@ -181,6 +181,53 @@ fn object_id(instance_id: &str) -> String {
     format!("cat-{instance_id}")
 }
 
+/// Whether `gear` writes nodes of `type_id`: the product its two, the
+/// catalogue the rest. Only those are moved and held by it.
+fn owns_type(gear: &str, type_id: &str) -> bool {
+    (gear == "studio-product") == cgts::PRODUCT_NODE_TYPES.contains(&type_id)
+}
+
+/// The types `gear` declares for the catalogue: all of them, held where it
+/// writes them.
+pub(crate) fn needs_of(gear: &str) -> Vec<TypeNeed> {
+    TYPES
+        .iter()
+        .map(|(type_id, entity, name, description)| TypeNeed {
+            declared_by: gear.to_owned(),
+            id: (*entity).to_owned(),
+            name: (*name).to_owned(),
+            description: (*description).to_owned(),
+            extends: Some("record".to_owned()),
+            bucket: Some("catalog".to_owned()),
+            fields: vec![
+                (CATALOG_ID.to_owned(), "string".to_owned(), String::new()),
+                (
+                    CATALOG_TENANT.to_owned(),
+                    "string".to_owned(),
+                    String::new(),
+                ),
+                ("day".to_owned(), "integer?".to_owned(), String::new()),
+                ("component".to_owned(), "string?".to_owned(), String::new()),
+            ],
+            relations: RELATIONS
+                .iter()
+                .filter(|r| r.2 == *entity)
+                .map(|r| (r.1.to_owned(), r.3.to_owned(), r.4.to_owned()))
+                .collect(),
+            held_by: owns_type(gear, type_id).then(|| gear.to_owned()),
+            searchable: matches!(
+                *entity,
+                "gear"
+                    | "catalog-kit"
+                    | "frontx-package"
+                    | "catalog-service"
+                    | "registry-entry"
+                    | "roadmap-item"
+            ),
+        })
+        .collect()
+}
+
 pub(crate) struct ModelSink {
     legacy: Arc<dyn CatalogSink>,
     hub: Option<Arc<ClientHub>>,
@@ -240,46 +287,11 @@ impl ModelSink {
     /// Whether this gear writes nodes of `type_id`: the product its two,
     /// the catalogue the rest. Only those are moved and held by it.
     fn owns(&self, type_id: &str) -> bool {
-        (self.gear == "studio-product") == cgts::PRODUCT_NODE_TYPES.contains(&type_id)
+        owns_type(&self.gear, type_id)
     }
 
     fn needs(&self) -> Vec<TypeNeed> {
-        TYPES
-            .iter()
-            .map(|(type_id, entity, name, description)| TypeNeed {
-                declared_by: self.gear.clone(),
-                id: (*entity).to_owned(),
-                name: (*name).to_owned(),
-                description: (*description).to_owned(),
-                extends: Some("record".to_owned()),
-                bucket: Some("catalog".to_owned()),
-                fields: vec![
-                    (CATALOG_ID.to_owned(), "string".to_owned(), String::new()),
-                    (
-                        CATALOG_TENANT.to_owned(),
-                        "string".to_owned(),
-                        String::new(),
-                    ),
-                    ("day".to_owned(), "integer?".to_owned(), String::new()),
-                    ("component".to_owned(), "string?".to_owned(), String::new()),
-                ],
-                relations: RELATIONS
-                    .iter()
-                    .filter(|r| r.2 == *entity)
-                    .map(|r| (r.1.to_owned(), r.3.to_owned(), r.4.to_owned()))
-                    .collect(),
-                held_by: self.owns(type_id).then(|| self.gear.clone()),
-                searchable: matches!(
-                    *entity,
-                    "gear"
-                        | "catalog-kit"
-                        | "frontx-package"
-                        | "catalog-service"
-                        | "registry-entry"
-                        | "roadmap-item"
-                ),
-            })
-            .collect()
+        needs_of(&self.gear)
     }
 
     /// The model, ready for `ctx`'s tenant: its types, and what the graph

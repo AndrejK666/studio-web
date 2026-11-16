@@ -1,0 +1,13 @@
+{
+  "manifest_version": "1",
+  "slug": "studio-api-docs",
+  "icon": "lucide:book-open",
+  "name": "Docs & API",
+  "description": "The backend's API reference, grouped by the gear that serves it, opened from the product menu.",
+  "publisher": "Constructor Fabric",
+  "permissions": {
+    "reads": [
+      "GET /openapi.json"
+    ]
+  }
+}

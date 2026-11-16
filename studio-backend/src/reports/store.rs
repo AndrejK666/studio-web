@@ -164,7 +164,7 @@ impl ModelStore {
         }
     }
 
-    fn need() -> crate::domain_model::port::TypeNeed {
+    pub(super) fn need() -> crate::domain_model::port::TypeNeed {
         let f = |n: &str, t: &str| (n.to_owned(), t.to_owned(), String::new());
         crate::domain_model::port::TypeNeed {
             declared_by: "studio-reports".to_owned(),

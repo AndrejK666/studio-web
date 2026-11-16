@@ -2264,14 +2264,20 @@ impl DomainModelService {
     }
 
     /// The kits the caller's organization's model carries, with the version
-    /// each overlay was applied at.
+    /// each overlay was applied at; a kit that only claims gear types the
+    /// model marks with it (ADR-0071 §3) is carried at no version, so the
+    /// kits' reconciliation leaves those types dormant where it does not
+    /// apply.
     pub async fn kit_models(
         &self,
         ctx: &SecurityContext,
     ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
-        Ok(super::kit_overlay::carried(
-            &*self.model_current(ctx).await?,
-        ))
+        let model = self.model_current(ctx).await?;
+        let mut carried = super::kit_overlay::carried(&model);
+        for kit in super::kit_overlay::claiming(&model) {
+            carried.entry(kit).or_default();
+        }
+        Ok(carried)
     }
 
     /// One versioned edit of some entities: `edit` changes a copy of the

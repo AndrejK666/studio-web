@@ -24,6 +24,17 @@ mod infra_gdl;
 mod kind;
 mod mcp;
 pub(crate) use mcp::tools as mcp_tools;
+
+/// Every type this gear declares in the model, for the kits' claims test:
+/// the catalogue's (it holds the product's two) and its gear explanations.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    let mut out = crate::catalog_graph::needs_of("studio-product");
+    out.extend(crate::model_metadata::declared_types(
+        explanations::MODEL_KINDS,
+    ));
+    out
+}
 mod migrations;
 mod new_gear;
 pub mod port;

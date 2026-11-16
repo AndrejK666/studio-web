@@ -151,5 +151,25 @@
         }
       }
     ]
-  }
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-artifact-ingest/v1/runs",
+      "GET /studio-artifact-ingest/v1/nodes",
+      "GET /studio-artifact-ingest/v1/open-pull-requests",
+      "POST /studio-documents/v1/pull-request-checks",
+      "GET /studio-documents/v1/workspaces/{workspace_id}/capabilities",
+      "GET /studio-spec-mapping/v1/capabilities",
+      "POST /studio-spec-mapping/v1/conformance"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-artifact-ingest",
+      "types": [
+        "ci-run",
+        "ci-job"
+      ]
+    }
+  ]
 }

@@ -58,25 +58,11 @@ impl Ontology {
                 origin: Some("gear".into()),
             })?;
             self.entity_mut(&need.id)?["meta"]["declared_by"] = json!(need.declared_by);
-            // Ownership is not installation. A gear-only definition must not
-            // become a Studio type or claim that its kit is installed.
-            // The owner is the seed's annotation, or the kit the type moved
-            // to out of the core (ADR-0070 phase 5).
-            let owner = Ontology::running_core()
-                .iter()
-                .find(|e| e.get("id").and_then(Value::as_str) == Some(need.id.as_str()))
-                .and_then(|e| e.pointer("/meta/kit"))
-                .filter(|v| v.is_string())
-                .cloned()
-                .or_else(|| {
-                    Ontology::running_moves()
-                        .get(&need.id)
-                        .filter(|k| k.as_str() != crate::domain_model::ontology::LEFT_BY_STUDIO)
-                        .map(|k| json!(k))
-                });
-            if let Some(owner) = owner {
+            if let Some(owner) = owner_kit(&need.id) {
                 self.entity_mut(&need.id)?["meta"]["kit"] = owner;
             }
+            changed = true;
+        } else if self.claim_unmarked_gear_type(&need.id)? {
             changed = true;
         }
         let have: Vec<String> = self
@@ -113,6 +99,61 @@ impl Ontology {
             self.doc["gear_declarations"] = json!(declarations);
         }
         Ok(changed || declaration_changed)
+    }
+}
+
+/// The kit a gear-declared type belongs to. Ownership is not installation:
+/// a gear-only definition must not become a Studio type or claim that its kit
+/// is installed. The owner is the seed's annotation, else the kit the type
+/// moved to out of the core (ADR-0070 phase 5), else the built-in kit that
+/// claims it (ADR-0071 §3). Whether that kit applies is the kits' to say:
+/// the organization's reconciliation leaves the type dormant where it does
+/// not (`kit_overlay`).
+fn owner_kit(id: &str) -> Option<Value> {
+    Ontology::running_core()
+        .iter()
+        .find(|e| e.get("id").and_then(Value::as_str) == Some(id))
+        .and_then(|e| e.pointer("/meta/kit"))
+        .filter(|v| v.is_string())
+        .cloned()
+        .or_else(|| {
+            Ontology::running_moves()
+                .get(id)
+                .filter(|k| k.as_str() != crate::domain_model::ontology::LEFT_BY_STUDIO)
+                .map(|k| json!(k))
+        })
+        .or_else(|| {
+            crate::kit_registry::port::Claims::builtin()
+                .type_claim(id)
+                .map(|c| json!(c.kit))
+        })
+}
+
+impl Ontology {
+    /// A gear's type an organization already has, created before a kit
+    /// claimed it (ADR-0071 step 1): marked with its claiming kit, unless
+    /// something else already speaks for it (a kit's mark, a kit that left
+    /// it, a type that is not the gear's).
+    fn claim_unmarked_gear_type(&mut self, id: &str) -> anyhow::Result<bool> {
+        let Some(e) = self.entity(id) else {
+            return Ok(false);
+        };
+        let gears = e.pointer("/meta/origin").and_then(Value::as_str) == Some("gear");
+        let unmarked = e.pointer("/meta/kit").is_none_or(Value::is_null)
+            && e.pointer("/meta/left_by").is_none_or(Value::is_null);
+        if !(gears && unmarked) {
+            return Ok(false);
+        }
+        let Some(kit) = crate::kit_registry::port::Claims::builtin().type_claim(id) else {
+            return Ok(false);
+        };
+        let kit = json!(kit.kit);
+        let e = self.entity_mut(id)?;
+        if !e.get("meta").is_some_and(Value::is_object) {
+            e["meta"] = json!({});
+        }
+        e["meta"]["kit"] = kit;
+        Ok(true)
     }
 }
 

@@ -28,6 +28,12 @@ pub mod source;
 mod store;
 pub mod xlsx;
 
+/// Every type this gear declares in the model, for the kits' claims test.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    vec![store::ModelStore::need()]
+}
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
