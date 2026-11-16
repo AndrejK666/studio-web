@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import type { CatalogNode, RegistryEntry } from '../../api/types';
 import { CATALOGUE_FILTERS, catalogueRows } from './CatalogueGrid';
-import { REGISTRY_FILTERS, keepsRegistryRow, type RegistryRow } from './RegistryGrid';
+import { REGISTRY_FILTERS, keepsRegistryRow, registryRows, type RegistryRow } from './RegistryGrid';
+
+describe('the type a row shows', () => {
+  it('is the catalogue’s, and the type filter keeps only that type', () => {
+    const nodes = [
+      { type_id: 'g', instance_id: 'a', value: { name: 'a', component_kind: 'gear', component_type: 'gear' } },
+      { type_id: 'g', instance_id: 'b', value: { name: 'b', component_kind: 'micro-frontend', component_type: 'mfe' } },
+    ] as CatalogNode[];
+    const shown = catalogueRows(nodes, { filters: { [CATALOGUE_FILTERS.type]: { value: ['mfe'] } } }, null, {});
+    expect(shown.map((r) => r.node.value.name)).toEqual(['b']);
+    const rows = registryRows([
+      { key: 'r:x', name: 'x', kind: 'plugin', description: '', state: 'declared', entry: { name: 'x', kind: 'plugin', state: 'declared', capabilities: [], orphaned: false, occurrences: [] } },
+      { key: 'c:b', name: 'b', kind: 'frontx', description: '', state: 'published', node: nodes[1] },
+    ]);
+    expect(rows.map((r) => r.type)).toEqual(['plugin', 'mfe']);
+  });
+});
 
 const node = (name: string, value: Record<string, unknown> = {}): CatalogNode => ({
   type_id: 'gts.cf.studio.catalog.gear.v1~',
@@ -70,19 +86,20 @@ describe('the registry grid’s filters', () => {
     kind: 'gear',
     description: '',
     state: 'declared',
+    type: 'gear',
     entry: entry(),
   };
 
   it('keeps a row under no filter, and under each that it matches', () => {
     expect(keepsRegistryRow(row, {})).toBe(true);
     expect(keepsRegistryRow(row, { [REGISTRY_FILTERS.state]: choice('declared') })).toBe(true);
-    expect(keepsRegistryRow(row, { [REGISTRY_FILTERS.kind]: choice('gear') })).toBe(true);
+    expect(keepsRegistryRow(row, { [REGISTRY_FILTERS.type]: choice('gear') })).toBe(true);
     expect(keepsRegistryRow(row, { [REGISTRY_FILTERS.project]: choice('p1') })).toBe(true);
   });
 
   it('drops a row another state, type or project leaves out', () => {
     expect(keepsRegistryRow(row, { [REGISTRY_FILTERS.state]: choice('candidate') })).toBe(false);
-    expect(keepsRegistryRow(row, { [REGISTRY_FILTERS.kind]: choice('kit') })).toBe(false);
+    expect(keepsRegistryRow(row, { [REGISTRY_FILTERS.type]: choice('kit') })).toBe(false);
     expect(keepsRegistryRow(row, { [REGISTRY_FILTERS.project]: choice('p2') })).toBe(false);
     // A published node no project declares is in no project.
     expect(keepsRegistryRow({ ...row, entry: undefined }, { [REGISTRY_FILTERS.project]: choice('p1') })).toBe(false);

@@ -14,7 +14,7 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
 import { api } from '../../api/client';
 import type { PlanRow } from '../../api/types';
 import { ScopeContext, type Scope } from '../common';
-import { ProjectComponentsInventory } from './ProjectComponentsInventory';
+import { ProjectComponentsInventory, inventoryType } from './ProjectComponentsInventory';
 import { declareRefusal, detectedProjects, evidenceLines, scaffoldTargetLine } from './registryLines';
 
 const plan = [
@@ -106,6 +106,15 @@ describe('ProjectComponentsInventory', () => {
     draw();
     await waitFor(() => expect(screen.getByText('down')).toBeTruthy());
     expect(screen.getByText('retry')).toBeTruthy();
+  });
+});
+
+describe('the type glyph on a row', () => {
+  it('is the Components screens type: services, then the registry kind word for word', () => {
+    expect(inventoryType({ role: 'service', kind: 'go' })).toBe('service');
+    expect(inventoryType({ role: 'ours', kind: 'plugin' })).toBe('plugin');
+    expect(inventoryType({ role: 'platform', kind: 'gear' })).toBe('gear');
+    expect(inventoryType({ role: 'could', kind: 'module' })).toBe('other');
   });
 });
 

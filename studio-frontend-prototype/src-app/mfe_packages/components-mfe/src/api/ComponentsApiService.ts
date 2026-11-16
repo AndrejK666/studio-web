@@ -17,6 +17,7 @@ import type {
   CatalogNode,
   CatalogRepoSource,
   Colleague,
+  ComponentDetail,
   ComponentValues,
   Connection,
   FieldSchema,
@@ -36,6 +37,7 @@ import type {
   StudioProfile,
   TaskRun,
 } from './types';
+import type { ScreenPreview } from '@constructor-studio/mfe-shared';
 import type { ComponentSnapshot } from '../model/field-trend';
 
 export const CATALOG = '/studio-components-catalog/v1';
@@ -190,6 +192,17 @@ export class ComponentsApiService extends BaseApiService {
   readonly versions = this.protocol(RestEndpointProtocol).queryWith<{ nodes: CatalogNode[] }, Org & { crate: string }>(
     ({ org, crate }) => orgScoped(`${CATALOG}/versions?crate=${encodeURIComponent(crate)}`, org)
   );
+
+  /** One component's page: its type, what it provides and needs, who stands for it. */
+  readonly componentDetail = this.protocol(RestEndpointProtocol).queryWith<ComponentDetail, Org & { name: string }>(
+    ({ org, name }) => orgScoped(`${CATALOG}/components/${encodeURIComponent(name)}`, org)
+  );
+
+  /** The pictures builds took of a micro-frontend's screens, the newest build first. */
+  readonly screenPreviews = this.protocol(RestEndpointProtocol).queryWith<
+    { items: ScreenPreview[]; total: number },
+    Org & { component: string }
+  >(({ org, component }) => orgScoped(`${CATALOG}/screen-previews?component=${encodeURIComponent(component)}`, org));
 
   /** Replace the Studio-managed profile of one component. */
   saveProfile(org: string | null, name: string) {

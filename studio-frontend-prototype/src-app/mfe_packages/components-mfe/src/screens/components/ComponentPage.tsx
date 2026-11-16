@@ -90,7 +90,8 @@ export function ComponentPage({
   baselines: { status: 'loading' | 'ready' | 'error'; byName: Map<string, ComponentSnapshot> };
   days: number;
   onDays: (days: number) => void;
-  onBack: () => void;
+  /** Without it the page is a tab of a component's page, which has the way back. */
+  onBack?: () => void;
   onSaved: (profile: Record<string, unknown>) => void;
 }) {
   const { org, t } = useScope();
@@ -136,12 +137,17 @@ export function ComponentPage({
   return (
     <section className={styles.stack} data-component-page={name}>
       <div className={styles.topbar}>
-        <Button variant="ghost" onClick={onBack} data-component-back>
-          ← {t('back_to_list')}
-        </Button>
-        <h1 className={styles.title} title={name}>
-          {displayName(name)}
-        </h1>
+        {/* Inside a component's page (its Profile tab), the page has the way back and the name. */}
+        {onBack && (
+          <>
+            <Button variant="ghost" onClick={onBack} data-component-back>
+              ← {t('back_to_list')}
+            </Button>
+            <h1 className={styles.title} title={name}>
+              {displayName(name)}
+            </h1>
+          </>
+        )}
         <Tabs value={view} onValueChange={(v) => setView(v as View)}>
           <TabsList variant="line" aria-label={t('view')}>
             <TabsTrigger value="empty">{t('view_empty')}</TabsTrigger>

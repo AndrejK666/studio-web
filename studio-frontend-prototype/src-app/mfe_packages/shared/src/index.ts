@@ -317,6 +317,15 @@ export {
 } from './domain/DomainModelApiService';
 // People and teams (people-mfe, team-mfe).
 export * from './people';
+// What a component is, in one word and one glyph: the catalogue's type.
+export {
+  COMPONENT_TYPES,
+  ComponentTypeIcon,
+  catalogueComponentType,
+  isComponentType,
+  registryComponentType,
+  type ComponentType,
+} from './components/componentType';
 
 // A list on the kit's DataGrid (#1076) has its own entry, `@constructor-studio/mfe-shared/grid`
 // (`grid.ts`), so importing this one does not load the kit's DataGrid.
