@@ -65,6 +65,7 @@ export {
   STUDIO_SHARED_PROPERTY_UI_PREFERENCES,
   useHostPreference,
 } from './host/preferences';
+export { STUDIO_ACTION_INBOX_COUNT, reportInboxCount } from './host/inboxCount';
 export { StudioMfeLifecycle } from './mfe/StudioMfeLifecycle';
 export { authShared } from './auth/authShared';
 export {

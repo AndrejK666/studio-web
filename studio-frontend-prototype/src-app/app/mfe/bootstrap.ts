@@ -48,6 +48,7 @@ import {
   STUDIO_ACTION_CHAIN_DONE,
   STUDIO_ACTION_CHAIN_FAILED,
   STUDIO_ACTION_CONTEXT_PUBLISH,
+  STUDIO_ACTION_INBOX_COUNT,
   STUDIO_ACTION_NOTIFY,
   STUDIO_ACTION_PLACE_OPEN,
   STUDIO_ACTION_PREFERENCE_SET,
@@ -66,6 +67,7 @@ import {
   prewarmShadowStyles,
 } from '@constructor-studio/mfe-shared';
 import { createPreferenceSetHandler, publishMfePreferences } from '@/app/mfe/preferenceActions';
+import { createInboxCountHandler } from '@/app/mfe/inboxCountActions';
 import {
   createArtifactOpenHandler,
   createContextPublishHandler,
@@ -247,6 +249,7 @@ class ScreenDomainImpl extends ExtensionDomainImplementation {
     ctx.registerHandler(STUDIO_ACTION_NOTIFY, createNotifyHandler());
     ctx.registerHandler(STUDIO_ACTION_PLACE_OPEN, createPlaceOpenHandler());
     ctx.registerHandler(STUDIO_ACTION_PREFERENCE_SET, createPreferenceSetHandler());
+    ctx.registerHandler(STUDIO_ACTION_INBOX_COUNT, createInboxCountHandler());
     ctx.registerHandler(
       STUDIO_ACTION_SCREEN_OPEN,
       createScreenOpenHandler(() => registry.getExtensionsForDomain(screenDomain.id) as StudioScreenExtension[])
@@ -541,6 +544,7 @@ export function buildStudioScreenDomain(): ExtensionDomain {
       STUDIO_ACTION_SCREEN_OPEN,
       STUDIO_ACTION_PLACE_OPEN,
       STUDIO_ACTION_PREFERENCE_SET,
+      STUDIO_ACTION_INBOX_COUNT,
       STUDIO_ACTION_CHAIN_DONE,
       STUDIO_ACTION_CHAIN_FAILED,
     ],

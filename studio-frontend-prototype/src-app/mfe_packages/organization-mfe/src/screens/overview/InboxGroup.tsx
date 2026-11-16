@@ -29,6 +29,7 @@ import { apiRegistry, useMfeBridge } from '@gears-frontx/react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
 import {
   errorMessage,
+  reportInboxCount,
   responseStatus,
   useScreenAvailability,
   useStudioEventRefresh,
@@ -105,8 +106,10 @@ export function InboxGroup({
       setOpen(next);
       onCount?.(next.total);
       onSources?.(inboxSources(next.items));
+      // The top bar shows this count rather than reading the Inbox again (#1077).
+      reportInboxCount(bridge, next.total);
     },
-    [onCount, onSources]
+    [onCount, onSources, bridge]
   );
 
   useEffect(() => {
@@ -125,11 +128,12 @@ export function InboxGroup({
         setFailed({ status: responseStatus(e), message: errorMessage(e) });
         onFailed?.(true);
         onCount?.(0);
+        reportInboxCount(bridge, null);
       });
     return () => {
       live = false;
     };
-  }, [api, tick, reloadKey, shown, onCount, onFailed]);
+  }, [api, tick, reloadKey, shown, onCount, onFailed, bridge]);
 
   useEffect(() => {
     if (!showHidden) return;

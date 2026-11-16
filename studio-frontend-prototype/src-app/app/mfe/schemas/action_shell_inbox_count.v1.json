@@ -1,0 +1,22 @@
+{
+  "$id": "gts://gts.frontx.mfes.comm.action.v1~constructor_studio.shell.inbox.count.v1~",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Shell-owned action an MFE executes against the screen domain after it read the person's open Inbox (`GET /studio-user/v1/me/inbox?view=open`): how many items wait, or null when the read failed. The top bar shows it instead of reading the Inbox itself while such a screen is open, so a visit reads the Inbox once, not twice (#1077). See inboxCountActions.ts.",
+  "allOf": [
+    {
+      "$ref": "gts://gts.frontx.mfes.comm.action.v1~"
+    }
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      },
+      "required": ["total"]
+    }
+  }
+}

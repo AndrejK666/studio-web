@@ -93,6 +93,15 @@ each MFE's build bundles them into its own stylesheet, as it does its own.
   `useThemedRoot` finds a popup's `container`: the screen's `[data-theme]`
   root, or else the shadow root's top element.
 
+## The Inbox count
+
+A screen that reads the person's open Inbox (`GET /studio-user/v1/me/inbox`)
+calls `reportInboxCount(bridge, total)` after each read (`null` when it
+failed), and declares `STUDIO_ACTION_INBOX_COUNT` in its entry's
+`domainActions`. The top bar shows that count and does not read the Inbox
+itself while such a screen is open (#1077): the server reads every source to
+answer, and the bar's read and the screen's used to go out together.
+
 ## Remembered choices
 
 `useHostPreference('mfe.<name>')` reads and changes one of the person's UI

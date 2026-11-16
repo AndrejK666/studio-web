@@ -32,11 +32,20 @@ vi.mock('@/app/live/liveChannel', () => ({
 }));
 
 import { APP_CONTEXT_SLICE_KEY } from '@/app/slices/appContextSlice';
-import { INBOX_FRESH_MS, INBOX_REREAD_MS, INBOX_ROUTE, movesInbox, useInboxEntry } from './useInboxEntry';
+import { reportInboxCountToShell, resetInboxCountReports } from '@/app/mfe/inboxCountActions';
+import {
+  INBOX_FRESH_MS,
+  INBOX_REREAD_MS,
+  INBOX_ROUTE,
+  movesInbox,
+  placeInAddress,
+  screenReadsInbox,
+  useInboxEntry,
+} from './useInboxEntry';
 
-/** The person is on `section`. */
-function onSection(section: string | null) {
-  store.state = { [APP_CONTEXT_SLICE_KEY]: { section } };
+/** The person is on `section`, of a project or not. */
+function onSection(section: string | null, project: string | null = null) {
+  store.state = { [APP_CONTEXT_SLICE_KEY]: { section, project: project ? { id: project, name: project } : null } };
 }
 
 function hear(subject_type: string) {
@@ -53,6 +62,7 @@ describe('useInboxEntry', () => {
     fetchCount.mockReset();
     fetchCount.mockResolvedValue({ total: 4, unread: [] });
     onSection(null);
+    resetInboxCountReports();
   });
   afterEach(() => {
     cleanup();
@@ -94,10 +104,68 @@ describe('useInboxEntry', () => {
   it('reads again on leaving the Inbox, where items are marked', async () => {
     onSection('inbox');
     const { rerender } = renderHook(() => useInboxEntry());
-    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(1));
+    expect(fetchCount).not.toHaveBeenCalled();
     onSection('workspaces');
     rerender();
-    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(1));
+  });
+
+  // #1077: the Inbox and the organization's Overview read the Inbox themselves.
+  it("takes the count a screen that read the Inbox reports, and reads nothing itself", async () => {
+    onSection('overview');
+    const { result } = renderHook(() => useInboxEntry());
+    act(() => reportInboxCountToShell(7));
+    expect(result.current.count).toBe(7);
+    act(() => reportInboxCountToShell(null));
+    expect(result.current.count).toBeNull();
+    expect(fetchCount).not.toHaveBeenCalled();
+  });
+
+  it('reads nothing on leaving such a screen that has just reported, marks included', async () => {
+    vi.useFakeTimers();
+    onSection('inbox');
+    const { rerender, result } = renderHook(() => useInboxEntry());
+    act(() => reportInboxCountToShell(2));
+    onSection('workspaces');
+    rerender();
+    await act(async () => {});
+    expect(fetchCount).not.toHaveBeenCalled();
+    expect(result.current.count).toBe(2);
+  });
+
+  it('reads itself when such a screen says nothing within INBOX_FRESH_MS', async () => {
+    vi.useFakeTimers();
+    onSection('inbox');
+    renderHook(() => useInboxEntry());
+    expect(fetchCount).not.toHaveBeenCalled();
+    await act(async () => {
+      vi.advanceTimersByTime(INBOX_FRESH_MS);
+    });
+    expect(fetchCount).toHaveBeenCalledTimes(1);
+  });
+
+  it('on a cold load, goes by the address until the routing names the section', () => {
+    window.history.replaceState({}, '', '/?screen=organization;org=o1;section=overview');
+    try {
+      renderHook(() => useInboxEntry());
+      expect(fetchCount).not.toHaveBeenCalled();
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+    expect(placeInAddress('?screen=projects;org=o1;workspace=w1;project=p1;section=overview')).toEqual({
+      section: 'overview',
+      projectId: 'p1',
+    });
+    expect(placeInAddress('?screen=people;org=o1')).toEqual({ section: null, projectId: null });
+  });
+
+  it("reads at once on a project's Overview, which does not read the Inbox", async () => {
+    onSection('overview', 'p1');
+    renderHook(() => useInboxEntry());
+    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(1));
+    expect(screenReadsInbox('overview', 'p1')).toBe(false);
+    expect(screenReadsInbox('overview', null)).toBe(true);
+    expect(screenReadsInbox('people', null)).toBe(false);
   });
 
   it('asks nothing for a click between two other tabs while the count is fresh', async () => {
