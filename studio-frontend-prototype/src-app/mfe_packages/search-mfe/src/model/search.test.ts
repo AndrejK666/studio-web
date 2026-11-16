@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { artifactHit, matchPlaces, type Place } from './search';
+import { artifactHit, matchPlaces, plainTitle, type Place } from './search';
 
 const ws = (id: string, name: string): Place => ({ kind: 'workspace', id, name, workspaceId: id, workspaceName: name });
 const project = (id: string, name: string, w: Place): Place => ({
@@ -56,5 +56,15 @@ describe('artifactHit', () => {
     );
     expect(issue).toMatchObject({ kind: 'issue', title: '#7 Broken', opens: 'link', url: 'https://x/7' });
     expect(artifactHit(file({ project_id: undefined, workspace_id: undefined }), { workspaceId: 'w2' }).opens).toBe('none');
+  });
+});
+
+describe('plainTitle', () => {
+  it('drops HTML comments a bot body opens with, and folds whitespace', () => {
+    expect(plainTitle('<!-- coderabbit-ai-generated:v1 -->\n<!-- This is an auto-generated comment -->\nSummary by CodeRabbit')).toBe(
+      'Summary by CodeRabbit'
+    );
+    expect(plainTitle('Fix the build <!-- left open')).toBe('Fix the build');
+    expect(plainTitle('#12 Plain')).toBe('#12 Plain');
   });
 });
