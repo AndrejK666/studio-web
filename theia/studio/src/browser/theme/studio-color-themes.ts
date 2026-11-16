@@ -290,15 +290,60 @@ export function toTheiaColors(palette: PortalPalette): Record<string, string> {
     };
 }
 
+/** WCAG 2 contrast ratio of two `#rrggbb` colours. */
+export function contrastRatio(a: string, b: string): number {
+    const luminance = (hex: string) => {
+        const [r, g, bl] = channels(hex).map(v => {
+            const c = v / 255;
+            return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+    };
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+}
+
+/** The WCAG AA floor for normal text. */
+export const TEXT_CONTRAST_MIN = 4.5;
+
+/**
+ * The product extension's accent, which it uses as TEXT as well as a fill:
+ * links (`--theia-textLink-foreground`), a change card's "Accepted" verdict,
+ * the status line's pending count. The portal's `primary` is a fill colour:
+ * on the light card it reads at 5.29:1, but on the dark one at 3.38:1, under
+ * the 4.5:1 floor. Where it falls short the accent is the portal's text-link
+ * colour instead (`link-foreground`, 7.03:1 on the dark card), the same move
+ * the extension's own dark palette makes with its authored #64a6f7; and what
+ * sits on that lighter accent is the dark card, not white (2.54:1).
+ */
+export function textAccent(palette: PortalPalette): { color: string; on: string; hover: string } {
+    const t = (name: string) => token(palette, name);
+    const card = t('card');
+    const primary = t('primary');
+    if (contrastRatio(primary, card) >= TEXT_CONTRAST_MIN) {
+        return { color: primary, on: t('primary-foreground'), hover: t('primary-hover') };
+    }
+    const link = t('link-foreground');
+    const onPrimary = t('primary-foreground');
+    return {
+        color: link,
+        on: contrastRatio(onPrimary, link) >= contrastRatio(card, link) ? onPrimary : card,
+        // Lighter on a dark ground, as the extension's own dark hover is.
+        hover: mix(link, t('foreground'), 0.82),
+    };
+}
+
 /**
  * The product extension (theia/product-ext) paints its own surfaces — the
  * document editor, rails, the status line — and re-points several Theia keys
  * from a palette of `--studio-*` custom properties. While a Studio theme is on,
  * that palette takes the portal's values too, or those surfaces would keep the
- * other colour scheme. The roles match `toTheiaColors`.
+ * other colour scheme. The roles match `toTheiaColors`, but for the accent,
+ * which the extension also sets text in: see `textAccent`.
  */
 export function toProductPalette(palette: PortalPalette, typography: PortalTypography): Record<string, string> {
     const t = (name: string) => token(palette, name);
+    const accent = textAccent(palette);
     return {
         '--studio-bg': t('card'),
         '--studio-surface': t('sidebar'),
@@ -309,9 +354,9 @@ export function toProductPalette(palette: PortalPalette, typography: PortalTypog
         '--studio-edge': t('border-strong'),
         '--studio-text': t('foreground'),
         '--studio-muted': t('muted-foreground'),
-        '--studio-accent': t('primary'),
-        '--studio-on-accent': t('primary-foreground'),
-        '--studio-accent-hover': t('primary-hover'),
+        '--studio-accent': accent.color,
+        '--studio-on-accent': accent.on,
+        '--studio-accent-hover': accent.hover,
         '--studio-selection-bg': t('selection-subtle'),
         '--studio-mark': t('primary'),
         '--studio-danger': t('danger'),

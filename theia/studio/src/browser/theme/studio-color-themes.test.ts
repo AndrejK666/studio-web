@@ -1,4 +1,5 @@
 import {
+    contrastRatio,
     mix,
     PORTAL_TOKENS,
     STUDIO_DARK_THEME_ID,
@@ -7,6 +8,7 @@ import {
     studioThemeId,
     studioThemeJson,
     studioThemeMode,
+    TEXT_CONTRAST_MIN,
     toProductPalette,
     toTheiaColors,
     toTheiaTypography,
@@ -21,11 +23,13 @@ const KIT = {
         background: '#f1f5f9', foreground: '#0f172a', card: '#ffffff', primary: '#0065e3',
         border: '#e2e8f0', sidebar: '#f1f5f9', 'selection-subtle': '#dce7f2', ring: '#0065e3',
         'muted-foreground': '#334155', input: '#d9e2ec', 'primary-foreground': '#ffffff',
+        'link-foreground': '#2668c5',
     },
     dark: {
         background: '#0f172a', foreground: '#ffffff', card: '#0f172a', primary: '#0065e3',
         border: '#334155', sidebar: '#0f172a', 'selection-subtle': '#26384b', ring: '#0065e3',
         'muted-foreground': '#94a3b8', input: '#334155', 'primary-foreground': '#ffffff',
+        'link-foreground': '#6ba5f0',
     },
 } as const;
 
@@ -118,10 +122,22 @@ describe.each(['light', 'dark'] as const)('toTheiaColors, %s', mode => {
         expect(product['--studio-bg']).toBe(colors['editor.background']);
         expect(product['--studio-chrome']).toBe(colors['statusBar.background']);
         expect(product['--studio-surface']).toBe(colors['sideBar.background']);
-        expect(product['--studio-accent']).toBe(colors['button.background']);
+        // The accent carries text in the extension; dark keeps primary for
+        // Theia's filled buttons only (#1070 review).
+        expect(product['--studio-accent']).toBe(mode === 'light' ? colors['button.background'] : kit['link-foreground']);
         expect(product['--studio-selection-bg']).toBe(colors['list.activeSelectionBackground']);
         expect(product['--studio-line']).toBe(colors['panel.border']);
         expect(product['--studio-text']).toBe(colors.foreground);
+    });
+
+    it('gives the extension an accent that reads as text, and text that reads on it', () => {
+        const product = toProductPalette(PORTAL_TOKENS[mode], PORTAL_TOKENS.typography);
+        const accent = product['--studio-accent'];
+        for (const ground of ['--studio-bg', '--studio-surface', '--studio-chrome']) {
+            expect(contrastRatio(accent, product[ground])).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+        }
+        expect(contrastRatio(product['--studio-on-accent'], accent)).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
+        expect(contrastRatio(product['--studio-accent-hover'], product['--studio-bg'])).toBeGreaterThanOrEqual(TEXT_CONTRAST_MIN);
     });
 
     it('fails on a palette missing a token, rather than painting nothing', () => {
