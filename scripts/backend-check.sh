@@ -50,4 +50,4 @@ if [ "$#" -gt 0 ]; then
 fi
 
 echo "[backend-check] $gate"
-exec "$root/scripts/backend-gate.sh" --raw "$cmd"
+exec bash "$root/scripts/backend-gate.sh" --raw "$cmd"
