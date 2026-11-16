@@ -548,8 +548,16 @@ async fn fill_tenant(
 #[async_trait]
 impl GraphStore for IndexedGraphStore {
     async fn upsert_nodes(&self, ctx: &SecurityContext, nodes: &[GtsNode]) -> anyhow::Result<()> {
-        self.inner.upsert_nodes(ctx, nodes).await?;
         let tenant = ctx.subject_tenant_id();
+        if let Err(e) = self.inner.upsert_nodes(ctx, nodes).await {
+            // The graph writes in chunks, so a failure may come after earlier
+            // chunks landed, and a write whose answer was lost (a deadline)
+            // may have landed whole. Which rows the graph now has is not
+            // reported, so the index cannot follow it row by row: the tenant
+            // goes back to the graph until a fill reads what is there.
+            self.withdraw(tenant, &e).await;
+            return Err(e);
+        }
         // Not a file's content: nothing lists it, and its excerpt is the
         // weight the file rows were split to shed (see `gts::is_listed`). The
         // fill skips it the same way, because the graph never lists it.

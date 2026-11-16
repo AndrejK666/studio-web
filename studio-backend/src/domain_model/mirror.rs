@@ -48,7 +48,8 @@ use uuid::Uuid;
 use super::entity::{edge, fill, object};
 use super::ontology::{EdgeType, NodeType, Ontology};
 use super::store::{
-    DomainStore, EdgeUpsert, EdgeView, Hop, Neighbourhood, NodeUpsert, ObjectNode, is_live,
+    DomainStore, EdgeRead, EdgeUpsert, EdgeView, Hop, Neighbourhood, NodeUpsert, ObjectNode,
+    RelationRemoval, is_live, is_relation_unseen,
 };
 
 /// Rows per insert statement, under Postgres's 65 535 bound parameters.
@@ -305,14 +306,15 @@ impl DomainMirror {
         edge_type_id: &str,
         from: &str,
         to: &str,
-        relation: Option<&str>,
+        relations: Option<&[&str]>,
     ) -> anyhow::Result<()> {
         let mut cond = Condition::all()
             .add(edge::Column::EdgeTypeId.eq(edge_type_id))
             .add(edge::Column::Src.eq(from))
             .add(edge::Column::Dst.eq(to));
-        if let Some(r) = relation {
-            cond = cond.add(edge::Column::Relation.is_in([r, ""]));
+        // `None`: every row of the pair. An unnamed row is `""`.
+        if let Some(r) = relations {
+            cond = cond.add(edge::Column::Relation.is_in(r.iter().copied()));
         }
         let conn = self.db.conn()?;
         edge::Entity::delete_many()
@@ -742,6 +744,16 @@ impl IndexedDomainStore {
         }
     }
 
+    /// A graph write failed. A refusal stored nothing and leaves the rows as
+    /// they are; any other failure may have come after the graph committed
+    /// (a deadline, a lost answer), or after some of a caller's batches
+    /// landed, so the rows can no longer be trusted to match.
+    async fn after_failed_write(&self, tenant: Uuid, cause: &anyhow::Error) {
+        if !super::store::wrote_nothing(cause) {
+            self.withdraw(tenant, cause).await;
+        }
+    }
+
     async fn after_nodes(&self, ctx: &SecurityContext, nodes: &[NodeUpsert]) {
         let tenant = ctx.subject_tenant_id();
         let (live, gone) = object_rows(tenant, nodes);
@@ -788,9 +800,26 @@ async fn fill_tenant(
         .collect();
     let written = rows.len();
     mirror.write_objects(tenant, rows, false).await?;
-    let edges: Vec<edge::Model> = inner
-        .read_edges(ctx, &ids)
-        .await?
+    let read = inner.read_edges_whole(ctx, &ids).await?;
+    if !read.cut.is_empty() {
+        // Some objects have more edges than one walk may carry, so the rows
+        // would miss relations for good. The tenant stays on the graph, which
+        // answers them (as it answers everything) until a fill can read them
+        // whole; the fill is tried again after its back-off.
+        warn!(
+            objects = written,
+            edges_read = read.edges.len(),
+            cut_seeds = read.cut.len(),
+            sample = ?read.cut.iter().take(5).collect::<Vec<_>>(),
+            "studio-domain-model: the read model was not filled — some objects' relations exceed the graph's traversal budget"
+        );
+        anyhow::bail!(
+            "{} objects have more relations than one traversal carries; the read model stays unfilled",
+            read.cut.len()
+        );
+    }
+    let edges: Vec<edge::Model> = read
+        .edges
         .into_iter()
         .filter(|e| is_relation_type(&e.type_id))
         .map(|e| edge_row(tenant, &e.type_id, &e.from, &e.to, e.relation.as_deref()))
@@ -834,11 +863,17 @@ impl DomainStore for IndexedDomainStore {
         discriminator: Option<&str>,
         payload: Option<Value>,
     ) -> anyhow::Result<()> {
-        self.inner
+        let tenant = ctx.subject_tenant_id();
+        if let Err(e) = self
+            .inner
             .create_relation(ctx, edge_type_id, from, to, discriminator, payload)
-            .await?;
+            .await
+        {
+            // A write whose answer was lost may still have landed.
+            self.after_failed_write(tenant, &e).await;
+            return Err(e);
+        }
         if is_relation_type(edge_type_id) {
-            let tenant = ctx.subject_tenant_id();
             let row = edge_row(tenant, edge_type_id, from, to, discriminator);
             if let Err(e) = self.mirror.write_edges(tenant, vec![row]).await {
                 self.withdraw(tenant, &e).await;
@@ -854,7 +889,7 @@ impl DomainStore for IndexedDomainStore {
         from: &str,
         to: &str,
         relation: Option<&str>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<RelationRemoval> {
         let tenant = ctx.subject_tenant_id();
         let removed = match self
             .inner
@@ -862,15 +897,27 @@ impl DomainStore for IndexedDomainStore {
             .await
         {
             Ok(r) => r,
+            // The graph could not see whether the edge is there and removed
+            // nothing: the row stays, as the edge does.
+            Err(e) if is_relation_unseen(&e) => return Err(e),
             Err(e) => {
+                // An edge may have gone before the failure.
                 self.withdraw(tenant, &e).await;
                 return Err(e);
             }
         };
         self.fills.bump(tenant);
+        // Exactly the rows the graph dropped. After the named edge went, an
+        // older unnamed row may still stand for the relation in the graph,
+        // so it stays here too; when the graph had neither, both rows go.
+        let rows: Option<Vec<&str>> = match (removed, relation) {
+            (_, None) => None,
+            (RelationRemoval::Named, Some(r)) => Some(vec![r]),
+            (RelationRemoval::Unnamed | RelationRemoval::Absent, Some(r)) => Some(vec![r, ""]),
+        };
         if let Err(e) = self
             .mirror
-            .delete_edge(tenant, edge_type_id, from, to, relation)
+            .delete_edge(tenant, edge_type_id, from, to, rows.as_deref())
             .await
         {
             self.withdraw(tenant, &e).await;
@@ -901,7 +948,13 @@ impl DomainStore for IndexedDomainStore {
         ctx: &SecurityContext,
         nodes: &[NodeUpsert],
     ) -> anyhow::Result<u64> {
-        let n = self.inner.upsert_nodes(ctx, nodes).await?;
+        let n = match self.inner.upsert_nodes(ctx, nodes).await {
+            Ok(n) => n,
+            Err(e) => {
+                self.after_failed_write(ctx.subject_tenant_id(), &e).await;
+                return Err(e);
+            }
+        };
         self.after_nodes(ctx, nodes).await;
         Ok(n)
     }
@@ -911,7 +964,13 @@ impl DomainStore for IndexedDomainStore {
         ctx: &SecurityContext,
         nodes: &[NodeUpsert],
     ) -> anyhow::Result<u64> {
-        let n = self.inner.upsert_nodes_keeping_vectors(ctx, nodes).await?;
+        let n = match self.inner.upsert_nodes_keeping_vectors(ctx, nodes).await {
+            Ok(n) => n,
+            Err(e) => {
+                self.after_failed_write(ctx.subject_tenant_id(), &e).await;
+                return Err(e);
+            }
+        };
         self.after_nodes(ctx, nodes).await;
         Ok(n)
     }
@@ -921,8 +980,14 @@ impl DomainStore for IndexedDomainStore {
         ctx: &SecurityContext,
         edges: &[EdgeUpsert],
     ) -> anyhow::Result<u64> {
-        let n = self.inner.upsert_edges(ctx, edges).await?;
         let tenant = ctx.subject_tenant_id();
+        let n = match self.inner.upsert_edges(ctx, edges).await {
+            Ok(n) => n,
+            Err(e) => {
+                self.after_failed_write(tenant, &e).await;
+                return Err(e);
+            }
+        };
         let rows: Vec<edge::Model> = edges
             .iter()
             .filter(|e| is_relation_type(&e.type_id))
@@ -948,6 +1013,14 @@ impl DomainStore for IndexedDomainStore {
         seeds: &[String],
     ) -> anyhow::Result<Vec<EdgeView>> {
         self.inner.read_edges(ctx, seeds).await
+    }
+
+    async fn read_edges_whole(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+    ) -> anyhow::Result<EdgeRead> {
+        self.inner.read_edges_whole(ctx, seeds).await
     }
 
     async fn neighbours(

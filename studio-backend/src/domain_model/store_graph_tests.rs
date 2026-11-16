@@ -9,90 +9,16 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use authz_resolver_sdk::api::AuthZResolverApi;
-use authz_resolver_sdk::constraints::{Constraint, InPredicate, Predicate};
-use authz_resolver_sdk::models::{
-    EvaluationRequest, EvaluationResponse, EvaluationResponseContext,
-};
-use authz_resolver_sdk::pep::PolicyEnforcer;
-use graph_storage::config::{GraphStorageConfig, ValidatedConfig};
-use graph_storage::domain::embedding::{EmbeddingCoordinator, SpaceState};
-use graph_storage::domain::local_client::GraphStorageLocalClient;
-use graph_storage::domain::service::GraphServices;
-use graph_storage::infra::embedding::fake::FakeEmbeddingProvider;
-use graph_storage::infra::fake_store::{FakeGraphEngine, FakeGraphStore};
 use graph_storage_sdk::GraphStorageClientV1;
 use graph_storage_sdk::models::TypeRegistration;
 use serde_json::{Value, json};
-use toolkit_canonical_errors::CanonicalError;
-use toolkit_security::{PlatformSecurityContext, SecurityContext, pep_properties};
+use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::gts;
 use super::ontology::NodeType;
 use super::store::{DomainStore, GraphStorageBackend, NodeUpsert};
-
-/// Admits everything, in the caller's own tenant — the posture the gear is
-/// deployed under: the policy decides who may call, the scope what they see.
-struct AllowInOwnTenant;
-
-#[async_trait]
-impl AuthZResolverApi for AllowInOwnTenant {
-    async fn evaluate(
-        &self,
-        _ctx: PlatformSecurityContext,
-        request: EvaluationRequest,
-    ) -> Result<EvaluationResponse, CanonicalError> {
-        let tenant = request
-            .subject
-            .properties
-            .get("tenant_id")
-            .and_then(Value::as_str)
-            .and_then(|raw| Uuid::parse_str(raw).ok())
-            .unwrap_or_else(Uuid::nil);
-        Ok(EvaluationResponse {
-            decision: true,
-            context: EvaluationResponseContext {
-                constraints: vec![Constraint {
-                    predicates: vec![Predicate::In(InPredicate::new(
-                        pep_properties::OWNER_TENANT_ID,
-                        [tenant],
-                    ))],
-                }],
-                deny_reason: None,
-            },
-        })
-    }
-}
-
-/// The gear's service over its in-memory store, and the client every Studio
-/// gear holds, in process.
-fn client() -> Arc<dyn GraphStorageClientV1> {
-    let store = Arc::new(FakeGraphStore::new());
-    let engine = Arc::new(FakeGraphEngine::new(Arc::clone(&store)));
-    let embedding = EmbeddingCoordinator::new(
-        Arc::new(FakeEmbeddingProvider::new(384)),
-        SpaceState::Active { epoch: 1 },
-        8 * 1024,
-    );
-    let services = GraphServices::new(
-        ValidatedConfig::unchecked(GraphStorageConfig::default()),
-        store,
-        engine,
-        PolicyEnforcer::new(Arc::new(AllowInOwnTenant)),
-        embedding,
-    );
-    Arc::new(GraphStorageLocalClient::new(Arc::new(services)))
-}
-
-fn ctx(tenant: Uuid) -> SecurityContext {
-    SecurityContext::builder()
-        .subject_id(Uuid::now_v7())
-        .subject_tenant_id(tenant)
-        .build()
-        .expect("a valid security context")
-}
+use crate::test_graph::{client, client_with_budget, ctx};
 
 fn node_type(leaf: &str) -> NodeType {
     NodeType {
@@ -341,4 +267,211 @@ async fn a_new_tenant_registers_the_index_from_the_start() {
         .expect("the types register");
     assert!(pinned.is_empty());
     assert!(filter_is_admitted(client.as_ref(), &ctx, &team.type_id).await);
+}
+
+// ── Removing a relation on a busy node ─────────────────────────────────────
+
+/// A team with many `owns` edges of one relation (`staff`) and one of
+/// another (`lead`), all of the verb `owns`.
+async fn busy_team(store: &GraphStorageBackend, ctx: &SecurityContext) -> (String, Vec<String>) {
+    use super::ontology::EdgeType;
+    let team = node_type("team");
+    let person = node_type("person");
+    let owns = gts::edge_type_id("owns");
+    store.register_meta_types(ctx).await.expect("meta types");
+    store
+        .register_types(
+            ctx,
+            &[team.clone(), person.clone()],
+            &[EdgeType {
+                type_id: owns.clone(),
+                relation_kind: "owns".to_owned(),
+                src_type_ids: vec![team.type_id.clone()],
+                dst_type_ids: vec![person.type_id.clone()],
+            }],
+        )
+        .await
+        .expect("types");
+    let mut nodes = vec![object(&team.type_id, "core", json!({"name": "core"}))];
+    nodes.extend((0..8).map(|i| {
+        object(
+            &person.type_id,
+            &format!("p{i}"),
+            json!({"name": format!("p{i}")}),
+        )
+    }));
+    store.upsert_nodes(ctx, &nodes).await.expect("nodes");
+    let core = nodes[0].node_key.clone();
+    let people: Vec<String> = nodes[1..].iter().map(|n| n.node_key.clone()).collect();
+    // Six staff edges, then the lead, and p7 with no edge at all.
+    for p in &people[..6] {
+        store
+            .create_relation(ctx, &owns, &core, p, Some("staff"), None)
+            .await
+            .expect("staff");
+    }
+    store
+        .create_relation(ctx, &owns, &core, &people[6], Some("lead"), None)
+        .await
+        .expect("lead");
+    (core, people)
+}
+
+#[tokio::test]
+async fn a_relation_on_a_busy_node_is_found_by_its_discriminator() {
+    use super::store::RelationRemoval;
+    let client = client_with_budget(3);
+    let ctx = ctx(Uuid::now_v7());
+    let store = GraphStorageBackend::new(Arc::clone(&client));
+    let (core, people) = busy_team(&store, &ctx).await;
+    let owns = gts::edge_type_id("owns");
+
+    // An unfiltered walk from `core` is cut: eight edges, three nodes.
+    let walk = client
+        .traverse(
+            &ctx,
+            graph_storage_sdk::models::TraverseRequest {
+                seeds: vec![core.clone()],
+                depth: 1,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("walk");
+    assert!(walk.truncated.is_some(), "the hub is over the budget");
+
+    // The lead is one edge of its relation: the walk carries only it.
+    let removed = store
+        .delete_relation(&ctx, &owns, &core, &people[6], Some("lead"))
+        .await
+        .expect("the lead is found");
+    assert_eq!(removed, RelationRemoval::Named);
+    let lead = client
+        .traverse(
+            &ctx,
+            graph_storage_sdk::models::TraverseRequest {
+                seeds: vec![core.clone()],
+                depth: 1,
+                edge_discriminators: vec!["lead".to_owned()],
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("walk");
+    assert!(lead.edges.is_empty(), "the lead edge is gone");
+
+    // Asked again, the named edge is not there, and the look for an older
+    // unnamed one has to walk every `owns` edge of the hub, which the budget
+    // cuts: the store says it cannot tell rather than "absent".
+    let again = store
+        .delete_relation(&ctx, &owns, &core, &people[6], Some("lead"))
+        .await
+        .expect_err("the unnamed look is cut");
+    assert!(super::store::is_relation_unseen(&again), "{again}");
+}
+
+#[tokio::test]
+async fn a_relation_past_the_budget_is_unseen_not_absent() {
+    let client = client_with_budget(3);
+    let ctx = ctx(Uuid::now_v7());
+    let store = GraphStorageBackend::new(Arc::clone(&client));
+    let (core, people) = busy_team(&store, &ctx).await;
+    let owns = gts::edge_type_id("owns");
+
+    // p7 has no staff edge, but six staff edges overflow the walk: the store
+    // cannot tell, and says so rather than "absent".
+    let e = store
+        .delete_relation(&ctx, &owns, &core, &people[7], Some("staff"))
+        .await
+        .expect_err("a cut walk is not an answer");
+    assert!(super::store::is_relation_unseen(&e), "{e}");
+
+    // A staff edge either is found and removed, or is unseen: never absent.
+    for p in &people[..6] {
+        match store
+            .delete_relation(&ctx, &owns, &core, p, Some("staff"))
+            .await
+        {
+            Ok(r) => assert!(r.removed(), "{p}: {r:?}"),
+            Err(e) => assert!(super::store::is_relation_unseen(&e), "{p}: {e}"),
+        }
+    }
+}
+
+// ── Reading every edge for the read model's fill ───────────────────────────
+
+/// Two teams, two people each: walked together they exceed a budget of
+/// three nodes, walked one at a time they do not.
+#[tokio::test]
+async fn a_cut_walk_is_walked_again_in_halves_until_every_edge_is_read() {
+    use super::ontology::EdgeType;
+    let client = client_with_budget(3);
+    let ctx = ctx(Uuid::now_v7());
+    let store = GraphStorageBackend::new(Arc::clone(&client));
+    let team = node_type("team");
+    let person = node_type("person");
+    let owns = gts::edge_type_id("owns");
+    store.register_meta_types(&ctx).await.expect("meta types");
+    store
+        .register_types(
+            &ctx,
+            &[team.clone(), person.clone()],
+            &[EdgeType {
+                type_id: owns.clone(),
+                relation_kind: "owns".to_owned(),
+                src_type_ids: vec![team.type_id.clone()],
+                dst_type_ids: vec![person.type_id.clone()],
+            }],
+        )
+        .await
+        .expect("types");
+    let nodes = vec![
+        object(&team.type_id, "t1", json!({})),
+        object(&team.type_id, "t2", json!({})),
+        object(&person.type_id, "a", json!({})),
+        object(&person.type_id, "b", json!({})),
+        object(&person.type_id, "c", json!({})),
+        object(&person.type_id, "d", json!({})),
+    ];
+    store.upsert_nodes(&ctx, &nodes).await.expect("nodes");
+    let key = |i: usize| nodes[i].node_key.clone();
+    for (t, p) in [(0, 2), (0, 3), (1, 4), (1, 5)] {
+        store
+            .create_relation(&ctx, &owns, &key(t), &key(p), Some("staff"), None)
+            .await
+            .expect("edge");
+    }
+    let seeds = vec![key(0), key(1)];
+
+    let both = client
+        .traverse(
+            &ctx,
+            graph_storage_sdk::models::TraverseRequest {
+                seeds: seeds.clone(),
+                depth: 1,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("walk");
+    assert!(both.truncated.is_some(), "one walk of both is cut");
+
+    let whole = store.read_edges_whole(&ctx, &seeds).await.expect("edges");
+    assert_eq!(whole.edges.len(), 4, "every edge, after halving");
+    assert!(whole.cut.is_empty());
+
+    // A team with more edges than one walk carries is named, not hidden.
+    for p in ["e", "f", "g"] {
+        let n = object(&person.type_id, p, json!({}));
+        store
+            .upsert_nodes(&ctx, std::slice::from_ref(&n))
+            .await
+            .expect("node");
+        store
+            .create_relation(&ctx, &owns, &key(0), &n.node_key, Some("staff"), None)
+            .await
+            .expect("edge");
+    }
+    let whole = store.read_edges_whole(&ctx, &seeds).await.expect("edges");
+    assert_eq!(whole.cut, vec![key(0)]);
 }

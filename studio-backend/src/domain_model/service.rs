@@ -85,6 +85,10 @@ const TRUSTED_BATCH: usize = 500;
 const EMBEDDED_BATCH: usize = 32;
 /// Offending objects named in the sample.
 const CONFORMANCE_SAMPLE: usize = 5;
+/// The most objects a bounded read asks the store for while it looks for
+/// enough the caller may read (`readable_page`): the graph's own traversal
+/// budget, so a refill costs no more than one of its walks.
+const READABLE_READ_MAX: usize = 10_000;
 
 /// Everything about one object write except the object: where it is scoped,
 /// whether it may replace what is there, and how hard it is checked.
@@ -1501,7 +1505,8 @@ impl DomainModelService {
                 to,
                 Some(&declared.name),
             )
-            .await?;
+            .await?
+            .removed();
         if removed {
             self.notify
                 .objects_changed(ctx, &declared.source, &[from.to_owned()], "unrelate");
@@ -1876,6 +1881,74 @@ impl DomainModelService {
             .collect())
     }
 
+    /// Would [`Self::put_objects_trusted`] of `entity_ref` objects in these
+    /// scopes be admitted? Writes nothing: a caller about to read a large
+    /// set in order to write it asks first, so a refusal costs no read.
+    pub async fn check_put_trusted(
+        &self,
+        ctx: &SecurityContext,
+        entity_ref: &str,
+        scopes: &[String],
+    ) -> anyhow::Result<()> {
+        let ontology = self.model(ctx).await?;
+        let scopes: Vec<&str> = scopes.iter().map(String::as_str).collect();
+        self.admit_trusted_put(ctx, &ontology, entity_ref, &scopes)
+            .await
+            .map(|_| ())
+    }
+
+    /// The type a trusted write names, once the caller may write it in each
+    /// of `scopes` (empty is organization-wide). A refusal says who was
+    /// refused what, where: on its own "not permitted" names neither the
+    /// subject nor the owner, and a refused sweep cannot be diagnosed from it.
+    async fn admit_trusted_put(
+        &self,
+        ctx: &SecurityContext,
+        ontology: &Ontology,
+        entity_ref: &str,
+        scopes: &[&str],
+    ) -> anyhow::Result<String> {
+        let entity_id = ontology
+            .resolve_entity_id(entity_ref)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
+        let who = |why: &str| {
+            format!(
+                "subject {} ({}) in tenant {} may not write `{entity_id}` objects: {why}",
+                ctx.subject_id(),
+                ctx.subject_type().unwrap_or("no subject type"),
+                ctx.subject_tenant_id()
+            )
+        };
+        let write = match self
+            .policy
+            .access(ctx, access::WRITE, Some(&entity_id))
+            .await
+        {
+            Ok(write) => write,
+            Err(e) => {
+                let cause = who("refused for the type as a whole");
+                warn!(%cause, error = %e, "studio-domain-model: a trusted write was refused");
+                return Err(anyhow::Error::from(e).context(cause));
+            }
+        };
+        let mut scopes = scopes.to_vec();
+        scopes.sort_unstable();
+        scopes.dedup();
+        for scope in scopes {
+            let scope = Some(scope).filter(|s| !s.is_empty());
+            let owner = write.owner_of_scope(scope);
+            if !write.admits_owner(ctx, owner).await {
+                let cause = who(&format!(
+                    "the grant does not reach owner {owner} (scope `{}`)",
+                    scope.unwrap_or("")
+                ));
+                warn!(%cause, "studio-domain-model: a trusted write was refused");
+                return Err(anyhow::Error::from(AccessError::Denied).context(cause));
+            }
+        }
+        Ok(entity_id)
+    }
+
     /// Write a batch of objects of one type for a gear that owns their shape
     /// and their ids (ADR-0066 §8a): unchecked against the type, a graph
     /// write per few hundred objects, and the caller's right to write asked
@@ -1891,22 +1964,10 @@ impl DomainModelService {
             return Ok(0);
         }
         let ontology = self.model(ctx).await?;
-        let entity_id = ontology
-            .resolve_entity_id(entity_ref)
-            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
-        let write = self
-            .policy
-            .access(ctx, access::WRITE, Some(&entity_id))
+        let scopes: Vec<&str> = items.iter().map(|(_, s, _)| s.as_str()).collect();
+        let entity_id = self
+            .admit_trusted_put(ctx, &ontology, entity_ref, &scopes)
             .await?;
-        let mut scopes: Vec<&str> = items.iter().map(|(_, s, _)| s.as_str()).collect();
-        scopes.sort_unstable();
-        scopes.dedup();
-        for scope in scopes {
-            let scope = Some(scope).filter(|s| !s.is_empty());
-            if !write.admits_owner(ctx, write.owner_of_scope(scope)).await {
-                return Err(AccessError::Denied.into());
-            }
-        }
         let type_id = gts::node_type_id(&entity_id);
         let kept = self
             .open_fields_of(ctx, &ontology, &entity_id, &items)
@@ -2776,6 +2837,41 @@ impl DomainModelService {
     /// unbounded version answered in 26 s with every payload inlined. `limit`
     /// caps the nodes; `type_ref` and `scope` narrow which ones, with the same
     /// meaning they have on `GET /objects`.
+    /// Up to `limit` objects of `type_ids` the caller may read, and whether
+    /// more readable ones are there.
+    ///
+    /// The bound is applied after access, not before: cutting the store's
+    /// read at `limit + 1` and then dropping what the PDP hides would hand
+    /// back a short page and say there is nothing more when there is. When
+    /// the access hides rows, the read is repeated with a larger bound until
+    /// `limit + 1` readable ones are in hand or the store has no more, up to
+    /// [`READABLE_READ_MAX`]; past that the page says there may be more.
+    async fn readable_page(
+        &self,
+        ctx: &SecurityContext,
+        read: &access::Access,
+        type_ids: &[String],
+        scope: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<(Vec<ObjectNode>, bool)> {
+        let want = limit.saturating_add(1);
+        let mut asked = want;
+        loop {
+            let rows = self
+                .store
+                .list_objects(ctx, type_ids, scope, Some(asked))
+                .await?;
+            let exhausted = rows.len() < asked;
+            let mut kept = read.retain(ctx, rows).await;
+            if kept.len() >= want || exhausted || asked >= READABLE_READ_MAX {
+                let more = kept.len() > limit || (!exhausted && kept.len() < want);
+                kept.truncate(limit);
+                return Ok((kept, more));
+            }
+            asked = asked.saturating_mul(4).min(READABLE_READ_MAX).max(want);
+        }
+    }
+
     pub async fn objects_graph(
         &self,
         ctx: &SecurityContext,
@@ -2809,16 +2905,11 @@ impl DomainModelService {
             }
             (type_ids, meta)
         };
-        // One over the bound: if it comes back, there was more to show.
         let scope = scope.map(str::trim).filter(|s| !s.is_empty());
-        let mut objs = self
-            .store
-            .list_objects(ctx, &type_ids, scope, Some(limit + 1))
-            .await?;
         let read = self.policy.access(ctx, access::READ, type_ref).await?;
-        let mut objs = read.retain(ctx, std::mem::take(&mut objs)).await;
-        let truncated = objs.len() > limit;
-        objs.truncate(limit);
+        let (objs, truncated) = self
+            .readable_page(ctx, &read, &type_ids, scope, limit)
+            .await?;
         let nodes = objs
             .iter()
             .map(|o| {
@@ -3329,25 +3420,15 @@ impl DomainModelService {
             .ok_or_else(|| anyhow::anyhow!("unknown domain type: {type_ref}"))?;
         let properties = ontology.effective_properties(&entity_id);
 
-        // One over the bound: if it comes back, there was more to check.
-        let mut objects = self
-            .store
-            .list_objects(
-                ctx,
-                &[gts::node_type_id(&entity_id)],
-                scope,
-                Some(limit + 1),
-            )
-            .await?;
-        let truncated = objects.len() > limit;
-        objects.truncate(limit);
         // It reports payload samples, so it reads what the caller may read and
         // nothing else (ADR-0035 §5).
         let read = self
             .policy
             .access(ctx, access::READ, Some(&entity_id))
             .await?;
-        let objects = read.retain(ctx, objects).await;
+        let (objects, truncated) = self
+            .readable_page(ctx, &read, &[gts::node_type_id(&entity_id)], scope, limit)
+            .await?;
 
         let mut report = Conformance {
             checked: objects.len() as u64,

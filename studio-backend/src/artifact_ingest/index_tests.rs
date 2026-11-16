@@ -622,3 +622,117 @@ async fn a_subject_page_matches_the_graph() {
         );
     }
 }
+
+/// A graph that writes in chunks, as graph-storage's backend does, and fails
+/// on the chunk after the first: the rows before it are in the graph and the
+/// call still answers an error.
+struct FailsAfterFirstChunk {
+    inner: Arc<InMemoryGraphStore>,
+    chunk: usize,
+}
+
+#[async_trait::async_trait]
+impl GraphStore for FailsAfterFirstChunk {
+    async fn upsert_nodes(&self, ctx: &SecurityContext, nodes: &[GtsNode]) -> anyhow::Result<()> {
+        let first = &nodes[..nodes.len().min(self.chunk)];
+        self.inner.upsert_nodes(ctx, first).await?;
+        if nodes.len() > self.chunk {
+            anyhow::bail!("graph-storage ingest: deadline exceeded on the second chunk");
+        }
+        Ok(())
+    }
+
+    async fn upsert_edges(
+        &self,
+        ctx: &SecurityContext,
+        edges: &[super::super::graph::GtsEdge],
+    ) -> anyhow::Result<()> {
+        self.inner.upsert_edges(ctx, edges).await
+    }
+
+    async fn delete_nodes(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[GtsNode],
+    ) -> anyhow::Result<usize> {
+        self.inner.delete_nodes(ctx, nodes).await
+    }
+
+    async fn list(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+    ) -> anyhow::Result<Arc<Vec<GtsNode>>> {
+        self.inner.list(ctx, type_filter).await
+    }
+
+    async fn list_relations(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<Vec<super::super::graph::GtsEdgeView>> {
+        self.inner.list_relations(ctx).await
+    }
+}
+
+/// A batch whose second chunk fails has its first chunk in the graph. The
+/// listing must not then come from an index that holds none of it: the error
+/// goes back to the caller, and the tenant is read from the graph until a
+/// fill catches up.
+#[tokio::test]
+async fn a_batch_that_fails_part_way_does_not_leave_the_listing_behind() {
+    let ctx = ctx();
+    let (graph, _) = filled(&ctx).await;
+    let store = IndexedGraphStore::new(
+        Arc::new(FailsAfterFirstChunk {
+            inner: graph.clone(),
+            chunk: 32,
+        }),
+        index().await,
+    );
+    assert!(store.ready(&ctx).await, "served from the index before");
+    let before = store
+        .count_in_scope(&ctx, Some("issue"), PROJECT)
+        .await
+        .unwrap();
+
+    let batch: Vec<GtsNode> = (0..40)
+        .map(|i| {
+            node(
+                gts::ISSUE_TYPE,
+                &format!("late-{i:02}"),
+                json!({ "workspace_id": WS, "project_id": PROJECT, "title": format!("Late {i}") }),
+            )
+        })
+        .collect();
+    assert!(
+        store.upsert_nodes(&ctx, &batch).await.is_err(),
+        "the failure is the caller's to see"
+    );
+
+    let in_graph = graph
+        .count_in_scope(&ctx, Some("issue"), PROJECT)
+        .await
+        .unwrap();
+    assert_eq!(in_graph, before + 32, "the first chunk did land");
+    assert!(
+        !store
+            .index
+            .is_filled(ctx.subject_tenant_id())
+            .await
+            .unwrap(),
+        "the tenant is no longer served from the index"
+    );
+    assert_eq!(
+        store
+            .count_in_scope(&ctx, Some("issue"), PROJECT)
+            .await
+            .unwrap(),
+        in_graph,
+        "the listing counts what the graph has"
+    );
+    let listed = store
+        .list_in_scope(&ctx, Some("issue"), PROJECT)
+        .await
+        .unwrap();
+    assert!(listed.iter().any(|n| n.instance_id == "late-00"));
+}

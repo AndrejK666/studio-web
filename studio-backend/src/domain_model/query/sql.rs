@@ -122,6 +122,54 @@ impl Sql {
         }
     }
 
+    /// `id` compared for (in)equality, on the column itself so the primary
+    /// key `(tenant_id, instance_id)` answers it. `None` for the comparisons
+    /// that keep the generic JSON reading (ordering, `_contains`, `_is_null`).
+    ///
+    /// The same answers as the JSON reading: an id is always a string and
+    /// never absent, so it equals only a string, `_neq` / `_nin` are the
+    /// plain negations, and an empty list matches nothing.
+    fn id_cmp(&mut self, op: &Op, arg: &Value) -> Option<String> {
+        let strings = |arg: &Value| -> Vec<String> {
+            arg.as_array()
+                .map(|l| {
+                    l.iter()
+                        .filter_map(|a| a.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let is = match op {
+            Op::Eq | Op::Neq => match arg.as_str() {
+                Some(s) => {
+                    let p = self.param(SqlValue::String(Some(s.to_string())));
+                    format!("instance_id = {p}")
+                }
+                None => "FALSE".to_string(),
+            },
+            Op::In | Op::Nin => {
+                let ids = strings(arg);
+                if ids.is_empty() {
+                    "FALSE".to_string()
+                } else {
+                    // One parameter whatever the list's length: a JSON array
+                    // unpacked into `text[]`, which the index scan takes as
+                    // `= ANY(...)`.
+                    let list = Value::Array(ids.into_iter().map(Value::String).collect());
+                    let p = self.param(SqlValue::Json(Some(Box::new(list))));
+                    format!(
+                        "instance_id = ANY(ARRAY(SELECT jsonb_array_elements_text({p}::jsonb)))"
+                    )
+                }
+            }
+            _ => return None,
+        };
+        Some(match op {
+            Op::Neq | Op::Nin => format!("(NOT ({is}))"),
+            _ => format!("({is})"),
+        })
+    }
+
     fn any_of(&mut self, v: &str, arg: &Value) -> String {
         let items: Vec<String> = arg
             .as_array()
@@ -148,6 +196,11 @@ impl Sql {
             }
             Expr::Not(e) => format!("(NOT {})", self.expr(e)),
             Expr::Cmp { path, op, arg } => {
+                if is_id(path)
+                    && let Some(sql) = self.id_cmp(op, arg)
+                {
+                    return sql;
+                }
                 let v = self.value_at(path);
                 let absent = format!("(jsonb_typeof({v}) IS NULL OR jsonb_typeof({v}) = 'null')");
                 let body = match op {
@@ -195,6 +248,11 @@ impl Sql {
             }
         }
     }
+}
+
+/// The object's own id, not a payload field.
+fn is_id(path: &[String]) -> bool {
+    path.len() == 1 && path[0] == "id"
 }
 
 /// A `where` as one SQL condition.
@@ -341,4 +399,44 @@ pub(super) fn group_key(paths: &[Vec<String>]) -> SqlExpr {
         })
         .collect();
     sql.done(format!("jsonb_build_array({})", parts.join(", ")))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::super::{Expr, Op};
+    use super::Sql;
+
+    fn compiled(op: Op, arg: serde_json::Value) -> (String, usize) {
+        let mut sql = Sql::default();
+        let text = sql.expr(&Expr::Cmp {
+            path: vec!["id".to_string()],
+            op,
+            arg,
+        });
+        (text, sql.params.len())
+    }
+
+    /// `id` reads the key column, so the primary key answers it, and a list
+    /// is one parameter however long it is.
+    #[test]
+    fn an_id_is_compared_on_the_key_column() {
+        let (eq, n) = compiled(Op::Eq, json!("a"));
+        assert_eq!(eq, "(instance_id = $1)");
+        assert_eq!(n, 1);
+        let (any, n) = compiled(Op::In, json!(["a", "b", "c"]));
+        assert!(any.starts_with("(instance_id = ANY("), "{any}");
+        assert_eq!(n, 1);
+        let (nin, _) = compiled(Op::Nin, json!(["a"]));
+        assert!(nin.starts_with("(NOT (instance_id = ANY("), "{nin}");
+        for text in [&eq, &any, &nin] {
+            assert!(!text.contains("to_jsonb"), "{text}");
+        }
+        // Nothing to match: no parameter, no row.
+        assert_eq!(compiled(Op::In, json!([])), ("(FALSE)".to_string(), 0));
+        assert_eq!(compiled(Op::Eq, json!(7)), ("(FALSE)".to_string(), 0));
+        // Orderings keep the JSON reading.
+        assert!(compiled(Op::Gt, json!("a")).0.contains("to_jsonb"));
+    }
 }

@@ -843,3 +843,458 @@ async fn a_project_grant_narrows_several_scopes_too() {
     assert_eq!(out.rows.total, 1);
     assert_eq!(out.groups.unwrap()[0].count, 1);
 }
+
+// ── Writes the graph took only part of, or whose answer was lost ───────────
+
+use super::super::ontology::{EdgeType, NodeType};
+use super::super::store::{EdgeUpsert, EdgeView, NodeUpsert, ObjectNode, WRITE_REFUSED};
+
+/// How [`Flaky`] fails a node write.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Failure {
+    /// Nothing fails.
+    None,
+    /// The graph took the batch and the answer never came back.
+    LostAnswer,
+    /// The graph refused the batch at admission: nothing was stored.
+    Refused,
+}
+
+/// The in-memory graph, with writes that fail the way the real one's can.
+struct Flaky {
+    inner: Arc<InMemoryDomainStore>,
+    failure: Failure,
+}
+
+#[async_trait::async_trait]
+impl DomainStore for Flaky {
+    async fn register_meta_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        self.inner.register_meta_types(ctx).await
+    }
+    async fn register_types(
+        &self,
+        ctx: &SecurityContext,
+        node_types: &[NodeType],
+        edge_types: &[EdgeType],
+    ) -> anyhow::Result<Vec<String>> {
+        self.inner.register_types(ctx, node_types, edge_types).await
+    }
+    async fn create_relation(
+        &self,
+        ctx: &SecurityContext,
+        edge_type_id: &str,
+        from: &str,
+        to: &str,
+        discriminator: Option<&str>,
+        payload: Option<Value>,
+    ) -> anyhow::Result<()> {
+        self.inner
+            .create_relation(ctx, edge_type_id, from, to, discriminator, payload)
+            .await
+    }
+    async fn get_object(
+        &self,
+        ctx: &SecurityContext,
+        instance_id: &str,
+    ) -> anyhow::Result<Option<ObjectNode>> {
+        self.inner.get_object(ctx, instance_id).await
+    }
+    async fn list_objects(
+        &self,
+        ctx: &SecurityContext,
+        type_ids: &[String],
+        scope: Option<&str>,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<ObjectNode>> {
+        self.inner.list_objects(ctx, type_ids, scope, limit).await
+    }
+    async fn upsert_nodes(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64> {
+        match self.failure {
+            Failure::None => self.inner.upsert_nodes(ctx, nodes).await,
+            Failure::LostAnswer => {
+                self.inner.upsert_nodes(ctx, nodes).await?;
+                anyhow::bail!("graph-storage node batch ingest: deadline exceeded")
+            }
+            Failure::Refused => {
+                anyhow::bail!("graph-storage node batch ingest: {WRITE_REFUSED}: invalid payload")
+            }
+        }
+    }
+    async fn upsert_nodes_keeping_vectors(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.upsert_nodes(ctx, nodes).await
+    }
+    async fn upsert_edges(
+        &self,
+        ctx: &SecurityContext,
+        edges: &[EdgeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.inner.upsert_edges(ctx, edges).await
+    }
+    async fn read_edges(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+    ) -> anyhow::Result<Vec<EdgeView>> {
+        self.inner.read_edges(ctx, seeds).await
+    }
+}
+
+fn team_upsert(key: &str) -> NodeUpsert {
+    let type_id = super::super::gts::node_type_id("team");
+    NodeUpsert {
+        expected_version: None,
+        node_key: super::super::gts::instance_id(&type_id, key),
+        type_id,
+        name: Some(key.to_string()),
+        payload: json!({"name": key}),
+    }
+}
+
+/// A write that reached the graph and answered an error leaves the rows
+/// behind it. The tenant goes back to the graph rather than listing without
+/// the object, and both readers agree again.
+#[tokio::test]
+async fn a_write_that_landed_but_failed_sends_the_tenant_back_to_the_graph() {
+    let p = seeded().await;
+    let tenant = p.ctx.subject_tenant_id();
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
+    let store = IndexedDomainStore::new(
+        Arc::new(Flaky {
+            inner: p.inner.clone(),
+            failure: Failure::LostAnswer,
+        }),
+        p.mirror.clone(),
+    );
+    assert!(
+        store
+            .upsert_nodes(&p.ctx, &[team_upsert("late")])
+            .await
+            .is_err()
+    );
+    assert!(
+        !p.mirror.is_filled(tenant).await.unwrap(),
+        "the read model no longer answers for the tenant"
+    );
+    // The listing comes from the graph now, so it has the object.
+    let out = p
+        .sql
+        .query(
+            &p.ctx,
+            &query("team", json!({"order_by": [{"field": "name"}]})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.source, "graph");
+    assert_eq!(names(&shape(&out)), ["Core", "Edge", "late"]);
+}
+
+/// A write the graph refused stored nothing: the rows still match, and the
+/// tenant keeps its read model rather than paying for a refill.
+#[tokio::test]
+async fn a_refused_write_keeps_the_read_model() {
+    let p = seeded().await;
+    let tenant = p.ctx.subject_tenant_id();
+    let store = IndexedDomainStore::new(
+        Arc::new(Flaky {
+            inner: p.inner.clone(),
+            failure: Failure::Refused,
+        }),
+        p.mirror.clone(),
+    );
+    assert!(
+        store
+            .upsert_nodes(&p.ctx, &[team_upsert("late")])
+            .await
+            .is_err()
+    );
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
+    let teams = p
+        .same("team", json!({"order_by": [{"field": "name"}]}))
+        .await;
+    assert_eq!(names(&teams), ["Core", "Edge"]);
+    // Nothing fails: the write reaches both.
+    let fine = IndexedDomainStore::new(
+        Arc::new(Flaky {
+            inner: p.inner.clone(),
+            failure: Failure::None,
+        }),
+        p.mirror.clone(),
+    );
+    fine.upsert_nodes(&p.ctx, &[team_upsert("later")])
+        .await
+        .unwrap();
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
+}
+
+// ── Removing a relation: the row goes only when the edge does ──────────────
+
+/// The in-memory graph, whose walk for a relation to delete is always cut.
+struct CutWalk(Arc<InMemoryDomainStore>);
+
+#[async_trait::async_trait]
+impl DomainStore for CutWalk {
+    async fn register_meta_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        self.0.register_meta_types(ctx).await
+    }
+    async fn register_types(
+        &self,
+        ctx: &SecurityContext,
+        node_types: &[NodeType],
+        edge_types: &[EdgeType],
+    ) -> anyhow::Result<Vec<String>> {
+        self.0.register_types(ctx, node_types, edge_types).await
+    }
+    async fn create_relation(
+        &self,
+        ctx: &SecurityContext,
+        edge_type_id: &str,
+        from: &str,
+        to: &str,
+        discriminator: Option<&str>,
+        payload: Option<Value>,
+    ) -> anyhow::Result<()> {
+        self.0
+            .create_relation(ctx, edge_type_id, from, to, discriminator, payload)
+            .await
+    }
+    async fn get_object(
+        &self,
+        ctx: &SecurityContext,
+        instance_id: &str,
+    ) -> anyhow::Result<Option<ObjectNode>> {
+        self.0.get_object(ctx, instance_id).await
+    }
+    async fn list_objects(
+        &self,
+        ctx: &SecurityContext,
+        type_ids: &[String],
+        scope: Option<&str>,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<ObjectNode>> {
+        self.0.list_objects(ctx, type_ids, scope, limit).await
+    }
+    async fn upsert_nodes(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.0.upsert_nodes(ctx, nodes).await
+    }
+    async fn upsert_nodes_keeping_vectors(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.0.upsert_nodes_keeping_vectors(ctx, nodes).await
+    }
+    async fn upsert_edges(
+        &self,
+        ctx: &SecurityContext,
+        edges: &[EdgeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.0.upsert_edges(ctx, edges).await
+    }
+    async fn read_edges(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+    ) -> anyhow::Result<Vec<EdgeView>> {
+        self.0.read_edges(ctx, seeds).await
+    }
+    async fn delete_relation(
+        &self,
+        _ctx: &SecurityContext,
+        _edge_type_id: &str,
+        _from: &str,
+        _to: &str,
+        _relation: Option<&str>,
+    ) -> anyhow::Result<super::super::store::RelationRemoval> {
+        anyhow::bail!("{}", super::super::store::RELATION_UNSEEN)
+    }
+    /// The first seed has more edges than one walk carries.
+    async fn read_edges_whole(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+    ) -> anyhow::Result<super::super::store::EdgeRead> {
+        Ok(super::super::store::EdgeRead {
+            edges: self.0.read_edges(ctx, seeds).await?,
+            cut: seeds.iter().take(1).cloned().collect(),
+        })
+    }
+}
+
+async fn core_and_gemini(p: &Pair) -> (String, String) {
+    let gemini = p
+        .same("project", json!({"where": {"name": {"_eq": "Gemini"}}}))
+        .await;
+    let core = p
+        .same("team", json!({"where": {"name": {"_eq": "Core"}}}))
+        .await;
+    (
+        core["items"][0]["id"].as_str().unwrap().to_string(),
+        gemini["items"][0]["id"].as_str().unwrap().to_string(),
+    )
+}
+
+/// The graph could not see whether the edge is there and removed nothing:
+/// the read model keeps its row and its fill.
+#[tokio::test]
+async fn an_unseen_relation_keeps_its_row() {
+    let p = seeded().await;
+    let tenant = p.ctx.subject_tenant_id();
+    let (core, gemini) = core_and_gemini(&p).await;
+    let cut = DomainModelService::new(Arc::new(IndexedDomainStore::new(
+        Arc::new(CutWalk(p.inner.clone())),
+        p.mirror.clone(),
+    )));
+    let e = cut
+        .delete_relation(&p.ctx, "team.delivers", &core, &gemini)
+        .await
+        .expect_err("unseen is an error");
+    assert!(super::super::store::is_relation_unseen(&e), "{e}");
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
+    let teams = p
+        .same(
+            "team",
+            json!({"where": {"name": {"_eq": "Core"}}, "include": {"delivers": {}}}),
+        )
+        .await;
+    assert_eq!(
+        teams["items"][0]["relations"]["delivers"]["total"],
+        json!(2),
+        "the edge and its row are both still there"
+    );
+}
+
+/// An older edge naming no relation stands for every relation of its verb.
+/// Removing the named edge leaves it in the graph, so its row stays too, and
+/// both readers still see the relation; removing again takes the old one.
+#[tokio::test]
+async fn removing_a_named_edge_leaves_an_unnamed_one_in_both_readers() {
+    let p = seeded().await;
+    let (core, gemini) = core_and_gemini(&p).await;
+    // The verb `team.delivers` is stored under, as the seed wrote it.
+    let delivers = p
+        .inner
+        .read_edges(&p.ctx, std::slice::from_ref(&core))
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|e| e.to == gemini)
+        .expect("core delivers gemini")
+        .type_id;
+    // Written the way relations were before they carried their name.
+    p.inner
+        .create_relation(&p.ctx, &delivers, &core, &gemini, None, None)
+        .await
+        .unwrap();
+    p.fill().await;
+    let delivered = |out: Value| out["items"][0]["relations"]["delivers"]["total"].clone();
+    let q = json!({"where": {"name": {"_eq": "Core"}}, "include": {"delivers": {}}});
+
+    assert!(
+        p.sql
+            .delete_relation(&p.ctx, "team.delivers", &core, &gemini)
+            .await
+            .unwrap()
+    );
+    assert_eq!(delivered(p.same("team", q.clone()).await), json!(2));
+
+    assert!(
+        p.sql
+            .delete_relation(&p.ctx, "team.delivers", &core, &gemini)
+            .await
+            .unwrap(),
+        "the unnamed edge went this time"
+    );
+    assert_eq!(delivered(p.same("team", q.clone()).await), json!(1));
+
+    assert!(
+        !p.sql
+            .delete_relation(&p.ctx, "team.delivers", &core, &gemini)
+            .await
+            .unwrap()
+    );
+    assert_eq!(delivered(p.same("team", q).await), json!(1));
+}
+
+/// A fill whose traversal could not read some object's edges whole would
+/// miss those relations for good. The tenant stays on the graph instead.
+#[tokio::test]
+async fn a_fill_that_cannot_read_every_edge_leaves_the_tenant_on_the_graph() {
+    let p = Pair::new(Uuid::new_v4()).await;
+    p.write(json!([
+        {"op": "upsert", "type": "team", "key": "core", "value": {"name": "Core"}, "as": "core"},
+        {"op": "upsert", "type": "project", "key": "apollo", "value": {"name": "Apollo"}, "as": "apollo"},
+        {"op": "link", "relation": "team.delivers", "from": "$core", "to": "$apollo"},
+    ]))
+    .await;
+    let tenant = p.ctx.subject_tenant_id();
+    let model = p.graph.tenant_model(&p.ctx).await.expect("model");
+    let cut = CutWalk(p.inner.clone());
+    let e = fill_tenant(&cut, &p.mirror, &FillState::default(), &p.ctx, &model)
+        .await
+        .expect_err("a cut walk does not fill");
+    assert!(e.to_string().contains("traversal"), "{e}");
+    assert!(!p.mirror.is_filled(tenant).await.unwrap());
+    // The same tenant read whole fills.
+    p.fill().await;
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
+}
+
+/// `id` filters compile to the key column on the SQL side; every shape of
+/// them answers what the graph answers, including the ones that match
+/// nothing or everything.
+#[tokio::test]
+async fn id_filters_answer_the_same_from_postgres_as_from_the_graph() {
+    let p = seeded().await;
+    let all = p
+        .same("risk", json!({"order_by": [{"field": "title"}]}))
+        .await;
+    let ids: Vec<Value> = all["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].clone())
+        .collect();
+    assert_eq!(ids.len(), 7);
+    let order = json!([{"field": "title"}]);
+    let cases = [
+        (json!({"id": {"_eq": ids[0]}}), 1),
+        (json!({"id": {"_eq": "no-such-id"}}), 0),
+        (json!({"id": {"_eq": 7}}), 0),
+        (json!({"id": {"_neq": ids[0]}}), 6),
+        (json!({"id": {"_neq": 7}}), 7),
+        (json!({"id": {"_in": [ids[1], ids[2], "no-such-id", 3]}}), 2),
+        (json!({"id": {"_in": []}}), 0),
+        (json!({"id": {"_nin": [ids[1], ids[2]]}}), 5),
+        (json!({"id": {"_nin": []}}), 7),
+        (json!({"_not": {"id": {"_in": [ids[3]]}}}), 6),
+        (
+            json!({"_or": [{"id": {"_eq": ids[4]}}, {"impact": {"_eq": "low"}}]}),
+            2,
+        ),
+        (
+            json!({"id": {"_eq": ids[5]}, "impact": {"_eq": "nothing"}}),
+            0,
+        ),
+    ];
+    for (filter, expected) in cases {
+        let out = p
+            .same(
+                "risk",
+                json!({"where": filter.clone(), "order_by": order.clone()}),
+            )
+            .await;
+        assert_eq!(out["items"].as_array().unwrap().len(), expected, "{filter}");
+    }
+}
