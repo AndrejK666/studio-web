@@ -34,9 +34,13 @@ import { categoriesOf, filterCatalogue, nameOf, rowFacts, schemaFor, type RowFac
 import { COMPONENT_KIND_LABELS, NOT_COMPONENTS, inKindFilter, kindChips } from '../../model/component-kinds';
 import { readinessOf } from '../../model/readiness';
 import { reviewCounts, reviewOf, type ReviewPart } from '../../model/review-summary';
-import type { Text } from './common';
+import { catalogueComponentType, ComponentTypeIcon } from '@constructor-studio/mfe-shared';
+import { hostsOf, typeCounts } from '../../model/component-page';
+import { useScope, type Text } from './common';
+import { ComponentTile, TypeBadge, ViewFromPreference, tilesPlugin, typeLabel, useVisibleRows } from './ComponentCards';
 import { TrendMark, WINDOWS } from './ComponentPage';
 import { OutLink } from './parts';
+import cards from './ComponentView.module.css';
 import type { useBaselines, useCatalogue } from './useCatalogue';
 import styles from './ComponentsScreen.module.css';
 
@@ -53,6 +57,7 @@ export const CATALOGUE_FILTERS = {
   category: 'category',
   hideSdks: 'hide_sdks',
   kind: 'kind',
+  type: 'type',
 } as const;
 
 /** The column order maps to the sort the toolbar's select offered. */
@@ -75,6 +80,7 @@ export function catalogueRows(
 ): CatalogueRow[] {
   const filters = context.filters ?? {};
   const kind = tagGroupChoice(filters[CATALOGUE_FILTERS.kind]) ?? '';
+  const type = tagGroupChoice(filters[CATALOGUE_FILTERS.type]) ?? '';
   return filterCatalogue(nodes, {
     q: searchQuery(filters),
     category: tagGroupChoice(filters[CATALOGUE_FILTERS.category]) ?? '',
@@ -84,6 +90,7 @@ export function catalogueRows(
     resolvedCategory: (name) => resolved[name]?.category,
   })
     .filter((g) => inKindFilter(g, kind))
+    .filter((g) => !type || catalogueComponentType(g.value) === type)
     .map((node) => ({ id: node.instance_id, node }));
 }
 
@@ -94,6 +101,7 @@ interface CatalogueCells {
   facts: Map<string, RowFacts>;
   days: number;
   onDays: (days: number) => void;
+  onOpen: (name: string) => void;
 }
 
 const [CatalogueCellsProvider, useCatalogueCells] = createGridCells<CatalogueCells>('Catalogue');
@@ -102,26 +110,64 @@ const NameCell: React.FC<{ item: CatalogueRow }> = ({ item }) => {
   const { t, facts } = useCatalogueCells();
   const name = nameOf(item.node);
   return (
-    <div data-component-row={name}>
-      <div className={styles.name}>{name}</div>
-      {item.node.value.description && <div className={styles.purpose}>{String(item.node.value.description)}</div>}
-      <SourceChips sources={facts.get(item.id)?.sources} t={t} />
+    <div className={cards.nameCell} data-component-row={name}>
+      <ComponentTypeIcon type={catalogueComponentType(item.node.value)} className={cards.nameIcon} size={18} />
+      <div className={cards.nameStack}>
+        <div className={styles.name}>{name}</div>
+        {item.node.value.description && <div className={styles.purpose}>{String(item.node.value.description)}</div>}
+        <SourceChips sources={facts.get(item.id)?.sources} t={t} />
+      </div>
     </div>
   );
 };
 
+/** The type as a glyph and a word; under it the catalogue's finer kind and the category. */
 const TypeCell: React.FC<{ item: CatalogueRow }> = ({ item }) => {
-  const f = useCatalogueCells().facts.get(item.id);
+  const { t, facts } = useCatalogueCells();
+  const f = facts.get(item.id);
   if (!f) return null;
+  const reason = item.node.value.component_type_reason;
+  const kind = COMPONENT_KIND_LABELS[f.kind] ?? f.kind;
   return (
     <>
-      <Badge variant="secondary" title={f.excluded ?? f.kindReason}>
-        {COMPONENT_KIND_LABELS[f.kind] ?? f.kind}
-      </Badge>
-      {f.category && f.category !== f.kind && <div className={styles.sub}>{f.category}</div>}
+      <TypeBadge type={catalogueComponentType(item.node.value)} t={t} reason={typeof reason === 'string' ? reason : f.kindReason} hosts={hostsOf(item.node)} />
+      <div className={styles.sub} title={f.excluded ?? f.kindReason}>
+        {kind}
+        {f.category && f.category !== f.kind ? ` · ${f.category}` : ''}
+      </div>
     </>
   );
 };
+
+/** The tiles view: one card per visible row. */
+const CatalogueTiles: React.FC = () => {
+  const { t, onOpen } = useCatalogueCells();
+  const rows = useVisibleRows<CatalogueRow>();
+  return (
+    <ul className={cards.tiles} data-component-tiles>
+      {rows.map((row) => (
+        <ComponentTile
+          key={row.id}
+          t={t}
+          onOpen={() => onOpen(nameOf(row.node))}
+          tile={{
+            key: row.id,
+            name: nameOf(row.node),
+            type: catalogueComponentType(row.node.value),
+            state: row.node.value.max_stable_version ?? row.node.value.newest_version ? (
+              <code className={styles.version}>{String(row.node.value.max_stable_version ?? row.node.value.newest_version)}</code>
+            ) : null,
+            purpose: String(row.node.value.description ?? ''),
+            // The platform's catalogue is no organization's: which projects use it is the registry's.
+            projects: [],
+          }}
+        />
+      ))}
+    </ul>
+  );
+};
+
+const CatalogueTilesPlugin = tilesPlugin('catalogueTiles', CatalogueTiles);
 
 const ReleaseCell: React.FC<{ item: CatalogueRow }> = ({ item }) => {
   const { t, facts } = useCatalogueCells();
@@ -259,7 +305,7 @@ export function CatalogueGrid({
   const columns = useMemo<DataGridTableColumn<CatalogueRow>[]>(
     () => [
       { id: 'component', label: t('col_component'), component: NameCell, minWidth: 240 },
-      { id: 'type', label: t('col_type'), component: TypeCell, width: 130 },
+      { id: 'type', label: t('col_type'), component: TypeCell, width: 160 },
       { id: 'release', label: t('col_release'), component: ReleaseCell, width: 110 },
       { id: 'readiness', label: t('col_readiness'), component: ReadinessColumn, width: 170 },
       { id: 'downloads', label: t('col_downloads'), component: DownloadsCell, width: 120 },
@@ -281,9 +327,20 @@ export function CatalogueGrid({
     .filter((c) => c.value !== '')
     .map((c) => `${c.value}\t${c.value === NOT_COMPONENTS ? c.label : (COMPONENT_KIND_LABELS[c.value] ?? c.label)} ${c.count}`)
     .join('\n');
+  // The type, with how many of each: what the catalogue laid on the components.
+  const types = typeCounts(components.filter((g) => inKindFilter(g, '')).map((g) => catalogueComponentType(g.value)))
+    .map((c) => `${c.type}\t${typeLabel(c.type, t)} ${c.count}`)
+    .join('\n');
   const filters = useMemo(() => {
     const split = (joined: string) => (joined ? joined.split('\n') : []);
     const entities: DataGridFilterEntity[] = [];
+    const typeOptions = split(types).map((line) => {
+      const [value, label] = line.split('\t');
+      return { value, label };
+    });
+    if (typeOptions.length > 1) {
+      entities.push(filterTagGroup({ id: CATALOGUE_FILTERS.type, label: t('col_type'), mode: 'radio', options: typeOptions }));
+    }
     const categoryOptions = split(categories).map((value) => ({ value, label: value }));
     if (categoryOptions.length > 0) {
       entities.push(filterTagGroup({ id: CATALOGUE_FILTERS.category, label: t('filter_category'), mode: 'radio', options: categoryOptions }));
@@ -294,12 +351,13 @@ export function CatalogueGrid({
       return { value, label };
     });
     if (kindOptions.length > 0) {
-      entities.push(filterTagGroup({ id: CATALOGUE_FILTERS.kind, label: t('type'), mode: 'radio', options: kindOptions }));
+      entities.push(filterTagGroup({ id: CATALOGUE_FILTERS.kind, label: t('filter_kind'), mode: 'radio', options: kindOptions }));
     }
     return entities;
-  }, [t, categories, kinds]);
+  }, [t, categories, kinds, types]);
 
-  const cells = useMemo<CatalogueCells>(() => ({ t, facts, days, onDays }), [t, facts, days, onDays]);
+  const { bridge } = useScope();
+  const cells = useMemo<CatalogueCells>(() => ({ t, facts, days, onDays, onOpen }), [t, facts, days, onDays, onOpen]);
   const open = useCallback((row: CatalogueRow) => onOpen(nameOf(row.node)), [onOpen]);
 
   return (
@@ -319,6 +377,8 @@ export function CatalogueGrid({
         >
           <DataGridRowClickPlugin<CatalogueRow> click={open} />
           <DataGridActionsPlugin component={WindowPicker} />
+          <CatalogueTilesPlugin />
+          <ViewFromPreference bridge={bridge} />
           {reloadBridge}
         </ListGrid>
       </CatalogueCellsProvider>

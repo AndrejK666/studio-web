@@ -26,7 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from '@gears-frontx/ui-kit';
-import { openScreen } from '@constructor-studio/mfe-shared';
+import { ComponentTypeIcon, openScreen, registryComponentType, type ComponentType } from '@constructor-studio/mfe-shared';
 import { productApi } from '../../api/client';
 import type { Conformance, PlanRow } from '../../api/types';
 import { capabilityEntities, keptSentences, suggestedCategory } from '../../model/capability-entities';
@@ -467,6 +467,13 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
   );
 }
 
+/** The glyph the Components screens draw for the row's type (mfe-shared): a
+ *  service the project's build tools declare is a service, the rest by their
+ *  registry kind, word for word. */
+export function inventoryType(r: Pick<InventoryRow, 'role' | 'kind'>): ComponentType {
+  return r.role === 'service' ? 'service' : registryComponentType(r.kind);
+}
+
 function InventoryLine({
   row: r,
   open,
@@ -490,6 +497,7 @@ function InventoryLine({
     <>
       <TableRow data-inventory-row={r.key} data-role={r.role} aria-expanded={open} className={styles.clickable}>
         <TableCell onClick={onToggle}>
+          <ComponentTypeIcon type={inventoryType(r)} className={styles.typeIcon} />
           <b>{r.name}</b> <span className={styles.muted}>{r.kind}</span>
           {r.path && <div className={styles.muted}>{r.path}</div>}
         </TableCell>

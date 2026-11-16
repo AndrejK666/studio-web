@@ -1,23 +1,22 @@
 /**
- * The organization's registry on the kit's DataGrid, the way Specs draws its
- * list (#1076): the search over names, descriptions and paths, the state, type
- * and project filters, header sort, pages, the list's empty state, and the
- * "needs a decision" chip in the grid's toolbar. A click on a row opens it
- * under the list (the grid has no row of its own for it): why it looks like a
- * gear, where it is declared, and the decisions it allows; a second click, or
- * Close, folds it.
+ * The organization's registry on the kit's DataGrid, the way Kits draws its
+ * library (#1081): each row with its type's glyph, a Type column, the search
+ * over names, descriptions and paths, the state, type (with counts) and
+ * project filters, header sort, pages, the list's empty state, the "needs a
+ * decision" chip in the grid's toolbar, and a tiles view beside the table.
+ * A click on a row opens the component's page (`ComponentView`).
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
   Badge,
-  Button,
   DataGridActionsPlugin,
   DataGridRowClickPlugin,
   filterTagGroup,
   type DataGridFilterEntity,
   type DataGridTableColumn,
 } from '@gears-frontx/ui-kit';
+import { ComponentTypeIcon, type ComponentType } from '@constructor-studio/mfe-shared';
 import {
   GridClearFilters,
   GridEmpty,
@@ -27,7 +26,8 @@ import {
   useLocalGridLoad,
 } from '@constructor-studio/mfe-shared/grid';
 import type { RegistryEntry } from '../../api/types';
-import { ROW_STATES, nameOf, type ComponentRow } from '../../model/catalogue';
+import { ROW_STATES, type ComponentRow } from '../../model/catalogue';
+import { hostsOf, projectsUsing, rowType, typeCounts } from '../../model/component-page';
 import {
   STATE_LABEL,
   STATE_TONE,
@@ -39,19 +39,21 @@ import {
   registryProjects,
 } from '../../model/registry';
 import { useScope, type Text } from './common';
-import { EntryDetail, type Person } from './RegistryEntry';
+import { ComponentTile, TypeBadge, ViewFromPreference, tilesPlugin, typeLabel, useVisibleRows } from './ComponentCards';
 import { StatusChip, toneOf } from './parts';
 import styles from './ComponentsScreen.module.css';
+import cards from './ComponentView.module.css';
 
-/** A row of the grid: a registry entry, a published node, or both. */
+/** A row of the grid: a registry entry, a published node, or both, with its type. */
 export interface RegistryRow extends ComponentRow {
   id: string;
+  type: ComponentType;
 }
 
 /** The filter keys the grid hands `load`. */
 export const REGISTRY_FILTERS = {
   state: 'state',
-  kind: 'kind',
+  type: 'type',
   project: 'project',
 } as const;
 
@@ -60,10 +62,15 @@ export function keepsRegistryRow(row: RegistryRow, filters: Record<string, unkno
   const chosen = (key: string) => tagGroupChoice(filters[key] as { value?: unknown } | undefined);
   const state = chosen(REGISTRY_FILTERS.state);
   if (state && row.state !== state) return false;
-  const kind = chosen(REGISTRY_FILTERS.kind);
-  if (kind && row.kind !== kind) return false;
+  const type = chosen(REGISTRY_FILTERS.type);
+  if (type && row.type !== type) return false;
   const project = chosen(REGISTRY_FILTERS.project);
   return !project || (row.entry?.occurrences ?? []).some((o) => o.project_id === project);
+}
+
+/** The list's rows with their types. */
+export function registryRows(rows: readonly ComponentRow[]): RegistryRow[] {
+  return rows.map((r) => ({ ...r, id: r.key, type: rowType(r) }));
 }
 
 const releaseOf = (row: RegistryRow): string => String(row.node?.value.max_stable_version ?? row.node?.value.newest_version ?? '');
@@ -80,6 +87,7 @@ const REGISTRY_OPTIONS = {
   filter: keepsRegistryRow,
   compare: {
     component: (a: RegistryRow, b: RegistryRow) => a.name.localeCompare(b.name),
+    type: (a: RegistryRow, b: RegistryRow) => a.type.localeCompare(b.type),
     // What needs a decision first, as the state filter lists them.
     state: (a: RegistryRow, b: RegistryRow) => stateRank(a) - stateRank(b),
     release: (a: RegistryRow, b: RegistryRow) => releaseOf(a).localeCompare(releaseOf(b), undefined, { numeric: true }),
@@ -88,15 +96,14 @@ const REGISTRY_OPTIONS = {
   },
 };
 
-/** What a cell and the toolbar need beyond their row. */
+/** What a cell, a tile and the toolbar need beyond their row. */
 interface RegistryCells {
   t: Text;
-  /** The key of the row open under the list. */
-  open: string | null;
   /** Candidates waiting for a decision, and the orphans among the entries. */
   candidates: number;
   orphaned: number;
   onCandidates: (on: boolean) => void;
+  onOpen: (row: RegistryRow) => void;
 }
 
 const [RegistryCellsProvider, useRegistryCells] = createGridCells<RegistryCells>('Registry');
@@ -104,33 +111,51 @@ const [RegistryCellsProvider, useRegistryCells] = createGridCells<RegistryCells>
 const Dash: React.FC = () => <span className={styles.muted}>—</span>;
 
 const NameCell: React.FC<{ item: RegistryRow }> = ({ item }) => {
-  const { t, open } = useRegistryCells();
+  const { t } = useRegistryCells();
   return (
-    <div data-registry-row={item.name} data-open={open === item.key || undefined}>
-      <span className={styles.name}>{item.name}</span> <span className={styles.sub}>{item.kind}</span>
-      {item.entry && isDuplicated(item.entry) && (
-        <Badge variant="warning" title={t('declared_many_title')}>
-          ×{new Set(item.entry.occurrences.map((o) => o.repo)).size} {t('repos')}
-        </Badge>
-      )}
-      {item.entry && isOrphaned(item.entry) && (
-        <Badge variant="secondary" title={t('orphaned_title')}>
-          {t('orphaned')}
-        </Badge>
-      )}
-      {item.description && <div className={styles.purpose}>{item.description}</div>}
+    <div className={cards.nameCell} data-registry-row={item.name}>
+      <ComponentTypeIcon type={item.type} className={cards.nameIcon} size={18} />
+      <div className={cards.nameStack}>
+        <div>
+          <span className={styles.name}>{item.name}</span>
+          {item.entry && isDuplicated(item.entry) && (
+            <>
+              {' '}
+              <Badge variant="warning" title={t('declared_many_title')}>
+                ×{new Set(item.entry.occurrences.map((o) => o.repo)).size} {t('repos')}
+              </Badge>
+            </>
+          )}
+          {item.entry && isOrphaned(item.entry) && (
+            <>
+              {' '}
+              <Badge variant="secondary" title={t('orphaned_title')}>
+                {t('orphaned')}
+              </Badge>
+            </>
+          )}
+        </div>
+        {item.description && <div className={styles.purpose}>{item.description}</div>}
+      </div>
     </div>
   );
 };
 
-const StateCell: React.FC<{ item: RegistryRow }> = ({ item }) => {
-  const published = item.entry ? publishStatus(item.entry) : null;
+const TypeCell: React.FC<{ item: RegistryRow }> = ({ item }) => {
+  const { t } = useRegistryCells();
+  const reason = item.node?.value.component_type_reason;
+  return <TypeBadge type={item.type} t={t} reason={typeof reason === 'string' ? reason : undefined} hosts={hostsOf(item.node)} />;
+};
+
+/** The row's state as chips: the registry's, and how far its publication went. */
+function StateChips({ row }: { row: RegistryRow }) {
+  const published = row.entry ? publishStatus(row.entry) : null;
   return (
     <span className={styles.chips}>
       <StatusChip
-        tone={STATE_TONE[item.state] !== undefined ? toneOf(STATE_TONE[item.state]) : item.state === 'published' ? 'ok' : 'neutral'}
+        tone={STATE_TONE[row.state] !== undefined ? toneOf(STATE_TONE[row.state]) : row.state === 'published' ? 'ok' : 'neutral'}
       >
-        {STATE_LABEL[item.state] ?? item.state}
+        {STATE_LABEL[row.state] ?? row.state}
       </StatusChip>
       {published && (
         <StatusChip tone={published.kind === 'published' ? 'ok' : 'info'} data-registry-publish-status>
@@ -139,7 +164,9 @@ const StateCell: React.FC<{ item: RegistryRow }> = ({ item }) => {
       )}
     </span>
   );
-};
+}
+
+const StateCell: React.FC<{ item: RegistryRow }> = ({ item }) => <StateChips row={item} />;
 
 const ProjectsCell: React.FC<{ item: RegistryRow }> = ({ item }) => {
   if (!item.entry) return <Dash />;
@@ -201,6 +228,33 @@ const DecideChip: React.FC = () => {
   );
 };
 
+/** The tiles view: one card per visible row. */
+const RegistryTiles: React.FC = () => {
+  const { t, onOpen } = useRegistryCells();
+  const rows = useVisibleRows<RegistryRow>();
+  return (
+    <ul className={cards.tiles} data-component-tiles>
+      {rows.map((row) => (
+        <ComponentTile
+          key={row.id}
+          t={t}
+          onOpen={() => onOpen(row)}
+          tile={{
+            key: row.id,
+            name: row.name,
+            type: row.type,
+            state: <StateChips row={row} />,
+            purpose: row.description,
+            projects: projectsUsing(row.entry),
+          }}
+        />
+      ))}
+    </ul>
+  );
+};
+
+const RegistryTilesPlugin = tilesPlugin('registryTiles', RegistryTiles);
+
 const RegistryEmpty: React.FC = () => {
   const { t } = useRegistryCells();
   return (
@@ -217,35 +271,28 @@ export function RegistryGrid({
   rows: componentRows,
   entries,
   withCatalogue,
-  people,
-  names,
-  onDecided,
-  onOpenComponent,
-  platformAdmin,
   candidates,
   orphaned,
   onCandidates,
+  onOpen,
 }: {
   rows: ComponentRow[];
   entries: RegistryEntry[];
   withCatalogue: boolean;
-  people: Person[];
-  names: Record<string, string>;
-  onDecided: () => void;
-  onOpenComponent: (name: string) => void;
-  platformAdmin: boolean;
   candidates: number;
   orphaned: number;
   onCandidates: (on: boolean) => void;
+  /** Open a row's page. */
+  onOpen: (row: RegistryRow) => void;
 }) {
-  const { t } = useScope();
-  const [open, setOpen] = useState<string | null>(null);
-  const rows = useMemo<RegistryRow[]>(() => componentRows.map((r) => ({ ...r, id: r.key })), [componentRows]);
+  const { t, bridge } = useScope();
+  const rows = useMemo(() => registryRows(componentRows), [componentRows]);
   const { load, reloadBridge } = useLocalGridLoad(rows, REGISTRY_OPTIONS);
 
   const columns = useMemo<DataGridTableColumn<RegistryRow>[]>(() => {
     const out: DataGridTableColumn<RegistryRow>[] = [
       { id: 'component', label: t('col_component'), component: NameCell, minWidth: 240 },
+      { id: 'type', label: t('col_type'), component: TypeCell, width: 150 },
       { id: 'state', label: t('col_state'), component: StateCell, width: 200 },
       { id: 'projects', label: t('col_projects'), component: ProjectsCell, width: 200 },
       { id: 'declared_at', label: t('col_declared_at'), component: DeclaredAtCell, width: 240 },
@@ -263,7 +310,9 @@ export function RegistryGrid({
   const states = ROW_STATES.filter((st) => rows.some((r) => r.state === st))
     .map((st) => `${st}\t${STATE_LABEL[st] ?? st} ${rows.filter((r) => r.state === st).length}`)
     .join('\n');
-  const kinds = [...new Set(rows.map((r) => r.kind).filter(Boolean))].sort().join('\n');
+  const types = typeCounts(rows.map((r) => r.type))
+    .map((c) => `${c.type}\t${typeLabel(c.type, t)} ${c.count}`)
+    .join('\n');
   const projects = useMemo(
     () => registryProjects(entries).map((p) => `${p.id}\t${p.name}`).join('\n'),
     [entries]
@@ -279,24 +328,17 @@ export function RegistryGrid({
       const choices = options(joined);
       if (choices.length > 1) entities.push(filterTagGroup({ id, label, mode: 'radio', options: choices }));
     };
+    add(REGISTRY_FILTERS.type, t('col_type'), types);
     add(REGISTRY_FILTERS.state, t('col_state'), states);
-    add(REGISTRY_FILTERS.kind, t('col_type'), kinds);
     add(REGISTRY_FILTERS.project, t('filter_project'), projects);
     return entities;
-  }, [t, states, kinds, projects]);
+  }, [t, states, types, projects]);
 
   const cells = useMemo<RegistryCells>(
-    () => ({ t, open, candidates, orphaned, onCandidates }),
-    [t, open, candidates, orphaned, onCandidates]
+    () => ({ t, candidates, orphaned, onCandidates, onOpen }),
+    [t, candidates, orphaned, onCandidates, onOpen]
   );
-  const toggle = useCallback((row: RegistryRow) => setOpen((now) => (now === row.key ? null : row.key)), []);
-  const opened = open ? rows.find((r) => r.key === open) ?? null : null;
-
-  // The detail sits under the list: bring it into view when a row opens.
-  const detail = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (open) detail.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
-  }, [open]);
+  const click = useCallback((row: RegistryRow) => onOpen(row), [onOpen]);
 
   return (
     <RegistryCellsProvider value={cells}>
@@ -310,43 +352,14 @@ export function RegistryGrid({
         empty={RegistryEmpty}
         unsortable={['projects', 'declared_at']}
         defaultOrder={{ id: 'component', direction: 'asc' }}
-        minWidth="60rem"
+        minWidth="68rem"
       >
-        <DataGridRowClickPlugin<RegistryRow> click={toggle} />
+        <DataGridRowClickPlugin<RegistryRow> click={click} />
         <DataGridActionsPlugin component={DecideChip} />
+        <RegistryTilesPlugin />
+        <ViewFromPreference bridge={bridge} />
         {reloadBridge}
       </ListGrid>
-      {opened && (
-        <section ref={detail} className={styles.panel} data-registry-expanded={opened.name}>
-          <header className={styles.panelHead}>
-            <h2 className={styles.panelTitle}>{opened.name}</h2>
-            <span className={styles.sub}>{opened.kind}</span>
-            <Button variant="ghost" size="sm" className={styles.pushEnd} onClick={() => setOpen(null)}>
-              {t('close')}
-            </Button>
-          </header>
-          {opened.entry ? (
-            <EntryDetail
-              entry={opened.entry}
-              entries={entries}
-              people={people}
-              names={names}
-              onDecided={onDecided}
-              onOpenComponent={opened.node ? () => onOpenComponent(nameOf(opened.node!)) : undefined}
-              platformAdmin={platformAdmin}
-            />
-          ) : (
-            <div className={styles.sub}>
-              {t('published_no_project')}{' '}
-              {opened.node && (
-                <Button variant="link" size="sm" onClick={() => onOpenComponent(nameOf(opened.node!))}>
-                  {t('open_page')} →
-                </Button>
-              )}
-            </div>
-          )}
-        </section>
-      )}
     </RegistryCellsProvider>
   );
 }

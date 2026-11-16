@@ -3,10 +3,11 @@
  * `ComponentRegistry`: every component its projects declare — a `gear.toml`
  * or `gear.gdl` directory, a `#[toolkit::gear]` attribute, a FrontX package,
  * a kit manifest — laid beside what its catalogue holds, one row each, on the
- * kit's DataGrid (`RegistryGrid`). A row opens under the list: why it looks
- * like a gear, who owns it, where it is
- * declared, what was contributed or extracted, and the decisions it allows
- * (an organization administrator's; anyone else is told so by the 403).
+ * kit's DataGrid (`RegistryGrid`). A row opens the component's page
+ * (`ComponentView`), whose Lifecycle block carries the registry's panel: why
+ * it looks like a gear, who owns it, where it is declared, what was
+ * contributed or extracted, and the decisions it allows (an organization
+ * administrator's; anyone else is told so by the 403).
  * "Needs a decision" lists the candidates, strongest first.
  */
 
@@ -14,7 +15,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Checkbox, Empty, EmptyHeader, EmptyTitle, Skeleton } from '@gears-frontx/ui-kit';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import type { CatalogNode, RegistryEntry, RegistryProjectWalk } from '../../api/types';
-import { componentRows } from '../../model/catalogue';
+import { componentRows, type ComponentRow } from '../../model/catalogue';
 import {
   candidateWhere,
   candidatesOf,
@@ -26,8 +27,9 @@ import {
   walkLine,
 } from '../../model/registry';
 import { api, errText, statusOf, useScope, waitForSync } from './common';
-import { RegistryDecisions, DeclareCandidate, type Person } from './RegistryEntry';
-import { RegistryGrid } from './RegistryGrid';
+import { ComponentView } from './ComponentView';
+import { EntryDetail, RegistryDecisions, DeclareCandidate, type Person } from './RegistryEntry';
+import { RegistryGrid, registryRows } from './RegistryGrid';
 import { StatusChip } from './parts';
 import styles from './ComponentsScreen.module.css';
 
@@ -54,7 +56,8 @@ export function Registry({
   onSummary,
   candidates,
   onCandidates,
-  onOpenComponent,
+  profileFor,
+  onPage,
   catalogue,
 }: {
   /** Where the header's Read the projects now finds this registry's read. */
@@ -63,8 +66,10 @@ export function Registry({
   /** The candidates view, held by the header's chip. */
   candidates: boolean;
   onCandidates: (on: boolean) => void;
-  /** Open a published component's page. */
-  onOpenComponent: (name: string) => void;
+  /** A published component's field profile, for its page's Profile tab. */
+  profileFor: (row: ComponentRow) => React.ReactNode;
+  /** Whether a component's page is open over the list. */
+  onPage: (open: boolean) => void;
   /** What the organization's catalogue holds, laid beside what its projects declare. */
   catalogue: CatalogNode[];
 }) {
@@ -77,6 +82,7 @@ export function Registry({
   const [sync, setSync] = useState('');
   const [busy, setBusy] = useState(false);
   const people = usePeople();
+  const [openKey, setOpenKey] = useState<string | null>(null);
   const names = useMemo(() => Object.fromEntries(people.map((p) => [p.id, p.name])), [people]);
 
   useEffect(() => {
@@ -148,6 +154,12 @@ export function Registry({
   const rows = useMemo(() => componentRows(entries ?? [], catalogue), [entries, catalogue]);
   const counts = useMemo(() => stateCounts(entries ?? []), [entries]);
   const orphaned = (entries ?? []).filter(isOrphaned).length;
+  // The open row, read again from the rows after every decision.
+  const opened = useMemo(() => (openKey ? (registryRows(rows).find((r) => r.key === openKey) ?? null) : null), [openKey, rows]);
+  const pageOpen = opened !== null;
+  useEffect(() => {
+    onPage(pageOpen);
+  }, [pageOpen, onPage]);
   const duplicated = (entries ?? []).filter(isDuplicated).length;
 
   useEffect(() => {
@@ -167,6 +179,34 @@ export function Registry({
           <EmptyTitle>{t('no_registry')}</EmptyTitle>
         </EmptyHeader>
       </Empty>
+    );
+  }
+
+  if (opened && loaded) {
+    return (
+      <ComponentView
+        key={opened.key}
+        name={opened.name}
+        node={opened.node}
+        entry={opened.entry}
+        type={opened.type}
+        onBack={() => setOpenKey(null)}
+        profile={opened.node ? profileFor(opened) : undefined}
+        lifecycle={
+          opened.entry ? (
+            <EntryDetail
+              entry={opened.entry}
+              entries={loaded.entries}
+              people={people}
+              names={names}
+              onDecided={load}
+              platformAdmin={platformAdmin}
+            />
+          ) : (
+            <p className={styles.sub}>{t('published_no_project')}</p>
+          )
+        }
+      />
     );
   }
 
@@ -202,14 +242,10 @@ export function Registry({
               rows={rows}
               entries={loaded.entries}
               withCatalogue={catalogue.length > 0}
-              people={people}
-              names={names}
-              onDecided={load}
-              onOpenComponent={onOpenComponent}
-              platformAdmin={platformAdmin}
               candidates={counts.candidate ?? 0}
               orphaned={orphaned}
               onCandidates={onCandidates}
+              onOpen={(row) => setOpenKey(row.key)}
             />
           )}
           <ProjectsRead loaded={loaded} entries={loaded.entries} onToggle={(id) => void toggleProject(id)} />

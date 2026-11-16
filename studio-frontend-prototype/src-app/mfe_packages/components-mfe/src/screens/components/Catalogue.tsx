@@ -7,14 +7,16 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { Button, Skeleton } from '@gears-frontx/ui-kit';
-import { openScreen } from '@constructor-studio/mfe-shared';
+import { catalogueComponentType, openScreen } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
+import type { CatalogNode } from '../../api/types';
 import { nameOf, schemaFor } from '../../model/catalogue';
 import { syncedSources } from '../../model/component-kinds';
 import { inTierTab, shadowedNote, tierCounts } from '../../model/component-tiers';
 import { useScope } from './common';
 import { CatalogueGrid } from './CatalogueGrid';
 import { ComponentPage } from './ComponentPage';
+import { ComponentView } from './ComponentView';
 import { PageHeader, StatusChip } from './parts';
 import { Registry, type RegistrySummary } from './Registry';
 import { SourcesDialog, useCatalogueSync } from './Sources';
@@ -49,21 +51,49 @@ export function Catalogue({ tier }: { tier: 'platform' | 'organization' }) {
     [selected, gears]
   );
 
+  const [registryPage, setRegistryPage] = useState(false);
+
+  /** A catalogue node's field profile: the Profile tab of its page. */
+  const profileOf = (gear: CatalogNode) => (
+    <ComponentPage
+      gear={gear}
+      profile={profiles[nameOf(gear)]}
+      values={resolved[nameOf(gear)]?.values ?? {}}
+      schema={schemaFor(schemas, gear.type_id)}
+      baselines={baselines}
+      days={days}
+      onDays={setDays}
+      onSaved={(p) => setProfile(nameOf(gear), p)}
+    />
+  );
+
   if (selectedGear) {
     return (
-      <ComponentPage
-        gear={selectedGear}
-        profile={profiles[nameOf(selectedGear)]}
-        values={resolved[nameOf(selectedGear)]?.values ?? {}}
-        schema={schemaFor(schemas, selectedGear.type_id)}
-        baselines={baselines}
-        days={days}
-        onDays={setDays}
+      <ComponentView
+        key={selectedGear.instance_id}
+        name={nameOf(selectedGear)}
+        node={selectedGear}
+        type={catalogueComponentType(selectedGear.value)}
         onBack={() => setSelected(null)}
-        onSaved={(p) => setProfile(nameOf(selectedGear), p)}
+        profile={profileOf(selectedGear)}
       />
     );
   }
+
+  const registryView = (
+    <Registry
+      readRef={readNow}
+      onSummary={setRegistry}
+      candidates={decide}
+      onCandidates={setDecide}
+      profileFor={(row) => (row.node ? profileOf(row.node) : null)}
+      onPage={setRegistryPage}
+      catalogue={componentNodes}
+    />
+  );
+  // A component's page open over the registry shows alone; the registry stays
+  // mounted in the same place, so Back finds its filters and page as they were.
+  const listChrome = platformLevel || !registryPage;
 
   const status = (
     <>
@@ -140,17 +170,19 @@ export function Catalogue({ tier }: { tier: 'platform' | 'organization' }) {
 
   return (
     <>
-      <PageHeader
-        title={platformLevel ? t('platform_title') : t('organization_title')}
-        status={status}
-        info={info}
-        infoLabel={t('about', { title: platformLevel ? t('platform_title') : t('organization_title') })}
-        actions={actions}
-        container={container}
-      />
+      {listChrome && (
+        <PageHeader
+          title={platformLevel ? t('platform_title') : t('organization_title')}
+          status={status}
+          info={info}
+          infoLabel={t('about', { title: platformLevel ? t('platform_title') : t('organization_title') })}
+          actions={actions}
+          container={container}
+        />
+      )}
       {sourcesOpen && <SourcesDialog sync={sync} onClose={() => setSourcesOpen(false)} />}
-      {truncated && <p className={styles.hint}>{t('truncated', { count: gears?.length ?? 0 })}</p>}
-      {err && gears !== null && <p className={styles.error}>{err}</p>}
+      {listChrome && truncated && <p className={styles.hint}>{t('truncated', { count: gears?.length ?? 0 })}</p>}
+      {listChrome && err && gears !== null && <p className={styles.error}>{err}</p>}
       {platformLevel ? (
         gears === null ? (
           err ? (
@@ -172,14 +204,7 @@ export function Catalogue({ tier }: { tier: 'platform' | 'organization' }) {
           />
         )
       ) : (
-        <Registry
-          readRef={readNow}
-          onSummary={setRegistry}
-          candidates={decide}
-          onCandidates={setDecide}
-          onOpenComponent={setSelected}
-          catalogue={componentNodes}
-        />
+        registryView
       )}
     </>
   );

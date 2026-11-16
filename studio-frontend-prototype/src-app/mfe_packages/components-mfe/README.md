@@ -20,6 +20,12 @@ extension the shell mounted (`scopeOf`):
   each naming the organization on screen (`organization_id`), and what the
   kit borrows from `studio-connector`, `studio-kits`, `studio-user` and
   `studio-tasks`.
-- `src/screens/components/` — the screens.
+- `src/screens/components/` — the screens. A component is drawn the way
+  Kits draws a kit: its type glyph and word (mfe-shared `ComponentTypeIcon`,
+  the catalogue's `component_type`), a tiles view beside the table
+  (`ComponentCards.tsx`), and its page (`ComponentView.tsx`, from
+  `GET /components/{name}`) with a counted block per question — what it
+  provides, needs, where it is used, quality and lifecycle; the field
+  profile (`ComponentPage.tsx`) is the page's Profile tab.
 
 What is not carried over yet is listed in `docs/parity.md`.

@@ -368,6 +368,44 @@ pub fn builtin_manifests() -> Vec<KitManifest> {
         .collect()
 }
 
+/// What one built-in kit claims of one gear: the kit, and the gear's types,
+/// MCP tools and write routes it stands for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GearClaims {
+    /// The kit's slug.
+    pub kit: String,
+    /// The kit's name, as the library shows it.
+    pub kit_name: String,
+    pub types: Vec<String>,
+    pub mcp_tools: Vec<String>,
+    pub routes: Vec<String>,
+}
+
+/// Every built-in kit's claims on `gear` (case-blind), in the catalogue's
+/// order: what a component's page lists as the kits that stand for it.
+pub fn builtin_gear_claims(gear: &str) -> Vec<GearClaims> {
+    let gear = gear.trim();
+    if gear.is_empty() {
+        return Vec::new();
+    }
+    builtin_manifests()
+        .into_iter()
+        .flat_map(|m| {
+            m.gears
+                .into_iter()
+                .filter(|g| g.gear.eq_ignore_ascii_case(gear))
+                .map(|g| GearClaims {
+                    kit: m.slug.clone(),
+                    kit_name: m.name.clone(),
+                    types: g.types,
+                    mcp_tools: g.mcp_tools,
+                    routes: g.routes,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// Whether `id` is a core gear type ([`CORE_GEAR_TYPES`]).
 #[cfg(test)]
 pub fn is_core_gear_type(id: &str) -> bool {

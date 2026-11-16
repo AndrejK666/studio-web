@@ -41,6 +41,13 @@
   font-size: 0.8125rem;
 }
 
+/* The row's type glyph, as Organization › Components draws it. */
+.typeIcon {
+  margin-inline-end: var(--space-1);
+  vertical-align: -0.125rem;
+  color: var(--primary);
+}
+
 .error {
   color: var(--destructive);
 }

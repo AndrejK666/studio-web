@@ -34,30 +34,25 @@ fn declared() -> BTreeSet<(String, String)> {
 
 /// Every gear's MCP tools, by the gear that serves them.
 fn tools_by_gear() -> BTreeMap<&'static str, &'static str> {
-    let mut out = BTreeMap::new();
-    for (gear, tools) in [
-        ("studio-domain-model", crate::domain_model::mcp_tools()),
-        ("studio-documents", crate::documents::mcp_tools()),
-        ("studio-spec-mapping", crate::spec_mapping::mcp_tools()),
-        ("studio-organizations", crate::organizations::mcp_tools()),
-        ("studio-user", crate::user_profile::mcp_tools()),
-        ("studio-spec-quality", crate::spec_quality::mcp_tools()),
-        ("studio-organizations", crate::project_sources::mcp_tools()),
-        ("studio-connector", crate::connectors::mcp_tools()),
-        ("studio-product", crate::product::mcp_tools()),
-        ("studio-environments", crate::environments::mcp_tools()),
-        (
-            "studio-artifact-ingest",
-            crate::artifact_ingest::mcp_tools(),
-        ),
-        ("studio-tasks", crate::tasks::mcp_tools()),
-        ("studio-kits", crate::kit_registry::mcp_tools()),
-    ] {
-        for t in tools {
-            out.insert(t.name, gear);
-        }
-    }
-    out
+    crate::mcp::tools_by_gear()
+        .into_iter()
+        .map(|(gear, t)| (t.name, gear))
+        .collect()
+}
+
+#[test]
+fn a_gears_claims_name_every_kit_that_stands_for_it() {
+    let claims = builtin_gear_claims("studio-artifact-ingest");
+    assert!(
+        claims.iter().any(|c| c.kit == "project-tests"
+            && c.types.iter().any(|t| t == "ci-run")
+            && !c.kit_name.is_empty()),
+        "{claims:?}"
+    );
+    // Case-blind, and nothing for a gear no kit names.
+    assert_eq!(builtin_gear_claims("STUDIO-ARTIFACT-INGEST"), claims);
+    assert!(builtin_gear_claims("no-such-gear").is_empty());
+    assert!(builtin_gear_claims(" ").is_empty());
 }
 
 /// Studio's running core types: the seed's types no kit owns.
