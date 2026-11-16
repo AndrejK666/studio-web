@@ -1501,7 +1501,8 @@ impl DomainModelService {
                 to,
                 Some(&declared.name),
             )
-            .await?;
+            .await?
+            .removed();
         if removed {
             self.notify
                 .objects_changed(ctx, &declared.source, &[from.to_owned()], "unrelate");

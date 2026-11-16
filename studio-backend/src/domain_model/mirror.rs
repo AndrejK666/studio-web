@@ -48,7 +48,8 @@ use uuid::Uuid;
 use super::entity::{edge, fill, object};
 use super::ontology::{EdgeType, NodeType, Ontology};
 use super::store::{
-    DomainStore, EdgeUpsert, EdgeView, Hop, Neighbourhood, NodeUpsert, ObjectNode, is_live,
+    DomainStore, EdgeUpsert, EdgeView, Hop, Neighbourhood, NodeUpsert, ObjectNode, RelationRemoval,
+    is_live, is_relation_unseen,
 };
 
 /// Rows per insert statement, under Postgres's 65 535 bound parameters.
@@ -305,14 +306,15 @@ impl DomainMirror {
         edge_type_id: &str,
         from: &str,
         to: &str,
-        relation: Option<&str>,
+        relations: Option<&[&str]>,
     ) -> anyhow::Result<()> {
         let mut cond = Condition::all()
             .add(edge::Column::EdgeTypeId.eq(edge_type_id))
             .add(edge::Column::Src.eq(from))
             .add(edge::Column::Dst.eq(to));
-        if let Some(r) = relation {
-            cond = cond.add(edge::Column::Relation.is_in([r, ""]));
+        // `None`: every row of the pair. An unnamed row is `""`.
+        if let Some(r) = relations {
+            cond = cond.add(edge::Column::Relation.is_in(r.iter().copied()));
         }
         let conn = self.db.conn()?;
         edge::Entity::delete_many()
@@ -870,7 +872,7 @@ impl DomainStore for IndexedDomainStore {
         from: &str,
         to: &str,
         relation: Option<&str>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<RelationRemoval> {
         let tenant = ctx.subject_tenant_id();
         let removed = match self
             .inner
@@ -878,15 +880,27 @@ impl DomainStore for IndexedDomainStore {
             .await
         {
             Ok(r) => r,
+            // The graph could not see whether the edge is there and removed
+            // nothing: the row stays, as the edge does.
+            Err(e) if is_relation_unseen(&e) => return Err(e),
             Err(e) => {
+                // An edge may have gone before the failure.
                 self.withdraw(tenant, &e).await;
                 return Err(e);
             }
         };
         self.fills.bump(tenant);
+        // Exactly the rows the graph dropped. After the named edge went, an
+        // older unnamed row may still stand for the relation in the graph,
+        // so it stays here too; when the graph had neither, both rows go.
+        let rows: Option<Vec<&str>> = match (removed, relation) {
+            (_, None) => None,
+            (RelationRemoval::Named, Some(r)) => Some(vec![r]),
+            (RelationRemoval::Unnamed | RelationRemoval::Absent, Some(r)) => Some(vec![r, ""]),
+        };
         if let Err(e) = self
             .mirror
-            .delete_edge(tenant, edge_type_id, from, to, relation)
+            .delete_edge(tenant, edge_type_id, from, to, rows.as_deref())
             .await
         {
             self.withdraw(tenant, &e).await;

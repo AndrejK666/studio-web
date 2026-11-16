@@ -1033,3 +1033,185 @@ async fn a_refused_write_keeps_the_read_model() {
         .unwrap();
     assert!(p.mirror.is_filled(tenant).await.unwrap());
 }
+
+// ── Removing a relation: the row goes only when the edge does ──────────────
+
+/// The in-memory graph, whose walk for a relation to delete is always cut.
+struct CutWalk(Arc<InMemoryDomainStore>);
+
+#[async_trait::async_trait]
+impl DomainStore for CutWalk {
+    async fn register_meta_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        self.0.register_meta_types(ctx).await
+    }
+    async fn register_types(
+        &self,
+        ctx: &SecurityContext,
+        node_types: &[NodeType],
+        edge_types: &[EdgeType],
+    ) -> anyhow::Result<Vec<String>> {
+        self.0.register_types(ctx, node_types, edge_types).await
+    }
+    async fn create_relation(
+        &self,
+        ctx: &SecurityContext,
+        edge_type_id: &str,
+        from: &str,
+        to: &str,
+        discriminator: Option<&str>,
+        payload: Option<Value>,
+    ) -> anyhow::Result<()> {
+        self.0
+            .create_relation(ctx, edge_type_id, from, to, discriminator, payload)
+            .await
+    }
+    async fn get_object(
+        &self,
+        ctx: &SecurityContext,
+        instance_id: &str,
+    ) -> anyhow::Result<Option<ObjectNode>> {
+        self.0.get_object(ctx, instance_id).await
+    }
+    async fn list_objects(
+        &self,
+        ctx: &SecurityContext,
+        type_ids: &[String],
+        scope: Option<&str>,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<ObjectNode>> {
+        self.0.list_objects(ctx, type_ids, scope, limit).await
+    }
+    async fn upsert_nodes(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.0.upsert_nodes(ctx, nodes).await
+    }
+    async fn upsert_nodes_keeping_vectors(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.0.upsert_nodes_keeping_vectors(ctx, nodes).await
+    }
+    async fn upsert_edges(
+        &self,
+        ctx: &SecurityContext,
+        edges: &[EdgeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.0.upsert_edges(ctx, edges).await
+    }
+    async fn read_edges(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+    ) -> anyhow::Result<Vec<EdgeView>> {
+        self.0.read_edges(ctx, seeds).await
+    }
+    async fn delete_relation(
+        &self,
+        _ctx: &SecurityContext,
+        _edge_type_id: &str,
+        _from: &str,
+        _to: &str,
+        _relation: Option<&str>,
+    ) -> anyhow::Result<super::super::store::RelationRemoval> {
+        anyhow::bail!("{}", super::super::store::RELATION_UNSEEN)
+    }
+}
+
+async fn core_and_gemini(p: &Pair) -> (String, String) {
+    let gemini = p
+        .same("project", json!({"where": {"name": {"_eq": "Gemini"}}}))
+        .await;
+    let core = p
+        .same("team", json!({"where": {"name": {"_eq": "Core"}}}))
+        .await;
+    (
+        core["items"][0]["id"].as_str().unwrap().to_string(),
+        gemini["items"][0]["id"].as_str().unwrap().to_string(),
+    )
+}
+
+/// The graph could not see whether the edge is there and removed nothing:
+/// the read model keeps its row and its fill.
+#[tokio::test]
+async fn an_unseen_relation_keeps_its_row() {
+    let p = seeded().await;
+    let tenant = p.ctx.subject_tenant_id();
+    let (core, gemini) = core_and_gemini(&p).await;
+    let cut = DomainModelService::new(Arc::new(IndexedDomainStore::new(
+        Arc::new(CutWalk(p.inner.clone())),
+        p.mirror.clone(),
+    )));
+    let e = cut
+        .delete_relation(&p.ctx, "team.delivers", &core, &gemini)
+        .await
+        .expect_err("unseen is an error");
+    assert!(super::super::store::is_relation_unseen(&e), "{e}");
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
+    let teams = p
+        .same(
+            "team",
+            json!({"where": {"name": {"_eq": "Core"}}, "include": {"delivers": {}}}),
+        )
+        .await;
+    assert_eq!(
+        teams["items"][0]["relations"]["delivers"]["total"],
+        json!(2),
+        "the edge and its row are both still there"
+    );
+}
+
+/// An older edge naming no relation stands for every relation of its verb.
+/// Removing the named edge leaves it in the graph, so its row stays too, and
+/// both readers still see the relation; removing again takes the old one.
+#[tokio::test]
+async fn removing_a_named_edge_leaves_an_unnamed_one_in_both_readers() {
+    let p = seeded().await;
+    let (core, gemini) = core_and_gemini(&p).await;
+    // The verb `team.delivers` is stored under, as the seed wrote it.
+    let delivers = p
+        .inner
+        .read_edges(&p.ctx, std::slice::from_ref(&core))
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|e| e.to == gemini)
+        .expect("core delivers gemini")
+        .type_id;
+    // Written the way relations were before they carried their name.
+    p.inner
+        .create_relation(&p.ctx, &delivers, &core, &gemini, None, None)
+        .await
+        .unwrap();
+    p.fill().await;
+    let delivered = |out: Value| out["items"][0]["relations"]["delivers"]["total"].clone();
+    let q = json!({"where": {"name": {"_eq": "Core"}}, "include": {"delivers": {}}});
+
+    assert!(
+        p.sql
+            .delete_relation(&p.ctx, "team.delivers", &core, &gemini)
+            .await
+            .unwrap()
+    );
+    assert_eq!(delivered(p.same("team", q.clone()).await), json!(2));
+
+    assert!(
+        p.sql
+            .delete_relation(&p.ctx, "team.delivers", &core, &gemini)
+            .await
+            .unwrap(),
+        "the unnamed edge went this time"
+    );
+    assert_eq!(delivered(p.same("team", q.clone()).await), json!(1));
+
+    assert!(
+        !p.sql
+            .delete_relation(&p.ctx, "team.delivers", &core, &gemini)
+            .await
+            .unwrap()
+    );
+    assert_eq!(delivered(p.same("team", q).await), json!(1));
+}

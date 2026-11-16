@@ -342,3 +342,155 @@ async fn a_new_tenant_registers_the_index_from_the_start() {
     assert!(pinned.is_empty());
     assert!(filter_is_admitted(client.as_ref(), &ctx, &team.type_id).await);
 }
+
+// ── Removing a relation on a busy node ─────────────────────────────────────
+
+/// The gear with a traversal budget small enough for a test to exceed: three
+/// nodes a walk, the seed included.
+fn client_with_budget(max_nodes: u32) -> Arc<dyn GraphStorageClientV1> {
+    let store = Arc::new(FakeGraphStore::new());
+    let engine = Arc::new(FakeGraphEngine::new(Arc::clone(&store)));
+    let embedding = EmbeddingCoordinator::new(
+        Arc::new(FakeEmbeddingProvider::new(384)),
+        SpaceState::Active { epoch: 1 },
+        8 * 1024,
+    );
+    let services = GraphServices::new(
+        ValidatedConfig::unchecked(GraphStorageConfig {
+            traversal_max_nodes: max_nodes,
+            ..GraphStorageConfig::default()
+        }),
+        store,
+        engine,
+        PolicyEnforcer::new(Arc::new(AllowInOwnTenant)),
+        embedding,
+    );
+    Arc::new(GraphStorageLocalClient::new(Arc::new(services)))
+}
+
+/// A team with many `owns` edges of one relation (`staff`) and one of
+/// another (`lead`), all of the verb `owns`.
+async fn busy_team(store: &GraphStorageBackend, ctx: &SecurityContext) -> (String, Vec<String>) {
+    use super::ontology::EdgeType;
+    let team = node_type("team");
+    let person = node_type("person");
+    let owns = gts::edge_type_id("owns");
+    store.register_meta_types(ctx).await.expect("meta types");
+    store
+        .register_types(
+            ctx,
+            &[team.clone(), person.clone()],
+            &[EdgeType {
+                type_id: owns.clone(),
+                relation_kind: "owns".to_owned(),
+                src_type_ids: vec![team.type_id.clone()],
+                dst_type_ids: vec![person.type_id.clone()],
+            }],
+        )
+        .await
+        .expect("types");
+    let mut nodes = vec![object(&team.type_id, "core", json!({"name": "core"}))];
+    nodes.extend((0..8).map(|i| {
+        object(
+            &person.type_id,
+            &format!("p{i}"),
+            json!({"name": format!("p{i}")}),
+        )
+    }));
+    store.upsert_nodes(ctx, &nodes).await.expect("nodes");
+    let core = nodes[0].node_key.clone();
+    let people: Vec<String> = nodes[1..].iter().map(|n| n.node_key.clone()).collect();
+    // Six staff edges, then the lead, and p7 with no edge at all.
+    for p in &people[..6] {
+        store
+            .create_relation(ctx, &owns, &core, p, Some("staff"), None)
+            .await
+            .expect("staff");
+    }
+    store
+        .create_relation(ctx, &owns, &core, &people[6], Some("lead"), None)
+        .await
+        .expect("lead");
+    (core, people)
+}
+
+#[tokio::test]
+async fn a_relation_on_a_busy_node_is_found_by_its_discriminator() {
+    use super::store::RelationRemoval;
+    let client = client_with_budget(3);
+    let ctx = ctx(Uuid::now_v7());
+    let store = GraphStorageBackend::new(Arc::clone(&client));
+    let (core, people) = busy_team(&store, &ctx).await;
+    let owns = gts::edge_type_id("owns");
+
+    // An unfiltered walk from `core` is cut: eight edges, three nodes.
+    let walk = client
+        .traverse(
+            &ctx,
+            graph_storage_sdk::models::TraverseRequest {
+                seeds: vec![core.clone()],
+                depth: 1,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("walk");
+    assert!(walk.truncated.is_some(), "the hub is over the budget");
+
+    // The lead is one edge of its relation: the walk carries only it.
+    let removed = store
+        .delete_relation(&ctx, &owns, &core, &people[6], Some("lead"))
+        .await
+        .expect("the lead is found");
+    assert_eq!(removed, RelationRemoval::Named);
+    let lead = client
+        .traverse(
+            &ctx,
+            graph_storage_sdk::models::TraverseRequest {
+                seeds: vec![core.clone()],
+                depth: 1,
+                edge_discriminators: vec!["lead".to_owned()],
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("walk");
+    assert!(lead.edges.is_empty(), "the lead edge is gone");
+
+    // Asked again, the named edge is not there, and the look for an older
+    // unnamed one has to walk every `owns` edge of the hub, which the budget
+    // cuts: the store says it cannot tell rather than "absent".
+    let again = store
+        .delete_relation(&ctx, &owns, &core, &people[6], Some("lead"))
+        .await
+        .expect_err("the unnamed look is cut");
+    assert!(super::store::is_relation_unseen(&again), "{again}");
+}
+
+#[tokio::test]
+async fn a_relation_past_the_budget_is_unseen_not_absent() {
+    let client = client_with_budget(3);
+    let ctx = ctx(Uuid::now_v7());
+    let store = GraphStorageBackend::new(Arc::clone(&client));
+    let (core, people) = busy_team(&store, &ctx).await;
+    let owns = gts::edge_type_id("owns");
+
+    // p7 has no staff edge, but six staff edges overflow the walk: the store
+    // cannot tell, and says so rather than "absent".
+    let e = store
+        .delete_relation(&ctx, &owns, &core, &people[7], Some("staff"))
+        .await
+        .expect_err("a cut walk is not an answer");
+    assert!(super::store::is_relation_unseen(&e), "{e}");
+
+    // A staff edge either is found and removed, or is unseen: never absent.
+    for p in &people[..6] {
+        match store
+            .delete_relation(&ctx, &owns, &core, p, Some("staff"))
+            .await
+        {
+            Ok(r) => assert!(r.removed(), "{p}: {r:?}"),
+            Err(e) => assert!(super::store::is_relation_unseen(&e), "{p}: {e}"),
+        }
+    }
+}
