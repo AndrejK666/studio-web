@@ -513,6 +513,10 @@ impl ModelGraphStore {
     async fn move_tenant(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
         let port = self.port()?;
         self.ensure_types(ctx, port.as_ref()).await?;
+        // Asked before the walk, not learnt from the first write after it: a
+        // refused move used to read the whole old store first (10 000+ nodes
+        // on Dev), fail, and do it again at every retry.
+        self.may_move(ctx, port.as_ref()).await?;
         let mut moved: Vec<GtsNode> = Vec::new();
         for (artifact_type, _) in KINDS {
             let found = self.legacy.list(ctx, Some(artifact_type)).await?;
@@ -560,6 +564,37 @@ impl ModelGraphStore {
             skipped,
             "studio-artifact-ingest: artifacts moved into the domain model"
         );
+        Ok(())
+    }
+
+    /// May this caller write what the move writes? Every model type an
+    /// artifact becomes and the marker, organization-wide: the grant the
+    /// sweep's identity needs in the tenant. A refusal names the subject, the
+    /// type and the owner (`check_put`), so the cause is in the log.
+    async fn may_move(
+        &self,
+        ctx: &SecurityContext,
+        port: &dyn DomainObjects,
+    ) -> anyhow::Result<()> {
+        let org = [String::new()];
+        let mut entities: Vec<&str> = KINDS.iter().map(|(_, entity)| *entity).collect();
+        entities.push("sync-state");
+        entities.sort_unstable();
+        entities.dedup();
+        for entity in entities {
+            if let Err(e) = port.check_put(ctx, entity, &org).await {
+                warn!(
+                    tenant = %ctx.subject_tenant_id(),
+                    subject = %ctx.subject_id(),
+                    entity,
+                    error = %format!("{e:#}"),
+                    "studio-artifact-ingest: the move into the domain model is refused before reading the old store"
+                );
+                return Err(e.context(format!(
+                    "the artifact move may not write `{entity}` objects in this tenant; the old store was not read"
+                )));
+            }
+        }
         Ok(())
     }
 

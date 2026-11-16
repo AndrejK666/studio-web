@@ -141,6 +141,20 @@ pub trait DomainObjects: Send + Sync {
         anyhow::bail!("batch writes are not offered here")
     }
 
+    /// Would [`Self::put_objects`] of `entity` in these scopes (empty is
+    /// organization-wide) be admitted for the caller? Writes nothing. A gear
+    /// about to read a large set in order to write it asks first, so a
+    /// refusal costs no read. The default admits: a port that cannot tell
+    /// leaves the answer to the write.
+    async fn check_put(
+        &self,
+        _ctx: &SecurityContext,
+        _entity: &str,
+        _scopes: &[String],
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Create one object only if its id is free: `false` when it is taken.
     /// A gear serializes concurrent writers with it.
     async fn claim(
@@ -378,6 +392,15 @@ impl DomainObjects for Objects {
             .await
     }
 
+    async fn check_put(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        scopes: &[String],
+    ) -> anyhow::Result<()> {
+        self.0.check_put_trusted(ctx, entity, scopes).await
+    }
+
     async fn remove_objects(
         &self,
         ctx: &SecurityContext,
@@ -597,6 +620,15 @@ impl DomainObjects for KeptByGear {
         objects: Vec<OwnedObject>,
     ) -> anyhow::Result<usize> {
         self.0.put_objects(&as_gear(ctx)?, entity, objects).await
+    }
+
+    async fn check_put(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        scopes: &[String],
+    ) -> anyhow::Result<()> {
+        self.0.check_put(&as_gear(ctx)?, entity, scopes).await
     }
 
     async fn claim(

@@ -1881,6 +1881,74 @@ impl DomainModelService {
             .collect())
     }
 
+    /// Would [`Self::put_objects_trusted`] of `entity_ref` objects in these
+    /// scopes be admitted? Writes nothing: a caller about to read a large
+    /// set in order to write it asks first, so a refusal costs no read.
+    pub async fn check_put_trusted(
+        &self,
+        ctx: &SecurityContext,
+        entity_ref: &str,
+        scopes: &[String],
+    ) -> anyhow::Result<()> {
+        let ontology = self.model(ctx).await?;
+        let scopes: Vec<&str> = scopes.iter().map(String::as_str).collect();
+        self.admit_trusted_put(ctx, &ontology, entity_ref, &scopes)
+            .await
+            .map(|_| ())
+    }
+
+    /// The type a trusted write names, once the caller may write it in each
+    /// of `scopes` (empty is organization-wide). A refusal says who was
+    /// refused what, where: on its own "not permitted" names neither the
+    /// subject nor the owner, and a refused sweep cannot be diagnosed from it.
+    async fn admit_trusted_put(
+        &self,
+        ctx: &SecurityContext,
+        ontology: &Ontology,
+        entity_ref: &str,
+        scopes: &[&str],
+    ) -> anyhow::Result<String> {
+        let entity_id = ontology
+            .resolve_entity_id(entity_ref)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
+        let who = |why: &str| {
+            format!(
+                "subject {} ({}) in tenant {} may not write `{entity_id}` objects: {why}",
+                ctx.subject_id(),
+                ctx.subject_type().unwrap_or("no subject type"),
+                ctx.subject_tenant_id()
+            )
+        };
+        let write = match self
+            .policy
+            .access(ctx, access::WRITE, Some(&entity_id))
+            .await
+        {
+            Ok(write) => write,
+            Err(e) => {
+                let cause = who("refused for the type as a whole");
+                warn!(%cause, error = %e, "studio-domain-model: a trusted write was refused");
+                return Err(anyhow::Error::from(e).context(cause));
+            }
+        };
+        let mut scopes = scopes.to_vec();
+        scopes.sort_unstable();
+        scopes.dedup();
+        for scope in scopes {
+            let scope = Some(scope).filter(|s| !s.is_empty());
+            let owner = write.owner_of_scope(scope);
+            if !write.admits_owner(ctx, owner).await {
+                let cause = who(&format!(
+                    "the grant does not reach owner {owner} (scope `{}`)",
+                    scope.unwrap_or("")
+                ));
+                warn!(%cause, "studio-domain-model: a trusted write was refused");
+                return Err(anyhow::Error::from(AccessError::Denied).context(cause));
+            }
+        }
+        Ok(entity_id)
+    }
+
     /// Write a batch of objects of one type for a gear that owns their shape
     /// and their ids (ADR-0066 §8a): unchecked against the type, a graph
     /// write per few hundred objects, and the caller's right to write asked
@@ -1896,22 +1964,10 @@ impl DomainModelService {
             return Ok(0);
         }
         let ontology = self.model(ctx).await?;
-        let entity_id = ontology
-            .resolve_entity_id(entity_ref)
-            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
-        let write = self
-            .policy
-            .access(ctx, access::WRITE, Some(&entity_id))
+        let scopes: Vec<&str> = items.iter().map(|(_, s, _)| s.as_str()).collect();
+        let entity_id = self
+            .admit_trusted_put(ctx, &ontology, entity_ref, &scopes)
             .await?;
-        let mut scopes: Vec<&str> = items.iter().map(|(_, s, _)| s.as_str()).collect();
-        scopes.sort_unstable();
-        scopes.dedup();
-        for scope in scopes {
-            let scope = Some(scope).filter(|s| !s.is_empty());
-            if !write.admits_owner(ctx, write.owner_of_scope(scope)).await {
-                return Err(AccessError::Denied.into());
-            }
-        }
         let type_id = gts::node_type_id(&entity_id);
         let kept = self
             .open_fields_of(ctx, &ontology, &entity_id, &items)
