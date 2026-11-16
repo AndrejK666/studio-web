@@ -31,7 +31,7 @@ import { stubFrame } from '@frontx-test-utils/stubFrame';
 import type { MfeEntryIframe } from '@/app/mfe/MfeHandlerIframe';
 import { APP_CONTEXT_SLICE_KEY } from '@/app/slices/appContextSlice';
 import { APP_SESSION_SLICE_KEY } from '@/app/slices/appSessionSlice';
-import { StudioSessionApiService, type StudioSessionState } from '@/app/api';
+import { CloneStatusApiService, StudioSessionApiService, type StudioSessionState } from '@/app/api';
 import { DARK_THEME_ID } from '@/app/themes/dark';
 import { DEFAULT_THEME_ID } from '@/app/themes/default';
 import { DRACULA_THEME_ID } from '@/app/themes/dracula';
@@ -188,7 +188,13 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
       fetch: () => Promise.resolve({ items: [{ id: 'c1', scope: 'organization', secret_ref: 'ref-1' }] }),
     })),
   };
+  const cloneStatus = vi.fn(
+    (_params: { projectId: string }): { fetch: () => Promise<unknown> } => ({
+      fetch: () => Promise.resolve({ items: [], total: 0 }),
+    })
+  );
   const services = new Map<unknown, unknown>([
+    [CloneStatusApiService, { cloneStatus }],
     [StudioEventsApiService, events],
     [StudioSessionApiService, sessions],
     [StudioTasksApiService, tasks],
@@ -258,6 +264,7 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
     sessions,
     tasks,
     accounts,
+    cloneStatus,
   };
 }
 
@@ -336,6 +343,28 @@ describe('createEditorSession', () => {
     await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
     expect(published()).toEqual([ADDRESS]);
     await vi.waitFor(() => expect(h.disconnect).toHaveBeenCalledWith('connection-1'));
+  });
+
+  it('says which source could not be cloned while it launches, from the clone status', async () => {
+    const h = harness();
+    h.cloneStatus.mockReturnValue({
+      fetch: () =>
+        Promise.resolve({
+          items: [
+            { clone_url: 'https://git.test/acme/web.git', full_path: 'acme/web', state: 'failed', cause: 'branch_not_found', action: 'pick_branch', detail: 'gone' },
+            { clone_url: 'https://git.test/acme/api.git', full_path: 'acme/api', state: 'cloned' },
+          ],
+          total: 2,
+        }),
+    });
+    h.launch.mockResolvedValue(session('starting', RUN));
+    h.tasks.run.mockReturnValue({ fetch: vi.fn().mockResolvedValue(run('running')) });
+
+    h.open();
+    await vi.waitFor(() => expect(h.state().clones).toHaveLength(1));
+    expect(h.cloneStatus).toHaveBeenCalledWith({ projectId: PROJECT });
+    expect(h.state().clones[0]).toMatchObject({ repository: 'acme/web', cause: 'branch_not_found', detail: 'gone' });
+    expect(h.state().phase).toBe('launching');
   });
 
   it('ends failed with the run error when the backend gives up, and stops listening', async () => {

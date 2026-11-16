@@ -11,7 +11,7 @@ import {
   StudioEventsApiService,
   StudioTasksApiService,
 } from '@constructor-studio/mfe-shared';
-import { IdentityApiService, OrganizationsApiService, StudioSessionApiService } from '@/app/api';
+import { CloneStatusApiService, IdentityApiService, OrganizationsApiService, StudioSessionApiService } from '@/app/api';
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
 import { PresenceApiService } from '@/app/api/PresenceApiService';
 import { InboxCountApiService } from '@/app/api/InboxCountApiService';
@@ -60,6 +60,8 @@ apiRegistry.register(StudioEventsApiService);
 // The editor's session: its launch, the run that says it is ready, and the
 // sources and connections it clones from.
 apiRegistry.register(StudioSessionApiService);
+// Whether the project's sources could be cloned: why the editor opens without one.
+apiRegistry.register(CloneStatusApiService);
 // The desktops a project is open on, and a file handed to one (ADR-0027 §5–6).
 apiRegistry.register(DesktopApiService);
 apiRegistry.register(StudioTasksApiService);

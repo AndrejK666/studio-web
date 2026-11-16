@@ -21,7 +21,7 @@ import DICTIONARY from '@/app/i18n/en.json';
 
 function show(state: Partial<EditorSessionState>): void {
   store.state = {
-    [EDITOR_SESSION_SLICE_KEY]: { phase: 'idle', failure: null, shown: true, ...state } satisfies EditorSessionState,
+    [EDITOR_SESSION_SLICE_KEY]: { phase: 'idle', failure: null, shown: true, clones: [], ...state } satisfies EditorSessionState,
   };
 }
 
@@ -52,6 +52,29 @@ describe('EditorSessionStatus', () => {
     render(<EditorSessionStatus />);
 
     expect(screen.getByRole('status').textContent).toBe('editor_session_launching');
+  });
+
+  it('names a source that could not be cloned, why, and what fixes it, instead of only waiting', () => {
+    show({
+      phase: 'launching',
+      clones: [
+        {
+          repository: 'acme/web',
+          cause: 'branch_not_found',
+          causeText: 'The branch the source names no longer exists.',
+          action: 'pick_branch',
+          actionText: null,
+          detail: 'feature/gone',
+        },
+        { repository: 'acme/api', cause: 'later_cause', causeText: 'A cause the portal has no words for.', action: null, actionText: null, detail: null },
+      ],
+    });
+    render(<EditorSessionStatus />);
+
+    const web = document.querySelector('[data-editor-clone-problem="acme/web"]');
+    expect(web?.textContent).toBe('editor_clone_failededitor_clone_cause_branch_not_foundeditor_clone_action_pick_branch');
+    const api = document.querySelector('[data-editor-clone-problem="acme/api"]');
+    expect(api?.textContent).toBe('editor_clone_failedA cause the portal has no words for.');
   });
 
   it.each([
