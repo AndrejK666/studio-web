@@ -76,7 +76,7 @@ locally for each component you changed:
 
 | Component | Checks |
 |---|---|
-| `studio-backend/` | `scripts/backend-check.sh` — fmt, clippy, build, feature combinations and tests in CI's own image; only Docker is needed |
+| `studio-backend/` | `scripts/backend-gate.sh` — fmt, clippy and tests in one container with CI's toolchain and features; `scripts/backend-check.sh <gate>` for build or a single gate; only Docker is needed |
 | `studio-frontend/` | `npm ci && npm run build`, then `npm run lint`, `npm run type-check` and `npm run test:unit` |
 | `studio-frontend-prototype/` | `npm ci && npm test && npm run build` |
 | `theia/` | `npm test`; for an IDE change, rebuild with `docker compose build session-image` and try it in a session |
