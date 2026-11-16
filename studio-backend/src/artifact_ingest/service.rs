@@ -278,6 +278,9 @@ pub struct IngestService {
     /// sync that names a token: nothing could say it is the organization's.
     connectors: Option<crate::connectors::sdk::Connectors>,
     platform: Option<PlatformClient>,
+    /// Where a sync says its fetch of the shared checkout found the source's
+    /// branch gone (#1071's clone status). `None` without the gear's database.
+    clone_outcomes: Option<Arc<dyn super::port::CloneOutcomes>>,
 }
 
 pub struct PlatformClient {
@@ -360,12 +363,22 @@ impl IngestService {
             clone_failures: std::sync::Mutex::new(HashMap::new()),
             connectors: None,
             platform: None,
+            clone_outcomes: None,
         }
     }
 
     #[must_use]
     pub fn with_platform(mut self, platform: Option<PlatformClient>) -> Self {
         self.platform = platform;
+        self
+    }
+
+    #[must_use]
+    pub fn with_clone_outcomes(
+        mut self,
+        outcomes: Option<Arc<dyn super::port::CloneOutcomes>>,
+    ) -> Self {
+        self.clone_outcomes = outcomes;
         self
     }
 
@@ -843,8 +856,11 @@ impl IngestService {
         {
             progress.set("reading workspace files…");
             let (username, password) = driver.clone_credentials(token);
+            let source = project_id
+                .and_then(|p| Uuid::parse_str(p).ok())
+                .zip(driver.clone_url(clone_base_url, repo_full_path).ok());
             match self
-                .walk_shared_checkout(dir, username.to_string(), password.to_string())
+                .walk_shared_checkout(dir, username.to_string(), password.to_string(), source)
                 .await
             {
                 Ok(v) => Some(v),
@@ -1740,34 +1756,84 @@ impl IngestService {
     /// be lost), then read it. A failed fetch -- no network, no credential --
     /// reads the checkout as it stands and says so, which is no worse than
     /// before.
+    ///
+    /// `source` is the project and the source's clone URL: a branch found gone
+    /// is recorded as the source's clone status, and a fetch that finds it
+    /// again forgets that.
     async fn walk_shared_checkout(
         &self,
         dir: PathBuf,
         username: String,
         password: String,
+        source: Option<(Uuid, String)>,
     ) -> anyhow::Result<(PathBuf, git_checkout::Walk, Option<String>)> {
-        tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            match git_checkout::update_shared_checkout(&dir, &username, &password) {
-                Ok(git_checkout::CheckoutUpdate::Advanced { from, to }) => tracing::info!(
-                    dir = %dir.display(), %from, %to,
-                    "studio-artifact-ingest: pulled the shared checkout up to the remote"
-                ),
-                Ok(git_checkout::CheckoutUpdate::Kept { reason }) => tracing::warn!(
-                    dir = %dir.display(), %reason,
-                    "studio-artifact-ingest: shared checkout not updated — reading it as it stands"
-                ),
-                Ok(git_checkout::CheckoutUpdate::Current) => {}
-                Err(e) => tracing::warn!(
-                    error = %e, dir = %dir.display(),
-                    "studio-artifact-ingest: could not fetch the shared checkout's branch — reading it as it stands"
-                ),
-            }
+        use super::port::{CloneCause, CloneChannel, CloneFailure, CloneOutcome, clone_order};
+        // `None` when the fetch failed for another reason: it says nothing
+        // about the branch, so nothing is recorded or forgotten.
+        let (read, branch) = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let branch = match git_checkout::update_shared_checkout(&dir, &username, &password) {
+                Ok(git_checkout::CheckoutUpdate::Advanced { from, to }) => {
+                    tracing::info!(
+                        dir = %dir.display(), %from, %to,
+                        "studio-artifact-ingest: pulled the shared checkout up to the remote"
+                    );
+                    Some(None)
+                }
+                Ok(git_checkout::CheckoutUpdate::Kept { reason }) => {
+                    tracing::warn!(
+                        dir = %dir.display(), %reason,
+                        "studio-artifact-ingest: shared checkout not updated — reading it as it stands"
+                    );
+                    Some(None)
+                }
+                Ok(git_checkout::CheckoutUpdate::Current) => Some(None),
+                Ok(git_checkout::CheckoutUpdate::BranchGone { branch }) => {
+                    tracing::warn!(
+                        dir = %dir.display(), %branch,
+                        "studio-artifact-ingest: the shared checkout's branch is gone from the remote — reading it as it stands"
+                    );
+                    Some(Some(branch))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e, dir = %dir.display(),
+                        "studio-artifact-ingest: could not fetch the shared checkout's branch — reading it as it stands"
+                    );
+                    None
+                }
+            };
             let commit = git_checkout::head_commit(&dir);
             let walked = git_checkout::walk(&dir, &synced_text)?;
-            Ok((dir, walked, commit))
+            Ok(((dir, walked, commit), branch))
         })
         .await
-        .map_err(|e| anyhow!("workspace read did not finish: {e}"))?
+        .map_err(|e| anyhow!("workspace read did not finish: {e}"))??;
+        if let (Some(outcomes), Some((project, url)), Some(gone)) =
+            (&self.clone_outcomes, source, branch)
+        {
+            let noted = match gone {
+                Some(branch) => {
+                    let failure =
+                        CloneFailure::new(CloneCause::BranchNotFound).with_detail(branch);
+                    outcomes
+                        .record(
+                            project,
+                            &url,
+                            CloneOutcome::failed(CloneChannel::Sync, failure),
+                        )
+                        .await
+                }
+                None => {
+                    outcomes
+                        .clear_failure(project, &url, CloneChannel::Sync, clone_order())
+                        .await
+                }
+            };
+            if let Err(e) = noted {
+                tracing::warn!(%project, error = %format!("{e:#}"), "studio-artifact-ingest: the source's clone status was not recorded");
+            }
+        }
+        Ok(read)
     }
 
     /// Walk an existing checkout on a blocking thread (no clone), reading text

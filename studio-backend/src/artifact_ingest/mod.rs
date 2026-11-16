@@ -386,7 +386,14 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 )
                 .with_work_root_failure(work_root_failure)
                 .with_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub()))
-                .with_platform(platform_client(ctx)?),
+                .with_platform(platform_client(ctx)?)
+                .with_clone_outcomes(
+                    self.clone_status
+                        .get()
+                        .cloned()
+                        .flatten()
+                        .map(|s| s as Arc<dyn port::CloneOutcomes>),
+                ),
             ))
         };
 

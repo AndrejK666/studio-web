@@ -35,6 +35,10 @@ fn every_cause_names_the_action_that_fixes_it() {
         CloneAction::CheckRepository
     );
     assert_eq!(CloneCause::Unreachable.action(), CloneAction::Retry);
+    assert_eq!(
+        CloneCause::BranchNotFound.action(),
+        CloneAction::PickBranch
+    );
     for cause in CloneCause::ALL {
         assert_eq!(CloneCause::parse(cause.as_str()), Some(cause));
         assert!(!cause.text().is_empty());
