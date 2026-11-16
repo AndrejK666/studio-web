@@ -266,8 +266,9 @@ The tool list itself does not change with the kits.
 
 | Tool | What it answers or does |
 | --- | --- |
-| `kits_catalog` | the kit library, each kit with its shelf (`builtin`, `official`, `organization`) |
-| `kits_describe` | one kit and what is inside it before install: screens, types, rules, functions, services, inbox, MCP tools, permissions, material, kinds, docs, and the manifest it was read from |
+| `kits_catalog` | the kit library, each kit with its shelf (`builtin`, `official`, `organization`) and its type, `kind` (`runtime`, `gears`, `model`, `material`) with every tier it `brings` |
+| `kits_describe` | one kit and what is inside it before install: screens, types, rules, functions, services, inbox, MCP tools (with descriptions), gear claims, permissions, material, kinds, docs, its `kind`, and the manifest it was read from |
+| `kit_gdl` | one kit's manifest as `kit.gdl` text (GDL 1.7, ADR-0068 §3): authored, or rendered by Studio from the manifest it read, which its first line says |
 | `kits_installed` | an organization's kits, or a project's with `project_id`: `base`, the organization's, the project's, and `effective` |
 | `kit_base_install` | *changes:* installs a kit for every organization (platform administrators) |
 | `kit_base_uninstall` | *changes:* stops a kit being a base kit (platform administrators) |

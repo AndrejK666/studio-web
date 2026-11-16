@@ -26,9 +26,10 @@ import {
   useLocalGridLoad,
 } from '@constructor-studio/mfe-shared/grid';
 import type { ChildMfeBridge } from '@gears-frontx/react';
-import type { CatalogKit, InstalledKits } from '../../api/KitsApiService';
+import { KIT_KINDS, type CatalogKit, type InstalledKits } from '../../api/KitsApiService';
 import type { useHomeTranslations } from '../../i18n';
 import { KitIcon } from './KitIcon';
+import { KindBadge } from './KindBadge';
 import styles from './HomeScreen.module.css';
 
 type Text = ReturnType<typeof useHomeTranslations>['t'];
@@ -49,6 +50,7 @@ export interface KitRow extends CatalogKit {
 /** The filter keys the grid hands `load`. */
 export const KIT_FILTERS = {
   level: 'level',
+  kind: 'kind',
   shelf: 'shelf',
   status: 'status',
   publisher: 'publisher',
@@ -73,12 +75,20 @@ export function keepsKit(row: KitRow, filters: Record<string, unknown>): boolean
   const chosen = (key: string) => listChoices(filters[key] as { value?: unknown } | undefined);
   const levels = chosen(KIT_FILTERS.level);
   if (levels.length > 0 && !levels.some((level) => row.levels?.includes(level))) return false;
+  const kinds = chosen(KIT_FILTERS.kind);
+  if (kinds.length > 0 && !kinds.includes(row.kind ?? '')) return false;
   const shelves = chosen(KIT_FILTERS.shelf);
   if (shelves.length > 0 && !shelves.includes(row.shelf ?? '')) return false;
   const statuses = chosen(KIT_FILTERS.status);
   if (statuses.length > 0 && !statuses.includes(row.status)) return false;
   const publishers = chosen(KIT_FILTERS.publisher);
   return publishers.length === 0 || publishers.includes(row.publisher);
+}
+
+/** Where a row's kind stands among the tiers, strongest first; a row without one last. */
+function kindRank(row: KitRow): number {
+  const at = row.kind ? KIT_KINDS.indexOf(row.kind) : -1;
+  return at < 0 ? KIT_KINDS.length : at;
 }
 
 const byText = (pick: (row: KitRow) => string) => (a: KitRow, b: KitRow) =>
@@ -91,6 +101,8 @@ const LOCAL_OPTIONS = {
     name: byText((row) => row.name),
     publisher: byText((row) => row.publisher),
     version: byText((row) => row.default_version),
+    // Strongest first, as the server orders the tiers.
+    kind: (a: KitRow, b: KitRow) => kindRank(a) - kindRank(b),
   },
 };
 
@@ -123,6 +135,11 @@ const NameCell: React.FC<{ item: KitRow }> = ({ item }) => {
 
 const VersionCell: React.FC<{ item: KitRow }> = ({ item }) => <code>{item.default_version}</code>;
 
+const KindCell: React.FC<{ item: KitRow }> = ({ item }) => {
+  const { t } = useKitCells();
+  return <KindBadge kit={item} t={t} />;
+};
+
 const LevelsCell: React.FC<{ item: KitRow }> = ({ item }) => <span>{(item.levels ?? []).join(', ')}</span>;
 
 const StatusCell: React.FC<{ item: KitRow }> = ({ item }) => {
@@ -148,6 +165,14 @@ const KitTile: React.FC<{ kit: KitRow }> = ({ kit }) => {
         <dd>{kit.publisher}</dd>
         <dt>{t('version')}</dt>
         <dd>{kit.default_version}</dd>
+        {kit.kind && (
+          <>
+            <dt>{t('col_kind')}</dt>
+            <dd>
+              <KindBadge kit={kit} t={t} />
+            </dd>
+          </>
+        )}
         {kit.repository_url && (
           <>
             <dt>{t('repository')}</dt>
@@ -246,6 +271,7 @@ export const KitsGrid: React.FC<{
       { id: 'name', label: t('col_name'), component: NameCell },
       { id: 'publisher', label: t('publisher'), width: 160 },
       { id: 'version', label: t('version'), component: VersionCell, width: 140 },
+      { id: 'kind', label: t('col_kind'), component: KindCell, width: 130 },
       { id: 'levels', label: t('levels'), component: LevelsCell, width: 180 },
       { id: 'status', label: t('col_status'), component: StatusCell, width: 300 },
     ],
@@ -254,18 +280,31 @@ export const KitsGrid: React.FC<{
   // The options a filter offers are the ones the rows have: one entity list per set of them.
   const levels = distinct(rows.flatMap((row) => row.levels ?? [])).join(',');
   const shelves = distinct(rows.map((row) => row.shelf)).join(',');
+  // The tiers in their order, strongest first, as far as the rows have them.
+  const kinds = KIT_KINDS.filter((k) => rows.some((row) => row.kind === k)).join(',');
   const publishers = distinct(rows.map((row) => row.publisher)).join(',');
   const known = rows.some((row) => row.status !== 'unknown');
   const filters = useMemo(() => {
     const split = (joined: string) => (joined ? joined.split(',') : []);
     const entities = [
       tagGroup(KIT_FILTERS.level, t('filter_level'), split(levels).map((value) => ({ value, label: value }))),
+    ];
+    if (kinds) {
+      entities.push(
+        tagGroup(
+          KIT_FILTERS.kind,
+          t('filter_kind'),
+          split(kinds).map((value) => ({ value, label: t(`kind_${value}`) }))
+        )
+      );
+    }
+    entities.push(
       tagGroup(
         KIT_FILTERS.shelf,
         t('filter_shelf'),
         split(shelves).map((value) => ({ value, label: t(`shelf_${value}`) }))
-      ),
-    ];
+      )
+    );
     if (known) {
       entities.push(
         tagGroup(
@@ -279,7 +318,7 @@ export const KitsGrid: React.FC<{
       tagGroup(KIT_FILTERS.publisher, t('filter_publisher'), split(publishers).map((value) => ({ value, label: value })))
     );
     return entities;
-  }, [t, levels, shelves, publishers, known]);
+  }, [t, levels, kinds, shelves, publishers, known]);
   return (
     <KitCellsProvider value={cells}>
       <ListGrid<KitRow>
@@ -291,7 +330,7 @@ export const KitsGrid: React.FC<{
         empty={KitsEmpty}
         unsortable={['levels', 'status']}
         defaultOrder={{ id: 'name', direction: 'asc' }}
-        minWidth="56rem"
+        minWidth="64rem"
       >
         <KitTilesPlugin />
         <ViewFromPreference bridge={bridge} />

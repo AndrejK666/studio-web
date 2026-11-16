@@ -111,7 +111,22 @@ This README is what you need to work in the directory.
     contents and `null`.
   - `null`: nothing reliable describes the kit (organization kits, re-pinned
     kits).
-  Also the MCP tool `kits_describe`.
+  Also the MCP tool `kits_describe`. Its MCP tools carry their descriptions
+  from the MCP registry (`archive::with_tool_descriptions`).
+- A kit's type (`kind.rs`): every catalogue entry has `kind` (`runtime`,
+  `gears`, `model`, `material`: the strongest tier it brings) and `brings`
+  (every tier, strongest first), computed from its contents. Every built-in
+  kit is `gears` (plus `model` with types or fields), the official kits
+  `material`, a bundle kit `runtime`. Design: `docs/design/studio-kits.md`
+  §3.14.
+- A kit's files (`gdl.rs`, `archive.rs`): `GET /catalog/{kit_slug}/kit.gdl`
+  (text; the MCP tool `kit_gdl`) renders its manifest in the GDL 1.7 shape of
+  ADR-0068 §3, or serves a bundle kit's authored one; `/manifest` is the
+  source manifest as written; `/archive` a `.tar.gz` of manifests, model,
+  claims, working material (read at the pinned commit through a connection,
+  `shelf::KitSourceReader::list_at` / `read_at`) and bundles, partial with a
+  README note when a read fails. The rendering's golden files are in
+  `golden/`; `UPDATE_GOLDEN=1 cargo test kit_registry::gdl` rewrites them.
 - Who installs a kit (ADR-0069 §4), `installed.rs`: **base kits** for every
   organization, by a platform administrator, kept on the platform root
   (`00000000-…-0001`); **organization kits**, by the organization's

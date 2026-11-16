@@ -4261,10 +4261,12 @@ response	GET /studio-insight/v1/health	instance_id	String	always
 response	GET /studio-insight/v1/health	probe_ms	u64	optional
 response	GET /studio-insight/v1/health	reachable	bool	always
 response	GET /studio-kits/v1/catalog	items	Vec<{}>	always
+response	GET /studio-kits/v1/catalog	items.brings	Vec<String>	always
 response	GET /studio-kits/v1/catalog	items.default_version	String	always
 response	GET /studio-kits/v1/catalog	items.description	String	always
 response	GET /studio-kits/v1/catalog	items.icon	String	optional
 response	GET /studio-kits/v1/catalog	items.icon_url	String	optional
+response	GET /studio-kits/v1/catalog	items.kind	String	always
 response	GET /studio-kits/v1/catalog	items.levels	Vec<String>	always
 response	GET /studio-kits/v1/catalog	items.manifest_path	String	always
 response	GET /studio-kits/v1/catalog	items.name	String	always
@@ -4352,11 +4354,14 @@ response	GET /studio-kits/v1/catalog/{}	contents.types.fields.type	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.types.gts	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.types.id	String	always
 response	GET /studio-kits/v1/catalog/{}	contents.types.name	String	always
+response	GET /studio-kits/v1/catalog/{}	gdl_rendered_from	String	optional
 response	GET /studio-kits/v1/catalog/{}	kit	{}	always
+response	GET /studio-kits/v1/catalog/{}	kit.brings	Vec<String>	always
 response	GET /studio-kits/v1/catalog/{}	kit.default_version	String	always
 response	GET /studio-kits/v1/catalog/{}	kit.description	String	always
 response	GET /studio-kits/v1/catalog/{}	kit.icon	String	optional
 response	GET /studio-kits/v1/catalog/{}	kit.icon_url	String	optional
+response	GET /studio-kits/v1/catalog/{}	kit.kind	String	always
 response	GET /studio-kits/v1/catalog/{}	kit.levels	Vec<String>	always
 response	GET /studio-kits/v1/catalog/{}	kit.manifest_path	String	always
 response	GET /studio-kits/v1/catalog/{}	kit.name	String	always
@@ -4378,6 +4383,7 @@ response	GET /studio-kits/v1/catalog/{}	origin.path	String	optional
 response	GET /studio-kits/v1/catalog/{}	origin.provider	String	optional
 response	GET /studio-kits/v1/catalog/{}	origin.refreshed_at	String	optional
 response	GET /studio-kits/v1/catalog/{}	origin.repository	String	optional
+response	GET /studio-kits/v1/catalog/{}	source_manifest	String	optional
 response	GET /studio-kits/v1/inbox-sources	items	Vec<{}>	always
 response	GET /studio-kits/v1/inbox-sources	items.destination	{}	optional
 response	GET /studio-kits/v1/inbox-sources	items.destination.mcp_tool	String	optional
@@ -4523,11 +4529,14 @@ response	GET /studio-kits/v1/organization-shelf	items.contents.types.fields.type
 response	GET /studio-kits/v1/organization-shelf	items.contents.types.gts	String	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.types.id	String	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.types.name	String	always
+response	GET /studio-kits/v1/organization-shelf	items.gdl_rendered_from	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.kit	{}	always
+response	GET /studio-kits/v1/organization-shelf	items.kit.brings	Vec<String>	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.default_version	String	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.description	String	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.icon	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.kit.icon_url	String	optional
+response	GET /studio-kits/v1/organization-shelf	items.kit.kind	String	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.levels	Vec<String>	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.manifest_path	String	always
 response	GET /studio-kits/v1/organization-shelf	items.kit.name	String	always
@@ -4549,6 +4558,7 @@ response	GET /studio-kits/v1/organization-shelf	items.origin.path	String	optiona
 response	GET /studio-kits/v1/organization-shelf	items.origin.provider	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.origin.refreshed_at	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.origin.repository	String	optional
+response	GET /studio-kits/v1/organization-shelf	items.source_manifest	String	optional
 response	GET /studio-kits/v1/organization-shelf	total	u32	always
 response	GET /studio-kits/v1/project-phase	installed	bool	always
 response	GET /studio-kits/v1/project-phase	next	Vec<{}>	always
@@ -7050,11 +7060,14 @@ response	POST /studio-kits/v1/organization-shelf	contents.types.fields.type	Stri
 response	POST /studio-kits/v1/organization-shelf	contents.types.gts	String	always
 response	POST /studio-kits/v1/organization-shelf	contents.types.id	String	always
 response	POST /studio-kits/v1/organization-shelf	contents.types.name	String	always
+response	POST /studio-kits/v1/organization-shelf	gdl_rendered_from	String	optional
 response	POST /studio-kits/v1/organization-shelf	kit	{}	always
+response	POST /studio-kits/v1/organization-shelf	kit.brings	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	kit.default_version	String	always
 response	POST /studio-kits/v1/organization-shelf	kit.description	String	always
 response	POST /studio-kits/v1/organization-shelf	kit.icon	String	optional
 response	POST /studio-kits/v1/organization-shelf	kit.icon_url	String	optional
+response	POST /studio-kits/v1/organization-shelf	kit.kind	String	always
 response	POST /studio-kits/v1/organization-shelf	kit.levels	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	kit.manifest_path	String	always
 response	POST /studio-kits/v1/organization-shelf	kit.name	String	always
@@ -7076,6 +7089,7 @@ response	POST /studio-kits/v1/organization-shelf	origin.path	String	optional
 response	POST /studio-kits/v1/organization-shelf	origin.provider	String	optional
 response	POST /studio-kits/v1/organization-shelf	origin.refreshed_at	String	optional
 response	POST /studio-kits/v1/organization-shelf	origin.repository	String	optional
+response	POST /studio-kits/v1/organization-shelf	source_manifest	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	contents	{}	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.docs	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.functions	Vec<{}>	always
@@ -7153,11 +7167,14 @@ response	POST /studio-kits/v1/organization-shelf/preview	contents.types.fields.t
 response	POST /studio-kits/v1/organization-shelf/preview	contents.types.gts	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.types.id	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.types.name	String	always
+response	POST /studio-kits/v1/organization-shelf/preview	gdl_rendered_from	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	kit	{}	always
+response	POST /studio-kits/v1/organization-shelf/preview	kit.brings	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.default_version	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.description	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.icon	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	kit.icon_url	String	optional
+response	POST /studio-kits/v1/organization-shelf/preview	kit.kind	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.levels	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.manifest_path	String	always
 response	POST /studio-kits/v1/organization-shelf/preview	kit.name	String	always
@@ -7179,6 +7196,7 @@ response	POST /studio-kits/v1/organization-shelf/preview	origin.path	String	opti
 response	POST /studio-kits/v1/organization-shelf/preview	origin.provider	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	origin.refreshed_at	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	origin.repository	String	optional
+response	POST /studio-kits/v1/organization-shelf/preview	source_manifest	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents	{}	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.docs	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.functions	Vec<{}>	always
@@ -7256,11 +7274,14 @@ response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.types.field
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.types.gts	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.types.id	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.types.name	String	always
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	gdl_rendered_from	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit	{}	always
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.brings	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.default_version	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.description	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.icon	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.icon_url	String	optional
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.kind	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.levels	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.manifest_path	String	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	kit.name	String	always
@@ -7282,6 +7303,7 @@ response	POST /studio-kits/v1/organization-shelf/{}/refresh	origin.path	String	o
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	origin.provider	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	origin.refreshed_at	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	origin.repository	String	optional
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	source_manifest	String	optional
 response	POST /studio-kits/v1/projects/{}/installations	failure_reason	String	optional
 response	POST /studio-kits/v1/projects/{}/installations	install_mode	String	always
 response	POST /studio-kits/v1/projects/{}/installations	installed_at	String	optional
@@ -8679,6 +8701,9 @@ route	GET /studio-identity/v1/users
 route	GET /studio-insight/v1/health
 route	GET /studio-kits/v1/catalog
 route	GET /studio-kits/v1/catalog/{}
+route	GET /studio-kits/v1/catalog/{}/archive
+route	GET /studio-kits/v1/catalog/{}/kit.gdl
+route	GET /studio-kits/v1/catalog/{}/manifest
 route	GET /studio-kits/v1/inbox-sources
 route	GET /studio-kits/v1/installed-kits
 route	GET /studio-kits/v1/kits/{}/{}/mfe/{}/{}/{}

@@ -1,0 +1,56 @@
+# kit.gdl rendered by Studio from the built-in kit.json and Studio's screens: not an authored kit.gdl.
+# constructor-research at 0.0.0-golden, on the builtin shelf. The shape is ADR-0068 §3 (GDL 1.7).
+# Kit type: gears (brings gears).
+gdl_version = "1.7"
+
+kit(
+    slug = "constructor-research",
+    name = "Constructor Research",
+    version = "0.0.0-golden",
+    description = "Build a project's product in Constructor Research and run it there as one of its applications: the Research projects, their hardware, and the deploys, rollbacks and addresses of what runs there. For the whole organization, or for one project.",
+    publisher = "Constructor Fabric",
+    icon = "lucide:atom",
+    levels = ["organization", "project"],
+    types = [],
+    tabs = [
+        kit_tab(level = "organization", label = "Constructor Research", route = "/constructor-research"),
+    ],
+    inbox = [
+        kit_inbox_source(id = "deploy-failed", label = "A Research deploy you asked for failed"),
+        kit_inbox_source(id = "sign-in-expires", label = "Your Constructor Research sign-in runs out"),
+    ],
+    mcp_tools = [
+        "research_projects",
+        "research_hardware",
+    ],
+    gears = [
+        kit_gear_claim(gear = "studio-environments", mcp_tools = ["research_projects", "research_hardware"]),
+    ],
+    permissions = permissions(
+        reads = [
+            "GET /studio-environments/v1/environments",
+            "POST /studio-environments/v1/environments/{environment_id}/test",
+            "GET /studio-environments/v1/research/projects",
+            "GET /studio-environments/v1/research/projects/{project}/hardware",
+            "GET /studio-environments/v1/research/my-projects",
+            "GET /studio-environments/v1/research/my-projects/{research_project}/hardware",
+            "GET /studio-environments/v1/deployments",
+            "GET /studio-environments/v1/deployments/{deployment_id}",
+            "GET /studio-environments/v1/deployments/{deployment_id}/status",
+            "GET /studio-environments/v1/deployments/{deployment_id}/logs",
+            "GET /studio-environments/v1/builds/{build_id}/log",
+            "GET /studio-connector/v1/connections",
+            "GET /studio-environments/v1/research/inbox/deploys",
+            "GET /studio-environments/v1/research/inbox/sign-in",
+        ],
+        writes = [
+            "POST /studio-environments/v1/environments",
+            "PUT /studio-environments/v1/environments/{environment_id}",
+            "POST /studio-environments/v1/project-environments",
+            "POST /studio-environments/v1/builds",
+            "POST /studio-environments/v1/deployments",
+        ],
+        listens = [],
+    ),
+    material = [],
+)

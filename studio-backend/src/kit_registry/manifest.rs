@@ -438,10 +438,16 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
 
 /// Built-in kit `slug`'s `kit.json`, when it has one.
 pub fn builtin_manifest(slug: &str) -> Option<KitManifest> {
+    builtin_manifest_text(slug).map(|body| read_kit_json(body).expect("a built-in kit.json reads"))
+}
+
+/// Built-in kit `slug`'s compiled-in `kit.json` as written, for a kit's
+/// page and its archive.
+pub fn builtin_manifest_text(slug: &str) -> Option<&'static str> {
     BUILTIN_MANIFESTS
         .iter()
         .find(|(s, _)| *s == slug)
-        .map(|(_, body)| read_kit_json(body).expect("a built-in kit.json reads"))
+        .map(|(_, body)| *body)
 }
 
 /// A manifest's model overlay, read and checked; `None` when it brings no

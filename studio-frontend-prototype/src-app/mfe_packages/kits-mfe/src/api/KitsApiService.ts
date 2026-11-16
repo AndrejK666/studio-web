@@ -30,6 +30,29 @@ export interface CatalogKit {
   icon?: string | null;
   /** Where a bundled `icon` is served (the kit bundle route); null for a lucide one. */
   icon_url?: string | null;
+  /**
+   * The kit's type, computed by the server from what it brings: `runtime` (its own code runs in
+   * Studio), `gears` (built on Studio's gears), `model` (types and rules only) or `material`
+   * (files for a checkout only). Absent from a backend before it.
+   */
+  kind?: KitKind;
+  /** Every tier it brings, strongest first. */
+  brings?: KitKind[];
+}
+
+/** The kit types, strongest first. */
+export const KIT_KINDS = ['runtime', 'gears', 'model', 'material'] as const;
+export type KitKind = (typeof KIT_KINDS)[number];
+
+/** What a kit claims of one gear (ADR-0071 §2). */
+export interface KitGearClaim {
+  gear: string;
+  types: string[];
+  mcp_tools: string[];
+  /** Write routes, `METHOD /path`. */
+  routes: string[];
+  sync_only_with_kit: boolean;
+  note?: string | null;
 }
 
 export interface CatalogPage {
@@ -135,6 +158,8 @@ export interface KitContents {
   services: { name: string; description: string | null }[];
   inbox: { id: string; label: string }[];
   mcp_tools: { name: string; description: string | null }[];
+  /** What it claims of the gears it stands for; absent from a backend before ADR-0071. */
+  gears?: KitGearClaim[];
   permissions: { reads: string[]; writes: string[]; listens: string[] };
   material: { path: string; description: string | null }[];
   kinds: string[];
@@ -168,6 +193,10 @@ export interface KitDetail {
   manifest: string | null;
   /** Set for a kit of an organization's own shelf. */
   origin?: KitOrigin | null;
+  /** What its `kit.gdl` is rendered from; null when the kit has an authored one. Absent before the route. */
+  gdl_rendered_from?: string | null;
+  /** The source manifest `GET /catalog/{slug}/manifest` serves (`kit.json`, `.cf-studio-kit.toml`, `kit.gdl`). */
+  source_manifest?: string | null;
 }
 
 /** Where a kit is, for the organization's shelf (`ShelfSourceDto`). */

@@ -26,6 +26,9 @@ pub const MANIFEST_CF_STUDIO_KIT: &str = ".cf-studio-kit.toml";
 /// `manifest` of a kit described by Studio's interim `kit.json` (an
 /// organization's own kit, or a built-in kit that brings a model).
 pub const MANIFEST_KIT_JSON: &str = "kit.json";
+/// `manifest` of a kit described by an authored `kit.gdl` (a bundle kit,
+/// `STUDIO_KIT_BUNDLES_DIR`).
+pub const MANIFEST_KIT_GDL: &str = "kit.gdl";
 
 /// One kit of the library and what it brings.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -510,12 +513,20 @@ fn same_repository(left: &str, right: &str) -> bool {
 /// What an official kit brings, from the copy of its manifest -- only when
 /// the catalogue offers it from that repository at that commit.
 fn official_contents(kit: &KitDescriptor) -> Option<KitContents> {
-    let copy = MANIFEST_COPIES.iter().find(|copy| {
-        copy.slug == kit.slug
-            && copy.commit == kit.default_version
-            && same_repository(copy.repository_url, &kit.repository_url)
-    })?;
-    read_manifest(copy.body, copy.slug)
+    read_manifest(official_manifest_text(kit)?, &kit.slug)
+}
+
+/// The copy of an official kit's `.cf-studio-kit.toml`, as written, when the
+/// catalogue offers it from that repository at that commit.
+pub fn official_manifest_text(kit: &KitDescriptor) -> Option<&'static str> {
+    MANIFEST_COPIES
+        .iter()
+        .find(|copy| {
+            copy.slug == kit.slug
+                && copy.commit == kit.default_version
+                && same_repository(copy.repository_url, &kit.repository_url)
+        })
+        .map(|copy| copy.body)
 }
 
 /// The material and artifact kinds of kit `slug` in a `.cf-studio-kit.toml`

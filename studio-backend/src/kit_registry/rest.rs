@@ -60,19 +60,38 @@ pub struct KitDto {
     /// grant that lets it answer. Null for a lucide icon, for none, and for
     /// an organization's kit read without its organization.
     pub icon_url: Option<String>,
+    /// The kit's type, computed from what it brings (ADR-0068 §8): `runtime`
+    /// (its own code runs in Studio: micro-frontend bundles loaded at run
+    /// time, WebAssembly or agent functions, a kit service), `gears` (built on
+    /// Studio's gears: its screens are Studio's own and its data the gears'),
+    /// `model` (types and rules only, no code) or `material` (files `cfs`
+    /// writes into a project's checkout only). The strongest of `brings`.
+    pub kind: String,
+    /// Every tier the kit brings, strongest first (`runtime`, `gears`,
+    /// `model`, `material`); never empty.
+    pub brings: Vec<String>,
 }
 
 /// A catalogue entry for a caller in `org`, with where its bundled icon is
-/// served.
-fn kit_dto(kit: KitDescriptor, bundles: &KitBundles, org: Option<Uuid>) -> KitDto {
-    let url = bundles.icon_url(&kit, org);
-    let mut dto: KitDto = kit.into();
+/// served and its type, from what it brings.
+fn kit_dto(detail: &KitDetail, bundles: &KitBundles, org: Option<Uuid>) -> KitDto {
+    let url = bundles.icon_url(&detail.kit, org);
+    let mut dto: KitDto = detail.kit.clone().into();
     dto.icon_url = url;
+    set_kind(&mut dto, detail);
     dto
 }
 
-/// A kit described for a caller in `org`.
-fn detail_dto(detail: KitDetail, bundles: &KitBundles, org: Option<Uuid>) -> KitDetailDto {
+fn set_kind(dto: &mut KitDto, detail: &KitDetail) {
+    let kind = super::kind::kind_of(detail);
+    dto.kind = kind.kind.to_owned();
+    dto.brings = kind.brings.iter().map(|b| (*b).to_owned()).collect();
+}
+
+/// A kit described for a caller in `org`, its MCP tools with their
+/// descriptions from the MCP registry.
+fn detail_dto(mut detail: KitDetail, bundles: &KitBundles, org: Option<Uuid>) -> KitDetailDto {
+    super::archive::with_tool_descriptions(&mut detail.contents);
     let url = bundles.icon_url(&detail.kit, org);
     let mut dto: KitDetailDto = detail.into();
     dto.kit.icon_url = url;
@@ -340,6 +359,15 @@ pub struct KitDetailDto {
     /// Where an organization's own kit came from (its shelf entry); null for
     /// a built-in or official kit.
     pub origin: Option<KitOriginDto>,
+    /// What `GET /catalog/{kit_slug}/kit.gdl` renders the kit's `kit.gdl`
+    /// from (`kit.json`, `.cf-studio-kit.toml`, the built-in kit.json and
+    /// Studio's screens, or the catalogue entry); null when the kit has an
+    /// authored `kit.gdl`, served as written.
+    pub gdl_rendered_from: Option<String>,
+    /// The source manifest `GET /catalog/{kit_slug}/manifest` answers with
+    /// (`kit.json`, `.cf-studio-kit.toml` or `kit.gdl`); null when no
+    /// manifest describes the kit.
+    pub source_manifest: Option<String>,
 }
 
 /// Where a kit of an organization's shelf came from: the repository a
@@ -493,7 +521,12 @@ pub struct ReportKitMaterializationDto {
 
 impl From<KitDescriptor> for KitDto {
     fn from(value: KitDescriptor) -> Self {
+        // What the library alone says the kit brings; a caller holding the
+        // kit's detail (a shelf kit's manifest) sets it again (`set_kind`).
+        let kind = super::kind::kind_of(&super::contents::describe(value.clone()));
         Self {
+            kind: kind.kind.to_owned(),
+            brings: kind.brings.iter().map(|b| (*b).to_owned()).collect(),
             slug: value.slug,
             name: value.name,
             description: value.description,
@@ -522,9 +555,15 @@ impl From<KitDetail> for KitDetailDto {
                 })
                 .collect()
         };
+        let gdl_rendered_from = super::archive::rendered_from(&value).map(str::to_owned);
+        let source_manifest = super::archive::source_file(&value).map(str::to_owned);
+        let mut kit: KitDto = value.kit.clone().into();
+        set_kind(&mut kit, &value);
         let c = value.contents;
         Self {
-            kit: value.kit.into(),
+            gdl_rendered_from,
+            source_manifest,
+            kit,
             contents: KitContentsDto {
                 screens: c
                     .screens
@@ -1494,7 +1533,12 @@ async fn catalogue(
     Query(query): Query<CatalogueQuery>,
 ) -> ApiResult<JsonBody<KitListDto>> {
     let page = query.page;
-    let mut library = service.catalogue();
+    // Each kit with what it brings: its type is computed from that.
+    let mut library: Vec<KitDetail> = service
+        .catalogue()
+        .into_iter()
+        .map(|kit| service.describe(kit))
+        .collect();
     let mut org = None;
     // An organization's own kits are listed only for it, and only when it is
     // named: the IDE and other callers see the shared library as before.
@@ -1504,7 +1548,7 @@ async fn catalogue(
             .shelf(&ctx, ctx.subject_tenant_id())
             .await
             .map_err(refused)?;
-        library.extend(shelf.into_iter().map(|k| k.kit));
+        library.extend(shelf.iter().map(super::shelf::detail));
         org = Some(
             installer
                 .shelf_organization(&ctx, ctx.subject_tenant_id())
@@ -1513,14 +1557,14 @@ async fn catalogue(
     }
     let bundles = service.bundles();
     let items: Vec<KitDto> = library
-        .into_iter()
-        .filter(|kit| {
+        .iter()
+        .filter(|detail| {
             query
                 .shelf
                 .as_deref()
-                .is_none_or(|shelf| kit.shelf == shelf)
+                .is_none_or(|shelf| detail.kit.shelf == shelf)
         })
-        .map(|kit| kit_dto(kit, &bundles, org))
+        .map(|detail| kit_dto(detail, &bundles, org))
         .collect();
     let (items, total) = page_of(items, page);
     Ok(Json(KitListDto { items, total }))
@@ -1556,6 +1600,169 @@ async fn get_kit(
                 .create(),
         ),
     }
+}
+
+/// A kit as the file routes find it: in the shared library, else on the
+/// organization's own shelf; with the organization whose connections read
+/// its repository.
+async fn find_kit(
+    ctx: &SecurityContext,
+    service: &KitRegistryService,
+    installer: &KitInstaller,
+    kit_slug: &str,
+) -> Result<(KitDetail, Option<super::shelf::ShelfKit>, Uuid), CanonicalError> {
+    let org = installer
+        .shelf_organization(ctx, ctx.subject_tenant_id())
+        .await;
+    if let Some(detail) = service.kit(kit_slug) {
+        return Ok((detail, None, org));
+    }
+    let slug = kit_slug.trim().to_ascii_lowercase();
+    match installer
+        .shelf_kit(ctx, ctx.subject_tenant_id(), &slug)
+        .await
+        .map_err(refused)?
+    {
+        Some(kit) => Ok((super::shelf::detail(&kit), Some(kit), org)),
+        None => Err(
+            KitRegistryError::not_found("the kit library does not hold this kit")
+                .with_resource(kit_slug.to_owned())
+                .create(),
+        ),
+    }
+}
+
+/// A file answer: its bytes, content type and `Content-Disposition`.
+fn file_response(
+    bytes: Vec<u8>,
+    content_type: &str,
+    disposition: &str,
+    file_name: &str,
+    extra: Option<(&'static str, String)>,
+) -> axum::response::Response {
+    use axum::http::{HeaderValue, header};
+    use axum::response::IntoResponse;
+    let mut response = bytes.into_response();
+    let headers = response.headers_mut();
+    if let Ok(v) = HeaderValue::from_str(content_type) {
+        headers.insert(header::CONTENT_TYPE, v);
+    }
+    // The name is a slug and a version, or a fixed file name: nothing to quote.
+    if let Ok(v) = HeaderValue::from_str(&format!("{disposition}; filename=\"{file_name}\"")) {
+        headers.insert(header::CONTENT_DISPOSITION, v);
+    }
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-cache"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    if let Some((name, value)) = extra
+        && let Ok(v) = HeaderValue::from_str(&value)
+    {
+        headers.insert(name, v);
+    }
+    response
+}
+
+/// The header saying what a served `kit.gdl` was rendered from.
+const RENDERED_FROM_HEADER: &str = "x-kit-gdl-rendered-from";
+
+async fn get_kit_gdl(
+    OrgCtx(ctx): OrgCtx,
+    Extension(service): Extension<Arc<KitRegistryService>>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Path(kit_slug): Path<String>,
+) -> ApiResult<axum::response::Response> {
+    let (detail, shelf, _) = find_kit(&ctx, &service, &installer, &kit_slug).await?;
+    let local = service.bundles().local_kit(&detail.kit.slug);
+    let text = super::archive::gdl_text(
+        &detail,
+        shelf.as_ref(),
+        local.as_ref().map(|l| l.root.as_path()),
+    )
+    .await
+    .map_err(internal)?;
+    let from = super::archive::rendered_from(&detail).map(|from| {
+        (
+            RENDERED_FROM_HEADER,
+            from.replace(|c: char| !c.is_ascii() || c.is_ascii_control(), " "),
+        )
+    });
+    Ok(file_response(
+        text.into_bytes(),
+        "text/plain; charset=utf-8",
+        "inline",
+        super::gdl::KIT_GDL,
+        from,
+    ))
+}
+
+async fn get_kit_manifest(
+    OrgCtx(ctx): OrgCtx,
+    Extension(service): Extension<Arc<KitRegistryService>>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Path(kit_slug): Path<String>,
+) -> ApiResult<axum::response::Response> {
+    let (detail, shelf, org) = find_kit(&ctx, &service, &installer, &kit_slug).await?;
+    let local = service.bundles().local_kit(&detail.kit.slug);
+    match super::archive::source_manifest(
+        &detail,
+        shelf.as_ref(),
+        local.as_ref().map(|l| l.root.as_path()),
+        installer.reader(),
+        org,
+    )
+    .await
+    {
+        Ok(Some(found)) => Ok(file_response(
+            found.body.into_bytes(),
+            super::archive::content_type_of(found.file),
+            "inline",
+            found.file,
+            found
+                .kept_copy
+                .then(|| ("x-kit-manifest-copy", "the shelf's kept copy".to_owned())),
+        )),
+        Ok(None) => Err(KitRegistryError::not_found(
+            "no manifest describes this kit at the version the library offers",
+        )
+        .with_resource(kit_slug)
+        .create()),
+        Err(why) => Err(CanonicalError::internal(format!(
+            "the kit's manifest could not be read: {why}"
+        ))
+        .create()),
+    }
+}
+
+async fn get_kit_archive(
+    OrgCtx(ctx): OrgCtx,
+    Extension(service): Extension<Arc<KitRegistryService>>,
+    Extension(installer): Extension<Arc<KitInstaller>>,
+    Path(kit_slug): Path<String>,
+) -> ApiResult<axum::response::Response> {
+    let (mut detail, shelf, org) = find_kit(&ctx, &service, &installer, &kit_slug).await?;
+    super::archive::with_tool_descriptions(&mut detail.contents);
+    let local = service.bundles().local_kit(&detail.kit.slug);
+    let bytes = super::archive::build(
+        &detail,
+        shelf.as_ref(),
+        local.as_ref(),
+        installer.reader(),
+        org,
+    )
+    .await
+    .map_err(internal)?;
+    Ok(file_response(
+        bytes,
+        "application/gzip",
+        "attachment",
+        &super::archive::file_name(&detail),
+        None,
+    ))
 }
 
 async fn list_shelf(
@@ -2350,6 +2557,103 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
+    router = OperationBuilder::get("/studio-kits/v1/catalog/{kit_slug}/kit.gdl")
+        .operation_id("studio_kits.get_kit_gdl")
+        .summary("A kit's manifest as kit.gdl")
+        .description(
+            "Any signed-in user, for a kit `GET /catalog/{kit_slug}` describes. The kit's \
+             manifest in the GDL 1.7 shape of ADR-0068 §3 (`kit(slug, name, version, levels, \
+             types = [kit_type(...)], tabs = [kit_tab(...)], mcp_tools, gears, permissions, \
+             material, ...)`), as text. A kit with an authored `kit.gdl` (a bundle kit) gets \
+             it as written; every other kit's is rendered by the server from the manifest \
+             Studio read (a built-in kit's compiled-in `kit.json` and its screens, an official \
+             kit's `.cf-studio-kit.toml` copy, an organization kit's kept manifest), which its \
+             first line and the `x-kit-gdl-rendered-from` header say. Nothing is fetched.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("kit_slug", "Kit slug")
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .handler(get_kit_gdl)
+        .text_response(StatusCode::OK, "The kit.gdl", "text/plain")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-kits/v1/catalog/{kit_slug}/manifest")
+        .operation_id("studio_kits.get_kit_manifest")
+        .summary("A kit's source manifest, as written")
+        .description(
+            "Any signed-in user. The manifest the kit is described by, as written: a built-in \
+             kit's compiled-in `kit.json` (`application/json`), an official kit's \
+             `.cf-studio-kit.toml` at the pinned version (`application/toml`), an organization \
+             kit's manifest read from its repository at the pinned commit through its \
+             connection (its `kit.json` as the shelf keeps it when the repository does not \
+             answer, marked by `x-kit-manifest-copy`), a bundle kit's `kit.gdl`. The file name \
+             is in `Content-Disposition` and in `source_manifest` of `GET \
+             /catalog/{kit_slug}`. 404 when no manifest describes the kit (an official kit \
+             pinned to another version).",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("kit_slug", "Kit slug")
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .handler(get_kit_manifest)
+        .text_response(StatusCode::OK, "The source manifest", "text/plain")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-kits/v1/catalog/{kit_slug}/archive")
+        .operation_id("studio_kits.get_kit_archive")
+        .summary("An archive of a kit's contents")
+        .description(
+            "Any signed-in user. A `.tar.gz` (`application/gzip`, `attachment; \
+             filename=\"<slug>-<version>.tar.gz\"`) with everything under `<slug>/`: \
+             `README.md` (what is here and what is missing), `kit.gdl` (authored or rendered), \
+             the source manifest as written, `model/overlay.json` (the model overlay as \
+             written) and `model/contents.json` (its types with GTS id, new or existing, \
+             fields), `claims.json` (gear claims, MCP tools, Inbox sources, rules, functions, \
+             permissions), `material/…` (the files `cfs` writes into a checkout, read from the \
+             kit's repository at its pinned commit: an official kit through the organization's \
+             first GitHub connection, an organization's kit through the connection its shelf \
+             names) and `mfe/<package>/…` (the bundles it serves at run time). A built-in \
+             kit's screens ship in Studio's portal image and are not included. A repository \
+             that does not answer leaves its files out and the README says why. At most 8 MiB \
+             a file, 64 MiB and 2000 files in all, 60 s of repository reads; every path is \
+             relative with no `..`.",
+        )
+        .tag("StudioKits")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("kit_slug", "Kit slug")
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            crate::org_scope::PARAM_DOC,
+            "string",
+        )
+        .handler(get_kit_archive)
+        .text_response(StatusCode::OK, "The archive", "application/gzip")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     router = OperationBuilder::get("/studio-kits/v1/projects/{project_id}/installations")
         .operation_id("studio_kits.list_project_installations")
         .summary("List desired kit installations for a project")
@@ -2519,7 +2823,7 @@ mod icon_tests {
             .into_iter()
             .find(|k| k.slug == "project-tests")
             .unwrap();
-        let dto = kit_dto(kit, &bundles(), None);
+        let dto = kit_dto(&super::super::contents::describe(kit), &bundles(), None);
         assert_eq!(dto.icon.as_deref(), Some("lucide:flask-conical"));
         assert_eq!(dto.icon_url, None, "a lucide icon is drawn by the shell");
         let json = serde_json::to_value(&dto).unwrap();

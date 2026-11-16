@@ -120,6 +120,79 @@ pub trait KitSourceReader: Send + Sync {
             "this reader cannot read a kit's files"
         )))
     }
+
+    /// Every file of a repository at a commit, `(path, size)`, for the kit
+    /// archive's directories ([`super::archive`]). As `ctx` acting in `org`.
+    async fn list_at(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        at: &RepoAt,
+    ) -> Result<Vec<(String, Option<i64>)>, Refusal> {
+        let _ = (ctx, org, at);
+        Err(Refusal::Internal(anyhow!(
+            "this reader cannot list a repository"
+        )))
+    }
+
+    /// One file of a repository at a commit, for the kit archive; `None`
+    /// when there is no such file.
+    async fn read_at(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        at: &RepoAt,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, Refusal> {
+        let _ = (ctx, org, at, path);
+        Err(Refusal::Internal(anyhow!(
+            "this reader cannot read a kit's files"
+        )))
+    }
+}
+
+/// A repository at one commit, as the kit archive reads a kit's files: an
+/// organization's kit through the connection its shelf names, an official
+/// kit through the first connection of the provider the organization has.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepoAt {
+    /// `None`: the organization's first connection of `provider`.
+    pub connection_id: Option<Uuid>,
+    pub provider: String,
+    /// `owner/name`.
+    pub repository: String,
+    pub commit: String,
+}
+
+impl From<&KitOrigin> for RepoAt {
+    fn from(o: &KitOrigin) -> Self {
+        Self {
+            connection_id: Some(o.connection_id),
+            provider: o.provider.clone(),
+            repository: o.repository.clone(),
+            commit: o.commit.clone(),
+        }
+    }
+}
+
+/// `owner/name` of a GitHub repository's web address
+/// (`https://github.com/owner/name`, `.git` or not).
+pub fn github_repository(url: &str) -> Option<String> {
+    let rest = url
+        .trim()
+        .strip_prefix("https://github.com/")?
+        .trim_end_matches('/')
+        .trim_end_matches(".git");
+    let parts: Vec<&str> = rest.split('/').collect();
+    let ok = parts.len() == 2
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && *p != "."
+                && *p != ".."
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        });
+    ok.then(|| rest.to_owned())
 }
 
 /// No connector in this assembly: every source is unreadable.
@@ -547,6 +620,39 @@ impl ConnectorSourceReader {
         }
         Ok((service, connection.provider))
     }
+
+    /// The repository `at` names, at its commit: through the organization's
+    /// own connection when one is named, else its first of the provider.
+    async fn open_at(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        at: &RepoAt,
+    ) -> Result<crate::connectors::sdk::Repository, Refusal> {
+        use crate::connectors::sdk::Repository;
+        let (service, provider) = match at.connection_id {
+            Some(id) => self.organization_connection(ctx, org, id).await?,
+            None => (
+                self.0.get().ok_or_else(|| {
+                    Refusal::Internal(anyhow!(
+                        "studio-connector is not running here, so no repository can be read"
+                    ))
+                })?,
+                at.provider.clone(),
+            ),
+        };
+        Repository::open(
+            &service,
+            ctx,
+            org,
+            at.connection_id,
+            &provider,
+            &at.repository,
+            Some(&at.commit),
+        )
+        .await
+        .map_err(Refusal::Internal)
+    }
 }
 
 #[async_trait]
@@ -574,6 +680,36 @@ impl KitSourceReader for ConnectorSourceReader {
         .await
         .map_err(Refusal::Internal)?;
         at_commit.read_bytes(path).await.map_err(Refusal::Internal)
+    }
+
+    async fn list_at(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        at: &RepoAt,
+    ) -> Result<Vec<(String, Option<i64>)>, Refusal> {
+        let repo = self.open_at(ctx, org, at).await?;
+        let tree = repo.tree().await.map_err(Refusal::Internal)?;
+        if tree.truncated {
+            tracing::warn!(repository = %at.repository, "studio-kits: the provider cut a repository's file list short");
+        }
+        Ok(tree
+            .files
+            .into_iter()
+            .filter(|f| !f.is_dir)
+            .map(|f| (f.path, f.size))
+            .collect())
+    }
+
+    async fn read_at(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        at: &RepoAt,
+        path: &str,
+    ) -> Result<Option<Vec<u8>>, Refusal> {
+        let repo = self.open_at(ctx, org, at).await?;
+        repo.read_bytes(path).await.map_err(Refusal::Internal)
     }
 
     async fn fetch(

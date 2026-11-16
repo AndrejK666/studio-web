@@ -75,6 +75,8 @@ const SDLC = {
   shelf: 'official',
   levels: ['project'],
   icon: 'lucide:workflow',
+  kind: 'material',
+  brings: ['material'],
 };
 
 describe('HomeScreen', () => {
@@ -113,6 +115,11 @@ describe('HomeScreen', () => {
     expect(within(row).getByText('v1.2.0')).toBeTruthy();
     expect(row.querySelector('[data-kit-icon="lucide:workflow"]')).toBeTruthy();
     expect(screen.getByPlaceholderText('search')).toBeTruthy();
+    // The Kit type column: a short label, its tier explained in the tooltip.
+    expect(screen.getAllByText('col_kind').length).toBeGreaterThan(0);
+    const kind = row.querySelector('[data-kit-kind="material"]') as HTMLElement;
+    expect(within(kind).getByText('kind_material')).toBeTruthy();
+    expect(kind.getAttribute('title')).toBe('kind_material_hint');
 
     // An unknown host theme bridges to the kit's light scope.
     expect((container.firstChild as HTMLElement).getAttribute('data-theme')).toBe('light');
@@ -150,6 +157,8 @@ describe('HomeScreen', () => {
       return found as HTMLElement;
     });
     expect(within(tile).getByText('github.com/example/sdlc')).toBeTruthy();
+    // The tile says the kit's type too.
+    expect(tile.querySelector('[data-kit-kind="material"]')).toBeTruthy();
     expect(tile.querySelector('img')?.getAttribute('src')).toBe(
       '/cf/studio-kits/v1/kits/sdlc/v1.2.0/mfe/grant/sdlc/icon.svg'
     );
@@ -348,7 +357,11 @@ describe('HomeScreen', () => {
     // "Inside the kit" carries the kit's icon beside its name.
     expect(document.querySelector('[data-kit-detail="sdlc"] [data-kit-icon="lucide:workflow"]')).toBeTruthy();
     expect(screen.getByText('sec_permissions')).toBeTruthy();
-    expect(screen.getByText('kits_describe')).toBeTruthy();
+    // The tool, among the agent's items and again in Contents with its description.
+    expect(screen.getAllByText('kits_describe')).toHaveLength(2);
+    const contents = document.querySelector('[data-kit-block="contents"]') as HTMLElement;
+    expect(within(contents).getByText('what a kit brings')).toBeTruthy();
+    expect(within(contents).getByRole('button', { name: 'contents_archive' })).toBeTruthy();
     expect(screen.getByText('templates/')).toBeTruthy();
     expect(screen.getByText('PRD')).toBeTruthy();
     expect(screen.getByText('.cf-studio-kit.toml')).toBeTruthy();

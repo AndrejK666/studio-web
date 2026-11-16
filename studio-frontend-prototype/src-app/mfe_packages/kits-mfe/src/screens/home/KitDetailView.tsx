@@ -31,6 +31,8 @@ import { LevelMap } from './kit/LevelMap';
 import { ModelDiagram } from './kit/ModelDiagram';
 import { AgentItems, Permissions } from './kit/PeopleAndAgents';
 import { ItemsGrid, type ItemRow } from './kit/ItemsGrid';
+import { KitContentsSection, type KitFileIo } from './kit/KitContentsSection';
+import { KindBadge } from './KindBadge';
 import type { Text } from './kit/text';
 import styles from './HomeScreen.module.css';
 import page from './kit/KitPage.module.css';
@@ -230,6 +232,8 @@ export function KitDetailView({
   t,
   status = 'unknown',
   context = NO_CONTEXT,
+  organizationId = null,
+  fileIo,
 }: {
   kit: CatalogKit;
   detail: KitDetail | null;
@@ -242,6 +246,10 @@ export function KitDetailView({
   /** Whether it is installed where the page is open. */
   status?: KitStatus;
   context?: KitPageContext;
+  /** The organization the page is open in: an organization's own kit's files are read there. */
+  organizationId?: string | null;
+  /** How the Contents section reads and saves the kit's files; the real routes by default. */
+  fileIo?: KitFileIo;
 }) {
   const c = detail?.contents;
   return (
@@ -260,6 +268,14 @@ export function KitDetailView({
         <dl className={styles.facts}>
           <dt>{t('publisher')}</dt>
           <dd>{kit.publisher}</dd>
+          {(detail?.kit.kind ?? kit.kind) && (
+            <>
+              <dt>{t('col_kind')}</dt>
+              <dd>
+                <KindBadge kit={detail?.kit.kind ? detail.kit : kit} t={t} />
+              </dd>
+            </>
+          )}
           <dt>{t('version')}</dt>
           <dd>
             <code>{kit.default_version}</code>
@@ -302,7 +318,14 @@ export function KitDetailView({
       ) : !c ? (
         <Skeleton className={styles.skeletonLine} />
       ) : (
-        <Contents kit={kit} c={c} context={context} t={t} />
+        <>
+          <Contents kit={kit} c={c} context={context} t={t} />
+          {detail && (
+            <Block id="contents" title={t('sec_contents')} hint={t('sec_contents_hint')}>
+              <KitContentsSection detail={detail} organizationId={organizationId} t={t} io={fileIo} />
+            </Block>
+          )}
+        </>
       )}
     </article>
   );
