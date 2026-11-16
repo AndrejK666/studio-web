@@ -1,4 +1,5 @@
 import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
+import type { ProjectRollup } from '../../../api/ProjectStatusApiService';
 import { TENANT_TYPES, type Tenant } from '@constructor-studio/mfe-shared';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -73,7 +74,7 @@ function tenant(id: string, tenantType: string): Tenant {
 
 const PROJECT = tenant('proj', TENANT_TYPES.project);
 
-async function mount(rows: Tenant[], phases?: Record<string, string>) {
+async function mount(rows: Tenant[], phases?: Record<string, string>, rollups?: Record<string, ProjectRollup>) {
   const { mfeApp } = await import('../../../init');
   const { bridge, executeActionsChain } = createMfeBridgeFixture({
     domainId: 'screen',
@@ -89,7 +90,7 @@ async function mount(rows: Tenant[], phases?: Record<string, string>) {
   render(
     <FrontXProvider app={mfeApp} mfeBridge={mfeContextValue(bridge)}>
       <OrganizationProvider>
-        <ProjectsTable rows={rows} empty={null} phases={phases} />
+        <ProjectsTable rows={rows} empty={null} phases={phases} rollups={rollups} />
       </OrganizationProvider>
     </FrontXProvider>
   );
@@ -108,6 +109,15 @@ const beforeEachState = () => {
 
 describe('ProjectsTable rows', () => {
   beforeEach(beforeEachState);
+
+  it('shows the rollup open findings and pull requests, and no data where it has none', async () => {
+    await mount([PROJECT, tenant('other', TENANT_TYPES.project)], undefined, {
+      proj: { id: 'proj', name: 'proj', kind: 'project', open_findings: 3, pulls_merged: 56, pulls_open: 13 },
+    });
+    expect(document.querySelector('[data-project-issues]')?.textContent).toBe('3 open findings');
+    expect(document.querySelector('[data-project-movement]')?.textContent).toBe('56 merged · 13 open');
+    expect(document.querySelectorAll('[data-project-issues]')).toHaveLength(1);
+  });
 
   it('tells the shell to open the project, and opens nothing itself', async () => {
     const { mfeApp, executeActionsChain } = await mount([PROJECT]);

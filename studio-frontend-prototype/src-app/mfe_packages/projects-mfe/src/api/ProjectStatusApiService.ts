@@ -102,6 +102,19 @@ export interface CreateProjectBody {
   idempotency_key?: string;
 }
 
+/** One row of `GET /rollups` (`RollupDto`): the counts the projects list reads. Null means not asked, not zero. */
+export interface ProjectRollup {
+  id: string;
+  name: string;
+  /** `workspace` or `project`. */
+  kind: string;
+  open_findings?: number | null;
+  findings?: number | null;
+  pulls_open?: number | null;
+  pulls_merged?: number | null;
+  activity_days?: number | null;
+}
+
 export class ProjectStatusApiService extends BaseApiService {
   constructor() {
     // The server reads every gear behind the status before it answers.
@@ -109,6 +122,11 @@ export class ProjectStatusApiService extends BaseApiService {
     const restEndpoints = new RestEndpointProtocol(restProtocol);
     super({ baseURL: STUDIO_ORGANIZATIONS_API_BASE_URL }, restProtocol, restEndpoints);
   }
+
+  /** A workspace and its projects as the portfolio rollup counts them; every count may be null (not asked). */
+  readonly rollups = this.protocol(RestEndpointProtocol).queryWith<{ items: ProjectRollup[]; total: number }, { workspaceId: string }>(
+    ({ workspaceId }) => `/rollups?${new URLSearchParams({ workspace_id: workspaceId })}`
+  );
 
   readonly status = this.protocol(RestEndpointProtocol).queryWith<ProjectStatus, { projectId: string }>(
     ({ projectId }) => `/project-status?${new URLSearchParams({ project_id: projectId })}`

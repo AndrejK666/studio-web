@@ -19,6 +19,7 @@ import { useProjectListText } from '../../../i18n';
 import { NoData } from './NoData';
 import { OwnerInline } from './OwnerInline';
 import { ProjectStatusInline } from './StatusInline';
+import type { ProjectRollup } from '../../../api/ProjectStatusApiService';
 import styles from '../ProjectListScreen.module.css';
 
 interface ProjectsTableProps {
@@ -26,6 +27,8 @@ interface ProjectsTableProps {
   empty: React.ReactNode;
   /** Each project's phase (Project lifecycle), by id; empty where the kit does not apply. */
   phases?: Record<string, string>;
+  /** Each project's portfolio rollup (`/rollups?workspace_id=`), by id: its Issues and 7-day movement. */
+  rollups?: Record<string, ProjectRollup>;
 }
 
 /**
@@ -33,7 +36,7 @@ interface ProjectsTableProps {
  * tenant type registry puts nothing else under one — so there are no container
  * rows, no chevrons and no indentation left to draw.
  */
-const ProjectRow: React.FC<{ project: Tenant; phase?: string }> = ({ project, phase }) => {
+const ProjectRow: React.FC<{ project: Tenant; phase?: string; rollup?: ProjectRollup }> = ({ project, phase, rollup }) => {
   const t = useProjectListText();
   const state = useProjectConfig(project.id);
   const { formatRelative } = useFormatters();
@@ -65,11 +68,21 @@ const ProjectRow: React.FC<{ project: Tenant; phase?: string }> = ({ project, ph
         <ProjectStatusInline tenant={project} state={state} />
       </TableCell>
       <TableCell className={styles.colIssues}>
-        {/* Findings/Signals have no portfolio rollup — see `issueSummary`. */}
-        <NoData label={t('no_data')} />
+        {/* The open detector findings the rollup counts; null is "not asked", not zero. */}
+        {rollup?.open_findings == null ? (
+          <NoData label={t('no_data')} />
+        ) : (
+          <span data-project-issues>{t.count('issues_open', rollup.open_findings)}</span>
+        )}
       </TableCell>
       <TableCell className={styles.colMovement}>
-        <NoData label={t('no_data')} />
+        {rollup?.pulls_merged == null && rollup?.pulls_open == null ? (
+          <NoData label={t('no_data')} />
+        ) : (
+          <span data-project-movement>
+            {t('movement_pulls', { merged: rollup.pulls_merged ?? '—', open: rollup.pulls_open ?? '—' })}
+          </span>
+        )}
       </TableCell>
       <TableCell className={styles.colOwner}>
         <OwnerInline state={state} />
@@ -87,7 +100,7 @@ ProjectRow.displayName = 'ProjectRow';
  * The mockup's Projects Portfolio table: Project, Status, Issues, 7-day
  * movement, Owner, Updated.
  */
-export const ProjectsTable: React.FC<ProjectsTableProps> = ({ rows, empty, phases }) => {
+export const ProjectsTable: React.FC<ProjectsTableProps> = ({ rows, empty, phases, rollups }) => {
   const t = useProjectListText();
 
   return (
@@ -110,7 +123,9 @@ export const ProjectsTable: React.FC<ProjectsTableProps> = ({ rows, empty, phase
             </TableCell>
           </TableRow>
         ) : (
-          rows.map((project) => <ProjectRow key={project.id} project={project} phase={phases?.[project.id]} />)
+          rows.map((project) => (
+            <ProjectRow key={project.id} project={project} phase={phases?.[project.id]} rollup={rollups?.[project.id]} />
+          ))
         )}
       </TableBody>
     </Table>
