@@ -21,6 +21,8 @@ export interface WorkspaceSecrets {
   rootTokenRef?: string | null;
   sources?: readonly ProjectSource[];
   connections: readonly Connection[];
+  /** Every connection's token is named here, used or not: the organization's own connections. */
+  listsConnections?: boolean;
 }
 
 function checkoutDir(fullPath: string): string {
@@ -53,6 +55,7 @@ export function knownSecretRefs(workspaces: readonly WorkspaceSecrets[]): Secret
   };
   for (const ws of workspaces) {
     add(ws.rootTokenRef, `${ws.name} (project root)`);
+    if (ws.listsConnections) for (const c of ws.connections) add(c.secret_ref, `${ws.name} · ${c.name || c.provider || c.id}`);
     const byId = new Map(ws.connections.map((c) => [c.id, c]));
     // A repository's token is its connection's.
     for (const { source, dir } of named(ws.sources)) add(byId.get(source.connection_id)?.secret_ref, `${ws.name} / ${dir}`);

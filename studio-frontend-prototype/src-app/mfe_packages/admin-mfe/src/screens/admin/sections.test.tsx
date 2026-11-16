@@ -97,6 +97,7 @@ function serve(over: Record<string, unknown> = {}) {
     getTenant: read('getTenant', tenant('o1', 'Acme')),
     getOrganizations: read('getOrganizations', { items: [] }),
     getWorkspaces: read('getWorkspaces', { items: [tenant('w1', 'Web', { tenant_type: 'ws' })] }),
+    getProjects: read('getProjects', { items: [tenant('p1', 'Site', { tenant_type: 'project' })] }),
     getTenantMetadata: read('getTenantMetadata', null),
     putTenantMetadata: write('putTenantMetadata'),
     myMemberships: read('myMemberships', { items: [] }),
@@ -257,6 +258,14 @@ describe('Secrets', () => {
     const row = (await screen.findByText('gh-token')).closest('tr') as HTMLElement;
     fireEvent.click(row.querySelector('[data-secret-check]') as HTMLElement);
     expect(await within(row).findByText('secrets_readable')).toBeTruthy();
+    // A project's config is read from the project, never from a workspace (walk 2026-11-16: 404s on every workspace).
+    const configReads = calls
+      .filter((c) => c.what === 'getTenantMetadata')
+      .map((c) => c.arg as { tenantId: string; metadataType: string } | undefined)
+      .filter((a) => a?.metadataType?.includes('project.config'))
+      .map((a) => a?.tenantId);
+    expect(configReads).toContain('p1');
+    expect(configReads).not.toContain('w1');
   });
 });
 
