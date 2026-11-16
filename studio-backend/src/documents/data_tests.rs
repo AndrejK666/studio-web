@@ -543,3 +543,41 @@ async fn a_workspaces_projects_are_counted_together_as_one_by_one() {
     let p3_counts = super::service::project_documents_of(&groups, p3);
     assert_eq!(p3_counts.bindings, Some(1), "only the workspace's");
 }
+
+// ── An owner moved before a row type existed ──────────────────────────────
+
+/// An owner moved into the model by an earlier build never declared the row
+/// types that came later (`spec-upload`, #1029). Reading one must declare
+/// it, not fail the whole project domain model with "unknown domain type".
+#[tokio::test]
+async fn a_row_type_newer_than_the_move_is_declared_before_it_is_read() {
+    let r = rig().await;
+    r.port
+        .put_objects(
+            &ctx(),
+            "sync-state",
+            vec![crate::domain_model::port::OwnedObject {
+                id: format!("documents-moved-v2:{}", r.ws),
+                scope: r.ws.to_string(),
+                payload: json!({"status": "done", "message": "moved by an earlier build"}),
+            }],
+        )
+        .await
+        .unwrap();
+    let before = r
+        .port
+        .query(&ctx(), json!({"type": "spec-upload"}))
+        .await
+        .unwrap_err();
+    assert!(
+        before.to_string().contains("unknown domain type"),
+        "the model lacks the type until the gear declares it: {before}"
+    );
+
+    let uploads = r
+        .data
+        .list_spec_uploads(&ctx(), r.ws, Uuid::new_v4())
+        .await
+        .expect("reading a row type the move did not know");
+    assert!(uploads.is_empty());
+}
