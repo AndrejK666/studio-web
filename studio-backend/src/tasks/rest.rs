@@ -15,6 +15,7 @@ use serde::Deserialize;
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
+use toolkit::client_hub::ClientHub;
 use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
@@ -30,7 +31,7 @@ pub struct StudioTasksError;
 /// Service handle. `None` = the gear booted without a database: the routes stay
 /// mounted and answer 503 with the reason.
 #[derive(Clone)]
-pub struct Tasks(pub Option<Arc<TaskService>>);
+pub struct Tasks(pub Option<Arc<TaskService>>, pub Option<Arc<ClientHub>>);
 
 impl Tasks {
     fn get(&self) -> ApiResult<&Arc<TaskService>> {
@@ -43,6 +44,79 @@ impl Tasks {
                 .create()
         })
     }
+
+    /// The tenants a run listing for organization `org` reads: the
+    /// organization, its workspaces and their projects, as the caller sees
+    /// them. A caller who does not reach the organization gets 404.
+    async fn organization_tenants(&self, ctx: &SecurityContext, org: Uuid) -> ApiResult<Vec<Uuid>> {
+        let hub = self.1.as_ref().ok_or_else(|| {
+            CanonicalError::service_unavailable()
+                .with_detail("the tenant tree is not available here")
+                .create()
+        })?;
+        let am = hub
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail("account-management is not available")
+                    .create()
+            })?;
+        am.get_tenant(ctx, org).await.map_err(|_| {
+            StudioTasksError::not_found(format!("organization {org} is not found"))
+                .with_resource(org.to_string())
+                .create()
+        })?;
+        let projects = hub
+            .get::<dyn crate::organizations::port::ProjectsOf>()
+            .map_err(|_| {
+                CanonicalError::service_unavailable()
+                    .with_detail("the organizations gear is not available")
+                    .create()
+            })?
+            .projects_of(ctx, org)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        Ok(tenants_of_organization(org, &projects))
+    }
+
+    /// A `tenant` named by the caller, refused (404) unless the caller reaches
+    /// it: the runs of another organization are not anybody's to read, cancel
+    /// or retry. The caller's own tenant needs no question.
+    async fn reached(&self, ctx: &SecurityContext, tenant: Option<Uuid>) -> ApiResult<Uuid> {
+        let own = ctx.subject_tenant_id();
+        let Some(tenant) = tenant.filter(|t| *t != own) else {
+            return Ok(own);
+        };
+        let reached = match self.1.as_ref().map(|hub| {
+            hub.get::<dyn account_management_sdk::AccountManagementClient>()
+        }) {
+            Some(Ok(am)) => am.get_tenant(ctx, tenant).await.is_ok(),
+            _ => false,
+        };
+        if reached {
+            Ok(tenant)
+        } else {
+            Err(StudioTasksError::not_found(format!("tenant {tenant} is not found"))
+                .with_resource(tenant.to_string())
+                .create())
+        }
+    }
+}
+
+/// The organization, then every workspace and project under it, once each.
+pub(crate) fn tenants_of_organization(
+    org: Uuid,
+    projects: &[crate::organizations::port::OrgProject],
+) -> Vec<Uuid> {
+    let mut out = vec![org];
+    for p in projects {
+        for id in [p.workspace_id, p.id] {
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
+    }
+    out
 }
 
 struct License;
@@ -114,6 +188,10 @@ pub struct TaskTypeListDto {
 pub struct RunFilter {
     #[serde(default)]
     tenant: Option<Uuid>,
+    /// The runs of one organization: its own tenant, its workspaces' and its
+    /// projects'. Wins over `tenant`.
+    #[serde(default)]
+    organization_id: Option<Uuid>,
     /// `queued` | `running` | `succeeded` | `failed` | `cancelled`.
     #[serde(default)]
     state: Option<String>,
@@ -175,10 +253,14 @@ async fn list_runs(
         })?),
         None => None,
     };
+    let tenants = match q.organization_id {
+        Some(org) => tasks.organization_tenants(&ctx, org).await?,
+        None => vec![tasks.reached(&ctx, q.tenant).await?],
+    };
     let (items, total) = svc
         .list(
             &ctx,
-            q.tenant.unwrap_or_else(|| ctx.subject_tenant_id()),
+            &tenants,
             &RunQuery {
                 state,
                 task_type: q.task_type,
@@ -201,7 +283,7 @@ async fn get_run(
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<JsonBody<RunDto>> {
     let svc = tasks.get()?;
-    let tenant = q.tenant.unwrap_or_else(|| ctx.subject_tenant_id());
+    let tenant = tasks.reached(&ctx, q.tenant).await?;
     let row = svc
         .get(&ctx, tenant, id)
         .await
@@ -221,7 +303,7 @@ async fn cancel_run(
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<(StatusCode, JsonBody<RunDto>)> {
     let svc = tasks.get()?;
-    let tenant = q.tenant.unwrap_or_else(|| ctx.subject_tenant_id());
+    let tenant = tasks.reached(&ctx, q.tenant).await?;
     let row = svc.cancel(&ctx, tenant, id).await.map_err(|e| {
         StudioTasksError::failed_precondition()
             .with_precondition_violation(id.to_string(), format!("{e:#}"), "TASK_CANCEL_REFUSED")
@@ -239,7 +321,7 @@ async fn retry_run(
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<(StatusCode, JsonBody<RunDto>)> {
     let svc = tasks.get()?;
-    let tenant = q.tenant.unwrap_or_else(|| ctx.subject_tenant_id());
+    let tenant = tasks.reached(&ctx, q.tenant).await?;
     let row = svc.retry(&ctx, tenant, id).await.map_err(|e| {
         StudioTasksError::failed_precondition()
             .with_precondition_violation(id.to_string(), format!("{e:#}"), "TASK_RETRY_REFUSED")
@@ -267,6 +349,7 @@ pub fn register_routes(
     mut router: Router,
     openapi: &dyn OpenApiRegistry,
     service: Option<Arc<TaskService>>,
+    hub: Option<Arc<ClientHub>>,
 ) -> Router {
     router = OperationBuilder::get("/studio-tasks/v1/runs")
         .operation_id("studio_tasks.list_runs")
@@ -287,10 +370,21 @@ pub fn register_routes(
             "integer",
         )
         .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
+        .query_param(
+            "organization_id",
+            false,
+            "The runs of this organization: its own, its workspaces' and its projects'",
+        )
+        .query_param(
+            "tenant",
+            false,
+            "The tenant the runs are in, when it is not the caller's",
+        )
         .handler(list_runs)
         .json_response_with_schema::<RunListDto>(openapi, StatusCode::OK, "Runs")
         .error_400(openapi)
         .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
@@ -389,5 +483,32 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(Tasks(service)))
+    router.layer(Extension(Tasks(service, hub)))
+}
+
+#[cfg(test)]
+mod organization_scope_tests {
+    use super::tenants_of_organization;
+    use crate::organizations::port::OrgProject;
+    use uuid::Uuid;
+
+    /// An organization's runs are its own, its workspaces' and its projects':
+    /// never another organization's (walk 2026-11-16: Acronis listed
+    /// Constractor Fabric's runs, with Cancel).
+    #[test]
+    fn an_organization_reads_its_own_tree_once() {
+        let org = Uuid::from_u128(1);
+        let (ws, p1, p2) = (Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+        let project = |id| OrgProject {
+            id,
+            name: String::new(),
+            workspace_id: ws,
+            workspace_name: String::new(),
+        };
+        assert_eq!(
+            tenants_of_organization(org, &[project(p1), project(p2)]),
+            [org, ws, p1, p2]
+        );
+        assert_eq!(tenants_of_organization(org, &[]), [org]);
+    }
 }

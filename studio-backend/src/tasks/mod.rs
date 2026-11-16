@@ -515,7 +515,7 @@ impl RunnableCapability for StudioTasksGear {
 impl toolkit::contracts::RestApiCapability for StudioTasksGear {
     fn register_rest(
         &self,
-        _ctx: &GearCtx,
+        ctx: &GearCtx,
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
@@ -523,6 +523,9 @@ impl toolkit::contracts::RestApiCapability for StudioTasksGear {
             router,
             openapi,
             self.service.get().cloned().flatten(),
+            // Whose runs an organization listing reads, and whether the caller
+            // reaches a tenant it names.
+            Some(ctx.client_hub()),
         ))
     }
 }
