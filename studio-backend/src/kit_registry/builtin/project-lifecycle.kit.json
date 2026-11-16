@@ -703,15 +703,54 @@
     {
       "name": "project_phase_set",
       "description": "Move a project to a phase along the declared lifecycle"
+    },
+    {
+      "name": "project_phases",
+      "description": "Every project of an organization with its phase"
     }
   ],
   "permissions": {
     "reads": [
+      "GET /studio-organizations/v1/project-types",
       "GET /studio-kits/v1/project-phase",
       "GET /studio-kits/v1/project-phases"
     ],
     "writes": [
-      "PUT /studio-kits/v1/project-phase"
+      "PUT /studio-kits/v1/project-phase",
+      "PUT /studio-organizations/v1/project-types",
+      "DELETE /studio-organizations/v1/project-types"
     ]
-  }
+  },
+  "gears": [
+    {
+      "gear": "studio-kits",
+      "mcp_tools": [
+        "project_phase",
+        "project_phase_set",
+        "project_phases"
+      ],
+      "routes": [
+        "PUT /studio-kits/v1/project-phase"
+      ]
+    },
+    {
+      "gear": "studio-organizations",
+      "types": [
+        "project-type"
+      ],
+      "routes": [
+        "PUT /studio-organizations/v1/project-types",
+        "DELETE /studio-organizations/v1/project-types"
+      ]
+    },
+    {
+      "gear": "studio-documents",
+      "types": [
+        "lifecycle-stage",
+        "delivery-scope",
+        "delivery-limit",
+        "delivery-scope-version"
+      ]
+    }
+  ]
 }

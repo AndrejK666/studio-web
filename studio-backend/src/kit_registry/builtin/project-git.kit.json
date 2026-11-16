@@ -290,5 +290,13 @@
       "label": "Pull requests waiting on you",
       "kind": "studio"
     }
+  ],
+  "gears": [
+    {
+      "gear": "studio-artifact-ingest",
+      "types": [
+        "pull-request"
+      ]
+    }
   ]
 }

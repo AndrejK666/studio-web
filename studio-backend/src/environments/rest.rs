@@ -73,6 +73,7 @@ fn problem(r: Refusal) -> CanonicalError {
             .with_detail(detail)
             .create(),
         Refusal::Internal(detail) => CanonicalError::internal(detail).create(),
+        Refusal::Kit(refusal) => refusal.problem(),
     }
 }
 

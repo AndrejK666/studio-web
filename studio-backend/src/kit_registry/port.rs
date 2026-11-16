@@ -17,6 +17,10 @@ use async_trait::async_trait;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+pub use super::claims::Claims;
+pub use super::gate::{
+    KIT_NOT_INSTALLED, KitRefusal, require_kit, sync_wanted, tool_refusal, with_claimed_routes,
+};
 use super::installed::KitInstaller;
 pub use super::service::CONSTRUCTOR_RESEARCH_KIT;
 use super::service::KitRegistryService;

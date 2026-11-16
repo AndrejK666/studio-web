@@ -29,9 +29,29 @@ mod code {
     pub const INVALID_PARAMS: i64 = -32602;
 }
 
+/// Whether a tool may be called here, asked before the call: a tool a kit
+/// claims answers `KIT_NOT_INSTALLED` where its kit does not apply (ADR-0071
+/// §4). `Some(text)` is the refusal the agent reads.
+#[async_trait::async_trait]
+pub trait Gate: Send + Sync {
+    async fn refuse(&self, tool: &str, args: &Map<String, Value>) -> Option<String>;
+}
+
+/// No gate: every tool is called.
+#[cfg(test)]
+pub struct Open;
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl Gate for Open {
+    async fn refuse(&self, _tool: &str, _args: &Map<String, Value>) -> Option<String> {
+        None
+    }
+}
+
 /// The answer to one HTTP POST body: `None` when it held only notifications
 /// and responses, which MCP answers with 202 and no body.
-pub async fn handle_body(body: &[u8], tools: &[Tool], api: &Api) -> Option<Value> {
+pub async fn handle_body(body: &[u8], tools: &[Tool], api: &Api, gate: &dyn Gate) -> Option<Value> {
     let parsed: Value = match serde_json::from_slice(body) {
         Ok(v) => v,
         Err(e) => return Some(error(Value::Null, code::PARSE, &format!("not JSON: {e}"))),
@@ -41,19 +61,19 @@ pub async fn handle_body(body: &[u8], tools: &[Tool], api: &Api) -> Option<Value
         Value::Array(messages) => {
             let mut out = Vec::new();
             for message in messages {
-                if let Some(answer) = handle(message, tools, api).await {
+                if let Some(answer) = handle(message, tools, api, gate).await {
                     out.push(answer);
                 }
             }
             (!out.is_empty()).then_some(Value::Array(out))
         }
-        message => handle(message, tools, api).await,
+        message => handle(message, tools, api, gate).await,
     }
 }
 
 /// One JSON-RPC message. A notification or a response (no `method` and an
 /// `id`, from an agent answering a request we never send) gets no answer.
-pub async fn handle(message: Value, tools: &[Tool], api: &Api) -> Option<Value> {
+pub async fn handle(message: Value, tools: &[Tool], api: &Api, gate: &dyn Gate) -> Option<Value> {
     let Value::Object(message) = message else {
         return Some(error(
             Value::Null,
@@ -79,7 +99,7 @@ pub async fn handle(message: Value, tools: &[Tool], api: &Api) -> Option<Value> 
         "initialize" => result(id, initialize(&params)),
         "ping" => result(id, json!({})),
         "tools/list" => result(id, json!({ "tools": list(tools) })),
-        "tools/call" => match call(&params, tools, api).await {
+        "tools/call" => match call(&params, tools, api, gate).await {
             Ok(answer) => result(id, answer),
             Err(why) => error(id, code::INVALID_PARAMS, &why),
         },
@@ -126,7 +146,7 @@ fn list(tools: &[Tool]) -> Vec<Value> {
 /// A tool call. A tool that does not exist, or arguments that are not an
 /// object, is a protocol error; anything the tool itself refuses is its
 /// result, marked `isError`, so the agent reads why and can try again.
-async fn call(params: &Value, tools: &[Tool], api: &Api) -> Result<Value, String> {
+async fn call(params: &Value, tools: &[Tool], api: &Api, gate: &dyn Gate) -> Result<Value, String> {
     let name = params
         .get("name")
         .and_then(Value::as_str)
@@ -140,6 +160,19 @@ async fn call(params: &Value, tools: &[Tool], api: &Api) -> Result<Value, String
         Some(Value::Object(args)) => args.clone(),
         Some(_) => return Err("`arguments` is an object".to_owned()),
     };
+    // A tool its kit claims, where the kit does not apply: the tool's own
+    // refusal, before it calls anything.
+    if let Some(why) = gate.refuse(tool.name, &args).await {
+        tracing::info!(
+            tool = tool.name,
+            who = api.who(),
+            "studio-mcp: tool refused, its kit is not installed"
+        );
+        return Ok(json!({
+            "content": [{ "type": "text", "text": why }],
+            "isError": true,
+        }));
+    }
     let started = std::time::Instant::now();
     let outcome = sdk::call(tool, api.clone(), args).await;
     // One line per call: who used which tool, and whether it answered. The
@@ -210,7 +243,42 @@ mod tests {
     }
 
     async fn ask(message: Value) -> Option<Value> {
-        handle_body(message.to_string().as_bytes(), &tools(), &api()).await
+        handle_body(message.to_string().as_bytes(), &tools(), &api(), &Open).await
+    }
+
+    /// A gate that refuses `echo` in the project it names.
+    struct NoKitIn(&'static str);
+
+    #[async_trait::async_trait]
+    impl Gate for NoKitIn {
+        async fn refuse(&self, tool: &str, args: &Map<String, Value>) -> Option<String> {
+            (tool == "echo" && args.get("project_id").and_then(Value::as_str) == Some(self.0))
+                .then(|| "KIT_NOT_INSTALLED (kit k): this comes with the kit `k`".to_owned())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tool_whose_kit_is_not_installed_answers_so_without_running() {
+        let gate = NoKitIn("p1");
+        let call = |project: &str| {
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                "params":{"name":"echo","arguments":{"project_id": project}}})
+            .to_string()
+        };
+        let refused = handle_body(call("p1").as_bytes(), &tools(), &api(), &gate)
+            .await
+            .unwrap();
+        assert_eq!(refused["result"]["isError"], true);
+        assert!(
+            refused["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("KIT_NOT_INSTALLED (kit k)")
+        );
+        let ran = handle_body(call("p2").as_bytes(), &tools(), &api(), &gate)
+            .await
+            .unwrap();
+        assert_eq!(ran["result"]["isError"], false);
     }
 
     #[tokio::test]
@@ -293,7 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_is_not_json_or_not_served_is_said() {
-        let bad = handle_body(b"{", &tools(), &api()).await.unwrap();
+        let bad = handle_body(b"{", &tools(), &api(), &Open).await.unwrap();
         assert_eq!(bad["error"]["code"], code::PARSE);
         let other = ask(json!({"jsonrpc":"2.0","id":1,"method":"resources/list"}))
             .await

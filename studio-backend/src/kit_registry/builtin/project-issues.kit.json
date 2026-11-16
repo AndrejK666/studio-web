@@ -391,5 +391,30 @@
         }
       }
     ]
-  }
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-documents/v1/project-domain-model/issues",
+      "GET /studio-documents/v1/project-domain-model/readiness",
+      "GET /studio-documents/v1/project-domain-model/doc-quality",
+      "GET /studio-documents/v1/project-domain-model"
+    ],
+    "writes": [
+      "POST /studio-documents/v1/project-domain-model/reviews",
+      "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
+      "POST /studio-documents/v1/project-domain-model/issues",
+      "POST /studio-documents/v1/project-domain-model/entities",
+      "POST /studio-documents/v1/project-domain-model/sentences/proposals",
+      "POST /studio-documents/v1/project-domain-model/glossary/decisions"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-artifact-ingest",
+      "types": [
+        "work-item",
+        "finding"
+      ]
+    }
+  ]
 }

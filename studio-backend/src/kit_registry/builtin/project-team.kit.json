@@ -155,5 +155,12 @@
         }
       }
     ]
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-user/v1/organizations/{org_id}/members",
+      "GET /studio-user/v1/me/colleagues",
+      "GET /studio-organizations/v1/access-catalogue"
+    ]
   }
 }

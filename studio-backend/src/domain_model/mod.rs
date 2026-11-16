@@ -34,6 +34,8 @@ pub(crate) mod gts;
 mod mcp;
 pub(crate) use mcp::tools as mcp_tools;
 #[cfg(test)]
+mod claimed_types_tests;
+#[cfg(test)]
 mod held_tests;
 #[cfg(test)]
 mod kept_by_gear_tests;

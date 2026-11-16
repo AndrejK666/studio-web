@@ -278,7 +278,15 @@ pub struct IngestService {
     /// sync that names a token: nothing could say it is the organization's.
     connectors: Option<crate::connectors::sdk::Connectors>,
     platform: Option<PlatformClient>,
+    /// Where studio-kits answers whether a kit applies: a claim that opts in
+    /// (`sync_only_with_kit`, ADR-0071 §4) lets a sync skip the CI runs and
+    /// jobs, or the build outputs, where its kit does not. `None` syncs
+    /// everything.
+    kits: Option<Arc<toolkit::client_hub::ClientHub>>,
 }
+
+/// This gear, as the kits' claims name it.
+const GEAR_NAME: &str = "studio-artifact-ingest";
 
 pub struct PlatformClient {
     /// The configured OAuth client; the Studio PDP recognises the sync by it.
@@ -360,7 +368,36 @@ impl IngestService {
             clone_failures: std::sync::Mutex::new(HashMap::new()),
             connectors: None,
             platform: None,
+            kits: None,
         }
+    }
+
+    /// Ask studio-kits, through `hub`, whether an opted-in claim's kit
+    /// applies before an expensive part of a sync (ADR-0071 §4).
+    #[must_use]
+    pub fn with_kits(mut self, hub: Arc<toolkit::client_hub::ClientHub>) -> Self {
+        self.kits = Some(hub);
+        self
+    }
+
+    /// Whether this sync reads `type_id` where `tenant` is: always, unless the
+    /// kit claiming it opted in to `sync_only_with_kit` and does not apply
+    /// there. Then the data starts from the first sync after an install.
+    async fn sync_wanted(&self, ctx: &SecurityContext, tenant: Uuid, type_id: &str) -> bool {
+        use crate::kit_registry::port::{Claims, KitPresence, sync_wanted};
+        let presence = self
+            .kits
+            .as_ref()
+            .and_then(|hub| hub.get::<dyn KitPresence>().ok());
+        sync_wanted(
+            Claims::builtin(),
+            presence.as_deref(),
+            ctx,
+            tenant,
+            GEAR_NAME,
+            type_id,
+        )
+        .await
     }
 
     #[must_use]
@@ -1300,24 +1337,44 @@ impl IngestService {
         let mut ci_error: Option<String> = None;
         // Completed runs, for their jobs: (created_at, run node, run id, attempt).
         let mut finished_runs: Vec<(Option<String>, String, i64, Option<i64>)> = Vec::new();
-        let reads: Vec<(Option<i64>, u32)> = match driver
-            .list_workflows(&auth, repo_full_path)
-            .await
-        {
-            Ok(workflows) if !workflows.is_empty() => workflows
-                .iter()
-                .filter(|w| w.state.as_deref().is_none_or(|s| s == "active"))
-                .take(MAX_WORKFLOWS)
-                .map(|w| (Some(w.id), 1))
-                .collect(),
-            Ok(_) => vec![(None, MAX_RUN_PAGES)],
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    repo = repo_full_path,
-                    "studio-artifact-ingest: workflow listing failed — reading runs repository-wide"
-                );
-                vec![(None, MAX_RUN_PAGES)]
+        // A kit that claims the runs or the outputs and opted in to
+        // `sync_only_with_kit` (ADR-0071 §4) skips them where it does not
+        // apply; without the flag they are read as always.
+        let kit_tenant = project_id
+            .or(workspace_id)
+            .and_then(|t| Uuid::parse_str(t).ok())
+            .unwrap_or_else(|| ctx.subject_tenant_id());
+        let ci_wanted = self.sync_wanted(ctx, kit_tenant, "ci-run").await;
+        let outputs_wanted = self.sync_wanted(ctx, kit_tenant, "build-artifact").await;
+        let releases_wanted = self.sync_wanted(ctx, kit_tenant, "release").await;
+        if !ci_wanted || !outputs_wanted || !releases_wanted {
+            tracing::info!(
+                repo = repo_full_path,
+                ci_wanted,
+                outputs_wanted,
+                releases_wanted,
+                "studio-artifact-ingest: skipping what a kit that is not installed here claims"
+            );
+        }
+        let reads: Vec<(Option<i64>, u32)> = if !ci_wanted {
+            Vec::new()
+        } else {
+            match driver.list_workflows(&auth, repo_full_path).await {
+                Ok(workflows) if !workflows.is_empty() => workflows
+                    .iter()
+                    .filter(|w| w.state.as_deref().is_none_or(|s| s == "active"))
+                    .take(MAX_WORKFLOWS)
+                    .map(|w| (Some(w.id), 1))
+                    .collect(),
+                Ok(_) => vec![(None, MAX_RUN_PAGES)],
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = repo_full_path,
+                        "studio-artifact-ingest: workflow listing failed — reading runs repository-wide"
+                    );
+                    vec![(None, MAX_RUN_PAGES)]
+                }
             }
         };
         'reads: for (workflow, pages) in reads {
@@ -1392,7 +1449,7 @@ impl IngestService {
         let mut outputs = 0usize;
         // Pipelines' manifests (ADR-0048 §4): read after the listing.
         let mut manifests: Vec<RemoteBuildArtifact> = Vec::new();
-        'artifacts: for page in 1..=MAX_OUTPUT_PAGES {
+        'artifacts: for page in 1..=(if outputs_wanted { MAX_OUTPUT_PAGES } else { 0 }) {
             let batch = match driver
                 .list_build_artifacts(&auth, repo_full_path, page, PER_PAGE)
                 .await
@@ -1441,7 +1498,7 @@ impl IngestService {
             )
             .await;
         }
-        'releases: for page in 1..=MAX_OUTPUT_PAGES {
+        'releases: for page in 1..=(if releases_wanted { MAX_OUTPUT_PAGES } else { 0 }) {
             let batch = match driver
                 .list_releases(&auth, repo_full_path, page, PER_PAGE)
                 .await

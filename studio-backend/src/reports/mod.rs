@@ -28,6 +28,12 @@ pub mod source;
 mod store;
 pub mod xlsx;
 
+/// Every type this gear declares in the model, for the kits' claims test.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    vec![store::ModelStore::need()]
+}
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -142,7 +148,14 @@ impl RestApiCapability for StudioReportsGear {
         let access = Arc::new(crate::studio_session::sdk::TenantMembership::new(
             hub.get::<dyn account_management_sdk::AccountManagementClient>()?,
         ));
-        Ok(rest::register_routes(router, openapi, service, hub, access))
+        let router = rest::register_routes(router, openapi, service, Arc::clone(&hub), access);
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): studio-kits' one shared check.
+        Ok(crate::kit_registry::port::with_claimed_routes(
+            router,
+            hub,
+            "studio-reports",
+        ))
     }
 }
 

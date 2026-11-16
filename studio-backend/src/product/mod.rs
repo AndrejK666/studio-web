@@ -24,6 +24,17 @@ mod infra_gdl;
 mod kind;
 mod mcp;
 pub(crate) use mcp::tools as mcp_tools;
+
+/// Every type this gear declares in the model, for the kits' claims test:
+/// the catalogue's (it holds the product's two) and its gear explanations.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    let mut out = crate::catalog_graph::needs_of("studio-product");
+    out.extend(crate::model_metadata::declared_types(
+        explanations::MODEL_KINDS,
+    ));
+    out
+}
 mod migrations;
 mod new_gear;
 pub mod port;
@@ -209,6 +220,13 @@ impl RestApiCapability for StudioProductGear {
         let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);
         // The platform's gear repositories, read on the way in (ADR-0046).
         let router = port::with_gear_roots(router, &ctx.client_hub());
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): studio-kits' one shared check.
+        let router = crate::kit_registry::port::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-product",
+        );
         // Without it, a request that names an organization is refused rather
         // than served from the caller's home tenant.
         Ok(match org_access {

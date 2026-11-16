@@ -443,6 +443,25 @@ fn put_property(o: &mut Ontology, entity: &str, name: &str, value: Option<Value>
     }
 }
 
+/// Type `id` as the equality check compares it: a gear's type whose
+/// `meta.kit` is the kit that claims it (ADR-0071 §3, set by
+/// `declare_gear_type`) compares as without it, so the claims are not a
+/// difference (ADR-0071 step 1).
+fn without_claimed_kit(id: &str, e: Option<&Value>) -> Option<Value> {
+    let mut e = e?.clone();
+    let claimed = crate::kit_registry::port::Claims::builtin()
+        .type_claim(id)
+        .map(|c| c.kit.as_str());
+    let is_claim = e.pointer("/meta/origin").and_then(Value::as_str)
+        == Some(crate::domain_model::kit_overlay::ORIGIN_GEAR)
+        && claimed.is_some()
+        && e.pointer("/meta/kit").and_then(Value::as_str) == claimed;
+    if is_claim && let Some(meta) = e.get_mut("meta").and_then(Value::as_object_mut) {
+        meta.remove("kit");
+    }
+    Some(e)
+}
+
 fn differing(a: &Ontology, b: &Ontology) -> Vec<String> {
     let ids: BTreeSet<&str> = a
         .entities()
@@ -452,7 +471,7 @@ fn differing(a: &Ontology, b: &Ontology) -> Vec<String> {
         .collect();
     let mut out: Vec<String> = ids
         .into_iter()
-        .filter(|id| a.entity(id) != b.entity(id))
+        .filter(|id| without_claimed_kit(id, a.entity(id)) != without_claimed_kit(id, b.entity(id)))
         .map(str::to_owned)
         .collect();
     if a.entity_ids() != b.entity_ids() && out.is_empty() {
@@ -946,5 +965,56 @@ mod tests {
         sync(&mut o, "org-reports", "1", None, &|_| false).unwrap();
         assert!(!o.has_entity("report"));
         assert!(property(&o, "organization", "reports").is_none());
+    }
+
+    #[test]
+    fn the_equality_check_does_not_count_a_kit_a_claim_set() {
+        // ADR-0071 step 1: an organization with every base kit reads the same
+        // model apart from the `meta.kit` the claims set on gear types.
+        let budget = crate::model_metadata::declared_types(crate::usage::MODEL_KINDS)
+            .into_iter()
+            .find(|n| n.id == "budget")
+            .unwrap();
+        let mut before = Ontology::load();
+        before.declare_gear_type(&budget).unwrap();
+        let mut after = before.clone();
+        before
+            .entity_mut("budget")
+            .unwrap()
+            .get_mut("meta")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove("kit");
+        assert_eq!(after.entity("budget").unwrap()["meta"]["kit"], "org-costs");
+        assert!(differing(&before, &after).is_empty());
+        // Any other kit is a difference.
+        after.entity_mut("budget").unwrap()["meta"]["kit"] = json!("org-reports");
+        assert_eq!(differing(&before, &after), ["budget"]);
+    }
+
+    #[test]
+    fn a_gear_type_created_before_its_claim_is_marked_with_the_claiming_kit() {
+        let declared = crate::model_metadata::declared_types(crate::environments::MODEL_KINDS);
+        let need = |id: &str| declared.iter().find(|n| n.id == id).unwrap().clone();
+        let mut o = Ontology::load();
+        o.declare_gear_type(&need("deployment")).unwrap();
+        assert_eq!(
+            o.entity("deployment").unwrap()["meta"]["kit"],
+            "product-releases"
+        );
+        // As an organization's model had it before the claims.
+        o.entity_mut("deployment").unwrap()["meta"]
+            .as_object_mut()
+            .unwrap()
+            .remove("kit");
+        assert!(o.declare_gear_type(&need("deployment")).unwrap());
+        assert_eq!(
+            o.entity("deployment").unwrap()["meta"]["kit"],
+            "product-releases"
+        );
+        assert!(!o.declare_gear_type(&need("deployment")).unwrap(), "once");
+        // A core gear type has no kit.
+        o.declare_gear_type(&need("tenant-document")).unwrap();
+        assert!(o.entity("tenant-document").unwrap()["meta"]["kit"].is_null());
     }
 }

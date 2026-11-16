@@ -243,6 +243,20 @@ fn header_need() -> TypeNeed {
     )
 }
 
+/// The types `kinds` become, and the `tenant-document` every gear's
+/// document keeps its settings on: for the kits' claims test (their fields
+/// come from the records, so none are named here).
+#[cfg(test)]
+pub(crate) fn declared_types(kinds: &[Kind]) -> Vec<TypeNeed> {
+    let mut out = vec![header_need()];
+    for k in kinds {
+        for p in k.parts {
+            out.push(need(p.entity, p.name, p.description, k.gear, Vec::new()));
+        }
+    }
+    out
+}
+
 /// A document as the model keeps it: its settings, and its records by part.
 struct Split {
     settings: Map<String, Value>,

@@ -23,5 +23,10 @@
         }
       }
     ]
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-artifact-ingest/v1/nodes"
+    ]
   }
 }

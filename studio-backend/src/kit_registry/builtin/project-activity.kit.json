@@ -272,5 +272,23 @@
         }
       }
     ]
-  }
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-artifact-ingest/v1/activity",
+      "GET /studio-domain-model/v1/types",
+      "POST /studio-domain-model/v1/query"
+    ],
+    "writes": [
+      "POST /studio-domain-model/v1/mutate"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-artifact-ingest",
+      "types": [
+        "comment"
+      ]
+    }
+  ]
 }

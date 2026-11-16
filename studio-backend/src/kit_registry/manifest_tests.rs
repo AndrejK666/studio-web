@@ -54,7 +54,10 @@ fn project_lifecycle_is_a_built_in_kit_that_brings_a_model() {
         contents_of(&m).types[0].gts,
         "gts.cf.studio.kit.project_lifecycle.phase.v1~"
     );
-    assert!(builtin_manifest("studio-api-docs").is_none());
+    // Every built-in kit has its kit.json now, Docs & API too (ADR-0071 §6).
+    let docs = builtin_manifest("studio-api-docs").expect("compiled in");
+    assert!(docs.model.is_none() && docs.gears.is_empty());
+    assert_eq!(docs.permissions.reads, ["GET /openapi.json"]);
     // And one Inbox source: a project waiting in its phase on its owner.
     let source = &m.inbox[0];
     assert_eq!(source.id, "phase-waiting");
@@ -447,4 +450,103 @@ fn a_kit_without_a_model_brings_no_model() {
     let c = contents_of(&m);
     assert!(c.types.is_empty());
     assert_eq!(c.model, KitModel::default());
+}
+
+/// A manifest with `gears` (and `writes`) as given.
+fn with_gears(gears: serde_json::Value, writes: &[&str]) -> Result<KitManifest, String> {
+    read_kit_json(
+        &serde_json::json!({
+            "slug": "claims", "name": "Claims",
+            "permissions": {"writes": writes},
+            "gears": gears,
+        })
+        .to_string(),
+    )
+}
+
+#[test]
+fn a_kit_claims_a_gears_types_tools_and_write_routes() {
+    let m = with_gears(
+        serde_json::json!([{
+            "gear": "studio-usage",
+            "types": ["budget"],
+            "mcp_tools": ["budget_set"],
+            "routes": ["PUT /studio-usage/v1/budgets"],
+            "sync_only_with_kit": true
+        }]),
+        &["PUT /studio-usage/v1/budgets"],
+    )
+    .unwrap();
+    assert_eq!(m.gears[0].types, ["budget"]);
+    assert!(m.gears[0].sync_only_with_kit);
+    let c = contents_of(&m);
+    assert_eq!(c.gears, m.gears);
+    assert!(
+        c.mcp_tools.iter().any(|t| t.name == "budget_set"),
+        "a claimed tool is one of the kit's tools"
+    );
+    // Off by default, and written back as it was read.
+    let plain = with_gears(serde_json::json!([{"gear": "studio-usage"}]), &[]).unwrap();
+    assert!(!plain.gears[0].sync_only_with_kit);
+    let back = serde_json::to_value(&plain).unwrap();
+    assert_eq!(back["gears"], serde_json::json!([{"gear": "studio-usage"}]));
+    assert!(
+        serde_json::to_value(read_kit_json(OPS).unwrap())
+            .unwrap()
+            .get("gears")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_claim_is_refused_when_it_names_no_write_route_of_its_gear() {
+    let refused =
+        |gears: serde_json::Value, writes: &[&str]| with_gears(gears, writes).expect_err("refused");
+    // A read is never claimed.
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "routes": ["GET /studio-usage/v1/budgets"]}]),
+            &[],
+        )
+        .contains("reads are not claimed")
+    );
+    // Another gear's route.
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "routes": ["PUT /studio-reports/v1/x"]}]),
+            &["PUT /studio-reports/v1/x"],
+        )
+        .contains("not a route of `studio-usage`")
+    );
+    // A claimed route is one the kit writes.
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "routes": ["PUT /studio-usage/v1/budgets"]}]),
+            &[],
+        )
+        .contains("permissions.writes")
+    );
+    // Twice, or under a name that is not a gear's.
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "types": ["budget", "budget"]}]),
+            &[],
+        )
+        .contains("claimed twice")
+    );
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage"}, {"gear": "studio-usage"}]),
+            &[]
+        )
+        .contains("named twice")
+    );
+    assert!(refused(serde_json::json!([{"gear": "usage"}]), &[]).contains("gear's name"));
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "unknown": []}]),
+            &[]
+        )
+        .contains("does not read")
+    );
 }

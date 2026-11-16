@@ -194,7 +194,6 @@ async fn an_open_gear_type_can_be_written_after_uninstall_without_reinstalling_i
         .await
         .unwrap();
     port.ensure_type(&ctx(), &open).await.unwrap();
-    assert!(service.kit_models(&ctx()).await.unwrap().is_empty());
     let doc = service.ontology_document(&ctx()).await.unwrap();
     let entity = doc["entities"]
         .as_array()
@@ -205,6 +204,30 @@ async fn an_open_gear_type_can_be_written_after_uninstall_without_reinstalling_i
     assert_eq!(entity["meta"]["origin"], "gear");
     assert_eq!(entity["meta"]["kit"], "project-issues");
     assert!(entity["meta"].get("held_by").is_none());
+    // The kit claims it (ADR-0071 §3): the kits' reconciliation sees the
+    // kit, and where it does not apply leaves the type dormant.
+    assert_eq!(
+        service
+            .kit_models(&ctx())
+            .await
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["project-issues"]
+    );
+    service
+        .sync_kit_model(&ctx(), "project-issues", "", None)
+        .await
+        .unwrap();
+    let doc = service.ontology_document(&ctx()).await.unwrap();
+    let entity = doc["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "work-item")
+        .unwrap();
+    assert_eq!(entity["meta"]["left_by"]["kit"], "project-issues");
+    assert!(service.kit_models(&ctx()).await.unwrap().is_empty());
     port.put_objects(
         &ctx(),
         "work-item",

@@ -1636,6 +1636,27 @@ impl DocumentsData {
     }
 }
 
+/// Every type this gear's tables become, for the kits' claims test.
+#[cfg(test)]
+pub(super) fn table_needs() -> Vec<TypeNeed> {
+    vec![
+        doc_type::Model::need(),
+        analysis::Model::need(),
+        spec_extraction::Model::need(),
+        spec_judgement::Model::need(),
+        spec_decision::Model::need(),
+        spec_review::Model::need(),
+        spec_upload::Model::need(),
+        spec_term::Model::need(),
+        document::Model::need(),
+        document_binding::Model::need(),
+        application_part::Model::need(),
+        delivery_scope::Model::need(),
+        delivery_limit::Model::need(),
+        delivery_history::Model::need(),
+    ]
+}
+
 #[async_trait::async_trait]
 impl crate::model_sweep::TenantMover for DocumentsData {
     fn name(&self) -> &str {

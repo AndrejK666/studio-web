@@ -44,7 +44,7 @@ fn f(n: &str, t: &str) -> (String, String, String) {
     (n.to_string(), t.to_string(), String::new())
 }
 
-fn needs() -> Vec<TypeNeed> {
+pub(super) fn needs() -> Vec<TypeNeed> {
     vec![
         TypeNeed {
             declared_by: "studio-documents".to_owned(),

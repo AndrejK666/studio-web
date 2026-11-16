@@ -147,6 +147,8 @@ pub(crate) struct McpState {
     pub public_url: String,
     pub authn: Arc<dyn AuthNResolverClient>,
     pub limits: Arc<sdk::Limits>,
+    /// Where studio-kits answers whether a tool's kit applies (ADR-0071 §4).
+    pub hub: Arc<toolkit::client_hub::ClientHub>,
 }
 
 #[toolkit::gear(
@@ -180,6 +182,7 @@ impl Gear for McpGear {
             public_url: resolve(&cfg.public_url, &cfg.public_url_env),
             authn,
             limits: Arc::new(sdk::Limits::new([("spec_check", cfg.spec_checks_per_hour)])),
+            hub: ctx.client_hub(),
         });
         let _ = SELF_API.set((state.client.clone(), state.api_url.clone()));
         tracing::info!(

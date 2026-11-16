@@ -48,7 +48,7 @@ pub enum ProcessStorage {
 const STAGE_TYPE: &str = "lifecycle-stage";
 const CAPABILITY_TYPE: &str = "capability";
 
-fn stage_need() -> TypeNeed {
+pub(super) fn stage_need() -> TypeNeed {
     let f = |n: &str, t: &str, d: &str| (n.to_string(), t.to_string(), d.to_string());
     TypeNeed {
         declared_by: "studio-documents".to_owned(),
@@ -84,7 +84,7 @@ fn stage_need() -> TypeNeed {
     }
 }
 
-fn capability_need() -> TypeNeed {
+pub(super) fn capability_need() -> TypeNeed {
     let f = |n: &str, t: &str, d: &str| (n.to_string(), t.to_string(), d.to_string());
     TypeNeed {
         declared_by: "studio-documents".to_owned(),

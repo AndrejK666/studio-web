@@ -20,9 +20,6 @@ use crate::domain_model::port::{KitOverlay, is_refusal};
 
 /// The kit this is the function of.
 pub const SLUG: &str = "project-lifecycle";
-/// The `failed_precondition` kind for a project whose phase is asked for or
-/// set where Project lifecycle is not installed.
-pub const KIT_NOT_INSTALLED: &str = "KIT_NOT_INSTALLED";
 /// The `failed_precondition` kind for a move the lifecycle does not declare.
 pub const NO_SUCH_TRANSITION: &str = "NO_SUCH_TRANSITION";
 /// The `permission_denied` reason when the PDP refuses the project's write.

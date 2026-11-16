@@ -100,6 +100,130 @@ pub struct KitManifest {
     pub kinds: Vec<String>,
     #[serde(default)]
     pub docs: Vec<String>,
+    /// What the kit claims of each gear it stands for (ADR-0071 §1, §2):
+    /// the gear's types whose state and `meta.kit` the kit decides, the
+    /// gear's MCP tools and its write routes, which answer
+    /// `KIT_NOT_INSTALLED` where the kit does not apply. A claim declares
+    /// nothing: the type still comes from the gear's `TypeNeed`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gears: Vec<ManifestGearClaim>,
+}
+
+/// What a kit claims of one gear (ADR-0071 §2). One type, tool or write
+/// route belongs to one kit: two kits claiming the same is
+/// `KIT_MODEL_CONFLICT`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestGearClaim {
+    /// The gear's name, `studio-<name>`.
+    pub gear: String,
+    /// Ids of types the gear declares through its `TypeNeed`, held or open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub types: Vec<String>,
+    /// Names of tools the gear's MCP serves.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_tools: Vec<String>,
+    /// The gear's **write** routes, `METHOD /path` as `permissions.writes`
+    /// names them (and each is also there). Reads are never claimed: shell
+    /// summaries and other kits' screens keep reading them (ADR-0071 §4).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<String>,
+    /// The gear may skip its expensive sync of these types where the kit does
+    /// not apply (ADR-0071 §4). Off by default: with it, a reinstall finds
+    /// data only from the next sync on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sync_only_with_kit: bool,
+}
+
+/// The methods of a write route a kit may claim.
+pub const WRITE_METHODS: [&str; 4] = ["POST", "PUT", "PATCH", "DELETE"];
+
+/// `(method, path)` of a claimed route, `METHOD /path`, when it is a write
+/// route of `gear`'s own (`/<gear>/v1/…`); the error says why not.
+pub fn claimed_route<'a>(route: &'a str, gear: &str) -> Result<(&'a str, &'a str), String> {
+    let Some((method, path)) = route.split_once(' ') else {
+        return Err(format!("`{route}` is not `METHOD /path`"));
+    };
+    if !WRITE_METHODS.contains(&method) {
+        return Err(format!(
+            "`{route}` is not a write route ({}): reads are not claimed",
+            WRITE_METHODS.join(", ")
+        ));
+    }
+    let prefix = format!("/{gear}/v1/");
+    if !path.starts_with(&prefix) || path.contains(['?', '#', ' ']) || path.contains("//") {
+        return Err(format!("`{route}` is not a route of `{gear}` ({prefix}…)"));
+    }
+    Ok((method, path))
+}
+
+/// The `gears` section's own rules: gear names, ids and write routes as
+/// written, each claimed route also in `permissions.writes`, and nothing
+/// claimed twice. Whether two kits claim the same thing is checked where
+/// both are known (the built-in kits' test, the shelf).
+fn check_claims(m: &KitManifest) -> Result<(), String> {
+    let name_ok = |s: &str, sep: char| {
+        !s.is_empty()
+            && s.len() <= 80
+            && s.starts_with(|c: char| c.is_ascii_lowercase())
+            && s.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == sep)
+    };
+    let mut gears: Vec<&str> = Vec::new();
+    let mut types: Vec<&str> = Vec::new();
+    let mut tools: Vec<&str> = Vec::new();
+    let mut routes: Vec<&str> = Vec::new();
+    for claim in &m.gears {
+        if !claim.gear.starts_with("studio-") || !name_ok(&claim.gear, '-') {
+            return Err(format!(
+                "{KIT_JSON}: gears: `{}` is not a gear's name (`studio-<name>`)",
+                claim.gear
+            ));
+        }
+        if gears.contains(&claim.gear.as_str()) {
+            return Err(format!(
+                "{KIT_JSON}: gears: `{}` is named twice; one entry per gear",
+                claim.gear
+            ));
+        }
+        gears.push(&claim.gear);
+        if let Some(t) = claim.types.iter().find(|t| !name_ok(t, '-')) {
+            return Err(format!(
+                "{KIT_JSON}: gears: `{t}` is not a type id (lowercase letters, digits, `-`)"
+            ));
+        }
+        if let Some(t) = claim.mcp_tools.iter().find(|t| !name_ok(t, '_')) {
+            return Err(format!(
+                "{KIT_JSON}: gears: `{t}` is not a tool name (lowercase letters, digits, `_`)"
+            ));
+        }
+        for r in &claim.routes {
+            claimed_route(r, &claim.gear).map_err(|why| format!("{KIT_JSON}: gears: {why}"))?;
+            if !m.permissions.writes.contains(r) {
+                return Err(format!(
+                    "{KIT_JSON}: gears: `{r}` is claimed and `permissions.writes` does not name \
+                     it; a claimed route is one the kit writes"
+                ));
+            }
+        }
+        types.extend(claim.types.iter().map(String::as_str));
+        tools.extend(claim.mcp_tools.iter().map(String::as_str));
+        routes.extend(claim.routes.iter().map(String::as_str));
+    }
+    for (what, list) in [
+        ("type", &mut types),
+        ("tool", &mut tools),
+        ("route", &mut routes),
+    ] {
+        list.sort_unstable();
+        if let Some(w) = list.windows(2).find(|w| w[0] == w[1]) {
+            return Err(format!(
+                "{KIT_JSON}: gears: the {what} `{}` is claimed twice",
+                w[0]
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,6 +428,11 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
     (
         "constructor-research",
         include_str!("builtin/constructor-research.kit.json"),
+    ),
+    // The API reference: a screen (`contents.rs`) and the route it reads.
+    (
+        "studio-api-docs",
+        include_str!("builtin/studio-api-docs.kit.json"),
     ),
 ];
 
@@ -519,6 +648,7 @@ fn check(m: &KitManifest) -> Result<(), String> {
     if m.model.as_ref().is_some_and(|v| !v.is_object()) {
         return Err(format!("{KIT_JSON}: `model` is an object"));
     }
+    check_claims(m)?;
     // The overlay's own rules (ADR-0067 §6); the organization's model is
     // checked against it when the kit is installed.
     overlay_of(m)?;
@@ -727,7 +857,20 @@ pub fn contents_of(m: &KitManifest) -> KitContents {
                 destination: s.destination.clone(),
             })
             .collect(),
-        mcp_tools: named(&m.mcp_tools),
+        // The tools it names, and the gears' tools it claims (ADR-0071 §2).
+        mcp_tools: {
+            let mut tools: Vec<KitNamed> = named(&m.mcp_tools);
+            for name in m.gears.iter().flat_map(|g| &g.mcp_tools) {
+                if !tools.iter().any(|t| &t.name == name) {
+                    tools.push(KitNamed {
+                        name: name.clone(),
+                        description: None,
+                    });
+                }
+            }
+            tools
+        },
+        gears: m.gears.clone(),
         permissions: KitPermissions {
             reads: m.permissions.reads.clone(),
             writes: m.permissions.writes.clone(),

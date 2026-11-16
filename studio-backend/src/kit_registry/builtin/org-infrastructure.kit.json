@@ -23,5 +23,55 @@
         }
       }
     ]
-  }
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-environments/v1/environments",
+      "GET /studio-environments/v1/environments/{environment_id}/readiness",
+      "POST /studio-environments/v1/environments/{environment_id}/test",
+      "GET /studio-environments/v1/deployments",
+      "GET /studio-environments/v1/deployments/{deployment_id}/status",
+      "GET /studio-environments/v1/deployments/{deployment_id}/logs",
+      "GET /studio-environments/v1/research/projects",
+      "GET /studio-environments/v1/research/projects/{project}/hardware",
+      "GET /studio-environments/v1/namespace-assignments",
+      "GET /studio-environments/v1/image-retention",
+      "GET /studio-environments/v1/registries",
+      "GET /studio-environments/v1/registries/{connection_id}/repositories",
+      "GET /studio-environments/v1/registries/{connection_id}/repositories/{repository}/tags",
+      "GET /studio-environments/v1/registries/{connection_id}/orphans",
+      "GET /studio-connector/v1/connections",
+      "POST /studio-connector/v1/connections/{id}/test",
+      "GET /studio-kits/v1/installed-kits"
+    ],
+    "writes": [
+      "POST /studio-environments/v1/environments",
+      "PUT /studio-environments/v1/environments/{environment_id}",
+      "DELETE /studio-environments/v1/environments/{environment_id}",
+      "PUT /studio-environments/v1/open-clusters",
+      "POST /studio-environments/v1/deployments/{deployment_id}/decisions",
+      "PUT /studio-environments/v1/namespace-assignments",
+      "PUT /studio-environments/v1/image-retention",
+      "DELETE /studio-environments/v1/registries/{connection_id}/repositories/{repository}/versions/{digest}"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-environments",
+      "types": [
+        "deployment-environment",
+        "environment-binding",
+        "environment-config-secret"
+      ],
+      "routes": [
+        "POST /studio-environments/v1/environments",
+        "PUT /studio-environments/v1/environments/{environment_id}",
+        "DELETE /studio-environments/v1/environments/{environment_id}",
+        "PUT /studio-environments/v1/open-clusters",
+        "PUT /studio-environments/v1/namespace-assignments",
+        "PUT /studio-environments/v1/image-retention",
+        "DELETE /studio-environments/v1/registries/{connection_id}/repositories/{repository}/versions/{digest}"
+      ]
+    }
+  ]
 }

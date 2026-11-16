@@ -336,7 +336,14 @@ slot?}`), `model` (the overlay, §3.10), `rules` and `services` and
 `mcp_tools` (`{name, description?}`), `functions` (`{name, runtime:
 wasm|agent, description?}`), `inbox` (`{id, label, kind?: query|endpoint,
 query?, path?, title?, workspace_field?}`, §3.11), `permissions` (`{reads,
-writes, listens}`), `material` (`{path, description?}`), `kinds`, `docs`. A
+writes, listens}`), `material` (`{path, description?}`), `kinds`, `docs`,
+and `gears` (ADR-0071 §2): per gear, `{gear, types?, mcp_tools?, routes?,
+sync_only_with_kit?}`, the gear's types, MCP tools and **write** routes the
+kit claims. A claimed route is `METHOD /<gear>/v1/…`, never a `GET`, and is
+also in `permissions.writes`; nothing is claimed twice in one manifest, and a
+shelf kit may not claim what a built-in kit claims, a core gear type or a
+shell tool (`KIT_MODEL_CONFLICT`). `kit.gdl` takes the same shape
+(`gears = [kit_gear_claim(gear = …, types = […], …)]`). A
 kit described only by `.cf-studio-kit.toml` brings working material: its
 resources' install paths and its artifact kinds; a manifest that lists
 several kits needs `slug` to say which.
@@ -790,10 +797,10 @@ Its compiled-in `kit.json` is `kit_registry/builtin/constructor-research.kit.jso
 | Part | What | Where |
 |---|---|---|
 | tab | Organization › Constructor Research (`/constructor-research`): the member's own sign-in, the steps sign in → connect a Research project → build and deploy from Releases, and each Research environment with its project and hardware, Test, Change and what each project runs there (status, logs, address) | `infrastructure-mfe`, second entry `./researchLifecycle` |
-| function | the gate: studio-environments asks studio-kits (`KitPresence`) before it adds or changes a Research environment, lists a connection's Research projects or hardware, or starts a build, deploy or rollback to Research; without the kit, 400 `failed_precondition` `KIT_NOT_INSTALLED` naming the kit | `environments/service.rs` `require_research_kit` |
+| function | the gate: studio-environments asks studio-kits (`KitPresence`) before it adds or changes a Research environment, lists a connection's Research projects or hardware, or starts a build, deploy or rollback to Research; without the kit, 400 `failed_precondition` `KIT_NOT_INSTALLED` naming the kit, studio-kits' one shared answer (ADR-0071 §4) | `environments/service.rs` `require_research_kit` → `kit_registry::port::require_kit` |
 | inbox-source | `deploy-failed` and `sign-in-expires`, both of kind `endpoint` (§3.11) | `GET /studio-environments/v1/research/inbox/deploys`, `…/research/inbox/sign-in` |
 | mcp-tool | `research_projects`, `research_hardware`; the build and deploy themselves are `build_start` and `deploy_request` on a Research environment | `environments/mcp.rs` |
-| permissions | the routes its screen and its Inbox sources call (`contents.rs`, `kit.json`) | |
+| permissions | the routes its screen and its Inbox sources call (`kit.json`) | |
 
 **Where the gate looks.** A request about a project -- a build, a deploy, a
 rollback, the project's own Research environment -- asks the project's
