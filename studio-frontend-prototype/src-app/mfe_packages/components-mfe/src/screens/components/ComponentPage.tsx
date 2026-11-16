@@ -11,8 +11,21 @@
  * the UML blocks (mermaid).
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs, TabsList, TabsTrigger, Textarea } from '@gears-frontx/ui-kit';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Badge,
+  Button,
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  Textarea,
+  type DataGridTableColumn,
+} from '@gears-frontx/ui-kit';
+import { GridEmpty, ListGrid, createGridCells, useLocalGridLoad } from '@constructor-studio/mfe-shared/grid';
 import type { CatalogNode, FieldVal } from '../../api/types';
 import {
   answeredGroups,
@@ -532,40 +545,91 @@ function Versions({ name, rows, repository, t }: { name: string; rows: CatalogNo
       </header>
       {rows === null ? (
         <p className={styles.sub}>{t('loading_versions')}</p>
-      ) : rows.length === 0 ? (
-        <p className={styles.sub}>{t('no_versions')}</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('col_version')}</TableHead>
-              <TableHead>{t('col_published')}</TableHead>
-              <TableHead>{t('col_license')}</TableHead>
-              <TableHead>Rust</TableHead>
-              <TableHead>{t('col_size')}</TableHead>
-              <TableHead className={styles.num}>{t('col_downloads')}</TableHead>
-              <TableHead>{t('col_by')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((v) => (
-              <TableRow key={v.instance_id}>
-                <TableCell>
-                  <code>{String(v.value.num ?? '—')}</code>
-                  {v.value.yanked ? <span className={styles.warnText}> · {t('yanked')}</span> : ''}
-                </TableCell>
-                <TableCell>{dateText(v.value.created_at)}</TableCell>
-                <TableCell>{String(v.value.license ?? '—')}</TableCell>
-                <TableCell>{String(v.value.rust_version ?? '—')}</TableCell>
-                <TableCell>{sizeText(v.value.crate_size)}</TableCell>
-                <TableCell className={styles.num}>{numText(v.value.downloads)}</TableCell>
-                <TableCell>{publishedBy(v.value.published_by)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <VersionsGrid rows={rows} t={t} />
       )}
     </section>
+  );
+}
+
+/* ── the published versions on the kit's DataGrid (#1076) ── */
+
+/** A row of the versions grid: one published version. */
+interface VersionRow {
+  id: string;
+  node: CatalogNode;
+}
+
+const numberOf = (value: unknown): number => (typeof value === 'number' ? value : -Infinity);
+const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
+
+const VERSION_OPTIONS = {
+  compare: {
+    version: (a: VersionRow, b: VersionRow) =>
+      String(a.node.value.num ?? '').localeCompare(String(b.node.value.num ?? ''), undefined, { numeric: true }),
+    published: (a: VersionRow, b: VersionRow) => textOf(a.node.value.created_at).localeCompare(textOf(b.node.value.created_at)),
+    size: (a: VersionRow, b: VersionRow) => numberOf(a.node.value.crate_size) - numberOf(b.node.value.crate_size),
+    downloads: (a: VersionRow, b: VersionRow) => numberOf(a.node.value.downloads) - numberOf(b.node.value.downloads),
+  },
+};
+
+const [VersionCellsProvider, useVersionCells] = createGridCells<{ t: Text }>('Versions');
+
+const VersionCell: React.FC<{ item: VersionRow }> = ({ item }) => {
+  const { t } = useVersionCells();
+  return (
+    <>
+      <code>{String(item.node.value.num ?? '—')}</code>
+      {item.node.value.yanked ? <span className={styles.warnText}> · {t('yanked')}</span> : ''}
+    </>
+  );
+};
+
+const PublishedCell: React.FC<{ item: VersionRow }> = ({ item }) => <>{dateText(item.node.value.created_at)}</>;
+const LicenseCell: React.FC<{ item: VersionRow }> = ({ item }) => <>{String(item.node.value.license ?? '—')}</>;
+const RustCell: React.FC<{ item: VersionRow }> = ({ item }) => <>{String(item.node.value.rust_version ?? '—')}</>;
+const SizeCell: React.FC<{ item: VersionRow }> = ({ item }) => <>{sizeText(item.node.value.crate_size)}</>;
+const DownloadsCell: React.FC<{ item: VersionRow }> = ({ item }) => (
+  <div className={styles.num}>{numText(item.node.value.downloads)}</div>
+);
+const ByCell: React.FC<{ item: VersionRow }> = ({ item }) => <>{publishedBy(item.node.value.published_by)}</>;
+
+const VersionsEmpty: React.FC = () => {
+  const { t } = useVersionCells();
+  return <GridEmpty title={t('no_versions')} noMatches={t('nothing_matches')} />;
+};
+
+/** The versions in the order served; sortable by version, date, size and downloads. */
+function VersionsGrid({ rows, t }: { rows: CatalogNode[]; t: Text }) {
+  const items = useMemo<VersionRow[]>(() => rows.map((node) => ({ id: node.instance_id, node })), [rows]);
+  const { load, reloadBridge } = useLocalGridLoad(items, VERSION_OPTIONS);
+  const columns = useMemo<DataGridTableColumn<VersionRow>[]>(
+    () => [
+      { id: 'version', label: t('col_version'), component: VersionCell, minWidth: 140 },
+      { id: 'published', label: t('col_published'), component: PublishedCell, width: 120 },
+      { id: 'license', label: t('col_license'), component: LicenseCell, width: 140 },
+      { id: 'rust', label: 'Rust', component: RustCell, width: 90 },
+      { id: 'size', label: t('col_size'), component: SizeCell, width: 100 },
+      { id: 'downloads', label: t('col_downloads'), component: DownloadsCell, width: 120 },
+      { id: 'by', label: t('col_by'), component: ByCell, width: 160 },
+    ],
+    [t]
+  );
+  const cells = useMemo(() => ({ t }), [t]);
+  return (
+    <VersionCellsProvider value={cells}>
+      <ListGrid<VersionRow>
+        name="component_versions"
+        label={t('published_versions')}
+        columns={columns}
+        load={load}
+        empty={VersionsEmpty}
+        unsortable={['license', 'rust', 'by']}
+        minWidth="48rem"
+      >
+        {reloadBridge}
+      </ListGrid>
+    </VersionCellsProvider>
   );
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Tenant } from '@constructor-studio/mfe-shared';
 import type { OrgOverview, OrgWorkspace } from '../../overview/types';
-import { healthOf, matchesManaged, visibleWorkspaces, workspaceSummary } from './model';
+import { healthOf, matchesManaged, workspaceSummary } from './model';
 
 const ws = (name: string, extra: Partial<Tenant> = {}): Tenant =>
   ({ id: name.toLowerCase(), name, status: 'active', self_managed: false, depth: 2, child_count: 1, created_at: '', updated_at: '', ...extra }) as Tenant;
@@ -39,13 +39,6 @@ describe('workspaces model', () => {
     expect([matchesManaged(self, 'self'), matchesManaged(org, 'self')]).toEqual([true, false]);
     expect([matchesManaged(self, 'org'), matchesManaged(org, 'org')]).toEqual([false, true]);
     expect([matchesManaged(self, 'all'), matchesManaged(org, 'all')]).toEqual([true, true]);
-  });
-
-  it('searches by name, filters by management and sorts by name', () => {
-    const rows = [ws('Zeta'), ws('alpha', { self_managed: true }), ws('Beta')];
-    expect(visibleWorkspaces(rows, '', 'all').map((r) => r.name)).toEqual(['alpha', 'Beta', 'Zeta']);
-    expect(visibleWorkspaces(rows, ' ET ', 'all').map((r) => r.name)).toEqual(['Beta', 'Zeta']);
-    expect(visibleWorkspaces(rows, '', 'self').map((r) => r.name)).toEqual(['alpha']);
   });
 
   it('finds a workspace in the overview by id', () => {

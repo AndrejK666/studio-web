@@ -15,6 +15,10 @@ import {
 import { STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION } from '@constructor-studio/mfe-shared';
 import { CONNECTION_LIST_NAMESPACE } from './i18n';
 import en from './screens/connection-list/i18n/en.json';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
+
+// The list's DataGrid measures its table.
+stubResizeObserver();
 
 type BridgeFixture = ReturnType<typeof createMfeBridgeFixture>;
 type TestBridge = BridgeFixture['bridge'];
@@ -146,10 +150,11 @@ describe('connections-mfe lifecycle', () => {
     );
 
     // The scaffold's HomeScreen is gone; the toolbar and the empty state are
-    // what prove the lifecycle now mounts the connections list instead.
+    // what prove the lifecycle now mounts the connections list instead. The
+    // grid (its search box, its empty state) loads its rows asynchronously.
     expect(screen.getByRole('heading', { name: en.title })).toBeTruthy();
-    expect(screen.getByRole('searchbox', { name: en.search_placeholder })).toBeTruthy();
-    expect(screen.getByText(en.empty_title)).toBeTruthy();
+    expect(await screen.findByPlaceholderText(en.search_placeholder)).toBeTruthy();
+    expect(await screen.findByText(en.empty_title)).toBeTruthy();
   });
 
   it('inherits base mount behavior from StudioMfeLifecycle', async () => {

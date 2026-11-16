@@ -2,12 +2,15 @@
  * The roadmap report as the Reports screen draws it (the prototype's
  * roadmap-report-view.tsx `RoadmapReportBody`): what the board plans, whether
  * the plan holds — the counts, by group, stage, plan, milestone and consumer,
- * the overdue milestones and a row per planned gear. Every number is the
+ * the overdue milestones and a row per planned gear. The counts are the
+ * report's own pivots (a column per progress axis, a row per label), drawn as
+ * small tables; the gears are a list, on the kit's DataGrid (RoadmapGearsGrid,
+ * #1076). Every number is the
  * server's (`studio-reports`, the last board sync and the plan the last
  * refresh read). `version` reads it again.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Empty,
   EmptyDescription,
@@ -22,12 +25,10 @@ import {
 } from '@gears-frontx/ui-kit';
 import { apiRegistry } from '@gears-frontx/react';
 import { ReportsApiService } from '../../api/ReportsApiService';
-import { demandText, type RoadmapGroup, type RoadmapReport } from '../../model/roadmap-report';
-import { KpiTile, StatusChip, errText, type Text, type Tone } from './parts';
+import type { RoadmapGroup, RoadmapReport } from '../../model/roadmap-report';
+import { KpiTile, StatusChip, errText, type Text } from './parts';
+import { RoadmapGearsGrid, gearRows } from './RoadmapGearsGrid';
 import styles from './ReportsScreen.module.css';
-
-/** A plan lamp as a chip tone. */
-const LAMP: Record<string, Tone> = { good: 'ok', watch: 'warn', bad: 'danger' };
 
 /** The progress axes across the groups, in board order. */
 function axisLabels(groups: RoadmapGroup[]): string[] {
@@ -63,6 +64,8 @@ export function RoadmapReportBody({
   const report = read?.report ?? null;
   const s = report?.summary;
   const axes = s ? axisLabels(s.by_group) : [];
+  // One array per read: every new one reloads the grid.
+  const rows = useMemo(() => gearRows(report?.items ?? []), [report]);
   return (
     <div className={styles.roadmap} data-roadmap>
       {read?.error && (
@@ -223,56 +226,8 @@ export function RoadmapReportBody({
                   </StatusChip>
                 </div>
               )}
-              <div className={styles.scroll}>
-                <Table className={styles.small} data-roadmap-rows>
-                  <TableHeader>
-                    <TableRow>
-                      {(['col_gear', 'col_stage', 'col_milestone', 'col_plan', 'col_demand', 'col_assignees', 'col_effort', 'col_grade'] as const).map(
-                        (h) => (
-                          <TableHead key={h}>{t(h)}</TableHead>
-                        )
-                      )}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {report.items.map((row) => {
-                      const r = row.readiness;
-                      return (
-                        <TableRow key={`${row.number ?? ''}:${row.title}`} data-roadmap-row={row.title}>
-                          <TableCell className={styles.top}>
-                            {r.roadmap_item ? (
-                              <a href={r.roadmap_item} target="_blank" rel="noreferrer" title={row.roadmap_title ?? ''}>
-                                {row.title}
-                              </a>
-                            ) : (
-                              row.title
-                            )}
-                            <div className={styles.sub}>{row.components.length ? row.components.join(', ') : t('not_in_code')}</div>
-                          </TableCell>
-                          <TableCell className={styles.top}>{r.stage ?? ''}</TableCell>
-                          <TableCell className={`${styles.top} ${styles.date}`}>
-                            {r.milestone ?? ''}
-                            {r.due && <span className={styles.mutedInline}> · {r.due}</span>}
-                            {r.committed && ` · ${t('committed')}`}
-                          </TableCell>
-                          <TableCell className={styles.top} title={r.plan_reasons.join('\n')}>
-                            {r.plan && <StatusChip tone={LAMP[r.plan_lamp ?? ''] ?? 'neutral'}>{r.plan}</StatusChip>}
-                            {r.plan_reasons.length > 0 && <div className={styles.mutedInline}>{r.plan_reasons.join('; ')}</div>}
-                          </TableCell>
-                          <TableCell className={styles.top}>{demandText(r.demand)}</TableCell>
-                          <TableCell className={styles.top}>{row.assignees ?? ''}</TableCell>
-                          <TableCell className={`${styles.top} ${styles.num}`}>
-                            {row.effort_md === null ? '' : t('days', { n: row.effort_md })}
-                            {row.remaining_md !== null && row.remaining_md !== row.effort_md && (
-                              <div className={styles.sub}>{t('days_left', { n: Math.round(row.remaining_md) })}</div>
-                            )}
-                          </TableCell>
-                          <TableCell className={styles.top}>{r.grade ?? ''}</TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+              <div data-roadmap-rows>
+                <RoadmapGearsGrid rows={rows} t={t} />
               </div>
             </>
           )}

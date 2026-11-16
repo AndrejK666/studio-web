@@ -2,53 +2,33 @@
  * The organization's component registry (ADR-0041), the prototype's
  * `ComponentRegistry`: every component its projects declare — a `gear.toml`
  * or `gear.gdl` directory, a `#[toolkit::gear]` attribute, a FrontX package,
- * a kit manifest — laid beside what its catalogue holds, one row each. A row
- * opens under itself: why it looks like a gear, who owns it, where it is
+ * a kit manifest — laid beside what its catalogue holds, one row each, on the
+ * kit's DataGrid (`RegistryGrid`). A row opens under the list: why it looks
+ * like a gear, who owns it, where it is
  * declared, what was contributed or extracted, and the decisions it allows
  * (an organization administrator's; anyone else is told so by the 403).
  * "Needs a decision" lists the candidates, strongest first.
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Badge,
-  Button,
-  Checkbox,
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-  Input,
-  NativeSelect,
-  NativeSelectOption,
-  Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@gears-frontx/ui-kit';
+import { Badge, Button, Checkbox, Empty, EmptyHeader, EmptyTitle, Skeleton } from '@gears-frontx/ui-kit';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import type { CatalogNode, RegistryEntry, RegistryProjectWalk } from '../../api/types';
-import { ROW_STATES, componentRows, nameOf, rowMatches, type ComponentRow } from '../../model/catalogue';
+import { componentRows } from '../../model/catalogue';
 import {
-  STATE_LABEL,
-  STATE_TONE,
   candidateWhere,
   candidatesOf,
-  consumersLabel,
   evidenceLines,
   isDuplicated,
   isOrphaned,
-  projectsOf,
-  publishStatus,
   registryProjects,
   stateCounts,
   walkLine,
 } from '../../model/registry';
 import { api, errText, statusOf, useScope, waitForSync } from './common';
-import { EntryDetail, RegistryDecisions, DeclareCandidate, type Person } from './RegistryEntry';
-import { StatusChip, toneOf } from './parts';
+import { RegistryDecisions, DeclareCandidate, type Person } from './RegistryEntry';
+import { RegistryGrid } from './RegistryGrid';
+import { StatusChip } from './parts';
 import styles from './ComponentsScreen.module.css';
 
 /** What the registry tells the screen's header. */
@@ -192,9 +172,13 @@ export function Registry({
 
   return (
     <section className={styles.stack} data-component-registry>
-      {error && <p className={styles.error}>{error}</p>}
+      {error && loaded !== null && <p className={styles.error}>{error}</p>}
       {loaded === null ? (
-        error ? null : <Skeleton className={styles.skeleton} />
+        error ? (
+          <GridFailed message={error} retry={t('retry')} onRetry={load} />
+        ) : (
+          <Skeleton className={styles.skeleton} />
+        )
       ) : (
         <>
           <p className={styles.sub}>
@@ -214,7 +198,7 @@ export function Registry({
               <CandidatesView entries={loaded.entries} people={people} names={names} onDecided={load} />
             </>
           ) : (
-            <RegistryTable
+            <RegistryGrid
               rows={rows}
               entries={loaded.entries}
               withCatalogue={catalogue.length > 0}
@@ -223,22 +207,9 @@ export function Registry({
               onDecided={load}
               onOpenComponent={onOpenComponent}
               platformAdmin={platformAdmin}
-              decideChip={
-                (counts.candidate ?? 0) > 0 ? (
-                  <StatusChip
-                    tone="warn"
-                    onClick={() => onCandidates(true)}
-                    title={
-                      orphaned > 0
-                        ? t('decide_title_orphaned', { candidates: counts.candidate ?? 0, orphaned })
-                        : t('decide_title')
-                    }
-                    data-registry-candidates-tab
-                  >
-                    {t('needs_decision_chip', { count: counts.candidate ?? 0 })}
-                  </StatusChip>
-                ) : null
-              }
+              candidates={counts.candidate ?? 0}
+              orphaned={orphaned}
+              onCandidates={onCandidates}
             />
           )}
           <ProjectsRead loaded={loaded} entries={loaded.entries} onToggle={(id) => void toggleProject(id)} />
@@ -321,256 +292,6 @@ function ProjectsRead({ loaded, entries, onToggle }: { loaded: Loaded; entries: 
         </ul>
       )}
     </details>
-  );
-}
-
-/* ── the list ───────────────────────────────────────────────────────────── */
-
-function RegistryTable({
-  rows,
-  entries,
-  withCatalogue,
-  people,
-  names,
-  onDecided,
-  onOpenComponent,
-  platformAdmin,
-  decideChip,
-}: {
-  rows: ComponentRow[];
-  entries: RegistryEntry[];
-  withCatalogue: boolean;
-  people: Person[];
-  names: Record<string, string>;
-  onDecided: () => void;
-  onOpenComponent: (name: string) => void;
-  platformAdmin: boolean;
-  decideChip: React.ReactNode;
-}) {
-  const { t } = useScope();
-  const [q, setQ] = useState('');
-  const [state, setState] = useState('');
-  const [kind, setKind] = useState('');
-  const [project, setProject] = useState('');
-  const [open, setOpen] = useState<string | null>(null);
-  const kinds = useMemo(() => [...new Set(rows.map((r) => r.kind).filter(Boolean))].sort(), [rows]);
-  const seen = useMemo(() => registryProjects(entries), [entries]);
-  const states = ROW_STATES.filter((st) => rows.some((r) => r.state === st));
-  const shown = rows.filter(
-    (r) =>
-      rowMatches(r, q) &&
-      (!state || r.state === state) &&
-      (!kind || r.kind === kind) &&
-      (!project || (r.entry?.occurrences ?? []).some((o) => o.project_id === project))
-  );
-  const filtered = !!(q.trim() || state || kind || project);
-  const columns = 4 + (withCatalogue ? 2 : 0);
-
-  return (
-    <>
-      <div className={styles.toolbar}>
-        <Input
-          type="search"
-          className={styles.search}
-          placeholder={t('search_registry')}
-          aria-label={t('search_registry')}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        {states.length > 1 && (
-          <span className={styles.chips} role="group" aria-label={t('every_state')}>
-            {states.map((st) => (
-              <StatusChip
-                key={st}
-                tone={state === st ? 'info' : 'neutral'}
-                pressed={state === st}
-                onClick={() => setState(state === st ? '' : st)}
-                data-state-chip={st}
-              >
-                {STATE_LABEL[st] ?? st} {rows.filter((r) => r.state === st).length}
-              </StatusChip>
-            ))}
-          </span>
-        )}
-        {kinds.length > 1 && (
-          <NativeSelect aria-label={t('every_type')} value={kind} onChange={(e) => setKind(e.target.value)}>
-            <NativeSelectOption value="">{t('every_type')}</NativeSelectOption>
-            {kinds.map((k) => (
-              <NativeSelectOption key={k} value={k}>
-                {k}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        )}
-        {seen.length > 1 && (
-          <NativeSelect aria-label={t('every_project')} value={project} onChange={(e) => setProject(e.target.value)}>
-            <NativeSelectOption value="">{t('every_project')}</NativeSelectOption>
-            {seen.map((p) => (
-              <NativeSelectOption key={p.id} value={p.id}>
-                {p.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        )}
-        {decideChip}
-        {filtered && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setQ('');
-              setState('');
-              setKind('');
-              setProject('');
-            }}
-          >
-            {t('clear_filters')}
-          </Button>
-        )}
-      </div>
-      {shown.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>{entries.length === 0 && rows.length === 0 ? t('nothing_read') : t('no_component_matches')}</EmptyTitle>
-            {entries.length === 0 && rows.length === 0 && <EmptyDescription>{t('nothing_read_body')}</EmptyDescription>}
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <Table data-registry-table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('col_component')}</TableHead>
-              <TableHead>{t('col_state')}</TableHead>
-              <TableHead>{t('col_projects')}</TableHead>
-              <TableHead>{t('col_declared_at')}</TableHead>
-              {withCatalogue && <TableHead>{t('col_release')}</TableHead>}
-              {withCatalogue && <TableHead className={styles.num}>{t('col_downloads')}</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {shown.map((r) => (
-              <React.Fragment key={r.key}>
-                <TableRow
-                  className={styles.openRow}
-                  aria-expanded={open === r.key}
-                  onClick={() => setOpen(open === r.key ? null : r.key)}
-                  data-registry-row={r.name}
-                >
-                  <TableCell className={styles.lead}>
-                    <span className={styles.name}>{r.name}</span> <span className={styles.sub}>{r.kind}</span>
-                    {r.entry && isDuplicated(r.entry) && (
-                      <Badge variant="warning" title={t('declared_many_title')}>
-                        ×{new Set(r.entry.occurrences.map((o) => o.repo)).size} {t('repos')}
-                      </Badge>
-                    )}
-                    {r.entry && isOrphaned(r.entry) && (
-                      <Badge variant="secondary" title={t('orphaned_title')}>
-                        {t('orphaned')}
-                      </Badge>
-                    )}
-                    {r.description && <div className={styles.purpose}>{r.description}</div>}
-                  </TableCell>
-                  <TableCell>
-                    <StateCell row={r} />
-                  </TableCell>
-                  <TableCell>
-                    {r.entry ? (
-                      <>
-                        {projectsOf(r.entry).join(', ') || '—'}
-                        {consumersLabel(r.entry) && (
-                          <div className={styles.sub} data-registry-used-by>
-                            {consumersLabel(r.entry)}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <span className={styles.muted}>—</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <DeclaredAt row={r} />
-                  </TableCell>
-                  {withCatalogue && (
-                    <TableCell>
-                      {r.node && (r.node.value.max_stable_version ?? r.node.value.newest_version) ? (
-                        <code className={styles.version}>{String(r.node.value.max_stable_version ?? r.node.value.newest_version)}</code>
-                      ) : (
-                        <span className={styles.muted}>—</span>
-                      )}
-                    </TableCell>
-                  )}
-                  {withCatalogue && (
-                    <TableCell className={styles.num}>
-                      {r.node?.value.downloads != null ? Number(r.node.value.downloads).toLocaleString('en-US') : <span className={styles.muted}>—</span>}
-                    </TableCell>
-                  )}
-                </TableRow>
-                {open === r.key && (
-                  <TableRow data-registry-expanded={r.name}>
-                    <TableCell colSpan={columns} className={styles.expanded}>
-                      {r.entry ? (
-                        <EntryDetail
-                          entry={r.entry}
-                          entries={entries}
-                          people={people}
-                          names={names}
-                          onDecided={onDecided}
-                          onOpenComponent={r.node ? () => onOpenComponent(nameOf(r.node!)) : undefined}
-                          platformAdmin={platformAdmin}
-                        />
-                      ) : (
-                        <div className={styles.sub}>
-                          {t('published_no_project')}{' '}
-                          {r.node && (
-                            <Button variant="link" size="sm" onClick={() => onOpenComponent(nameOf(r.node!))}>
-                              {t('open_page')} →
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                )}
-              </React.Fragment>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </>
-  );
-}
-
-function StateCell({ row: r }: { row: ComponentRow }) {
-  const published = r.entry ? publishStatus(r.entry) : null;
-  return (
-    <span className={styles.chips}>
-      <StatusChip tone={STATE_TONE[r.state] !== undefined ? toneOf(STATE_TONE[r.state]) : r.state === 'published' ? 'ok' : 'neutral'}>
-        {STATE_LABEL[r.state] ?? r.state}
-      </StatusChip>
-      {published && (
-        <StatusChip tone={published.kind === 'published' ? 'ok' : 'info'} data-registry-publish-status>
-          {published.label}
-        </StatusChip>
-      )}
-    </span>
-  );
-}
-
-function DeclaredAt({ row: r }: { row: ComponentRow }) {
-  const { t } = useScope();
-  const first = r.entry?.occurrences[0];
-  if (!first) {
-    return r.node?.value.repository ? (
-      <span className={styles.sub}>{String(r.node.value.repository).replace(/^https?:\/\//, '')}</span>
-    ) : (
-      <span className={styles.muted}>—</span>
-    );
-  }
-  return (
-    <span className={styles.sub}>
-      <code>{first.path}</code> ({first.declared_in})
-      {r.entry!.occurrences.length > 1 && ` ${t('and_more', { count: r.entry!.occurrences.length - 1 })}`}
-    </span>
   );
 }
 

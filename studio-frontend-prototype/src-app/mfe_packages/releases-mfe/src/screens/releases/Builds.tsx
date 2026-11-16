@@ -3,56 +3,40 @@
  * prototype's builds-tab.tsx (00828880) carried over in part. One line says
  * where the builds stand; Build in CI -- the repository's workflow, its runs,
  * which one is the project's build workflow -- then the product's builds,
- * from Studio, the IDE or CI, as one table: the newest open with how far it
+ * from Studio, the IDE or CI, as one list (BuildsGrids.tsx, the kit's DataGrid
+ * as Specs, #1076): the newest open under it with how far it
  * got (prepare, images, publish), its log, what failed and whose it is to
  * fix, and, once it published its chart, Deploy. A run of the project's
  * build workflow is one of them even when it left no manifest.
  */
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
-import {
-  Badge,
-  Button,
-  NativeSelect,
-  NativeSelectOption,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@gears-frontx/ui-kit';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Badge, Button, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
 import { isNotFound } from '@constructor-studio/mfe-shared';
 import type { BuildLog, Deployment, DeployEnvironment, ProjectBuildConfig, ProjectImage } from '../../api/types';
 import {
-  BUILD_STAGES,
-  buildDuration,
-  buildStages,
   buildWorkflowOf,
   buildsHeadline,
   buildsOf,
   ciReadFailures,
   failureCause,
-  ideBuildDuration,
   isBuildWorkflow,
   isLost,
   placeLines,
   productBuildsOf,
   repoPathsOf,
-  statusTone,
   stepToShow,
   workflowsOf,
   type BuildRun,
-  type BuildStage,
-  type BuildStatus,
   type BuildWorkflow,
   type IdeBuild,
   type StageState,
 } from '../../model/builds';
 import { recordFor, whereItRuns } from '../../model/images';
 import { buildsHint } from '../../model/pipeline';
+import { CiRunsGrid, ProductBuildsGrid, STAGE_MARK } from './BuildsGrids';
 import { DeployBuildTo } from './DeployActions';
-import { ErrorLine, TONE_BADGE, When, errText, useApi, useReleases, type Tone } from './parts';
+import { ErrorLine, errText, useApi, useReleases } from './parts';
 import { NextLine } from './NextLine';
 import styles from './ReleasesScreen.module.css';
 
@@ -62,19 +46,8 @@ const LIMIT = 200;
 /** How often the product's builds are read again while one runs. */
 const FOLLOW_MS = 10_000;
 
-/** CI runs shown before Show all: the newest of the chosen workflow. */
-const RUNS_SHOWN = 10;
-
 /** How often an open log is read again while its build runs. */
 const LOG_FOLLOW_MS = 5_000;
-
-/** A build's status as a chip's tone: statusTone, with a running build drawn as running. */
-function buildTone(status: BuildStatus): Tone {
-  return status === 'running' ? 'running' : (statusTone(status) as Tone);
-}
-
-const STAGE_TONE: Record<StageState, Tone> = { done: 'ok', running: 'running', failed: 'danger', waiting: 'neutral' };
-const STAGE_MARK: Record<StageState, string> = { done: '✓', running: '…', failed: '✕', waiting: '' };
 
 /** A pod step's state as a stage's, for its mark. */
 const STEP_STAGE: Record<string, StageState> = { passed: 'done', running: 'running', failed: 'failed', waiting: 'waiting' };
@@ -203,11 +176,10 @@ function InCi({
   builds: IdeBuild[];
   now: number;
 }) {
-  const { t, language, projectId } = useReleases();
+  const { t, projectId } = useReleases();
   const api = useApi();
   const [workflow, setWorkflow] = useState('');
   const [branch, setBranch] = useState('');
-  const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -232,8 +204,11 @@ function InCi({
       [...new Set((runs ?? []).filter((r) => r.workflow === chosen).map((r) => r.branch).filter(Boolean))] as string[],
     [runs, chosen]
   );
-  const matching = (runs ?? []).filter((r) => r.workflow === chosen && (!branch || r.branch === branch));
-  const shown = all ? matching : matching.slice(0, RUNS_SHOWN);
+  // One array while nothing changed: every new one reloads the grid.
+  const matching = useMemo(
+    () => (runs ?? []).filter((r) => r.workflow === chosen && (!branch || r.branch === branch)),
+    [runs, chosen, branch]
+  );
 
   const act = async (what: () => Promise<string>) => {
     setBusy(true);
@@ -360,61 +335,7 @@ function InCi({
               </Button>
             </div>
           </div>
-          <Table data-builds-table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('col_status')}</TableHead>
-                <TableHead>{t('col_commit')}</TableHead>
-                <TableHead>{t('branch')}</TableHead>
-                <TableHead>{t('col_started_by')}</TableHead>
-                <TableHead>{t('col_when')}</TableHead>
-                <TableHead>{t('col_took')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {shown.map((r) => {
-                const chart = r.externalId ? published.get(`ci-run-${r.externalId}`) : undefined;
-                return (
-                  <TableRow key={r.id} data-build-status={r.status}>
-                    <TableCell>
-                      <Badge variant={TONE_BADGE[buildTone(r.status)]}>{r.status}</Badge>
-                      {chart ? (
-                        <span className={styles.muted} data-run-published>
-                          {' '}
-                          · {t('published')} <code>{chart}</code>
-                        </span>
-                      ) : null}
-                    </TableCell>
-                    <TableCell>
-                      <code>{r.shortSha}</code>{' '}
-                      {r.url ? (
-                        <a href={r.url} target="_blank" rel="noreferrer">
-                          {r.title || t('run_number', { number: r.number ?? '' })}
-                        </a>
-                      ) : (
-                        r.title
-                      )}
-                      {r.attempt && r.attempt > 1 ? (
-                        <span className={styles.muted}> · {t('attempt', { attempt: r.attempt })}</span>
-                      ) : null}
-                    </TableCell>
-                    <TableCell>{r.branch ?? '—'}</TableCell>
-                    <TableCell>
-                      {r.author ?? '—'}
-                      {r.event ? <span className={styles.muted}> · {r.event}</span> : null}
-                    </TableCell>
-                    <TableCell>{r.createdAt ? new Date(r.createdAt).toLocaleString(language) : '—'}</TableCell>
-                    <TableCell>{buildDuration(r, now) ?? '—'}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-          {matching.length > RUNS_SHOWN && (
-            <button type="button" className={styles.link} onClick={() => setAll((v) => !v)} data-builds-show-all>
-              {all ? t('show_newest', { count: RUNS_SHOWN }) : t('show_all_runs', { count: matching.length })}
-            </button>
-          )}
+          <CiRunsGrid runs={matching} now={now} published={published} />
         </>
       )}
     </div>
@@ -422,9 +343,10 @@ function InCi({
 }
 
 /** The product's builds, newest first -- run by Studio, the IDE or CI -- as
- *  one table. The newest is open under its row: its log, what failed or what
- *  it published, and Deploy; another opens on a click. A Studio build whose
- *  Job's hour is long past without word is lost, not running. */
+ *  one list. The newest is open under it: its log, what failed or what it
+ *  published, and Deploy; another opens on a click on its row, and a second
+ *  click closes it. A Studio build whose Job's hour is long past without word
+ *  is lost, not running. */
 function ProductBuilds({
   builds,
   environments,
@@ -439,96 +361,40 @@ function ProductBuilds({
   onChanged: (message: string) => void;
 }) {
   const { t } = useReleases();
-  const product = builds.filter((b) => b.action !== 'run');
+  // One array while nothing changed: every new one reloads the grid.
+  const product = useMemo(() => builds.filter((b) => b.action !== 'run'), [builds]);
   // `undefined`: the newest, until the reader opens or closes one.
   const [open, setOpen] = useState<string | null | undefined>(undefined);
   const shown = open === undefined ? (product[0]?.id ?? null) : open;
+  const toggle = useCallback((b: IdeBuild) => setOpen(shown === b.id ? null : b.id), [shown]);
   if (product.length === 0) return null;
+  const opened = product.find((b) => b.id === shown);
   return (
     <section className={styles.card} data-product-builds>
       <h2 className={styles.cardTitle}>{t('builds_title')}</h2>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t('col_status')}</TableHead>
-            <TableHead>{t('col_build')}</TableHead>
-            <TableHead>{t('col_stages')}</TableHead>
-            <TableHead>{t('col_where')}</TableHead>
-            <TableHead>{t('col_commit')}</TableHead>
-            <TableHead>{t('col_when')}</TableHead>
-            <TableHead>{t('col_took')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {product.map((b) => {
-            const lost = isLost(b, now);
-            return (
-              <Fragment key={b.id}>
-                <TableRow
-                  className={styles.clickable}
-                  aria-expanded={shown === b.id}
-                  onClick={() => setOpen(shown === b.id ? null : b.id)}
-                  data-product-build={b.buildId}
-                >
-                  <TableCell>
-                    <span data-ide-build-status={lost ? 'lost' : b.status}>
-                      {lost ? (
-                        <Badge variant="warning" data-build-lost-badge>
-                          {t('lost')}
-                        </Badge>
-                      ) : (
-                        <Badge variant={TONE_BADGE[buildTone(b.status)]}>{b.status}</Badge>
-                      )}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <b>
-                      {b.product ?? t('the_product')}
-                      {b.profile ? <span className={styles.muted}> · {b.profile}</span> : null}
-                    </b>
-                  </TableCell>
-                  <TableCell>
-                    <StageLane build={b} lost={lost} />
-                  </TableCell>
-                  <TableCell>{b.where}</TableCell>
-                  <TableCell>
-                    {b.shortSha ? <code>{b.shortSha}</code> : (b.branch ?? '—')}
-                    {b.descriptionRevision !== null ? (
-                      <span className={styles.muted} title={t('revision_title')}>
-                        {' '}
-                        · {t('revision', { revision: b.descriptionRevision })}
-                      </span>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>
-                    <When iso={b.startedAt} />
-                  </TableCell>
-                  <TableCell>{lost ? '—' : (ideBuildDuration(b, now) ?? '—')}</TableCell>
-                </TableRow>
-                {shown === b.id && (
-                  <TableRow>
-                    <TableCell colSpan={7}>
-                      <BuildDetails
-                        build={b}
-                        lost={lost}
-                        now={now}
-                        environments={environments}
-                        deployments={deployments}
-                        onChanged={onChanged}
-                      />
-                    </TableCell>
-                  </TableRow>
-                )}
-              </Fragment>
-            );
-          })}
-        </TableBody>
-      </Table>
+      <ProductBuildsGrid builds={product} now={now} open={opened?.id ?? null} onToggle={toggle} />
+      {opened && (
+        <section className={styles.card} data-product-build-open={opened.buildId}>
+          <h3 className={styles.subTitle}>
+            {opened.product ?? t('the_product')}
+            {opened.profile ? <span className={styles.muted}> · {opened.profile}</span> : null}
+            <span className={styles.muted}> · {opened.buildId}</span>
+          </h3>
+          <BuildDetails
+            build={opened}
+            lost={isLost(opened, now)}
+            now={now}
+            environments={environments}
+            deployments={deployments}
+            onChanged={onChanged}
+          />
+        </section>
+      )}
     </section>
   );
 }
 
-/** One build, open under its row: where it ran, its log, what failed and
+/** One build, open under the list: where it ran, its log, what failed and
  *  whose it is to fix, or what it published, and Deploy once it published a chart. */
 function BuildDetails({
   build: b,
@@ -739,30 +605,5 @@ function BuildLogPanel({ buildId, running }: { buildId: string; running: boolean
         </div>
       )}
     </div>
-  );
-}
-
-/** prepare → images → publish, each as a badge in its state. A run of the
- *  product has no stages, nor has a CI run that left no manifest (its page
- *  has its jobs); a lost build's are not known past what it said. */
-function StageLane({ build: b, lost }: { build: IdeBuild; lost: boolean }) {
-  if (b.action === 'run' || (b.where === 'ci' && b.status !== 'passed' && !b.failureStep && !b.step))
-    return <span className={styles.muted}>—</span>;
-  const stages: Record<BuildStage, StageState> = buildStages(b);
-  return (
-    <span className={styles.stages} data-build-stages>
-      {BUILD_STAGES.map((stage, i) => {
-        const state: StageState =
-          lost && (stages[stage] === 'running' || stages[stage] === 'failed') ? 'waiting' : stages[stage];
-        return (
-          <span key={stage} className={styles.stages}>
-            {i > 0 && <span className={styles.muted}>→</span>}
-            <Badge variant={TONE_BADGE[STAGE_TONE[state]]} data-stage={stage} data-stage-state={state}>
-              {STAGE_MARK[state]} {stage}
-            </Badge>
-          </span>
-        );
-      })}
-    </span>
   );
 }

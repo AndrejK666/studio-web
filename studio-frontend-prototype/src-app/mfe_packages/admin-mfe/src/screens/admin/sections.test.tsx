@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CatalogType, OrgMember, PlatformIdentity } from '../../api/types';
+
+// The kit's DataGrid measures its table.
+stubResizeObserver();
 
 const { service, org, calls } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -156,6 +160,14 @@ describe('People', () => {
     const put = calls.find((c) => c.what === 'putMembership');
     expect(put?.arg).toEqual(['u2', 'o1']);
     expect(put?.body).toEqual({ role: 'member', status: 'suspended' });
+  });
+
+  it('opens what a person is known by below the list, not inside it', async () => {
+    render(<PeopleSection />);
+    const ann = (await screen.findByText('Ann Owner')).closest('tr') as HTMLElement;
+    fireEvent.click(within(ann).getByRole('button', { name: 'people_details' }));
+    const panel = await shown('[data-member-panel="u1"]');
+    expect(panel.closest('tr')).toBeNull();
   });
 
   it('offers adding an identity only when the directory answers', async () => {

@@ -93,37 +93,19 @@
   color: var(--destructive);
 }
 
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.search {
-  max-width: 18rem;
-}
-
-.count {
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
-}
-
-.sortable {
-  border: 0;
-  padding: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-}
-
-.row {
-  cursor: pointer;
-}
-
 .titleCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   white-space: normal;
+}
+
+/* What opens under a row's title: its decision, or the issue's form. */
+.detail {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--muted);
+  cursor: auto;
 }
 
 .where {
@@ -138,20 +120,6 @@
   color: var(--destructive);
 }
 
-.rowActions {
-  text-align: right;
-}
-
-.detailRow > td {
-  background: var(--muted);
-}
-
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
 
 .item {
   display: flex;

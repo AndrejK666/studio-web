@@ -14,17 +14,7 @@ import {
   useMfeBridge,
   useSharedProperty,
 } from "@gears-frontx/react";
-import { Folder } from "lucide-react";
-import {
-  Button,
-  Empty,
-  EmptyActions,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-  Skeleton,
-} from "@gears-frontx/ui-kit";
+import { Button, Skeleton } from "@gears-frontx/ui-kit";
 import {
   useOrganization,
   AccountsApiService,
@@ -37,8 +27,8 @@ import { OverviewApiService } from "../../api/OverviewApiService";
 import { ConfirmDialog, NameDialog } from "../../components/dialogs";
 import { useWorkspacesScreenTranslations, useWorkspacesText } from "../../i18n";
 import { WorkspacesToolbar } from "./components/WorkspacesToolbar";
-import { WorkspacesTable } from "./components/WorkspacesTable";
-import { healthOf, visibleWorkspaces, type ManagedFilter } from "./model";
+import { WorkspacesGrid } from "./components/WorkspacesGrid";
+import { healthOf } from "./model";
 import styles from "./WorkspacesScreen.module.css";
 
 /** A sum in the reader's language and the overview's currency. */
@@ -58,8 +48,6 @@ const WorkspaceList: React.FC<{
   const bridge = useMfeBridge();
   const accounts = apiRegistry.getService(AccountsApiService);
   const t = useWorkspacesText();
-  const [query, setQuery] = useState("");
-  const [managed, setManaged] = useState<ManagedFilter>("all");
   const [renaming, setRenaming] = useState<Tenant | null>(null);
   const [deleting, setDeleting] = useState<Tenant | null>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -104,8 +92,6 @@ const WorkspaceList: React.FC<{
     [all],
   );
 
-  const rows = useMemo(() => visibleWorkspaces(all, query, managed), [all, query, managed]);
-  const narrowed = query.trim() !== "" || managed !== "all";
 
   const health = useCallback((row: Tenant) => healthOf(overview, row.id), [overview]);
   const cash = useCallback(
@@ -138,15 +124,11 @@ const WorkspaceList: React.FC<{
   return (
     <div className={styles.screen} ref={container}>
       <WorkspacesToolbar
-        query={query}
-        onQueryChange={setQuery}
         busy={pending}
         canCreate
         total={all.length}
         projectTotal={projectTotal}
         organizationName={organization.name}
-        managed={managed}
-        onManagedChange={setManaged}
       />
 
       <div className={styles.panel}>
@@ -171,48 +153,20 @@ const WorkspaceList: React.FC<{
                 </Button>
               </div>
             )}
-            <WorkspacesTable
-              rows={rows}
-              // The organization's count, not the search's: the caption reads
-              // "1-2 of 10", and passing `rows` would make it say "1-2 of 2".
-              total={all.length}
-              empty={
-                narrowed && all.length > 0 ? (
-                  <Empty className={styles.empty}>
-                    <EmptyHeader>
-                      <EmptyDescription>{t("empty_search")}</EmptyDescription>
-                    </EmptyHeader>
-                    <EmptyActions>
-                      <Button
-                        variant="link"
-                        onClick={() => {
-                          setQuery("");
-                          setManaged("all");
-                        }}
-                      >
-                        {t("clear_search")}
-                      </Button>
-                    </EmptyActions>
-                  </Empty>
-                ) : isError ? null : (
-                  <Empty className={styles.empty}>
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <Folder />
-                      </EmptyMedia>
-                      <EmptyTitle>{t("empty_title")}</EmptyTitle>
-                      <EmptyDescription>{t("empty_hint")}</EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                )
-              }
-              onOpen={open}
-              onRename={setRenaming}
-              onDelete={setDeleting}
-              health={health}
-              stuckDays={overview?.stuck_days ?? 7}
-              cash={cash}
-            />
+            {/* A failed read with nothing kept shows only the error, not "no workspaces yet". */}
+            {!(isError && all.length === 0) && (
+              <WorkspacesGrid
+                // A new organization starts the grid clean; a new list of its workspaces reloads it.
+                key={organization.id}
+                workspaces={all}
+                health={health}
+                stuckDays={overview?.stuck_days ?? 7}
+                cash={cash}
+                onOpen={open}
+                onRename={setRenaming}
+                onDelete={setDeleting}
+              />
+            )}
           </>
         )}
       </div>
@@ -255,8 +209,6 @@ export const WorkspacesScreen: React.FC = () => {
     return (
       <div className={styles.screen} data-state="no-organization">
         <WorkspacesToolbar
-          query=""
-          onQueryChange={() => {}}
           busy={loading || translationsPending}
           canCreate={false}
         />

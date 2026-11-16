@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectorProvider, StoredConnection } from '../../../api/types';
+
+// The kit's DataGrid measures its table.
+stubResizeObserver();
 
 const { service, calls } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -164,15 +168,29 @@ describe('Integrations: the list', () => {
     expect(picker.querySelector('[data-provider="github"]')).toBeNull();
   });
 
+  it('filters by kind, and says when nothing matches with a way back', async () => {
+    render(<IntegrationsSection />);
+    await row('Acme GitHub');
+    fireEvent.click(screen.getByRole('button', { name: /int_kind/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: 'int_cat_ai' }));
+    await waitFor(() => expect(screen.queryByText('Acme GitHub')).toBeNull());
+    expect(screen.getByText('Shared key')).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText('int_search'), { target: { value: 'nothing like it' } });
+    expect(await screen.findByText('int_no_match')).toBeTruthy();
+    fireEvent.click(screen.getByText('clear_search'));
+    expect(await screen.findByText('Acme GitHub')).toBeTruthy();
+  });
+
   it('keeps its search and kind in the address, and opens on them', async () => {
     window.history.replaceState(null, '', '/connections?conn.f.kind=ai');
     const view = render(<IntegrationsSection />);
     // Opened on the address: the AI kind chosen, so the GitHub row is filtered out.
     await screen.findByText('Shared key');
-    expect(screen.queryByText('Acme GitHub')).toBeNull();
+    await waitFor(() => expect(screen.queryByText('Acme GitHub')).toBeNull());
 
-    fireEvent.change(screen.getByRole('searchbox', { name: 'int_search' }), { target: { value: 'shared' } });
-    expect(new URLSearchParams(window.location.search).get('conn.q')).toBe('shared');
+    fireEvent.change(screen.getByPlaceholderText('int_search'), { target: { value: 'shared' } });
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get('conn.q')).toBe('shared'));
     expect(new URLSearchParams(window.location.search).get('conn.f.kind')).toBe('ai');
 
     // Leaving the screen takes the list's part out of the address.

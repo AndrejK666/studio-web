@@ -1,7 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openScreen } from '@constructor-studio/mfe-shared';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import type { DeployEnvironment, Deployment, ProjectPath, ProjectTargets } from '../../api/types';
+
+// The lists are the kit's DataGrid, which measures its header.
+stubResizeObserver();
 
 const { service, calls, scope } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -101,7 +105,13 @@ const readyPath = (patch: Partial<ProjectPath> = {}): ProjectPath => ({
   ...patch,
 });
 
-function setUp({ deployments, path }: { deployments?: Deployment[]; path?: ProjectPath } = {}) {
+const runNode = (id: string, v: Record<string, unknown>) => ({ type_id: 'workflow_run', instance_id: id, value: v });
+
+function setUp({
+  deployments,
+  path,
+  runs,
+}: { deployments?: Deployment[]; path?: ProjectPath; runs?: ReturnType<typeof runNode>[] } = {}) {
   calls.length = 0;
   for (const k of Object.keys(service)) delete service[k];
   const targets: ProjectTargets = {
@@ -139,7 +149,12 @@ function setUp({ deployments, path }: { deployments?: Deployment[]; path?: Proje
     deployments: read('deployments', { items: deployments ?? [deployment({})], total: 1 }),
     nodes: (params: { type: string }) => {
       calls.push({ name: 'nodes', args: [params] });
-      const page = params.type === 'build' ? { nodes: builds } : { nodes: [] };
+      const page =
+        params.type === 'build'
+          ? { nodes: builds }
+          : params.type === 'workflow_run'
+            ? { nodes: runs ?? [] }
+            : { nodes: [] };
       return { fetch: () => Promise.resolve(page) };
     },
     connections: read('connections', { items: [] }),
@@ -243,7 +258,62 @@ describe('ReleasesScreen', () => {
       return card;
     });
     expect(failed.querySelector('[data-build-cause="gear"]')?.textContent).toContain('Gear billing fails');
-    expect(document.querySelectorAll('[data-product-build]').length).toBe(2);
+    await waitFor(() => expect(document.querySelectorAll('[data-product-build]').length).toBe(2));
+    expect(document.querySelector('[data-product-build="desktop-3"]')?.hasAttribute('data-product-build-open')).toBe(true);
+    // A click on another row opens it under the list instead; a second click closes it.
+    const row = () => document.querySelector('[data-product-build="studio-2"]')?.closest('tr') as HTMLElement;
+    fireEvent.click(row());
+    await waitFor(() => expect(document.querySelector('[data-build-card="studio-2"]')).toBeTruthy());
+    expect(document.querySelector('[data-build-card="desktop-3"]')).toBeNull();
+    fireEvent.click(row());
+    await waitFor(() => expect(document.querySelector('[data-build-card]')).toBeNull());
+  });
+
+  it("lists the chosen workflow's CI runs in a grid that searches them", async () => {
+    setUp({
+      deployments: [],
+      runs: [
+        runNode('r1', { workflow: 'ci', title: 'Fix the cart', branch: 'main', sha: 'aaaaaaa1', status: 'completed', conclusion: 'success', author: 'ann', created_at: '2026-11-08T09:00:00Z' }),
+        runNode('r2', { workflow: 'ci', title: 'Add billing', branch: 'main', sha: 'bbbbbbb2', status: 'completed', conclusion: 'failure', author: 'bob', created_at: '2026-11-09T09:00:00Z' }),
+      ],
+    });
+    render(<ReleasesScreen bridge={null} />);
+    await screen.findByText('status_deploy_newest');
+    fireEvent.click(document.querySelector('[data-release-tab="build"]') as HTMLElement);
+    expect(await screen.findByText('Fix the cart')).toBeTruthy();
+    expect(screen.getByText('Add billing')).toBeTruthy();
+    const search = screen.getByPlaceholderText('search_runs');
+    fireEvent.change(search, { target: { value: 'billing' } });
+    await waitFor(() => expect(screen.queryByText('Fix the cart')).toBeNull());
+    expect(screen.getByText('Add billing')).toBeTruthy();
+    fireEvent.change(search, { target: { value: 'nothing like it' } });
+    expect(await screen.findByText('no_runs_match')).toBeTruthy();
+    fireEvent.click(document.querySelector('[data-grid-clear-filters]') as HTMLElement);
+    expect(await screen.findByText('Fix the cart')).toBeTruthy();
+  });
+
+  it('lists the deploys on History: search, and a row opens what the deploy said', async () => {
+    setUp({
+      deployments: [
+        deployment({ id: 'd1', product: 'shop', reason: 'first try' }),
+        deployment({ id: 'd2', product: 'billing', environment_name: 'prod', namespace: 'billing-prod' }),
+      ],
+    });
+    render(<ReleasesScreen bridge={null} />);
+    await screen.findByText('0.2.0 runs in dev');
+    fireEvent.click(document.querySelector('[data-release-tab="history"]') as HTMLElement);
+    await waitFor(() => expect(document.querySelectorAll('[data-deploy-history-row]').length).toBe(2));
+    fireEvent.click(document.querySelector('[data-deploy-history-row="d1"]')?.closest('tr') as HTMLElement);
+    const detail = await waitFor(() => {
+      const d = document.querySelector('[data-deploy-history-detail="d1"]');
+      if (!d) throw new Error('not yet');
+      return d;
+    });
+    expect(detail.textContent).toContain('first try');
+    const search = screen.getByPlaceholderText('search_deploys');
+    fireEvent.change(search, { target: { value: 'billing-prod' } });
+    await waitFor(() => expect(document.querySelectorAll('[data-deploy-history-row]').length).toBe(1));
+    expect(document.querySelector('[data-deploy-history-row="d2"]')).toBeTruthy();
   });
 
   describe('the path to running (#1050)', () => {

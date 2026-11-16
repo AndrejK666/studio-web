@@ -11,7 +11,8 @@
 /* TODO(#888): the design draws a 32px search and 14px cells, the kit's DataGrid (and Specs)
  * 40px and 12px; check with the design which one Studio's tables keep. */
 .grid {
-  --data-grid-table-min-inline-size: 73.5rem;
+  /* The columns' widths summed (sourceColumns.tsx): a narrower pane scrolls the table sideways. */
+  --data-grid-table-min-inline-size: 100rem;
   min-width: 0;
 }
 

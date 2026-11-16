@@ -370,6 +370,9 @@ export function sourceColumns({
     {
       id: 'pull_requests',
       label: windowed('col_pull_requests'),
+      // Every other column has a width: under the fixed layout this one took
+      // what was left, nothing on a narrow pane, and wrapped a letter a line. Its header, the longest, fits 11rem.
+      width: '11rem',
       render: (row) =>
         row.kind === 'uploads' ? (
           <span className={styles.prsUnavailable}>{t('not_applicable')}</span>

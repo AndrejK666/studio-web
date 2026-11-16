@@ -6,7 +6,7 @@ import { useUserById } from '../../../shared/users';
 import type { ProjectConfigState } from '../../../shared/useProjectConfig';
 import { useProjectListText } from '../../../i18n';
 import { LoadFailed } from './LoadFailed';
-import { NoData } from './NoData';
+import { NoData } from '@constructor-studio/mfe-shared/grid';
 import styles from '../ProjectListScreen.module.css';
 
 /**

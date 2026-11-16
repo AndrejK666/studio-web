@@ -1,79 +1,38 @@
-import React, { useState } from 'react';
-import { Network } from 'lucide-react';
-import {
-  Button,
-  Empty,
-  EmptyActions,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-  Skeleton,
-} from '@gears-frontx/ui-kit';
+import React from 'react';
+import { Skeleton } from '@gears-frontx/ui-kit';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { useConnectionListScreenTranslations, useConnectionListText } from '../../i18n';
 import { useConnectionList } from '../../shared/useConnectionList';
 import { ConnectionsToolbar } from './components/ConnectionsToolbar';
-import { ConnectionsTable } from './components/ConnectionsTable';
+import { ConnectionsGrid } from './components/ConnectionsGrid';
 import styles from './ConnectionListScreen.module.css';
 
 export const ConnectionListScreen: React.FC = () => {
   const { isLoaded, error: translationsFailed } = useConnectionListScreenTranslations();
   const t = useConnectionListText();
-  const [query, setQuery] = useState('');
 
-  const { rows, loading, failed, org, total } = useConnectionList(query);
+  const { rows, loading, failed, org, retry } = useConnectionList();
   const busy = (!isLoaded && !translationsFailed) || loading;
 
   return (
     <div className={styles.screen}>
-      <ConnectionsToolbar query={query} onQueryChange={setQuery} busy={busy} />
+      <ConnectionsToolbar busy={busy} />
 
-      <section className={styles.card}>
+      <section className={styles.body}>
         {busy ? (
-          <div className={styles.rowsSkeleton}>
+          <div className={styles.rowsSkeleton} data-connections-loading>
             <Skeleton className={styles.rowSkeleton} />
             <Skeleton className={styles.rowSkeleton} />
             <Skeleton className={styles.rowSkeleton} />
           </div>
-        ) : failed || translationsFailed ? (
-          <p className={styles.state}>
-            {translationsFailed ? 'Could not load this screen.' : t('error_title')}
-          </p>
+        ) : translationsFailed ? (
+          <GridFailed message="Could not load this screen." />
+        ) : failed ? (
+          <GridFailed message={t('error_title')} retry={t('retry')} onRetry={retry} />
         ) : (
-          <ConnectionsTable
-            rows={rows}
-            tenantId={org?.id ?? ''}
-            empty={
-              total > 0 ? (
-                <Empty className={styles.empty}>
-                  <EmptyHeader>
-                    <EmptyDescription>{t('empty_no_match')}</EmptyDescription>
-                  </EmptyHeader>
-                  <EmptyActions>
-                    <Button variant="link" onClick={() => setQuery('')}>
-                      {t('clear_search')}
-                    </Button>
-                  </EmptyActions>
-                </Empty>
-              ) : (
-                <Empty className={styles.empty}>
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <Network />
-                    </EmptyMedia>
-                    <EmptyTitle>{t('empty_title')}</EmptyTitle>
-                    <EmptyDescription>{org ? t('empty_hint') : t('empty_no_org')}</EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              )
-            }
-          />
+          // Another organization starts the grid clean: its search, sort and page belong to the last one.
+          <ConnectionsGrid key={org?.id ?? 'none'} rows={rows} tenantId={org?.id ?? ''} />
         )}
-        {!busy && !failed && !translationsFailed && rows.length > 0 ? (
-          <footer className={styles.footer}>
-            {t.count('count', rows.length)}
-          </footer>
-        ) : null}
       </section>
     </div>
   );

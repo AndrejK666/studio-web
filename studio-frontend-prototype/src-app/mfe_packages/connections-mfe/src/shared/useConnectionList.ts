@@ -5,28 +5,35 @@ import { apiRegistry, useApiQuery } from '@gears-frontx/react';
 import { type ConnectionDto, ConnectorsApiService, type OrganizationRef, useOrganization } from '@constructor-studio/mfe-shared';
 
 export interface ConnectionRow {
+  /** The connection's id: the grid's row key. */
+  id: string;
   connection: ConnectionDto;
   providerName: string;
 }
 
 export interface ConnectionListView {
+  /** Every connection of the organization: the grid searches and pages them. */
   rows: ConnectionRow[];
   loading: boolean;
   failed: boolean;
   org: OrganizationRef | null;
-  total: number;
+  /** Reads the connections again, after a failed read. */
+  retry: () => void;
 }
 
-export function matchesQuery(row: ConnectionRow, query: string): boolean {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return true;
+// @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-4
+/**
+ * What the grid's search matches, case-insensitively, as a substring: the
+ * name, the account (what tells two GitHub rows apart), and the provider by
+ * its wire key and by its display name.
+ */
+export function connectionSearchTexts(row: ConnectionRow): string[] {
   const { label, account, provider } = row.connection;
-  return [label, account, provider, row.providerName].some((field) =>
-    field.toLowerCase().includes(needle)
-  );
+  return [label, account, provider, row.providerName];
 }
+// @cpt-end:cpt-studiofrontend-algo-connection-list-read:p2:inst-4
 
-export function useConnectionList(query: string): ConnectionListView {
+export function useConnectionList(): ConnectionListView {
   const connectors = apiRegistry.getService(ConnectorsApiService);
   const { org, loading: orgLoading } = useOrganization();
 
@@ -40,6 +47,7 @@ export function useConnectionList(query: string): ConnectionListView {
     data: connectionData,
     isLoading: connectionsLoading,
     isError: connectionsFailed,
+    refetch,
   } = useQuery({
     queryKey: listing.key,
     queryFn: ({ signal }) => listing.fetch({ signal }),
@@ -47,11 +55,12 @@ export function useConnectionList(query: string): ConnectionListView {
   });
   // @cpt-end:cpt-studiofrontend-algo-connection-list-read:p2:inst-1
 
-  const all = useMemo<ConnectionRow[]>(() => {
+  const rows = useMemo<ConnectionRow[]>(() => {
     const names = new Map(
       (providerData?.items ?? []).map((provider) => [provider.provider, provider.display_name])
     );
     return (connectionData?.items ?? []).map((connection) => ({
+      id: connection.id,
       connection,
       // @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-3
       providerName: names.get(connection.provider) ?? connection.provider,
@@ -59,17 +68,13 @@ export function useConnectionList(query: string): ConnectionListView {
     }));
   }, [providerData, connectionData]);
 
-  // @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-4
-  const rows = useMemo(() => all.filter((row) => matchesQuery(row, query)), [all, query]);
-  // @cpt-end:cpt-studiofrontend-algo-connection-list-read:p2:inst-4
-
   // @cpt-begin:cpt-studiofrontend-algo-connection-list-read:p2:inst-6
   return {
     rows,
     loading: orgLoading || providersLoading || connectionsLoading,
     failed: connectionsFailed,
     org,
-    total: all.length,
+    retry: () => void refetch(),
   };
   // @cpt-end:cpt-studiofrontend-algo-connection-list-read:p2:inst-6
 }

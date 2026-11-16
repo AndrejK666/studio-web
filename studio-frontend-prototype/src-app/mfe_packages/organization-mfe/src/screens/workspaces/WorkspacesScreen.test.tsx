@@ -1,9 +1,8 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 type TableProps = {
-  rows: { id: string; name: string }[];
-  total: number;
+  workspaces: { id: string; name: string }[];
   onRename: (row: unknown) => void;
   onDelete: (row: unknown) => void;
   health: (row: { id: string }) => unknown;
@@ -50,17 +49,8 @@ vi.mock('../../i18n', () => ({
 }));
 
 vi.mock('./components/WorkspacesToolbar', () => ({
-  WorkspacesToolbar: ({
-    onQueryChange,
-    onManagedChange,
-  }: {
-    onQueryChange: (value: string) => void;
-    onManagedChange?: (value: string) => void;
-  }) => (
-    <>
-      <input aria-label="search" onChange={(event) => onQueryChange(event.currentTarget.value)} />
-      <button onClick={() => onManagedChange?.('self')}>self</button>
-    </>
+  WorkspacesToolbar: ({ total, projectTotal }: { total?: number; projectTotal?: number }) => (
+    <p data-testid="totals">{`${total ?? '-'} / ${projectTotal ?? '-'}`}</p>
   ),
 }));
 
@@ -75,10 +65,10 @@ vi.mock('../../components/dialogs', () => ({
   },
 }));
 
-// Stubbed to read what the screen hands it: the caption's own wording is the
-// table's business and is covered in WorkspacesTable.test.tsx.
-vi.mock('./components/WorkspacesTable', () => ({
-  WorkspacesTable: (props: TableProps) => {
+// Stubbed to read what the screen hands it: search, filters and cells are the
+// grid's business and are covered in WorkspacesGrid.test.tsx.
+vi.mock('./components/WorkspacesGrid', () => ({
+  WorkspacesGrid: (props: TableProps) => {
     tableProps.current = props;
     return <div data-testid="table" />;
   },
@@ -114,27 +104,18 @@ describe('WorkspacesScreen', () => {
     vi.clearAllMocks();
   });
 
-  it('hands the table every workspace when nothing is searched for', () => {
+  it('hands the grid every workspace, and the toolbar the counts', () => {
     render(<WorkspacesScreen />);
-    expect(tableProps.current?.rows).toHaveLength(10);
-    expect(tableProps.current?.total).toBe(10);
+    expect(tableProps.current?.workspaces).toHaveLength(10);
+    expect(screen.getByTestId('totals').textContent).toBe('10 / 10');
   });
 
-  // The regression: `total` followed the filtered rows, so the caption said
-  // "1-2 of 2" and stopped naming the organization's real count.
-  it('narrows the rows but keeps the organization count when a search runs', () => {
+  it('a failed read with no rows shows the error and retry, not an empty grid', () => {
+    queryResult.current = { ...queryResult.current, data: undefined, isError: true };
     render(<WorkspacesScreen />);
-
-    fireEvent.change(screen.getByLabelText('search'), { target: { value: 'Platform' } });
-
-    expect(tableProps.current?.rows).toHaveLength(1);
-    expect(tableProps.current?.total).toBe(10);
-  });
-
-  it('keeps only the self-managed workspaces when that filter is picked', () => {
-    render(<WorkspacesScreen />);
-    fireEvent.click(screen.getByText('self'));
-    expect(tableProps.current?.rows.map((r) => r.id)).toEqual(['w1']);
+    expect(screen.getByText('error_title')).toBeTruthy();
+    expect(screen.getByText('retry')).toBeTruthy();
+    expect(screen.queryByTestId('table')).toBeNull();
   });
 
   it("joins the overview's health to each workspace by id, and its stuck threshold", () => {

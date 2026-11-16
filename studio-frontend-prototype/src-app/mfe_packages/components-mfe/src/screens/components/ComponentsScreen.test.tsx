@@ -1,9 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChildMfeBridge } from '@gears-frontx/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import type { CatalogNode, PublicationRequest, RegistryEntry } from '../../api/types';
 import en from './i18n/en.json';
 import ru from './i18n/ru.json';
+
+// The kit's DataGrid measures its table.
+stubResizeObserver();
 
 const { service, org, calls, opened } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -178,6 +182,39 @@ describe('ComponentsScreen', () => {
     expect(calls.find((c) => c.name === 'versions')?.params).toEqual({ org: 'o1', crate: 'audit' });
     fireEvent.click(screen.getByText(/back_to_list/));
     expect(await screen.findByText('audit')).toBeTruthy();
+  });
+
+  it('Platform › Components searches its grid, and Clear filters brings the rows back', async () => {
+    render(<ComponentsScreen bridge={bridgeFor('platform')} />);
+    expect(await screen.findByText('audit')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('search_components'), { target: { value: 'zzz' } });
+    expect(await screen.findByText('nothing_matches')).toBeTruthy();
+    fireEvent.click(screen.getByText('clear_filters'));
+    expect(await screen.findByText('audit')).toBeTruthy();
+  });
+
+  it('Platform › Components: a catalogue that did not load says why and retries', async () => {
+    let fail = true;
+    serve({
+      components: () => ({
+        fetch: () => (fail ? Promise.reject(new Error('catalogue down')) : Promise.resolve({ nodes: [gear('audit', 'platform')] })),
+      }),
+    });
+    render(<ComponentsScreen bridge={bridgeFor('platform')} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('catalogue down');
+    fail = false;
+    fireEvent.click(screen.getByText('retry'));
+    expect(await screen.findByText('audit')).toBeTruthy();
+  });
+
+  it('a registry row opens under the list, and a second click folds it', async () => {
+    render(<ComponentsScreen bridge={bridgeFor('organization')} />);
+    const name = await screen.findByText('billing', { selector: '[data-registry-row] span' });
+    fireEvent.click(name);
+    expect(await screen.findByText('decide')).toBeTruthy();
+    expect(document.querySelector('[data-registry-expanded="billing"]')).toBeTruthy();
+    fireEvent.click(name);
+    await waitFor(() => expect(document.querySelector('[data-registry-expanded]')).toBeNull());
   });
 
   it('offers Repositories & sync to a platform administrator only', async () => {

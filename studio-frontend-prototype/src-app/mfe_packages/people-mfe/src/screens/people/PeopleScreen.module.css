@@ -144,19 +144,6 @@
   border-radius: 0.125rem;
 }
 
-.search {
-  max-width: 20rem;
-}
-
-.sortBtn {
-  all: unset;
-  cursor: pointer;
-}
-
-.row {
-  cursor: pointer;
-}
-
 .pcell {
   display: flex;
   align-items: center;
