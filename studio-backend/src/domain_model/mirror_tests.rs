@@ -1250,3 +1250,51 @@ async fn a_fill_that_cannot_read_every_edge_leaves_the_tenant_on_the_graph() {
     p.fill().await;
     assert!(p.mirror.is_filled(tenant).await.unwrap());
 }
+
+/// `id` filters compile to the key column on the SQL side; every shape of
+/// them answers what the graph answers, including the ones that match
+/// nothing or everything.
+#[tokio::test]
+async fn id_filters_answer_the_same_from_postgres_as_from_the_graph() {
+    let p = seeded().await;
+    let all = p
+        .same("risk", json!({"order_by": [{"field": "title"}]}))
+        .await;
+    let ids: Vec<Value> = all["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].clone())
+        .collect();
+    assert_eq!(ids.len(), 7);
+    let order = json!([{"field": "title"}]);
+    let cases = [
+        (json!({"id": {"_eq": ids[0]}}), 1),
+        (json!({"id": {"_eq": "no-such-id"}}), 0),
+        (json!({"id": {"_eq": 7}}), 0),
+        (json!({"id": {"_neq": ids[0]}}), 6),
+        (json!({"id": {"_neq": 7}}), 7),
+        (json!({"id": {"_in": [ids[1], ids[2], "no-such-id", 3]}}), 2),
+        (json!({"id": {"_in": []}}), 0),
+        (json!({"id": {"_nin": [ids[1], ids[2]]}}), 5),
+        (json!({"id": {"_nin": []}}), 7),
+        (json!({"_not": {"id": {"_in": [ids[3]]}}}), 6),
+        (
+            json!({"_or": [{"id": {"_eq": ids[4]}}, {"impact": {"_eq": "low"}}]}),
+            2,
+        ),
+        (
+            json!({"id": {"_eq": ids[5]}, "impact": {"_eq": "nothing"}}),
+            0,
+        ),
+    ];
+    for (filter, expected) in cases {
+        let out = p
+            .same(
+                "risk",
+                json!({"where": filter.clone(), "order_by": order.clone()}),
+            )
+            .await;
+        assert_eq!(out["items"].as_array().unwrap().len(), expected, "{filter}");
+    }
+}
