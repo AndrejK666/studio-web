@@ -85,6 +85,10 @@ const TRUSTED_BATCH: usize = 500;
 const EMBEDDED_BATCH: usize = 32;
 /// Offending objects named in the sample.
 const CONFORMANCE_SAMPLE: usize = 5;
+/// The most objects a bounded read asks the store for while it looks for
+/// enough the caller may read (`readable_page`): the graph's own traversal
+/// budget, so a refill costs no more than one of its walks.
+const READABLE_READ_MAX: usize = 10_000;
 
 /// Everything about one object write except the object: where it is scoped,
 /// whether it may replace what is there, and how hard it is checked.
@@ -2777,6 +2781,41 @@ impl DomainModelService {
     /// unbounded version answered in 26 s with every payload inlined. `limit`
     /// caps the nodes; `type_ref` and `scope` narrow which ones, with the same
     /// meaning they have on `GET /objects`.
+    /// Up to `limit` objects of `type_ids` the caller may read, and whether
+    /// more readable ones are there.
+    ///
+    /// The bound is applied after access, not before: cutting the store's
+    /// read at `limit + 1` and then dropping what the PDP hides would hand
+    /// back a short page and say there is nothing more when there is. When
+    /// the access hides rows, the read is repeated with a larger bound until
+    /// `limit + 1` readable ones are in hand or the store has no more, up to
+    /// [`READABLE_READ_MAX`]; past that the page says there may be more.
+    async fn readable_page(
+        &self,
+        ctx: &SecurityContext,
+        read: &access::Access,
+        type_ids: &[String],
+        scope: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<(Vec<ObjectNode>, bool)> {
+        let want = limit.saturating_add(1);
+        let mut asked = want;
+        loop {
+            let rows = self
+                .store
+                .list_objects(ctx, type_ids, scope, Some(asked))
+                .await?;
+            let exhausted = rows.len() < asked;
+            let mut kept = read.retain(ctx, rows).await;
+            if kept.len() >= want || exhausted || asked >= READABLE_READ_MAX {
+                let more = kept.len() > limit || (!exhausted && kept.len() < want);
+                kept.truncate(limit);
+                return Ok((kept, more));
+            }
+            asked = asked.saturating_mul(4).min(READABLE_READ_MAX).max(want);
+        }
+    }
+
     pub async fn objects_graph(
         &self,
         ctx: &SecurityContext,
@@ -2810,16 +2849,11 @@ impl DomainModelService {
             }
             (type_ids, meta)
         };
-        // One over the bound: if it comes back, there was more to show.
         let scope = scope.map(str::trim).filter(|s| !s.is_empty());
-        let mut objs = self
-            .store
-            .list_objects(ctx, &type_ids, scope, Some(limit + 1))
-            .await?;
         let read = self.policy.access(ctx, access::READ, type_ref).await?;
-        let mut objs = read.retain(ctx, std::mem::take(&mut objs)).await;
-        let truncated = objs.len() > limit;
-        objs.truncate(limit);
+        let (objs, truncated) = self
+            .readable_page(ctx, &read, &type_ids, scope, limit)
+            .await?;
         let nodes = objs
             .iter()
             .map(|o| {
@@ -3330,25 +3364,15 @@ impl DomainModelService {
             .ok_or_else(|| anyhow::anyhow!("unknown domain type: {type_ref}"))?;
         let properties = ontology.effective_properties(&entity_id);
 
-        // One over the bound: if it comes back, there was more to check.
-        let mut objects = self
-            .store
-            .list_objects(
-                ctx,
-                &[gts::node_type_id(&entity_id)],
-                scope,
-                Some(limit + 1),
-            )
-            .await?;
-        let truncated = objects.len() > limit;
-        objects.truncate(limit);
         // It reports payload samples, so it reads what the caller may read and
         // nothing else (ADR-0035 §5).
         let read = self
             .policy
             .access(ctx, access::READ, Some(&entity_id))
             .await?;
-        let objects = read.retain(ctx, objects).await;
+        let (objects, truncated) = self
+            .readable_page(ctx, &read, &[gts::node_type_id(&entity_id)], scope, limit)
+            .await?;
 
         let mut report = Conformance {
             checked: objects.len() as u64,
