@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import { FRONTX_SHARED_PROPERTY_THEME } from '@gears-frontx/react';
 import { createMfeBridgeFixture } from '@frontx-test-utils/createMfeBridgeFixture';
 import { createTestApp } from '@frontx-test-utils/createTestApp';
 import { StudioMfeLifecycle } from './StudioMfeLifecycle';
@@ -158,6 +159,31 @@ describe('StudioMfeLifecycle', () => {
     expect(styleTexts(cold)).toContain(ADDITIONAL);
     expect(texts(warm)).toContain(ADDITIONAL);
     expect(styleTexts(warm)).not.toContain(ADDITIONAL);
+  });
+
+  // #1075: a screen root without `data-theme` stayed light on a dark page.
+  it("the host carries the portal's palette and follows it until unmount", async () => {
+    const fixture = createMfeBridgeFixture({
+      domainId: 'screen',
+      instanceId: 'themed',
+      initialProperties: { [FRONTX_SHARED_PROPERTY_THEME]: 'dark' },
+    });
+    const shadow = shadowLinking('/mfe-theme.css');
+    const lifecycle = new TestLifecycle(app, ADDITIONAL);
+    lifecycle.mount(shadow, fixture.bridge);
+
+    expect(shadow.host.getAttribute('data-kit-theme')).toBe('dark');
+    fixture.setProperty(FRONTX_SHARED_PROPERTY_THEME, 'default');
+    expect(shadow.host.getAttribute('data-kit-theme')).toBe('light');
+
+    await lifecycle.unmount(shadow);
+    expect(fixture.unsubscriptions.map((entry) => entry.unsubscribe.mock.calls.length)).toEqual([1]);
+  });
+
+  it('a host with no theme published yet takes the light palette', () => {
+    const shadow = shadowLinking('/mfe-theme-none.css');
+    mount(shadow);
+    expect(shadow.host.getAttribute('data-kit-theme')).toBe('light');
   });
 
   // FrontX's resets paint `:host` with `--background`, over the page the shell paints.

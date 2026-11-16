@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { matchesQuery, type ConnectionRow } from './useConnectionList';
 import { type ConnectionDto } from '@constructor-studio/mfe-shared';
+import { TEXT_SEARCH_FILTER_KEY, shownRows } from '@constructor-studio/mfe-shared/grid';
+import { CONNECTION_GRID_OPTIONS } from '../screens/connection-list/components/ConnectionsGrid';
+import { type ConnectionRow } from './useConnectionList';
 
 /**
- * The filter is the only logic in the hook worth isolating: the two reads
- * around it are `useApiQuery` calls with nothing of ours in them, and the
- * matching rule is what a member notices when it is wrong.
+ * The search is the only logic around the list worth isolating: the two reads
+ * are query calls with nothing of ours in them, and the matching rule is what
+ * a member notices when it is wrong. It runs as the grid runs it.
  */
 function row(over: Partial<ConnectionDto>, providerName = 'GitHub'): ConnectionRow {
   const connection: ConnectionDto = {
@@ -20,31 +22,35 @@ function row(over: Partial<ConnectionDto>, providerName = 'GitHub'): ConnectionR
     created_at_epoch_secs: 1_700_000_000,
     ...over,
   };
-  return { connection, providerName };
+  return { id: connection.id, connection, providerName };
 }
 
-describe('toolbar search', () => {
+const matches = (candidate: ConnectionRow, query: string): boolean =>
+  shownRows([candidate], { filters: { [TEXT_SEARCH_FILTER_KEY]: { value: query } } } as never, CONNECTION_GRID_OPTIONS)
+    .length === 1;
+
+describe('the connections search', () => {
   it('keeps every row when nothing is typed', () => {
-    expect(matchesQuery(row({}), '   ')).toBe(true);
+    expect(matches(row({}), '   ')).toBe(true);
   });
 
-  it('matches the connection name', () => {
-    expect(matchesQuery(row({}), 'platform')).toBe(true);
+  it('matches the connection name, whatever the case', () => {
+    expect(matches(row({}), 'PLATFORM')).toBe(true);
   });
 
   it('matches the account, which is what tells two GitHub rows apart', () => {
-    expect(matchesQuery(row({ label: 'A' }), 'constructorfabric')).toBe(true);
+    expect(matches(row({ label: 'A' }), 'constructorfabric')).toBe(true);
   });
 
   it('matches the provider by its display name', () => {
-    expect(matchesQuery(row({ label: 'A', account: 'b' }), 'hub')).toBe(true);
+    expect(matches(row({ label: 'A', account: 'b' }), 'hub')).toBe(true);
   });
 
   it('matches the provider by its wire key', () => {
-    expect(matchesQuery(row({ label: 'A', account: 'b' }), 'gh')).toBe(true);
+    expect(matches(row({ label: 'A', account: 'b' }), 'gh')).toBe(true);
   });
 
   it('drops a row nothing in it matches', () => {
-    expect(matchesQuery(row({}), 'gitlab')).toBe(false);
+    expect(matches(row({}), 'gitlab')).toBe(false);
   });
 });

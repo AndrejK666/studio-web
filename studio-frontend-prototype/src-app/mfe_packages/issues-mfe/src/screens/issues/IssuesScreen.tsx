@@ -15,7 +15,7 @@
  * build reads the document again.
  */
 
-import React, { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import {
   apiRegistry,
@@ -23,24 +23,7 @@ import {
   FRONTX_SCREEN_DOMAIN,
   FRONTX_SHARED_PROPERTY_THEME,
 } from '@gears-frontx/react';
-import {
-  Badge,
-  Button,
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
-  Input,
-  NativeSelect,
-  NativeSelectOption,
-  Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@gears-frontx/ui-kit';
+import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
 import {
   sendToHost,
   STUDIO_ACTION_ARTIFACT_OPEN,
@@ -48,6 +31,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   useOrganization,
 } from '@constructor-studio/mfe-shared';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { IssuesApiService } from '../../api/IssuesApiService';
 import type {
   DocQualityRow,
@@ -59,16 +43,16 @@ import type {
   ServedSpecModel,
 } from '../../api/types';
 import { estimateLabel, etaLabel, readFraction, tokensLabel, type SpecModelBuildEstimate } from '../../model/build-eta';
-import { GROUP_ORDER, issueRows, withoutSaved, type IssueRow, type RowGroup } from '../../model/issue-rows';
+import { issueRows, withoutSaved, type IssueRow } from '../../model/issue-rows';
 import { pruneSaved, withSaved, type SavedEdit } from '../../model/saved-entities';
 import { buildLine, unreadNote } from '../../model/spec-model';
 import { useIssuesTranslations } from '../../i18n';
-import { DocItem, IssueForm, Prose, QueueItem, type Text } from './IssueItems';
+import type { Text } from './IssueItems';
+import { IssuesGrid } from './IssuesGrid';
 import styles from './IssuesScreen.module.css';
 
 const DARK_HOST_THEMES = ['dark', 'dracula', 'dracula-large'];
 const POLL_MS = 3000;
-const PAGE_SIZE = 20;
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -131,8 +115,6 @@ interface Read {
 
 /** A backend from before the doc-quality route answers 404: the queue still shows. */
 const noRows = { items: [] as DocQualityRow[], total: 0, by_kind: {} };
-
-type SortBy = { column: 'kind' | 'group'; desc: boolean } | null;
 
 function ProjectIssues({
   projectId,
@@ -341,11 +323,15 @@ function ProjectIssues({
       </header>
       <p className={styles.about}>{t('about')}</p>
 
-      {error && (
-        <p role="alert" className={styles.error}>
-          {error}
-        </p>
-      )}
+      {error &&
+        (read ? (
+          <p role="alert" className={styles.error}>
+            {error}
+          </p>
+        ) : (
+          // Nothing read yet: the list's own failure, with a retry.
+          <GridFailed message={error} retry={t('retry')} onRetry={() => void load()} />
+        ))}
       {!read && !error && <p className={styles.muted}>{t('loading')}</p>}
       {note && (
         <p className={styles.hint} data-no-documentation data-unread={model?.unread_documents ?? 0}>
@@ -354,7 +340,7 @@ function ProjectIssues({
       )}
 
       {read && (
-        <IssuesTable
+        <IssuesGrid
           rows={rows}
           readiness={read.readiness}
           built={read.model.facts.length > 0}
@@ -371,282 +357,5 @@ function ProjectIssues({
         />
       )}
     </>
-  );
-}
-
-function IssuesTable({
-  rows,
-  readiness,
-  built,
-  people,
-  issueOf,
-  t,
-  onDecide,
-  onPropose,
-  onSave,
-  onSameThing,
-  onProposeSentence,
-  onCreateIssue,
-  onOpenFile,
-}: {
-  rows: IssueRow[];
-  readiness: SpecModelReadiness;
-  built: boolean;
-  people: Person[];
-  issueOf: (r: IssueRow) => string | null;
-  t: Text;
-  onDecide: React.ComponentProps<typeof QueueItem>['onDecide'];
-  onPropose: React.ComponentProps<typeof QueueItem>['onPropose'];
-  onSave: React.ComponentProps<typeof DocItem>['onSave'];
-  onSameThing: React.ComponentProps<typeof DocItem>['onSameThing'];
-  onProposeSentence: React.ComponentProps<typeof DocItem>['onProposeSentence'];
-  onCreateIssue: (key: string, issue: NewIssue) => Promise<unknown>;
-  onOpenFile: (path: string) => void;
-}) {
-  const [search, setSearch] = useState('');
-  const [group, setGroup] = useState<RowGroup | ''>('');
-  const [kind, setKind] = useState('');
-  const [doc, setDoc] = useState('');
-  const [page, setPage] = useState(0);
-  const [sort, setSort] = useState<SortBy>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [opening, setOpening] = useState<string | null>(null);
-
-  const kindLabel = (r: IssueRow) => t(`kind_${r.kindId}`);
-  const n = (g: RowGroup) => rows.filter((r) => r.group === g).length;
-  const kinds = [...new Set(rows.map(kindLabel))].sort();
-  const docs = [...new Set(rows.map((r) => r.side?.path).filter((p): p is string => !!p))].sort();
-
-  const shown = useMemo(() => {
-    const words = search.trim().toLowerCase();
-    const out = rows.filter(
-      (r) =>
-        (!group || r.group === group) &&
-        (!kind || t(`kind_${r.kindId}`) === kind) &&
-        (!doc || r.side?.path === doc) &&
-        (!words ||
-          [r.title, t(`kind_${r.kindId}`), r.side?.path].some((s) => (s ?? '').toLowerCase().includes(words)))
-    );
-    if (!sort) return out;
-    const cmp =
-      sort.column === 'kind'
-        ? (a: IssueRow, b: IssueRow) => t(`kind_${a.kindId}`).localeCompare(t(`kind_${b.kindId}`))
-        : (a: IssueRow, b: IssueRow) => GROUP_ORDER.indexOf(a.group) - GROUP_ORDER.indexOf(b.group);
-    return [...out].sort((a, b) => (sort.desc ? -cmp(a, b) : cmp(a, b)));
-  }, [rows, search, group, kind, doc, sort, t]);
-
-  const pages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
-  const at = Math.min(page, pages - 1);
-  const pageRows = shown.slice(at * PAGE_SIZE, (at + 1) * PAGE_SIZE);
-  const sortBy = (column: 'kind' | 'group') =>
-    setSort((s) => (s?.column !== column ? { column, desc: false } : s.desc ? null : { column, desc: true }));
-  const arrow = (column: 'kind' | 'group') => (sort?.column === column ? (sort.desc ? ' ↓' : ' ↑') : '');
-  const filter = (set: () => void) => {
-    set();
-    setPage(0);
-  };
-
-  return (
-    <div className={styles.resolve}>
-      <div className={styles.verdict} data-verdict>
-        <b className={readiness.ready ? styles.ok : styles.bad}>
-          {readiness.ready ? t('verdict_ready') : t.count('verdict_blocking', readiness.blocking)}
-        </b>
-        <span className={styles.muted}>
-          {' · '}
-          {t('verdict_rest', { look: n('look'), improve: n('improve') })}
-          {readiness.total > 0 ? ` · ${t('verdict_cited', { cited: readiness.cited, total: readiness.total })}` : ''}
-        </span>
-        {!built && <span className={styles.muted}> · {t('verdict_not_built')}</span>}
-      </div>
-
-      <div className={styles.toolbar}>
-        <Input
-          className={styles.search}
-          placeholder={t('search')}
-          aria-label={t('search')}
-          value={search}
-          onChange={(e) => filter(() => setSearch(e.target.value))}
-        />
-        <div className={styles.chips} role="group" aria-label={t('filter_group')}>
-          <Button size="sm" variant={group === '' ? 'default' : 'outline'} onClick={() => filter(() => setGroup(''))}>
-            {t('group_all')}
-          </Button>
-          {GROUP_ORDER.filter((g) => n(g) > 0).map((g) => (
-            <Button
-              key={g}
-              size="sm"
-              variant={group === g ? 'default' : 'outline'}
-              aria-pressed={group === g}
-              onClick={() => filter(() => setGroup(g))}
-              data-group-chip={g}
-            >
-              {t(`filter_${g}`)} <span className={styles.count}>{n(g)}</span>
-            </Button>
-          ))}
-        </div>
-        <NativeSelect value={kind} onChange={(e) => filter(() => setKind(e.target.value))} aria-label={t('every_kind')}>
-          <NativeSelectOption value="">{t('every_kind')}</NativeSelectOption>
-          {kinds.map((k) => (
-            <NativeSelectOption key={k} value={k}>
-              {k}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        <NativeSelect value={doc} onChange={(e) => filter(() => setDoc(e.target.value))} aria-label={t('every_document')}>
-          <NativeSelectOption value="">{t('every_document')}</NativeSelectOption>
-          {docs.map((p) => (
-            <NativeSelectOption key={p} value={p}>
-              {p}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      </div>
-
-      {shown.length === 0 ? (
-        <Empty data-issues-empty>
-          <EmptyHeader>
-            <EmptyTitle>{rows.length > 0 ? t('nothing_matches') : built ? t('empty_built') : t('empty_unbuilt')}</EmptyTitle>
-            {rows.length === 0 && !built && <EmptyDescription>{t('empty_unbuilt_body')}</EmptyDescription>}
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <Table data-issues-table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>
-                <button type="button" className={styles.sortable} onClick={() => sortBy('kind')}>
-                  {t('col_kind')}
-                  {arrow('kind')}
-                </button>
-              </TableHead>
-              <TableHead>{t('col_issue')}</TableHead>
-              <TableHead>{t('col_where')}</TableHead>
-              <TableHead>
-                <button type="button" className={styles.sortable} onClick={() => sortBy('group')}>
-                  {t('col_status')}
-                  {arrow('group')}
-                </button>
-              </TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {pageRows.map((r) => {
-              const url = issueOf(r);
-              const canCreate = !url && (r.queue ? r.queue.actions.includes('create_issue') : true);
-              const open = expanded === r.key;
-              return (
-                <Fragment key={r.key}>
-                  <TableRow
-                    className={styles.row}
-                    data-issue-row={r.key}
-                    aria-expanded={open}
-                    onClick={() => setExpanded(open ? null : r.key)}
-                  >
-                    <TableCell>
-                      <Badge variant={r.tone === 'bad' ? 'danger' : 'warning'}>{kindLabel(r)}</Badge>
-                    </TableCell>
-                    <TableCell className={styles.titleCell}>
-                      <Prose text={r.title} />
-                    </TableCell>
-                    <TableCell>
-                      {r.side ? (
-                        <code className={styles.where} title={r.side.path}>
-                          {r.side.path.split('/').pop()}
-                          {r.side.line_start ? `:${r.side.line_start}` : ''}
-                        </code>
-                      ) : (
-                        <span className={styles.muted}>—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {url ? (
-                        <a
-                          href={url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={styles.issueLink}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {t('issue_number', { number: url.split('/').pop() ?? '' })}
-                        </a>
-                      ) : (
-                        <span className={`${styles.muted} ${styles[`status_${r.group}`] ?? ''}`}>{t(`status_${r.group}`)}</span>
-                      )}
-                    </TableCell>
-                    <TableCell className={styles.rowActions}>
-                      {canCreate && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setOpening(opening === r.key ? null : r.key);
-                          }}
-                        >
-                          {t('create_issue')}
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                  {opening === r.key && canCreate && (
-                    <TableRow>
-                      <TableCell colSpan={5}>
-                        <IssueForm
-                          row={r}
-                          people={people}
-                          t={t}
-                          onCancel={() => setOpening(null)}
-                          onCreate={(issue) => onCreateIssue(r.key, issue).then((x) => (setOpening(null), x))}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {open && (
-                    <TableRow className={styles.detailRow}>
-                      <TableCell colSpan={5}>
-                        {r.queue ? (
-                          <QueueItem
-                            item={r.queue}
-                            kindLabel={kindLabel(r)}
-                            onDecide={onDecide}
-                            onPropose={onPropose}
-                            onOpenFile={onOpenFile}
-                            t={t}
-                          />
-                        ) : r.doc ? (
-                          <DocItem
-                            item={r.doc}
-                            kindLabel={kindLabel(r)}
-                            onSave={onSave}
-                            onSameThing={onSameThing}
-                            onProposeSentence={onProposeSentence}
-                            onOpenFile={onOpenFile}
-                            t={t}
-                          />
-                        ) : null}
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </Fragment>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
-
-      {pages > 1 && (
-        <div className={styles.pager}>
-          <Button size="sm" variant="outline" disabled={at === 0} onClick={() => setPage(at - 1)}>
-            {t('previous')}
-          </Button>
-          <span className={styles.muted}>{t('page_of', { page: at + 1, pages, count: shown.length })}</span>
-          <Button size="sm" variant="outline" disabled={at >= pages - 1} onClick={() => setPage(at + 1)}>
-            {t('next')}
-          </Button>
-        </div>
-      )}
-    </div>
   );
 }

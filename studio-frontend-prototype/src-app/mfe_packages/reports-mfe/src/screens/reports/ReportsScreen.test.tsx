@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Plan } from '../../model/plan-model';
 import type { Report, ReportSource } from '../../model/reports-model';
 import type { RoadmapReport } from '../../model/roadmap-report';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
+
+// The roadmap's gears are the kit's DataGrid, which measures its header.
+stubResizeObserver();
 
 const { service, org, calls } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -188,13 +192,37 @@ describe('ReportsScreen', () => {
     expect(container.querySelector('[data-reports-count]')?.textContent).toBe('reports_one 1');
     expect(card.querySelector('[data-report-state="ready"]')?.textContent).toContain('2026-11-09 10:42');
     await waitFor(() => expect(card.textContent).toContain('hourly'));
-    const row = await find('[data-roadmap-row="CORE - cf-auth"]', card);
+    // The gear's cell carries the hook; its grid row has the rest.
+    const row = (await find('[data-roadmap-row="CORE - cf-auth"]', card)).closest('tr') as HTMLElement;
     expect(row.textContent).toContain('Acronis P1');
     expect(card.querySelector('[data-roadmap-overdue]')?.textContent).toContain('M0');
     expect(card.querySelector('[data-kpi="kpi_not_on_board"]')?.textContent).toContain('2');
     // Every reports read names the organization on screen.
     expect(calls).toContainEqual({ what: 'reports', arg: { organizationId: 'o1' } });
     expect(calls).toContainEqual({ what: 'summary', arg: { organizationId: 'o1', reportId: 'roadmap' } });
+  });
+
+  it("searches the roadmap's gears and clears the search when nothing matched", async () => {
+    const billing = {
+      ...roadmap.items[0],
+      name: 'cf-billing',
+      title: 'BILLING - cf-billing',
+      number: 8,
+      components: [],
+      assignees: '@b',
+      readiness: { ...roadmap.items[0].readiness, stage: 'Alpha', stage_at: 1, demand: [] },
+    };
+    serve({ summary: answer('summary', { ...roadmap, items: [...roadmap.items, billing], total: 2 }) });
+    const { container } = render(<ReportsScreen />);
+    await find('[data-roadmap-row="BILLING - cf-billing"]', container);
+    expect(container.querySelector('[data-roadmap-row="BILLING - cf-billing"]')?.textContent).toContain('not_in_code');
+    fireEvent.change(screen.getByPlaceholderText('search_gears'), { target: { value: 'acronis' } });
+    await waitFor(() => expect(container.querySelector('[data-roadmap-row="BILLING - cf-billing"]')).toBeNull());
+    expect(container.querySelector('[data-roadmap-row="CORE - cf-auth"]')).not.toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('search_gears'), { target: { value: 'no such gear' } });
+    expect(await screen.findByText('no_gears_match')).toBeTruthy();
+    fireEvent.click(container.querySelector('[data-grid-clear-filters]') as HTMLElement);
+    await find('[data-roadmap-row="BILLING - cf-billing"]', container);
   });
 
   it('offers to configure a report with no source, and draws nothing for it', async () => {

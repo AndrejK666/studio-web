@@ -1,5 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The kit's DataGrid measures its table.
+stubResizeObserver();
 
 const { service, org, calls } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,

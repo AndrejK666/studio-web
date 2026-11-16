@@ -1,8 +1,17 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { FRONTX_SHARED_PROPERTY_LANGUAGE, FRONTX_SHARED_PROPERTY_THEME } from '@gears-frontx/react';
 import { createMfeBridgeFixture } from '@frontx-test-utils/createMfeBridgeFixture';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SpecModelIssueRow } from '../../api/types';
+
+// The kit's DataGrid measures its header.
+stubResizeObserver();
+
+beforeAll(() => {
+  // jsdom has none, and the kit's filter tags build one on a click.
+  globalThis.PointerEvent ??= MouseEvent as unknown as typeof PointerEvent;
+});
 
 const { translations, service, scope, sendToHost } = vi.hoisted(() => ({
   translations: vi.fn(),
@@ -198,9 +207,32 @@ describe('IssuesScreen', () => {
   it('filters by group', async () => {
     render(<IssuesScreen bridge={bridge()} />);
     await screen.findByText(finding.title);
-    fireEvent.click(screen.getByText('filter_look'));
-    expect(screen.queryByText(finding.title)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /filter_group/ }));
+    // Only the groups that have rows are offered, each with its count.
+    expect(screen.queryByRole('radio', { name: /filter_decided/ })).toBeNull();
+    fireEvent.click(await screen.findByRole('radio', { name: 'filter_look (1)' }));
+    await waitFor(() => expect(screen.queryByText(finding.title)).toBeNull());
     expect(screen.getByText(assumption.title)).toBeTruthy();
+  });
+
+  it('narrows the rows by the search, and says when nothing matches', async () => {
+    render(<IssuesScreen bridge={bridge()} />);
+    await screen.findByText(finding.title);
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'invoice' } });
+    await waitFor(() => expect(screen.queryByText(finding.title)).toBeNull());
+    expect(screen.getByText('Invoice has no definition')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'nothing like it' } });
+    expect(await screen.findByText('nothing_matches')).toBeTruthy();
+  });
+
+  it('closes an opened row on a second click of the row, not on a click inside what it opened', async () => {
+    render(<IssuesScreen bridge={bridge()} />);
+    fireEvent.click(await screen.findByText(finding.title));
+    fireEvent.click(await screen.findByText('real'));
+    expect(screen.getByText('real')).toBeTruthy();
+    // The row's own title comes first; what opened under it repeats it.
+    fireEvent.click(screen.getAllByText(finding.title)[0]);
+    await waitFor(() => expect(screen.queryByText('real')).toBeNull());
   });
 
   it('says every reference resolves when nothing is queued and the model is not built', async () => {
@@ -215,6 +247,10 @@ describe('IssuesScreen', () => {
     issues.mockRejectedValueOnce(new Error('503 the documents gear is down'));
     render(<IssuesScreen bridge={bridge()} />);
     expect((await screen.findByRole('alert')).textContent).toContain('503 the documents gear is down');
+    // Try again reads it all again.
+    fireEvent.click(screen.getByRole('button', { name: 'retry' }));
+    expect(await screen.findByText(finding.title)).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('asks for a project when none is open', () => {

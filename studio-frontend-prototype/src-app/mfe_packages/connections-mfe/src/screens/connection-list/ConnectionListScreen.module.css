@@ -33,55 +33,15 @@
   height: var(--text-heading-1-line-height);
 }
 
-input.search {
-  width: 13.75rem;
-  height: var(--control-height-sm);
-}
-
-.card {
-  border: var(--border-width) solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-elevated);
-  color: var(--card-foreground);
-  overflow: hidden;
-}
-
-.table {
-  width: 100%;
-}
-
-/* Two text lines plus breathing room — the mockup's row rhythm. Doubled to
-   outweigh the kit's own cell padding. */
-.table.table tbody tr > td {
-  padding-block: var(--space-4);
-}
-
-.table th {
-  color: var(--muted-foreground);
-}
-
-.colConnection {
-  text-align: start;
-}
-
-.colStatus,
-.colAvailable,
-.colProjects,
-.colLastSync {
-  text-align: start;
-  white-space: nowrap;
-}
-
-.colActions {
-  text-align: end;
-  white-space: nowrap;
+.body {
+  min-width: 0;
 }
 
 .nameCell {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0;
+  min-width: 0;
 }
 
 .rowGlyph {
@@ -110,12 +70,14 @@ input.search {
   font-weight: var(--text-label-weight);
 }
 
-.subtitle,
-.updated,
-.noData {
+.subtitle {
   font-size: var(--text-meta-size);
   line-height: var(--text-meta-line-height);
   color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 28rem;
 }
 
 .loadFailed {
@@ -141,13 +103,6 @@ input.search {
   border: 0;
 }
 
-.subtitle {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 28rem;
-}
-
 .rowsSkeleton {
   display: flex;
   flex-direction: column;
@@ -157,23 +112,4 @@ input.search {
 
 .rowSkeleton {
   height: var(--space-6);
-}
-
-.state {
-  padding: var(--space-6) var(--space-4);
-  text-align: center;
-}
-
-.empty {
-  margin-inline: auto;
-  border: 0;
-  white-space: normal;
-}
-
-.footer {
-  padding: var(--space-3) var(--space-4);
-  border-top: var(--border-width) solid var(--border);
-  font-size: var(--text-meta-size);
-  line-height: var(--text-meta-line-height);
-  color: var(--muted-foreground);
 }

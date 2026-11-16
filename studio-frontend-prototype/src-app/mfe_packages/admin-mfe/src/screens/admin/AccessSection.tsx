@@ -22,12 +22,6 @@ import {
   Input,
   NativeSelect,
   NativeSelectOption,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@gears-frontx/ui-kit';
 import { AccountsApiService, useOrganization, type OrganizationRef, type Tenant } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../api/AdminApiService';
@@ -41,6 +35,7 @@ import {
 } from '../../model/access';
 import { byName, fromColleagues, fromMembers, type Member } from '../../model/members';
 import { ErrorLine, Header, errText, useAdmin } from './common';
+import { GrantsGrid } from './GrantsGrid';
 import styles from './Admin.module.css';
 
 /** Where AM keeps the organization's access document. */
@@ -360,42 +355,12 @@ function Access({ org }: { org: OrganizationRef }) {
                 <CardContent className={styles.cardBody}>
                   <h3 className={styles.subtitle}>{t('access_grants')}</h3>
                   <p className={styles.muted}>{t('access_grants_about')}</p>
-                  {cfg.grants.length === 0 ? (
-                    <p className={styles.muted}>{t('access_no_grants')}</p>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>{t('access_col_subject')}</TableHead>
-                          <TableHead>{t('access_col_role')}</TableHead>
-                          <TableHead>{t('access_col_scope')}</TableHead>
-                          <TableHead />
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {cfg.grants.map((g) => (
-                          <TableRow key={g.id} data-access-grant={g.id}>
-                            <TableCell>
-                              <Badge variant="secondary">{t(`access_subject_${g.subjectType}`)}</Badge> {g.subjectName}
-                            </TableCell>
-                            <TableCell>{cfg.roles.find((r) => r.key === g.roleKey)?.name ?? g.roleKey}</TableCell>
-                            <TableCell className={styles.sub}>
-                              {g.scopeType === 'org' ? t('access_scope_org', { name: g.scopeName }) : g.scopeName}
-                            </TableCell>
-                            <TableCell className={styles.num}>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => mutate({ ...cfg, grants: cfg.grants.filter((x) => x.id !== g.id) })}
-                              >
-                                {t('remove')}
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
+                  <GrantsGrid
+                    t={t}
+                    grants={cfg.grants}
+                    roles={cfg.roles}
+                    onRemove={(g) => mutate({ ...cfg, grants: cfg.grants.filter((x) => x.id !== g.id) })}
+                  />
 
                   <div className={styles.inline}>
                     <NativeSelect

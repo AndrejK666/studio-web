@@ -207,7 +207,7 @@
   min-height: 16rem;
 }
 
-/* ── toolbar and tables ── */
+/* ── toolbar and grid cells ── */
 
 .toolbar {
   display: flex;
@@ -216,16 +216,8 @@
   gap: var(--space-2);
 }
 
-.search {
-  width: 16rem;
-}
-
-.openRow {
-  cursor: pointer;
-}
-
-.lead {
-  max-width: 28rem;
+.pushEnd {
+  margin-left: auto;
 }
 
 .name {
@@ -235,11 +227,6 @@
 .purpose {
   color: var(--muted-foreground);
   font-size: var(--text-meta-size);
-  white-space: normal;
-}
-
-.expanded {
-  background: var(--muted);
   white-space: normal;
 }
 

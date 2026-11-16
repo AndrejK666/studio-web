@@ -284,8 +284,9 @@
   white-space: nowrap;
 }
 
-.top {
-  vertical-align: top;
+/* A second line inside a grid cell (the roadmap's gear rows). */
+.line {
+  display: block;
 }
 
 .skeleton {

@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChildMfeBridge } from '@gears-frontx/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
+
+// The kit's DataGrid measures its header.
+stubResizeObserver();
 
 const { service, org, calls, opened } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -102,6 +106,9 @@ function serve(over: Record<string, unknown> = {}) {
 
 const bridge = {} as ChildMfeBridge;
 
+/** A person's row in the grid. */
+const rowOf = (id: string) => document.querySelector(`[data-person="${id}"]`)?.closest('tr') ?? null;
+
 beforeEach(() => {
   calls.length = 0;
   opened.length = 0;
@@ -133,7 +140,7 @@ describe('Organization › People', () => {
   it("puts a person's role grant on the project it names, and opens that project's Team", async () => {
     render(<PeopleScreen bridge={bridge} />);
     const chip = await waitFor(() => {
-      const found = document.querySelector('[data-person="u2"] [data-person-project="p1"]');
+      const found = rowOf('u2')?.querySelector('[data-person-project="p1"]');
       if (!found) throw new Error('no chip');
       return found as HTMLElement;
     });
@@ -150,12 +157,34 @@ describe('Organization › People', () => {
         organizationId: 'o1',
       },
     ]);
+    // The mark's click is the project's, not the row's: no person panel opens.
+    expect(document.querySelector('[data-person-panel]')).toBeNull();
+  });
+
+  it('opens the person from a click anywhere on the row', async () => {
+    render(<PeopleScreen bridge={bridge} />);
+    await screen.findByRole('button', { name: 'Bob' });
+    fireEvent.click(screen.getByText('role_member', { selector: 'span' }).closest('td') as HTMLElement);
+    expect(await screen.findByText('addresses_hidden')).toBeTruthy();
+  });
+
+  it('offers an invitation when the organization has nobody to list', async () => {
+    serve({ orgMembers: () => Promise.resolve([]) });
+    render(<PeopleScreen bridge={bridge} />);
+    const invite = await waitFor(() => {
+      const found = document.querySelector('[data-people-empty]');
+      if (!found) throw new Error('no empty state');
+      return found as HTMLElement;
+    });
+    expect(screen.getByText('empty_title')).toBeTruthy();
+    fireEvent.click(invite);
+    expect(await screen.findByLabelText('invite_address')).toBeTruthy();
   });
 
   it('says a person without a grant is on no project under role access', async () => {
     render(<PeopleScreen bridge={bridge} />);
     await waitFor(() => {
-      const none = document.querySelector('[data-person="u1"] [data-people-none]');
+      const none = rowOf('u1')?.querySelector('[data-people-none]');
       if (!none) throw new Error('not yet');
       expect(none.textContent).toContain('stack_no_project');
     });
@@ -164,9 +193,11 @@ describe('Organization › People', () => {
   it('narrows the list by the search', async () => {
     render(<PeopleScreen bridge={bridge} />);
     await screen.findByRole('button', { name: 'Ann' });
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'bob' } });
-    expect(screen.queryByRole('button', { name: 'Ann' })).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'bob' } });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Ann' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Bob' })).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'nobody' } });
+    expect(await screen.findByText('no_matches')).toBeTruthy();
   });
 
   it('falls back to the colleague projection for a member without people.view', async () => {

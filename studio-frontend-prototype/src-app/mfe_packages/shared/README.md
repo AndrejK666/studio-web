@@ -72,20 +72,35 @@ each MFE's build bundles them into its own stylesheet, as it does its own.
   `filter` keeps a row under the other filters, `compare` sorts by column id.
   Render its `reloadBridge` inside the grid; a new `rows` array is a reload, so
   memoize it. `shownRows` and `pageOfRows` are the same rules as pure functions.
-  A list the server pages writes its own `load`, as Specs does.
+  A list the server pages writes its own `load`, as Specs does; a list in
+  memory that answers a tree's branches apart (Workspaces and their projects)
+  writes its own too, with `useLocalGridReload(rows)` for the reload.
 - **`createGridCells(name)`**: a context for what cells need beyond their row
   (callbacks, labels), so `columns` stays one array: the grid resets its
   column state on a new one.
 - **Conventions**: column ids are snake_case (the kit throws otherwise); a
   name column is `NameCell` (an icon and a name that opens the row); a cell
   with nothing to show is `NoData`; `GridEmpty` says "nothing here yet" or
-  "nothing matched"; a list that did not load is `GridFailed` with a retry;
+  "nothing matched", with `GridClearFilters` (empties the search and drops
+  every filter) as its way back; a list that did not load is `GridFailed` with a retry;
   the line under a list is `GridFooter`.
 - **Filters**: `TEXT_SEARCH_FILTER_KEY`, and `tagGroupChoice`, `listChoices`,
   `searchQuery` read what a stored filter holds, whatever shape it has.
-- **Theme**: `useThemedRoot` finds the screen's `[data-theme]` root for a
-  popup's `container`. A screen's root carries `data-theme` from
-  `useHostChrome`; without it the kit's tokens stay light.
+- **Theme**: `StudioMfeLifecycle` keeps `data-kit-theme` on the MFE's shadow
+  host in step with the portal theme, and `anchorKitThemeOnShadowHost` lets
+  the kit's light and dark palettes match it, so every node under the host
+  takes the portal's tokens, whatever its screen root carries (#1075).
+  `useThemedRoot` finds a popup's `container`: the screen's `[data-theme]`
+  root, or else the shadow root's top element.
+
+## The Inbox count
+
+A screen that reads the person's open Inbox (`GET /studio-user/v1/me/inbox`)
+calls `reportInboxCount(bridge, total)` after each read (`null` when it
+failed), and declares `STUDIO_ACTION_INBOX_COUNT` in its entry's
+`domainActions`. The top bar shows that count and does not read the Inbox
+itself while such a screen is open (#1077): the server reads every source to
+answer, and the bar's read and the screen's used to go out together.
 
 ## Remembered choices
 

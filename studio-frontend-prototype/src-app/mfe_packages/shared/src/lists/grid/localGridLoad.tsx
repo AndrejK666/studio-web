@@ -76,6 +76,16 @@ const ReloadOnChange: React.FC<{ rows: unknown }> = ({ rows }) => {
 };
 
 /**
+ * Only the reload half of `useLocalGridLoad`, for a list that writes its own
+ * `load` over rows in memory (a tree whose branches answer apart, a list with
+ * more than one kind of row): render the element inside the `DataGrid`, and a
+ * new `rows` reloads the grid, keeping its search, filters and page size.
+ */
+export function useLocalGridReload(rows: unknown): React.ReactElement {
+  return <ReloadOnChange rows={rows} />;
+}
+
+/**
  * A `load` over rows already in memory: the grid's search, filters, order and
  * page applied to them here, as Specs does (#689). The grid keeps `load` in a
  * ref, so new rows reach it through `reloadBridge`, not through a new `load`.
