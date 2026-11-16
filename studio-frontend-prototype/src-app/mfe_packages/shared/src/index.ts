@@ -59,6 +59,17 @@ export {
 } from './host/chainOutcome';
 export { useNotify } from './host/useNotify';
 export {
+  BUILT_PREVIEWS_DIR,
+  BUILT_PREVIEWS_INDEX,
+  builtPreviewsOf,
+  forgetBuiltPreviews,
+  isPicture,
+  loadScreenPreviews,
+  newestBuild,
+  pictureFor,
+  type ScreenPreview,
+} from './host/screenPreviews';
+export {
   MFE_PREFERENCE_KEY,
   MFE_PREFERENCE_MAX_LENGTH,
   STUDIO_ACTION_PREFERENCE_SET,

@@ -343,6 +343,17 @@ jobs:
         run: npm run build
       - name: Test
         run: npm test
+      # A picture of each of the portal's own screens into the dist/ it ships
+      # (scripts/mfe-screen-previews.mjs): nginx serves them under
+      # /screen-previews/, where the product map and a kit's page read them
+      # when the components catalogue keeps none. Advisory -- a browser that
+      # will not start must not fail the portal; the screens then show their
+      # schematic and say so.
+      - name: Screen previews
+        continue-on-error: true
+        run: |
+          npx playwright install chromium
+          npm run build:previews -- --commit "$(git rev-parse --short=12 HEAD)"
       - uses: actions/upload-artifact@v6
         with:
           name: studio-frontend-prototype-dist

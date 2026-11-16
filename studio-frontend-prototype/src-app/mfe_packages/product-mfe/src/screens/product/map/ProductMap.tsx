@@ -262,9 +262,14 @@ export function ProductMap({
   /** Each screen card's catalogue entry, by node: what its pictures are kept under. */
   const pictured = useMemo(() => {
     const out = new Map<string, { component: string; version: string | null }>();
+    const mfes = read?.mfes ?? [];
     for (const place of product?.frontend?.mfes ?? []) {
-      const cat = catalogueMfe(place, read?.mfes ?? []);
+      // A fork's frontend is the catalogue's package at the same path: when
+      // the repository does not match, the one package kept at that path.
+      const atPath = mfes.filter((m) => m.path === place.path);
+      const cat = catalogueMfe(place, mfes) ?? (atPath.length === 1 ? atPath[0] : null);
       if (cat) out.set(`mfe:${place.path}`, { component: cat.name, version: cat.version });
+      else if (place.package) out.set(`mfe:${place.path}`, { component: place.package, version: null });
     }
     return out;
   }, [product, read]);

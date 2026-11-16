@@ -8,8 +8,8 @@
  * Pure: the page and its tests hand everything in.
  */
 
-import type { ModelTab, ShellTab } from '@constructor-studio/mfe-shared';
-import type { KitContents, KitField, KitScreen, KitTypeInfo, ScreenPreview } from '../api/KitsApiService';
+import { pictureFor, type ModelTab, type ShellTab } from '@constructor-studio/mfe-shared';
+import type { KitContents, KitField, KitScreen, KitTypeInfo } from '../api/KitsApiService';
 
 /** The levels in the shell's order (ADR-0069). */
 export const LEVEL_ORDER = ['platform', 'organization', 'workspace', 'project', 'admin'] as const;
@@ -169,26 +169,8 @@ export function levelMaps({ slug, contents, shellTabs, routes, modelTabs }: Leve
   });
 }
 
-/**
- * The newest build's picture of a screen: by route, else by label. `items`
- * come the newest build first (`GET /screen-previews`); a picture of an
- * older build is not taken when the newest has none of the screen.
- */
-export function pictureFor(
-  items: readonly ScreenPreview[] | null | undefined,
-  place: { route: string | null; label: string }
-): ScreenPreview | null {
-  const usable = (items ?? []).filter((p) => p.image.startsWith('data:image/'));
-  const newest = usable[0]?.commit;
-  if (!newest) return null;
-  const build = usable.filter((p) => p.commit === newest);
-  if (place.route) {
-    const byRoute = build.find((p) => p.route === place.route);
-    if (byRoute) return byRoute;
-  }
-  const label = place.label.trim().toLowerCase();
-  return build.find((p) => p.label?.trim().toLowerCase() === label) ?? null;
-}
+/** The newest build's picture of a screen: the rule every screen card shares (mfe-shared `screenPreviews`). */
+export { pictureFor };
 
 /* ── What it adds to the model ────────────────────────────────────────── */
 

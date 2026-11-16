@@ -14,6 +14,7 @@ import {
   STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
   TAB_LEVELS,
   isAvailableScreens,
+  loadScreenPreviews,
   modelOf,
   modelTabs,
   shellTabsOf,
@@ -380,10 +381,13 @@ function useKitPageContext(bridge: ChildMfeBridge, orgId: string | null): KitPag
       shellTabs: shellTabsOf(value),
       routes: value?.routes ?? null,
       modelTabs: levelModelTabs && levelModelTabs.orgId === orgId ? levelModelTabs.tabs : null,
+      // The catalogue's pictures, else the ones the portal's build took of its own screens.
       loadPreviews: (component: string) =>
-        Promise.resolve()
-          .then(() => pageApi.screenPreviews({ component, organizationId: orgId }).fetch())
-          .then((r): ScreenPreview[] => r?.items ?? []),
+        loadScreenPreviews(component, () =>
+          Promise.resolve()
+            .then(() => pageApi.screenPreviews({ component, organizationId: orgId }).fetch())
+            .then((r): ScreenPreview[] => r?.items ?? [])
+        ),
     };
   }, [availableKey, levelModelTabs, orgId, pageApi]);
 }
