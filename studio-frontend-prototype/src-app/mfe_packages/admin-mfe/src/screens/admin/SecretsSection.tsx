@@ -22,7 +22,7 @@ import {
 import { AdminApiService } from '../../api/AdminApiService';
 import type { Connection, WorkspaceSettings } from '../../api/types';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
-import { knownSecretRefs, type SecretRow } from '../../model/secrets';
+import { knownSecretRefs, type SecretRow, type WorkspaceSecrets } from '../../model/secrets';
 import { ErrorLine, Header, errText, useAdmin, useConfirm } from './common';
 import { SecretsGrid, type SecretHealth } from './SecretsGrid';
 import styles from './Admin.module.css';
@@ -56,16 +56,30 @@ function Secrets({ org }: { org: OrganizationRef }) {
     let live = true;
     void (async () => {
       try {
-        const workspaces = (await accounts.getWorkspaces({ organizationId: org.id }).fetch({ staleTime: 0 }))?.items ?? [];
-        const each = await Promise.all(
+        // A workspace's settings carry its root token; a project's config its sources, whose tokens are the
+        // connections'. Project config is read from the projects, under each workspace and straight under the
+        // organization: a workspace has none (walk 2026-11-16: five 404s and "No secret references found").
+        const [workspaces, orgProjects, orgConnections] = await Promise.all([
+          accounts.getWorkspaces({ organizationId: org.id }).fetch({ staleTime: 0 }).then((p) => p?.items ?? []),
+          accounts.getProjects({ parentId: org.id }).fetch({ staleTime: 0 }).then((p) => p?.items ?? [], () => []),
+          api
+            .connections({ tenant: org.id })
+            .fetch({ staleTime: 0 })
+            .then((p) => p.items)
+            .catch((): Connection[] => []),
+        ]);
+        const projectSecrets = async (project: { id: string; name: string }, where: string, connections: Connection[]) => {
+          const config = await accounts
+            .getTenantMetadata<ProjectConfig>({ tenantId: project.id, metadataType: PROJECT_CONFIG_TYPE })
+            .fetch({ staleTime: 0 })
+            .catch(() => null);
+          return { name: `${where}${project.name}`, sources: config?.value?.sources, connections };
+        };
+        const perWorkspace = await Promise.all(
           workspaces.map(async (ws) => {
-            const [settings, config, connections] = await Promise.all([
+            const [settings, connections, projects] = await Promise.all([
               accounts
                 .getTenantMetadata<WorkspaceSettings>({ tenantId: ws.id, metadataType: WS_SETTINGS_TYPE })
-                .fetch({ staleTime: 0 })
-                .catch(() => null),
-              accounts
-                .getTenantMetadata<ProjectConfig>({ tenantId: ws.id, metadataType: PROJECT_CONFIG_TYPE })
                 .fetch({ staleTime: 0 })
                 .catch(() => null),
               api
@@ -73,15 +87,23 @@ function Secrets({ org }: { org: OrganizationRef }) {
                 .fetch({ staleTime: 0 })
                 .then((p) => p.items)
                 .catch((): Connection[] => []),
+              accounts
+                .getProjects({ parentId: ws.id })
+                .fetch({ staleTime: 0 })
+                .then((p) => p?.items ?? [], () => []),
             ]);
-            return {
-              name: ws.name,
-              rootTokenRef: settings?.value?.root_token_ref,
-              sources: config?.value?.sources,
-              connections,
-            };
+            const reachable = [...connections, ...orgConnections];
+            return [
+              { name: ws.name, rootTokenRef: settings?.value?.root_token_ref, connections: reachable },
+              ...(await Promise.all(projects.map((p) => projectSecrets(p, `${ws.name} / `, reachable)))),
+            ];
           })
         );
+        const each: WorkspaceSecrets[] = [
+          { name: org.name, connections: orgConnections, listsConnections: true },
+          ...perWorkspace.flat(),
+          ...(await Promise.all(orgProjects.map((p) => projectSecrets(p, '', orgConnections)))),
+        ];
         if (!live) return;
         setRows(knownSecretRefs(each));
         setReadError(null);
@@ -94,7 +116,7 @@ function Secrets({ org }: { org: OrganizationRef }) {
     return () => {
       live = false;
     };
-  }, [api, accounts, org.id, tick]);
+  }, [api, accounts, org.id, org.name, tick]);
 
   const check = useCallback(
     async (ref: string) => {

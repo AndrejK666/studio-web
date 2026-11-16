@@ -35,7 +35,7 @@ import {
 import { useWorkspacesText } from '../../../i18n';
 import { growthText, quietText, reasonLine } from '../../../overview/model';
 import type { OrgProjectHealth, OrgWorkspace } from '../../../overview/types';
-import { matchesManaged, workspaceSummary, type ManagedFilter } from '../model';
+import { matchesManaged, projectCountOf, workspaceSummary, type ManagedFilter } from '../model';
 import styles from '../WorkspacesScreen.module.css';
 
 /** A row of the grid: a workspace, or one of its projects under it. */
@@ -60,6 +60,8 @@ export function keepsWorkspace(row: WorkspaceGridRow, filters: Record<string, un
   return chosen.length === 0 || chosen.some((side) => matchesManaged(row.tenant, side));
 }
 
+/** A workspace's projects: the overview's list of them, else the child count (walk 2026-11-16). */
+const projectsOf = (row: WorkspaceGridRow) => (row.kind === 'workspace' ? projectCountOf(row.tenant, row.health) : null);
 const spendOf = (row: WorkspaceGridRow) => (row.kind === 'workspace' ? row.health?.spend : row.project.spend) ?? null;
 const failingOf = (row: WorkspaceGridRow) =>
   (row.kind === 'workspace' ? row.health?.specs_failing : row.project.specs_failing) ?? 0;
@@ -77,7 +79,7 @@ export const WORKSPACE_GRID_OPTIONS = {
   filter: keepsWorkspace,
   compare: {
     workspace: (a: WorkspaceGridRow, b: WorkspaceGridRow) => nameOf(a).localeCompare(nameOf(b)),
-    projects: byNumber((row) => (row.kind === 'workspace' ? row.tenant.child_count : null)),
+    projects: byNumber(projectsOf),
     spend: byNumber(spendOf),
     failing: byNumber(failingOf),
     stuck: byNumber(stuckOf),
@@ -172,12 +174,10 @@ const NameCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) => {
 
 const Count: React.FC<{ value: React.ReactNode }> = ({ value }) => <span className={styles.count}>{value}</span>;
 
-const ProjectsCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) =>
-  item.kind === 'workspace' && item.tenant.child_count !== undefined ? (
-    <Count value={item.tenant.child_count} />
-  ) : (
-    <Dash />
-  );
+const ProjectsCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) => {
+  const count = projectsOf(item);
+  return count === null || count === undefined ? <Dash /> : <Count value={count} />;
+};
 
 const SpendCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) => {
   const { cash } = useWorkspaceCells();

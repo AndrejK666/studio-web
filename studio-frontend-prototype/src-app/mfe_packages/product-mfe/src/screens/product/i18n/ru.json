@@ -34,5 +34,7 @@
   "roles_home": "дом",
   "roles_home_title": "Описание живёт с этим источником: его источники path(...) разрешаются здесь",
   "roles_pinned": "закреплён {commit}",
-  "roles_not_saved": "не сохранено"
+  "roles_not_saved": "не сохранено",
+  "source_branch_gone": "Источник {repository} указывает на ветку {branch}, которой больше нет: подключите репозиторий заново на существующей ветке (Источники).",
+  "source_clone_failed": "Не удалось клонировать источник {repository}: {cause}"
 }

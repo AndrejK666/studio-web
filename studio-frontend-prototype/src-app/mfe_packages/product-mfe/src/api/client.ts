@@ -211,6 +211,9 @@ export const api = {
   connections: (_token: string, tenant: string) => svc().connections({ tenant }).fetch(FRESH),
   glossary: (_token: string, projectId: string) => svc().glossary({ projectId }).fetch(FRESH),
   specModel: (_token: string, projectId: string) => svc().specModel({ projectId }).fetch(FRESH),
+  /** The project's sources whose last clone or fetch failed: why a product built from them cannot resolve. */
+  cloneFailures: async (_token: string, projectId: string) =>
+    (await svc().cloneStatus({ projectId }).fetch(FRESH)).items.filter((s) => s.state === 'failed'),
 
   listArtifactNodes: (
     _token: string,

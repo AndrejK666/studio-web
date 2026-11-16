@@ -147,7 +147,7 @@
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.admin.mfe.main.v1",
       "presentation": {
-        "label": "Project tenants",
+        "label": "Workspace tenants",
         "icon": "lucide:folder-tree",
         "route": "/admin/tenants",
         "order": 95,

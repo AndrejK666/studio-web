@@ -66,6 +66,16 @@ describe('SourcesFooter', () => {
     ).toBe('3 sources · 12 specs from sources · 2 open pull requests');
   });
 
+  it('never says all synced beside a row that is syncing or could not be cloned', () => {
+    dictionary.current = { words: en, language: 'en' };
+    const counts = { sources: 1, specs: 0, openPullRequests: 0 };
+    expect(
+      render(
+        <SourcesFooter footer={counts} synced={{ repositories: 1, neverSynced: 0, syncing: 1, cloneFailed: 1 }} />
+      ).container.textContent
+    ).toBe('1 source · 0 specs from sources · 0 open pull requests · 1 syncing · 1 could not be cloned');
+  });
+
   it('takes the Russian forms of never synced', () => {
     dictionary.current = { words: ru, language: 'ru' };
     expect(

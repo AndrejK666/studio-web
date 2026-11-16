@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useScreenAvailability } from '@constructor-studio/mfe-shared';
 import {
   Badge,
   Button,
@@ -38,7 +39,7 @@ import type {
   ResearchProject,
 } from '../../api/types';
 import type { IdeBuild } from '../../model/builds';
-import { ended, researchEnvironmentFor, researchEnvironmentInput, type Intent } from '../../model/path';
+import { ROUTES, ended, researchEnvironmentFor, researchEnvironmentInput, type Intent } from '../../model/path';
 import { deployableBuilds } from '../../model/project-deploys';
 import { useDeployRequest } from './DeployActions';
 import { CauseView } from './ProjectPath';
@@ -67,6 +68,8 @@ export function DeployDialog({
   onIntent: (intent: Intent, action: Partial<PathAction>) => void;
 }) {
   const { t, container } = useReleases();
+  // Organization › Infrastructure is named only where its kit put the screen.
+  const noEnvironmentKey = useScreenAvailability().route(ROUTES.infrastructure) ? 'no_environment' : 'no_environment_admin';
   const research = !!path?.research_kit;
   const clusters = environments.filter((e) => e.kind !== 'research' || research);
   return (
@@ -79,7 +82,7 @@ export function DeployDialog({
         <section className={styles.stack}>
           <h3 className={styles.subTitle}>{t('target_environments')}</h3>
           {clusters.length === 0 ? (
-            <p className={styles.muted}>{t('no_environment')}</p>
+            <p className={styles.muted}>{t(noEnvironmentKey)}</p>
           ) : (
             <ul className={styles.targets}>
               {clusters.map((e) => (

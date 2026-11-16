@@ -1,6 +1,6 @@
 {
   "title": "Background work",
-  "about": "Every run this deployment has queued, and the schedules that fire them. Runs survive a restart, are retried with backoff, and end up in a dead-letter table rather than nowhere. The list opens on what failed and what is running; a scheduled task's succeeded runs fold into one row.",
+  "about": "Every run this organization, its workspaces and its projects have queued, and the schedules that fire them for it. Runs survive a restart, are retried with backoff, and end up in a dead-letter table rather than nowhere. The list opens on what failed and what is running; a scheduled task's succeeded runs fold into one row.",
   "count_running": "{count} running",
   "count_queued": "{count} queued",
   "count_failed": "{count} failed",

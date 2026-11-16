@@ -12,7 +12,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
-import { isNotFound } from '@constructor-studio/mfe-shared';
+import { isNotFound, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { BuildLog, Deployment, DeployEnvironment, ProjectBuildConfig, ProjectImage } from '../../api/types';
 import {
   buildWorkflowOf,
@@ -34,6 +34,7 @@ import {
 } from '../../model/builds';
 import { recordFor, whereItRuns } from '../../model/images';
 import { buildsHint } from '../../model/pipeline';
+import { ROUTES } from '../../model/path';
 import { CiRunsGrid, ProductBuildsGrid, STAGE_MARK } from './BuildsGrids';
 import { DeployBuildTo } from './DeployActions';
 import { ErrorLine, errText, useApi, useReleases } from './parts';
@@ -130,7 +131,8 @@ export function ProjectBuilds({
 
   // Building in Studio is not in this portal yet (parity.md): the line says
   // what it can without it.
-  const hint = buildsHint(builds, false, now);
+  const screens = useScreenAvailability();
+  const hint = buildsHint(builds, false, now, screens.route(ROUTES.infrastructure));
 
   return (
     <section className={styles.stack} data-release-builds>

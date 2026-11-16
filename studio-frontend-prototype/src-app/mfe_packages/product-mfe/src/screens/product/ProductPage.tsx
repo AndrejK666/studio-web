@@ -107,6 +107,18 @@ export function ProductPage() {
   const [openStep, setOpenStep] = useState<string | null>(null);
   /** What Backend says comes next (ProductBackend announces it). */
   const [next, setNext] = useState<string | null>(() => announcedNext(projectId));
+  /** Sources whose last clone failed: the cause behind "doesn't resolve: N errors" (walk 2026-11-16). */
+  const [cloneFailures, setCloneFailures] = useState<Awaited<ReturnType<typeof productApi.cloneFailures>>>([]);
+  useEffect(() => {
+    let alive = true;
+    productApi.cloneFailures(projectId).then(
+      (items) => alive && setCloneFailures(items),
+      () => alive && setCloneFailures([])
+    );
+    return () => {
+      alive = false;
+    };
+  }, [projectId, round]);
 
   useEffect(() => {
     let alive = true;
@@ -224,6 +236,14 @@ export function ProductPage() {
                     {t('pull_request')}
                   </a>
                 )}
+                {header.verdict?.tone === 'danger' &&
+                  cloneFailures.map((c) => (
+                    <span key={c.full_path} className={styles.error} data-product-clone-failure={c.full_path}>
+                      {c.cause === 'branch_not_found' && c.detail
+                        ? t('source_branch_gone', { repository: c.full_path, branch: c.detail })
+                        : t('source_clone_failed', { repository: c.full_path, cause: c.cause_text ?? '' })}
+                    </span>
+                  ))}
               </span>
             )
           }

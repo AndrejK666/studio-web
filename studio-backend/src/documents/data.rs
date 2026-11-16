@@ -376,6 +376,15 @@ macro_rules! move_back {
     }};
 }
 
+/// Declare every row type one owner's rows use, in one go.
+macro_rules! ensure_all {
+    ($self:ident, $ctx:expr, $port:expr, [$($m:ident),* $(,)?]) => {{
+        $(
+            $self.table.ensure::<$m::Model>($ctx, $port).await?;
+        )*
+    }};
+}
+
 /// Every table one owner's rows are moved from, in one go.
 macro_rules! move_all {
     ($self:ident, $ctx:expr, $port:expr, $owner:expr, [$($m:ident => $load:ident),* $(,)?]) => {{
@@ -457,7 +466,41 @@ impl DocumentsData {
             return Ok(Some((port, org_ctx)));
         }
         let marker = format!("documents-moved-v2:{owner}");
-        if !Self::marked_done(ctx, port.as_ref(), &marker).await? {
+        if Self::marked_done(ctx, port.as_ref(), &marker).await? {
+            // Moved by an earlier build, which may not have known every row
+            // type this one keeps (`spec-upload` came after the move): a type
+            // the model lacks fails every read that names it. A declaration
+            // that changes nothing is answered from the cached model.
+            let p = port.as_ref();
+            let declared = async {
+                ensure_all!(
+                    self,
+                    ctx,
+                    p,
+                    [
+                        doc_type,
+                        analysis,
+                        spec_extraction,
+                        spec_judgement,
+                        spec_decision,
+                        spec_review,
+                        spec_term,
+                        spec_upload,
+                        document,
+                        document_binding,
+                        application_part,
+                        delivery_scope,
+                        delivery_limit,
+                        delivery_history,
+                    ]
+                );
+                anyhow::Ok(())
+            }
+            .await;
+            if let Err(e) = declared {
+                tracing::warn!(owner = %owner, error = %e, "studio-documents: the row types could not be declared — a read of a missing one fails");
+            }
+        } else {
             let p = port.as_ref();
             let moved = async {
                 let n = move_all!(self, ctx, p, owner, [

@@ -28,15 +28,17 @@ import { ConfirmDialog, NameDialog } from "../../components/dialogs";
 import { useWorkspacesScreenTranslations, useWorkspacesText } from "../../i18n";
 import { WorkspacesToolbar } from "./components/WorkspacesToolbar";
 import { WorkspacesGrid } from "./components/WorkspacesGrid";
-import { healthOf } from "./model";
+import { healthOf, projectCountOf } from "./model";
 import styles from "./WorkspacesScreen.module.css";
 
 /** A sum in the reader's language and the overview's currency. */
 function money(value: number, currency: string, language: string): string {
+  // A sum that rounds to nothing is $0, not -$0: a forecast or difference can come back as -0.2 (walk 2026-11-16).
+  const whole = Math.round(value) === 0 ? 0 : value;
   try {
-    return new Intl.NumberFormat(language, { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
+    return new Intl.NumberFormat(language, { style: "currency", currency, maximumFractionDigits: 0 }).format(whole);
   } catch {
-    return `${Math.round(value)} ${currency}`;
+    return `${Math.round(whole)} ${currency}`;
   }
 }
 
@@ -87,9 +89,10 @@ const WorkspaceList: React.FC<{
 
   const all = useMemo(() => data?.items ?? [], [data]);
 
+  // The same count as each row's: the overview's projects, else the child count.
   const projectTotal = useMemo(
-    () => all.reduce((sum, row) => sum + (row.child_count ?? 0), 0),
-    [all],
+    () => all.reduce((sum, row) => sum + (projectCountOf(row, healthOf(overview, row.id)) ?? 0), 0),
+    [all, overview],
   );
 
 

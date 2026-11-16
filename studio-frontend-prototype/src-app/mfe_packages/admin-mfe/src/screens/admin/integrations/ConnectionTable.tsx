@@ -53,8 +53,34 @@ import own from './Integrations.module.css';
 
 type Health = { state: 'ok' | 'bad' | 'testing'; text: string; at: number };
 
-/** Each connection's last answer, kept across visits to the page. */
-const healthCache = new Map<string, Health>();
+/**
+ * Each connection's last answer, kept across visits to the page and, through localStorage, across page loads: a test
+ * of a GitHub connection is a live call that spends the token's rate limit, so a visit asks only what has no answer
+ * younger than HEALTH_TTL_MS (walk 2026-11-16: every visit tested all six).
+ */
+const HEALTH_STORE_KEY = 'studio.admin.connection-health.v1';
+const healthCache = new Map<string, Health>(readStoredHealth());
+
+function readStoredHealth(): [string, Health][] {
+  try {
+    const raw = window.localStorage.getItem(HEALTH_STORE_KEY);
+    const stored = raw ? (JSON.parse(raw) as Record<string, Health>) : {};
+    return Object.entries(stored).filter(
+      ([, h]) => !!h && (h.state === 'ok' || h.state === 'bad') && typeof h.at === 'number'
+    );
+  } catch {
+    return [];
+  }
+}
+
+function storeHealth(): void {
+  try {
+    const settled = [...healthCache.entries()].filter(([, h]) => h.state !== 'testing');
+    window.localStorage.setItem(HEALTH_STORE_KEY, JSON.stringify(Object.fromEntries(settled)));
+  } catch {
+    // A private window or blocked storage: the answers last this page load only.
+  }
+}
 
 /** "8 min ago", "yesterday": when a health answer came. */
 export function ago(at: number, now: number, t: ScreenText): string {
@@ -284,6 +310,7 @@ export function ConnectionTable({
         )
         .then((v) => {
           healthCache.set(c.id, v);
+          storeHealth();
           setHealth((h) => ({ ...h, [c.id]: v }));
         }),
     [api, org.id]

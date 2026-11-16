@@ -470,7 +470,8 @@ describe('generated MFE manifest', () => {
         // Saved views of the model's objects (admin-mfe, order 80), after Objects.
         'Views',
         'All identities',
-        'Project tenants',
+        // Workspaces, not projects: the list is of workspace tenants (walk 2026-11-16).
+        'Workspace tenants',
         // The prototype's System (who is here, a test notification, raw types and JSON).
         'System',
       ]);

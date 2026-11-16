@@ -67,7 +67,14 @@ export const SearchScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
 
-  useEffect(() => input.current?.focus(), []);
+  // The input is drawn only once the translations are in, so a mount-time focus found no input; and the shell's
+  // dialog settles its own focus after mounting the screen. Focus when the input exists, after that (walk 2026-11-16:
+  // typing went to the header button).
+  useEffect(() => {
+    if (loading) return;
+    const timer = setTimeout(() => input.current?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   // The organization's workspaces and their projects, read once per organization.
   useEffect(() => {

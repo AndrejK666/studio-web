@@ -26,7 +26,6 @@
   "close": "Закрыть",
   "cancel": "Отмена",
   "next": "Дальше:",
-
   "newest_build": "новейшая сборка:",
   "nothing_published": "пока ничего не опубликовано",
   "col_environment": "Окружение",
@@ -59,7 +58,6 @@
   "promote_title": "Развернуть {version}, которая работает в {from}, в {environment}",
   "promote_title_replaces": "Развернуть {version}, которая работает в {from}, в {environment} вместо {replaces}",
   "what_promote": "Продвижение {version} в {environment}",
-
   "asked_queued": "{what}: в очереди.",
   "asked_waits": "{what}: ждёт одобрения администратора.",
   "environment": "Окружение",
@@ -130,7 +128,6 @@
   "place_cluster_title": "Кластер Kubernetes",
   "cluster": "кластер",
   "research_signin": "ваш вход в Research: нет → Подключить",
-
   "build_in_ci_title": "Сборка в CI",
   "builds_title": "Сборки",
   "ci_unreadable": "Studio не смогла прочитать запуски CI в {repo}: {error}. Возможно, у подключения нет доступа на чтение к Actions репозитория.",
@@ -186,7 +183,6 @@
   "log_following": "следим",
   "log_empty": "(пока ничего не записано)",
   "log_no_step": "Ни один шаг ещё не начался.",
-
   "own_environments": "Окружения этого проекта",
   "own_environments_sub": "какой профиль работает в каждом окружении",
   "bindings_title": "Какой профиль работает в каждом окружении",
@@ -200,7 +196,6 @@
   "save": "Сохранить",
   "saved": "Сохранено.",
   "bindings_saved": "Привязки сохранены.",
-
   "search_deploys": "Поиск развёртываний…",
   "col_state": "Состояние",
   "col_what": "Что",
@@ -215,7 +210,6 @@
   "no_workloads": "В {namespace} нет рабочих нагрузок.",
   "unknown_user": "кто-то",
   "unknown_user_id": "пользователь {id}…",
-
   "path_title": "Путь к запуску",
   "path_checklist": "Что нужно для деплоя",
   "check_done": "есть",
@@ -291,5 +285,6 @@
   "research_building": "Сборка {build} в Constructor Research…",
   "research_deploying": "Запуск приложения в Constructor Research…",
   "research_runs": "Продукт работает в Constructor Research.",
-  "research_build_failed": "Сборка в Constructor Research не удалась."
+  "research_build_failed": "Сборка в Constructor Research не удалась.",
+  "no_environment_admin": "Окружений пока нет. Попросите администратора организации добавить его."
 }

@@ -88,6 +88,8 @@ describe('OverviewScreen', () => {
     expect(openScreen).toHaveBeenLastCalledWith(null, '/costs');
     // Components (`components` kit) is not installed here: no tile, no row button.
     expect(screen.queryByRole('button', { name: 'Decide' })).toBeNull();
+    // ...and no row either: nobody here could take the decision (walk 2026-11-16).
+    expect(screen.queryByText(/components wait for a decision/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'open_people' }));
     expect(openScreen).toHaveBeenLastCalledWith(null, '/people');
   });

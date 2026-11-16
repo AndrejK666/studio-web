@@ -26,6 +26,7 @@ import { useProjectConfig } from '../../../shared/useProjectConfig';
 import { useProjectListText } from '../../../i18n';
 import { OwnerInline } from './OwnerInline';
 import { ProjectStatusInline } from './StatusInline';
+import type { ProjectRollup } from '../../../api/ProjectStatusApiService';
 import styles from '../ProjectListScreen.module.css';
 
 /** How the grid searches and sorts the projects in memory. */
@@ -43,6 +44,8 @@ interface ProjectCells {
   formatRelative: (value: string) => string;
   /** Each project's phase (Project lifecycle), by id; empty where the kit does not apply. */
   phases: Record<string, string>;
+  /** Each project's portfolio rollup (`/rollups?workspace_id=`), by id: its Issues and 7-day movement. */
+  rollups: Record<string, ProjectRollup>;
   /** Which "nothing here yet" the list says: no organization, no workspace, or no project. */
   emptyNote: string;
 }
@@ -82,10 +85,28 @@ const OwnerCell: React.FC<{ item: Tenant }> = ({ item }) => {
   return <OwnerInline state={state} />;
 };
 
-/** Findings/Signals and movement have no portfolio rollup yet — see `issueSummary`, `movement7d`. */
-const NoSourceCell: React.FC = () => {
-  const { t } = useProjectCells();
-  return <NoData label={t('no_data')} />;
+/** The open detector findings the rollup counts; null is "not asked", not zero. */
+const IssuesCell: React.FC<{ item: Tenant }> = ({ item }) => {
+  const { t, rollups } = useProjectCells();
+  const rollup = rollups[item.id];
+  return rollup?.open_findings == null ? (
+    <NoData label={t('no_data')} />
+  ) : (
+    <span data-project-issues>{t.count('issues_open', rollup.open_findings)}</span>
+  );
+};
+
+/** The pull requests merged and open over the rollup's window; a count it could not read stays a dash. */
+const MovementCell: React.FC<{ item: Tenant }> = ({ item }) => {
+  const { t, rollups } = useProjectCells();
+  const rollup = rollups[item.id];
+  return rollup?.pulls_merged == null && rollup?.pulls_open == null ? (
+    <NoData label={t('no_data')} />
+  ) : (
+    <span data-project-movement>
+      {t('movement_pulls', { merged: rollup.pulls_merged ?? '—', open: rollup.pulls_open ?? '—' })}
+    </span>
+  );
 };
 
 const UpdatedCell: React.FC<{ item: Tenant }> = ({ item }) => {
@@ -109,12 +130,15 @@ const ProjectsEmpty: React.FC = () => {
 export interface ProjectsGridProps {
   /** Each project's phase (Project lifecycle), by id; empty where the kit does not apply. */
   phases?: Record<string, string>;
+  /** Each project's portfolio rollup (`/rollups?workspace_id=`), by id; empty while unread or refused. */
+  rollups?: Record<string, ProjectRollup>;
 }
 
 const NO_PHASES: Record<string, string> = {};
+const NO_ROLLUPS: Record<string, ProjectRollup> = {};
 
 /** The workspace in scope's projects, read from `WorkspaceProjectsProvider`. */
-export const ProjectsGrid: React.FC<ProjectsGridProps> = ({ phases = NO_PHASES }) => {
+export const ProjectsGrid: React.FC<ProjectsGridProps> = ({ phases = NO_PHASES, rollups = NO_ROLLUPS }) => {
   const t = useProjectListText();
   const { formatRelative } = useFormatters();
   const bridge = useMfeBridge();
@@ -134,8 +158,8 @@ export const ProjectsGrid: React.FC<ProjectsGridProps> = ({ phases = NO_PHASES }
     () => [
       { id: 'project', label: t('col_project'), component: ProjectCell },
       { id: 'status', label: t('col_status'), component: StatusCell, width: '15%' },
-      { id: 'issues', label: t('col_issues'), component: NoSourceCell, width: '11%' },
-      { id: 'movement', label: t('col_movement'), component: NoSourceCell, width: '15%' },
+      { id: 'issues', label: t('col_issues'), component: IssuesCell, width: '11%' },
+      { id: 'movement', label: t('col_movement'), component: MovementCell, width: '15%' },
       { id: 'owner', label: t('col_owner'), component: OwnerCell, width: '15%', cellOverflow: 'nowrap' },
       { id: 'updated', label: t('col_updated'), component: UpdatedCell, width: '12%', cellOverflow: 'nowrap' },
     ],
@@ -144,8 +168,8 @@ export const ProjectsGrid: React.FC<ProjectsGridProps> = ({ phases = NO_PHASES }
 
   const emptyNote = !org ? t('empty_no_org') : !workspace ? t('empty_no_workspace') : t('empty_hint');
   const cells = useMemo<ProjectCells>(
-    () => ({ t, formatRelative, phases, emptyNote }),
-    [t, formatRelative, phases, emptyNote]
+    () => ({ t, formatRelative, phases, rollups, emptyNote }),
+    [t, formatRelative, phases, rollups, emptyNote]
   );
 
   return (

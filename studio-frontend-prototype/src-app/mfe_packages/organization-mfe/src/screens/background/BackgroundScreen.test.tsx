@@ -21,6 +21,11 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   useSharedProperty: (id: string) => (id.includes('live.studio_events') ? live.value : 'en'),
 }));
 
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  useOrganization: () => ({ org: { id: 'o1', name: 'Org' } }),
+}));
+
 import { BackgroundScreen } from './BackgroundScreen';
 
 const run = (id: string, state: string, task_type = 'catalog.sync'): TaskRun =>
@@ -48,11 +53,13 @@ describe('BackgroundScreen', () => {
         fetch: () =>
           Promise.resolve({
             items: [
+              // Another organization's schedule: not this one's to see or run.
+              { id: 's2', name: 'Elsewhere', task_type: 'catalog.sync', payload: { organization_id: 'o2' }, expression_kind: 'cron', expression: '0 3 * * *', timezone: 'UTC', concurrency: 'forbid', missed_policy: 'skip', max_catch_up_runs: 0, enabled: true, next_run_at: null, created_at: '' },
               {
                 id: 's1',
                 name: 'Nightly catalogue',
                 task_type: 'catalog.sync',
-                payload: {},
+                payload: { organization_id: 'o1' },
                 expression_kind: 'cron',
                 expression: '0 3 * * *',
                 timezone: 'UTC',
@@ -66,8 +73,9 @@ describe('BackgroundScreen', () => {
             ],
           }),
       },
-      runs: ({ state }: { state?: string }) => ({
+      runs: ({ state, organizationId }: { state?: string; organizationId?: string }) => ({
         fetch: () => {
+          if (organizationId !== 'o1') throw new Error('runs read outside the organization in view');
           calls.push(state ?? 'every');
           return Promise.resolve(
             state === 'failed' ? { items: [run('f1', 'failed')], total: 1 } : { items: [], total: 0 }
@@ -91,6 +99,7 @@ describe('BackgroundScreen', () => {
   it('runs a schedule now', async () => {
     render(<BackgroundScreen />);
     expect(await screen.findByText('Nightly catalogue')).toBeTruthy();
+    expect(screen.queryByText('Elsewhere')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'run_now' }));
     await waitFor(() => expect(calls).toContain('run-now:s1'));
   });

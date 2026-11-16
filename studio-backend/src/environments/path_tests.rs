@@ -181,6 +181,40 @@ fn a_ready_project_is_asked_to_deploy_and_a_running_one_is_done() {
     assert_eq!(p.running_in.len(), 1);
 }
 
+/// What runs was built, though Studio kept no record of the build: the
+/// path does not say "runs in dev" and "Nothing is built yet" together.
+#[test]
+fn a_product_that_runs_without_a_recorded_build_was_built_elsewhere() {
+    let f = PathFacts {
+        builds: Vec::new(),
+        deployments: vec![deploy(
+            CLUSTER,
+            "2026-11-02T00:00:00Z",
+            "succeeded",
+            Some("installed"),
+        )],
+        ..facts()
+    };
+    let p = project_path(&f);
+    assert_eq!(step(&p, "running").state, StepState::Done);
+    assert_eq!(step(&p, "build").state, StepState::Done);
+    assert_eq!(step(&p, "image").state, StepState::Done);
+    assert!(
+        step(&p, "build")
+            .reason
+            .contains("outside Studio's records")
+    );
+    assert_eq!(p.current, "running");
+
+    // Nothing runs: nothing built is still what the path says.
+    let f = PathFacts {
+        builds: Vec::new(),
+        ..facts()
+    };
+    let p = project_path(&f);
+    assert_eq!(step(&p, "build").reason, "Nothing is built yet.");
+}
+
 #[test]
 fn a_failed_deploy_says_its_cause_and_names_the_deployment() {
     let failed = deploy(

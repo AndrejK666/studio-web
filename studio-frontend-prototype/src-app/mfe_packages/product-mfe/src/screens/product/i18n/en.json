@@ -34,5 +34,7 @@
   "roles_home": "home",
   "roles_home_title": "The description travels with this source: its path(...) sources resolve here",
   "roles_pinned": "pinned {commit}",
-  "roles_not_saved": "not saved"
+  "roles_not_saved": "not saved",
+  "source_branch_gone": "The source {repository} names the branch {branch}, which no longer exists: connect the repository again on a branch that exists (Sources).",
+  "source_clone_failed": "The source {repository} could not be cloned: {cause}"
 }

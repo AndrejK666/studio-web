@@ -32,8 +32,8 @@ import {
   TableHeader,
   TableRow,
 } from '@gears-frontx/ui-kit';
-import { isRunEvent, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
-import { BackgroundApiService } from '../../api/BackgroundApiService';
+import { isRunEvent, useOrganization, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
+import { BackgroundApiService, scheduleOf } from '../../api/BackgroundApiService';
 import {
   ATTENTION_STATES,
   EVERY_STATE,
@@ -83,6 +83,8 @@ export const BackgroundScreen: React.FC = () => {
   const published = useSharedProperty(FRONTX_SHARED_PROPERTY_LANGUAGE);
   const language = typeof published === 'string' && published ? published : 'en';
   const api = apiRegistry.getService(BackgroundApiService);
+  // The organization in view: its runs and schedules only, never the deployment's (walk 2026-11-16).
+  const organizationId = useOrganization().org?.id ?? null;
 
   const [state, setState] = useState<string | null>(null);
   const [taskType, setTaskType] = useState<string>('');
@@ -114,20 +116,21 @@ export const BackgroundScreen: React.FC = () => {
   useEffect(() => {
     let alive = true;
     api.schedules.fetch({ staleTime: 0 }).then(
-      (r) => alive && setSchedules(r.items),
+      (r) => alive && setSchedules(organizationId ? r.items.filter((sc) => scheduleOf(sc, organizationId)) : []),
       () => alive && setSchedules([])
     );
     return () => {
       alive = false;
     };
-  }, [api, tick]);
+  }, [api, tick, organizationId]);
 
   useEffect(() => {
     let alive = true;
+    if (!organizationId) return;
     void Promise.all(
       STATES.map((st) =>
         api
-          .runs({ state: st, limit: 1 })
+          .runs({ organizationId, state: st, limit: 1 })
           .fetch({ staleTime: 0 })
           .then(
             (r) => [st, r.total ?? r.items.length] as const,
@@ -143,17 +146,18 @@ export const BackgroundScreen: React.FC = () => {
     return () => {
       alive = false;
     };
-  }, [api, tick]);
+  }, [api, tick, organizationId]);
 
   useEffect(() => {
     let alive = true;
+    if (!organizationId) return;
     const read = async (): Promise<Page> => {
       const typeFilter = taskType || undefined;
       if (!state) {
         // The default: failed and running together. The backend narrows by one
         // state, so it is asked once per state and the pages merged.
         const pages = await Promise.all(
-          ATTENTION_STATES.map((st) => api.runs({ state: st, taskType: typeFilter, limit }).fetch({ staleTime: 0 }))
+          ATTENTION_STATES.map((st) => api.runs({ organizationId, state: st, taskType: typeFilter, limit }).fetch({ staleTime: 0 }))
         );
         return {
           at: Date.now(),
@@ -166,7 +170,7 @@ export const BackgroundScreen: React.FC = () => {
         };
       }
       const r = await api
-        .runs({ state: state === EVERY_STATE ? undefined : state, taskType: typeFilter, limit })
+        .runs({ organizationId, state: state === EVERY_STATE ? undefined : state, taskType: typeFilter, limit })
         .fetch({ staleTime: 0 });
       return { at: Date.now(), items: foldRecurring(r.items, recurring), total: r.total ?? r.items.length };
     };
@@ -188,7 +192,7 @@ export const BackgroundScreen: React.FC = () => {
     return () => {
       alive = false;
     };
-  }, [api, state, taskType, limit, recurring, tick]);
+  }, [api, state, taskType, limit, recurring, tick, organizationId]);
 
   useStudioEventRefresh(isRunEvent, refresh);
 
@@ -203,7 +207,7 @@ export const BackgroundScreen: React.FC = () => {
     if (what === 'cancel' && !window.confirm(t('cancel_confirm', { task: run.task_type, id: run.id.slice(0, 8) })))
       return;
     try {
-      await (what === 'cancel' ? api.cancel(run.id) : api.retry(run.id)).fetch(undefined);
+      await (what === 'cancel' ? api.cancel(run.id, run.tenant_id) : api.retry(run.id, run.tenant_id)).fetch(undefined);
     } catch (e) {
       setError(t('action_failed', { error: message(e) }));
     }

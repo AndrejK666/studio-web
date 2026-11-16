@@ -488,7 +488,7 @@ impl TaskService {
     pub async fn list(
         &self,
         _ctx: &SecurityContext,
-        tenant: Uuid,
+        tenants: &[Uuid],
         query: &RunQuery,
     ) -> anyhow::Result<(Vec<entity::Model>, u64)> {
         let mut filter = Condition::all();
@@ -504,7 +504,7 @@ impl TaskService {
         // property that makes `total` mean anything.
         let scoped = entity::Entity::find()
             .secure()
-            .scope_with(&AccessScope::for_tenant(tenant))
+            .scope_with(&AccessScope::for_tenants(tenants.to_vec()))
             .filter(filter);
         let total = scoped.clone().count(&conn).await?;
         let rows = scoped

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Tenant } from '@constructor-studio/mfe-shared';
 import type { OrgOverview, OrgWorkspace } from '../../overview/types';
-import { healthOf, matchesManaged, workspaceSummary } from './model';
+import { healthOf, matchesManaged, projectCountOf, workspaceSummary } from './model';
 
 const ws = (name: string, extra: Partial<Tenant> = {}): Tenant =>
   ({ id: name.toLowerCase(), name, status: 'active', self_managed: false, depth: 2, child_count: 1, created_at: '', updated_at: '', ...extra }) as Tenant;
@@ -62,5 +62,17 @@ describe('workspaces model', () => {
     expect(workspaceSummary(ws('W', { child_count: 0 }), undefined, 7)).toBe('No projects yet');
     expect(workspaceSummary(ws('W', { child_count: 3 }), undefined, 7)).toBe('');
     expect(workspaceSummary(ws('W', { child_count: 3, self_managed: true }), undefined, 7)).toBe('Self-managed');
+  });
+});
+
+describe('projectCountOf', () => {
+  it('counts the projects the overview lists, not every child tenant of the workspace', () => {
+    const three = health([{ name: 'A' }, { name: 'B' }, { name: 'C' }] as unknown as OrgWorkspace['projects']);
+    expect(projectCountOf(ws('W', { child_count: 10 }), three)).toBe(3);
+  });
+
+  it('falls back to the child count without the overview, and to nothing without either', () => {
+    expect(projectCountOf(ws('W', { child_count: 4 }), undefined)).toBe(4);
+    expect(projectCountOf(ws('W', { child_count: undefined }), undefined)).toBeUndefined();
   });
 });

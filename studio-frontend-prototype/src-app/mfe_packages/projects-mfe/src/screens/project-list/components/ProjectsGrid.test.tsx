@@ -1,5 +1,6 @@
 import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
+import type { ProjectRollup } from '../../../api/ProjectStatusApiService';
 import { TENANT_TYPES, type Tenant } from '@constructor-studio/mfe-shared';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -72,7 +73,7 @@ function tenant(id: string, updatedAt = '2026-08-20T09:00:00Z'): Tenant {
 
 const PROJECT = tenant('proj');
 
-async function mount(phases?: Record<string, string>) {
+async function mount(phases?: Record<string, string>, rollups?: Record<string, ProjectRollup>) {
   const { mfeApp } = await import('../../../init');
   const { bridge, executeActionsChain } = createMfeBridgeFixture({
     domainId: 'screen',
@@ -88,7 +89,7 @@ async function mount(phases?: Record<string, string>) {
   render(
     <FrontXProvider app={mfeApp} mfeBridge={mfeContextValue(bridge)}>
       <OrganizationProvider>
-        <ProjectsGrid phases={phases} />
+        <ProjectsGrid phases={phases} rollups={rollups} />
       </OrganizationProvider>
     </FrontXProvider>
   );
@@ -115,6 +116,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('ProjectsGrid rows', () => {
+  it('shows the rollup open findings and pull requests, and no data where it has none', async () => {
+    scope.projects = [PROJECT, tenant('other')];
+    await mount(undefined, {
+      proj: { id: 'proj', name: 'proj', kind: 'project', open_findings: 3, pulls_merged: 56, pulls_open: 13 },
+    });
+    await screen.findByText('other');
+    expect(document.querySelector('[data-project-issues]')?.textContent).toBe('3 open findings');
+    expect(document.querySelector('[data-project-movement]')?.textContent).toBe('56 merged · 13 open');
+    expect(document.querySelectorAll('[data-project-issues]')).toHaveLength(1);
+  });
+
   it('tells the shell to open the project, and opens nothing itself', async () => {
     const { mfeApp, executeActionsChain } = await mount();
     const name = await screen.findByText('proj');

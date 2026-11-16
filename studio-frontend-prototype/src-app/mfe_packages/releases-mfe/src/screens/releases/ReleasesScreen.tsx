@@ -33,9 +33,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import { useSharedProperty } from '@gears-frontx/react';
 import { Badge, Button, Skeleton, Tabs, TabsList, TabsTrigger } from '@gears-frontx/ui-kit';
-import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, isNotFound, openScreen, useHostChrome } from '@constructor-studio/mfe-shared';
+import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, isNotFound, openScreen, useHostChrome, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { Deployment, PathAction, ProjectPath, ProjectTargets } from '../../api/types';
-import { deploymentFromSearch, pathSteps, type Intent, type SpecsSeen } from '../../model/path';
+import { ROUTES, deploymentFromSearch, pathSteps, type Intent, type SpecsSeen } from '../../model/path';
 import { DeployDialog } from './DeployDialog';
 import { DeploymentDetail } from './DeploymentDetail';
 import { ProjectPathView } from './ProjectPath';
@@ -135,6 +135,8 @@ function addressedDeployment(): string | null {
 
 function Releases({ projectId, onOrganization }: { projectId: string; onOrganization: (id: string) => void }) {
   const { t, bridge } = useReleases();
+  // Organization › Infrastructure is named only where its kit put the screen.
+  const noEnvironmentKey = useScreenAvailability().route(ROUTES.infrastructure) ? 'no_environment' : 'no_environment_admin';
   const api = useApi();
   const [path, setPath] = useState<ProjectPath | null>(null);
   const [specs, setSpecs] = useState<SpecsSeen>('unavailable');
@@ -352,7 +354,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
               !error && <p className={styles.muted}>{t('loading')}</p>
             ) : noEnvironment ? (
               <section className={styles.card}>
-                <p className={styles.muted}>{t('no_environment')}</p>
+                <p className={styles.muted}>{t(noEnvironmentKey)}</p>
               </section>
             ) : (
               <ReleaseLadder

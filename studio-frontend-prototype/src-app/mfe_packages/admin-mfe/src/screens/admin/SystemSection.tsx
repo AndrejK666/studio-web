@@ -810,7 +810,7 @@ function GearsTable({ data }: { data: unknown }) {
                 <Pills items={g.dependencies} />
               </TableCell>
               <TableCell className={styles.sub}>{g.deployment_mode ?? '—'}</TableCell>
-              <TableCell className={styles.num}>{g.instances?.length ?? 0}</TableCell>
+              <TableCell className={styles.num}>{g.instances ? g.instances.length : '—'}</TableCell>
             </TableRow>
           ))}
         </TableBody>
