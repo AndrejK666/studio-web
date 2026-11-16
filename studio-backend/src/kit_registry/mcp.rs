@@ -33,9 +33,11 @@ pub fn tools() -> Vec<Tool> {
             description: "The kit library: every kit a person may install, each with its \
                 `shelf` (`builtin`: shipped in Studio; `official`: Constructor's, from its own \
                 repository; `organization`: an organization's own), the `levels` it may be \
-                installed on, its `default_version`, and its `icon` (`lucide:<name>`, or an SVG \
-                in its bundle, `mfe/<package>/<file>.svg`, served at `icon_url`). Optionally one \
-                shelf.",
+                installed on, its `default_version`, its `icon` (`lucide:<name>`, or an SVG \
+                in its bundle, `mfe/<package>/<file>.svg`, served at `icon_url`), and its \
+                `kind`: `runtime` (its own code runs in Studio: bundles, functions, a service), \
+                `gears` (built on Studio's gears), `model` (types and rules only) or `material` \
+                (files for a checkout only), with every tier it `brings`. Optionally one shelf.",
             input_schema: || {
                 object(
                     json!({
@@ -57,10 +59,12 @@ pub fn tools() -> Vec<Tool> {
             description: "What is inside one kit, before anyone installs it: the catalogue \
                 entry and its `contents` by the sections of a kit manifest (`screens`, `types`, \
                 `rules`, `functions`, `services`, `inbox`, `mcp_tools`, `permissions`, the \
-                `material` cfs writes into a checkout, artifact `kinds`, `docs`), and \
-                `manifest`, where that came from (`built-in`, `.cf-studio-kit.toml`, or null \
-                when nothing reliable describes it). An organization's own kit is described \
-                from the manifest kept at its pinned commit, with `origin`.",
+                `material` cfs writes into a checkout, artifact `kinds`, `docs`), each MCP tool \
+                with its description, the kit's `kind` and what it `brings` (in `kit`), and \
+                `manifest`, where that came from (`built-in`, `.cf-studio-kit.toml`, `kit.json`, \
+                `kit.gdl`, or null when nothing reliable describes it). An organization's own \
+                kit is described from the manifest kept at its pinned commit, with `origin`. \
+                `kit_gdl` gives the same as one `kit.gdl`.",
             input_schema: || {
                 object(
                     json!({ "kit_slug": kit_slug(), "organization_id": organization_id() }),
@@ -70,6 +74,25 @@ pub fn tools() -> Vec<Tool> {
             effect: Effect::Read,
             experimental: false,
             run: Run::Get("/studio-kits/v1/catalog/{kit_slug}"),
+        },
+        Tool {
+            name: "kit_gdl",
+            description: "One kit's manifest as `kit.gdl` text, in the GDL 1.7 shape of \
+                ADR-0068 §3: `kit(slug, name, version, levels, types = [kit_type(...)], \
+                tabs = [kit_tab(...)], mcp_tools, gears = [kit_gear_claim(...)], \
+                permissions = permissions(reads, writes, listens), material, ...)`. A kit with \
+                an authored `kit.gdl` gets it as written; any other kit's is rendered by \
+                Studio from the manifest it read, and its first line says from which. \
+                `kits_describe` answers the same as JSON.",
+            input_schema: || {
+                object(
+                    json!({ "kit_slug": kit_slug(), "organization_id": organization_id() }),
+                    &["kit_slug"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-kits/v1/catalog/{kit_slug}/kit.gdl"),
         },
         Tool {
             name: "kits_installed",

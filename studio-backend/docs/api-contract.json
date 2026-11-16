@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 252,
+  "open_violations": 255,
   "operations": [
     {
       "method": "DELETE",
@@ -3094,6 +3094,45 @@
       "responses": [
         "KitDetailDto"
       ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/catalog/{kit_slug}/archive",
+      "operation_id": "studio_kits.get_kit_archive",
+      "tag": "StudioKits",
+      "summary": "An archive of a kit's contents",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/catalog/{kit_slug}/kit.gdl",
+      "operation_id": "studio_kits.get_kit_gdl",
+      "tag": "StudioKits",
+      "summary": "A kit's manifest as kit.gdl",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/catalog/{kit_slug}/manifest",
+      "operation_id": "studio_kits.get_kit_manifest",
+      "tag": "StudioKits",
+      "summary": "A kit's source manifest, as written",
+      "authenticated": true,
       "errors": [
         "401",
         "404",

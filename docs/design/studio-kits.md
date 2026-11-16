@@ -201,7 +201,10 @@ and never written back in the old shape.
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
 | `GET` | `/studio-kits/v1/catalog` | Every kit of the library, each with its `shelf` (`builtin`, `official`, `organization`) and `levels`; `?shelf=` filters; `?organization_id=` adds that organization's own kits | unstable |
-| `GET` | `/studio-kits/v1/catalog/{kit_slug}` | One kit and what is inside it (`contents` by the sections of a kit manifest, `manifest` = where that came from, `origin` for an organization's own kit); 404 for an unknown slug | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}` | One kit and what is inside it (`contents` by the sections of a kit manifest, `manifest` = where that came from, `origin` for an organization's own kit, `gdl_rendered_from`, `source_manifest`); 404 for an unknown slug | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}/kit.gdl` | The kit's manifest as `kit.gdl` text: authored, or rendered by the server (§3.14) | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}/manifest` | The kit's source manifest as written (`kit.json`, `.cf-studio-kit.toml` or `kit.gdl`); 404 when none describes it (§3.14) | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}/archive` | A `.tar.gz` of the kit's contents: manifests, model, claims, working material, bundles (§3.14) | unstable |
 | `GET` | `/studio-kits/v1/organization-shelf` | The organization's own kits (`?organization_id=`), each described with its `origin`; any member | unstable |
 | `POST` | `/studio-kits/v1/organization-shelf/preview` | Read a kit from a repository (`{connection_id, repository, path?, ref?, slug?}`) without keeping it; kit administrators | unstable |
 | `POST` | `/studio-kits/v1/organization-shelf` | Read, pin and keep a kit on the shelf; a library slug is 400 `KIT_SLUG_TAKEN` | unstable |
@@ -851,6 +854,79 @@ kit. Reinstalling opens the gate on the same environments.
 - Listing Research projects for a project's own Research environment: the
   listing asks the organization's kits, so a project-only installation types
   the Research project's id.
+
+### 3.14 A kit's type and its files
+
+Every catalogue entry (`GET /catalog`, `kit` of `GET /catalog/{kit_slug}`,
+`kits_catalog`, `kits_describe`) carries `kind` and `brings`, computed on the
+server from what the kit brings (`kit_registry/kind.rs`), by the tiers of
+ADR-0068 §8:
+
+| `kind` | The kit | Classified so today |
+| --- | --- | --- |
+| `runtime` | brings its own code that runs in Studio: micro-frontend bundles loaded at run time (`mfe`, ADR-0068 phase 5), WebAssembly or agent `functions`, or a kit `services` container | a bundle kit (`STUDIO_KIT_BUNDLES_DIR`, e.g. `hello-kit`); an organization's `kit.json` with `mfe`, `functions` or `services` |
+| `gears` | built on Studio's gears: its screens are Studio's own (a built-in kit, or a screen with no bundle of the kit's) and its data is held by gears it claims (`gears`) or calls (`permissions`) | all 18 built-in kits |
+| `model` | types, fields, relations, tabs or rules only, no code: the generic screens show its objects | an organization's `kit.json` with only a `model` |
+| `material` | working material only: files `cfs` writes into a checkout (`material`, artifact `kinds`) | `sdlc`, `compete` |
+
+`kind` is the strongest tier the kit brings, in the order of the table;
+`brings` lists them all, strongest first (a built-in kit with types is
+`["gears", "model"]`). A kit nothing describes falls back on its shelf: built-in
+`gears`, any other `material`. The portal shows it as the "Kit type" column,
+filter and tile line of Platform, Organization and Project › Kits.
+
+**`kit.gdl`.** `GET /catalog/{kit_slug}/kit.gdl` (and the MCP tool `kit_gdl`)
+answers the kit's manifest in the GDL 1.7 shape of ADR-0068 §3 with ADR-0071
+§2's `gears`: `kit(slug, name, version, description, publisher, icon,
+levels, types = [kit_type(gts, id, name, adopts, fields)], model =
+path("model/overlay.json"), extends = [kit_field | kit_relation], tabs =
+[kit_tab(level, label, route | name, shows)], sections, mfe, rules,
+functions, services = [use_service(...)], inbox = [kit_inbox_source(...)],
+mcp_tools, gears = [kit_gear_claim(...)], permissions = permissions(reads,
+writes, listens), material = [path(...)], kinds, docs)`. `types`, `tabs`,
+`mcp_tools`, `permissions` and `material` are always written, the rest only
+when non-empty. No kit is authored in that shape yet, so the server renders it
+(`kit_registry/gdl.rs`) from the manifest Studio read — a built-in kit's
+compiled-in `kit.json` and its screens, an official kit's `.cf-studio-kit.toml`
+copy, an organization kit's kept `kit.json` / `.cf-studio-kit.toml` — and says
+so in its first line, in the `x-kit-gdl-rendered-from` header and in
+`gdl_rendered_from` of the detail. A bundle kit's authored `kit.gdl` is served
+as written (its `kit(name = …)` is the passport shape `components_catalog`
+reads, where `name` is the slug). Golden files hold the rendering:
+`kit_registry/golden/*.kit.gdl` (`UPDATE_GOLDEN=1` rewrites them).
+
+**The source manifest.** `GET /catalog/{kit_slug}/manifest` answers it as
+written: the built-in `kit.json`, the official kit's `.cf-studio-kit.toml` copy
+at its pin, an organization kit's manifest read at its pinned commit through
+its connection (the shelf's kept `kit.json`, marked `x-kit-manifest-copy`, when
+the repository does not answer), a bundle kit's `kit.gdl`. 404 when nothing
+describes the kit.
+
+**The archive.** `GET /catalog/{kit_slug}/archive` answers
+`application/gzip`, `attachment; filename="<slug>-<version>.tar.gz"` (a commit
+shortened to 12), every entry under `<slug>/`:
+
+```text
+README.md            what is here, where it came from, what is missing ("Partial")
+kit.gdl              authored or rendered
+kit.json | .cf-studio-kit.toml   the source manifest as written
+model/overlay.json   the model overlay as written (types, fields, relations, tabs, lifecycles)
+model/contents.json  the types as Studio reads them: gts, id, new/existing, fields; model fields, relations, tabs
+claims.json          gear claims, MCP tools with descriptions, Inbox sources, rules, functions, permissions
+material/…           each resource's source at the pinned commit, at its install path
+mfe/<package>/…      the bundles the kit serves at run time
+```
+
+Material and bundles are read where the kit has a repository: an official kit
+through the caller's organization's first GitHub connection, an organization's
+kit through the connection its shelf names, both as this gear's service
+identity in the organization; a bundle kit's from its directory (regular files
+only). A built-in kit has none: its README says its screens ship in Studio's
+portal image. A read that fails leaves its files out and the README lists
+what and why. Limits: 8 MiB a file, 64 MiB and 2000 files in all, 60 s of
+repository reads (8 at a time); every entry path is relative, with no `..`,
+`.`, empty segment, backslash, drive or control character. The archive is
+built in memory within those limits, then sent.
 
 ## 4. Additional context
 

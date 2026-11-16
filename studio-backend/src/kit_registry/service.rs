@@ -260,7 +260,26 @@ impl KitRegistryService {
     /// One kit of the library with what it brings (ADR-0068 §4: shown before
     /// it is installed). `None` for a slug the library does not hold.
     pub fn kit(&self, slug: &str) -> Option<super::contents::KitDetail> {
-        super::contents::find(self.catalogue(), slug)
+        super::contents::find(self.catalogue(), slug).map(|d| self.with_local(d))
+    }
+
+    /// One kit of the library with what it brings, as [`Self::kit`] finds it.
+    pub fn describe(&self, kit: KitDescriptor) -> super::contents::KitDetail {
+        self.with_local(super::contents::describe(kit))
+    }
+
+    /// A bundle kit (`STUDIO_KIT_BUNDLES_DIR`) is described by its authored
+    /// `kit.gdl`: its bundles, docs and artifact kinds.
+    fn with_local(&self, mut detail: super::contents::KitDetail) -> super::contents::KitDetail {
+        if detail.kit.source == super::bundles::SOURCE_BUNDLE_DIR
+            && let Some(local) = self.bundles.local_kit(&detail.kit.slug)
+        {
+            detail.contents.mfe = local.mfe;
+            detail.contents.docs = local.docs;
+            detail.contents.kinds = local.kinds;
+            detail.manifest = Some(super::contents::MANIFEST_KIT_GDL);
+        }
+        detail
     }
 
     /// The kits the IDE's installer can write into a checkout: the official

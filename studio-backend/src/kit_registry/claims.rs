@@ -67,6 +67,7 @@ pub const SHELL_MCP_TOOLS: &[&str] = &[
     // studio-kits: the library and the installer.
     "kits_catalog",
     "kits_describe",
+    "kit_gdl",
     "kits_installed",
     "kits_inbox_sources",
     "kits_shelf",
