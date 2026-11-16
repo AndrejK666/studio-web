@@ -71,10 +71,12 @@ export const TARGET_ROUTE: Record<NeedTarget, string> = {
 };
 
 function money(value: number, currency: string, language: string): string {
+  // A sum that rounds to nothing is $0, not -$0: a forecast or difference can come back as -0.2 (walk 2026-11-16).
+  const whole = Math.round(value) === 0 ? 0 : value;
   try {
-    return new Intl.NumberFormat(language, { style: 'currency', currency, maximumFractionDigits: 0 }).format(value);
+    return new Intl.NumberFormat(language, { style: 'currency', currency, maximumFractionDigits: 0 }).format(whole);
   } catch {
-    return `${Math.round(value)} ${currency}`;
+    return `${Math.round(whole)} ${currency}`;
   }
 }
 
@@ -117,7 +119,9 @@ function OrganizationOverview({
   useStudioEventRefresh(isRunEnding, () => void read.refetch());
   const o: OrgOverview | undefined = read.data;
   const cash = (n: number) => money(n, o?.spend?.currency || 'USD', language);
-  const others = o ? othersAttention(o, cash) : [];
+  // A component decision is taken on the Components kit's screen: where it is not installed nobody here can take
+  // it, so the row would lead nowhere. Other rows still say something worth knowing without their button.
+  const others = o ? othersAttention(o, cash).filter((r) => r.action.target !== 'gears' || routeOf('gears') !== null) : [];
   // What waits on the reader, once their Inbox is read: the header counts both.
   const [you, setYou] = useState<number | null>(null);
 

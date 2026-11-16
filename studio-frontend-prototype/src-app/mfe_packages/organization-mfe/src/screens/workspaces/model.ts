@@ -30,6 +30,18 @@ export function visibleWorkspaces(all: readonly Tenant[], query: string, managed
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * How many projects a workspace has: the organization overview's list of them when it names the workspace, else the
+ * account system's child count. The child count takes every child tenant, whatever its type or state, so it can say
+ * 10 where the workspace's Projects list shows 3 (walk 2026-11-16); the overview counts projects only.
+ */
+export function projectCountOf(
+  row: Pick<Tenant, 'child_count'>,
+  health: Pick<OrgWorkspace, 'projects'> | undefined
+): number | undefined {
+  return health ? health.projects.length : row.child_count;
+}
+
 /** A workspace's health in the overview, or undefined when the overview has none for it. */
 export function healthOf(overview: OrgOverview | null | undefined, id: string): OrgWorkspace | undefined {
   return overview?.workspaces.find((w) => w.id === id);

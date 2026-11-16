@@ -5,6 +5,7 @@ import { Building2, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@gears-frontx/ui-kit";
 import type { Tenant } from "@constructor-studio/mfe-shared";
 import { growthText, quietText } from "../../../overview/model";
+import { projectCountOf } from "../model";
 import type { OrgWorkspace } from "../../../overview/types";
 import { NoData } from "./NoData";
 import styles from "../WorkspacesScreen.module.css";
@@ -111,12 +112,10 @@ export function workspaceColumns({
       key: "projects",
       label: labels.projects,
       className: styles.colNum,
-      render: (row) =>
-        row.child_count === undefined ? (
-          dash(labels.noData)
-        ) : (
-          <span className={styles.count}>{row.child_count}</span>
-        ),
+      render: (row) => {
+        const count = projectCountOf(row, health(row));
+        return count === undefined ? dash(labels.noData) : <span className={styles.count}>{count}</span>;
+      },
     },
     {
       key: "spend",
