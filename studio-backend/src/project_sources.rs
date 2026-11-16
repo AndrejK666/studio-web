@@ -186,9 +186,12 @@ pub fn parse(config: &Value) -> Vec<ProjectSource> {
 }
 
 /// A clone URL reduced to what names the repository: host and path, without
-/// the scheme, credentials, a trailing slash or `.git`, in lower case.
+/// the scheme, credentials, a query, a fragment, a trailing slash or `.git`,
+/// in lower case. A query can carry a token (`?access_token=`), and the key is
+/// stored (`artifact_ingest::clone_status`), so it never keeps one.
 pub fn repository_key(url: &str) -> Option<String> {
     let (_, rest) = url.trim().split_once("://")?;
+    let rest = rest.split(['?', '#']).next().unwrap_or_default();
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
     let host = authority
         .rsplit_once('@')

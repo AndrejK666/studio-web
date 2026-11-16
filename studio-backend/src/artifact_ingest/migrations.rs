@@ -11,7 +11,64 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m0001::Migration), Box::new(m0002::Migration)]
+        vec![
+            Box::new(m0001::Migration),
+            Box::new(m0002::Migration),
+            Box::new(m0003::Migration),
+        ]
+    }
+}
+
+/// The order of the operation that wrote each clone status row, so an older
+/// outcome never replaces a newer one (#1070 review, see
+/// `clone_status::clone_order`). A row from before it orders by its `at_ms`.
+mod m0003 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const ONLY_POSTGRES: &str =
+        "studio-artifact-ingest migrations: only PostgreSQL is supported (see the module docs)";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0003_studio_source_clone_status_order"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"
+ALTER TABLE studio_source_clone_status
+    ADD COLUMN IF NOT EXISTS at_order BIGINT NOT NULL DEFAULT 0;
+UPDATE studio_source_clone_status SET at_order = at_ms * 1000000 WHERE at_order = 0;
+",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_source_clone_status DROP COLUMN IF EXISTS at_order",
+                )
+                .await?;
+            Ok(())
+        }
     }
 }
 

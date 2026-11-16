@@ -81,6 +81,29 @@ fn a_pasted_url_and_the_providers_name_one_repository() {
     ));
 }
 
+/// #1070 review: the key is stored, so what a query or a fragment carries
+/// (a token, often) never reaches it.
+#[test]
+fn a_repository_key_keeps_no_query_and_no_fragment() {
+    assert_eq!(
+        repository_key("https://git.example/acme/api.git?access_token=s3cr3t").as_deref(),
+        Some("git.example/acme/api")
+    );
+    assert_eq!(
+        repository_key("https://git.example/Acme/API/#readme").as_deref(),
+        Some("git.example/acme/api")
+    );
+    assert_eq!(
+        repository_key("https://git.example?token=s3cr3t"),
+        None,
+        "no path, no repository"
+    );
+    assert!(same_repository(
+        "https://git.example/acme/api.git?access_token=s3cr3t",
+        "https://git.example/acme/api"
+    ));
+}
+
 fn resolved(secret_ref: Option<&str>, personal: bool) -> Resolved {
     Resolved {
         source: parse(&json!({ "sources": [

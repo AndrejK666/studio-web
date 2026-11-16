@@ -176,10 +176,15 @@ fn with_clones(mut listed: Value, clones: Option<&Value>) -> Value {
     listed
 }
 
-/// `config` with `sources` replaced and nothing else touched.
-fn with_sources(mut config: Value, sources: Value) -> Result<Value, ToolError> {
-    if !sources.is_array() {
+/// `config` with `sources` replaced and nothing else touched. The `clone`
+/// that `project_sources` adds to each source is a reading, not a setting: a
+/// list read and sent back keeps none of it.
+fn with_sources(mut config: Value, mut sources: Value) -> Result<Value, ToolError> {
+    let Some(items) = sources.as_array_mut() else {
         return Err(ToolError::new("`sources` is a list"));
+    };
+    for source in items.iter_mut().filter_map(Value::as_object_mut) {
+        source.remove("clone");
     }
     if !config.is_object() {
         config = json!({});
@@ -256,6 +261,34 @@ mod tests {
         assert_eq!(out["sources"][1]["full_path"], "acme/web");
         // No clone status, no `clone`.
         assert_eq!(with_clones(listed.clone(), None), listed);
+    }
+
+    /// #1070 review: a read-modify-write through `project_sources` and
+    /// `project_sources_set` stores the sources, not their clone status.
+    #[test]
+    fn a_list_read_and_sent_back_stores_no_clone_status() {
+        let stored = json!({
+            "build": {"workflow": "b.yml"},
+            "sources": [
+                { "connection_id": "c", "full_path": "acme/api",
+                  "clone_url": "https://github.com/acme/api.git", "gears_here": true }
+            ]
+        });
+        let clones = json!({ "total": 1, "items": [
+            { "clone_url": "https://github.com/acme/api.git", "full_path": "acme/api",
+              "state": "failed", "cause": "no_connection", "action": "connect" }
+        ]});
+        let read = with_clones(sources_of(&stored), Some(&clones));
+        assert_eq!(read["sources"][0]["clone"]["state"], "failed");
+
+        let written = with_sources(stored.clone(), read["sources"].clone()).unwrap();
+        assert_eq!(written, stored, "the round trip changes nothing");
+        assert!(written["sources"][0].get("clone").is_none());
+        // A non-object entry is left as it is.
+        assert_eq!(
+            with_sources(json!({}), json!([1])).unwrap(),
+            json!({"sources": [1]})
+        );
     }
 
     #[test]

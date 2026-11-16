@@ -102,6 +102,9 @@ pub mod clone_status {
         /// `cloned` or `failed`.
         pub state: String,
         pub at_ms: i64,
+        /// The operation's `clone_status::clone_order`: an outcome replaces
+        /// the row, and a clear deletes it, only when the row is older.
+        pub at_order: i64,
         /// Who cloned: `desktop` or `ide_session`.
         pub channel: String,
         /// Why it failed (`CloneCause`), `None` when it did not.

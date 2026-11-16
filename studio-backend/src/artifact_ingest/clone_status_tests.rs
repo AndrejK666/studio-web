@@ -203,20 +203,203 @@ async fn a_session_launch_forgets_only_its_own_failure() {
 
     // A desktop's failure is not the session's to forget.
     store
-        .clear_failure(project, API, CloneChannel::Desktop)
+        .clear_failure(project, API, CloneChannel::Desktop, clone_order())
         .await
         .expect("clear");
     assert_eq!(store.of_project(project).await.expect("read").len(), 2);
 
     store
-        .clear_failure(project, API, CloneChannel::IdeSession)
+        .clear_failure(project, API, CloneChannel::IdeSession, clone_order())
         .await
         .expect("clear");
     store
-        .clear_failure(project, WEB, CloneChannel::IdeSession)
+        .clear_failure(project, WEB, CloneChannel::IdeSession, clone_order())
         .await
         .expect("clear");
     let rows = store.of_project(project).await.expect("read");
     assert_eq!(rows.len(), 1, "the desktop's clone stays: {rows:?}");
     assert_eq!(rows[0].repository, "github.com/acme/web");
+}
+
+#[test]
+fn operations_are_ordered_even_within_one_millisecond() {
+    let orders: Vec<i64> = (0..1000).map(|_| clone_order()).collect();
+    assert!(
+        orders.windows(2).all(|w| w[0] < w[1]),
+        "strictly increasing"
+    );
+    let first = CloneOutcome::cloned(CloneChannel::Desktop);
+    let second = CloneOutcome::cloned(CloneChannel::Desktop);
+    assert!(first.order < second.order);
+    assert_eq!(order_ms(1_700_000_000_123_456_789), 1_700_000_000_123);
+}
+
+/// #1070 review: the key is stored, so a token in a URL's query never is.
+#[test]
+fn a_query_or_a_fragment_never_reaches_the_key() {
+    assert_eq!(
+        repository_of("https://git.example/acme/api.git?access_token=s3cr3t").as_deref(),
+        Some("git.example/acme/api")
+    );
+    assert_eq!(
+        repository_of("https://git.example/acme/api#frag").as_deref(),
+        Some("git.example/acme/api")
+    );
+}
+
+/// #1070 review: an scp-style SSH source is keyed by host and path too, so
+/// its `not_http` failure is recorded and shown.
+#[test]
+fn an_scp_style_source_has_a_key_without_its_user() {
+    assert_eq!(
+        repository_of("git@github.com:Acme/API.git").as_deref(),
+        Some("github.com/acme/api")
+    );
+    assert_eq!(
+        repository_of("github.com:acme/api/").as_deref(),
+        Some("github.com/acme/api")
+    );
+    // Local paths are not repositories on a host.
+    assert_eq!(repository_of(r"C:\repos\api"), None);
+    assert_eq!(repository_of("C:/repos/api"), None);
+    assert_eq!(repository_of("./api:x"), None);
+    assert_eq!(repository_of("/srv/git/api.git"), None);
+    assert_eq!(repository_of("git@github.com:"), None);
+
+    let source = crate::project_sources::parse(&json!({ "sources": [
+        { "full_path": "acme/api", "clone_url": "git@github.com:acme/api.git" },
+    ]}));
+    let stored = [LastClone {
+        repository: "github.com/acme/api".into(),
+        at_ms: 1_700_000_000_000,
+        channel: "desktop".into(),
+        cause: Some("not_http".into()),
+        upstream_status: None,
+        detail: String::new(),
+    }];
+    let got = statuses(&source, &stored);
+    assert_eq!(got[0].state, "failed");
+    assert_eq!(got[0].cause.as_deref(), Some("not_http"));
+}
+
+#[tokio::test]
+async fn an_scp_style_failure_and_a_tokened_url_are_stored_without_secrets() {
+    let store = store().await;
+    let project = Uuid::new_v4();
+    store
+        .record(
+            project,
+            "git@github.com:acme/api.git",
+            CloneOutcome::failed(
+                CloneChannel::Desktop,
+                CloneFailure::new(CloneCause::NotHttp),
+            ),
+        )
+        .await
+        .expect("record");
+    store
+        .record(
+            project,
+            "https://git.example/acme/web.git?access_token=s3cr3t#x",
+            CloneOutcome::cloned(CloneChannel::Desktop),
+        )
+        .await
+        .expect("record");
+    let mut keys: Vec<String> = store
+        .of_project(project)
+        .await
+        .expect("read")
+        .into_iter()
+        .map(|r| r.repository)
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["git.example/acme/web", "github.com/acme/api"]);
+}
+
+/// #1070 review: writers record from background tasks, so an older outcome
+/// can reach the database after a newer one. It must not replace it, nor may
+/// an older clear delete a newer failure.
+#[tokio::test]
+async fn an_older_operation_never_replaces_a_newer_outcome() {
+    let store = store().await;
+    let project = Uuid::new_v4();
+    let older_failure = CloneOutcome::failed(
+        CloneChannel::Desktop,
+        CloneFailure::new(CloneCause::ProviderRefused),
+    );
+    let newer_clone = CloneOutcome::cloned(CloneChannel::Desktop);
+    assert!(older_failure.order < newer_clone.order);
+
+    // The newer commits first, the older arrives late.
+    store
+        .record(project, API, newer_clone.clone())
+        .await
+        .expect("record");
+    store
+        .record(project, API, older_failure)
+        .await
+        .expect("a late outcome is not an error");
+    let rows = store.of_project(project).await.expect("read");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].cause, None, "the newer clone stays: {rows:?}");
+
+    // The same order again (a tie) keeps what is stored.
+    let tie = CloneOutcome {
+        order: newer_clone.order,
+        ..CloneOutcome::failed(
+            CloneChannel::Desktop,
+            CloneFailure::new(CloneCause::Unreachable),
+        )
+    };
+    store.record(project, API, tie).await.expect("record");
+    assert_eq!(
+        store.of_project(project).await.expect("read")[0].cause,
+        None
+    );
+
+    // A newer one still replaces it.
+    store
+        .record(
+            project,
+            API,
+            CloneOutcome::failed(
+                CloneChannel::Desktop,
+                CloneFailure::new(CloneCause::Unreachable),
+            ),
+        )
+        .await
+        .expect("record");
+    let rows = store.of_project(project).await.expect("read");
+    assert_eq!(rows[0].cause.as_deref(), Some("unreachable"));
+
+    // An IDE session's clear, decided before a later failure, leaves it.
+    let clear_order = clone_order();
+    let later_failure = CloneOutcome::failed(
+        CloneChannel::IdeSession,
+        CloneFailure::new(CloneCause::ConnectionNotFound),
+    );
+    store
+        .record(project, WEB, later_failure)
+        .await
+        .expect("record");
+    store
+        .clear_failure(project, WEB, CloneChannel::IdeSession, clear_order)
+        .await
+        .expect("clear");
+    let rows = store.of_project(project).await.expect("read");
+    assert!(
+        rows.iter()
+            .any(|r| r.repository == "github.com/acme/web" && r.cause.is_some()),
+        "the newer failure stays: {rows:?}"
+    );
+    // A clear decided after it forgets it.
+    store
+        .clear_failure(project, WEB, CloneChannel::IdeSession, clone_order())
+        .await
+        .expect("clear");
+    let rows = store.of_project(project).await.expect("read");
+    assert!(
+        rows.iter().all(|r| r.repository != "github.com/acme/web"),
+        "{rows:?}"
+    );
 }

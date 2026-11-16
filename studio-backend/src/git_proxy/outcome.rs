@@ -33,9 +33,10 @@ pub fn cause_of(no_token: NoToken) -> CloneCause {
 ///
 /// A host that asks for credentials the proxy did not send is not refusing
 /// the connection's token, there was none: the cause is why there was none.
-/// A 404 to a request without a token is read the same way when the source
-/// names a connection that should have lent one, because a host may hide a
-/// private repository behind "not found" (GitHub does, to the API).
+/// A 404 to a request without a token is read the same way, because a host
+/// may hide a private repository behind "not found" (GitHub does, to the
+/// API). For a source with no connection at all that stays ambiguous, so the
+/// failure keeps the connection remedy and its detail names both readings.
 pub fn failure_of(upstream: Upstream, no_token: Option<NoToken>) -> Option<CloneFailure> {
     let missing = no_token.map(cause_of);
     match upstream {
@@ -47,13 +48,16 @@ pub fn failure_of(upstream: Upstream, no_token: Option<NoToken>) -> Option<Clone
         Upstream::Answered(status @ (401 | 403)) => Some(
             CloneFailure::new(missing.unwrap_or(CloneCause::ProviderRefused)).with_status(status),
         ),
-        Upstream::Answered(404) => Some(
-            CloneFailure::new(match missing {
-                Some(cause) if cause != CloneCause::NoConnection => cause,
-                _ => CloneCause::RepositoryNotFound,
-            })
-            .with_status(404),
-        ),
+        Upstream::Answered(404) => Some(match missing {
+            Some(CloneCause::NoConnection) => CloneFailure::new(CloneCause::NoConnection)
+                .with_status(404)
+                .with_detail(
+                    "The repository's host answered 404: the repository does not exist, \
+                     or it is private and needs a connection.",
+                ),
+            Some(cause) => CloneFailure::new(cause).with_status(404),
+            None => CloneFailure::new(CloneCause::RepositoryNotFound).with_status(404),
+        }),
         Upstream::Answered(status) => {
             Some(CloneFailure::new(CloneCause::ProviderError).with_status(status))
         }
@@ -117,16 +121,30 @@ mod tests {
             cause(Upstream::Answered(404), None),
             Some(CloneCause::RepositoryNotFound)
         );
-        assert_eq!(
-            cause(Upstream::Answered(404), Some(NoToken::NoConnection)),
-            Some(CloneCause::RepositoryNotFound)
-        );
         let f = failure_of(Upstream::Answered(502), None).unwrap();
         assert_eq!(f.cause, CloneCause::ProviderError);
         assert_eq!(f.upstream_status, Some(502));
         assert_eq!(
             cause(Upstream::Unreachable, None),
             Some(CloneCause::Unreachable)
+        );
+    }
+
+    /// #1070 review: a private repository behind a source with no
+    /// connection can answer 404. The remedy stays "connect", and the detail
+    /// says the repository may also not exist.
+    #[test]
+    fn a_404_without_a_connection_keeps_the_connection_remedy() {
+        let f = failure_of(Upstream::Answered(404), Some(NoToken::NoConnection)).unwrap();
+        assert_eq!(f.cause, CloneCause::NoConnection);
+        assert_eq!(f.cause.action().as_str(), "connect");
+        assert_eq!(f.upstream_status, Some(404));
+        assert!(f.detail.contains("does not exist"), "{}", f.detail);
+        assert!(f.detail.contains("needs a connection"), "{}", f.detail);
+        assert!(
+            !f.cause.text().contains("asked for credentials"),
+            "a 404 asks for nothing: {}",
+            f.cause.text()
         );
     }
 }

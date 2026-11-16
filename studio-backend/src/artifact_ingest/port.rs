@@ -817,7 +817,7 @@ pub trait BuildRecords: Send + Sync + 'static {
     ) -> anyhow::Result<()>;
 }
 
-pub use super::clone_status::{CloneCause, CloneChannel, CloneFailure, CloneOutcome};
+pub use super::clone_status::{CloneCause, CloneChannel, CloneFailure, CloneOutcome, clone_order};
 
 /// Where the code paths that clone a project's sources say how it went
 /// (#1071): `studio-git` for a desktop's clone or fetch, `studio-session` for
@@ -828,7 +828,7 @@ pub use super::clone_status::{CloneCause, CloneChannel, CloneFailure, CloneOutco
 pub trait CloneOutcomes: Send + Sync + 'static {
     /// Record the outcome of a clone or fetch of `clone_url`, a source of
     /// `project`. The URL is reduced to host and path; no credential in it is
-    /// kept.
+    /// kept. An outcome older than the stored one (by `order`) is dropped.
     async fn record(
         &self,
         project: uuid::Uuid,
@@ -837,11 +837,14 @@ pub trait CloneOutcomes: Send + Sync + 'static {
     ) -> anyhow::Result<()>;
 
     /// Forget a failure `channel` recorded for `clone_url`, now that it no
-    /// longer holds. Anything else recorded is kept.
+    /// longer holds. Anything else recorded is kept, and so is a failure
+    /// recorded after `order`: a [`clone_order`] taken when the caller learnt
+    /// that the failure no longer holds.
     async fn clear_failure(
         &self,
         project: uuid::Uuid,
         clone_url: &str,
         channel: CloneChannel,
+        order: i64,
     ) -> anyhow::Result<()>;
 }

@@ -22,21 +22,25 @@
 //! The writers reach this through [`super::port::CloneOutcomes`]; the reader
 //! is `GET /studio-artifact-ingest/v1/sources/clone-status`, which the Sources
 //! tab and the `project_sources` MCP tool read. No token and no URL is stored:
-//! a repository is keyed by host and path (`project_sources::repository_key`),
-//! and the detail text goes through [`redact`] first.
+//! a repository is keyed by host and path ([`repository_of`]), and the detail
+//! text goes through [`redact`] first. An older outcome never replaces a newer
+//! one ([`clone_order`]).
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::extract::Query;
 use axum::{Extension, Router};
-use sea_orm::{ActiveValue, ColumnTrait, Condition, EntityTrait};
+use sea_orm::sea_query::Expr;
+use sea_orm::{ActiveValue, ColumnTrait, Condition, DbErr, EntityTrait};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
 use toolkit::client_hub::ClientHub;
 use toolkit_db::Db;
-use toolkit_db::secure::{SecureDeleteExt, SecureEntityExt, SecureInsertExt, SecureOnConflict};
+use toolkit_db::secure::{
+    ScopeError, SecureDeleteExt, SecureEntityExt, SecureInsertExt, SecureOnConflict,
+};
 use toolkit_security::{AccessScope, SecurityContext};
 use uuid::Uuid;
 
@@ -111,7 +115,8 @@ impl CloneAction {
 /// Why a clone failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloneCause {
-    /// The source names no connection, and its host asked for credentials.
+    /// The source names no connection, and its host asked for credentials,
+    /// or answered 404, which a private repository can hide behind.
     NoConnection,
     /// The source names a connection that is not found from the project.
     ConnectionNotFound,
@@ -183,7 +188,7 @@ impl CloneCause {
     pub fn text(self) -> &'static str {
         match self {
             Self::NoConnection => {
-                "The source names no connection, and the repository's host asked for credentials."
+                "The source names no connection, and the repository's host did not serve it without credentials."
             }
             Self::ConnectionNotFound => {
                 "The source's connection was not found, so it was cloned without a token."
@@ -243,6 +248,10 @@ impl CloneFailure {
 pub struct CloneOutcome {
     pub channel: CloneChannel,
     pub failure: Option<CloneFailure>,
+    /// When it happened, as a [`clone_order`]: stamped where the outcome is
+    /// built, before the writer hands it to a background task, so a write
+    /// that reaches the database late cannot pass for the newer one.
+    pub order: i64,
 }
 
 impl CloneOutcome {
@@ -250,6 +259,7 @@ impl CloneOutcome {
         Self {
             channel,
             failure: None,
+            order: clone_order(),
         }
     }
 
@@ -257,8 +267,81 @@ impl CloneOutcome {
         Self {
             channel,
             failure: Some(failure),
+            order: clone_order(),
         }
     }
+}
+
+/// The order of clone-status operations: nanoseconds since the epoch, and
+/// strictly increasing within this process, so two operations in the same
+/// millisecond, or the same nanosecond, still have an order.
+///
+/// The store applies an operation only over an older one (#1070 review): an
+/// outcome replaces the stored row when its order is greater, and a
+/// [`clear_failure`](super::port::CloneOutcomes::clear_failure) deletes a
+/// failure only when the failure's order is smaller. Equal orders (two
+/// replicas in the same nanosecond) keep what is stored.
+pub fn clone_order() -> i64 {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    static LAST: AtomicI64 = AtomicI64::new(0);
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    )
+    .unwrap_or(i64::MAX);
+    let mut last = LAST.load(Ordering::Relaxed);
+    loop {
+        let next = now.max(last.saturating_add(1));
+        match LAST.compare_exchange_weak(last, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return next,
+            Err(seen) => last = seen,
+        }
+    }
+}
+
+/// The milliseconds of a [`clone_order`], for `at_ms`.
+fn order_ms(order: i64) -> i64 {
+    order.div_euclid(1_000_000)
+}
+
+/// The key a source's clone status is stored under: host and path, lower
+/// case, with no scheme, credentials, query, fragment or `.git`.
+///
+/// An http(s) URL gives `project_sources::repository_key`. An scp-style SSH
+/// source (`git@github.com:acme/api.git`) has none there, on purpose: it is
+/// never the same repository as a URL for `same_repository`. Its failure is
+/// still worth showing (`not_http`), so here it is keyed the same way, by its
+/// host and path, without the user (#1070 review).
+pub fn repository_of(clone_url: &str) -> Option<String> {
+    crate::project_sources::repository_key(clone_url).or_else(|| scp_repository(clone_url))
+}
+
+/// `[user@]host:path` → `host/path`. Not a local path: a Windows drive
+/// (`C:\…`, `C:/…`) has a one-letter "host", and a path names no host at all.
+fn scp_repository(url: &str) -> Option<String> {
+    let url = url.trim();
+    if url.contains("://") {
+        return None;
+    }
+    let (authority, path) = url.split_once(':')?;
+    if authority.contains(['/', '\\']) {
+        return None;
+    }
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let path = path.trim_matches('/');
+    let path = path
+        .strip_suffix(".git")
+        .unwrap_or(path)
+        .trim_end_matches('/');
+    if host.chars().count() < 2 || path.is_empty() || path.contains('\\') {
+        return None;
+    }
+    Some(format!("{host}/{path}").to_ascii_lowercase())
 }
 
 /// `text` with every credential it could carry taken out: the user and
@@ -371,9 +454,9 @@ impl CloneStatusStore {
         project: Uuid,
         repository: String,
         outcome: CloneOutcome,
-        at_ms: i64,
     ) -> anyhow::Result<()> {
         let conn = self.db.conn()?;
+        let order = outcome.order;
         let failure = outcome.failure;
         let model = row::ActiveModel {
             tenant_id: ActiveValue::Set(project),
@@ -386,7 +469,8 @@ impl CloneStatusStore {
                 }
                 .to_owned(),
             ),
-            at_ms: ActiveValue::Set(at_ms),
+            at_ms: ActiveValue::Set(order_ms(order)),
+            at_order: ActiveValue::Set(order),
             channel: ActiveValue::Set(outcome.channel.as_str().to_owned()),
             cause: ActiveValue::Set(failure.as_ref().map(|f| f.cause.as_str().to_owned())),
             upstream_status: ActiveValue::Set(
@@ -402,25 +486,35 @@ impl CloneStatusStore {
                     .unwrap_or_default(),
             ),
         };
-        let on_conflict = SecureOnConflict::<row::Entity>::columns([
+        let mut on_conflict = SecureOnConflict::<row::Entity>::columns([
             row::Column::TenantId,
             row::Column::Repository,
         ])
         .update_columns([
             row::Column::State,
             row::Column::AtMs,
+            row::Column::AtOrder,
             row::Column::Channel,
             row::Column::Cause,
             row::Column::UpstreamStatus,
             row::Column::Detail,
         ])?;
-        row::Entity::insert(model)
+        // Only over an older outcome: one that waited for the database while
+        // a newer one committed must not replace it (see `clone_order`).
+        on_conflict.inner_mut().action_and_where(Expr::cust(
+            "studio_source_clone_status.at_order < excluded.at_order",
+        ));
+        let written = row::Entity::insert(model)
             .secure()
             .scope_unchecked(&AccessScope::for_tenant(project))?
             .on_conflict(on_conflict)
             .exec(&conn)
-            .await?;
-        Ok(())
+            .await;
+        match written {
+            // The stored outcome is newer (or as new): it stays.
+            Ok(_) | Err(ScopeError::Db(DbErr::RecordNotInserted)) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 
@@ -434,10 +528,10 @@ impl super::port::CloneOutcomes for CloneStatusStore {
         clone_url: &str,
         outcome: CloneOutcome,
     ) -> anyhow::Result<()> {
-        let Some(repository) = crate::project_sources::repository_key(clone_url) else {
+        let Some(repository) = repository_of(clone_url) else {
             return Ok(());
         };
-        self.write(project, repository, outcome, now_ms()).await
+        self.write(project, repository, outcome).await
     }
 
     async fn clear_failure(
@@ -445,8 +539,9 @@ impl super::port::CloneOutcomes for CloneStatusStore {
         project: Uuid,
         clone_url: &str,
         channel: CloneChannel,
+        order: i64,
     ) -> anyhow::Result<()> {
-        let Some(repository) = crate::project_sources::repository_key(clone_url) else {
+        let Some(repository) = repository_of(clone_url) else {
             return Ok(());
         };
         let conn = self.db.conn()?;
@@ -457,22 +552,14 @@ impl super::port::CloneOutcomes for CloneStatusStore {
                 Condition::all()
                     .add(row::Column::Repository.eq(repository))
                     .add(row::Column::Channel.eq(channel.as_str()))
-                    .add(row::Column::State.eq("failed")),
+                    .add(row::Column::State.eq("failed"))
+                    // A failure recorded after this launch knew better stays.
+                    .add(row::Column::AtOrder.lt(order)),
             )
             .exec(&conn)
             .await?;
         Ok(())
     }
-}
-
-fn now_ms() -> i64 {
-    i64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0),
-    )
-    .unwrap_or(0)
 }
 
 fn rfc3339(at_ms: i64) -> Option<String> {
@@ -584,7 +671,7 @@ pub fn statuses(
     sources
         .iter()
         .map(|source| {
-            let key = crate::project_sources::repository_key(&source.clone_url);
+            let key = repository_of(&source.clone_url);
             let last = key
                 .as_deref()
                 .and_then(|key| stored.iter().find(|s| s.repository == key));
@@ -677,6 +764,7 @@ pub fn register_routes(
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
     router.layer(Extension(CloneStatusApi { store, hub }))
 }

@@ -218,7 +218,9 @@ fn note_launch_clones(
     clones: Vec<(String, super::launch_sources::LaunchClone)>,
 ) {
     use super::launch_sources::LaunchClone;
-    use crate::artifact_ingest::port::{CloneChannel, CloneFailure, CloneOutcome, CloneOutcomes};
+    use crate::artifact_ingest::port::{
+        CloneChannel, CloneFailure, CloneOutcome, CloneOutcomes, clone_order,
+    };
 
     if clones.iter().all(|(_, c)| *c == LaunchClone::Nothing) {
         return;
@@ -226,25 +228,23 @@ fn note_launch_clones(
     let Ok(outcomes) = hub.get::<dyn CloneOutcomes>() else {
         return;
     };
+    // When the launch learnt it, not when the task gets to it: a later
+    // launch's news must not be overwritten by this one's.
+    let order = clone_order();
     tokio::spawn(async move {
         for (url, clone) in clones {
             let done = match clone {
                 LaunchClone::Nothing => continue,
                 LaunchClone::Clear => {
                     outcomes
-                        .clear_failure(project_id, &url, CloneChannel::IdeSession)
+                        .clear_failure(project_id, &url, CloneChannel::IdeSession, order)
                         .await
                 }
                 LaunchClone::Failed(cause) => {
+                    let failed =
+                        CloneOutcome::failed(CloneChannel::IdeSession, CloneFailure::new(cause));
                     outcomes
-                        .record(
-                            project_id,
-                            &url,
-                            CloneOutcome::failed(
-                                CloneChannel::IdeSession,
-                                CloneFailure::new(cause),
-                            ),
-                        )
+                        .record(project_id, &url, CloneOutcome { order, ..failed })
                         .await
                 }
             };

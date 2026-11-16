@@ -534,9 +534,10 @@ go to the graph until a fill writes the row.
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | UUID | the project |
-| `repository` | TEXT | the clone URL reduced to `host/path`, lower case, without scheme, credentials or `.git` |
+| `repository` | TEXT | the clone URL reduced to `host/path`, lower case, without scheme, credentials, query, fragment or `.git`; an scp-style SSH source (`git@host:org/repo`) is keyed the same way, without its user |
 | `state` | TEXT | `cloned` or `failed` |
 | `at_ms` | BIGINT | when |
+| `at_order` | BIGINT | the writing operation's order: nanoseconds, strictly increasing per process |
 | `channel` | TEXT | `desktop` or `ide_session` |
 | `cause` | TEXT | why it failed; NULL when it did not |
 | `upstream_status` | INTEGER | the source host's status, when it answered one |
@@ -548,7 +549,10 @@ go to the graph until a fill writes the row.
 
 **Additional info**: The last outcome only, overwritten, never a history
 (#1071). No token and no URL is stored. A launch that has its token again
-deletes the failure an earlier launch recorded, and nothing else. The server's
+deletes the failure an earlier launch recorded, and nothing else. The writers
+record from background tasks, so each operation carries the order it happened
+in: an outcome replaces the row only when it is newer, a clear deletes a
+failure only when the failure is older, and a tie keeps what is stored. The server's
 own sync is not recorded here: it is the repository node's `synced_at`.
 
 **Example**:
