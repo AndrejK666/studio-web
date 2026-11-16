@@ -368,3 +368,13 @@ export function sourcesFooter(
 export function neverSynced(rows: readonly SourcesTableRow[]): number {
   return rows.filter((row) => row.kind === 'repository' && row.lastSync.kind === 'not_synced').length;
 }
+
+/** The repositories syncing now: the footer says so rather than "all synced" beside a "Syncing…" row. */
+export function syncingNow(rows: readonly SourcesTableRow[]): number {
+  return rows.filter((row) => row.kind === 'repository' && row.sync.kind === 'in_flight').length;
+}
+
+/** The repositories whose last clone failed: synced on the server, yet nobody can open them in an IDE. */
+export function cloneFailures(rows: readonly SourcesTableRow[]): number {
+  return rows.filter((row) => row.kind === 'repository' && row.clone.kind === 'failed').length;
+}

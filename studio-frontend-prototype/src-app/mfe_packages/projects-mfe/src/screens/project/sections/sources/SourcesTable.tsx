@@ -19,7 +19,7 @@ import {
 import { useSourcesText } from '../../../../i18n';
 import { openSourcesConnect } from '../../../../actions/sourcesConnectActions';
 import { ReadFailed, SectionSkeleton } from '../../../../components/SectionStates';
-import { activityScale, neverSynced, type SourcesTableRow } from '../../../../model/sourceRows';
+import { activityScale, cloneFailures, neverSynced, syncingNow, type SourcesTableRow } from '../../../../model/sourceRows';
 import { SOURCE_SHARE_SLICE_KEY } from '../../../../slices/sourceShareSlice';
 import { useSourcesLoad } from '../../../../shared/useSourcesLoad';
 import { useSourceRowActions } from '../../../../shared/useSourceRowActions';
@@ -103,6 +103,8 @@ export const SourcesTable: React.FC<SourcesTableProps> = ({
     () => ({
       repositories: sources.rows.filter((row) => row.kind === 'repository').length,
       neverSynced: neverSynced(sources.rows),
+      syncing: syncingNow(sources.rows),
+      cloneFailed: cloneFailures(sources.rows),
     }),
     [sources.rows]
   );
