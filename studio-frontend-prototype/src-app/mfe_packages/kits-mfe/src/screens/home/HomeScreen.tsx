@@ -402,7 +402,7 @@ function KitPage({
   organizationId: string | null;
 }) {
   const context = useKitPageContext(bridge, organizationId);
-  return <KitDetailView {...props} context={context} />;
+  return <KitDetailView {...props} context={context} organizationId={organizationId} />;
 }
 
 type Text = ReturnType<typeof useHomeTranslations>['t'];
