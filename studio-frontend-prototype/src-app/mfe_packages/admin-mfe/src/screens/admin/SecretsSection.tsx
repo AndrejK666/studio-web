@@ -125,7 +125,7 @@ function Secrets({ org }: { org: OrganizationRef }) {
     return () => {
       live = false;
     };
-  }, [api, accounts, org.id]);
+  }, [api, accounts, org.id, org.name]);
 
   async function check(ref: string) {
     setStatus((s) => ({ ...s, [ref]: 'checking' }));
