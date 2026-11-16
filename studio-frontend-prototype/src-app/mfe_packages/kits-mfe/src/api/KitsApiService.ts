@@ -6,7 +6,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
-import type { DomainTypesResponse } from '@constructor-studio/mfe-shared';
+import type { DomainTypesResponse, ScreenPreview } from '@constructor-studio/mfe-shared';
 import type { KitInstallation, ProjectRepository } from '../model/ideKits';
 
 export const KITS_API_BASE_URL = '/cf/studio-kits/v1';
@@ -212,20 +212,8 @@ export class ConnectionsApiService extends BaseApiService {
   );
 }
 
-/** One picture a build took of a micro-frontend screen (`scripts/mfe-screen-previews.mjs`). */
-export interface ScreenPreview {
-  component: string;
-  version: string | null;
-  commit: string;
-  route: string;
-  label: string | null;
-  order: number;
-  /** `data:image/webp;base64,...` */
-  image: string;
-  width: number | null;
-  height: number | null;
-  captured_at: string;
-}
+/** One picture a build took of a micro-frontend screen: the shared shape (mfe-shared `screenPreviews`). */
+export type { ScreenPreview };
 
 const orgParam = (organizationId: string | null) =>
   organizationId ? `organization_id=${encodeURIComponent(organizationId)}` : '';

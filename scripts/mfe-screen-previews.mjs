@@ -9,6 +9,12 @@
  * components catalogue (`POST /studio-components-catalog/v1/screen-previews`),
  * where the product map shows them on the micro-frontend's card.
  *
+ * The portal takes pictures of its own screens into the dist/ it ships
+ * (`npm run build:previews` in studio-frontend-prototype: `--out
+ * dist/screen-previews`), so nginx serves `index.json` and the files beside
+ * the shell and the product map and a kit's page show them when the
+ * catalogue keeps none (mfe-shared `screenPreviews`).
+ *
  * Nothing here talks to a real backend or IdP except the upload. What the
  * pictures show is therefore each screen as a signed-in user with one
  * organization, one workspace and one empty project sees it: the layout, the
@@ -27,8 +33,9 @@
  */
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
-import { join, extname, resolve } from 'node:path';
+import { dirname, join, extname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 // ── arguments ───────────────────────────────────────────────────────────────
@@ -237,7 +244,14 @@ async function loadPlaywright() {
     const entry = join(from, 'index.mjs');
     return import(pathToFileURL(existsSync(entry) ? entry : join(from, 'index.js')).href);
   }
-  return import('playwright');
+  try {
+    return await import('playwright');
+  } catch {
+    // Run from a package that has it (`npm run build:previews` in the portal).
+    const dir = dirname(createRequire(join(process.cwd(), 'package.json')).resolve('playwright/package.json'));
+    const entry = join(dir, 'index.mjs');
+    return import(pathToFileURL(existsSync(entry) ? entry : join(dir, 'index.js')).href);
+  }
 }
 
 /**
@@ -325,7 +339,10 @@ async function main() {
     for (const mfe of mfes) {
       for (const [order, screen] of mfe.screens.entries()) {
         const url = screenUrl(origin, screen);
-        await tab.goto(url, { waitUntil: 'networkidle' });
+        // A shell that holds an event stream open never goes network-idle
+        // (the portal does): loaded, then idle if it gets there.
+        await tab.goto(url, { waitUntil: 'load' });
+        await tab.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => undefined);
         // Module Federation loads the remote after the shell settles.
         await tab.waitForTimeout(Number(args.settle ?? 2500));
         const png = await tab.screenshot();
@@ -343,11 +360,12 @@ async function main() {
           height: shot.height,
           file,
           landed: tab.url().replace(origin, ''),
+          captured_at: new Date().toISOString(),
         };
         index.push(entry);
         console.log(`${mfe.name} ${screen.route} -> ${file} (${Math.round(shot.url.length / 1365)} KiB) at ${entry.landed}`);
         if (args.upload) {
-          const { file: _f, landed: _l, ...body } = entry;
+          const { file: _f, landed: _l, captured_at: _c, ...body } = entry;
           await upload(args.upload, args.org, process.env.STUDIO_TOKEN, { ...body, image: shot.url });
         }
       }

@@ -201,28 +201,44 @@
   z-index: 1;
 }
 
+/* A line's colour says its kind, the same on the map and in its legend;
+   red says it is broken. Never a subsystem's hue: that is the boxes'. */
 .link {
   fill: none;
   stroke: var(--muted-foreground);
-  stroke-width: 1.2px;
-  opacity: 0.55;
+  stroke-width: 1.4px;
+  stroke-linejoin: round;
+  opacity: 0.7;
 }
 
 .linkCalls {
-  stroke-dasharray: none;
+  stroke: var(--primary);
 }
 
-.linkRunsOn,
-.linkStoresIn {
+.linkRunsOn {
+  stroke: var(--muted-foreground);
   stroke-dasharray: 4 3;
 }
 
+.linkStoresIn {
+  stroke: var(--muted-foreground);
+  stroke-dasharray: 2 2;
+}
+
 .linkSignsIn {
+  stroke: var(--chart-category-purple, #a855f7);
   stroke-dasharray: 1 3;
+  stroke-linecap: round;
 }
 
 .linkDepends {
+  stroke: var(--foreground);
   stroke-dasharray: 6 2;
+}
+
+/* At rest, a line stands for a subsystem's worth of links: quieter. */
+.linkRest {
+  opacity: 0.45;
 }
 
 .linkBad {
@@ -244,9 +260,42 @@
 }
 
 .linkCount {
+  pointer-events: auto;
+}
+
+.linkCount rect {
+  fill: var(--card);
+  stroke: var(--border);
+}
+
+.linkCount text {
   fill: var(--foreground);
   font-size: 10px;
   font-weight: 600;
+}
+
+.linkLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.linkLegend li {
+  display: inline-flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.linkLegend svg {
+  width: 1.75rem;
+  height: 0.75rem;
+  overflow: visible;
 }
 
 .lane {

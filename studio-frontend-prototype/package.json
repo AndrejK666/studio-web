@@ -34,6 +34,7 @@
     "dev:all": "npx --yes tsx@4.23.12 scripts/dev-all.ts",
     "preview": "vite preview",
     "build:package": "tsup",
+    "build:previews": "node ../scripts/mfe-screen-previews.mjs --dist dist --mfes src-app/mfe_packages --out dist/screen-previews",
     "build": "npm run build:package && npm run build:mfes && npm run generate:mfe-manifests -- --base-path /mfes && vite build && npm run package:mfe-assets",
     "type-check:package": "tsc --noEmit",
     "type-check:package:test": "tsc -p tsconfig.test.json",

@@ -10,7 +10,7 @@ import type { ScreenPreview as ScreenPicture } from '../../../api/types';
 import { productApi } from '../../../api/client';
 import {
   MAP_LAYERS,
-  MISSING_GROUP,
+  SHELL_NODE,
   groupsOf,
   linksOf,
   type MapLayer,
@@ -19,7 +19,9 @@ import {
   type MapOverlay,
   type ProductMap as Map_,
 } from '../../../model/product-map';
-import { previewBuild, shortCommit, type PreviewBuild } from '../../../model/screen-previews';
+import { bottomPort, bundlesOf, labelAt, leftPort, orderMap, pathOf, route, type Point, type Port } from '../../../model/map-layout';
+import { loadScreenPreviews, newestBuild } from '@constructor-studio/mfe-shared';
+import { shortCommit } from '../../../model/screen-previews';
 import { useMapTranslations } from '../../../i18n';
 import { DRAG_GEAR, DRAG_MFE, KIND_GLYPH, hueOf, kindWord, screensOf, stateWord, type MapLook, type Text } from './words';
 import styles from './ProductMap.module.css';
@@ -29,35 +31,34 @@ const cx = (...names: (string | false | null | undefined)[]) => names.filter(Boo
 /* ── A micro-frontend's screens, drawn ── */
 
 /** Each component's pictures, read once per page: a build adds them, and a
- *  reload is when a reader expects to see a new one. */
+ *  reload is when a reader expects to see a new one. Read as a kit's page
+ *  reads them (mfe-shared `loadScreenPreviews`): the catalogue's, else the
+ *  ones the portal's own build took. */
 const pictures = new Map<string, Promise<ScreenPicture[]>>();
 
 function usePictures(component: string | null): ScreenPicture[] | null {
-  const [items, setItems] = useState<ScreenPicture[] | null>(null);
+  const [items, setItems] = useState<{ component: string; items: ScreenPicture[] } | null>(null);
   useEffect(() => {
     if (!component) return;
     let live = true;
     let read = pictures.get(component);
     if (!read) {
-      read = productApi.screenPreviews(component).then(
-        (r) => r.items ?? [],
-        (): ScreenPicture[] => []
-      );
+      read = loadScreenPreviews(component, () => productApi.screenPreviews(component).then((r) => r.items ?? []));
       pictures.set(component, read);
     }
     void read.then((r) => {
-      if (live) setItems(r);
+      if (live) setItems({ component, items: r });
     });
     return () => {
       live = false;
     };
   }, [component]);
-  return component ? items : null;
+  return component && items?.component === component ? items.items : null;
 }
 
-/** What a micro-frontend puts in the shell, as a small window: the picture a
- *  build took of each screen when the catalogue keeps one for this version,
- *  otherwise drawn from what its manifest declares and labelled a schematic.
+/** What a micro-frontend puts in the shell, as a small window: the newest
+ *  build's picture of each screen (the rule a kit's page uses), otherwise
+ *  drawn from what its manifest declares and labelled as having no picture.
  *  `bare` leaves out the menu, for a page drawn inside the shell's window. */
 export function ScreenPreview({
   name,
@@ -73,27 +74,28 @@ export function ScreenPreview({
   bare?: boolean;
 }) {
   const items = usePictures(pictured?.component ?? null);
-  const build = items ? previewBuild(items, pictured?.version ?? null) : null;
-  if (build) return <BuiltPreview key={screen ?? ''} name={name} build={build} screen={screen ?? null} bare={bare} />;
+  const build = newestBuild(items);
+  if (build.length) return <BuiltPreview key={screen ?? ''} name={name} build={build} screen={screen ?? null} bare={bare} />;
   return <SchematicPreview name={name} screens={screens} screen={screen ?? null} bare={bare} />;
 }
 
 /** The pictures of one build: one screen large, every screen as a tab that shows it on hover. */
-function BuiltPreview({ name, build, screen, bare }: { name: string; build: PreviewBuild; screen: string | null; bare: boolean }) {
+function BuiltPreview({ name, build, screen, bare }: { name: string; build: ScreenPicture[]; screen: string | null; bare: boolean }) {
   const { t } = useMapTranslations();
   const [on, setOn] = useState(() =>
     Math.max(
       0,
-      build.screens.findIndex((s) => s.label === screen || s.route === screen)
+      build.findIndex((s) => s.label === screen || s.route === screen)
     )
   );
-  const shot = build.screens[Math.min(on, build.screens.length - 1)];
+  const shot = build[Math.min(on, build.length - 1)];
+  const capturedAt = build.reduce((at, p) => (p.captured_at > at ? p.captured_at : at), '');
   return (
     <span className={styles.previewHold} onClick={(e) => e.stopPropagation()}>
       <span
         className={styles.preview}
         role="img"
-        aria-label={`${name}: ${build.screens.map((s) => s.label ?? s.route).join(', ')}, built at ${build.commit}`}
+        aria-label={`${name}: ${build.map((s) => s.label ?? s.route).join(', ')}, built at ${shot.commit}`}
         data-pmap-preview="built"
       >
         <span className={styles.previewBar}>
@@ -101,18 +103,18 @@ function BuiltPreview({ name, build, screen, bare }: { name: string; build: Prev
           <span
             className={styles.previewTag}
             title={t('preview_built_title', {
-              commit: build.commit,
-              version: build.version ?? '—',
-              at: build.capturedAt,
+              commit: shot.commit,
+              version: shot.version ?? '—',
+              at: capturedAt || '—',
             })}
           >
-            {t('preview_built', { commit: shortCommit(build.commit) })}
+            {t('preview_built', { commit: shortCommit(shot.commit) })}
           </span>
         </span>
         <img className={styles.previewShot} src={shot.image} alt={shot.label ?? shot.route} />
-        {build.screens.length > 1 && !bare && (
+        {build.length > 1 && !bare && (
           <span className={styles.previewThumbs}>
-            {build.screens.map((s, i) => (
+            {build.map((s, i) => (
               <span
                 key={s.route}
                 className={cx(styles.previewThumb, s === shot && styles.on)}
@@ -145,7 +147,9 @@ function SchematicPreview({ name, screens, screen, bare }: { name: string; scree
     >
       <span className={styles.previewBar}>
         <span className={styles.previewUrl}>/{(open ?? name).toLowerCase().replace(/[^a-z0-9]+/g, '-')}</span>
-        <span className={styles.previewTag}>{t('preview_schematic')}</span>
+        <span className={styles.previewTag} title={t('preview_schematic_title')}>
+          {t('preview_schematic')}
+        </span>
       </span>
       <span className={styles.previewBody}>
         {!bare && (
@@ -174,41 +178,22 @@ function SchematicPreview({ name, screens, screen, bare }: { name: string; scree
 
 /* ── The lanes and the links ── */
 
-/** One drawn line: every link between the same two drawn ends (a folded
- *  group draws its nodes' links at its header), `count` of them. */
+/** One drawn line (`bundlesOf`), routed (`route`). */
 type Path = {
   key: string;
   d: string;
+  points: Point[];
+  /** The link it speaks for: its worst. */
   link: MapLink;
   links: MapLink[];
   count: number;
-  mid: { x: number; y: number };
-  hue: number | null;
+  kind: MapLink['kind'];
+  aggregate: boolean;
+  to: string;
 };
 
-/** The groups of a lane in the order that crosses fewest lines: by the mean
- *  place of what links into them from the lane above (a barycentre). The
- *  engine's group of what is missing stays first. */
-function laneOrder(
-  groups: { group: string; nodes: MapNode[] }[],
-  above: Map<string, number>,
-  links: readonly MapLink[]
-): { group: string; nodes: MapNode[] }[] {
-  if (above.size === 0) return groups;
-  const score = (g: { nodes: MapNode[] }) => {
-    const ids = new Set(g.nodes.map((n) => n.id));
-    const at: number[] = [];
-    for (const l of links) {
-      if (ids.has(l.to) && above.has(l.from)) at.push(above.get(l.from)!);
-      else if (ids.has(l.from) && above.has(l.to)) at.push(above.get(l.to)!);
-    }
-    return at.length ? at.reduce((a, b) => a + b, 0) / at.length : Number.POSITIVE_INFINITY;
-  };
-  return groups
-    .map((g, i) => ({ g, i, s: g.group === MISSING_GROUP ? Number.NEGATIVE_INFINITY : score(g) }))
-    .sort((a, b) => (a.s === b.s ? a.i - b.i : a.s - b.s))
-    .map((x) => x.g);
-}
+/** A count written where a line arrives: for every line into the same end at rest, their sum. */
+type Label = { key: string; x: number; y: number; count: number; title: string };
 
 const LINK_CLASS: Record<MapLink['kind'], string> = {
   calls: styles.linkCalls,
@@ -217,6 +202,16 @@ const LINK_CLASS: Record<MapLink['kind'], string> = {
   depends: styles.linkDepends,
   'stores-in': styles.linkStoresIn,
 };
+
+/** The legend under the map: each kind drawn with the class its lines are drawn with. */
+const LEGEND: [MapLink['kind'] | 'bad', string][] = [
+  ['calls', styles.linkCalls],
+  ['signs-in', styles.linkSignsIn],
+  ['runs-on', styles.linkRunsOn],
+  ['depends', styles.linkDepends],
+  ['stores-in', styles.linkStoresIn],
+  ['bad', styles.linkBad],
+];
 
 const STATE_CLASS: Record<MapNode['state'], string> = {
   ok: styles.ok,
@@ -269,6 +264,7 @@ export function MapCanvas({
   const box = useRef<HTMLDivElement | null>(null);
   const refs = useRef(new Map<string, HTMLElement>());
   const [paths, setPaths] = useState<Path[]>([]);
+  const [labels, setLabels] = useState<Label[]>([]);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [over, setOver] = useState<MapLayer | null>(null);
   /** The node the pointer is on: its links show as if it were selected. */
@@ -277,118 +273,144 @@ export function MapCanvas({
   const [screenOn, setScreenOn] = useState<{ node: string; screen: string } | null>(null);
   const lanes = MAP_LAYERS.filter((l) => layers.has(l.id));
 
-  // Each lane's groups ordered under what links into them from the lane
-  // above, so lines run down rather than across.
-  const laneGroups = useMemo(() => {
-    const out = new Map<MapLayer, { group: string; nodes: MapNode[] }[]>();
-    let above = new Map<string, number>();
-    for (const lane of MAP_LAYERS) {
-      const groups = laneOrder(groupsOf(map.nodes, lane.id), above, map.links);
-      out.set(lane.id, groups);
-      if (!layers.has(lane.id)) continue;
-      const next = new Map<string, number>();
-      groups.flatMap((g) => g.nodes).forEach((n, i) => next.set(n.id, i));
-      above = next;
-    }
-    return out;
-  }, [map, layers]);
+  // What is lit: the selection, else what the pointer is on.
+  const lit = selected ?? (link ? null : hover);
+
+  // The screens, the subsystems and the gears in each ordered so the links
+  // run as straight down as they can (map-layout.ts).
+  const order = useMemo(() => {
+    const frontend = groupsOf(map.nodes, 'frontend').flatMap((g) => g.nodes.map((n) => n.id));
+    return orderMap(
+      { frontend, backend: groupsOf(map.nodes, 'backend'), infrastructure: groupsOf(map.nodes, 'infrastructure') },
+      map.links
+    );
+  }, [map]);
+  const laneGroups = useMemo(
+    () =>
+      new Map<MapLayer, { group: string; nodes: MapNode[] }[]>([
+        ['frontend', groupsOf(map.nodes, 'frontend')],
+        ['backend', order.backend],
+        ['infrastructure', order.infrastructure],
+      ]),
+    [map, order]
+  );
+  const frontRank = useMemo(() => new Map(order.frontend.map((id, i) => [id, i])), [order]);
 
   const measure = useCallback(() => {
     const el = box.current;
     if (!el) return;
     const at = el.getBoundingClientRect();
+    const rel = (r: DOMRect) => ({ x: r.left - at.left, y: r.top - at.top, w: r.width, h: r.height });
     const rank = (layer: MapLayer) => MAP_LAYERS.findIndex((l) => l.id === layer);
     const key = (n: MapNode) => `${n.layer}:${n.group}`;
-    // `end` names what is drawn for a node -- its group's header while the
-    // group is folded -- so links between the same drawn ends are one line.
-    const endOf = (id: string) => {
+    // What is drawn for a node: its group's header while the group is
+    // folded, nothing while it is hidden.
+    const endOf = (id: string): string | null => {
       const n = nodeById.get(id);
       if (!n || !layers.has(n.layer)) return null;
       // A database is drawn only while its PostgreSQL is open.
       if (n.parent && (collapsed.has(key(n)) || collapsed.has(`dbs:${n.parent}`))) return null;
       const end = n.layer !== 'frontend' && collapsed.has(key(n)) ? `group:${key(n)}` : id;
+      return refs.current.has(end) ? end : null;
+    };
+    const groupOf = (id: string): string | null => {
+      const n = nodeById.get(id);
+      if (!n || !layers.has(n.layer)) return null;
+      if (n.layer === 'frontend') return id;
+      const end = `group:${key(n)}`;
+      return refs.current.has(end) ? end : null;
+    };
+    const lanesAt = new Map<number, ReturnType<typeof rel>>();
+    for (const lane of el.querySelectorAll<HTMLElement>('[data-pmap-lane]')) {
+      lanesAt.set(rank(lane.dataset.pmapLane as MapLayer), rel(lane.getBoundingClientRect()));
+    }
+    const ranks = [...lanesAt.keys()].sort((a, b) => a - b);
+    const gutterAbove = (r: number) => {
+      const lane = lanesAt.get(r)!;
+      const prev = ranks.filter((x) => x < r).pop();
+      if (prev === undefined) return lane.y - 4;
+      const p = lanesAt.get(prev)!;
+      return (p.y + p.h + lane.y) / 2;
+    };
+    const gutterBelow = (r: number) => {
+      const lane = lanesAt.get(r)!;
+      return lane.y + lane.h - 5;
+    };
+    // The shell's margin, where lines from its screens run down.
+    const shellEl = el.querySelector<HTMLElement>('[data-pmap-shell]');
+    const frontLane = lanesAt.get(rank('frontend'));
+    const trunk = shellEl && frontLane ? (frontLane.x + rel(shellEl.getBoundingClientRect()).x) / 2 : 4;
+    const portOf = (end: string): Port | null => {
       const node = refs.current.get(end);
-      const r = node?.getBoundingClientRect();
-      if (!node || !r) return null;
-      // A node scrolled out of its row is drawn at the row's edge.
-      const row = node.closest('[data-pmap-row]')?.getBoundingClientRect();
-      let left = r.left;
-      let width = r.width;
-      if (row) {
-        const l = Math.max(left, row.left);
-        const rr = Math.min(left + width, row.right);
-        if (rr - l < 8) {
-          left = left < row.left ? row.left : row.right - 8;
-          width = 8;
-        } else {
-          left = l;
-          width = rr - l;
+      if (!node) return null;
+      const r = rel(node.getBoundingClientRect());
+      const layer = (end.startsWith('group:') ? end.split(':')[1] : nodeById.get(end)?.layer) as MapLayer | undefined;
+      if (!layer) return null;
+      const lane = rank(layer);
+      if (layer === 'frontend') {
+        // A screen in the shell's menu goes out left; a micro-frontend in the
+        // grid of shared ones goes under its row first.
+        if (node.closest('[data-pmap-shared]')) return bottomPort(lane, r, 4, trunk);
+        if (end === SHELL_NODE) {
+          const head = node.querySelector<HTMLElement>('button');
+          return leftPort(lane, head ? rel(head.getBoundingClientRect()) : { ...r, h: 28 }, trunk);
         }
+        return leftPort(lane, r, trunk);
       }
-      return { end, layer: n.layer, x: left - at.left, y: r.top - at.top, w: width, h: r.height };
+      // Into the gap left of its subsystem's column; a node scrolled out of
+      // its row is drawn at the row's edge.
+      const group = node.closest('[data-pmap-group]');
+      const row = node.closest('[data-pmap-row]');
+      const g = group ? rel(group.getBoundingClientRect()) : r;
+      let channel = g.x - 6;
+      let x = r.x;
+      if (row) {
+        const rr = rel(row.getBoundingClientRect());
+        channel = Math.min(Math.max(channel, rr.x - 4), rr.x + rr.w);
+        x = Math.min(Math.max(x, rr.x), rr.x + rr.w);
+      }
+      return leftPort(lane, { x, y: r.y, h: r.h }, channel);
     };
-    type End = NonNullable<ReturnType<typeof endOf>>;
-    const bundles = new Map<string, { a: End; b: End; links: MapLink[] }>();
-    for (const l of map.links) {
-      const a = endOf(l.from);
-      const b = endOf(l.to);
-      if (!a || !b || a.end === b.end) continue;
-      const k = `${a.end}>${b.end}`;
-      const had = bundles.get(k);
-      if (had) had.links.push(l);
-      else bundles.set(k, { a, b, links: [l] });
-    }
-    // Lines between lanes leave the bottom and arrive at the top; within a
-    // lane both ends are at the bottom.
-    const sides = (a: End, b: End) => {
-      const same = rank(a.layer) === rank(b.layer);
-      const down = rank(a.layer) < rank(b.layer);
-      return { aBottom: same || down, bBottom: same || !down };
-    };
-    // A node's lines are spread along its edge in the order of their other ends.
-    const edges = new Map<string, { key: string; other: number }[]>();
-    const onEdge = (edge: string, k: string, other: End) =>
-      edges.set(edge, [...(edges.get(edge) ?? []), { key: k, other: other.x + other.w / 2 }]);
-    for (const [k, { a, b }] of bundles) {
-      const { aBottom, bBottom } = sides(a, b);
-      onEdge(`${a.end}:${aBottom ? 'b' : 't'}`, k, b);
-      onEdge(`${b.end}:${bBottom ? 'b' : 't'}`, k, a);
-    }
-    const xOn = (end: End, edge: string, k: string) => {
-      const list = [...(edges.get(edge) ?? [])].sort((p, q) => p.other - q.other);
-      const i = list.findIndex((e) => e.key === k);
-      const pad = Math.min(12, end.w / 4);
-      const span = end.w - 2 * pad;
-      return end.x + pad + (list.length <= 1 ? span / 2 : (span * i) / (list.length - 1));
-    };
+    const bundles = bundlesOf(map.links, { lit, picked: link }, endOf, groupOf);
+    // At rest, the screens' lines leave the shell in the order of the menu.
+    bundles.sort((a, b) => (frontRank.get(a.from) ?? 1e9) - (frontRank.get(b.from) ?? 1e9));
     const out: Path[] = [];
-    for (const [k, { a, b, links }] of bundles) {
-      const { aBottom, bBottom } = sides(a, b);
-      const ax = xOn(a, `${a.end}:${aBottom ? 'b' : 't'}`, k);
-      const bx = xOn(b, `${b.end}:${bBottom ? 'b' : 't'}`, k);
-      const ay = aBottom ? a.y + a.h : a.y;
-      const by = bBottom ? b.y + b.h : b.y;
-      let d: string;
-      let mid: { x: number; y: number };
-      if (aBottom && bBottom) {
-        const dip = Math.max(ay, by) + 24;
-        d = `M${ax},${ay} C${ax},${dip} ${bx},${dip} ${bx},${by}`;
-        mid = { x: (ax + bx) / 2, y: dip - 6 };
-      } else {
-        const m = (ay + by) / 2;
-        d = `M${ax},${ay} C${ax},${m} ${bx},${m} ${bx},${by}`;
-        mid = { x: (ax + bx) / 2, y: m };
-      }
+    const arrive = new Map<string, Label>();
+    for (const b of bundles) {
+      const pa = portOf(b.from);
+      const pb = portOf(b.to);
+      if (!pa || !pb) continue;
+      const points = route(pa, pb, b.kind, gutterAbove, gutterBelow);
       // The line speaks for its worst link: a bad one is never hidden in a bundle.
-      const worst = links.find((l) => l.state === 'bad') ?? links[0];
-      // Coloured as the subsystem it arrives at, so a bundle reads by colour.
-      const to = nodeById.get(worst.to);
-      out.push({ key: k, d, link: worst, links, count: links.length, mid, hue: to && to.layer !== 'frontend' ? hueOf(to.group) : null });
+      const worst = b.links.find((l) => l.state === 'bad') ?? b.links[0];
+      out.push({
+        key: b.key,
+        d: pathOf(points),
+        points,
+        link: worst,
+        links: b.links,
+        count: b.links.length,
+        kind: b.kind,
+        aggregate: b.aggregate,
+        to: b.to,
+      });
+      if (b.links.length > 1 || b.aggregate) {
+        // Lines into one end at rest share its last run: one count for all of them.
+        const where = labelAt(points);
+        const k = b.aggregate ? b.to : b.key;
+        const had = arrive.get(k);
+        const title = b.links.map((l) => l.why);
+        if (had) {
+          had.count += b.links.length;
+          had.title = `${had.title}; ${title.slice(0, 2).join('; ')}`;
+        } else arrive.set(k, { key: k, x: where[0], y: where[1], count: b.links.length, title: title.slice(0, 4).join('; ') });
+      }
     }
     setPaths(out);
+    setLabels([...arrive.values()].filter((l) => l.count > 1));
     setSize({ w: el.scrollWidth, h: el.scrollHeight });
     // `look` and `find` change what is drawn, so where the lines go.
-  }, [map, nodeById, layers, collapsed, look, find]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [map, nodeById, layers, collapsed, look, find, lit, link, frontRank]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Measured once the lanes are laid out, and again whenever they resize.
   useEffect(() => {
@@ -408,8 +430,6 @@ export function MapCanvas({
     if (el) refs.current.set(id, el);
     else refs.current.delete(id);
   };
-  // What is lit: the selection, else what the pointer is on.
-  const lit = selected ?? (link ? null : hover);
   const touches = (l: MapLink) => (lit ? l.from === lit || l.to === lit : link ? l === link : false);
   const linked = new Set<string>();
   if (lit) for (const l of linksOf(map, lit)) linked.add(l.from === lit ? l.to : l.from);
@@ -530,7 +550,11 @@ export function MapCanvas({
   const app = (shell: MapNode, groups: { group: string; nodes: MapNode[] }[], tx: Text) => {
     // The shell drawn as the app it is. Its menu is the screens, each group
     // of them a micro-frontend; the page shows the screen hovered.
-    const mounted = groups.flatMap((g) => g.nodes).filter((n) => n.id !== shell.id);
+    // In the order that crosses fewest lines (map-layout.ts).
+    const mounted = groups
+      .flatMap((g) => g.nodes)
+      .filter((n) => n.id !== shell.id)
+      .sort((a, b) => (frontRank.get(a.id) ?? 0) - (frontRank.get(b.id) ?? 0));
     if (mounted.length === 0) return <p className={styles.muted}>{tx('app_empty')}</p>;
     const pages = mounted.filter((n) => screensOf(n).length > 0);
     const shared = mounted.filter((n) => screensOf(n).length === 0);
@@ -608,7 +632,7 @@ export function MapCanvas({
           )}
         </div>
         {shared.length > 0 && (
-          <div className={styles.appShared}>
+          <div className={styles.appShared} data-pmap-shared>
             <span className={styles.muted}>{tx('app_shared')}</span>
             {shared.map((n) => chip(n))}
           </div>
@@ -621,27 +645,23 @@ export function MapCanvas({
     <div className={cx(styles.canvas, look === 'compact' && styles.compact)} ref={box} onClick={() => onSelect(null)} data-pmap-canvas>
       <svg className={styles.links} width={size.w} height={size.h} aria-hidden>
         {paths.map((p) => {
-          // Gear-to-gear and gear-to-database links show only for what is
-          // selected or pointed at: the lanes would be a web otherwise.
           const on = p.links.some(touches);
-          if (p.links.every((l) => l.kind === 'depends' || l.kind === 'stores-in') && !on) return null;
-          const cls = cx(styles.link, LINK_CLASS[p.link.kind], p.link.state === 'bad' && styles.linkBad, on ? styles.linkOn : focus && styles.dim);
+          const cls = cx(
+            styles.link,
+            LINK_CLASS[p.kind],
+            p.aggregate && styles.linkRest,
+            p.link.state === 'bad' && styles.linkBad,
+            on ? styles.linkOn : focus && styles.dim
+          );
           return (
             <g key={p.key}>
               <path
                 className={cls}
                 d={p.d}
-                style={{
-                  ...(p.count > 1 ? { strokeWidth: `${Math.min(5, 1.2 + Math.log2(p.count))}px` } : {}),
-                  ...(p.hue !== null && p.link.state !== 'bad' ? { stroke: `hsl(${p.hue} 62% 52%)` } : {}),
-                }}
+                style={p.count > 1 && !p.aggregate ? { strokeWidth: `${Math.min(4, 1.2 + Math.log2(p.count))}px` } : undefined}
                 data-pmap-link={p.key}
+                data-pmap-link-kind={p.kind}
               />
-              {p.count > 1 && (on || !focus) && (
-                <text className={styles.linkCount} x={p.mid.x} y={p.mid.y} textAnchor="middle" dominantBaseline="middle">
-                  {p.count}
-                </text>
-              )}
               <path
                 className={styles.linkHit}
                 d={p.d}
@@ -662,6 +682,15 @@ export function MapCanvas({
             </g>
           );
         })}
+        {labels.map((l) => (
+          <g key={`n:${l.key}`} className={cx(styles.linkCount, focus && !lit && !link && styles.dim)} data-pmap-link-count={l.key}>
+            <rect x={l.x - 9} y={l.y - 7} width={18} height={14} rx={7} />
+            <text x={l.x} y={l.y} textAnchor="middle" dominantBaseline="central">
+              {l.count}
+            </text>
+            <title>{l.title}</title>
+          </g>
+        ))}
       </svg>
       {lanes.length === 0 && <p className={styles.muted}>{t('no_layers')}</p>}
       {lanes.map((lane) => {
@@ -698,6 +727,7 @@ export function MapCanvas({
                 shell ? (
                   <div
                     ref={setRef(shell.id)}
+                    data-pmap-shell
                     className={cx(styles.shell, STATE_CLASS[shell.state], selected === shell.id && styles.on, linked.has(shell.id) && styles.linked)}
                     data-pmap-node={shell.id}
                     data-pmap-state={shell.state}
@@ -783,6 +813,19 @@ export function MapCanvas({
           </div>
         );
       })}
+      {lanes.length > 0 && (
+        <ul className={styles.linkLegend} data-pmap-link-legend>
+          {LEGEND.map(([kind, cls]) => (
+            <li key={kind} data-pmap-legend-kind={kind}>
+              <svg aria-hidden>
+                <path className={cx(styles.link, cls, styles.linkOn)} d="M0,6 L28,6" />
+              </svg>
+              {t(`link_legend_${kind.replace('-', '_')}`)}
+            </li>
+          ))}
+          <li>{t(lit || link ? 'link_legend_lit' : 'link_legend_rest')}</li>
+        </ul>
+      )}
     </div>
   );
 }
