@@ -309,37 +309,60 @@ pub fn unpack(mut v: serde_json::Value) -> anyhow::Result<ReportSource> {
 
 #[cfg(feature = "graph")]
 mod graph {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
 
     use anyhow::anyhow;
     use async_trait::async_trait;
     use graph_storage_sdk::GraphStorageClientV1;
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use toolkit_security::SecurityContext;
+    use uuid::Uuid;
 
     use super::super::gts;
     use super::super::source::ReportSource;
     use super::ReportStore;
 
+    /// The payload field a deleted source carries, as a domain object's does
+    /// (`domain_model::store::DELETED_FIELD`): graph-storage never lets a
+    /// deleted node's key be written again, and a source's key is derived
+    /// from its report, so deleting the node would forbid ever saving that
+    /// report's source again in this organization.
+    const DELETED_FIELD: &str = "_deleted";
+
     pub struct GraphStore {
         client: Arc<dyn GraphStorageClientV1>,
-        registered: AtomicBool,
+        /// Tenants whose types are registered by this process. Per tenant,
+        /// because graph-storage resolves a type in the caller's tenant
+        /// scope: a registration made in one organization is not another's.
+        registered: Mutex<HashSet<Uuid>>,
     }
 
     impl GraphStore {
         pub fn new(client: Arc<dyn GraphStorageClientV1>) -> Self {
             Self {
                 client,
-                registered: AtomicBool::new(false),
+                registered: Mutex::new(HashSet::new()),
             }
         }
 
-        /// Once per process: registering is idempotent, and cheap only the
-        /// first time.
+        fn is_registered(&self, tenant: Uuid) -> bool {
+            self.registered
+                .lock()
+                .map(|r| r.contains(&tenant))
+                .unwrap_or(false)
+        }
+
+        /// Once per tenant and process: registering is idempotent, and cheap
+        /// only the first time. A stored type whose schema here changed is
+        /// updated in place (`Update`), as every other Studio store does;
+        /// under the default (`Reject`) every report write would fail.
         async fn ensure_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
-            use graph_storage_sdk::models::TypeRegistration;
-            if self.registered.load(Ordering::Acquire) {
+            use graph_storage_sdk::models::{
+                OnExisting, TypeRegistration, TypeRegistrationOptions,
+            };
+            let tenant = ctx.subject_tenant_id();
+            if self.is_registered(tenant) {
                 return Ok(());
             }
             let batch: Vec<TypeRegistration> = gts::graph_node_type_schemas()
@@ -354,10 +377,57 @@ mod graph {
                     schema,
                 })
                 .collect();
-            self.client.register_types(ctx, batch).await.map_err(|e| {
-                anyhow!("register report types: {}", crate::graph_error::explain(&e))
-            })?;
-            self.registered.store(true, Ordering::Release);
+            let options = TypeRegistrationOptions {
+                on_existing: OnExisting::Update,
+                ..Default::default()
+            };
+            self.client
+                .register_types_with(ctx, batch, options)
+                .await
+                .map_err(|e| {
+                    anyhow!("register report types: {}", crate::graph_error::explain(&e))
+                })?;
+            if let Ok(mut r) = self.registered.lock() {
+                r.insert(tenant);
+            }
+            Ok(())
+        }
+
+        async fn write(
+            &self,
+            ctx: &SecurityContext,
+            report: &str,
+            payload: Value,
+        ) -> anyhow::Result<()> {
+            use crate::artifact_ingest::sdk::without_nul;
+            use graph_storage_sdk::models::{IngestOptions, IngestRequest, NodeSpec};
+            self.ensure_types(ctx).await?;
+            let node = NodeSpec {
+                node_key: gts::source_key(report),
+                type_id: gts::graph_type_id(),
+                name: Some(report.to_owned()),
+                payload: Some(without_nul(payload)),
+                expected_version: None,
+            };
+            self.client
+                .ingest(
+                    ctx,
+                    IngestRequest {
+                        nodes: vec![node],
+                        edges: Vec::new(),
+                        options: IngestOptions {
+                            create_phantoms: Some(false),
+                            report_per_item: false,
+                            embed: Some(false),
+                        },
+                        replace_scope: None,
+                        idempotency_key: None,
+                    },
+                )
+                .await
+                .map_err(|e| {
+                    anyhow!("graph-storage ingest: {}", crate::graph_error::explain(&e))
+                })?;
             Ok(())
         }
     }
@@ -405,47 +475,25 @@ mod graph {
             let Some(payload) = row.payload else {
                 return Ok(None);
             };
+            if payload.get(DELETED_FIELD).and_then(Value::as_bool) == Some(true) {
+                return Ok(None);
+            }
             Ok(Some(super::unpack(payload)?))
         }
 
+        /// Marked, not deleted: the key stays writable, so the report can
+        /// be given a source again (the `returning` path does exactly that).
         async fn delete(&self, ctx: &SecurityContext, report: &str) -> anyhow::Result<()> {
-            match self.client.delete_node(ctx, &gts::source_key(report)).await {
-                Ok(_) | Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => Ok(()),
-                Err(e) => Err(anyhow!("graph-storage delete: {e}")),
+            if self.get(ctx, report).await?.is_none() {
+                return Ok(());
             }
+            let mut mark = json!({ "report": report });
+            mark[DELETED_FIELD] = Value::Bool(true);
+            self.write(ctx, report, mark).await
         }
 
         async fn put(&self, ctx: &SecurityContext, source: &ReportSource) -> anyhow::Result<()> {
-            use crate::artifact_ingest::sdk::without_nul;
-            use graph_storage_sdk::models::{IngestOptions, IngestRequest, NodeSpec};
-            self.ensure_types(ctx).await?;
-            let node = NodeSpec {
-                node_key: gts::source_key(&source.report),
-                type_id: gts::graph_type_id(),
-                name: Some(source.report.clone()),
-                payload: Some(without_nul(super::pack(source)?)),
-                expected_version: None,
-            };
-            self.client
-                .ingest(
-                    ctx,
-                    IngestRequest {
-                        nodes: vec![node],
-                        edges: Vec::new(),
-                        options: IngestOptions {
-                            create_phantoms: Some(false),
-                            report_per_item: false,
-                            embed: Some(false),
-                        },
-                        replace_scope: None,
-                        idempotency_key: None,
-                    },
-                )
-                .await
-                .map_err(|e| {
-                    anyhow!("graph-storage ingest: {}", crate::graph_error::explain(&e))
-                })?;
-            Ok(())
+            self.write(ctx, &source.report, super::pack(source)?).await
         }
     }
 }
@@ -571,5 +619,120 @@ mod tests {
                 .and_then(|s| s.board),
             Some("o/49".into())
         );
+    }
+}
+
+/// The graph-backed store against graph-storage itself, in process.
+#[cfg(all(test, feature = "graph"))]
+mod graph_tests {
+    use std::sync::Arc;
+
+    use graph_storage_sdk::models::TypeRegistration;
+    use serde_json::{Value, json};
+    use uuid::Uuid;
+
+    use super::super::gts;
+    use super::super::source::ReportSource;
+    use super::{GraphStore, ReportStore};
+    use crate::test_graph::{client, ctx};
+
+    fn source(board: &str) -> ReportSource {
+        ReportSource {
+            report: "roadmap".into(),
+            board: Some(board.into()),
+            ..ReportSource::default()
+        }
+    }
+
+    /// Deleting marks the source: the key stays writable, so the report can
+    /// be given a source again, which a deleted node's key never could.
+    #[tokio::test]
+    async fn a_deleted_source_can_be_saved_again() {
+        let store = GraphStore::new(client());
+        let ctx = ctx(Uuid::now_v7());
+        store.put(&ctx, &source("o/1")).await.unwrap();
+        store.delete(&ctx, "roadmap").await.unwrap();
+        assert_eq!(store.get(&ctx, "roadmap").await.unwrap(), None);
+        store
+            .delete(&ctx, "roadmap")
+            .await
+            .expect("deleting twice is fine");
+        store
+            .put(&ctx, &source("o/2"))
+            .await
+            .expect("the key is writable");
+        assert_eq!(
+            store.get(&ctx, "roadmap").await.unwrap(),
+            Some(source("o/2"))
+        );
+    }
+
+    /// Types are registered in each organization that writes, not once for
+    /// the process.
+    #[tokio::test]
+    async fn every_organization_gets_its_types() {
+        let store = GraphStore::new(client());
+        let (a, b) = (ctx(Uuid::now_v7()), ctx(Uuid::now_v7()));
+        store.put(&a, &source("a/1")).await.unwrap();
+        store
+            .put(&b, &source("b/1"))
+            .await
+            .expect("the second tenant writes");
+        assert_eq!(
+            store
+                .get(&b, "roadmap")
+                .await
+                .unwrap()
+                .and_then(|s| s.board),
+            Some("b/1".into())
+        );
+        assert_eq!(
+            store
+                .get(&a, "roadmap")
+                .await
+                .unwrap()
+                .and_then(|s| s.board),
+            Some("a/1".into())
+        );
+    }
+
+    /// A type stored under an older schema is updated in place, not refused:
+    /// under `Reject` every report write would fail after a schema change.
+    #[tokio::test]
+    async fn a_type_stored_under_another_schema_is_updated_not_refused() {
+        let client = client();
+        let ctx = ctx(Uuid::now_v7());
+        let mut older: Value = gts::graph_node_type_schemas().remove(0);
+        older["description"] = json!("Where a report reads from (as first registered).");
+        let type_id = gts::graph_type_id();
+        client
+            .register_types(
+                &ctx,
+                vec![TypeRegistration {
+                    type_id: type_id.clone(),
+                    schema: older,
+                }],
+            )
+            .await
+            .expect("the older schema registers");
+        assert!(
+            client
+                .register_types(
+                    &ctx,
+                    vec![TypeRegistration {
+                        type_id,
+                        schema: gts::graph_node_type_schemas().remove(0),
+                    }],
+                )
+                .await
+                .is_err(),
+            "the default refuses a changed schema"
+        );
+        let store = GraphStore::new(Arc::clone(&client));
+        store
+            .put(&ctx, &source("o/1"))
+            .await
+            .expect("the store updates it");
+        assert!(store.get(&ctx, "roadmap").await.unwrap().is_some());
     }
 }
