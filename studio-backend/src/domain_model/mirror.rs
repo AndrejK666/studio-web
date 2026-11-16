@@ -742,6 +742,16 @@ impl IndexedDomainStore {
         }
     }
 
+    /// A graph write failed. A refusal stored nothing and leaves the rows as
+    /// they are; any other failure may have come after the graph committed
+    /// (a deadline, a lost answer), or after some of a caller's batches
+    /// landed, so the rows can no longer be trusted to match.
+    async fn after_failed_write(&self, tenant: Uuid, cause: &anyhow::Error) {
+        if !super::store::wrote_nothing(cause) {
+            self.withdraw(tenant, cause).await;
+        }
+    }
+
     async fn after_nodes(&self, ctx: &SecurityContext, nodes: &[NodeUpsert]) {
         let tenant = ctx.subject_tenant_id();
         let (live, gone) = object_rows(tenant, nodes);
@@ -834,11 +844,17 @@ impl DomainStore for IndexedDomainStore {
         discriminator: Option<&str>,
         payload: Option<Value>,
     ) -> anyhow::Result<()> {
-        self.inner
+        let tenant = ctx.subject_tenant_id();
+        if let Err(e) = self
+            .inner
             .create_relation(ctx, edge_type_id, from, to, discriminator, payload)
-            .await?;
+            .await
+        {
+            // A write whose answer was lost may still have landed.
+            self.after_failed_write(tenant, &e).await;
+            return Err(e);
+        }
         if is_relation_type(edge_type_id) {
-            let tenant = ctx.subject_tenant_id();
             let row = edge_row(tenant, edge_type_id, from, to, discriminator);
             if let Err(e) = self.mirror.write_edges(tenant, vec![row]).await {
                 self.withdraw(tenant, &e).await;
@@ -901,7 +917,13 @@ impl DomainStore for IndexedDomainStore {
         ctx: &SecurityContext,
         nodes: &[NodeUpsert],
     ) -> anyhow::Result<u64> {
-        let n = self.inner.upsert_nodes(ctx, nodes).await?;
+        let n = match self.inner.upsert_nodes(ctx, nodes).await {
+            Ok(n) => n,
+            Err(e) => {
+                self.after_failed_write(ctx.subject_tenant_id(), &e).await;
+                return Err(e);
+            }
+        };
         self.after_nodes(ctx, nodes).await;
         Ok(n)
     }
@@ -911,7 +933,13 @@ impl DomainStore for IndexedDomainStore {
         ctx: &SecurityContext,
         nodes: &[NodeUpsert],
     ) -> anyhow::Result<u64> {
-        let n = self.inner.upsert_nodes_keeping_vectors(ctx, nodes).await?;
+        let n = match self.inner.upsert_nodes_keeping_vectors(ctx, nodes).await {
+            Ok(n) => n,
+            Err(e) => {
+                self.after_failed_write(ctx.subject_tenant_id(), &e).await;
+                return Err(e);
+            }
+        };
         self.after_nodes(ctx, nodes).await;
         Ok(n)
     }
@@ -921,8 +949,14 @@ impl DomainStore for IndexedDomainStore {
         ctx: &SecurityContext,
         edges: &[EdgeUpsert],
     ) -> anyhow::Result<u64> {
-        let n = self.inner.upsert_edges(ctx, edges).await?;
         let tenant = ctx.subject_tenant_id();
+        let n = match self.inner.upsert_edges(ctx, edges).await {
+            Ok(n) => n,
+            Err(e) => {
+                self.after_failed_write(tenant, &e).await;
+                return Err(e);
+            }
+        };
         let rows: Vec<edge::Model> = edges
             .iter()
             .filter(|e| is_relation_type(&e.type_id))

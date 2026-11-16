@@ -151,6 +151,20 @@ pub fn is_version_taken(e: &anyhow::Error) -> bool {
     e.to_string().contains(VERSION_TAKEN)
 }
 
+/// The marker a write the graph refused at admission carries: one ingest is
+/// atomic, so a refusal (a payload that does not validate, a missing
+/// endpoint, a denied caller) stored nothing. Any other failure — a deadline,
+/// an outage — may have come after the graph committed, and the read model
+/// can then no longer tell what the graph holds.
+pub const WRITE_REFUSED: &str = "domain-model: the graph refused the write, nothing was stored";
+
+/// True for the refusal above, or for a compare-and-set refusal: either way
+/// nothing reached the graph.
+pub fn wrote_nothing(e: &anyhow::Error) -> bool {
+    let text = e.to_string();
+    text.contains(WRITE_REFUSED) || text.contains(VERSION_TAKEN)
+}
+
 /// True when an object belongs to `scope`. `None` matches everything; the
 /// scope is tagged on the payload as `_scope` when the object is created.
 fn in_scope(value: &serde_json::Value, scope: Option<&str>) -> bool {
@@ -631,10 +645,32 @@ mod graph_backend {
                     if e.to_string().contains("expected version") {
                         anyhow::anyhow!("{}: {e}", super::VERSION_TAKEN)
                     } else {
-                        anyhow::anyhow!("graph-storage node batch ingest: {e}")
+                        write_error("graph-storage node batch ingest", &e)
                     }
                 })?;
             Ok(res.counts.nodes_inserted + res.counts.nodes_updated)
+        }
+    }
+
+    /// A failed ingest, marked [`super::WRITE_REFUSED`] when the gear refused
+    /// it before writing. An ingest is one transaction, so a refusal stored
+    /// nothing; a deadline or an outage may have come after the commit.
+    fn write_error(what: &str, e: &CanonicalError) -> anyhow::Error {
+        let refused = matches!(
+            e,
+            CanonicalError::InvalidArgument { .. }
+                | CanonicalError::NotFound { .. }
+                | CanonicalError::AlreadyExists { .. }
+                | CanonicalError::PermissionDenied { .. }
+                | CanonicalError::FailedPrecondition { .. }
+                | CanonicalError::Aborted { .. }
+                | CanonicalError::OutOfRange { .. }
+                | CanonicalError::Unauthenticated { .. }
+        );
+        if refused {
+            anyhow::anyhow!("{what}: {}: {e}", super::WRITE_REFUSED)
+        } else {
+            anyhow::anyhow!("{what}: {e}")
         }
     }
 
@@ -950,7 +986,7 @@ mod graph_backend {
             self.client
                 .ingest(ctx, ingest_one(Vec::new(), vec![edge]))
                 .await
-                .map_err(|e| anyhow::anyhow!("graph-storage domain relation ingest: {e}"))?;
+                .map_err(|e| write_error("graph-storage domain relation ingest", &e))?;
             Ok(())
         }
 
@@ -1109,7 +1145,7 @@ mod graph_backend {
                 .client
                 .ingest(ctx, ingest_one(Vec::new(), specs))
                 .await
-                .map_err(|e| anyhow::anyhow!("graph-storage edge batch ingest: {e}"))?;
+                .map_err(|e| write_error("graph-storage edge batch ingest", &e))?;
             Ok(res.counts.edges_inserted + res.counts.edges_updated)
         }
 

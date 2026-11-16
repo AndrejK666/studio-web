@@ -843,3 +843,193 @@ async fn a_project_grant_narrows_several_scopes_too() {
     assert_eq!(out.rows.total, 1);
     assert_eq!(out.groups.unwrap()[0].count, 1);
 }
+
+// ── Writes the graph took only part of, or whose answer was lost ───────────
+
+use super::super::ontology::{EdgeType, NodeType};
+use super::super::store::{EdgeUpsert, EdgeView, NodeUpsert, ObjectNode, WRITE_REFUSED};
+
+/// How [`Flaky`] fails a node write.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Failure {
+    /// Nothing fails.
+    None,
+    /// The graph took the batch and the answer never came back.
+    LostAnswer,
+    /// The graph refused the batch at admission: nothing was stored.
+    Refused,
+}
+
+/// The in-memory graph, with writes that fail the way the real one's can.
+struct Flaky {
+    inner: Arc<InMemoryDomainStore>,
+    failure: Failure,
+}
+
+#[async_trait::async_trait]
+impl DomainStore for Flaky {
+    async fn register_meta_types(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        self.inner.register_meta_types(ctx).await
+    }
+    async fn register_types(
+        &self,
+        ctx: &SecurityContext,
+        node_types: &[NodeType],
+        edge_types: &[EdgeType],
+    ) -> anyhow::Result<Vec<String>> {
+        self.inner.register_types(ctx, node_types, edge_types).await
+    }
+    async fn create_relation(
+        &self,
+        ctx: &SecurityContext,
+        edge_type_id: &str,
+        from: &str,
+        to: &str,
+        discriminator: Option<&str>,
+        payload: Option<Value>,
+    ) -> anyhow::Result<()> {
+        self.inner
+            .create_relation(ctx, edge_type_id, from, to, discriminator, payload)
+            .await
+    }
+    async fn get_object(
+        &self,
+        ctx: &SecurityContext,
+        instance_id: &str,
+    ) -> anyhow::Result<Option<ObjectNode>> {
+        self.inner.get_object(ctx, instance_id).await
+    }
+    async fn list_objects(
+        &self,
+        ctx: &SecurityContext,
+        type_ids: &[String],
+        scope: Option<&str>,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<ObjectNode>> {
+        self.inner.list_objects(ctx, type_ids, scope, limit).await
+    }
+    async fn upsert_nodes(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64> {
+        match self.failure {
+            Failure::None => self.inner.upsert_nodes(ctx, nodes).await,
+            Failure::LostAnswer => {
+                self.inner.upsert_nodes(ctx, nodes).await?;
+                anyhow::bail!("graph-storage node batch ingest: deadline exceeded")
+            }
+            Failure::Refused => {
+                anyhow::bail!("graph-storage node batch ingest: {WRITE_REFUSED}: invalid payload")
+            }
+        }
+    }
+    async fn upsert_nodes_keeping_vectors(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[NodeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.upsert_nodes(ctx, nodes).await
+    }
+    async fn upsert_edges(
+        &self,
+        ctx: &SecurityContext,
+        edges: &[EdgeUpsert],
+    ) -> anyhow::Result<u64> {
+        self.inner.upsert_edges(ctx, edges).await
+    }
+    async fn read_edges(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+    ) -> anyhow::Result<Vec<EdgeView>> {
+        self.inner.read_edges(ctx, seeds).await
+    }
+}
+
+fn team_upsert(key: &str) -> NodeUpsert {
+    let type_id = super::super::gts::node_type_id("team");
+    NodeUpsert {
+        expected_version: None,
+        node_key: super::super::gts::instance_id(&type_id, key),
+        type_id,
+        name: Some(key.to_string()),
+        payload: json!({"name": key}),
+    }
+}
+
+/// A write that reached the graph and answered an error leaves the rows
+/// behind it. The tenant goes back to the graph rather than listing without
+/// the object, and both readers agree again.
+#[tokio::test]
+async fn a_write_that_landed_but_failed_sends_the_tenant_back_to_the_graph() {
+    let p = seeded().await;
+    let tenant = p.ctx.subject_tenant_id();
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
+    let store = IndexedDomainStore::new(
+        Arc::new(Flaky {
+            inner: p.inner.clone(),
+            failure: Failure::LostAnswer,
+        }),
+        p.mirror.clone(),
+    );
+    assert!(
+        store
+            .upsert_nodes(&p.ctx, &[team_upsert("late")])
+            .await
+            .is_err()
+    );
+    assert!(
+        !p.mirror.is_filled(tenant).await.unwrap(),
+        "the read model no longer answers for the tenant"
+    );
+    // The listing comes from the graph now, so it has the object.
+    let out = p
+        .sql
+        .query(
+            &p.ctx,
+            &query("team", json!({"order_by": [{"field": "name"}]})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.source, "graph");
+    assert_eq!(names(&shape(&out)), ["Core", "Edge", "late"]);
+}
+
+/// A write the graph refused stored nothing: the rows still match, and the
+/// tenant keeps its read model rather than paying for a refill.
+#[tokio::test]
+async fn a_refused_write_keeps_the_read_model() {
+    let p = seeded().await;
+    let tenant = p.ctx.subject_tenant_id();
+    let store = IndexedDomainStore::new(
+        Arc::new(Flaky {
+            inner: p.inner.clone(),
+            failure: Failure::Refused,
+        }),
+        p.mirror.clone(),
+    );
+    assert!(
+        store
+            .upsert_nodes(&p.ctx, &[team_upsert("late")])
+            .await
+            .is_err()
+    );
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
+    let teams = p
+        .same("team", json!({"order_by": [{"field": "name"}]}))
+        .await;
+    assert_eq!(names(&teams), ["Core", "Edge"]);
+    // Nothing fails: the write reaches both.
+    let fine = IndexedDomainStore::new(
+        Arc::new(Flaky {
+            inner: p.inner.clone(),
+            failure: Failure::None,
+        }),
+        p.mirror.clone(),
+    );
+    fine.upsert_nodes(&p.ctx, &[team_upsert("later")])
+        .await
+        .unwrap();
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
+}
