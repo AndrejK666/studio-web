@@ -141,6 +141,16 @@ pub struct Neighbourhood {
     pub truncated: bool,
 }
 
+/// What [`DomainStore::read_edges_whole`] answers.
+#[derive(Debug, Clone, Default)]
+pub struct EdgeRead {
+    /// The edges read, deduplicated.
+    pub edges: Vec<EdgeView>,
+    /// Seeds whose own walk the graph's budget still cut: some of their
+    /// edges are missing from `edges`.
+    pub cut: Vec<String>,
+}
+
 /// The marker an upsert refused by its compare-and-set carries, so a caller
 /// can tell "another writer got there first" from a real failure without
 /// matching on the storage gear's own wording.
@@ -308,6 +318,21 @@ pub trait DomainStore: Send + Sync {
         ctx: &SecurityContext,
         seeds: &[String],
     ) -> anyhow::Result<Vec<EdgeView>>;
+
+    /// [`Self::read_edges`] for a reader that must have every edge (the read
+    /// model's fill): a walk the graph's budget cuts is walked again over
+    /// fewer seeds, and the seeds whose edges still could not be read whole
+    /// are named. The default reads them whole.
+    async fn read_edges_whole(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+    ) -> anyhow::Result<EdgeRead> {
+        Ok(EdgeRead {
+            edges: self.read_edges(ctx, seeds).await?,
+            cut: Vec::new(),
+        })
+    }
 
     /// The objects of the hop's node types reached from `seeds` by one edge
     /// of the hop, with those edges. One call per relation and nesting level
@@ -1322,6 +1347,72 @@ mod graph_backend {
                 }
             }
             Ok(out)
+        }
+
+        /// Chunks as [`Self::read_edges`] walks them. A chunk the budget cuts
+        /// is split in two and each half walked again, down to single seeds;
+        /// a seed whose own walk is still cut is reported in `cut`. Halving
+        /// costs about two walks per cut level, against one walk per seed
+        /// for re-walking a cut chunk seed by seed.
+        async fn read_edges_whole(
+            &self,
+            ctx: &SecurityContext,
+            seeds: &[String],
+        ) -> anyhow::Result<super::EdgeRead> {
+            let mut read = super::EdgeRead::default();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut pending: Vec<Vec<String>> = seeds
+                .chunks(TRAVERSE_SEEDS)
+                .rev()
+                .map(<[String]>::to_vec)
+                .collect();
+            let mut walks = 0usize;
+            while let Some(chunk) = pending.pop() {
+                walks += 1;
+                let res = self
+                    .client
+                    .traverse(
+                        ctx,
+                        TraverseRequest {
+                            seeds: chunk.clone(),
+                            depth: 1,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
+                let cut = res.truncated.is_some();
+                if cut && chunk.len() > 1 {
+                    // Walked again in halves; this walk's edges come back
+                    // with them.
+                    let (a, b) = chunk.split_at(chunk.len() / 2);
+                    pending.push(b.to_vec());
+                    pending.push(a.to_vec());
+                    continue;
+                }
+                if cut {
+                    read.cut.extend(chunk);
+                }
+                for e in res.edges {
+                    if seen.insert(e.edge_key.clone()) {
+                        read.edges.push(EdgeView {
+                            type_id: gts::our_type_from_graph(&e.edge_type_id),
+                            from: e.src,
+                            to: e.dst,
+                            relation: e.discriminator.filter(|d| !d.is_empty()),
+                            key: Some(e.edge_key),
+                        });
+                    }
+                }
+            }
+            tracing::debug!(
+                seeds = seeds.len(),
+                walks,
+                edges = read.edges.len(),
+                cut = read.cut.len(),
+                "studio-domain-model: edges read whole"
+            );
+            Ok(read)
         }
 
         async fn search(

@@ -1119,6 +1119,17 @@ impl DomainStore for CutWalk {
     ) -> anyhow::Result<super::super::store::RelationRemoval> {
         anyhow::bail!("{}", super::super::store::RELATION_UNSEEN)
     }
+    /// The first seed has more edges than one walk carries.
+    async fn read_edges_whole(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+    ) -> anyhow::Result<super::super::store::EdgeRead> {
+        Ok(super::super::store::EdgeRead {
+            edges: self.0.read_edges(ctx, seeds).await?,
+            cut: seeds.iter().take(1).cloned().collect(),
+        })
+    }
 }
 
 async fn core_and_gemini(p: &Pair) -> (String, String) {
@@ -1214,4 +1225,28 @@ async fn removing_a_named_edge_leaves_an_unnamed_one_in_both_readers() {
             .unwrap()
     );
     assert_eq!(delivered(p.same("team", q).await), json!(1));
+}
+
+/// A fill whose traversal could not read some object's edges whole would
+/// miss those relations for good. The tenant stays on the graph instead.
+#[tokio::test]
+async fn a_fill_that_cannot_read_every_edge_leaves_the_tenant_on_the_graph() {
+    let p = Pair::new(Uuid::new_v4()).await;
+    p.write(json!([
+        {"op": "upsert", "type": "team", "key": "core", "value": {"name": "Core"}, "as": "core"},
+        {"op": "upsert", "type": "project", "key": "apollo", "value": {"name": "Apollo"}, "as": "apollo"},
+        {"op": "link", "relation": "team.delivers", "from": "$core", "to": "$apollo"},
+    ]))
+    .await;
+    let tenant = p.ctx.subject_tenant_id();
+    let model = p.graph.tenant_model(&p.ctx).await.expect("model");
+    let cut = CutWalk(p.inner.clone());
+    let e = fill_tenant(&cut, &p.mirror, &FillState::default(), &p.ctx, &model)
+        .await
+        .expect_err("a cut walk does not fill");
+    assert!(e.to_string().contains("traversal"), "{e}");
+    assert!(!p.mirror.is_filled(tenant).await.unwrap());
+    // The same tenant read whole fills.
+    p.fill().await;
+    assert!(p.mirror.is_filled(tenant).await.unwrap());
 }

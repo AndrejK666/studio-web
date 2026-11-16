@@ -494,3 +494,81 @@ async fn a_relation_past_the_budget_is_unseen_not_absent() {
         }
     }
 }
+
+// ── Reading every edge for the read model's fill ───────────────────────────
+
+/// Two teams, two people each: walked together they exceed a budget of
+/// three nodes, walked one at a time they do not.
+#[tokio::test]
+async fn a_cut_walk_is_walked_again_in_halves_until_every_edge_is_read() {
+    use super::ontology::EdgeType;
+    let client = client_with_budget(3);
+    let ctx = ctx(Uuid::now_v7());
+    let store = GraphStorageBackend::new(Arc::clone(&client));
+    let team = node_type("team");
+    let person = node_type("person");
+    let owns = gts::edge_type_id("owns");
+    store.register_meta_types(&ctx).await.expect("meta types");
+    store
+        .register_types(
+            &ctx,
+            &[team.clone(), person.clone()],
+            &[EdgeType {
+                type_id: owns.clone(),
+                relation_kind: "owns".to_owned(),
+                src_type_ids: vec![team.type_id.clone()],
+                dst_type_ids: vec![person.type_id.clone()],
+            }],
+        )
+        .await
+        .expect("types");
+    let nodes = vec![
+        object(&team.type_id, "t1", json!({})),
+        object(&team.type_id, "t2", json!({})),
+        object(&person.type_id, "a", json!({})),
+        object(&person.type_id, "b", json!({})),
+        object(&person.type_id, "c", json!({})),
+        object(&person.type_id, "d", json!({})),
+    ];
+    store.upsert_nodes(&ctx, &nodes).await.expect("nodes");
+    let key = |i: usize| nodes[i].node_key.clone();
+    for (t, p) in [(0, 2), (0, 3), (1, 4), (1, 5)] {
+        store
+            .create_relation(&ctx, &owns, &key(t), &key(p), Some("staff"), None)
+            .await
+            .expect("edge");
+    }
+    let seeds = vec![key(0), key(1)];
+
+    let both = client
+        .traverse(
+            &ctx,
+            graph_storage_sdk::models::TraverseRequest {
+                seeds: seeds.clone(),
+                depth: 1,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("walk");
+    assert!(both.truncated.is_some(), "one walk of both is cut");
+
+    let whole = store.read_edges_whole(&ctx, &seeds).await.expect("edges");
+    assert_eq!(whole.edges.len(), 4, "every edge, after halving");
+    assert!(whole.cut.is_empty());
+
+    // A team with more edges than one walk carries is named, not hidden.
+    for p in ["e", "f", "g"] {
+        let n = object(&person.type_id, p, json!({}));
+        store
+            .upsert_nodes(&ctx, std::slice::from_ref(&n))
+            .await
+            .expect("node");
+        store
+            .create_relation(&ctx, &owns, &key(0), &n.node_key, Some("staff"), None)
+            .await
+            .expect("edge");
+    }
+    let whole = store.read_edges_whole(&ctx, &seeds).await.expect("edges");
+    assert_eq!(whole.cut, vec![key(0)]);
+}
