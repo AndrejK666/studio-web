@@ -22,6 +22,49 @@ export interface AvailableScreens {
   routes: string[];
   /** The kits installed where the person is, or `null` while unknown. */
   kits: string[] | null;
+  /**
+   * Every registered screen that is a tab on a level's bar, installed or not,
+   * in each level's order (#1099): what a kit's page draws the shell's tabs
+   * from. Absent from a shell that predates it.
+   */
+  tabs?: ShellTab[];
+}
+
+/** One registered screen as a level's tab bar lists it (`AvailableScreens.tabs`). */
+export interface ShellTab {
+  /** `platform`, `organization`, `workspace`, `project` or `admin`. */
+  level: string;
+  route: string;
+  label: string;
+  /** The manifest's icon (`lucide:<name>`), or null. */
+  icon: string | null;
+  /** `main` tabs first, then `settings` ones, each by `order`. */
+  placement: 'main' | 'settings';
+  order: number;
+  /** The kit that brings it; null for the shell's own. */
+  kit: string | null;
+  /** The name the Studio domain model and `hidden_tabs` know the tab by. */
+  modelTab: string;
+  /** The extension's entry: which micro-frontend draws it. */
+  entry: string;
+}
+
+function isShellTab(value: unknown): value is ShellTab {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Partial<ShellTab>;
+  return (
+    typeof v.level === 'string' &&
+    typeof v.route === 'string' &&
+    typeof v.label === 'string' &&
+    typeof v.entry === 'string' &&
+    typeof v.modelTab === 'string'
+  );
+}
+
+/** The registered tabs the shell publishes, or `null` before it does (or from a shell that does not). */
+export function shellTabsOf(value: unknown): ShellTab[] | null {
+  if (!isAvailableScreens(value) || !Array.isArray(value.tabs)) return null;
+  return value.tabs.filter(isShellTab);
 }
 
 export function isAvailableScreens(value: unknown): value is AvailableScreens {

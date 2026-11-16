@@ -50,8 +50,12 @@ This README is what you need to work in the directory.
   slug the library does not hold) answers `{kit, contents, manifest}`;
   `contents` holds every section of a kit manifest (`screens`, `types`,
   `rules`, `functions`, `services`, `inbox`, `mcp_tools`, `permissions`,
-  `material`, `kinds`, `docs`), each present and possibly empty. Where it
-  comes from, in `manifest`:
+  `material`, `kinds`, `docs`), each present and possibly empty. The kit
+  page draws its model from them (#1099): each of `types` names its model
+  `id`, whether it `adopts` a type the core has, and its `fields` (`origin`
+  `kit` or `core`); `model` lists the fields and relations it adds on other
+  types and the tabs it shows (`shows` relations), all by model id
+  (`manifest.rs`, `model_contents`). Where it comes from, in `manifest`:
   - `built-in`: declared in `builtin_contents()`, only what Studio has today
     (the tab, its route, the gears' routes its screen calls). Change it when
     the screen changes.

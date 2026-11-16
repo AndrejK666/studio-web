@@ -383,3 +383,68 @@ fn builtin_kits_name_their_icon_once() {
         }
     }
 }
+
+#[test]
+fn a_model_says_its_types_fields_relations_and_tabs_by_model_id() {
+    // project-lifecycle: its own `phase` with declared fields, types moved
+    // out of the core (adopted by id, fields and relations as the core had
+    // them), fields on `project`, and tabs both declared and written.
+    let c = contents_of(&builtin_manifest("project-lifecycle").expect("compiled in"));
+    let phase = c.types.iter().find(|t| t.id == "project-lifecycle-phase");
+    let phase = phase.expect("a kit's own type is `<slug>-<name>`");
+    assert!(!phase.adopts);
+    assert!(!phase.fields.is_empty());
+    assert!(
+        phase
+            .fields
+            .iter()
+            .all(|f| f.origin == ORIGIN_KIT && f.on.is_none())
+    );
+
+    let milestone = c.types.iter().find(|t| t.id == "milestone");
+    let milestone = milestone.expect("declared by id");
+    assert!(milestone.adopts, "a type the core has is adopted");
+    assert!(milestone.fields.iter().all(|f| f.origin == ORIGIN_CORE));
+    assert!(
+        c.model.relations.iter().any(|r| r.on == "milestone"
+            && r.target == "project"
+            && r.label.as_deref() == Some("tracks")),
+        "a moved type's relations are edges, labelled"
+    );
+    assert!(
+        c.model
+            .fields
+            .iter()
+            .any(|f| f.on.as_deref() == Some("project")
+                && f.name == "phase"
+                && f.origin == ORIGIN_KIT)
+    );
+    // A declared tab names the kit's type by its model id; a `shows`
+    // relation the kit moved out of the core is a tab, not an edge.
+    assert!(
+        c.model
+            .tabs
+            .iter()
+            .any(|t| t.level == "project" && t.target == "project-lifecycle-phase")
+    );
+    assert!(
+        c.model
+            .tabs
+            .iter()
+            .any(|t| t.level == "workspace" && t.label == "Templates & phases")
+    );
+    assert!(
+        !c.model
+            .relations
+            .iter()
+            .any(|r| r.verb.as_deref() == Some("shows"))
+    );
+}
+
+#[test]
+fn a_kit_without_a_model_brings_no_model() {
+    let m = read_kit_json(r#"{"slug": "plain", "name": "Plain"}"#).unwrap();
+    let c = contents_of(&m);
+    assert!(c.types.is_empty());
+    assert_eq!(c.model, KitModel::default());
+}

@@ -11,7 +11,8 @@
         "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.language.v1~",
         "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.organization.selected.v1~",
         "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project.selected.v1~",
-        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.session.ui.preferences.v1~"
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.session.ui.preferences.v1~",
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.screens.available.v1~"
       ],
       "actions": [],
       "domainActions": [

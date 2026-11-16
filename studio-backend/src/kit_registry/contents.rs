@@ -55,6 +55,9 @@ pub struct KitContents {
     pub docs: Vec<String>,
     /// The built micro-frontends it carries, `mfe/<package>`.
     pub mfe: Vec<String>,
+    /// What its model overlay adds beside its own types: fields and
+    /// relations on other types, and the tabs the model shows.
+    pub model: KitModel,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +80,65 @@ pub struct KitType {
     pub gts: String,
     pub name: String,
     pub description: Option<String>,
+    /// The type's id in the model: `<slug>-<name>`, or the id it declares.
+    pub id: String,
+    /// Declared by an id Studio's core already has (ADR-0070 §4): an
+    /// organization that has the type keeps its definition and its objects,
+    /// and one the core left dormant becomes this kit's again.
+    pub adopts: bool,
+    /// Its fields, relations aside.
+    pub fields: Vec<KitField>,
+}
+
+/// `origin` of a field or relation the kit declares itself.
+pub const ORIGIN_KIT: &str = "kit";
+/// `origin` of one that moved out of Studio's core into the kit as the
+/// core had it (ADR-0070 phase 5).
+pub const ORIGIN_CORE: &str = "core";
+
+/// A field of a kit's model: on one of its types, or on another (`on`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KitField {
+    /// The type it is on, by its model id; `None` inside [`KitType::fields`].
+    pub on: Option<String>,
+    pub name: String,
+    pub type_name: String,
+    pub description: Option<String>,
+    pub required: bool,
+    /// [`ORIGIN_KIT`] or [`ORIGIN_CORE`].
+    pub origin: &'static str,
+}
+
+/// A relation a kit's model declares, between two types by their model ids.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KitRelation {
+    pub on: String,
+    pub name: String,
+    pub target: String,
+    pub label: Option<String>,
+    /// `references`, `owns`, `member`, `composes`, `derives`...
+    pub verb: Option<String>,
+    pub origin: &'static str,
+}
+
+/// A tab the kit's model shows on a level (a `shows` relation).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KitModelTab {
+    /// `organization`, `workspace` or `project`.
+    pub level: String,
+    pub name: String,
+    pub label: String,
+    /// The type it lists, by its model id.
+    pub target: String,
+}
+
+/// What a kit's model adds beside its own types.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KitModel {
+    /// Fields it adds to types it does not bring.
+    pub fields: Vec<KitField>,
+    pub relations: Vec<KitRelation>,
+    pub tabs: Vec<KitModelTab>,
 }
 
 /// A rule, a service or an MCP tool: a name and what it is.
@@ -149,6 +211,9 @@ pub fn describe(kit: KitDescriptor) -> KitDetail {
                         .permissions
                         .listens
                         .extend(more.permissions.listens);
+                    contents.model.fields.extend(more.model.fields);
+                    contents.model.relations.extend(more.model.relations);
+                    contents.model.tabs.extend(more.model.tabs);
                 }
                 (contents, Some(MANIFEST_BUILTIN))
             }

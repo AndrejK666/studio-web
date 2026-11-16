@@ -6,6 +6,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
+import type { DomainTypesResponse } from '@constructor-studio/mfe-shared';
 import type { KitInstallation, ProjectRepository } from '../model/ideKits';
 
 export const KITS_API_BASE_URL = '/cf/studio-kits/v1';
@@ -73,10 +74,62 @@ function scopeQuery({ organizationId, projectId }: InstalledScope): string {
   return q.toString();
 }
 
+/** A field of a kit's model (#1099). */
+export interface KitField {
+  /** The type it is on, by its model id; null for one listed under its type. */
+  on?: string | null;
+  name: string;
+  type: string;
+  description: string | null;
+  required: boolean;
+  /** `kit` (the kit declares it) or `core` (moved out of Studio's core into the kit). */
+  origin: string;
+}
+
+/** A relation of a kit's model, between two types by their model ids. */
+export interface KitRelation {
+  on: string;
+  name: string;
+  target: string;
+  label: string | null;
+  verb: string | null;
+  origin: string;
+}
+
+/** A tab a kit's model shows on a level (a `shows` relation). */
+export interface KitModelTab {
+  level: string;
+  name: string;
+  label: string;
+  target: string;
+}
+
+/** A type a kit brings. `id`, `adopts` and `fields` are absent from a backend before #1099. */
+export interface KitTypeInfo {
+  gts: string;
+  name: string;
+  description: string | null;
+  /** Its id in the model: `<slug>-<name>`, or the id it declares. */
+  id?: string;
+  /** Declared by an id Studio's core has: an organization's own (or dormant) one becomes this kit's. */
+  adopts?: boolean;
+  fields?: KitField[];
+}
+
+/** A screen a kit brings. */
+export interface KitScreen {
+  kind: 'tab' | 'section';
+  level: string;
+  label: string;
+  route: string | null;
+  slot: string | null;
+  needs?: string[];
+}
+
 /** What a kit brings, by the sections of its manifest (ADR-0068 §3, §8). */
 export interface KitContents {
-  screens: { kind: 'tab' | 'section'; level: string; label: string; route: string | null; slot: string | null }[];
-  types: { gts: string; name: string; description: string | null }[];
+  screens: KitScreen[];
+  types: KitTypeInfo[];
   rules: { name: string; description: string | null }[];
   functions: { name: string; runtime: 'wasm' | 'agent'; description: string | null }[];
   services: { name: string; description: string | null }[];
@@ -86,6 +139,8 @@ export interface KitContents {
   material: { path: string; description: string | null }[];
   kinds: string[];
   docs: string[];
+  /** What its model adds beside its own types; absent from a backend before #1099. */
+  model?: { fields: KitField[]; relations: KitRelation[]; tabs: KitModelTab[] };
 }
 
 /** Where an organization's own kit came from (`KitOriginDto`). */
@@ -154,6 +209,50 @@ export class ConnectionsApiService extends BaseApiService {
 
   readonly connections = this.protocol(RestEndpointProtocol).queryWith<{ items: Connection[] }, { organizationId: string }>(
     ({ organizationId }) => `/connections?tenant=${encodeURIComponent(organizationId)}`
+  );
+}
+
+/** One picture a build took of a micro-frontend screen (`scripts/mfe-screen-previews.mjs`). */
+export interface ScreenPreview {
+  component: string;
+  version: string | null;
+  commit: string;
+  route: string;
+  label: string | null;
+  order: number;
+  /** `data:image/webp;base64,...` */
+  image: string;
+  width: number | null;
+  height: number | null;
+  captured_at: string;
+}
+
+const orgParam = (organizationId: string | null) =>
+  organizationId ? `organization_id=${encodeURIComponent(organizationId)}` : '';
+
+/**
+ * What a kit's page reads beside the kit library (#1099): the pictures a build
+ * took of a micro-frontend's screens (studio-components-catalog), and the
+ * organization's Studio domain model, for the tabs its model adds to a level.
+ */
+export class KitPageApiService extends BaseApiService {
+  constructor() {
+    const restProtocol = new RestProtocol({ timeout: 30000 });
+    const restEndpoints = new RestEndpointProtocol(restProtocol);
+    super({ baseURL: '/cf' }, restProtocol, restEndpoints);
+  }
+
+  readonly screenPreviews = this.protocol(RestEndpointProtocol).queryWith<
+    { items: ScreenPreview[]; total: number },
+    { component: string; organizationId: string | null }
+  >(({ component, organizationId }) =>
+    [`/studio-components-catalog/v1/screen-previews?component=${encodeURIComponent(component)}`, orgParam(organizationId)]
+      .filter(Boolean)
+      .join('&')
+  );
+
+  readonly modelTypes = this.protocol(RestEndpointProtocol).queryWith<DomainTypesResponse, { organizationId: string }>(
+    ({ organizationId }) => `/studio-domain-model/v1/types?${orgParam(organizationId)}`
   );
 }
 

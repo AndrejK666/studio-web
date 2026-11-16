@@ -113,6 +113,80 @@ pub struct KitTypeDto {
     pub gts: String,
     pub name: String,
     pub description: Option<String>,
+    /// The type's id in the model: `<slug>-<name>`, or the id it declares.
+    pub id: String,
+    /// Declared by an id Studio's core already has: an organization that has
+    /// the type keeps it and its objects, and one left dormant becomes this
+    /// kit's again (ADR-0070 §4).
+    pub adopts: bool,
+    /// Its fields, relations aside.
+    pub fields: Vec<KitFieldDto>,
+}
+
+/// A field of a kit's model.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitFieldDto {
+    /// The type it is on, by its model id; null for a field listed under its type.
+    pub on: Option<String>,
+    pub name: String,
+    /// The field's type as the model writes it (`string`, `idea | build`, `timestamp?`).
+    #[serde(rename = "type")]
+    pub type_name: String,
+    pub description: Option<String>,
+    pub required: bool,
+    /// `kit` (the kit declares it) or `core` (moved out of Studio's core into the kit).
+    pub origin: String,
+}
+
+/// A relation a kit's model declares, between two types by their model ids.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitRelationDto {
+    pub on: String,
+    pub name: String,
+    pub target: String,
+    pub label: Option<String>,
+    /// `references`, `owns`, `member`, `composes`, `derives`, ...
+    pub verb: Option<String>,
+    /// `kit` or `core`, as for a field.
+    pub origin: String,
+}
+
+/// A tab a kit's model shows on a level (a `shows` relation, ADR-0066).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitModelTabDto {
+    /// `organization`, `workspace` or `project`.
+    pub level: String,
+    pub name: String,
+    pub label: String,
+    /// The type it lists, by its model id.
+    pub target: String,
+}
+
+/// What a kit's model adds beside its own types.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct KitModelDto {
+    /// Fields it adds to types it does not bring (and, for a type moved out
+    /// of the core, the ones that moved with it).
+    pub fields: Vec<KitFieldDto>,
+    pub relations: Vec<KitRelationDto>,
+    pub tabs: Vec<KitModelTabDto>,
+}
+
+impl From<super::contents::KitField> for KitFieldDto {
+    fn from(f: super::contents::KitField) -> Self {
+        Self {
+            on: f.on,
+            name: f.name,
+            type_name: f.type_name,
+            description: f.description,
+            required: f.required,
+            origin: f.origin.to_owned(),
+        }
+    }
 }
 
 /// A rule, a kit service or an MCP tool a kit brings.
@@ -204,6 +278,9 @@ pub struct KitContentsDto {
     /// The built micro-frontends it carries (`mfe/<package>`), served to the
     /// shell at run time (`GET /mfe-manifests`).
     pub mfe: Vec<String>,
+    /// What its model adds beside its own types: fields and relations on
+    /// other types, and the tabs it shows.
+    pub model: KitModelDto,
 }
 
 /// One kit of the library and what is inside it.
@@ -425,6 +502,9 @@ impl From<KitDetail> for KitDetailDto {
                         gts: t.gts,
                         name: t.name,
                         description: t.description,
+                        id: t.id,
+                        adopts: t.adopts,
+                        fields: t.fields.into_iter().map(Into::into).collect(),
                     })
                     .collect(),
                 rules: named(c.rules),
@@ -464,6 +544,33 @@ impl From<KitDetail> for KitDetailDto {
                 kinds: c.kinds,
                 docs: c.docs,
                 mfe: c.mfe,
+                model: KitModelDto {
+                    fields: c.model.fields.into_iter().map(Into::into).collect(),
+                    relations: c
+                        .model
+                        .relations
+                        .into_iter()
+                        .map(|r| KitRelationDto {
+                            on: r.on,
+                            name: r.name,
+                            target: r.target,
+                            label: r.label,
+                            verb: r.verb,
+                            origin: r.origin.to_owned(),
+                        })
+                        .collect(),
+                    tabs: c
+                        .model
+                        .tabs
+                        .into_iter()
+                        .map(|t| KitModelTabDto {
+                            level: t.level,
+                            name: t.name,
+                            label: t.label,
+                            target: t.target,
+                        })
+                        .collect(),
+                },
             },
             manifest: value.manifest.map(str::to_owned),
             origin: None,
