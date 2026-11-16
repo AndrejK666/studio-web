@@ -199,7 +199,11 @@ fn a_product_that_runs_without_a_recorded_build_was_built_elsewhere() {
     assert_eq!(step(&p, "running").state, StepState::Done);
     assert_eq!(step(&p, "build").state, StepState::Done);
     assert_eq!(step(&p, "image").state, StepState::Done);
-    assert!(step(&p, "build").reason.contains("outside Studio's records"));
+    assert!(
+        step(&p, "build")
+            .reason
+            .contains("outside Studio's records")
+    );
     assert_eq!(p.current, "running");
 
     // Nothing runs: nothing built is still what the path says.

@@ -218,7 +218,7 @@ impl RecentRuns for TaskService {
             offset: 0,
             limit,
         };
-        let (rows, _) = TaskService::list(self, &ctx, tenant, &query).await?;
+        let (rows, _) = TaskService::list(self, &ctx, &[tenant], &query).await?;
         Ok(rows
             .into_iter()
             .map(|r| RunSummary {

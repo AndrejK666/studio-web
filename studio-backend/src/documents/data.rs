@@ -473,11 +473,27 @@ impl DocumentsData {
             // that changes nothing is answered from the cached model.
             let p = port.as_ref();
             let declared = async {
-                ensure_all!(self, ctx, p, [
-                    doc_type, analysis, spec_extraction, spec_judgement, spec_decision,
-                    spec_review, spec_term, spec_upload, document, document_binding,
-                    application_part, delivery_scope, delivery_limit, delivery_history,
-                ]);
+                ensure_all!(
+                    self,
+                    ctx,
+                    p,
+                    [
+                        doc_type,
+                        analysis,
+                        spec_extraction,
+                        spec_judgement,
+                        spec_decision,
+                        spec_review,
+                        spec_term,
+                        spec_upload,
+                        document,
+                        document_binding,
+                        application_part,
+                        delivery_scope,
+                        delivery_limit,
+                        delivery_history,
+                    ]
+                );
                 anyhow::Ok(())
             }
             .await;

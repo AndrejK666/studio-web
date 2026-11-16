@@ -1813,8 +1813,7 @@ impl IngestService {
         {
             let noted = match gone {
                 Some(branch) => {
-                    let failure =
-                        CloneFailure::new(CloneCause::BranchNotFound).with_detail(branch);
+                    let failure = CloneFailure::new(CloneCause::BranchNotFound).with_detail(branch);
                     outcomes
                         .record(
                             project,

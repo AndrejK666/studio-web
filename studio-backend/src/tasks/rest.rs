@@ -87,18 +87,22 @@ impl Tasks {
         let Some(tenant) = tenant.filter(|t| *t != own) else {
             return Ok(own);
         };
-        let reached = match self.1.as_ref().map(|hub| {
-            hub.get::<dyn account_management_sdk::AccountManagementClient>()
-        }) {
+        let reached = match self
+            .1
+            .as_ref()
+            .map(|hub| hub.get::<dyn account_management_sdk::AccountManagementClient>())
+        {
             Some(Ok(am)) => am.get_tenant(ctx, tenant).await.is_ok(),
             _ => false,
         };
         if reached {
             Ok(tenant)
         } else {
-            Err(StudioTasksError::not_found(format!("tenant {tenant} is not found"))
-                .with_resource(tenant.to_string())
-                .create())
+            Err(
+                StudioTasksError::not_found(format!("tenant {tenant} is not found"))
+                    .with_resource(tenant.to_string())
+                    .create(),
+            )
         }
     }
 }
