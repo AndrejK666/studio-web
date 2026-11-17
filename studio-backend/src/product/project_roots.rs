@@ -230,7 +230,9 @@ pub async fn read(
             )]);
         }
     };
-    let outcomes = hub.get::<dyn crate::artifact_ingest::port::CloneOutcomes>().ok();
+    let outcomes = hub
+        .get::<dyn crate::artifact_ingest::port::CloneOutcomes>()
+        .ok();
     let outcomes = &outcomes;
     let deadline = tokio::time::Instant::now() + READ_DEADLINE;
     let reads: Vec<(Uuid, (ProjectRead, Vec<UnreadableSource>))> = futures_util::stream::iter(projects)

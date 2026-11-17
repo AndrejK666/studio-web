@@ -3957,8 +3957,14 @@ mod adoption_input_tests {
             "acme/web",
             walked(&[("docs/a.md", "new-a")]),
         );
-        assert!(!alive.contains("old-a"), "the older attachment is forgotten");
-        assert!(!alive.contains("stored-a"), "the walk replaces this repo's files");
+        assert!(
+            !alive.contains("old-a"),
+            "the older attachment is forgotten"
+        );
+        assert!(
+            !alive.contains("stored-a"),
+            "the walk replaces this repo's files"
+        );
         assert!(alive.contains("new-a"));
         assert_eq!(by_path.get("docs/a.md").map(String::as_str), Some("new-a"));
     }
