@@ -25,8 +25,14 @@ fn the_aliases_are_the_adr_s_and_each_says_when_it_goes() {
     assert_eq!(
         listed,
         [
-            ("project-issues", &["project-domain-model", "project-git"][..]),
-            ("project-activity", &["project-git", "project-lifecycle"][..]),
+            (
+                "project-issues",
+                &["project-domain-model", "project-git"][..]
+            ),
+            (
+                "project-activity",
+                &["project-git", "project-lifecycle"][..]
+            ),
             ("product-releases", &["project-product", "delivery"][..]),
             ("org-infrastructure", &["delivery"][..]),
             ("org-connections", &[][..]),
@@ -37,7 +43,11 @@ fn the_aliases_are_the_adr_s_and_each_says_when_it_goes() {
     let builtin: Vec<String> = builtin_catalogue().into_iter().map(|k| k.slug).collect();
     for a in ALIASES {
         // Retired: no built-in kit has the slug any more...
-        assert!(!builtin.iter().any(|s| s == a.retired), "{} is retired", a.retired);
+        assert!(
+            !builtin.iter().any(|s| s == a.retired),
+            "{} is retired",
+            a.retired
+        );
         // ...and it resolves to built-in kits only.
         for to in a.resolves_to {
             assert!(builtin.iter().any(|s| s == to), "{} → {to}", a.retired);
@@ -61,6 +71,63 @@ fn the_aliases_go_one_release_after_the_merge() {
         ALIASES.is_empty() || version(BUILTIN_VERSION) <= version(REMOVE_AFTER),
         "Studio {BUILTIN_VERSION} still carries the kit slug aliases: remove them (ADR-0071 \
          step 7, #1089, docs/design/studio-kits.md \"Slug aliases\")"
+    );
+}
+
+/// The files that may name a retired slug in code (a quoted string) during
+/// the alias release. Step 7 (#1089) removes the aliases and empties this
+/// list: the table, its readers' tests and these assertions.
+const MAY_NAME_A_RETIRED_SLUG: &[&str] = &[
+    "kit_registry/aliases.rs",
+    "kit_registry/aliases_tests.rs",
+    "kit_registry/contents_tests.rs",
+    "kit_registry/installed_tests.rs",
+    "kit_registry/owners_tests.rs",
+];
+
+/// No code outside [`MAY_NAME_A_RETIRED_SLUG`] names a retired slug: what
+/// reads a kit by its slug names the kit that brings it now, so removing the
+/// aliases (step 7) breaks nothing.
+#[test]
+fn no_code_names_a_retired_slug_outside_the_alias_readers() {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path
+                .extension()
+                .is_some_and(|e| e == "rs" || e == "json" || e == "gdl" || e == "toml")
+            {
+                out.push(path);
+            }
+        }
+    }
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk(&src, &mut files);
+    let mut stray: Vec<String> = Vec::new();
+    for file in files {
+        let rel = file
+            .strip_prefix(&src)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        if MAY_NAME_A_RETIRED_SLUG.contains(&rel.as_str()) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        for a in ALIASES {
+            if text.contains(&format!("\"{}\"", a.retired)) {
+                stray.push(format!("{rel}: {}", a.retired));
+            }
+        }
+    }
+    assert!(
+        stray.is_empty(),
+        "retired kit slugs named in code (ADR-0071 §8): {stray:?}"
     );
 }
 
@@ -241,10 +308,10 @@ async fn installations_under_the_old_slugs_count_as_the_kits_they_resolve_to() {
     // The report says what was shown again.
     let reports = installer.rename_reports(&caller(ORG), PROJECT).await;
     assert!(
-        reports
-            .iter()
-            .any(|r| r.shown_again.contains(&"project-domain-model".to_owned())
-                && r.shown_again.contains(&"project-git".to_owned())),
+        reports.iter().any(
+            |r| r.shown_again.contains(&"project-domain-model".to_owned())
+                && r.shown_again.contains(&"project-git".to_owned())
+        ),
         "{reports:?}"
     );
 
@@ -313,7 +380,15 @@ async fn a_merged_kit_stays_removed_only_where_everything_merged_into_it_was() {
     assert!(!slugs(&base).contains(&"project-git"));
     // project-issues also went into the Project model, which was not removed.
     assert!(slugs(&base).contains(&"project-domain-model"));
+    // A document naming no retired slug is already current: its removal of
+    // project-git stands (a removal from before the merge with nothing else
+    // removed cannot be told from one after it).
     let (installer, _) = stand(&[(PLATFORM_TENANT, removed(&["project-git"]))]);
+    let base = installer.installed(&caller(ORG), ORG).await.unwrap().base;
+    assert!(!slugs(&base).contains(&"project-git"));
+    // With a retired slug beside it, the document is from before the merge:
+    // part of what project-git merges was kept, so it applies again.
+    let (installer, _) = stand(&[(PLATFORM_TENANT, removed(&["project-git", "project-issues"]))]);
     let base = installer.installed(&caller(ORG), ORG).await.unwrap().base;
     assert!(slugs(&base).contains(&"project-git"));
 }
@@ -362,7 +437,10 @@ async fn an_installation_of_what_went_to_the_shell_is_nothing_and_its_tab_always
         // An old portal still finds them: the shell always has them.
         assert!(slugs(&with_retired(&org.effective)).contains(&gone));
     }
-    installer.rename_installations(PLATFORM_TENANT).await.unwrap();
+    installer
+        .rename_installations(PLATFORM_TENANT)
+        .await
+        .unwrap();
     installer.rename_installations(ORG).await.unwrap();
     {
         let docs = store.docs.lock().unwrap();

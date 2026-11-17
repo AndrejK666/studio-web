@@ -5,9 +5,9 @@ gdl_version = "1.7"
 
 kit(
     slug = "project-lifecycle",
-    name = "Project lifecycle",
+    name = "Planning",
     version = "0.0.0-golden",
-    description = "Project status and phases, and their filters.",
+    description = "Project phases and templates, milestones, risks and delivery scope, and the project's Timeline.",
     publisher = "Constructor Fabric",
     icon = "lucide:route",
     levels = ["organization", "workspace", "project"],
@@ -35,6 +35,7 @@ kit(
     ],
     tabs = [
         kit_tab(level = "workspace", label = "Project templates", route = "/project-templates"),
+        kit_tab(level = "project", label = "Timeline", route = "/projects/timeline"),
         kit_tab(level = "project", name = "phases", label = "Phases", shows = "project-lifecycle-phase"),
         kit_tab(level = "workspace", name = "ptypes", label = "Templates & phases", shows = "project-type"),
     ],
@@ -56,11 +57,14 @@ kit(
             "GET /studio-organizations/v1/project-types",
             "GET /studio-kits/v1/project-phase",
             "GET /studio-kits/v1/project-phases",
+            "GET /studio-domain-model/v1/types",
+            "POST /studio-domain-model/v1/query",
         ],
         writes = [
             "PUT /studio-kits/v1/project-phase",
             "PUT /studio-organizations/v1/project-types",
             "DELETE /studio-organizations/v1/project-types",
+            "POST /studio-domain-model/v1/mutate",
         ],
         listens = [],
     ),

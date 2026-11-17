@@ -20,15 +20,15 @@ use async_trait::async_trait;
 use serde_json::Value;
 use toolkit_security::SecurityContext;
 
+/// The GTS id a domain type is stored and named by (`pull-request` →
+/// `gts.cf.studio.domain.pull_request.v1~`): what a screen's `needs` names.
+pub use super::gts::node_type_id;
 /// A kit's model overlay and what applying it changed (ADR-0067 §6): the
 /// format another gear (studio-kits) reads from a kit's manifest.
 pub use super::kit_overlay::{
     KitModelChange, KitModelError, KitOverlay, OverlayType, kit_type_gts,
     validate as validate_kit_overlay,
 };
-/// The GTS id a domain type is stored and named by (`pull-request` →
-/// `gts.cf.studio.domain.pull_request.v1~`): what a screen's `needs` names.
-pub use super::gts::node_type_id;
 use super::service::{DomainModelService, WriteOptions};
 use super::validate::ValidateMode;
 

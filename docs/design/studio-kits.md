@@ -994,7 +994,31 @@ loses it. Catalogue (`components`) writes no connection any more.
   readers (the store's migration, `with_retired`, the request mapping, the
   portal's `kitIn`) and the old slugs in tests and docs go. Until then
   `aliases_tests.rs` and `kitAliases.test.ts` list every alias with that
-  note, and the backend test fails on a Studio version past `REMOVE_AFTER`.
+  note, and the backend test fails on a Studio version past `REMOVE_AFTER`;
+  `no_code_names_a_retired_slug_outside_the_alias_readers` holds every other
+  backend file free of a quoted retired slug, and the portal's contract test
+  every `mfe.json`.
+
+  Before step 7, check: every organization's model has a version
+  `op = "kit-rename"` or names no retired slug (`domain_model_versions`), and
+  no installed-kits document names one (the start-up sweep logs each it
+  wrote; `GET /installed-kits` `renamed` shows what a document named). Then
+  remove, in one change:
+
+  1. `kit_registry/aliases.rs` (`ALIASES`, `resolve`, `migrate`,
+     `with_retired`) and `aliases_tests.rs`; `installed::MigratingStore`
+     (the installer keeps the store it is given), `requested()` and the
+     `*_one` split in `installed.rs`; `InstalledKit::retired` and the
+     `retired`, `renamed`, `shown_again` fields of `GET /installed-kits`
+     (an API removal: `api-contract --accept` records it);
+     `InstalledDocument::renamed`; `owners.rs`'s retired branch of `rehome`.
+  2. Keep the `kit-rename` sweep (`sweep.rs`, `rename_kit_marks`) only if
+     another merge is planned; it is idempotent and costs one model read per
+     reconciliation.
+  3. In the portal: `mfe-shared` `kitAliases.ts` and its test, `kitIn` in
+     `screenShows` and `kitAvailable` (back to `has`).
+  4. The retired slugs in tests (`MAY_NAME_A_RETIRED_SLUG`), fixtures and
+     docs (this section's table becomes history in ADR-0071).
 
 ## 4. Additional context
 

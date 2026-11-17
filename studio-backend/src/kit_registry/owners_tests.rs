@@ -53,7 +53,11 @@ fn a_mark_moves_only_from_a_kit_of_studio_s_that_no_longer_brings_it() {
         Some(Rehome::Kit("delivery".into()))
     );
     assert_eq!(
-        owners.rehome("product-releases", "project", MarkOn::Property("components")),
+        owners.rehome(
+            "product-releases",
+            "project",
+            MarkOn::Property("components")
+        ),
         Some(Rehome::Kit("project-product".into()))
     );
     assert_eq!(
@@ -96,9 +100,14 @@ fn a_mark_moves_only_from_a_kit_of_studio_s_that_no_longer_brings_it() {
     );
     // An organization's own kit keeps its marks.
     assert_eq!(owners.rehome("acme-ops", "finding", MarkOn::Type), None);
-    // A piece no built-in kit brings stays its kit's to leave.
+    // A piece no built-in kit brings stays its kit's to leave; a retired
+    // slug's goes to the first kit it resolves to.
+    assert_eq!(
+        owners.rehome("components", "no-such-type", MarkOn::Type),
+        None
+    );
     assert_eq!(
         owners.rehome("project-issues", "no-such-type", MarkOn::Type),
-        None
+        Some(Rehome::Kit("project-domain-model".into()))
     );
 }

@@ -263,7 +263,8 @@ impl Ontology {
                                 if o.contains_key("kit") {
                                     o.insert("kit".into(), json!(to));
                                 }
-                                if let Some(l) = o.get_mut("left_by").and_then(Value::as_object_mut) {
+                                if let Some(l) = o.get_mut("left_by").and_then(Value::as_object_mut)
+                                {
                                     l.insert("kit".into(), json!(to));
                                 }
                             }
@@ -282,7 +283,9 @@ impl Ontology {
                         }
                         changed.push(format!("source {entity} {key}: {slug} → {to}"));
                     }
-                    Rehome::Core => changed.push(format!("source {entity} {key}: {slug} → the core")),
+                    Rehome::Core => {
+                        changed.push(format!("source {entity} {key}: {slug} → the core"))
+                    }
                 }
             }
             if moved_any
@@ -359,8 +362,16 @@ mod tests {
         assert_eq!(property(&o, "project", "effort")["kit"], "new");
         let l = layers(&o);
         assert!(l.get("old").is_none(), "the emptied source goes: {l}");
-        assert!(l["new"]["source"]["project"].get("property:effort").is_some());
-        assert!(l["new"]["overrides"]["project"].get("property:effort").is_some());
+        assert!(
+            l["new"]["source"]["project"]
+                .get("property:effort")
+                .is_some()
+        );
+        assert!(
+            l["new"]["overrides"]["project"]
+                .get("property:effort")
+                .is_some()
+        );
         // Again: nothing left to move.
         assert!(o.rename_kit_marks(&to_new).unwrap().is_empty());
         // The new kit applies it as its own and the old kit's uninstall

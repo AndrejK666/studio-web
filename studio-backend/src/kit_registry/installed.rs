@@ -181,10 +181,16 @@ pub enum Refusal {
     NoSuchTransition(String),
     /// 400 `failed_precondition`: the kit requires kits that would not apply
     /// where it is installed (ADR-0071 §5): `kit`, and what is `missing`.
-    RequiresKits { kit: String, missing: Vec<String> },
+    RequiresKits {
+        kit: String,
+        missing: Vec<String>,
+    },
     /// 400 `failed_precondition`: kits that would still apply require the
     /// kit being uninstalled (ADR-0071 §5): `kit`, and the kits that need it.
-    RequiredBy { kit: String, by: Vec<String> },
+    RequiredBy {
+        kit: String,
+        by: Vec<String>,
+    },
     Internal(anyhow::Error),
 }
 
@@ -463,10 +469,7 @@ impl KitInstaller {
         // What it requires must apply to the project once it is installed
         // (ADR-0071 §5).
         let above = self.installed(ctx, project).await?;
-        let mut doc = self
-            .store
-            .read(&service_context(project)?, project)
-            .await?;
+        let mut doc = self.store.read(&service_context(project)?, project).await?;
         install_project(&mut doc, record.clone());
         let after = effective(&above.effective, &project_kits(&doc, &self.catalogue));
         self.check_requires(org, &slug, &record.version, &after)
@@ -499,10 +502,7 @@ impl KitInstaller {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
         let org = self.require_project_admin(ctx, project).await?;
         let above = self.installed(ctx, project).await?;
-        let mut doc = self
-            .store
-            .read(&service_context(project)?, project)
-            .await?;
+        let mut doc = self.store.read(&service_context(project)?, project).await?;
         if uninstall_project(&mut doc, &slug, &above.base, &above.organization).is_ok() {
             let after = effective(&above.effective, &project_kits(&doc, &self.catalogue));
             self.check_required_by(org, &slug, &after).await?;
@@ -775,7 +775,10 @@ impl KitInstaller {
     ) -> Result<InstalledKit, Refusal> {
         let mut last = None;
         for s in requested(slug)? {
-            last = Some(self.install_for_project_one(ctx, project, &s, version).await?);
+            last = Some(
+                self.install_for_project_one(ctx, project, &s, version)
+                    .await?,
+            );
         }
         last.ok_or_else(|| Refusal::Internal(anyhow!("nothing to install")))
     }

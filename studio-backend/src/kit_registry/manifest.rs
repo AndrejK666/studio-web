@@ -179,10 +179,14 @@ fn check_requires(m: &KitManifest) -> Result<(), String> {
     for r in &m.requires {
         let slug = normalize_slug(r).map_err(|e| format!("{KIT_JSON}: requires: {e}"))?;
         if slug != *r {
-            return Err(format!("{KIT_JSON}: requires: `{r}` must be a lowercase slug"));
+            return Err(format!(
+                "{KIT_JSON}: requires: `{r}` must be a lowercase slug"
+            ));
         }
         if *r == m.slug {
-            return Err(format!("{KIT_JSON}: requires: a kit does not require itself"));
+            return Err(format!(
+                "{KIT_JSON}: requires: a kit does not require itself"
+            ));
         }
         if seen.contains(&r.as_str()) {
             return Err(format!("{KIT_JSON}: requires: `{r}` is named twice"));

@@ -102,7 +102,10 @@ fn the_built_in_kits_declare_the_adr_s_two_requirements() {
     assert_eq!(
         requires,
         [
-            ("project-domain-model".to_owned(), vec!["project-specs".to_owned()]),
+            (
+                "project-domain-model".to_owned(),
+                vec!["project-specs".to_owned()]
+            ),
             (RESEARCH.to_owned(), vec![DELIVERY.to_owned()]),
         ]
     );

@@ -479,7 +479,11 @@ fn renamed_kits(id: &str, e: &mut Value) {
     let owners = KitOwners::builtin();
     let rename = |v: &mut Value, on: MarkOn<'_>| {
         for pointer in ["/kit", "/left_by/kit"] {
-            let Some(kit) = v.pointer(pointer).and_then(Value::as_str).map(str::to_owned) else {
+            let Some(kit) = v
+                .pointer(pointer)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
                 continue;
             };
             if let Some(Rehome::Kit(to)) = owners.rehome(&kit, id, on)
@@ -1040,20 +1044,14 @@ mod tests {
         let need = |id: &str| declared.iter().find(|n| n.id == id).unwrap().clone();
         let mut o = Ontology::load();
         o.declare_gear_type(&need("deployment")).unwrap();
-        assert_eq!(
-            o.entity("deployment").unwrap()["meta"]["kit"],
-            "delivery"
-        );
+        assert_eq!(o.entity("deployment").unwrap()["meta"]["kit"], "delivery");
         // As an organization's model had it before the claims.
         o.entity_mut("deployment").unwrap()["meta"]
             .as_object_mut()
             .unwrap()
             .remove("kit");
         assert!(o.declare_gear_type(&need("deployment")).unwrap());
-        assert_eq!(
-            o.entity("deployment").unwrap()["meta"]["kit"],
-            "delivery"
-        );
+        assert_eq!(o.entity("deployment").unwrap()["meta"]["kit"], "delivery");
         assert!(!o.declare_gear_type(&need("deployment")).unwrap(), "once");
         // A core gear type has no kit.
         o.declare_gear_type(&need("tenant-document")).unwrap();

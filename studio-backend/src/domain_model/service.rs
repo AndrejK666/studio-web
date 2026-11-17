@@ -2354,7 +2354,11 @@ impl DomainModelService {
                     "kit-rename: {} mark(s) now name the kit that brings them: {}{}",
                     moved.len(),
                     shown.join("; "),
-                    if moved.len() > shown.len() { "; …" } else { "" }
+                    if moved.len() > shown.len() {
+                        "; …"
+                    } else {
+                        ""
+                    }
                 ),
             )
             // No inverse: the old slugs are not something to go back to.

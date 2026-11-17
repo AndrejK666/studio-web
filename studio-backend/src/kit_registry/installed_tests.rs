@@ -409,10 +409,7 @@ fn a_stored_builtin_kit_takes_the_version_this_image_ships() {
         renamed: None,
     };
     let base = base_kits(&doc, &catalogue());
-    let issues = base
-        .iter()
-        .find(|k| k.kit_slug == "project-tests")
-        .unwrap();
+    let issues = base.iter().find(|k| k.kit_slug == "project-tests").unwrap();
     assert_eq!(issues.version, BUILTIN_VERSION);
     assert!(!issues.by_default);
     assert!(!slugs(&base).contains(&"project-gone"));

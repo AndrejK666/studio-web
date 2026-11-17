@@ -207,10 +207,7 @@ fn the_claims_name_a_kit_for_the_types_the_adr_lists() {
     // ADR-0071 §6, the slugs after step 5.
     assert_eq!(kit("ci-run").as_deref(), Some("project-tests"));
     assert_eq!(kit("ci-job").as_deref(), Some("project-tests"));
-    assert_eq!(
-        kit("deployment-environment").as_deref(),
-        Some("delivery")
-    );
+    assert_eq!(kit("deployment-environment").as_deref(), Some("delivery"));
     assert_eq!(kit("deployment").as_deref(), Some("delivery"));
     assert_eq!(kit("product-build").as_deref(), Some("delivery"));
     assert_eq!(kit("project-product").as_deref(), Some("project-product"));

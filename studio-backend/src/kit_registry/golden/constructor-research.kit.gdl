@@ -23,6 +23,9 @@ kit(
         "research_projects",
         "research_hardware",
     ],
+    requires = [
+        "delivery",
+    ],
     gears = [
         kit_gear_claim(gear = "studio-environments", mcp_tools = ["research_projects", "research_hardware"]),
     ],

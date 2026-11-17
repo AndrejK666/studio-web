@@ -11,7 +11,8 @@ use uuid::Uuid;
 use super::bundles::{KitBundles, KitMfeManifest};
 use super::contents::{KitDetail, KitNamed};
 use super::installed::{
-    BASE_KIT, InstalledKit, KIT_REQUIRED_BY, KIT_REQUIRES_KIT, KitInstaller, NOT_A_PROJECT_KIT, ORGANIZATION_KIT, Refusal,
+    BASE_KIT, InstalledKit, KIT_REQUIRED_BY, KIT_REQUIRES_KIT, KitInstaller, NOT_A_PROJECT_KIT,
+    ORGANIZATION_KIT, Refusal,
 };
 use super::models::{KIT_MODEL_CONFLICT, MODEL_KIT_NOT_FOR_PROJECT};
 use super::phase::NO_SUCH_TRANSITION;
@@ -1123,7 +1124,10 @@ async fn get_installed(
     let bundles = service.bundles();
     let org = Some(installed.organization_id);
     let reports = installer
-        .rename_reports(&ctx, installed.project_id.unwrap_or(installed.organization_id))
+        .rename_reports(
+            &ctx,
+            installed.project_id.unwrap_or(installed.organization_id),
+        )
         .await;
     let mut renamed: Vec<RenamedKitDto> = Vec::new();
     let mut shown_again: Vec<String> = Vec::new();
