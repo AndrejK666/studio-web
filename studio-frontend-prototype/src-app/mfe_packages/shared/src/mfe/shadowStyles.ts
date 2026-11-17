@@ -10,8 +10,11 @@
  * sizes.
  *
  * The fix is a cache that is already warm by the time anyone mounts, not a
- * mount that waits. `prewarmShadowStyles` fetches every sheet at bootstrap, from
- * URLs the MFE manifest carries long before a click; `warmShadowStyles` then
+ * mount that waits. `prewarmShadowStyles` fetches the host's sheets at bootstrap
+ * and an MFE's own when the shell starts mounting it, from URLs the MFE manifest
+ * carries, so the fetch runs beside the remote's JS that the mount awaits (it
+ * once fetched every MFE's at bootstrap: ~25 requests on a cold load, mostly for
+ * kits nobody opened or installed); `warmShadowStyles` then
  * reads them back **synchronously**, so `mount` adopts everything before its
  * first render without introducing an await. A cold read returns `null` and the
  * caller takes the old DOM-node path for that one mount — slower, never blank,
@@ -159,9 +162,10 @@ function hostStylesheetHrefs(): string[] {
 }
 
 /**
- * Fetch every sheet a shadow root will need, ahead of any mount.
+ * Fetch sheets a shadow root will need, ahead of its mount.
  *
- * Call once at bootstrap with the MFEs' own CSS URLs — the manifest carries them
+ * The shell calls it once at bootstrap with nothing (the host's sheets), and
+ * with an MFE's own CSS URLs as it starts mounting that MFE — the manifest carries them
  * as `metaData.publicPath` + `entries[].exposeAssets.css`, which is exactly what
  * `MfeHandlerMF.injectRemoteStylesheets` resolves its `<link>` hrefs from, so the
  * keys match. The shell's own `<link>`s are added here rather than asked for.

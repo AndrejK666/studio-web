@@ -160,20 +160,57 @@ export function resolveRuntimePublicPaths(
   });
 }
 
-export function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): string[] {
-  const hrefs: string[] = [];
-  for (const config of manifests) {
-    const baseUrl = config.manifest?.metaData?.publicPath;
-    if (!baseUrl) continue;
-    for (const entry of config.entries) {
-      // A frame entry (ADR-0021) exposes no chunks — nothing to add.
-      if (!('exposeAssets' in entry)) continue;
-      const css = entry.exposeAssets?.css;
-      for (const path of [...(css?.sync ?? []), ...(css?.async ?? [])]) {
-        hrefs.push(new URL(path, baseUrl).href);
-      }
-    }
+/**
+ * Each entry's own CSS, as absolute URLs: `metaData.publicPath` +
+ * `exposeAssets.css`, exactly what `MfeHandlerMF.injectRemoteStylesheets`
+ * resolves its `<link>` hrefs from, so the warm cache's keys match.
+ */
+export function entryStylesheetHrefs(config: MfeManifestConfig): Map<string, string[]> {
+  const byEntry = new Map<string, string[]>();
+  const baseUrl = config.manifest?.metaData?.publicPath;
+  if (!baseUrl) return byEntry;
+  for (const entry of config.entries) {
+    // A frame entry (ADR-0021) exposes no chunks — nothing to add.
+    if (!('exposeAssets' in entry)) continue;
+    const css = entry.exposeAssets?.css;
+    byEntry.set(
+      entry.id,
+      [...(css?.sync ?? []), ...(css?.async ?? [])].map((path) => new URL(path, baseUrl).href)
+    );
   }
+  return byEntry;
+}
+
+export function mfeStylesheetHrefs(manifests: readonly MfeManifestConfig[]): string[] {
+  return manifests.flatMap((config) => [...entryStylesheetHrefs(config).values()].flat());
+}
+
+/** Per registry, each registered entry's CSS: what a mount of one of its extensions warms. */
+const stylesheetsByRegistry = new WeakMap<MfeRegistry, Map<string, string[]>>();
+
+function rememberStylesheets(registry: MfeRegistry, config: MfeManifestConfig): void {
+  let byEntry = stylesheetsByRegistry.get(registry);
+  if (!byEntry) {
+    byEntry = new Map();
+    stylesheetsByRegistry.set(registry, byEntry);
+  }
+  for (const [entryId, hrefs] of entryStylesheetHrefs(config)) byEntry.set(entryId, hrefs);
+}
+
+/**
+ * The CSS of the entry `extensionId` mounts, fetched now — when it is about to
+ * mount, and never before. Until 2026-11 the bootstrap warmed every package's
+ * CSS up front: ~25 `lifecycle-*.css` requests on a cold load, most of them for
+ * kits the organization has not installed, and the identity reads queued behind
+ * them. Started here, the fetch runs beside the remote's own JS (remoteEntry,
+ * the exposed module), which the mount awaits before it adopts styles, so the
+ * first mount usually finds it warm; one that does not takes the `<link>` path
+ * once (`StudioMfeLifecycle.adoptHostStylesIntoShadowRoot`). Exported for the tests.
+ */
+export function warmStylesheetsOf(registry: MfeRegistry, extensionId: string): string[] {
+  const entryId = registry.getExtension(extensionId)?.entry;
+  const hrefs = (entryId && stylesheetsByRegistry.get(registry)?.get(entryId)) || [];
+  if (hrefs.length) prewarmShadowStyles(hrefs);
   return hrefs;
 }
 
@@ -197,7 +234,7 @@ class HostContainerHooks implements ContainerHooks {
   private readonly elements = new Map<string, HTMLElement>();
 
   constructor(
-    private readonly registry: MfeRegistry,
+    readonly registry: MfeRegistry,
     private readonly domainId: string,
     private readonly fill: boolean = true,
   ) {}
@@ -224,10 +261,14 @@ class HostContainerHooks implements ContainerHooks {
   }
 }
 
-/** Mounts through the domain's strategy, and records the extension once it is in. */
+/**
+ * Mounts through the domain's strategy, and records the extension once it is
+ * in. The extension's CSS starts loading here, beside its JS (`warmStylesheetsOf`).
+ */
 function mountHandler(strategy: MountStrategy, hooks: HostContainerHooks): ActionHandler {
   return ActionHandler.fromFunction(async (_t, p) => {
     const payload = p as ActionPayload;
+    warmStylesheetsOf(hooks.registry, payload.subject);
     await strategy.mount(payload);
     hooks.mounted(payload.subject);
   });
@@ -499,6 +540,8 @@ export async function registerMfePackage(
   for (const entry of config.entries) {
     registry.typeSystem.register(entry);
   }
+  // Remembered, not fetched: a mount of one of its extensions warms it.
+  rememberStylesheets(registry, config);
   for (const extension of config.extensions ?? []) {
     // Phase 2.6 content-addressed discovery: only register extensions whose
     // target domain is owned by this host registry. Extensions targeting a
@@ -689,9 +732,10 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
     );
     return;
   }
-  // Ahead of any mount, and not awaited: the first click may still beat it, and
-  // that mount simply takes the DOM-node path once.
-  prewarmShadowStyles(mfeStylesheetHrefs(manifests));
+  // The shell's own sheets only (already in the HTTP cache: the document loaded
+  // them). An MFE's CSS waits for a mount of it (`warmStylesheetsOf`), so a kit
+  // nobody opens — or one the organization has not installed — costs nothing.
+  prewarmShadowStyles();
 
   // First pass: register every package's non-action schemas (derived
   // ExtensionDomain / Extension type schemas) so leaf-MFE extension validation

@@ -46,6 +46,13 @@ vi.mock('@gears-frontx/react', async (importOriginal) => {
   };
 });
 
+// What the shell asks the shadow-style cache to fetch, and when.
+const { prewarmShadowStyles } = vi.hoisted(() => ({ prewarmShadowStyles: vi.fn() }));
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  prewarmShadowStyles,
+}));
+
 describe('bootstrapMFE (host-app)', () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
@@ -122,6 +129,52 @@ describe('bootstrapMFE (host-app)', () => {
     expect(registerInstance).toHaveBeenCalledWith(manifestEntity);
     expect(registerInstance).toHaveBeenCalledWith(entry);
     expect(registerExtension).toHaveBeenCalledWith(ext);
+  });
+
+  it("fetches an MFE's CSS when one of its extensions mounts, never at start-up", async () => {
+    // A cold load used to warm every package's lifecycle-*.css (~25 requests,
+    // most for kits not installed) before the identity reads.
+    prewarmShadowStyles.mockReset();
+    getDomain.mockImplementation((id: string) => (id === 'screen-domain' ? { id } : undefined));
+    const packageOf = (name: string) => {
+      const manifest = { id: `manifest.${name}`, metaData: { publicPath: `/mfes/${name}-mfe/` } };
+      return {
+        manifest,
+        entries: [
+          {
+            id: `entry.${name}`,
+            actions: [],
+            domainActions: [],
+            manifest,
+            exposeAssets: { css: { sync: [`assets/lifecycle-${name}.css`], async: [] } },
+          },
+        ],
+        extensions: [{ id: `ext.${name}`, domain: 'screen-domain', entry: `entry.${name}` }],
+      };
+    };
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify([packageOf('tests'), packageOf('reports')]), { status: 200 })
+    );
+
+    const { bootstrapMFE, warmStylesheetsOf } = await import('./bootstrap');
+    await bootstrapMFE(mockApp as never);
+
+    // At start-up: the shell's own sheets only.
+    expect(prewarmShadowStyles.mock.calls).toEqual([[]]);
+
+    // A mount names the extension; the registry knows its entry.
+    Object.assign(mockMfeRegistry, {
+      getExtension: (id: string) => (id === 'ext.tests' ? { id, entry: 'entry.tests' } : undefined),
+    });
+    try {
+      const href = `${window.location.origin}/mfes/tests-mfe/assets/lifecycle-tests.css`;
+      expect(warmStylesheetsOf(mockMfeRegistry as never, 'ext.tests')).toEqual([href]);
+      expect(prewarmShadowStyles).toHaveBeenLastCalledWith([href]);
+      expect(warmStylesheetsOf(mockMfeRegistry as never, 'ext.unknown')).toEqual([]);
+      expect(prewarmShadowStyles).toHaveBeenCalledTimes(2);
+    } finally {
+      delete (mockMfeRegistry as { getExtension?: unknown }).getExtension;
+    }
   });
 
   it('skips extension registration when host does not own the target domain', async () => {
