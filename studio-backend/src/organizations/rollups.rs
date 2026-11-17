@@ -159,6 +159,9 @@ pub struct Sources {
     pub roster: Option<Arc<dyn OrganizationRoster>>,
 }
 
+/// A parent tenant's team basis and its workspaces, `(id, name)`.
+type ParentWorkspaces = (Option<TeamBasis>, Vec<(Uuid, String)>);
+
 /// Workspaces of one organization read at once for its overview.
 const PARALLEL_WORKSPACES: usize = 4;
 
@@ -191,23 +194,42 @@ impl Sources {
                 .into_iter()
                 .map(|(id, _)| id),
         );
-        let mut out = Vec::new();
-        for parent in parents {
-            let workspaces = self.children_of(ctx, parent, WORKSPACE_TENANT_TYPE).await;
-            if workspaces.is_empty() {
-                continue;
-            }
-            // Every workspace under one parent shares its organization, so
-            // the team basis is read once for all of them.
-            let team = self.team_basis(ctx, Some(parent)).await;
-            for (workspace_id, workspace_name) in workspaces {
-                out.extend(
-                    self.workspace(ctx, workspace_id, workspace_name, team.as_ref())
-                        .await,
-                );
+        use futures_util::StreamExt;
+        // Each parent's workspaces, a few parents at once. Every workspace
+        // under one parent shares its organization, so the team basis is
+        // read once for all of them, beside the listing.
+        let groups: Vec<ParentWorkspaces> =
+            futures_util::stream::iter(parents)
+                .map(|parent| async move {
+                    let (workspaces, team) = tokio::join!(
+                        self.children_of(ctx, parent, WORKSPACE_TENANT_TYPE),
+                        self.team_basis(ctx, Some(parent))
+                    );
+                    (team, workspaces)
+                })
+                .buffered(PARALLEL_WORKSPACES)
+                .collect()
+                .await;
+        // Then the workspaces themselves, a few at once and in the order they
+        // were listed, as `organization_with` reads them: one after the other
+        // they made a platform administrator's portfolio the sum of every
+        // organization's. Bounded, because each fans out further.
+        // Built in a loop, not a closure over the groups: a closure taking
+        // the team by reference is not general enough for the handler's
+        // `Send` future.
+        let mut reads = Vec::new();
+        for (team, workspaces) in &groups {
+            for (id, name) in workspaces {
+                reads.push(self.workspace(ctx, *id, name.clone(), team.as_ref()));
             }
         }
-        out
+        futures_util::stream::iter(reads)
+            .buffered(PARALLEL_WORKSPACES)
+            .collect::<Vec<Vec<Rollup>>>()
+            .await
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     /// One workspace and its projects, for the table that shows a workspace.
