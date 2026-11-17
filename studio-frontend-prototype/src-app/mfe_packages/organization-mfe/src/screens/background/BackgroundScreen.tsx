@@ -32,7 +32,12 @@ import {
   TableHeader,
   TableRow,
 } from '@gears-frontx/ui-kit';
-import { isRunEvent, useOrganization, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
+import {
+  isRunEvent,
+  useOrganization,
+  usePollWhileVisible,
+  useStudioEventRefresh,
+} from '@constructor-studio/mfe-shared';
 import { BackgroundApiService, scheduleOf } from '../../api/BackgroundApiService';
 import {
   ATTENTION_STATES,
@@ -197,11 +202,8 @@ export const BackgroundScreen: React.FC = () => {
   useStudioEventRefresh(isRunEvent, refresh);
 
   const live = !!page?.items.some((r) => r.state === 'queued' || r.state === 'running');
-  useEffect(() => {
-    if (!live) return;
-    const timer = setInterval(refresh, LIVE_POLL_MS);
-    return () => clearInterval(timer);
-  }, [live, refresh]);
+  // Not while the tab is hidden: shown again, it reads at once.
+  usePollWhileVisible(refresh, LIVE_POLL_MS, live);
 
   const act = async (run: TaskRun, what: 'cancel' | 'retry') => {
     if (what === 'cancel' && !window.confirm(t('cancel_confirm', { task: run.task_type, id: run.id.slice(0, 8) })))

@@ -1,9 +1,10 @@
 /**
  * The top bar's way into the Inbox (the prototype's `InboxButton`,
  * `inbox-view.tsx`): the Inbox screen (organization-mfe, route `/inbox`) and
- * how many items wait on the person. The count is read when the button
- * appears, every two minutes, and when a review moves (studio-events,
- * `review_request`), as the prototype did — and when the person moves to
+ * how many items wait on the person (`GET /me/inbox/count`). The count is
+ * read when the button appears, every two minutes while the tab is shown (at
+ * once when it is shown again, nothing while it is hidden), when a review
+ * moves (studio-events, `review_request`), as the prototype did — and when the person moves to
  * another screen, so a mark made on the Inbox shows here at once (leaving the
  * Inbox or an Overview, or with a count older than {@link INBOX_FRESH_MS}; a
  * click between two other tabs asks nothing); `null` while
@@ -20,7 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRegistry, eventBus, useAppSelector, useDomainExtensions, FRONTX_SCREEN_DOMAIN } from '@gears-frontx/react';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
-import type { StudioEvent } from '@constructor-studio/mfe-shared';
+import { usePollWhileVisible, type StudioEvent } from '@constructor-studio/mfe-shared';
 import { InboxCountApiService } from '@/app/api/InboxCountApiService';
 import { lastInboxCountReport, onInboxCountReport } from '@/app/mfe/inboxCountActions';
 import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
@@ -150,11 +151,11 @@ export function useInboxEntry(): InboxEntry {
     if (marked || Date.now() - readAt.current >= INBOX_FRESH_MS) again();
   }, [section, again]);
 
-  useEffect(() => {
-    if (!screenId) return;
-    const timer = setInterval(again, INBOX_REREAD_MS);
-    return () => clearInterval(timer);
-  }, [screenId, again]);
+  // Every two minutes while the tab is shown; nothing while it is hidden. Shown
+  // again, it reads at once unless a count was read or reported a moment ago.
+  usePollWhileVisible(again, INBOX_REREAD_MS, screenId !== null, () => {
+    if (Date.now() - readAt.current >= INBOX_FRESH_MS) again();
+  });
 
   useStudioEvents(
     useCallback(

@@ -12,7 +12,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
-import { isNotFound, useScreenAvailability } from '@constructor-studio/mfe-shared';
+import { isNotFound, runWhenVisible, usePollWhileVisible, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { BuildLog, Deployment, DeployEnvironment, ProjectBuildConfig, ProjectImage } from '../../api/types';
 import {
   buildWorkflowOf,
@@ -123,11 +123,8 @@ export function ProjectBuilds({
     [ideBuilds, runs, config, repoPaths]
   );
   const running = builds.some((b) => b.status === 'running' && !isLost(b, now));
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(onFollow, FOLLOW_MS);
-    return () => window.clearInterval(timer);
-  }, [running, onFollow]);
+  // Not while the tab is hidden: shown again, it reads at once.
+  usePollWhileVisible(onFollow, FOLLOW_MS, running);
 
   // Building in Studio is not in this portal yet (parity.md): the line says
   // what it can without it.
@@ -539,6 +536,7 @@ function BuildLogPanel({ buildId, running }: { buildId: string; running: boolean
     if (!open) return;
     let alive = true;
     let timer: number | undefined;
+    let shown: (() => void) | undefined;
     const read = () =>
       api
         .buildLog({ projectId, buildId })
@@ -550,12 +548,15 @@ function BuildLogPanel({ buildId, running }: { buildId: string; running: boolean
         })
         .catch((e: unknown) => alive && setError(errText(e)))
         .finally(() => {
-          if (alive && live) timer = window.setTimeout(() => void read(), LOG_FOLLOW_MS);
+          // The next read waits for a hidden tab to be shown.
+          if (alive && live)
+            timer = window.setTimeout(() => (shown = runWhenVisible(() => void read())), LOG_FOLLOW_MS);
         });
     void read();
     return () => {
       alive = false;
       window.clearTimeout(timer);
+      shown?.();
     };
   }, [api, open, projectId, buildId, live]);
 

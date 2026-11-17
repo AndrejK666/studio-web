@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
+import { runWhenVisible } from '@constructor-studio/mfe-shared';
 import type { ContainerLog, Deployment, PathAction } from '../../api/types';
 import { ended, type Intent } from '../../model/path';
 import { CauseView } from './ProjectPath';
@@ -66,8 +67,13 @@ export function DeploymentDetail({
   const running = !!d && !ended(d.state);
   useEffect(() => {
     if (!running) return;
-    const timer = window.setTimeout(() => setRound((r) => r + 1), FOLLOW_MS);
-    return () => window.clearTimeout(timer);
+    // The next round waits for a hidden tab to be shown.
+    let shown: (() => void) | undefined;
+    const timer = window.setTimeout(() => (shown = runWhenVisible(() => setRound((r) => r + 1))), FOLLOW_MS);
+    return () => {
+      window.clearTimeout(timer);
+      shown?.();
+    };
   }, [running, round]);
 
   return (

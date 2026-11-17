@@ -12,9 +12,9 @@
  * again every two minutes, on Refresh, and when a review moves.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
-import { useOrganization } from '@constructor-studio/mfe-shared';
+import { useOrganization, usePollWhileVisible } from '@constructor-studio/mfe-shared';
 import { InboxGroup } from '../overview/InboxGroup';
 import type { InboxSourceCount } from '../../inbox/model';
 import { useOverviewTranslations } from '../../i18n';
@@ -56,10 +56,8 @@ function InboxPage({ organizationId, t }: { organizationId: string; t: Text }) {
   const [reloadKey, setReloadKey] = useState(0);
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);
 
-  useEffect(() => {
-    const timer = setInterval(reload, INBOX_PAGE_REREAD_MS);
-    return () => clearInterval(timer);
-  }, [reload]);
+  // Not while the tab is hidden: shown again, it reads at once.
+  usePollWhileVisible(reload, INBOX_PAGE_REREAD_MS);
 
   // A chip whose source has nothing open any more falls back to Everything.
   const current = only && sources.some((s) => s.source === only) ? only : null;

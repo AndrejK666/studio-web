@@ -124,7 +124,7 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
             searchExtension ? () => void openOverlayExtension(searchExtension.id) : undefined
           }
         />
-        {/* The count is the server's (GET /me/inbox): nothing shows while it is unknown. */}
+        {/* The count is the server's (GET /me/inbox/count): nothing shows while it is unknown. */}
         <IconPill
           icon={inbox.screen?.presentation?.icon ?? 'material-symbols:inbox'}
           label={t('inbox')}

@@ -30,6 +30,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   useOrganization,
+  usePollWhileVisible,
 } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { IssuesApiService } from '../../api/IssuesApiService';
@@ -163,11 +164,8 @@ function ProjectIssues({
   // While a build runs, read again until it stops: the build is in the
   // backend's process, and nothing pushes its progress.
   const running = read?.model.build.running ?? false;
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => void load(), POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [running, load]);
+  // Not while the tab is hidden: shown again, it reads at once.
+  usePollWhileVisible(() => void load(), POLL_MS, running);
 
   // What the next build would read and how long it should take, read again
   // whenever a build stops. An older backend answers 404: no estimate shown.
