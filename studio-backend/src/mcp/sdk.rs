@@ -265,12 +265,43 @@ impl Answer {
     }
 }
 
-/// A route's refusal, in the words the route used: the problem's `detail`
-/// and its field violations when it has them, the body as it came otherwise.
+/// A failed precondition's own sentences: each violation as `TYPE: description`.
+/// Its `detail` is only "Operation precondition not met" (docs/errors-catalog.md).
+fn violations(v: &Value) -> Option<String> {
+    let said: Vec<String> = v
+        .pointer("/context/violations")?
+        .as_array()?
+        .iter()
+        .filter_map(|x| {
+            let description = x.get("description")?.as_str()?.trim();
+            if description.is_empty() {
+                return None;
+            }
+            Some(
+                match x
+                    .get("type")
+                    .or_else(|| x.get("type_"))
+                    .and_then(Value::as_str)
+                {
+                    Some(kind) if !kind.is_empty() => format!("{kind}: {description}"),
+                    _ => description.to_owned(),
+                },
+            )
+        })
+        .collect();
+    (!said.is_empty()).then(|| said.join("; "))
+}
+
+/// A route's refusal, in the words the route used: a failed precondition's
+/// violations, else the problem's `detail` and its field violations when it
+/// has them, the body as it came otherwise.
 fn refusal(status: u16, body: &str) -> String {
     let said = serde_json::from_str::<Value>(body)
         .ok()
         .and_then(|v| {
+            if let Some(said) = violations(&v) {
+                return Some(said);
+            }
             let detail = v
                 .get("detail")
                 .or_else(|| v.get("message"))
@@ -278,7 +309,11 @@ fn refusal(status: u16, body: &str) -> String {
                 .and_then(Value::as_str)?
                 .to_owned();
             Some(
-                match v.get("errors").or_else(|| v.get("field_violations")) {
+                match v
+                    .get("errors")
+                    .or_else(|| v.get("field_violations"))
+                    .or_else(|| v.pointer("/context/field_violations"))
+                {
                     Some(more) if !more.is_null() => format!("{detail} {more}"),
                     _ => detail,
                 },
@@ -649,5 +684,28 @@ mod tests {
             "Studio answered 502: gateway down"
         );
         assert_eq!(refusal(500, ""), "Studio answered 500: no detail");
+    }
+
+    #[test]
+    fn a_failed_precondition_says_its_violations_not_the_generic_detail() {
+        let body = serde_json::json!({
+            "title": "Failed Precondition",
+            "detail": "Operation precondition not met",
+            "context": {"violations": [
+                {"type": "ENVIRONMENT_RESEARCH_UNREACHABLE", "subject": "environment",
+                 "description": "Constructor Research cannot be reached"},
+                {"subject": "x", "description": " "}
+            ]}
+        });
+        assert_eq!(
+            refusal(400, &body.to_string()),
+            "Studio answered 400: ENVIRONMENT_RESEARCH_UNREACHABLE: Constructor Research cannot be reached"
+        );
+        let empty = serde_json::json!({"detail": "Operation precondition not met",
+            "context": {"violations": []}});
+        assert_eq!(
+            refusal(400, &empty.to_string()),
+            "Studio answered 400: Operation precondition not met"
+        );
     }
 }
