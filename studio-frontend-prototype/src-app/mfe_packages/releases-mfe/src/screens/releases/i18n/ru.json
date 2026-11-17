@@ -286,5 +286,7 @@
   "research_deploying": "Запуск приложения в Constructor Research…",
   "research_runs": "Продукт работает в Constructor Research.",
   "research_build_failed": "Сборка в Constructor Research не удалась.",
-  "no_environment_admin": "Окружений пока нет. Попросите администратора организации добавить его."
+  "no_environment_admin": "Окружений пока нет. Попросите администратора организации добавить его.",
+  "status_build_outside": "То, что работает в {environment}, собрано вне Studio (в IDE или CI): записи о сборке в Studio нет.",
+  "build_outside_hint": "То, что работает в {environment}, собрано вне записей Studio (в IDE или CI). Соберите здесь, в IDE или в CI, чтобы следующая сборка была записана."
 }

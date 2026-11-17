@@ -217,6 +217,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   const steps = targets ? ladderSteps(targets.environments, deployments, builds) : [];
   const noEnvironment = !!targets && targets.environments.length === 0;
   const published = deployableBuilds(builds).length;
+  const runningIn = steps.find((s) => !!s.runs)?.environment.name ?? null;
   const status = targets ? releaseStatus(steps, published) : null;
 
   const tabs: ReleaseTab[] = unavailable ? ['build', 'deploy'] : TABS;
@@ -248,7 +249,12 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   };
 
   const tabStatus = (x: ReleaseTab): string => {
-    if (x === 'build') return published > 0 ? t.count('status_build_published', published) : t('status_build_none');
+    if (x === 'build')
+      return published > 0
+        ? t.count('status_build_published', published)
+        : runningIn
+          ? t('status_build_outside', { environment: runningIn })
+          : t('status_build_none');
     if (x === 'deploy')
       return noEnvironment
         ? t('status_deploy_no_environment')
@@ -345,6 +351,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
               now={now}
               onChanged={changed}
               onFollow={follow}
+              runningIn={runningIn}
             />
           )}
           {tab === 'deploy' &&
