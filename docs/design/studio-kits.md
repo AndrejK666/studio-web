@@ -957,6 +957,15 @@ them under other slugs. For one release the old slugs are aliases
 | `project-activity` | `project-git`, `project-lifecycle` |
 | `product-releases` | `project-product`, `delivery` |
 | `org-infrastructure` | `delivery` |
+| `org-connections`, `project-team`, `project-artifacts` | the shell (no kit; step 6) |
+
+Step 6 gave Connections (Organization › Connections), the project's People
+(`/projects/team`) and Artifacts back to the shell: `organization.connectors`,
+`project.people` and `project.artifacts` return to the core, and the sweep
+adopts them there (`adopted_from` = the old kit, never dormant).
+`assignment`, which nothing writes, is in `dropped_from_core`: an
+organization with objects of it keeps it dormant, left by Studio; one without
+loses it. Catalogue (`components`) writes no connection any more.
 
 - **Installations.** Every installed-kits document is read through the
   table: a base, organization or project installation of a retired slug is

@@ -75,6 +75,23 @@ pub const ALIASES: &[Alias] = &[
         resolves_to: &["delivery"],
         removal: REMOVAL,
     },
+    // To the shell (ADR-0071 §6, step 6): Connections, the project's People
+    // and Artifacts are Studio's own; an installation of these is nothing.
+    Alias {
+        retired: "org-connections",
+        resolves_to: &[],
+        removal: REMOVAL,
+    },
+    Alias {
+        retired: "project-team",
+        resolves_to: &[],
+        removal: REMOVAL,
+    },
+    Alias {
+        retired: "project-artifacts",
+        resolves_to: &[],
+        removal: REMOVAL,
+    },
 ];
 
 /// The kits the merges brought: no installation names them before, so they

@@ -140,8 +140,7 @@
         "route": "/projects/artifacts",
         "order": 20,
         "level": "project",
-        "section": "artifacts",
-        "kit": "project-artifacts"
+        "section": "artifacts"
       }
     },
     {

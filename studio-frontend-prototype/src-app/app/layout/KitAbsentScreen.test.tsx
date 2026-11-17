@@ -40,13 +40,13 @@ const ext = (id: string, entry: string, presentation: Record<string, unknown>) =
 const owner = ext('projects.main', 'entry.projects', { label: 'Projects', route: '/projects', level: 'workspace' });
 const overview = ext('projects.overview', 'entry.projects', { label: 'Overview', route: '/projects/overview', level: 'project', section: 'overview' });
 const artifacts = ext('projects.artifacts', 'entry.projects', {
-  label: 'Artifacts', route: '/projects/artifacts', level: 'project', section: 'artifacts', kit: 'project-artifacts',
+  label: 'Artifacts', route: '/projects/artifacts', level: 'project', section: 'artifacts', kit: 'project-specs',
 });
 const activity = ext('activity.activity', 'entry.activity', {
-  label: 'Activity', route: '/projects/activity', level: 'project', section: 'activity', kit: 'project-activity',
+  label: 'Activity', route: '/projects/activity', level: 'project', section: 'activity', kit: 'project-git',
 });
 const timeline = ext('activity.timeline', 'entry.activity', {
-  label: 'Timeline', route: '/projects/timeline', level: 'project', section: 'timeline', kit: 'project-activity', needs: ['gts.cf.studio.domain.milestone.v1~'],
+  label: 'Timeline', route: '/projects/timeline', level: 'project', section: 'timeline', kit: 'project-git', needs: ['gts.cf.studio.domain.milestone.v1~'],
 });
 
 afterEach(() => {
@@ -74,30 +74,30 @@ describe('KitAbsentScreen', () => {
 
   it('draws nothing where the kit is installed', () => {
     at(activity, 'activity');
-    state.installed = new Set(['project-activity']);
+    state.installed = new Set(['project-git']);
     const { container } = render(<KitAbsentScreen />);
     expect(container.innerHTML).toBe('');
   });
 
   it('says a kit’s screen is not available where its kit is not installed, and offers the level’s home', () => {
     at(activity, 'activity');
-    state.installed = new Set(['project-team']);
+    state.installed = new Set(['project-tests']);
     render(<KitAbsentScreen />);
-    expect(screen.getByRole('alert').textContent).toContain('screen_unknown_kit:Activity,project-activity');
+    expect(screen.getByRole('alert').textContent).toContain('screen_unknown_kit:Activity,project-git');
     fireEvent.click(screen.getByRole('button', { name: 'screen_unknown_home' }));
     expect(emit).toHaveBeenCalledWith('app/context/level/requested', { level: 'project' });
   });
 
   it('judges a section of the owner’s micro-frontend by its own kit', () => {
     at(owner, 'artifacts');
-    state.installed = new Set(['project-activity']);
+    state.installed = new Set(['project-git']);
     render(<KitAbsentScreen />);
-    expect(document.querySelector('[data-kit-absent-screen]')?.getAttribute('data-kit-absent-screen')).toBe('project-artifacts');
+    expect(document.querySelector('[data-kit-absent-screen]')?.getAttribute('data-kit-absent-screen')).toBe('project-specs');
   });
 
   it('says a section needs a type the kits here do not bring', () => {
     at(activity, 'timeline');
-    state.installed = new Set(['project-activity']);
+    state.installed = new Set(['project-git']);
     state.types = new Set(['project']);
     render(<KitAbsentScreen />);
     expect(screen.getByRole('alert').textContent).toContain('screen_needs_types:Timeline,gts.cf.studio.domain.milestone.v1~');

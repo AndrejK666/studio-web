@@ -86,9 +86,9 @@ describe('useInstalledKits across a switch', () => {
 
   it('does not take the project left’s answer for the next project’s', () => {
     state.project = 'p-1';
-    state.answer = answer('o-1', 'p-1', ['project-team']);
+    state.answer = answer('o-1', 'p-1', ['project-tests']);
     const { result, rerender } = renderHook(() => useInstalledKits());
-    expect(result.current?.has('project-team')).toBe(true);
+    expect(result.current?.has('project-tests')).toBe(true);
     state.project = 'p-2';
     rerender();
     expect(result.current).toBeNull();
@@ -103,10 +103,10 @@ describe('useInstalledKits across a switch', () => {
 
 describe('screenShows while the new scope is unknown', () => {
   it('hides a kit’s screen only once the kits are known, and a needing screen only once the types are', () => {
-    expect(screenShows(kitScreen('project-team'), null)).toBe(true);
-    expect(screenShows(kitScreen('project-team'), new Set())).toBe(false);
-    expect(screenShows(kitScreen('project-activity', ['gts.cf.studio.domain.milestone.v1~']), new Set(['project-activity']), null)).toBe(true);
-    expect(screenShows(kitScreen('project-activity', ['gts.cf.studio.domain.milestone.v1~']), new Set(['project-activity']), new Set())).toBe(false);
+    expect(screenShows(kitScreen('project-tests'), null)).toBe(true);
+    expect(screenShows(kitScreen('project-tests'), new Set())).toBe(false);
+    expect(screenShows(kitScreen('project-git', ['gts.cf.studio.domain.milestone.v1~']), new Set(['project-git']), null)).toBe(true);
+    expect(screenShows(kitScreen('project-git', ['gts.cf.studio.domain.milestone.v1~']), new Set(['project-git']), new Set())).toBe(false);
   });
 });
 

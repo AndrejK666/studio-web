@@ -457,18 +457,6 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "project-domain-model",
         include_str!("builtin/project-domain-model.kit.json"),
     ),
-    (
-        "org-connections",
-        include_str!("builtin/org-connections.kit.json"),
-    ),
-    (
-        "project-artifacts",
-        include_str!("builtin/project-artifacts.kit.json"),
-    ),
-    (
-        "project-team",
-        include_str!("builtin/project-team.kit.json"),
-    ),
     ("components", include_str!("builtin/components.kit.json")),
     (
         "project-specs",

@@ -27,13 +27,12 @@
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.team.mfe.main.v1",
       "presentation": {
-        "label": "Team",
+        "label": "People",
         "icon": "lucide:users",
         "route": "/projects/team",
         "order": 60,
         "level": "project",
         "section": "team",
-        "kit": "project-team",
         "modelTab": "people"
       }
     }

@@ -780,7 +780,6 @@ pub const BUILTIN_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     ("project-lifecycle", "lucide:route"),
     ("project-tests", "lucide:flask-conical"),
-    ("project-artifacts", "lucide:files"),
     ("org-costs", "lucide:wallet"),
     ("org-reports", "lucide:chart-column"),
     ("project-specs", "lucide:file-text"),
@@ -789,8 +788,6 @@ pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     ("delivery", "lucide:rocket"),
     ("project-product", "lucide:package"),
     ("project-domain-model", "lucide:shapes"),
-    ("org-connections", "lucide:plug"),
-    ("project-team", "lucide:users"),
     (CONSTRUCTOR_RESEARCH_KIT, "lucide:atom"),
     ("assistant", "lucide:sparkles"),
     ("project-git", "lucide:git-pull-request"),
@@ -833,12 +830,6 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "project-tests",
             "Tests",
             "The project's Tests tab: its test runs and their results.",
-            &["project"],
-        ),
-        kit(
-            "project-artifacts",
-            "Artifacts",
-            "The project's Artifacts tab: what its builds and documents produce.",
             &["project"],
         ),
         kit(
@@ -887,18 +878,6 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "project-domain-model",
             "Project model",
             "What a project's documents say the application is, and the open questions they leave to decide (not the Studio domain model).",
-            &["project"],
-        ),
-        kit(
-            "org-connections",
-            "Connections",
-            "An organization's connections to Git hosts, clusters, registries and model providers, and Admin's view of all of them.",
-            &["organization"],
-        ),
-        kit(
-            "project-team",
-            "Team",
-            "A project's Team tab: who works on it and in which role.",
             &["project"],
         ),
         // Not a base kit by default (`OPT_IN_BUILTIN`): an organization that
@@ -1252,7 +1231,6 @@ mod tests {
             [
                 "project-lifecycle",
                 "project-tests",
-                "project-artifacts",
                 "org-costs",
                 "org-reports",
                 "project-specs",
@@ -1261,8 +1239,6 @@ mod tests {
                 "delivery",
                 "project-product",
                 "project-domain-model",
-                "org-connections",
-                "project-team",
                 "constructor-research",
                 "assistant",
                 "project-git"

@@ -14,7 +14,7 @@ import {
   sendToHost,
 } from '../host/hostActions';
 
-/** The Team screen's manifest route (team-mfe, kit `project-team`). */
+/** The project People screen's manifest route (team-mfe, the shell's since ADR-0071 step 6). */
 export const TEAM_ROUTE = '/projects/team';
 
 export interface TeamTarget {

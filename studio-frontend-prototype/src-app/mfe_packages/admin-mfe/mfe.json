@@ -180,7 +180,6 @@
         "order": 40,
         "level": "organization",
         "section": "connections",
-        "kit": "org-connections",
         "modelTab": "connectors"
       }
     },

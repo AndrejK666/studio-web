@@ -29,6 +29,9 @@ fn the_aliases_are_the_adr_s_and_each_says_when_it_goes() {
             ("project-activity", &["project-git", "project-lifecycle"][..]),
             ("product-releases", &["project-product", "delivery"][..]),
             ("org-infrastructure", &["delivery"][..]),
+            ("org-connections", &[][..]),
+            ("project-team", &[][..]),
+            ("project-artifacts", &[][..]),
         ]
     );
     let builtin: Vec<String> = builtin_catalogue().into_iter().map(|k| k.slug).collect();
@@ -191,16 +194,13 @@ async fn installations_under_the_old_slugs_count_as_the_kits_they_resolve_to() {
             "assistant",
             "components",
             "delivery",
-            "org-connections",
             "org-costs",
             "org-reports",
-            "project-artifacts",
             "project-domain-model",
             "project-git",
             "project-lifecycle",
             "project-product",
             "project-specs",
-            "project-team",
             "project-tests",
             "studio-api-docs"
         ]
@@ -230,6 +230,10 @@ async fn installations_under_the_old_slugs_count_as_the_kits_they_resolve_to() {
         "project-activity",
         "product-releases",
         "org-infrastructure",
+        // The shell's: always.
+        "org-connections",
+        "project-team",
+        "project-artifacts",
     ] {
         let k = old.iter().find(|k| k.kit_slug == retired).unwrap();
         assert!(k.retired, "{retired}");
@@ -331,4 +335,45 @@ async fn a_request_naming_a_retired_slug_acts_on_what_it_resolves_to() {
         .unwrap();
     let base = installer.installed(&caller(ORG), ORG).await.unwrap().base;
     assert!(slugs(&base).contains(&"delivery"));
+}
+
+#[tokio::test]
+async fn an_installation_of_what_went_to_the_shell_is_nothing_and_its_tab_always_shows() {
+    let (installer, store) = stand(&[
+        (
+            PLATFORM_TENANT,
+            InstalledDocument {
+                removed_builtin: vec!["org-connections".into(), "project-team".into()],
+                ..InstalledDocument::default()
+            },
+        ),
+        (
+            ORG,
+            InstalledDocument {
+                kits: vec![record("project-artifacts")],
+                ..InstalledDocument::default()
+            },
+        ),
+    ]);
+    let org = installer.installed(&caller(ORG), ORG).await.unwrap();
+    assert!(org.organization.is_empty());
+    for gone in ["org-connections", "project-team", "project-artifacts"] {
+        assert!(!slugs(&org.effective).contains(&gone));
+        // An old portal still finds them: the shell always has them.
+        assert!(slugs(&with_retired(&org.effective)).contains(&gone));
+    }
+    installer.rename_installations(PLATFORM_TENANT).await.unwrap();
+    installer.rename_installations(ORG).await.unwrap();
+    {
+        let docs = store.docs.lock().unwrap();
+        assert!(docs[&PLATFORM_TENANT].removed_builtin.is_empty());
+        assert!(docs[&ORG].kits.is_empty());
+    }
+    // Asking for one is refused: there is no kit to install.
+    assert!(matches!(
+        installer
+            .install_for_organization(&caller(ORG), ORG, "org-connections", None)
+            .await,
+        Err(Refusal::Invalid(_))
+    ));
 }

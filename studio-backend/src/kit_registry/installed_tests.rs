@@ -125,16 +125,13 @@ async fn every_builtin_kit_is_a_base_kit_until_the_platform_removes_it() {
             "assistant",
             "components",
             "delivery",
-            "org-connections",
             "org-costs",
             "org-reports",
-            "project-artifacts",
             "project-domain-model",
             "project-git",
             "project-lifecycle",
             "project-product",
             "project-specs",
-            "project-team",
             "project-tests",
             "studio-api-docs"
         ]

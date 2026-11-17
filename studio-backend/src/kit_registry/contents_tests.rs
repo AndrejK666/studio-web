@@ -42,13 +42,11 @@ fn the_builtin_screens_are_today_s_tabs() {
             ("Open pull requests".to_owned(), Some("/tests".to_owned()))
         ]
     );
-    assert_eq!(
-        screens("project-artifacts"),
-        [(
-            "Artifacts".to_owned(),
-            Some("/projects/artifacts".to_owned())
-        )]
-    );
+    // Connections, the project's People and Artifacts are the shell's
+    // (ADR-0071 step 6): no kit brings them.
+    for gone in ["org-connections", "project-team", "project-artifacts"] {
+        assert!(builtin_catalogue().iter().all(|k| k.slug != gone), "{gone}");
+    }
     assert_eq!(
         screens("project-git"),
         [("Activity".to_owned(), Some("/projects/activity".to_owned()))]

@@ -316,12 +316,6 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             ],
             ..KitContents::default()
         },
-        // A section of `projects-mfe` today: the project's ingested
-        // artifacts.
-        "project-artifacts" => KitContents {
-            screens: vec![project_tab("Artifacts", Some("/projects/artifacts"))],
-            ..KitContents::default()
-        },
         // `costs-mfe`: the organization's costs, its price list and budgets
         // (studio-usage).
         "org-costs" => KitContents {
@@ -394,17 +388,6 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             ],
             ..KitContents::default()
         },
-        // The Project domain model (ADR-0066, ADR-0067; not the Studio domain
-        // model): the model a project's documents make, the findings and
-        // issues they leave to decide, the glossary, traces to work. The
-        // portal's screen is `domain-model-mfe`; the routes are the ones the
-        // old prototype's `spec-model-tab` called, under their new path.
-        // `admin-mfe`'s Integrations section, shown for the organization in
-        // scope. Admin › Integrations stays the platform administrator's.
-        "org-connections" => KitContents {
-            screens: vec![tab("organization", "Connections", Some("/connections"))],
-            ..KitContents::default()
-        },
         // Building and running a product in Constructor Research (ADR-0049,
         // docs/design/studio-kits.md §3.13). Not a base kit by default
         // (`OPT_IN_BUILTIN`); installed for an organization or one project.
@@ -425,15 +408,6 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 "Constructor Research",
                 Some("/constructor-research"),
             )],
-            ..KitContents::default()
-        },
-        // `team-mfe`: a project's Team, the role grants scoped to it in the
-        // organization's access config. That config is account-management's
-        // tenant metadata (read and written whole, as the old prototype did),
-        // a platform route outside this backend's contract, so it is not
-        // listed here.
-        "project-team" => KitContents {
-            screens: vec![project_tab("Team", Some("/projects/team"))],
             ..KitContents::default()
         },
         // `assistant-mfe`: Studio AI, docked in the shell's sidebar beside
@@ -462,7 +436,10 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             screens: vec![project_tab("Activity", Some("/projects/activity"))],
             ..KitContents::default()
         },
-        // Its open questions (`issues-mfe`, the prototype's Issues tab, at
+        // The Project model (ADR-0066, ADR-0067; not the Studio domain model):
+        // the model a project's documents make, the glossary, traces to work
+        // (`domain-model-mfe`; the routes are the ones the old prototype's
+        // `spec-model-tab` called, under their new path). Its open questions (`issues-mfe`, the prototype's Issues tab, at
         // `/issues`) moved here from `project-issues` with `finding`: they
         // are what the project's documents leave to decide (ADR-0071 step 4,
         // open question 2: the tab is "Open questions").

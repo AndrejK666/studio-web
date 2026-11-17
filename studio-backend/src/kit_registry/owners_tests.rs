@@ -72,6 +72,28 @@ fn a_mark_moves_only_from_a_kit_of_studio_s_that_no_longer_brings_it() {
         owners.rehome("project-issues", "work-item", MarkOn::Type),
         Some(Rehome::Kit("project-git".into()))
     );
+    // What went to the shell goes back to the core (ADR-0071 step 6).
+    assert_eq!(
+        owners.rehome(
+            "org-connections",
+            "organization",
+            MarkOn::Property("connectors")
+        ),
+        Some(Rehome::Core)
+    );
+    assert_eq!(
+        owners.rehome("project-team", "assignment", MarkOn::Type),
+        Some(Rehome::Core)
+    );
+    // Catalogue writes no connection any more.
+    let catalogue = crate::kit_registry::manifest::builtin_manifest("components").unwrap();
+    assert!(
+        catalogue
+            .permissions
+            .writes
+            .iter()
+            .all(|w| !w.contains("/studio-connector/"))
+    );
     // An organization's own kit keeps its marks.
     assert_eq!(owners.rehome("acme-ops", "finding", MarkOn::Type), None);
     // A piece no built-in kit brings stays its kit's to leave.

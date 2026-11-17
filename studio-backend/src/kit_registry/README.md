@@ -36,7 +36,7 @@ This README is what you need to work in the directory.
   `project-tests` (Tests), `project-product` (Product), `delivery` (Builds,
   releases & environments), `constructor-research`, `components`
   (Catalogue), `org-costs`, `org-reports`, `studio-api-docs` (level
-  `platform`), `project-artifacts`, `org-connections`, `project-team`, `assistant`
+  `platform`) and `assistant`
   (Studio AI, the chat panel the shell docks in its sidebar; no route, its
   permissions are studio-llm-proxy's client settings and chat completions) and
   `constructor-research`. Every built-in kit is a base kit by default except
@@ -91,7 +91,10 @@ This README is what you need to work in the directory.
 - Slug aliases (ADR-0071 §8, step 5), `aliases.rs`: `project-issues` →
   `project-domain-model` + `project-git`, `project-activity` →
   `project-git` + `project-lifecycle`, `product-releases` →
-  `project-product` + `delivery`, `org-infrastructure` → `delivery`. Every
+  `project-product` + `delivery`, `org-infrastructure` → `delivery`;
+  `org-connections`, `project-team`, `project-artifacts` → the shell (step
+  6: Connections, the project's People and Artifacts are shell tabs, their
+  relations back in the core, `assignment` dropped as left by Studio). Every
   installed-kits document is read through them (`installed::MigratingStore`):
   an installation of a retired slug counts as one of each kit it resolves
   to, and a merged kit stays removed (`removed_builtin`) only where every

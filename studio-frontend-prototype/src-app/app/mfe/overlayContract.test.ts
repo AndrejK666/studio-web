@@ -261,6 +261,14 @@ describe('generated MFE manifest', () => {
       expect(declared.filter(({ need }) => typeof need !== 'string' || !GTS_TYPE.test(need))).toEqual([]);
     });
 
+    it("names no kit for Connections, People or Artifacts: the shell's since ADR-0071 step 6", () => {
+      for (const route of ['/connections', '/projects/team', '/projects/artifacts']) {
+        const ext = extensions.find((e) => e.presentation?.route === route);
+        expect(ext, route).toBeDefined();
+        expect(ext?.presentation?.kit, route).toBeUndefined();
+      }
+    });
+
     it("names no retired kit slug (ADR-0071 §8): every screen's kit is a current one", () => {
       const retired = Object.keys(KIT_ALIASES);
       expect(
@@ -478,7 +486,8 @@ describe('generated MFE manifest', () => {
         'Releases',
         'Activity',
         'Timeline',
-        'Team',
+        // The project's People (team-mfe): the shell's since ADR-0071 step 6.
+        'People',
         // What the Studio domain model records about the project (admin-mfe's
         // generic screen, ADR-0066; the prototype drew it on Overview).
         'Attributes',
@@ -531,14 +540,21 @@ describe('generated MFE manifest', () => {
       // (ADR-0069) is a screen of its own, never the shell's entry; a kit with
       // several tabs on one entry (product-mfe: Product and Components)
       // switches on sections of its own.
-      // Some of the shell entry's sections belong to a kit (Artifacts, Specs,
-      // Activity, Timeline): still sections of that entry, shown only where
-      // their kit is installed.
-      const shellSections = project.filter((ext) => ext.presentation?.section && !ext.presentation?.kit);
+      // Some of the shell entry's sections belong to a kit (Specs): still
+      // sections of that entry, shown only where their kit is installed.
+      // The project's People (team-mfe) is the shell's too since ADR-0071
+      // step 6, on a package of its own.
+      const shellOwnPackage = (ext: PresentedExtension) => /~constructor_studio\.team\./.test(ext.id);
+      const shellSections = project.filter(
+        (ext) => ext.presentation?.section && !ext.presentation?.kit && !shellOwnPackage(ext)
+      );
       expect(new Set(shellSections.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
       expect(shellSections.length).toBeGreaterThan(1);
-      // A section elsewhere is a kit's own (it switches on sections of its own).
-      for (const ext of project.filter((e) => e.presentation?.section && e.entry !== workspaceEntry)) {
+      // A section elsewhere is a kit's own (it switches on sections of its
+      // own), or the shell's People.
+      for (const ext of project.filter(
+        (e) => e.presentation?.section && e.entry !== workspaceEntry && !shellOwnPackage(e)
+      )) {
         expect(ext.presentation?.kit).toBeTruthy();
       }
       // A tab with no section is a screen of its own, never the shell's entry.

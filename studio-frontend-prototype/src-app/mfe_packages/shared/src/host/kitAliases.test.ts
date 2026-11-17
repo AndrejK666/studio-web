@@ -11,6 +11,9 @@ describe('kit slug aliases (ADR-0071 §8)', () => {
       'project-activity': ['project-git', 'project-lifecycle'],
       'product-releases': ['project-product', 'delivery'],
       'org-infrastructure': ['delivery'],
+      'org-connections': [],
+      'project-team': [],
+      'project-artifacts': [],
     });
   });
 
@@ -27,6 +30,8 @@ describe('kit slug aliases (ADR-0071 §8)', () => {
     // project-lifecycle is not installed.
     expect(kitIn(installed, 'project-activity')).toBe(false);
     expect(kitIn(installed, 'project-tests')).toBe(false);
+    // The shell's: always.
+    expect(kitIn(new Set(), 'project-team')).toBe(true);
     expect(kitAvailable({ routes: [], kits: [...installed] }, 'product-releases')).toBe(true);
     expect(kitAvailable({ routes: [], kits: [...installed] }, 'project-activity')).toBe(false);
   });

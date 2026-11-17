@@ -213,10 +213,7 @@
       "PUT /studio-components-catalog/v1/registry/gear-repository",
       "DELETE /studio-components-catalog/v1/registry/gear-repository",
       "POST /studio-components-catalog/v1/registry/gear-repository/create",
-      "POST /studio-components-catalog/v1/registry/scaffold",
-      "POST /studio-connector/v1/connections",
-      "PATCH /studio-connector/v1/connections/{id}",
-      "DELETE /studio-connector/v1/connections/{id}"
+      "POST /studio-components-catalog/v1/registry/scaffold"
     ]
   },
   "gears": [

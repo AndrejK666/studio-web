@@ -16,6 +16,10 @@ export const KIT_ALIASES: Readonly<Record<string, readonly string[]>> = {
   'project-activity': ['project-git', 'project-lifecycle'],
   'product-releases': ['project-product', 'delivery'],
   'org-infrastructure': ['delivery'],
+  // To the shell (ADR-0071 step 6): Connections, People, Artifacts.
+  'org-connections': [],
+  'project-team': [],
+  'project-artifacts': [],
 };
 
 /** What `slug` resolves to when it is retired; `null` for a current slug. */
