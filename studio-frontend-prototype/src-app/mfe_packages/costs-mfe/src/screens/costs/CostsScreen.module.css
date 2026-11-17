@@ -180,3 +180,16 @@
   height: 2rem;
   width: 16rem;
 }
+
+/* A number in the report grid: right-aligned across its cell. */
+.numCell {
+  display: block;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.totalLine {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}

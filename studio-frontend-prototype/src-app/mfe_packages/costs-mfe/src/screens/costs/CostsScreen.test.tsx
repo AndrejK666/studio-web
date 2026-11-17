@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import type { BudgetList, BudgetStatus, CostReport, PriceList } from '../../api/types';
+
+// The kit's DataGrid measures its header.
+stubResizeObserver();
 
 const { service, org, calls } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -129,6 +133,53 @@ describe('CostsScreen', () => {
     expect(container.querySelector('[data-costs-budgets]')).not.toBeNull();
     // The report is asked with people's own keys and grouped by project to start with.
     expect(calls).toContainEqual(expect.objectContaining({ organizationId: 'o1', groupBy: 'project', includePersonal: true }));
+  });
+
+  it('lists the report through the grid: the search narrows its rows, and says when nothing matched', async () => {
+    serve({
+      costs: answer({
+        ...report,
+        group_by: 'model',
+        rows: [
+          { ...report.rows[0], key: 'anthropic/claude', label: 'anthropic/claude', unpriced: false },
+          { ...report.rows[0], key: 'openai/gpt', label: 'openai/gpt', unpriced: false },
+        ],
+      }),
+    });
+    const { container } = render(<CostsScreen />);
+    await waitFor(() => expect(container.querySelector('[data-list-grid="cost-report"] [data-cost-row="openai/gpt"]')).not.toBeNull());
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'claude' } });
+    await waitFor(() => expect(container.querySelector('[data-cost-row="openai/gpt"]')).toBeNull());
+    expect(container.querySelector('[data-cost-row="anthropic/claude"]')).not.toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'nobody' } });
+    expect(await screen.findByText('no_matches')).toBeTruthy();
+    fireEvent.click(screen.getByText('clear_search'));
+    await waitFor(() => expect(container.querySelector('[data-cost-row="openai/gpt"]')).not.toBeNull());
+  });
+
+  it('says nothing was used when the report has no rows', async () => {
+    serve({ costs: answer({ ...report, rows: [], total: 0, unpriced: [] }) });
+    render(<CostsScreen />);
+    expect(await screen.findByText('nothing_used')).toBeTruthy();
+  });
+
+  it('offers a retry when the report did not load, and reads it again', async () => {
+    let failed = false;
+    serve({
+      costs: (params?: unknown) => {
+        calls.push(params);
+        return {
+          fetch: () => {
+            if (failed) return Promise.resolve(report);
+            failed = true;
+            return Promise.reject(new Error('down'));
+          },
+        };
+      },
+    });
+    const { container } = render(<CostsScreen />);
+    fireEvent.click(await screen.findByText('retry'));
+    await waitFor(() => expect(container.querySelector('[data-cost-row="me"]')).not.toBeNull());
   });
 
   it('warns about a budget in the header and opens the budgets on it', async () => {
