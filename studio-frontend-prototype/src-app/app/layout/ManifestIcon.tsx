@@ -1,15 +1,18 @@
 /**
  * A tab's or a menu item's icon, as its manifest names it (`lucide:<name>`).
  *
- * `lucide-react/dynamic` is loaded on first use, not with the shell: its name
- * map (every lucide icon, each behind its own `import()`) was a quarter of a
- * megabyte of the host's entry chunk before minification. The glyph itself
- * always arrived in a chunk of its own after the first paint, so the map
- * coming the same way changes nothing the person sees: the label is there at
- * once and the glyph joins it.
+ * A name the shell bundles (`icons/bundledIcons.ts`: every built-in screen's,
+ * and the built-in kit catalogue's) draws at once, with no request. Any other
+ * lucide name — a kit installed at run time may name one — goes through
+ * `lucide-react/dynamic`, loaded on first use: its name map (every lucide icon,
+ * each behind its own `import()`) was a quarter of a megabyte of the host's
+ * entry chunk before minification. Both are our own origin; nothing is asked of
+ * an icon service.
  */
 
 import React, { Suspense } from 'react';
+import { bundledIcon } from '@/app/icons/bundledIcons';
+import { drawGlyph } from '@/app/icons/BundledIcon';
 import { levelIconName } from './levelIcon';
 
 export interface ManifestIconProps {
@@ -34,6 +37,8 @@ export const ManifestIcon: React.FC<ManifestIconProps> = ({ declared, url, class
   if (url) return <img src={url} alt="" aria-hidden="true" className={className} data-kit-icon-url />;
   // Not a lucide name: nothing to load, nothing to draw.
   if (!declared?.startsWith('lucide:')) return null;
+  const bundled = bundledIcon(declared);
+  if (bundled) return drawGlyph(bundled, declared, className);
   return (
     <Suspense fallback={null}>
       <LucideByName declared={declared} className={className} />
