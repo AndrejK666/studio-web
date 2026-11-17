@@ -5550,6 +5550,11 @@ response	GET /studio-user/v1/me/inbox-marks	items.state	String	always
 response	GET /studio-user/v1/me/inbox-marks	items.until	String	optional
 response	GET /studio-user/v1/me/inbox-marks	items.updated_at	String	always
 response	GET /studio-user/v1/me/inbox-marks	total	u32	always
+response	GET /studio-user/v1/me/inbox/count	members_known	bool	always
+response	GET /studio-user/v1/me/inbox/count	other	u32	always
+response	GET /studio-user/v1/me/inbox/count	total	u32	always
+response	GET /studio-user/v1/me/inbox/count	unread	Vec<String>	always
+response	GET /studio-user/v1/me/inbox/count	workspaces	u32	always
 response	GET /studio-user/v1/me/invitations	items	Vec<{}>	always
 response	GET /studio-user/v1/me/invitations	items.accepted_at_epoch_ms	i64	optional
 response	GET /studio-user/v1/me/invitations	items.email	String	always
@@ -8788,6 +8793,7 @@ route	GET /studio-user/v1/me/aliases
 route	GET /studio-user/v1/me/colleagues
 route	GET /studio-user/v1/me/inbox
 route	GET /studio-user/v1/me/inbox-marks
+route	GET /studio-user/v1/me/inbox/count
 route	GET /studio-user/v1/me/invitations
 route	GET /studio-user/v1/me/logins
 route	GET /studio-user/v1/me/memberships

@@ -60,7 +60,7 @@ use toolkit::contracts::{DatabaseCapability, RestApiCapability, RunnableCapabili
 use toolkit::{Gear, GearCtx};
 use tracing::{info, warn};
 
-pub use api::{StudioEvent, StudioEventPublisher};
+pub use api::{StudioEvent, StudioEventPublisher, published};
 use config::StudioEventsConfig;
 use hub::StudioEventHub;
 use store::EventStore;
