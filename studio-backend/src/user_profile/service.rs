@@ -429,6 +429,40 @@ pub struct IdentityService {
     realm_read: Mutex<HashMap<String, i64>>,
     /// The assembly's hub, for the domain model's view of the roadmap plan.
     hub: OnceLock<Arc<toolkit::client_hub::ClientHub>>,
+    /// The Inbox's facts, kept a few seconds per (person, organization).
+    inbox_reads: InboxReads,
+}
+
+/// How long the Inbox's facts are reused. The owner accepted 30 s: the badge,
+/// the Inbox and the Overview each read every source of every workspace, and
+/// a source moves by the minute, not the second.
+const INBOX_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The Inbox's facts (every source of every workspace, before the person's
+/// marks), kept [`INBOX_TTL`] per `(person, organization)` and computed once
+/// for callers that ask together. A review request published since — this
+/// process saw it (`studio_events::published`) — makes the next caller read
+/// again; other sources wait out the TTL.
+pub struct InboxReads(crate::ttl_cache::TtlCache<(String, Uuid), Arc<super::inbox::Read>>);
+
+impl Default for InboxReads {
+    fn default() -> Self {
+        Self(crate::ttl_cache::TtlCache::new(INBOX_TTL, 1024))
+    }
+}
+
+impl InboxReads {
+    /// The subject type whose events move what waits on a person.
+    const MOVED_BY: &'static str = "review_request";
+
+    pub async fn get<F, Fut>(&self, key: (String, Uuid), read: F) -> Arc<super::inbox::Read>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Arc<super::inbox::Read>>,
+    {
+        let epoch = crate::studio_events::published(Self::MOVED_BY);
+        self.0.get_or_compute(key, epoch, read, |_| true).await
+    }
 }
 
 impl IdentityService {
@@ -443,7 +477,13 @@ impl IdentityService {
             last_seen: Mutex::new(HashMap::new()),
             realm_read: Mutex::new(HashMap::new()),
             hub: OnceLock::new(),
+            inbox_reads: InboxReads::default(),
         }
+    }
+
+    /// The Inbox's kept facts.
+    pub(crate) fn inbox_reads(&self) -> &InboxReads {
+        &self.inbox_reads
     }
 
     /// Account-management, as the service reads it: for a handler that

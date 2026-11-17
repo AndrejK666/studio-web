@@ -33,7 +33,11 @@ README is what you need to work in the directory.
   next step is theirs, across their workspaces, overdue first, with the
   caller's `me/inbox-marks` applied (`?view=hidden` lists what the marks
   hide). Items are never stored: each is read from its source route as the
-  caller on every call (ADR-0068 §6), and each names its `source`
+  caller (ADR-0068 §6); the read is kept 30 s per (person, organization),
+  shared by callers that ask together, and read again after a
+  `review_request` event, while the marks apply on every call.
+  `GET /studio-user/v1/me/inbox/count` is the badge's read of the same
+  answer without the items. Each item names its `source`
   (`review-requests`, `pull-requests`). Kits add sources: the Inbox reads
   `GET /studio-kits/v1/inbox-sources` and runs each kit's domain query as the
   caller (`"$me"` = their subject id) through `POST

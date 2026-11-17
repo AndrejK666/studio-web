@@ -217,6 +217,38 @@ pub trait GraphStore: Send + Sync {
             .collect())
     }
 
+    /// The repository each of `node_ids` came from, for those that are files
+    /// of `scope` ([`GraphStore::files_in_scope`]) with a repository.
+    ///
+    /// Defaulted to the scope's whole file listing narrowed here, which is
+    /// the reference. The index overrides it with a query narrowed by id, so
+    /// counting a project's specs per repository reads only their rows.
+    async fn repos_of_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        node_ids: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        repos_of_listed_files(self, ctx, scope, node_ids).await
+    }
+
+    /// A window of movement per repository of `scope`, by
+    /// [`super::activity::repo_activity`]'s rules, measured at `now` (epoch
+    /// ms) over `days` days.
+    ///
+    /// Defaulted to every pull request and commit of the scope, read side by
+    /// side and folded here: the reference. The index overrides it with
+    /// queries that read a few columns, and of the commits only the window's.
+    async fn repo_activity(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        now: i64,
+        days: usize,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        activity_of_listing(self, ctx, scope, now, days).await
+    }
+
     /// One page of the listing, narrowed, ordered and sliced.
     ///
     /// Defaulted to the whole projection narrowed in process
@@ -230,6 +262,46 @@ pub trait GraphStore: Send + Sync {
         let nodes = self.list(ctx, query.type_filter).await?;
         Ok(page_of_nodes(&nodes, query))
     }
+}
+
+/// [`GraphStore::repos_of_files`] from the scope's whole file listing: the
+/// reference, and what a store without a narrower read answers.
+pub(crate) async fn repos_of_listed_files<S: GraphStore + ?Sized>(
+    store: &S,
+    ctx: &SecurityContext,
+    scope: &str,
+    node_ids: &[String],
+) -> anyhow::Result<HashMap<String, String>> {
+    let wanted: HashSet<&str> = node_ids.iter().map(String::as_str).collect();
+    Ok(store
+        .files_in_scope(ctx, scope)
+        .await?
+        .into_iter()
+        .filter(|f| !f.repo.is_empty() && wanted.contains(f.node_id.as_str()))
+        .map(|f| (f.node_id, f.repo))
+        .collect())
+}
+
+/// [`GraphStore::repo_activity`] from every pull request and commit of the
+/// scope, read side by side: the reference.
+pub(crate) async fn activity_of_listing<S: GraphStore + ?Sized>(
+    store: &S,
+    ctx: &SecurityContext,
+    scope: &str,
+    now: i64,
+    days: usize,
+) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+    let (pulls, commits) = tokio::join!(
+        store.list_in_scope(ctx, Some("pull_request"), scope),
+        store.list_in_scope(ctx, Some("commit"), scope)
+    );
+    let values = |nodes: Vec<GtsNode>| nodes.into_iter().map(|n| n.value).collect::<Vec<_>>();
+    Ok(super::activity::repo_activity(
+        &values(pulls?),
+        &values(commits?),
+        now,
+        days,
+    ))
 }
 
 /// What `/nodes` asks for.

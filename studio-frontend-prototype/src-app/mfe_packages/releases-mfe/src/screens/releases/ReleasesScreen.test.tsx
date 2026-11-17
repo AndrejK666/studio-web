@@ -107,11 +107,17 @@ const readyPath = (patch: Partial<ProjectPath> = {}): ProjectPath => ({
 
 const runNode = (id: string, v: Record<string, unknown>) => ({ type_id: 'workflow_run', instance_id: id, value: v });
 
+/**
+ * The services the screen reads. By default the path carries no targets and no
+ * deploys (a backend before `include`), so they are read on their own; `carry`
+ * puts them in the path's answer, as a backend with `include` does.
+ */
 function setUp({
   deployments,
   path,
   runs,
-}: { deployments?: Deployment[]; path?: ProjectPath; runs?: ReturnType<typeof runNode>[] } = {}) {
+  carry = false,
+}: { deployments?: Deployment[]; path?: ProjectPath; runs?: ReturnType<typeof runNode>[]; carry?: boolean } = {}) {
   calls.length = 0;
   for (const k of Object.keys(service)) delete service[k];
   const targets: ProjectTargets = {
@@ -144,9 +150,11 @@ function setUp({
       failure_step: 'images',
     }),
   ];
+  const deploys = { items: deployments ?? [deployment({})], total: 1 };
+  const answer = path ?? readyPath();
   Object.assign(service, {
     targets: read('targets', targets),
-    deployments: read('deployments', { items: deployments ?? [deployment({})], total: 1 }),
+    deployments: read('deployments', deploys),
     nodes: (params: { type: string }) => {
       calls.push({ name: 'nodes', args: [params] });
       const page =
@@ -164,7 +172,7 @@ function setUp({
     createDeployment: write('createDeployment', deployment({ id: 'd9', state: 'awaiting_approval' })),
     productDescription: read('productDescription', { latest: null }),
     saveBindings: write('saveBindings', { items: [], total: 0 }),
-    projectPath: read('projectPath', path ?? readyPath()),
+    projectPath: read('projectPath', carry ? { ...answer, targets, deployments: deploys } : answer),
     specPlan: read('specPlan', { items: [{}, {}], total: 2 }),
     deployment: read('deployment', deployment({})),
     deploymentLogs: read('deploymentLogs', { containers: [] }),
@@ -314,6 +322,50 @@ describe('ReleasesScreen', () => {
     fireEvent.change(search, { target: { value: 'billing-prod' } });
     await waitFor(() => expect(document.querySelectorAll('[data-deploy-history-row]').length).toBe(1));
     expect(document.querySelector('[data-deploy-history-row="d2"]')).toBeTruthy();
+  });
+
+  describe('targets and deploys from the path', () => {
+    const asked = (name: string) => calls.filter((c) => c.name === name).length;
+
+    it('takes them from the path answer and does not read them again', async () => {
+      setUp({ carry: true });
+      render(<ReleasesScreen bridge={null} />);
+      expect(await screen.findByText('0.2.0 runs in dev')).toBeTruthy();
+      expect(calls.find((c) => c.name === 'projectPath')?.args).toEqual([
+        { projectId: 'p1', include: 'targets,deployments' },
+      ]);
+      expect(asked('targets')).toBe(0);
+      expect(asked('deployments')).toBe(0);
+    });
+
+    it('reads them on their own from a backend whose path does not carry them', async () => {
+      render(<ReleasesScreen bridge={null} />);
+      expect(await screen.findByText('0.2.0 runs in dev')).toBeTruthy();
+      expect(asked('targets')).toBe(1);
+      expect(asked('deployments')).toBe(1);
+    });
+
+    it('reads them on their own when the path fails, with their own failures as before', async () => {
+      Object.assign(service, {
+        projectPath: read('projectPath', new Error('path is down')),
+        deployments: read('deployments', new Error('deploys are down')),
+      });
+      render(<ReleasesScreen bridge={null} />);
+      // A failed deploys read is an empty ladder, not an error.
+      await waitFor(() => expect(document.querySelector('[data-ladder-step="dev"]')).toBeTruthy());
+      expect(document.querySelector('[data-ladder-step="dev"]')?.getAttribute('data-ladder-state')).toBe('empty');
+      expect(asked('targets')).toBe(1);
+      expect(asked('deployments')).toBe(1);
+    });
+
+    it('a 404 from the targets is a deployment without environments, not an error', async () => {
+      Object.assign(service, {
+        projectPath: read('projectPath', new Error('path is down')),
+        targets: read('targets', Object.assign(new Error('not found'), { response: { status: 404 } })),
+      });
+      render(<ReleasesScreen bridge={null} />);
+      expect(await screen.findByText('no_environments_here')).toBeTruthy();
+    });
   });
 
   describe('the path to running (#1050)', () => {

@@ -130,6 +130,8 @@ impl StudioEventHub {
             channel.live.clone()
         };
         for event in events {
+            // Another replica's event, read from the log (`api::published`).
+            super::api::note_published(&event.subject_type);
             live.send(event);
         }
     }
@@ -152,6 +154,8 @@ impl StudioEventHub {
 
 impl StudioEventPublisher for StudioEventHub {
     fn publish(&self, event: StudioEvent) {
+        // For the readers that keep answers a few seconds (`api::published`).
+        super::api::note_published(&event.subject_type);
         let at_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as i64);

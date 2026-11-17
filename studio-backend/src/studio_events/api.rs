@@ -66,3 +66,29 @@ impl StudioEvent {
 pub trait StudioEventPublisher: Send + Sync {
     fn publish(&self, event: StudioEvent);
 }
+
+/// How many events about `subject_type` this process has published since it
+/// started: a number that moves when such a thing happened here. A reader
+/// that keeps answers for a few seconds (the Inbox) compares it with the one
+/// its answer was computed under and computes again when it moved. Another
+/// replica's events do not move it; the answer's own TTL covers those.
+pub fn published(subject_type: &str) -> u64 {
+    counts()
+        .lock()
+        .ok()
+        .and_then(|c| c.get(subject_type).copied())
+        .unwrap_or(0)
+}
+
+pub(super) fn note_published(subject_type: &str) {
+    if let Ok(mut c) = counts().lock() {
+        *c.entry(subject_type.to_owned()).or_insert(0) += 1;
+    }
+}
+
+type Counts = std::sync::Mutex<std::collections::HashMap<String, u64>>;
+
+fn counts() -> &'static Counts {
+    static COUNTS: std::sync::OnceLock<Counts> = std::sync::OnceLock::new();
+    COUNTS.get_or_init(Default::default)
+}

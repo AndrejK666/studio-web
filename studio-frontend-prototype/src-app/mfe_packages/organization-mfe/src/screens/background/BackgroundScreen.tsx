@@ -20,7 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiRegistry, useSharedProperty, FRONTX_SHARED_PROPERTY_LANGUAGE } from '@gears-frontx/react';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '@gears-frontx/ui-kit';
-import { isRunEvent, useOrganization, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
+import { isRunEvent, useOrganization, usePollWhileVisible, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { BackgroundApiService, scheduleOf } from '../../api/BackgroundApiService';
 import { ATTENTION_STATES, EVERY_STATE, STATES, foldRecurring, mergePages, type ShownRun } from '../../background/model';
@@ -162,11 +162,8 @@ export const BackgroundScreen: React.FC = () => {
   useStudioEventRefresh(isRunEvent, refresh);
 
   const live = !!page?.items.some((r) => r.state === 'queued' || r.state === 'running');
-  useEffect(() => {
-    if (!live) return;
-    const timer = setInterval(refresh, LIVE_POLL_MS);
-    return () => clearInterval(timer);
-  }, [live, refresh]);
+  // Not while the tab is hidden: shown again, it reads at once.
+  usePollWhileVisible(refresh, LIVE_POLL_MS, live);
 
   const onAct = useCallback(
     (run: TaskRun, what: 'cancel' | 'retry') => {

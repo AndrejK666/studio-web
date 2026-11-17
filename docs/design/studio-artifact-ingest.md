@@ -343,9 +343,13 @@ time.
 tenant is served from it only after a fill copied its graph in and wrote its
 `studio_artifact_index_fill` row; the fill runs in the background on the first
 read, and a failed fill is retried no sooner than 60 seconds later. `/nodes`
-with a `scope` is one `SELECT … LIMIT` with a `COUNT`; `/source-activity`,
-`/activity`, `/edges?scope=`, the portfolio counts and the documents gear's
-file list are one indexed query each.
+with a `scope` is one `SELECT … LIMIT` with a `COUNT`; `/activity`,
+`/edges?scope=`, the portfolio counts and the documents gear's file list are
+one indexed query each. `/source-activity` (`GraphStore::repo_activity`) reads
+no payload: the pull requests as five columns, the repositories with commits as
+one `GROUP BY`, and only the commits whose `created_at` is in the window; the
+fold is `activity::repo_activity`, and `index_tests` compares the two.
+`/specs-per-source` asks for the decided files by id (`repos_of_files`).
 
 ##### Responsibility boundaries
 

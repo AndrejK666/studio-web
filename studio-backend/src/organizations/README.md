@@ -78,7 +78,11 @@ This README is what you need to work in the directory.
   read through their REST routes as the caller (`crate::mcp::sdk::Api`), so
   the status never shows more than those routes would; a failed read lands in
   `unread` and is never counted as nothing wrong. The rules are unit tests in
-  `status_tests.rs`, ported from the portal's.
+  `status_tests.rs`, ported from the portal's. The health line (refused
+  connection, quiet days, stuck pull requests) is the project's alone
+  (`Overview::project_health`: its rollup row, the runs of the organization,
+  its workspace and itself, its open pull requests), kept a minute, or the
+  line of an overview the caller already has; never the whole organization's.
 
 ## Working here
 

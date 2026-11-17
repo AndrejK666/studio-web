@@ -2694,6 +2694,18 @@ impl IngestService {
         self.graph.list_in_scope(ctx, type_filter, scope).await
     }
 
+    /// A window of movement per repository of `scope`
+    /// (`/source-activity`), counted where the store can count it.
+    pub async fn repo_activity(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        now: i64,
+        days: usize,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        self.graph.repo_activity(ctx, scope, now, days).await
+    }
+
     /// One page of the listing, as `/nodes` asks for it.
     pub async fn page_nodes(
         &self,
@@ -3637,6 +3649,15 @@ impl super::port::ArtifactFiles for IngestService {
         scope: &str,
     ) -> anyhow::Result<Vec<super::port::IngestedFile>> {
         self.graph.files_in_scope(ctx, scope).await
+    }
+
+    async fn repos_of_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        node_ids: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        self.graph.repos_of_files(ctx, scope, node_ids).await
     }
 
     async fn reviews(

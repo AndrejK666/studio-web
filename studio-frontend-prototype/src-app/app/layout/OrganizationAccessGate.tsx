@@ -32,7 +32,7 @@
 
 import React from 'react';
 import { apiRegistry, eventBus, useAppSelector } from '@gears-frontx/react';
-import { parseProblemDetails } from '@constructor-studio/mfe-shared';
+import { parseProblemDetails, pollWhileVisible } from '@constructor-studio/mfe-shared';
 import {
   IdentityApiService,
   OrganizationsApiService,
@@ -50,7 +50,8 @@ type Busy = 'idle' | 'loading' | 'creating' | 'requesting' | 'withdrawing' | 'ac
  * How often a pending request is read again while this screen is up, so an
  * approval shows without a reload. A person with no organization has no tenant
  * to receive studio events on, so this is the one poll here; it runs only while
- * something is pending and stops with the screen.
+ * something is pending and stops with the screen. It rests while the tab is
+ * hidden and reads at once when it is shown again.
  */
 export const PENDING_POLL_MS = 30_000;
 
@@ -133,7 +134,7 @@ export const OrganizationAccessGate: React.FC = () => {
   React.useEffect(() => {
     if (!pending) return;
     let live = true;
-    const timer = setInterval(() => {
+    const stop = pollWhileVisible(() => {
       void readMine()
         .then((mine) => {
           if (live) setLatest(mine);
@@ -142,7 +143,7 @@ export const OrganizationAccessGate: React.FC = () => {
     }, PENDING_POLL_MS);
     return () => {
       live = false;
-      clearInterval(timer);
+      stop();
     };
   }, [pending]);
 

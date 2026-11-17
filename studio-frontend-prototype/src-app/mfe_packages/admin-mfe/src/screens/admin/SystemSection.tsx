@@ -33,6 +33,7 @@ import {
 } from '@gears-frontx/ui-kit';
 import {
   AccountsApiService,
+  pollWhileVisible,
   refusalReason,
   useOrganization,
   type OrganizationRef,
@@ -137,10 +138,11 @@ function WhoIsOnline() {
       );
     void read();
     // Refreshed on the cadence people report in on: faster shows the same answer more often.
-    const timer = setInterval(() => void read(), PRESENCE_REFRESH_MS);
+    // Not while the tab is hidden: shown again, it reads at once.
+    const stop = pollWhileVisible(() => void read(), PRESENCE_REFRESH_MS);
     return () => {
       live = false;
-      clearInterval(timer);
+      stop();
     };
   }, [api, tick]);
 

@@ -1042,16 +1042,46 @@ impl RepoEnricher {
             }
         };
 
-        // Described by a manifest: the catalogue's own rule for a gear directory.
-        let mut gears: Vec<LocalGear> = Vec::new();
-        let mut crate_dirs = std::collections::HashSet::new();
-        for dir in gear_dirs(&paths).into_iter().take(MAX_PROJECT_GEARS) {
-            let slug = dir
-                .rsplit('/')
+        // Every file the rules below read whatever the others say, read
+        // together, a few at a time: the gear directories' manifests and the
+        // Rust files that may declare a gear. One at a time, through the
+        // provider's API, this was 15.7 s of a `/plan` on Dev.
+        let dirs: Vec<String> = gear_dirs(&paths)
+            .into_iter()
+            .take(MAX_PROJECT_GEARS)
+            .collect();
+        let slug_of = |dir: &str| {
+            dir.rsplit('/')
                 .next()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| self.repo.rsplit('/').next().unwrap_or(&self.repo))
-                .to_string();
+                .to_string()
+        };
+        let mut first: Vec<String> = Vec::new();
+        for dir in &dirs {
+            let slug = slug_of(dir);
+            for rel in [
+                "gear.toml".to_string(),
+                "gear.gdl".to_string(),
+                format!("{slug}/gear.gdl"),
+                "Cargo.toml".to_string(),
+                format!("{slug}/Cargo.toml"),
+            ] {
+                let path = joined(dir, &rel);
+                if has(&path) {
+                    first.push(path);
+                }
+            }
+        }
+        let rust_files = project_gears::rust_candidates(&paths);
+        first.extend(rust_files.iter().map(|p| (*p).to_string()));
+        let mut read = self.read_many(&src, first).await;
+
+        // Described by a manifest: the catalogue's own rule for a gear directory.
+        let mut gears: Vec<LocalGear> = Vec::new();
+        let mut crate_dirs = std::collections::HashSet::new();
+        for dir in dirs {
+            let slug = slug_of(&dir);
             let toml_path = joined(&dir, "gear.toml");
             let gdl_path = [
                 joined(&dir, "gear.gdl"),
@@ -1060,14 +1090,12 @@ impl RepoEnricher {
             .into_iter()
             .find(|p| has(p));
             let toml = if has(&toml_path) {
-                self.read_file(&src, &toml_path)
-                    .await
-                    .map(|b| parse_gear_toml(&b))
+                text_of(&read, &toml_path).map(|b| parse_gear_toml(&b))
             } else {
                 None
             };
             let gdl = match &gdl_path {
-                Some(p) => self.read_file(&src, p).await.map(|b| parse_gear_gdl(&b)),
+                Some(p) => text_of(&read, p).map(|b| parse_gear_gdl(&b)),
                 None => None,
             };
             let declared = match (gdl, toml) {
@@ -1079,10 +1107,7 @@ impl RepoEnricher {
             for rel in ["Cargo.toml".to_string(), format!("{slug}/Cargo.toml")] {
                 let path = joined(&dir, &rel);
                 if has(&path)
-                    && let Some(name) = self
-                        .read_file(&src, &path)
-                        .await
-                        .and_then(|b| cargo_package_name(&b))
+                    && let Some(name) = text_of(&read, &path).and_then(|b| cargo_package_name(&b))
                 {
                     named.push((rel, name));
                 }
@@ -1113,21 +1138,39 @@ impl RepoEnricher {
         // Declared in code, by the toolkit's attribute.
         let mut bodies: std::collections::HashMap<&str, Option<String>> =
             std::collections::HashMap::new();
-        for file in project_gears::rust_candidates(&paths) {
-            let body = self.read_file(&src, file).await;
+        let mut declaring = Vec::new();
+        for file in rust_files {
+            let body = read.remove(file).flatten();
             let found = body
                 .as_deref()
                 .map(project_gears::code_declarations)
                 .unwrap_or_default();
             bodies.insert(file, body);
-            if found.is_empty() {
-                continue;
+            if !found.is_empty() {
+                declaring.push((file, found));
             }
+        }
+        // The module docs of the files that declare one, those not read yet
+        // read together.
+        let docs: Vec<String> = declaring
+            .iter()
+            .map(|(file, _)| project_gears::doc_file(file, &paths))
+            .filter(|doc| !bodies.contains_key(doc))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut doc_bodies = self.read_many(&src, docs).await;
+        for doc in declaring
+            .iter()
+            .map(|(file, _)| project_gears::doc_file(file, &paths))
+        {
+            if !bodies.contains_key(doc) {
+                bodies.insert(doc, doc_bodies.remove(doc).flatten());
+            }
+        }
+        for (file, found) in declaring {
             let doc_file = project_gears::doc_file(file, &paths);
-            if !bodies.contains_key(doc_file) {
-                let body = self.read_file(&src, doc_file).await;
-                bodies.insert(doc_file, body);
-            }
             let description = bodies
                 .get(doc_file)
                 .and_then(|b| b.as_deref())
@@ -1160,12 +1203,21 @@ impl RepoEnricher {
         }
         gears.truncate(MAX_PROJECT_GEARS);
 
-        // Each gear's README, as a document the matching may quote.
+        // Each gear's README, as a document the matching may quote, read
+        // together.
+        let readmes: Vec<String> = gears
+            .iter()
+            .filter_map(|g| project_gears::readme(&g.path, &paths))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let readmes = self.read_many(&src, readmes).await;
         for gear in &mut gears {
             let Some(path) = project_gears::readme(&gear.path, &paths) else {
                 continue;
             };
-            if let Some(body) = self.read_file(&src, path).await {
+            if let Some(body) = text_of(&readmes, path) {
                 let text = doc_excerpt(&body, DOC_EXCERPT_CHARS);
                 if !text.is_empty() {
                     gear.doc = Some((path.to_string(), text));
@@ -1179,12 +1231,14 @@ impl RepoEnricher {
                 .into_iter()
                 .filter_map(|(path, body)| body.map(|b| (path.to_string(), b)))
                 .collect();
-            for manifest in super::candidates::manifests_to_read(&paths) {
-                if texts.contains_key(manifest) {
-                    continue;
-                }
-                if let Some(body) = self.read_file(&src, manifest).await {
-                    texts.insert(manifest.to_string(), body);
+            let manifests: Vec<String> = super::candidates::manifests_to_read(&paths)
+                .into_iter()
+                .filter(|m| !texts.contains_key(*m))
+                .map(str::to_string)
+                .collect();
+            for (manifest, body) in self.read_many(&src, manifests).await {
+                if let Some(body) = body {
+                    texts.insert(manifest, body);
                 }
             }
             Some(Arc::new(super::candidates::detect(&files, &texts, &gears)))
@@ -1203,6 +1257,29 @@ impl RepoEnricher {
             gears,
             candidates: candidates.unwrap_or_default(),
         })
+    }
+
+    /// The text of each of `paths`, [`PLAN_READS`] at a time; `None` for
+    /// one that is absent. The reads are built in a loop, not a closure over
+    /// the paths: a closure borrowing each one is not general enough for the
+    /// `Send` the callers' tasks ask of this future.
+    async fn read_many(
+        &self,
+        src: &Repository,
+        paths: Vec<String>,
+    ) -> std::collections::HashMap<String, Option<String>> {
+        use futures_util::{StreamExt, stream};
+        let mut reads = Vec::with_capacity(paths.len());
+        for path in paths {
+            reads.push(async move {
+                let body = self.read_file(src, &path).await;
+                (path, body)
+            });
+        }
+        stream::iter(reads)
+            .buffer_unordered(PLAN_READS)
+            .collect()
+            .await
     }
 
     /// Fetch one text file's raw content, or `None` when it is absent.
@@ -1990,6 +2067,16 @@ fn plugins_status(declared: bool) -> Value {
 
 /// How much of a document's opening the profile keeps for the composer.
 const DOC_EXCERPT_CHARS: usize = 3000;
+
+/// Files a project-gears read fetches at once: enough to hide the round
+/// trip, few enough not to look like a burst to the provider's abuse limits.
+const PLAN_READS: usize = 8;
+
+/// A file [`RepoEnricher::read_many`] read, as text; `None` when it was absent
+/// or not asked for.
+fn text_of(read: &std::collections::HashMap<String, Option<String>>, path: &str) -> Option<String> {
+    read.get(path).cloned().flatten()
+}
 
 /// A gear's principal document of one `kind` (`PRD`, `DESIGN`,
 /// `DECOMPOSITION`, `UPSTREAM_REQS`) among its paths, relative to the gear.

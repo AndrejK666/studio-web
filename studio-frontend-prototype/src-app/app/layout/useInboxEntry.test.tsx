@@ -204,4 +204,49 @@ describe('useInboxEntry', () => {
     });
     expect(fetchCount).toHaveBeenCalledTimes(2);
   });
+
+  describe('in a hidden tab', () => {
+    let visibility: DocumentVisibilityState = 'visible';
+    const show = (next: DocumentVisibilityState) =>
+      act(() => {
+        visibility = next;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+    beforeEach(() => {
+      visibility = 'visible';
+      vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it('reads nothing while hidden, and at once when shown again', async () => {
+      vi.useFakeTimers();
+      renderHook(() => useInboxEntry());
+      expect(fetchCount).toHaveBeenCalledTimes(1);
+      show('hidden');
+      await act(async () => {
+        vi.advanceTimersByTime(INBOX_REREAD_MS * 3);
+      });
+      expect(fetchCount).toHaveBeenCalledTimes(1);
+      show('visible');
+      await act(async () => {});
+      expect(fetchCount).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        vi.advanceTimersByTime(INBOX_REREAD_MS);
+      });
+      expect(fetchCount).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not read again when shown with a count read a moment ago', async () => {
+      vi.useFakeTimers();
+      renderHook(() => useInboxEntry());
+      expect(fetchCount).toHaveBeenCalledTimes(1);
+      show('hidden');
+      await act(async () => {
+        vi.advanceTimersByTime(INBOX_FRESH_MS - 1);
+      });
+      show('visible');
+      await act(async () => {});
+      expect(fetchCount).toHaveBeenCalledTimes(1);
+    });
+  });
 });

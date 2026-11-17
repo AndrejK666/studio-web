@@ -1226,19 +1226,36 @@ pub struct InboxQuery {
     pub page: crate::pagination::PageQuery,
 }
 
-async fn get_my_inbox(
-    Extension(ctx): Extension<SecurityContext>,
-    Extension(service): Extension<Option<Arc<IdentityService>>>,
-    headers: axum::http::HeaderMap,
-    axum::extract::Query(query): axum::extract::Query<InboxQuery>,
-) -> ApiResult<JsonBody<InboxDto>> {
-    let service = configured(service)?;
-    let hidden_view = match query.view.as_deref().map(str::trim) {
-        None | Some("" | "open") => false,
-        Some("hidden") => true,
-        Some(_) => return Err(invalid(anyhow::anyhow!("`view` must be open or hidden"))),
-    };
-    let user_id = caller_user_id(&ctx, &service).await?;
+/// `?view=`: `false` for `open` (the default), `true` for `hidden`.
+fn hidden_view(view: Option<&str>) -> ApiResult<bool> {
+    match view.map(str::trim) {
+        None | Some("" | "open") => Ok(false),
+        Some("hidden") => Ok(true),
+        Some(_) => Err(invalid(anyhow::anyhow!("`view` must be open or hidden"))),
+    }
+}
+
+/// The caller's Inbox split into what waits and what their marks hide, and
+/// the read it came from.
+///
+/// The facts (every source of every workspace) are kept 30 s per (person,
+/// organization) and computed once for callers that ask together
+/// ([`super::service::InboxReads`]): the badge, the Inbox and the Overview
+/// used to read every source each, on every page and every two minutes. A
+/// review request published since moves the epoch and the facts are read
+/// again. The marks are NOT kept: they are read and applied on every call, so
+/// a mark the person just made shows at once, from the kept facts.
+async fn my_inbox(
+    ctx: &SecurityContext,
+    service: &Arc<IdentityService>,
+    headers: &axum::http::HeaderMap,
+    organization_id: Option<uuid::Uuid>,
+) -> ApiResult<(
+    Arc<super::inbox::Read>,
+    Vec<super::inbox::Item>,
+    Vec<super::inbox::Item>,
+)> {
+    let user_id = caller_user_id(ctx, service).await?;
     let api = crate::mcp::api_as(headers.get(axum::http::header::AUTHORIZATION).cloned())
         .ok_or_else(|| {
             CanonicalError::service_unavailable()
@@ -1250,31 +1267,42 @@ async fn get_my_inbox(
     // `"$me"` in a kit's source is the caller as the domain model knows
     // them: their subject (what `phase_owner` and other kit fields record).
     let me = ctx.subject_id().to_string();
-    let org = query.organization_id.map(|o| o.to_string());
+    let org = organization_id.map(|o| o.to_string());
+    // Whether the caller reaches the organization is asked on every call,
+    // kept facts or not: a person who left is not served what they saw.
+    let am = service.account_management();
+    let access = crate::studio_session::sdk::TenantMembership::new(Arc::clone(&am));
+    let in_org = crate::org_scope::resolve(&access, ctx, organization_id).await;
     // The organization's workspaces, from the tenant tree alone: the Inbox
     // used to ask `GET /rollups` for them and threw every count away, which
-    // made it 10 s at the median on Dev (#1077). The same walk and the same
-    // check that the caller reaches the organization as `/rollups` makes.
-    let am = service.account_management();
-    let workspaces = async {
-        let access = crate::studio_session::sdk::TenantMembership::new(Arc::clone(&am));
-        let in_org = crate::org_scope::resolve(&access, &ctx, query.organization_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        crate::organizations::sdk::portfolio_workspaces(am.as_ref(), &in_org)
-            .await
-            .map(|spaces| {
-                spaces
-                    .into_iter()
-                    .map(|(id, name)| (id.to_string(), name))
-                    .collect()
-            })
-            .map_err(|e| format!("{e:#}"))
+    // made it 10 s at the median on Dev (#1077).
+    let (api, me, org, am, in_org) = (&api, &me, &org, &am, &in_org);
+    let read_facts = move || async move {
+        let workspaces = async move {
+            let in_org = in_org.as_ref().map_err(ToString::to_string)?;
+            crate::organizations::sdk::portfolio_workspaces(am.as_ref(), in_org)
+                .await
+                .map(|spaces| {
+                    spaces
+                        .into_iter()
+                        .map(|(id, name)| (id.to_string(), name))
+                        .collect()
+                })
+                .map_err(|e| format!("{e:#}"))
+        };
+        Arc::new(super::inbox::read(api, me, org.as_deref(), workspaces).await)
     };
-    let (read, marks) = tokio::join!(
-        super::inbox::read(&api, &me, org.as_deref(), workspaces),
-        service.inbox_marks(&user_id)
-    );
+    let facts = async {
+        match in_org.as_ref() {
+            // Refused: read (and name why) without keeping anything.
+            Err(_) => read_facts().await,
+            Ok(in_org) => {
+                let key = (user_id.clone(), in_org.subject_tenant_id());
+                service.inbox_reads().get(key, read_facts).await
+            }
+        }
+    };
+    let (read, marks) = tokio::join!(facts, service.inbox_marks(&user_id));
     let marks: Vec<super::inbox::Mark> = marks
         .map_err(internal)?
         .into_iter()
@@ -1284,7 +1312,20 @@ async fn get_my_inbox(
             until: m.until,
         })
         .collect();
-    let (open, hidden) = super::inbox::inbox(read.items, &marks, time::OffsetDateTime::now_utc());
+    let (open, hidden) =
+        super::inbox::inbox(read.items.clone(), &marks, time::OffsetDateTime::now_utc());
+    Ok((read, open, hidden))
+}
+
+async fn get_my_inbox(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<InboxQuery>,
+) -> ApiResult<JsonBody<InboxDto>> {
+    let service = configured(service)?;
+    let hidden_view = hidden_view(query.view.as_deref())?;
+    let (read, open, hidden) = my_inbox(&ctx, &service, &headers, query.organization_id).await?;
     let (shown, other) = if hidden_view {
         (hidden, open.len())
     } else {
@@ -1315,7 +1356,56 @@ async fn get_my_inbox(
         items,
         total,
         other: u32::try_from(other).unwrap_or(u32::MAX),
-        unread: read.unread,
+        unread: read.unread.clone(),
+        members_known: read.members_known,
+        workspaces: u32::try_from(read.workspaces).unwrap_or(u32::MAX),
+    }))
+}
+
+/// How many items wait on the caller, without the items: the header badge.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InboxCountDto {
+    /// How many items the view holds: what `GET /me/inbox` reports as
+    /// `total` for the same view.
+    pub total: u32,
+    /// How many items the other view holds.
+    pub other: u32,
+    /// The sources that could not be read, each with why.
+    pub unread: Vec<String>,
+    /// Whether pull requests' accounts were matched to the organization's
+    /// members.
+    pub members_known: bool,
+    /// How many workspaces of the organization were read.
+    pub workspaces: u32,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct InboxCountQuery {
+    #[serde(default)]
+    pub view: Option<String>,
+    #[serde(default)]
+    pub organization_id: Option<uuid::Uuid>,
+}
+
+async fn get_my_inbox_count(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<IdentityService>>>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<InboxCountQuery>,
+) -> ApiResult<JsonBody<InboxCountDto>> {
+    let service = configured(service)?;
+    let hidden_view = hidden_view(query.view.as_deref())?;
+    let (read, open, hidden) = my_inbox(&ctx, &service, &headers, query.organization_id).await?;
+    let (shown, other) = if hidden_view {
+        (hidden.len(), open.len())
+    } else {
+        (open.len(), hidden.len())
+    };
+    Ok(Json(InboxCountDto {
+        total: u32::try_from(shown).unwrap_or(u32::MAX),
+        other: u32::try_from(other).unwrap_or(u32::MAX),
+        unread: read.unread.clone(),
         members_known: read.members_known,
         workspaces: u32::try_from(read.workspaces).unwrap_or(u32::MAX),
     }))
@@ -2153,9 +2243,10 @@ pub fn register_routes(
             "The person's Inbox (ADR-0068 §6): review requests waiting for their verdict, \
              pull requests whose next step is theirs, and the items of the Inbox sources the \
              kits installed for the organization bring (`GET /studio-kits/v1/inbox-sources`, \
-             run as the caller; each item carries its `kit`), read from their facts on every \
-             call — \
-             never stored, so an item leaves by itself when the fact changes — with the \
+             run as the caller; each item carries its `kit`), read from their facts — kept \
+             at most 30 s per person and organization, and read again when a review request \
+             was published since; never stored, so an item leaves by itself when the fact \
+             changes — with the \
              caller's marks applied. `view=open` (the default) lists what waits, overdue \
              first, then by due date, then reviews before pull requests; `view=hidden` lists \
              what a mark hides (done, or snoozed until later), and `other` counts the view \
@@ -2185,6 +2276,37 @@ pub fn register_routes(
         .query_param_typed("limit", false, "Page size, 1..=200 (default 50)", "integer")
         .handler(get_my_inbox)
         .json_response_with_schema::<InboxDto>(openapi, StatusCode::OK, "The inbox")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi)
+        .layer(Extension(service.clone()));
+
+    let router = OperationBuilder::get("/studio-user/v1/me/inbox/count")
+        .operation_id("studio_user.get_my_inbox_count")
+        .summary("How many items wait on the caller, without the items")
+        .description(
+            "The header badge's read: the `total` of `GET /studio-user/v1/me/inbox` for the \
+             same `view` and organization, with `other`, `unread`, `members_known` and \
+             `workspaces` as that route reports them, and no items. Both routes answer from \
+             one read of the sources, kept 30 s per person and organization and shared by \
+             callers that ask together; a review request published since is read again. \
+             The caller's marks are applied on every call, so a mark shows at once.",
+        )
+        .tag("StudioUser")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("view", false, "`open` (default) or `hidden`")
+        .query_param_typed(
+            crate::org_scope::PARAM,
+            false,
+            "The organization whose workspaces and kits are read (the one on screen); the \
+             caller's home tenant when absent",
+            "string",
+        )
+        .handler(get_my_inbox_count)
+        .json_response_with_schema::<InboxCountDto>(openapi, StatusCode::OK, "The count")
         .error_400(openapi)
         .error_401(openapi)
         .error_500(openapi)

@@ -216,6 +216,7 @@ impl RestApiCapability for StudioOrganizationsGear {
                 sources: Arc::clone(sources),
                 hub: ctx.client_hub(),
                 answers: overview::Answers::default(),
+                project_lines: overview::Answers::default(),
             })
         });
         // The metrics board reads through the overview's sources, and admits

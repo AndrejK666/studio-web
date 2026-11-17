@@ -384,12 +384,17 @@ impl EnvironmentService {
         project: Uuid,
     ) -> Result<String> {
         let name = self.project_name(ctx, project).await?;
+        self.slug_named(org, project, &name).await
+    }
+
+    /// [`Self::slug`] for a project whose name is already read.
+    async fn slug_named(&self, org: Uuid, project: Uuid, name: &str) -> Result<String> {
         match self.records() {
             Some(r) => r
-                .slug(org, project, &name)
+                .slug(org, project, name)
                 .await
                 .map_err(|e| Refusal::Internal(format!("{e:#}"))),
-            None => Ok(model::slug(&name)),
+            None => Ok(model::slug(name)),
         }
     }
 
@@ -403,6 +408,17 @@ impl EnvironmentService {
         env: &Environment,
     ) -> Result<placement::Place> {
         let slug = self.slug(ctx, org, project).await?;
+        self.place_with_slug(org, project, env, &slug).await
+    }
+
+    /// [`Self::place`] for a project whose slug is already read.
+    async fn place_with_slug(
+        &self,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        slug: &str,
+    ) -> Result<placement::Place> {
         let assignment = match self.records() {
             Some(r) => r
                 .assignment(org, project, env.id)
@@ -410,7 +426,7 @@ impl EnvironmentService {
                 .map_err(|e| Refusal::Internal(format!("{e:#}")))?,
             None => None,
         };
-        placement::place_of(env, &slug, assignment.as_ref())
+        placement::place_of(env, slug, assignment.as_ref())
             .map_err(|(code, why)| Refusal::Precondition(code, why))
     }
 
@@ -904,14 +920,18 @@ impl EnvironmentService {
         org: Uuid,
         project: Uuid,
     ) -> Result<(Vec<Environment>, Vec<Environment>)> {
-        let admitted = self
-            .environments(ctx, org)
-            .await?
+        // Two independent reads, side by side; the organization's refusal
+        // first, as when they were read in turn.
+        let (org_envs, own) = tokio::join!(
+            self.environments(ctx, org),
+            self.own_environments(ctx, project)
+        );
+        let admitted = org_envs?
             .items
             .into_iter()
             .filter(|e| e.admits(project))
             .collect();
-        Ok((admitted, self.own_environments(ctx, project).await?))
+        Ok((admitted, own?))
     }
 
     /// One environment `project` may deploy to: the organization's that
@@ -1293,24 +1313,43 @@ impl EnvironmentService {
     }
 
     pub async fn targets(&self, ctx: &SecurityContext, project: Uuid) -> Result<Targets> {
-        let org = self.organization_of_project(ctx, project).await?;
-        let project_name = self.project_name(ctx, project).await?;
-        let (admitted, own) = self.visible(ctx, org, project).await?;
-        let mut environments = Vec::new();
-        for e in admitted.into_iter().chain(own) {
-            // A namespace not assigned yet reads as none.
-            let ns = self
-                .place(ctx, org, project, &e)
-                .await
-                .map(|p| p.namespace)
-                .unwrap_or_default();
-            environments.push((e, ns));
-        }
-        let list = self
-            .store
-            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
-            .await?
-            .0;
+        // The organization (which is also whether the caller sees the
+        // project) beside the name; the organization's refusal is the one
+        // said when both fail. Then the environments beside the bindings,
+        // and every environment's namespace at once: one after the other
+        // these were about 3 s of a `project-path` on Dev.
+        let (org, project_name) = tokio::join!(
+            self.organization_of_project(ctx, project),
+            self.project_name(ctx, project)
+        );
+        let org = org?;
+        let project_name = project_name?;
+        let (visible, list) = tokio::join!(
+            self.visible(ctx, org, project),
+            self.store
+                .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+        );
+        let (admitted, own) = visible?;
+        let list = list?.0;
+        // The slug is the project's, the same in every environment: read once.
+        let slug = self.slug_named(org, project, &project_name).await;
+        let environments: Vec<(Environment, String)> =
+            futures_util::future::join_all(admitted.into_iter().chain(own).map(|e| {
+                let slug = slug.as_ref();
+                async move {
+                    // A namespace not assigned yet reads as none.
+                    let ns = match slug {
+                        Ok(slug) => self
+                            .place_with_slug(org, project, &e, slug)
+                            .await
+                            .map(|p| p.namespace)
+                            .unwrap_or_default(),
+                        Err(_) => String::new(),
+                    };
+                    (e, ns)
+                }
+            }))
+            .await;
         Ok(Targets {
             organization_id: org,
             project_name,

@@ -2791,6 +2791,7 @@
         "ProjectPathDto"
       ],
       "errors": [
+        "400",
         "401",
         "404",
         "500"
@@ -4451,6 +4452,22 @@
         "InboxMarkListDto"
       ],
       "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/me/inbox/count",
+      "operation_id": "studio_user.get_my_inbox_count",
+      "tag": "StudioUser",
+      "summary": "How many items wait on the caller, without the items",
+      "authenticated": true,
+      "responses": [
+        "InboxCountDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "500"
       ]

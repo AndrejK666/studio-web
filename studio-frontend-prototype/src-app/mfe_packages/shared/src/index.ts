@@ -248,6 +248,14 @@ export {
   type RunFollower,
   type RunFollowerOptions,
 } from './tasks/followRuns';
+// Polling that rests while the tab is hidden.
+export {
+  isPageHidden,
+  pollWhileVisible,
+  runWhenVisible,
+  usePollWhileVisible,
+  type PollWhileVisibleOptions,
+} from './polling/pollWhileVisible';
 
 // The Studio domain model at run time (ADR-0066): the shell's model tabs and
 // the generic screens that list a type's objects.
