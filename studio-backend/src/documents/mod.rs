@@ -45,6 +45,7 @@ mod service;
 mod sources_flight;
 mod spec_model;
 mod spec_rows;
+mod spec_texts;
 mod stamp;
 #[cfg(test)]
 mod sync_analysis_tests;
@@ -229,6 +230,13 @@ impl toolkit::Gear for StudioDocumentsGear {
         // (studio-organizations).
         ctx.client_hub()
             .register::<dyn port::ProjectDocuments>(service.clone());
+        // A project's specifications with their text, for studio-product's
+        // gear match (the matcher reads them as files).
+        ctx.client_hub()
+            .register::<dyn port::SpecTexts>(Arc::new(spec_texts::SpecTextsPort::new(
+                service.clone(),
+                ctx.client_hub(),
+            )));
 
         self.service
             .set(service)

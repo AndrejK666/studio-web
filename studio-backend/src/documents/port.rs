@@ -354,3 +354,65 @@ pub trait ProjectDocuments: Send + Sync + 'static {
         created_by: &str,
     ) -> anyhow::Result<Uuid>;
 }
+
+/// One of a project's specifications as its text is read now, for a gear
+/// that sends it elsewhere (studio-product's gear match). The same documents
+/// the project domain model reads: the typed documents of the project's
+/// repository, its Studio documents (`studio:<id>`) and its uploaded sources
+/// (`upload:<name>`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecText {
+    pub path: String,
+    pub text: String,
+    /// The document's type key, when it has one.
+    pub doc_type: Option<String>,
+    /// The commit and branch a repository document was read at; `None` for a
+    /// Studio document or an upload.
+    pub commit: Option<String>,
+    pub branch: Option<String>,
+}
+
+/// The documents read, and the ones whose text could not be.
+#[derive(Debug, Clone, Default)]
+pub struct SpecTextsRead {
+    pub documents: Vec<SpecText>,
+    pub unread: Vec<String>,
+}
+
+/// Why no texts were read.
+#[derive(Debug)]
+pub enum SpecTextsRefused {
+    /// The caller does not reach the project.
+    NotFound(String),
+    /// The selection names what the project's model does not have.
+    UnknownSelection(String),
+    /// This deployment cannot read them (no checkout reader).
+    Unavailable(String),
+    Failed(anyhow::Error),
+}
+
+impl std::fmt::Display for SpecTextsRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(m) | Self::UnknownSelection(m) | Self::Unavailable(m) => f.write_str(m),
+            Self::Failed(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
+/// A project's specifications with their text, read as the caller: reading
+/// the project is what authorizes it, exactly as the project domain model's
+/// own routes do.
+#[async_trait]
+pub trait SpecTexts: Send + Sync + 'static {
+    /// The documents `paths` and `glob` select (`docs/project-domain-model.md`,
+    /// "Selecting what a build reads"); every document of the model when both
+    /// are empty.
+    async fn spec_texts(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        paths: &[String],
+        glob: Option<&str>,
+    ) -> Result<SpecTextsRead, SpecTextsRefused>;
+}
