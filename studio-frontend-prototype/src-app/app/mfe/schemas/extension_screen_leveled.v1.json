@@ -62,8 +62,13 @@
         },
         "needs": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "$comment": "Domain types (ontology ids, e.g. 'milestone') the screen shows that another kit brings (ADR-0070 §2). The shell shows it only where every one is installed for the organization in scope, hides it where any is absent or dormant, and shows it while that is not yet known."
+          "items": { "type": "string", "pattern": "^gts\\.cf\\.studio\\.(domain|kit\\.[a-z0-9_]+)\\.[a-z0-9_]+\\.v1~$" },
+          "$comment": "Domain types the screen shows that another kit brings (ADR-0070 §2), by GTS id (ADR-0071 §5): gts.cf.studio.domain.<type>.v1~, the type's id with '-' as '_'. The shell shows it only where every one is installed for the organization in scope, hides it where any is absent or dormant, and shows it while that is not yet known."
+        },
+        "sectionNeeds": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^gts\\.cf\\.studio\\.(domain|kit\\.[a-z0-9_]+)\\.[a-z0-9_]+\\.v1~$" },
+          "$comment": "Domain types (GTS ids, as in needs) a section inside the screen shows that another kit brings (ADR-0071 §5): the screen itself always shows. The shell reads whether each is installed and publishes it in the screens-available property (types); the screen hides the section where one is not, and shows it while that is not yet known."
         }
       },
       "required": [

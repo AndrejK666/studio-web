@@ -12,7 +12,11 @@ stubResizeObserver();
 
 const { translations, service, scope } = vi.hoisted(() => ({
   translations: vi.fn(),
-  scope: { project: 'p1' as string | null, workspace: { id: 'w1' } as { id: string } | null },
+  scope: {
+    project: 'p1' as string | null,
+    workspace: { id: 'w1' } as { id: string } | null,
+    available: null as unknown,
+  },
   service: {} as Record<string, unknown>,
 }));
 
@@ -21,7 +25,12 @@ vi.mock('../../i18n', () => ({ useTestsTranslations: translations }));
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
-  useSharedProperty: (id: string) => (id.includes('context.project.') ? scope.project : scope.workspace),
+  useSharedProperty: (id: string) =>
+    id.includes('context.project.')
+      ? scope.project
+      : id.includes('screens.available')
+        ? scope.available
+        : scope.workspace,
 }));
 
 import { TestsScreen } from './TestsScreen';
@@ -44,6 +53,7 @@ describe('TestsScreen', () => {
       loading: false,
     });
     scope.project = 'p1';
+    scope.available = null;
     Object.assign(service, {
       ciRuns: query({
         total: 1,
@@ -151,6 +161,29 @@ describe('TestsScreen', () => {
     fail = false;
     fireEvent.click(screen.getByText('retry'));
     expect(await screen.findByText('mainline_red')).toBeTruthy();
+  });
+
+  it('shows the open pull requests only where the pull-request type of project-git is installed (ADR-0071 §5)', async () => {
+    const pulls = vi.fn(query({ items: [], total: 0 }));
+    service.openPullRequests = pulls;
+    // Known, and pull-request is not among the installed types.
+    scope.available = { routes: ['/tests'], kits: ['project-tests'], types: [] };
+    render(<TestsScreen bridge={bridge()} />);
+    expect(await screen.findByText('mainline_red')).toBeTruthy();
+    expect(document.querySelector('[data-tests-pulls-card]')).toBeNull();
+    expect(document.querySelector('[data-tests-spec-card]')).toBeTruthy();
+    expect(pulls).not.toHaveBeenCalled();
+  });
+
+  it('shows the open pull requests where the type is installed', async () => {
+    scope.available = {
+      routes: ['/tests'],
+      kits: ['project-tests', 'project-git'],
+      types: ['gts.cf.studio.domain.pull_request.v1~'],
+    };
+    render(<TestsScreen bridge={bridge()} />);
+    expect(await screen.findByText('mainline_red')).toBeTruthy();
+    expect(document.querySelector('[data-tests-pulls-card]')).toBeTruthy();
   });
 
   it('asks for a project when none is open', () => {

@@ -29,6 +29,7 @@ import {
   Skeleton,
 } from '@gears-frontx/ui-kit';
 import {
+  useScreenAvailability,
   openScreen,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
@@ -103,6 +104,10 @@ export const TestsScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =>
   const language = useBridgeString(bridge, FRONTX_SHARED_PROPERTY_LANGUAGE, 'en');
   const { t, loading } = useTestsTranslations();
   const { projectId, workspaceId } = useScope();
+  // The open pull requests are project-git's `pull-request` (ADR-0071 §5):
+  // without that type the tab shows CI runs and conformance, and no pull
+  // request. Unknown shows them.
+  const pullsShown = useScreenAvailability().type(PULL_REQUEST_TYPE);
 
   return (
     <div className={styles.screen} data-theme={DARK_HOST_THEMES.includes(theme) ? 'dark' : 'light'}>
@@ -113,7 +118,8 @@ export const TestsScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =>
       ) : (
         // Keyed by the scope: another project is another read, from nothing.
         <ProjectTests
-          key={`${projectId}:${workspaceId ?? ''}`}
+          key={`${projectId}:${workspaceId ?? ''}:${pullsShown}`}
+          pullsShown={pullsShown}
           projectId={projectId}
           workspaceId={workspaceId}
           t={t}
@@ -127,15 +133,21 @@ export const TestsScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =>
 
 TestsScreen.displayName = 'TestsScreen';
 
+/** The domain type the open pull requests section shows (`sectionNeeds` in mfe.json). */
+export const PULL_REQUEST_TYPE = 'gts.cf.studio.domain.pull_request.v1~';
+
 function ProjectTests({
   projectId,
   workspaceId,
+  pullsShown,
   t,
   language,
   onOpenSpecs,
 }: {
   projectId: string;
   workspaceId: string | null;
+  /** Whether project-git's pull requests are installed here. */
+  pullsShown: boolean;
   t: Text;
   language: string;
   /** Spec ↔ code is shown in full on Specs. */
@@ -164,10 +176,12 @@ function ProjectTests({
         .repositories({ projectId: forProject })
         .fetch({ staleTime: 0 })
         .catch(() => null),
-      api
-        .openPullRequests({ projectId: forProject })
-        .fetch({ staleTime: 0 })
-        .catch(() => null),
+      pullsShown
+        ? api
+            .openPullRequests({ projectId: forProject })
+            .fetch({ staleTime: 0 })
+            .catch(() => null)
+        : Promise.resolve(null),
     ])
       .then(([runs, repos, pulls]) => {
         if (!mine()) return;
@@ -180,10 +194,11 @@ function ProjectTests({
         });
       })
       .catch((e: unknown) => mine() && setError(message(e)));
-    api.pullRequestChecks
-      .fetch({ project_id: forProject, publish: false })
-      .then((c) => mine() && setChecks(c))
-      .catch((e: unknown) => mine() && setChecks({ error: message(e) }));
+    if (pullsShown)
+      api.pullRequestChecks
+        .fetch({ project_id: forProject, publish: false })
+        .then((c) => mine() && setChecks(c))
+        .catch((e: unknown) => mine() && setChecks({ error: message(e) }));
     if (workspaceId) {
       Promise.all([
         api.declaredCapabilities({ projectId: forProject }).fetch({ staleTime: 0 }),
@@ -209,7 +224,7 @@ function ProjectTests({
     return () => {
       alive = false;
     };
-  }, [projectId, workspaceId, attempt]);
+  }, [projectId, workspaceId, attempt, pullsShown]);
 
   const now = read?.at ?? 0;
   const main = useMemo(() => (read ? mainline(read.runs, now) : null), [read, now]);
@@ -319,45 +334,47 @@ function ProjectTests({
             </CardContent>
           </Card>
 
-          <Card data-tests-pulls-card>
-            <CardHeader>
-              <CardTitle>{t('card_pulls')}</CardTitle>
-            </CardHeader>
-            <CardContent className={styles.cardBody}>
-              <span className={styles.big}>
-                {read.pulls === null
-                  ? '—'
-                  : read.pulls.length === 0
-                    ? t('none_open')
-                    : t('pulls_green', {
-                        green: prCi?.green ?? 0,
-                        total: read.pulls.length,
-                      })}
-              </span>
-              {prCi && read.pulls && read.pulls.length > 0 && (
-                <span className={styles.muted}>
-                  {[
-                    prCi.red ? t('pulls_parts_red', { count: prCi.red }) : null,
-                    prCi.running ? t('pulls_parts_running', { count: prCi.running }) : null,
-                    prCi.none ? t('pulls_parts_none', { count: prCi.none }) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ') || t('pulls_all_green')}
+          {pullsShown && (
+            <Card data-tests-pulls-card>
+              <CardHeader>
+                <CardTitle>{t('card_pulls')}</CardTitle>
+              </CardHeader>
+              <CardContent className={styles.cardBody}>
+                <span className={styles.big}>
+                  {read.pulls === null
+                    ? '—'
+                    : read.pulls.length === 0
+                      ? t('none_open')
+                      : t('pulls_green', {
+                          green: prCi?.green ?? 0,
+                          total: read.pulls.length,
+                        })}
                 </span>
-              )}
-              <span className={styles.muted}>
-                {checks === null
-                  ? t('docs_checking')
-                  : 'error' in checks
-                    ? t('docs_error')
-                    : checks.total === 0
-                      ? t('docs_none')
-                      : docFailing
-                        ? t('docs_failing', { count: docFailing })
-                        : t('docs_pass')}
-              </span>
-            </CardContent>
-          </Card>
+                {prCi && read.pulls && read.pulls.length > 0 && (
+                  <span className={styles.muted}>
+                    {[
+                      prCi.red ? t('pulls_parts_red', { count: prCi.red }) : null,
+                      prCi.running ? t('pulls_parts_running', { count: prCi.running }) : null,
+                      prCi.none ? t('pulls_parts_none', { count: prCi.none }) : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || t('pulls_all_green')}
+                  </span>
+                )}
+                <span className={styles.muted}>
+                  {checks === null
+                    ? t('docs_checking')
+                    : 'error' in checks
+                      ? t('docs_error')
+                      : checks.total === 0
+                        ? t('docs_none')
+                        : docFailing
+                          ? t('docs_failing', { count: docFailing })
+                          : t('docs_pass')}
+                </span>
+              </CardContent>
+            </Card>
+          )}
 
           <Card data-tests-spec-card>
             <CardHeader>

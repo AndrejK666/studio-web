@@ -2324,6 +2324,91 @@ impl DomainModelService {
         ))
     }
 
+    /// The `kit-rename` sweep for the caller's organization (ADR-0071 §8):
+    /// every kit mark of Studio's own kits, and the kits' property sources,
+    /// moved to the kit that brings the piece now ([`KitOwners`]), as one
+    /// model version `op = "kit-rename"` with no inverse (a revert past it is
+    /// refused). Nothing is written when every mark is current. Answers what
+    /// moved.
+    ///
+    /// [`KitOwners`]: crate::kit_registry::port::KitOwners
+    pub async fn rename_kit_marks(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<String>> {
+        let owners = crate::kit_registry::port::KitOwners::builtin();
+        self.ensure_persisted(ctx).await?;
+        for attempt in 0..EDIT_ATTEMPTS {
+            let current = self.model_current(ctx).await?;
+            let mut next = (*current).clone();
+            let moved = next.rename_kit_marks(&|kit, entity, on| owners.rehome(kit, entity, on))?;
+            if moved.is_empty() || next.document() == current.document() {
+                return Ok(Vec::new());
+            }
+            let patch = json!(json_patch::diff(current.document(), next.document()));
+            let version_no = self.next_version(ctx)?;
+            let shown: Vec<&str> = moved.iter().take(12).map(String::as_str).collect();
+            let rev = Revision::new(
+                version_no,
+                ctx,
+                "kit-rename",
+                "",
+                format!(
+                    "kit-rename: {} mark(s) now name the kit that brings them: {}{}",
+                    moved.len(),
+                    shown.join("; "),
+                    if moved.len() > shown.len() {
+                        "; …"
+                    } else {
+                        ""
+                    }
+                ),
+            )
+            // No inverse: the old slugs are not something to go back to.
+            .with_patches(patch, json!([]));
+            if !self.claim_version(ctx, &rev).await? {
+                warn!(
+                    attempt,
+                    version = version_no,
+                    "studio-domain-model: model version taken, retrying the kit rename"
+                );
+                self.reload(ctx).await?;
+                continue;
+            }
+            let mut nodes = Vec::new();
+            for e in next.entities() {
+                let Some(id) = e.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if current.entity(id) == Some(e) {
+                    continue;
+                }
+                let node = next
+                    .object_type_node(id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown domain type: {id}"))?;
+                nodes.push(NodeUpsert {
+                    type_id: gts::META_OBJECT_TYPE.to_string(),
+                    node_key: gts::instance_id(gts::META_OBJECT_TYPE, id),
+                    name: Some(node.name.clone()),
+                    payload: node.payload.clone(),
+                    expected_version: None,
+                });
+            }
+            nodes.push(self.model_node(&next, version_no));
+            self.store.upsert_nodes(ctx, &nodes).await?;
+            if let Some(m) = self.tenants_lock()?.get_mut(&ctx.subject_tenant_id()) {
+                m.ontology = Arc::new(next);
+                m.version = version_no;
+            }
+            info!(
+                moved = moved.len(),
+                "studio-domain-model: kit marks renamed to the kits that bring them"
+            );
+            return Ok(moved);
+        }
+        Err(anyhow::anyhow!(
+            "the model is being edited concurrently — no version could be claimed in \
+             {EDIT_ATTEMPTS} attempts"
+        ))
+    }
+
     /// The kits the caller's organization's model carries, with the version
     /// each overlay was applied at; a kit that only claims gear types the
     /// model marks with it (ADR-0071 §3) is carried at no version, so the

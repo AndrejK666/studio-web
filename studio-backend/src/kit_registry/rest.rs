@@ -11,7 +11,8 @@ use uuid::Uuid;
 use super::bundles::{KitBundles, KitMfeManifest};
 use super::contents::{KitDetail, KitNamed};
 use super::installed::{
-    BASE_KIT, InstalledKit, KitInstaller, NOT_A_PROJECT_KIT, ORGANIZATION_KIT, Refusal,
+    BASE_KIT, InstalledKit, KIT_REQUIRED_BY, KIT_REQUIRES_KIT, KitInstaller, NOT_A_PROJECT_KIT,
+    ORGANIZATION_KIT, Refusal,
 };
 use super::models::{KIT_MODEL_CONFLICT, MODEL_KIT_NOT_FOR_PROJECT};
 use super::phase::NO_SUCH_TRANSITION;
@@ -340,6 +341,9 @@ pub struct KitContentsDto {
     /// The built micro-frontends it carries (`mfe/<package>`), served to the
     /// shell at run time (`GET /mfe-manifests`).
     pub mfe: Vec<String>,
+    /// The kits it cannot work without (ADR-0071 §5): installing it where one
+    /// of them does not apply is refused (`KIT_REQUIRES_KIT`).
+    pub requires: Vec<String>,
     /// What its model adds beside its own types: fields and relations on
     /// other types, and the tabs it shows.
     pub model: KitModelDto,
@@ -627,6 +631,7 @@ impl From<KitDetail> for KitDetailDto {
                 kinds: c.kinds,
                 docs: c.docs,
                 mfe: c.mfe,
+                requires: c.requires,
                 model: KitModelDto {
                     fields: c.model.fields.into_iter().map(Into::into).collect(),
                     relations: c
@@ -780,6 +785,18 @@ pub struct InstalledKitDto {
     pub icon: Option<String>,
     /// Where a bundled `icon` is served at this version (`KitDto.icon_url`).
     pub icon_url: Option<String>,
+    /// A retired slug (ADR-0071 §8), listed in `effective` during the alias
+    /// release for an old client: every kit it resolves to applies here.
+    pub retired: bool,
+}
+
+/// A retired kit slug a document named, and what it is now (ADR-0071 §8).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RenamedKitDto {
+    pub from: String,
+    /// The kits it resolves to; empty when it went to the shell.
+    pub to: Vec<String>,
 }
 
 /// The kits that apply to one organization, or to one project of it.
@@ -799,8 +816,16 @@ pub struct InstalledKitsDto {
     /// What was installed for the project alone; empty without `project_id`.
     pub project: Vec<InstalledKitDto>,
     /// What applies: `base`, `organization` and `project` together, one
-    /// entry per kit, at the newest version.
+    /// entry per kit, at the newest version. During the alias release
+    /// (ADR-0071 §8) it also lists each retired slug whose kits all apply,
+    /// marked `retired`.
     pub effective: Vec<InstalledKitDto>,
+    /// The retired slugs the platform's, the organization's or the
+    /// project's installations named, and what each is now (ADR-0071 §8).
+    pub renamed: Vec<RenamedKitDto>,
+    /// Kits that apply again although a kit merged into them had been
+    /// removed (ADR-0071 §8): what administrators are told is shown again.
+    pub shown_again: Vec<String>,
 }
 
 /// One micro-frontend package of a kit, for the shell to register
@@ -886,6 +911,7 @@ impl From<InstalledKit> for InstalledKitDto {
             by_default: value.by_default,
             icon: None,
             icon_url: None,
+            retired: value.retired,
         }
     }
 }
@@ -1001,11 +1027,60 @@ fn refused(refusal: Refusal) -> CanonicalError {
             .create(),
         // The one shared answer (ADR-0071 §4), as every gear gives it.
         Refusal::KitNotInstalled(kit) => super::gate::KitRefusal::NotInstalled { kit }.problem(),
+        // One violation per kit involved, its slug as the subject, so a client
+        // can offer to install (or uninstall) them together (ADR-0071 §5).
+        Refusal::RequiresKits { kit, missing } => violations(
+            missing
+                .iter()
+                .map(|m| {
+                    (
+                        m.clone(),
+                        format!(
+                            "`{kit}` requires the kit `{m}`, which does not apply here: \
+                             install `{m}` first, or both together"
+                        ),
+                    )
+                })
+                .collect(),
+            KIT_REQUIRES_KIT,
+        ),
+        Refusal::RequiredBy { kit, by } => violations(
+            by.iter()
+                .map(|b| {
+                    (
+                        b.clone(),
+                        format!(
+                            "`{b}` requires `{kit}` and still applies here: uninstall \
+                             `{b}` first, or both together"
+                        ),
+                    )
+                })
+                .collect(),
+            KIT_REQUIRED_BY,
+        ),
         Refusal::NoSuchTransition(detail) => KitRegistryError::failed_precondition()
             .with_precondition_violation("phase", detail, NO_SUCH_TRANSITION)
             .create(),
         Refusal::Internal(error) => internal(error),
     }
+}
+
+/// One `failed_precondition` with a violation per `(subject, description)`,
+/// all of `kind`.
+fn violations(items: Vec<(String, String)>, kind: &'static str) -> CanonicalError {
+    let mut items = items.into_iter();
+    let (subject, description) = items
+        .next()
+        .unwrap_or_else(|| ("kit".to_owned(), kind.to_owned()));
+    let mut problem = KitRegistryError::failed_precondition().with_precondition_violation(
+        subject,
+        description,
+        kind,
+    );
+    for (subject, description) in items {
+        problem = problem.with_precondition_violation(subject, description, kind);
+    }
+    problem.create()
 }
 
 /// What applies where the query points: a project named wins, and answers
@@ -1048,6 +1123,30 @@ async fn get_installed(
     let entries = installed_entries(&service, &installer, &installed).await;
     let bundles = service.bundles();
     let org = Some(installed.organization_id);
+    let reports = installer
+        .rename_reports(
+            &ctx,
+            installed.project_id.unwrap_or(installed.organization_id),
+        )
+        .await;
+    let mut renamed: Vec<RenamedKitDto> = Vec::new();
+    let mut shown_again: Vec<String> = Vec::new();
+    for r in reports {
+        for k in r.renamed {
+            if !renamed.iter().any(|x| x.from == k.from) {
+                renamed.push(RenamedKitDto {
+                    from: k.from,
+                    to: k.to,
+                });
+            }
+        }
+        for k in r.shown_again {
+            if !shown_again.contains(&k) {
+                shown_again.push(k);
+            }
+        }
+    }
+    let effective = super::aliases::with_retired(&installed.effective);
     let list = |kits: Vec<InstalledKit>| {
         kits.into_iter()
             .map(|kit| {
@@ -1067,7 +1166,9 @@ async fn get_installed(
         base: list(installed.base),
         organization: list(installed.organization),
         project: list(installed.project),
-        effective: list(installed.effective),
+        effective: list(effective),
+        renamed,
+        shown_again,
     }))
 }
 
@@ -2866,6 +2967,7 @@ mod icon_tests {
             installed_by: None,
             installed_at: None,
             by_default: true,
+            retired: false,
         }
         .into();
         assert_eq!(dto.icon, None);

@@ -97,6 +97,10 @@ pub struct InstalledDocument {
     /// Pinned manifests still used by installations after the shelf moves on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shelf_versions: Vec<super::shelf::ShelfKit>,
+    /// What resolving retired kit slugs did to this document (ADR-0071 §8),
+    /// for its administrators: set by the migration that wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renamed: Option<super::aliases::KitRenameReport>,
 }
 
 /// One installation as stored.
@@ -122,6 +126,9 @@ pub struct InstalledKit {
     pub installed_by: Option<String>,
     pub installed_at: Option<String>,
     pub by_default: bool,
+    /// A retired slug listed for an old client during the alias release
+    /// (ADR-0071 §8): everything it resolves to applies. Never stored.
+    pub retired: bool,
 }
 
 /// What applies to one organization, or to one project of it.
@@ -172,6 +179,18 @@ pub enum Refusal {
     KitNotInstalled(String),
     /// 400 `failed_precondition`: a lifecycle does not declare the move.
     NoSuchTransition(String),
+    /// 400 `failed_precondition`: the kit requires kits that would not apply
+    /// where it is installed (ADR-0071 §5): `kit`, and what is `missing`.
+    RequiresKits {
+        kit: String,
+        missing: Vec<String>,
+    },
+    /// 400 `failed_precondition`: kits that would still apply require the
+    /// kit being uninstalled (ADR-0071 §5): `kit`, and the kits that need it.
+    RequiredBy {
+        kit: String,
+        by: Vec<String>,
+    },
     Internal(anyhow::Error),
 }
 
@@ -191,6 +210,12 @@ pub const ORGANIZATION_KIT: &str = "ORGANIZATION_KIT";
 /// The `failed_precondition` kind for installing in a project a kit whose
 /// `levels` do not name `project`.
 pub const NOT_A_PROJECT_KIT: &str = "NOT_A_PROJECT_KIT";
+/// The `failed_precondition` kind for installing a kit where a kit it
+/// requires does not apply (ADR-0071 §5).
+pub const KIT_REQUIRES_KIT: &str = "KIT_REQUIRES_KIT";
+/// The `failed_precondition` kind for uninstalling a kit another kit that
+/// still applies requires (ADR-0071 §5).
+pub const KIT_REQUIRED_BY: &str = "KIT_REQUIRED_BY";
 
 /// Where the documents are kept.
 #[async_trait]
@@ -229,7 +254,12 @@ pub trait KitAuthority: Send + Sync {
 
 pub struct KitInstaller {
     catalogue: Vec<KitDescriptor>,
+    /// The documents read and written through the alias table (ADR-0071 §8,
+    /// [`MigratingStore`]).
     store: Arc<dyn InstalledStore>,
+    /// The same documents as stored: what the kit-rename sweep reads to see
+    /// whether one still names a retired slug.
+    raw: Arc<dyn InstalledStore>,
     authority: Arc<dyn KitAuthority>,
     reader: Arc<dyn super::shelf::KitSourceReader>,
     models: Option<Arc<dyn super::models::ModelPort>>,
@@ -246,9 +276,18 @@ impl KitInstaller {
         store: Arc<dyn InstalledStore>,
         authority: Arc<dyn KitAuthority>,
     ) -> Self {
+        let builtin = catalogue
+            .iter()
+            .filter(|k| k.shelf == SHELF_BUILTIN)
+            .map(|k| k.slug.clone())
+            .collect();
         Self {
             catalogue,
-            store,
+            store: Arc::new(MigratingStore {
+                inner: store.clone(),
+                builtin,
+            }),
+            raw: store,
             authority,
             reader: Arc::new(super::shelf::NoReader),
             models: None,
@@ -392,7 +431,7 @@ impl KitInstaller {
 
     /// Install `slug` for `project` only, at `version` or the kit's default.
     /// The kit's `levels` must name `project`.
-    pub async fn install_for_project(
+    async fn install_for_project_one(
         &self,
         ctx: &SecurityContext,
         project: Uuid,
@@ -427,6 +466,14 @@ impl KitInstaller {
                 return Err(Refusal::ModelKitNotForProject(slug));
             }
         }
+        // What it requires must apply to the project once it is installed
+        // (ADR-0071 §5).
+        let above = self.installed(ctx, project).await?;
+        let mut doc = self.store.read(&service_context(project)?, project).await?;
+        install_project(&mut doc, record.clone());
+        let after = effective(&above.effective, &project_kits(&doc, &self.catalogue));
+        self.check_requires(org, &slug, &record.version, &after)
+            .await?;
         let installed = self
             .store
             .update(project, &mut |doc| {
@@ -446,7 +493,7 @@ impl KitInstaller {
 
     /// Stop `project` having `slug` as its own. Refused for a kit it has only
     /// from its organization or the platform.
-    pub async fn uninstall_for_project(
+    async fn uninstall_for_project_one(
         &self,
         ctx: &SecurityContext,
         project: Uuid,
@@ -455,6 +502,11 @@ impl KitInstaller {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
         let org = self.require_project_admin(ctx, project).await?;
         let above = self.installed(ctx, project).await?;
+        let mut doc = self.store.read(&service_context(project)?, project).await?;
+        if uninstall_project(&mut doc, &slug, &above.base, &above.organization).is_ok() {
+            let after = effective(&above.effective, &project_kits(&doc, &self.catalogue));
+            self.check_required_by(org, &slug, &after).await?;
+        }
         self.store
             .update(project, &mut |doc| {
                 uninstall_project(doc, &slug, &above.base, &above.organization).map(|()| None)
@@ -497,7 +549,7 @@ impl KitInstaller {
     }
 
     /// Install `slug` as a base kit, at `version` or the kit's default.
-    pub async fn install_base(
+    async fn install_base_one(
         &self,
         ctx: &SecurityContext,
         slug: &str,
@@ -512,6 +564,16 @@ impl KitInstaller {
             )));
         }
         let record = record_for(&kit, version, ctx, now_rfc3339()?)?;
+        // A base kit applies to every organization: what it requires must be
+        // a base kit too (ADR-0071 §5).
+        let mut root = self
+            .store
+            .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
+            .await?;
+        install_base(&mut root, record.clone());
+        let after = base_kits(&root, &self.catalogue);
+        self.check_requires(PLATFORM_TENANT, &slug, &record.version, &after)
+            .await?;
         let installed = self
             .store
             .update(PLATFORM_TENANT, &mut |doc| {
@@ -531,10 +593,19 @@ impl KitInstaller {
 
     /// Stop `slug` being a base kit. A built-in kit stays removed until it is
     /// installed again.
-    pub async fn uninstall_base(&self, ctx: &SecurityContext, slug: &str) -> Result<(), Refusal> {
+    async fn uninstall_base_one(&self, ctx: &SecurityContext, slug: &str) -> Result<(), Refusal> {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
         self.require_platform_admin(ctx).await?;
         let catalogue = &self.catalogue;
+        let mut root = self
+            .store
+            .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
+            .await?;
+        if uninstall_base(&mut root, &slug, catalogue).is_ok() {
+            let after = base_kits(&root, catalogue);
+            self.check_required_by(PLATFORM_TENANT, &slug, &after)
+                .await?;
+        }
         self.store
             .update(PLATFORM_TENANT, &mut |doc| {
                 uninstall_base(doc, &slug, catalogue).map(|()| None)
@@ -551,7 +622,7 @@ impl KitInstaller {
 
     /// Install `slug` for the organization `tenant`, at `version` or the
     /// kit's default.
-    pub async fn install_for_organization(
+    async fn install_for_organization_one(
         &self,
         ctx: &SecurityContext,
         tenant: Uuid,
@@ -562,6 +633,20 @@ impl KitInstaller {
         let org = self.require_org_admin(ctx, tenant).await?;
         let kit = self.kit_for(org, &slug).await?;
         let record = record_for(&kit, version, ctx, now_rfc3339()?)?;
+        // What it requires must apply to the organization once it is
+        // installed (ADR-0071 §5), before anything changes.
+        let root = self
+            .store
+            .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
+            .await?;
+        let mut doc = self.store.read(&service_context(org)?, org).await?;
+        install_organization(&mut doc, record.clone());
+        let after = effective(
+            &base_kits(&root, &self.catalogue),
+            &organization_kits(&doc, &self.catalogue),
+        );
+        self.check_requires(org, &slug, &record.version, &after)
+            .await?;
         // The model first: a conflict refuses the install, and nothing is
         // recorded (ADR-0067 §6).
         self.apply_model(org, &kit, &record.version).await?;
@@ -584,7 +669,7 @@ impl KitInstaller {
 
     /// Stop the organization `tenant` having `slug`. Refused for a kit it
     /// has only as a base kit.
-    pub async fn uninstall_for_organization(
+    async fn uninstall_for_organization_one(
         &self,
         ctx: &SecurityContext,
         tenant: Uuid,
@@ -597,6 +682,11 @@ impl KitInstaller {
             .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
             .await?;
         let base = base_kits(&root, &self.catalogue);
+        let mut doc = self.store.read(&service_context(org)?, org).await?;
+        if uninstall_organization(&mut doc, &slug, &base).is_ok() {
+            let after = effective(&base, &organization_kits(&doc, &self.catalogue));
+            self.check_required_by(org, &slug, &after).await?;
+        }
         self.store
             .update(org, &mut |doc| {
                 uninstall_organization(doc, &slug, &base).map(|()| None)
@@ -660,6 +750,189 @@ impl KitInstaller {
     }
 }
 
+/// A request naming a retired slug (ADR-0071 §8) acts on every kit it
+/// resolves to; one naming a slug that went to the shell is refused.
+fn requested(slug: &str) -> Result<Vec<String>, Refusal> {
+    let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
+    match super::aliases::resolve(&slug) {
+        None => Ok(vec![slug]),
+        Some([]) => Err(Refusal::Invalid(format!(
+            "`{slug}` was retired: what it brought is part of Studio itself now (ADR-0071 §6)"
+        ))),
+        Some(to) => Ok(to.iter().map(|s| (*s).to_owned()).collect()),
+    }
+}
+
+impl KitInstaller {
+    /// Install `slug` for `project` only, at `version` or the kit's default.
+    /// The kit's `levels` must name `project`.
+    pub async fn install_for_project(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        slug: &str,
+        version: Option<&str>,
+    ) -> Result<InstalledKit, Refusal> {
+        let mut last = None;
+        for s in requested(slug)? {
+            last = Some(
+                self.install_for_project_one(ctx, project, &s, version)
+                    .await?,
+            );
+        }
+        last.ok_or_else(|| Refusal::Internal(anyhow!("nothing to install")))
+    }
+
+    /// Stop `project` having `slug` as its own.
+    pub async fn uninstall_for_project(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        slug: &str,
+    ) -> Result<(), Refusal> {
+        for s in requested(slug)? {
+            self.uninstall_for_project_one(ctx, project, &s).await?;
+        }
+        Ok(())
+    }
+
+    /// Install `slug` as a base kit, at `version` or the kit's default.
+    pub async fn install_base(
+        &self,
+        ctx: &SecurityContext,
+        slug: &str,
+        version: Option<&str>,
+    ) -> Result<InstalledKit, Refusal> {
+        let mut last = None;
+        for s in requested(slug)? {
+            last = Some(self.install_base_one(ctx, &s, version).await?);
+        }
+        last.ok_or_else(|| Refusal::Internal(anyhow!("nothing to install")))
+    }
+
+    /// Stop `slug` being a base kit.
+    pub async fn uninstall_base(&self, ctx: &SecurityContext, slug: &str) -> Result<(), Refusal> {
+        for s in requested(slug)? {
+            self.uninstall_base_one(ctx, &s).await?;
+        }
+        Ok(())
+    }
+
+    /// Install `slug` for the organization `tenant`.
+    pub async fn install_for_organization(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        slug: &str,
+        version: Option<&str>,
+    ) -> Result<InstalledKit, Refusal> {
+        let mut last = None;
+        for s in requested(slug)? {
+            last = Some(
+                self.install_for_organization_one(ctx, tenant, &s, version)
+                    .await?,
+            );
+        }
+        last.ok_or_else(|| Refusal::Internal(anyhow!("nothing to install")))
+    }
+
+    /// Stop the organization `tenant` having `slug`.
+    pub async fn uninstall_for_organization(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        slug: &str,
+    ) -> Result<(), Refusal> {
+        for s in requested(slug)? {
+            self.uninstall_for_organization_one(ctx, tenant, &s).await?;
+        }
+        Ok(())
+    }
+}
+
+/// Every installed-kits document read through the slug alias table
+/// (ADR-0071 §8, [`super::aliases::migrate`]): a retired slug reads as the
+/// kits it resolves to, and the first write of a document stores it so.
+pub struct MigratingStore {
+    inner: Arc<dyn InstalledStore>,
+    /// The built-in kits' slugs.
+    builtin: Vec<String>,
+}
+
+#[async_trait]
+impl InstalledStore for MigratingStore {
+    async fn read(&self, ctx: &SecurityContext, tenant: Uuid) -> anyhow::Result<InstalledDocument> {
+        let mut doc = self.inner.read(ctx, tenant).await?;
+        super::aliases::migrate(&mut doc, &self.builtin);
+        Ok(doc)
+    }
+
+    async fn update(
+        &self,
+        tenant: Uuid,
+        change: &mut (
+                 dyn for<'d> FnMut(
+            &'d mut InstalledDocument,
+        ) -> Result<Option<InstalledKit>, Refusal>
+                     + Send
+             ),
+    ) -> Result<Option<InstalledKit>, Refusal> {
+        let builtin = &self.builtin;
+        self.inner
+            .update(tenant, &mut |doc| {
+                super::aliases::migrate(doc, builtin);
+                change(doc)
+            })
+            .await
+    }
+
+    async fn organization_of(&self, ctx: &SecurityContext, tenant: Uuid) -> Uuid {
+        self.inner.organization_of(ctx, tenant).await
+    }
+
+    async fn is_project(&self, ctx: &SecurityContext, tenant: Uuid) -> bool {
+        self.inner.is_project(ctx, tenant).await
+    }
+}
+
+impl KitInstaller {
+    /// The kit-rename sweep's part for `tenant` (ADR-0071 §8): store its
+    /// installed-kits document with every retired slug resolved, when it
+    /// still names one. Answers whether it wrote.
+    pub async fn rename_installations(&self, tenant: Uuid) -> Result<bool, Refusal> {
+        let doc = self.raw.read(&service_context(tenant)?, tenant).await?;
+        if !super::aliases::needs_migration(&doc) {
+            return Ok(false);
+        }
+        self.store.update(tenant, &mut |_| Ok(None)).await?;
+        Ok(true)
+    }
+
+    /// What resolving retired slugs reported on the documents that make
+    /// `tenant`'s kits: the root's, its organization's, and its own.
+    pub async fn rename_reports(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+    ) -> Vec<super::aliases::KitRenameReport> {
+        let org = self.store.organization_of(ctx, tenant).await;
+        let mut tenants = vec![PLATFORM_TENANT, org, tenant];
+        tenants.dedup();
+        let mut out = Vec::new();
+        for t in tenants {
+            let Ok(sctx) = service_context(t) else {
+                continue;
+            };
+            if let Ok(doc) = self.store.read(&sctx, t).await
+                && let Some(report) = doc.renamed
+            {
+                out.push(report);
+            }
+        }
+        out
+    }
+}
+
 /// The identity this gear writes its documents with, in `tenant`.
 pub fn service_context(tenant: Uuid) -> anyhow::Result<SecurityContext> {
     SecurityContext::builder()
@@ -720,6 +993,7 @@ fn view(record: &InstalledRecord, kind: &'static str, catalogue: &[KitDescriptor
         installed_by: Some(record.installed_by.clone()),
         installed_at: Some(record.installed_at.clone()),
         by_default: false,
+        retired: false,
     }
 }
 
@@ -756,6 +1030,7 @@ pub fn base_kits(root: &InstalledDocument, catalogue: &[KitDescriptor]) -> Vec<I
             installed_by: None,
             installed_at: None,
             by_default: true,
+            retired: false,
         });
     }
     kits.sort_by(|a, b| a.kit_slug.cmp(&b.kit_slug));
@@ -880,6 +1155,7 @@ fn view_plain(record: InstalledRecord) -> InstalledKit {
         installed_by: Some(record.installed_by),
         installed_at: Some(record.installed_at),
         by_default: false,
+        retired: false,
     }
 }
 

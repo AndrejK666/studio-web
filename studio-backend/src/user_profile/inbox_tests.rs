@@ -378,7 +378,7 @@ fn studio_source(kit: &str, id: &str) -> Value {
 fn studio_s_own_sources_are_read_only_where_their_kits_list_them() {
     let specs = studio_source("project-specs", REVIEW_REQUESTS);
     let git = studio_source("project-git", PULL_REQUESTS);
-    let other = json!({"kit_slug": "product-releases", "kind": "endpoint",
+    let other = json!({"kit_slug": "delivery", "kind": "endpoint",
         "id": "deploys-awaiting-approval", "path": "/studio-environments/v1/inbox/x"});
 
     // Both kits installed: both sources, each with its kit.

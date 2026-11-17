@@ -32,7 +32,7 @@
         "order": 40,
         "level": "project",
         "section": "activity",
-        "kit": "project-activity"
+        "kit": "project-git"
       }
     },
     {
@@ -46,8 +46,7 @@
         "order": 50,
         "level": "project",
         "section": "timeline",
-        "kit": "project-activity",
-        "needs": ["milestone"]
+        "kit": "project-lifecycle"
       }
     }
   ]

@@ -25,7 +25,7 @@ import {
 } from '@/app/mfe/screenLevels';
 import { publishAvailableScreens } from '@/app/mfe/sharedContext';
 import { modelNameOf } from './modelTabs';
-import { screenShows, useInstalledKits } from './useInstalledKits';
+import { screenShows, sectionTypesNeeded, typesNeeded, useInstalledKits, useInstalledTypes } from './useInstalledKits';
 
 /** Every registered screen that is a tab on a level's bar, each level's main tabs then its settings, by order. */
 export function shellTabs(screens: readonly StudioScreenExtension[]): ShellTab[] {
@@ -57,27 +57,49 @@ export function shellTabs(screens: readonly StudioScreenExtension[]): ShellTab[]
   );
 }
 
-/** What the shell publishes for these screens and installed kits (`null`: unknown). */
+/** Every domain type (GTS id) a registered screen declares in `needs` or `sectionNeeds`. */
+export function typesDeclared(screens: readonly StudioScreenExtension[]): string[] {
+  const out = new Set<string>();
+  for (const screen of screens) {
+    if (!screen.presentation) continue;
+    for (const t of [...typesNeeded(screen), ...sectionTypesNeeded(screen)]) out.add(t);
+  }
+  return [...out].sort();
+}
+
+/**
+ * What the shell publishes for these screens, installed kits and installed
+ * domain types (`null`: unknown). `types` lists only the declared types
+ * (`typesDeclared`) that are installed.
+ */
 export function availableScreens(
   screens: readonly StudioScreenExtension[],
-  installed: ReadonlySet<string> | null
+  installed: ReadonlySet<string> | null,
+  types: ReadonlySet<string> | null = null
 ): Available {
   const routes = new Set<string>();
   for (const screen of screens) {
     const route = screen.presentation?.route;
-    if (route && screenShows(screen, installed)) routes.add(route);
+    if (route && screenShows(screen, installed, types)) routes.add(route);
   }
-  return { routes: [...routes].sort(), kits: installed ? [...installed].sort() : null, tabs: shellTabs(screens) };
+  return {
+    routes: [...routes].sort(),
+    kits: installed ? [...installed].sort() : null,
+    tabs: shellTabs(screens),
+    types: types ? typesDeclared(screens).filter((t) => types.has(t)) : null,
+  };
 }
 
 export const AvailableScreens: React.FC = () => {
   const app = useFrontX();
   const screens = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const installed = useInstalledKits();
-  const value = availableScreens(screens, installed);
+  // Read only where some screen declares a type it needs (ADR-0071 §5).
+  const types = useInstalledTypes(typesDeclared(screens).length > 0);
+  const value = availableScreens(screens, installed, types);
   // Published by content: a new array of the same screens is not news.
   const tabsKey = (value.tabs ?? []).map((tab) => `${tab.level}:${tab.route}:${tab.label}:${tab.order}`).join('\n');
-  const key = `${value.routes.join('\n')}|${value.kits?.join('\n') ?? '?'}|${tabsKey}`;
+  const key = `${value.routes.join('\n')}|${value.kits?.join('\n') ?? '?'}|${value.types?.join('\n') ?? '?'}|${tabsKey}`;
   useEffect(() => {
     publishAvailableScreens(app, value);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `value` is read through its key

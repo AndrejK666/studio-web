@@ -107,6 +107,44 @@ pub struct KitManifest {
     /// nothing: the type still comes from the gear's `TypeNeed`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gears: Vec<ManifestGearClaim>,
+    /// The slugs of the kits this kit cannot work without (ADR-0071 §5,
+    /// answering ADR-0068 open question 2): the installer refuses an install
+    /// where one of them does not apply, and an uninstall that would leave a
+    /// kit that applies without one (`KIT_REQUIRES_KIT`, `KIT_REQUIRED_BY`).
+    /// A relation to another kit's type needs no such declaration: it is
+    /// unresolved while that kit is absent (ADR-0070 §2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires: Vec<String>,
+}
+
+/// The GTS id a screen's `needs` names a domain type by (ADR-0071 §5):
+/// `gts.cf.studio.domain.<type>.v1~`, the type's id with `-` as `_`, or a
+/// kit's own type, `gts.cf.studio.kit.<slug>.<type>.v1~`.
+pub fn needs_id_ok(id: &str) -> bool {
+    let Some(rest) = id
+        .strip_prefix("gts.cf.studio.")
+        .and_then(|r| r.strip_suffix(".v1~"))
+    else {
+        return false;
+    };
+    let tokens: Vec<&str> = rest.split('.').collect();
+    let well_formed = |t: &str| {
+        !t.is_empty()
+            && t.starts_with(|c: char| c.is_ascii_lowercase())
+            && t.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    };
+    match tokens.as_slice() {
+        ["domain", leaf] => well_formed(leaf),
+        ["kit", slug, leaf] => well_formed(slug) && well_formed(leaf),
+        _ => false,
+    }
+}
+
+/// The GTS id of the domain type `entity_id` (`pull-request` →
+/// `gts.cf.studio.domain.pull_request.v1~`), as a screen's `needs` names it.
+pub fn domain_type_gts(entity_id: &str) -> String {
+    crate::domain_model::port::node_type_id(entity_id)
 }
 
 /// What a kit claims of one gear (ADR-0071 §2). One type, tool or write
@@ -133,6 +171,32 @@ pub struct ManifestGearClaim {
     /// data only from the next sync on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sync_only_with_kit: bool,
+}
+
+/// `requires` as written: kit slugs, each once, never the kit's own.
+fn check_requires(m: &KitManifest) -> Result<(), String> {
+    let mut seen: Vec<&str> = Vec::new();
+    for r in &m.requires {
+        let slug = normalize_slug(r).map_err(|e| format!("{KIT_JSON}: requires: {e}"))?;
+        if slug != *r {
+            return Err(format!(
+                "{KIT_JSON}: requires: `{r}` must be a lowercase slug"
+            ));
+        }
+        if *r == m.slug {
+            return Err(format!(
+                "{KIT_JSON}: requires: a kit does not require itself"
+            ));
+        }
+        if seen.contains(&r.as_str()) {
+            return Err(format!("{KIT_JSON}: requires: `{r}` is named twice"));
+        }
+        seen.push(r);
+    }
+    if m.requires.len() > 16 {
+        return Err(format!("{KIT_JSON}: requires: at most 16 kits"));
+    }
+    Ok(())
 }
 
 /// The methods of a write route a kit may claim.
@@ -383,43 +447,24 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
     ("org-reports", include_str!("builtin/org-reports.kit.json")),
     ("assistant", include_str!("builtin/assistant.kit.json")),
     ("project-git", include_str!("builtin/project-git.kit.json")),
-    (
-        "org-infrastructure",
-        include_str!("builtin/org-infrastructure.kit.json"),
-    ),
+    // From a build to a running environment (ADR-0071 §6): org-infrastructure
+    // and product-releases' Releases, merged.
+    ("delivery", include_str!("builtin/delivery.kit.json")),
     ("org-costs", include_str!("builtin/org-costs.kit.json")),
+    // What the product is made of (ADR-0071 §6): product-releases' Product
+    // and the project's Components.
     (
-        "product-releases",
-        include_str!("builtin/product-releases.kit.json"),
+        "project-product",
+        include_str!("builtin/project-product.kit.json"),
     ),
     (
         "project-domain-model",
         include_str!("builtin/project-domain-model.kit.json"),
     ),
-    (
-        "org-connections",
-        include_str!("builtin/org-connections.kit.json"),
-    ),
-    (
-        "project-artifacts",
-        include_str!("builtin/project-artifacts.kit.json"),
-    ),
-    (
-        "project-activity",
-        include_str!("builtin/project-activity.kit.json"),
-    ),
-    (
-        "project-team",
-        include_str!("builtin/project-team.kit.json"),
-    ),
     ("components", include_str!("builtin/components.kit.json")),
     (
         "project-specs",
         include_str!("builtin/project-specs.kit.json"),
-    ),
-    (
-        "project-issues",
-        include_str!("builtin/project-issues.kit.json"),
     ),
     (
         "project-tests",
@@ -654,6 +699,16 @@ fn check(m: &KitManifest) -> Result<(), String> {
     if m.model.as_ref().is_some_and(|v| !v.is_object()) {
         return Err(format!("{KIT_JSON}: `model` is an object"));
     }
+    for s in &m.screens {
+        if let Some(n) = s.needs.iter().find(|n| !needs_id_ok(n)) {
+            return Err(format!(
+                "{KIT_JSON}: screen `{}` needs `{n}`, which is not a domain type's GTS id \
+                 (`gts.cf.studio.domain.<type>.v1~`, the type's id with `-` as `_`)",
+                s.label
+            ));
+        }
+    }
+    check_requires(m)?;
     check_claims(m)?;
     // The overlay's own rules (ADR-0067 §6); the organization's model is
     // checked against it when the kit is installed.
@@ -893,6 +948,7 @@ pub fn contents_of(m: &KitManifest) -> KitContents {
         kinds: m.kinds.clone(),
         docs: m.docs.clone(),
         mfe: m.mfe.clone(),
+        requires: m.requires.clone(),
         model,
     }
 }

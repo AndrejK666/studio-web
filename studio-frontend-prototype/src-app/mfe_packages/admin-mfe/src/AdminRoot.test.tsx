@@ -57,7 +57,10 @@ describe('AdminRoot', () => {
     const shown = all.filter((p) => p.level === 'admin');
     expect(shown.map((p) => p.section)).toEqual([...ADMIN_SECTIONS]);
     expect(shown.every((p) => !('kit' in p))).toBe(true);
-    expect(all.find((p) => p.level === 'organization')).toHaveProperty('kit', 'org-connections');
+    // Connections is the shell's organization tab (ADR-0071 §6, step 6): no kit.
+    const connections = all.find((p) => p.level === 'organization');
+    expect(connections).toBeDefined();
+    expect(connections).not.toHaveProperty('kit');
     const orders = shown.map((p) => p.order);
     expect([...orders].sort((a, b) => a - b)).toEqual(orders);
   });

@@ -567,16 +567,16 @@ describe('LevelTabs and kits (ADR-0069 §4)', () => {
     const { screenShows } = await import('./useInstalledKits');
     const timeline = {
       id: 'timeline',
-      presentation: { label: 'Timeline', route: '/projects/timeline', level: 'project', kit: 'project-activity', needs: ['milestone'] },
+      presentation: { label: 'Timeline', route: '/projects/timeline', level: 'project', kit: 'project-activity', needs: ['gts.cf.studio.domain.milestone.v1~'] },
     };
     const kits = new Set(['project-activity']);
     // Unknown hides nothing.
     expect(screenShows(timeline as never, kits, null)).toBe(true);
-    expect(screenShows(timeline as never, kits, new Set(['milestone', 'project']))).toBe(true);
+    expect(screenShows(timeline as never, kits, new Set(['gts.cf.studio.domain.milestone.v1~', 'gts.cf.studio.domain.project.v1~']))).toBe(true);
     // project-lifecycle not installed, or the type dormant: the model has no milestone.
     expect(screenShows(timeline as never, kits, new Set(['project']))).toBe(false);
     // The kit itself still decides first.
-    expect(screenShows(timeline as never, new Set(), new Set(['milestone']))).toBe(false);
+    expect(screenShows(timeline as never, new Set(), new Set(['gts.cf.studio.domain.milestone.v1~']))).toBe(false);
   });
 
   it('drops a tab whose needed type the organization lacks', () => {
@@ -591,7 +591,7 @@ describe('LevelTabs and kits (ADR-0069 §4)', () => {
       id: 'ext.timeline',
       domain: SCREEN_DOMAIN,
       entry: 'entry.activity',
-      presentation: { label: 'Timeline', icon: 'lucide:milestone', route: '/projects/timeline', order: 61, level: 'project', section: 'timeline', needs: ['milestone'] },
+      presentation: { label: 'Timeline', icon: 'lucide:milestone', route: '/projects/timeline', order: 61, level: 'project', section: 'timeline', needs: ['gts.cf.studio.domain.milestone.v1~'] },
     };
     registered.value = [activity, timeline];
     installedTypes.value = new Set(['project']);
@@ -599,7 +599,7 @@ describe('LevelTabs and kits (ADR-0069 §4)', () => {
     expect(screen.queryByText('Activity')).not.toBeNull();
     expect(screen.queryByText('Timeline')).toBeNull();
     cleanup();
-    installedTypes.value = new Set(['project', 'milestone']);
+    installedTypes.value = new Set(['gts.cf.studio.domain.project.v1~', 'gts.cf.studio.domain.milestone.v1~']);
     render(<LevelTabs />);
     expect(screen.queryByText('Timeline')).not.toBeNull();
     installedTypes.value = null;

@@ -9,6 +9,9 @@
     "organization",
     "project"
   ],
+  "requires": [
+    "delivery"
+  ],
   "inbox": [
     {
       "id": "deploy-failed",

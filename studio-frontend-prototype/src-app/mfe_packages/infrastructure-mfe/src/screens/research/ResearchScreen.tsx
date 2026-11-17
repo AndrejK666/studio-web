@@ -14,7 +14,7 @@
  *      Research project is listed here, with its status, logs and address.
  *
  * The build, deploy, rollback and uninstall themselves stay on a project's
- * Releases (product-releases): the server refuses them with
+ * Releases (delivery): the server refuses them with
  * `KIT_NOT_INSTALLED` where this kit is not installed.
  */
 

@@ -9,7 +9,7 @@ import { openSourcesConnect } from '../../../../actions/sourcesConnectActions';
 import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
 
 /**
- * Organization › Connections, the `org-connections` kit's screen: where the
+ * Organization › Connections, the shell's (ADR-0071 step 6): where the
  * connections the repositories are picked from are added, tested and changed
  * (the prototype's "Manage connections" on Sources). The shell opens it; with
  * the kit not installed there is no such screen and nothing opens.

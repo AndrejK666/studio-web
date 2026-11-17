@@ -204,15 +204,17 @@ fn every_claimed_route_is_a_write_route_the_backend_serves() {
 #[test]
 fn the_claims_name_a_kit_for_the_types_the_adr_lists() {
     let kit = |id: &str| Claims::builtin().type_claim(id).map(|c| c.kit.clone());
-    // ADR-0071 "Migration order", step 1, under today's slugs.
+    // ADR-0071 §6, the slugs after step 5.
     assert_eq!(kit("ci-run").as_deref(), Some("project-tests"));
     assert_eq!(kit("ci-job").as_deref(), Some("project-tests"));
-    assert_eq!(
-        kit("deployment-environment").as_deref(),
-        Some("org-infrastructure")
-    );
-    assert_eq!(kit("deployment").as_deref(), Some("product-releases"));
-    assert_eq!(kit("product-build").as_deref(), Some("product-releases"));
+    assert_eq!(kit("deployment-environment").as_deref(), Some("delivery"));
+    assert_eq!(kit("deployment").as_deref(), Some("delivery"));
+    assert_eq!(kit("product-build").as_deref(), Some("delivery"));
+    assert_eq!(kit("project-product").as_deref(), Some("project-product"));
+    assert_eq!(kit("mapping-decision").as_deref(), Some("project-product"));
+    assert_eq!(kit("work-item").as_deref(), Some("project-git"));
+    assert_eq!(kit("comment").as_deref(), Some("project-git"));
+    assert_eq!(kit("finding").as_deref(), Some("project-domain-model"));
     assert_eq!(kit("budget").as_deref(), Some("org-costs"));
     assert_eq!(kit("model-price").as_deref(), Some("org-costs"));
     assert_eq!(kit("report-source").as_deref(), Some("org-reports"));
@@ -246,7 +248,7 @@ fn the_claims_name_a_kit_for_the_types_the_adr_lists() {
             .map(|c| c.kit.as_str()),
         Some("project-lifecycle")
     );
-    // Research claims its tools only; the deploys are Releases'.
+    // Research claims its tools only; the deploys are delivery's.
     assert_eq!(
         Claims::builtin()
             .tool_claim("research_projects")
@@ -257,7 +259,7 @@ fn the_claims_name_a_kit_for_the_types_the_adr_lists() {
         Claims::builtin()
             .tool_claim("deploy_request")
             .map(|c| c.kit.as_str()),
-        Some("product-releases")
+        Some("delivery")
     );
 }
 
@@ -270,7 +272,7 @@ fn a_route_is_found_by_its_template_and_binds_its_parameters() {
             "/cf/studio-environments/v1/project-environments/7f3c0d3e-0000-0000-0000-000000000001",
         )
         .unwrap();
-    assert_eq!(claim.kit, "product-releases");
+    assert_eq!(claim.kit, "delivery");
     assert_eq!(
         params.get("environment_id").map(String::as_str),
         Some("7f3c0d3e-0000-0000-0000-000000000001")

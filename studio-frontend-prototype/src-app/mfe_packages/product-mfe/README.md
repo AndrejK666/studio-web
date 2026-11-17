@@ -3,7 +3,7 @@
 The prototype's Product and Components project tabs, carried over (ADR-0069).
 One entry, two extensions switched on the shell's `section`:
 
-- **Product** (`/product`, kit `product-releases`) — the page of
+- **Product** (`/product`, kit `project-product`) — the page of
   `product-sections-view.tsx`: header with the engine's verdict and the next
   action, what the product is, the strip from configured to running, the
   sources its revision pins, and its parts: Map, Infrastructure, Backend

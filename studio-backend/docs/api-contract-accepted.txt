@@ -4328,6 +4328,7 @@ response	GET /studio-kits/v1/catalog/{}	contents.permissions	{}	always
 response	GET /studio-kits/v1/catalog/{}	contents.permissions.listens	Vec<String>	always
 response	GET /studio-kits/v1/catalog/{}	contents.permissions.reads	Vec<String>	always
 response	GET /studio-kits/v1/catalog/{}	contents.permissions.writes	Vec<String>	always
+response	GET /studio-kits/v1/catalog/{}	contents.requires	Vec<String>	always
 response	GET /studio-kits/v1/catalog/{}	contents.rules	Vec<{}>	always
 response	GET /studio-kits/v1/catalog/{}	contents.rules.description	String	optional
 response	GET /studio-kits/v1/catalog/{}	contents.rules.name	String	always
@@ -4407,6 +4408,7 @@ response	GET /studio-kits/v1/installed-kits	base.installed_at	String	optional
 response	GET /studio-kits/v1/installed-kits	base.installed_by	String	optional
 response	GET /studio-kits/v1/installed-kits	base.kind	String	always
 response	GET /studio-kits/v1/installed-kits	base.kit_slug	String	always
+response	GET /studio-kits/v1/installed-kits	base.retired	bool	always
 response	GET /studio-kits/v1/installed-kits	base.shelf	String	always
 response	GET /studio-kits/v1/installed-kits	base.version	String	always
 response	GET /studio-kits/v1/installed-kits	effective	Vec<{}>	always
@@ -4417,6 +4419,7 @@ response	GET /studio-kits/v1/installed-kits	effective.installed_at	String	option
 response	GET /studio-kits/v1/installed-kits	effective.installed_by	String	optional
 response	GET /studio-kits/v1/installed-kits	effective.kind	String	always
 response	GET /studio-kits/v1/installed-kits	effective.kit_slug	String	always
+response	GET /studio-kits/v1/installed-kits	effective.retired	bool	always
 response	GET /studio-kits/v1/installed-kits	effective.shelf	String	always
 response	GET /studio-kits/v1/installed-kits	effective.version	String	always
 response	GET /studio-kits/v1/installed-kits	organization	Vec<{}>	always
@@ -4427,6 +4430,7 @@ response	GET /studio-kits/v1/installed-kits	organization.installed_at	String	opt
 response	GET /studio-kits/v1/installed-kits	organization.installed_by	String	optional
 response	GET /studio-kits/v1/installed-kits	organization.kind	String	always
 response	GET /studio-kits/v1/installed-kits	organization.kit_slug	String	always
+response	GET /studio-kits/v1/installed-kits	organization.retired	bool	always
 response	GET /studio-kits/v1/installed-kits	organization.shelf	String	always
 response	GET /studio-kits/v1/installed-kits	organization.version	String	always
 response	GET /studio-kits/v1/installed-kits	organization_id	String	always
@@ -4438,9 +4442,14 @@ response	GET /studio-kits/v1/installed-kits	project.installed_at	String	optional
 response	GET /studio-kits/v1/installed-kits	project.installed_by	String	optional
 response	GET /studio-kits/v1/installed-kits	project.kind	String	always
 response	GET /studio-kits/v1/installed-kits	project.kit_slug	String	always
+response	GET /studio-kits/v1/installed-kits	project.retired	bool	always
 response	GET /studio-kits/v1/installed-kits	project.shelf	String	always
 response	GET /studio-kits/v1/installed-kits	project.version	String	always
 response	GET /studio-kits/v1/installed-kits	project_id	String	optional
+response	GET /studio-kits/v1/installed-kits	renamed	Vec<{}>	always
+response	GET /studio-kits/v1/installed-kits	renamed.from	String	always
+response	GET /studio-kits/v1/installed-kits	renamed.to	Vec<String>	always
+response	GET /studio-kits/v1/installed-kits	shown_again	Vec<String>	always
 response	GET /studio-kits/v1/mfe-manifests	items	Vec<{}>	always
 response	GET /studio-kits/v1/mfe-manifests	items.base_path	String	always
 response	GET /studio-kits/v1/mfe-manifests	items.config	Value	optional
@@ -4503,6 +4512,7 @@ response	GET /studio-kits/v1/organization-shelf	items.contents.permissions	{}	al
 response	GET /studio-kits/v1/organization-shelf	items.contents.permissions.listens	Vec<String>	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.permissions.reads	Vec<String>	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.permissions.writes	Vec<String>	always
+response	GET /studio-kits/v1/organization-shelf	items.contents.requires	Vec<String>	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.rules	Vec<{}>	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.rules.description	String	optional
 response	GET /studio-kits/v1/organization-shelf	items.contents.rules.name	String	always
@@ -7034,6 +7044,7 @@ response	POST /studio-kits/v1/organization-shelf	contents.permissions	{}	always
 response	POST /studio-kits/v1/organization-shelf	contents.permissions.listens	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	contents.permissions.reads	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	contents.permissions.writes	Vec<String>	always
+response	POST /studio-kits/v1/organization-shelf	contents.requires	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	contents.rules	Vec<{}>	always
 response	POST /studio-kits/v1/organization-shelf	contents.rules.description	String	optional
 response	POST /studio-kits/v1/organization-shelf	contents.rules.name	String	always
@@ -7141,6 +7152,7 @@ response	POST /studio-kits/v1/organization-shelf/preview	contents.permissions	{}
 response	POST /studio-kits/v1/organization-shelf/preview	contents.permissions.listens	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.permissions.reads	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.permissions.writes	Vec<String>	always
+response	POST /studio-kits/v1/organization-shelf/preview	contents.requires	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.rules	Vec<{}>	always
 response	POST /studio-kits/v1/organization-shelf/preview	contents.rules.description	String	optional
 response	POST /studio-kits/v1/organization-shelf/preview	contents.rules.name	String	always
@@ -7248,6 +7260,7 @@ response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.permissions
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.permissions.listens	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.permissions.reads	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.permissions.writes	Vec<String>	always
+response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.requires	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.rules	Vec<{}>	always
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.rules.description	String	optional
 response	POST /studio-kits/v1/organization-shelf/{}/refresh	contents.rules.name	String	always
@@ -8149,6 +8162,7 @@ response	PUT /studio-kits/v1/base-kits/{}	installed_at	String	optional
 response	PUT /studio-kits/v1/base-kits/{}	installed_by	String	optional
 response	PUT /studio-kits/v1/base-kits/{}	kind	String	always
 response	PUT /studio-kits/v1/base-kits/{}	kit_slug	String	always
+response	PUT /studio-kits/v1/base-kits/{}	retired	bool	always
 response	PUT /studio-kits/v1/base-kits/{}	shelf	String	always
 response	PUT /studio-kits/v1/base-kits/{}	version	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	by_default	bool	always
@@ -8158,6 +8172,7 @@ response	PUT /studio-kits/v1/organization-kits/{}	installed_at	String	optional
 response	PUT /studio-kits/v1/organization-kits/{}	installed_by	String	optional
 response	PUT /studio-kits/v1/organization-kits/{}	kind	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	kit_slug	String	always
+response	PUT /studio-kits/v1/organization-kits/{}	retired	bool	always
 response	PUT /studio-kits/v1/organization-kits/{}	shelf	String	always
 response	PUT /studio-kits/v1/organization-kits/{}	version	String	always
 response	PUT /studio-kits/v1/project-kits/{}	by_default	bool	always
@@ -8167,6 +8182,7 @@ response	PUT /studio-kits/v1/project-kits/{}	installed_at	String	optional
 response	PUT /studio-kits/v1/project-kits/{}	installed_by	String	optional
 response	PUT /studio-kits/v1/project-kits/{}	kind	String	always
 response	PUT /studio-kits/v1/project-kits/{}	kit_slug	String	always
+response	PUT /studio-kits/v1/project-kits/{}	retired	bool	always
 response	PUT /studio-kits/v1/project-kits/{}	shelf	String	always
 response	PUT /studio-kits/v1/project-kits/{}	version	String	always
 response	PUT /studio-kits/v1/project-phase	installed	bool	always

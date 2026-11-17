@@ -40,10 +40,17 @@ export interface LeveledPresentation {
   /** The kit that brings the screen; shown only where the kit is installed. */
   kit?: string;
   /**
-   * The domain types the screen shows that another kit brings (ADR-0070 §2):
-   * shown only where every one is installed.
+   * The domain types the screen shows that another kit brings (ADR-0070 §2),
+   * by GTS id (`gts.cf.studio.domain.<type>.v1~`, ADR-0071 §5): shown only
+   * where every one is installed.
    */
   needs?: readonly string[];
+  /**
+   * Domain types (GTS ids) a section inside the screen shows that another kit
+   * brings: the screen always shows; the shell publishes whether each is
+   * installed (screens available, `types`) and the screen hides the section.
+   */
+  sectionNeeds?: readonly string[];
   placement?: string;
   section?: string;
   parentSection?: string;

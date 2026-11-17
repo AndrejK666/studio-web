@@ -36,32 +36,43 @@ fn the_builtin_screens_are_today_s_tabs() {
     };
     assert_eq!(
         screens("project-tests"),
-        [("Tests".to_owned(), Some("/tests".to_owned()))]
-    );
-    assert_eq!(
-        screens("project-artifacts"),
-        [(
-            "Artifacts".to_owned(),
-            Some("/projects/artifacts".to_owned())
-        )]
-    );
-    assert_eq!(
-        screens("project-activity"),
         [
-            ("Activity".to_owned(), Some("/projects/activity".to_owned())),
-            ("Timeline".to_owned(), Some("/projects/timeline".to_owned()))
+            ("Tests".to_owned(), Some("/tests".to_owned())),
+            // Its open pull requests section, which needs project-git's type.
+            ("Open pull requests".to_owned(), Some("/tests".to_owned()))
+        ]
+    );
+    // Connections, the project's People and Artifacts are the shell's
+    // (ADR-0071 step 6): no kit brings them.
+    for gone in ["org-connections", "project-team", "project-artifacts"] {
+        assert!(builtin_catalogue().iter().all(|k| k.slug != gone), "{gone}");
+    }
+    assert_eq!(
+        screens("project-git"),
+        [("Activity".to_owned(), Some("/projects/activity".to_owned()))]
+    );
+    // Issues went to the Project model, as Open questions; Timeline to
+    // Planning, with no `needs` (ADR-0071 step 4); Activity to Git
+    // collaboration (step 5).
+    assert_eq!(
+        screens("project-domain-model"),
+        [
+            (
+                "Project domain model".to_owned(),
+                Some("/domain-model".to_owned())
+            ),
+            ("Open questions".to_owned(), Some("/issues".to_owned())),
         ]
     );
     assert_eq!(
-        screens("project-issues"),
-        [("Issues".to_owned(), Some("/issues".to_owned()))]
-    );
-    assert_eq!(
         screens("project-lifecycle"),
-        [(
-            "Project templates".to_owned(),
-            Some("/project-templates".to_owned())
-        )]
+        [
+            (
+                "Project templates".to_owned(),
+                Some("/project-templates".to_owned())
+            ),
+            ("Timeline".to_owned(), Some("/projects/timeline".to_owned())),
+        ]
     );
     assert_eq!(
         screens("project-specs"),
@@ -124,27 +135,28 @@ fn the_builtin_screens_are_today_s_tabs() {
                 Some("/platform/publication-requests")
             ),
             at("organization", "Components", Some("/components")),
-            at("project", "Components", Some("/project-components")),
         ]
     );
     assert_eq!(
-        levels("org-infrastructure"),
-        [at(
-            "organization",
-            "Infrastructure",
-            Some("/infrastructure")
-        )]
-    );
-    assert_eq!(
-        levels("product-releases"),
+        levels("delivery"),
         [
-            at("project", "Product", Some("/product")),
+            at("organization", "Infrastructure", Some("/infrastructure")),
             at("project", "Releases", Some("/releases"))
         ]
     );
     assert_eq!(
+        levels("project-product"),
+        [
+            at("project", "Product", Some("/product")),
+            at("project", "Components", Some("/project-components"))
+        ]
+    );
+    assert_eq!(
         levels("project-domain-model"),
-        [at("project", "Project domain model", Some("/domain-model"))]
+        [
+            at("project", "Project domain model", Some("/domain-model")),
+            at("project", "Open questions", Some("/issues"))
+        ]
     );
     // Constructor Research: one organization tab, and the MCP tools that
     // make a Research environment.

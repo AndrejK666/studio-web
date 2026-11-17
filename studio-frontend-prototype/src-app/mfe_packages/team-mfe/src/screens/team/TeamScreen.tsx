@@ -1,6 +1,6 @@
 /**
  * Project › Team — the prototype's `PeopleView` in `mode="team"`
- * (`people.tsx`), carried over (ADR-0069) as the `project-team` kit's screen:
+ * (`people.tsx`), carried over (ADR-0069); the shell's project People since ADR-0071 step 6:
  * who works on this project and in which role. The team is the role grants in
  * the organization's access config scoped to this project, plus the
  * organization-wide ones (shown, managed in Admin › Access). Adding a person,

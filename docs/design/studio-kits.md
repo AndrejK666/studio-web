@@ -340,7 +340,8 @@ slot?}`), `model` (the overlay, §3.10), `rules` and `services` and
 wasm|agent, description?}`), `inbox` (`{id, label, kind?: query|endpoint,
 query?, path?, title?, workspace_field?}`, §3.11), `permissions` (`{reads,
 writes, listens}`), `material` (`{path, description?}`), `kinds`, `docs`,
-and `gears` (ADR-0071 §2): per gear, `{gear, types?, mcp_tools?, routes?,
+`requires` (ADR-0071 §5: the slugs of the kits it cannot work without), and
+`gears` (ADR-0071 §2): per gear, `{gear, types?, mcp_tools?, routes?,
 sync_only_with_kit?}`, the gear's types, MCP tools and **write** routes the
 kit claims. A claimed route is `METHOD /<gear>/v1/…`, never a `GET`, and is
 also in `permissions.writes`; nothing is claimed twice in one manifest, and a
@@ -570,8 +571,24 @@ it"): `{route?, mcp_tool?}`, the kit's screen that answers an item (one of its
 each Inbox item carry it; without one an item opens the kit's workspace.
 
 A screen may say which domain types another kit brings it shows,
-`screens[].needs` (`["milestone"]` for Project activity's Timeline): the kit's
-detail lists it, and the shell hides the screen where one is not installed.
+`screens[].needs`, each by its GTS id (ADR-0071 §5:
+`gts.cf.studio.domain.<type>.v1~`, the type's id with `-` as `_`; a bare
+entity id is refused when the manifest is read): the kit's detail lists it,
+and the shell hides the screen where one is not installed. A section inside
+a screen that shows another kit's type declares it the same way (Tests'
+open pull requests section `needs` `gts.cf.studio.domain.pull_request.v1~`;
+in the portal, `presentation.sectionNeeds`): the screen stays, the section
+goes where the type is not installed.
+
+A kit that cannot work without another names it in **`requires`** (ADR-0071
+§5, ADR-0068 open question 2): `constructor-research` requires the delivery
+kit, `project-domain-model` requires `project-specs`. The installer refuses
+an install where a required kit would not apply (`KIT_REQUIRES_KIT`) and an
+uninstall that would leave a kit that still applies on that level without it
+(`KIT_REQUIRED_BY`), with one violation per kit involved, so a client can
+offer to install or uninstall both; it never does either on its own. A base
+kit's requirements are base kits; an organization's are met by base and
+organization kits; a project's by what applies to it.
 
 `GET /studio-user/v1/me/inbox?organization_id=` reads the organization on
 screen (its workspaces from the tenant tree, the walk `/rollups` makes but
@@ -927,6 +944,81 @@ what and why. Limits: 8 MiB a file, 64 MiB and 2000 files in all, 60 s of
 repository reads (8 at a time); every entry path is relative, with no `..`,
 `.`, empty segment, backslash, drive or control character. The archive is
 built in memory within those limits, then sent.
+
+### 3.15 Merged kits and their slug aliases
+
+ADR-0071 §6 cut the built-in kits by function, and step 5 merged four of
+them under other slugs. For one release the old slugs are aliases
+(`kit_registry/aliases.rs`, the portal's mirror `mfe-shared` `kitAliases`):
+
+| Retired slug | Resolves to |
+| --- | --- |
+| `project-issues` | `project-domain-model`, `project-git` |
+| `project-activity` | `project-git`, `project-lifecycle` |
+| `product-releases` | `project-product`, `delivery` |
+| `org-infrastructure` | `delivery` |
+| `org-connections`, `project-team`, `project-artifacts` | the shell (no kit; step 6) |
+
+Step 6 gave Connections (Organization › Connections), the project's People
+(`/projects/team`) and Artifacts back to the shell: `organization.connectors`,
+`project.people` and `project.artifacts` return to the core, and the sweep
+adopts them there (`adopted_from` = the old kit, never dormant).
+`assignment`, which nothing writes, is in `dropped_from_core`: an
+organization with objects of it keeps it dormant, left by Studio; one without
+loses it. Catalogue (`components`) writes no connection any more.
+
+- **Installations.** Every installed-kits document is read through the
+  table: a base, organization or project installation of a retired slug is
+  one of each kit it resolves to. `removed_builtin`: a surviving kit stays
+  removed only where it and every slug merged into it were removed; a kit
+  the merge brought (`delivery`, `project-product`) where every slug merged
+  into it was. Otherwise the merged kit applies, and the document records
+  what is shown again (`renamed.shown_again`, answered by
+  `GET /installed-kits` as `renamed` and `shown_again`). The first write of
+  a document stores it migrated, and the start-up `kit-rename` sweep writes
+  every tenant's. A request naming a retired slug acts on what it resolves to.
+- **Old clients.** `GET /installed-kits` and `KitPresence` list a retired
+  slug in `effective` (`retired: true`) wherever everything it resolves to
+  applies.
+- **The model.** The `kit-rename` sweep (`DomainObjects::rename_kit_marks`,
+  run first and last in every kit reconciliation and once per organization
+  at start) moves `meta.kit`, `left_by.kit`, a property's and a lifecycle's
+  `kit` of Studio's own kits to the kit that brings the piece now
+  (`kit_registry/owners.rs`, read from the built-in manifests), with the
+  kit's property source and the organization's overrides, as one model
+  version `op = "kit-rename"` with no inverse. The ADR-0070 §5 equality
+  check compares marks as the sweep leaves them.
+- **Removal (step 7, #1089).** One release after step 5 reached every
+  environment — the sweep has run in every organization and no portal,
+  desktop, Theia or script reads or sends a retired slug — the table, its
+  readers (the store's migration, `with_retired`, the request mapping, the
+  portal's `kitIn`) and the old slugs in tests and docs go. Until then
+  `aliases_tests.rs` and `kitAliases.test.ts` list every alias with that
+  note, and the backend test fails on a Studio version past `REMOVE_AFTER`;
+  `no_code_names_a_retired_slug_outside_the_alias_readers` holds every other
+  backend file free of a quoted retired slug, and the portal's contract test
+  every `mfe.json`.
+
+  Before step 7, check: every organization's model has a version
+  `op = "kit-rename"` or names no retired slug (`domain_model_versions`), and
+  no installed-kits document names one (the start-up sweep logs each it
+  wrote; `GET /installed-kits` `renamed` shows what a document named). Then
+  remove, in one change:
+
+  1. `kit_registry/aliases.rs` (`ALIASES`, `resolve`, `migrate`,
+     `with_retired`) and `aliases_tests.rs`; `installed::MigratingStore`
+     (the installer keeps the store it is given), `requested()` and the
+     `*_one` split in `installed.rs`; `InstalledKit::retired` and the
+     `retired`, `renamed`, `shown_again` fields of `GET /installed-kits`
+     (an API removal: `api-contract --accept` records it);
+     `InstalledDocument::renamed`; `owners.rs`'s retired branch of `rehome`.
+  2. Keep the `kit-rename` sweep (`sweep.rs`, `rename_kit_marks`) only if
+     another merge is planned; it is idempotent and costs one model read per
+     reconciliation.
+  3. In the portal: `mfe-shared` `kitAliases.ts` and its test, `kitIn` in
+     `screenShows` and `kitAvailable` (back to `has`).
+  4. The retired slugs in tests (`MAY_NAME_A_RETIRED_SLUG`), fixtures and
+     docs (this section's table becomes history in ADR-0071).
 
 ## 4. Additional context
 

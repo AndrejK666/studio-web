@@ -231,12 +231,30 @@ fn constructor_research_brings_two_endpoint_sources_and_no_model() {
 }
 
 #[test]
+fn a_kit_json_names_the_kits_it_requires() {
+    let body = r#"{"slug": "ops-runbooks", "name": "Ops", "levels": ["project"],
+                   "requires": ["project-specs"]}"#;
+    let m = read_kit_json(body).unwrap();
+    assert_eq!(m.requires, ["project-specs"]);
+    assert_eq!(contents_of(&m).requires, ["project-specs"]);
+    for (bad, why) in [
+        (r#"["ops-runbooks"]"#, "itself"),
+        (r#"["project-specs", "project-specs"]"#, "twice"),
+        (r#"["Project-Specs"]"#, "lowercase"),
+    ] {
+        let body = body.replace(r#"["project-specs"]"#, bad);
+        let err = read_kit_json(&body).unwrap_err();
+        assert!(err.contains(why), "{bad}: {err}");
+    }
+}
+
+#[test]
 fn a_kit_json_names_its_bundles_screen_needs_and_inbox_destinations() {
     let body = r#"{
       "slug": "ops-runbooks", "name": "Ops", "levels": ["project"],
       "mfe": ["mfe/runbooks"],
       "screens": [{"kind": "tab", "level": "project", "label": "Runbooks",
-                   "route": "/projects/runbooks", "needs": ["milestone"]}],
+                   "route": "/projects/runbooks", "needs": ["gts.cf.studio.domain.milestone.v1~"]}],
       "mcp_tools": [{"name": "runbook_run"}],
       "inbox": [{"id": "due", "label": "Due",
                  "query": {"type": "runbook"},
@@ -245,7 +263,10 @@ fn a_kit_json_names_its_bundles_screen_needs_and_inbox_destinations() {
     let m = read_kit_json(body).unwrap();
     let c = contents_of(&m);
     assert_eq!(c.mfe, ["mfe/runbooks"]);
-    assert_eq!(c.screens[0].needs, ["milestone"]);
+    assert_eq!(c.screens[0].needs, ["gts.cf.studio.domain.milestone.v1~"]);
+    // A bare entity id is not a need (ADR-0071 §5).
+    let bare = body.replace("gts.cf.studio.domain.milestone.v1~", "milestone");
+    assert!(read_kit_json(&bare).unwrap_err().contains("GTS id"));
     let d = c.inbox[0].destination.as_ref().unwrap();
     assert_eq!(d.route.as_deref(), Some("/projects/runbooks"));
     assert_eq!(d.mcp_tool.as_deref(), Some("runbook_run"));

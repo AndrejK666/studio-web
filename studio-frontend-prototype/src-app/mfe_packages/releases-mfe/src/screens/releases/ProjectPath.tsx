@@ -1,6 +1,6 @@
 /**
  * The project's path to running (#1050), on top of Releases (kit
- * `product-releases`): Specs → Product → Build → Image → Environment →
+ * `delivery` (Builds, releases & environments, ADR-0071 step 5)): Specs → Product → Build → Image → Environment →
  * Running, each with its state, why in plain words, what is missing as a
  * checklist, and one action. The server decides Product to Running
  * (`GET /project-path`); Specs is the size of the spec mapping's plan. A

@@ -1,7 +1,7 @@
 # releases-mfe — the Releases kit
 
 Project › Releases (ADR-0056 §4), carried over from the prototype's
-`releases-tab.tsx` (ADR-0069 §5). The built-in kit `product-releases`
+`releases-tab.tsx` (ADR-0069 §5). The built-in kit `delivery` (Builds, releases & environments, ADR-0071 step 5)
 (ADR-0068 §7) and, until a platform administrator removes it, a base kit
 (ADR-0069 §4).
 

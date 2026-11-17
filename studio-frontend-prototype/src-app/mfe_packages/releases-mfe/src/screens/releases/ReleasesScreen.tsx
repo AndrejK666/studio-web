@@ -1,7 +1,7 @@
 /**
  * Project › Releases (ADR-0056 §4), the prototype's ProjectReleases
  * (releases-tab.tsx at 00828880) carried over as the built-in kit
- * `product-releases` (ADR-0069 §5): how the project's product goes out.
+ * `delivery` (Builds, releases & environments, ADR-0071 step 5) (ADR-0069 §5): how the project's product goes out.
  *
  *   - The header says where the product stands, read from the ladder
  *     (releaseStatus), with Deploy to…: one dialog listing every target,

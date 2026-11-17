@@ -3,7 +3,7 @@
 # one file. It restates what package.json and mfe.json say, and those tools
 # check that they agree, so keep them in step when either changes.
 #
-# The Infrastructure kit, `org-infrastructure`: a built-in kit (ADR-0068 §7),
+# The Infrastructure kit, `delivery` (Builds, releases & environments, ADR-0071 step 5): a built-in kit (ADR-0068 §7),
 # a base kit by default (ADR-0069 §4). Its one screen is Organization ›
 # Infrastructure (ADR-0056 §2): the places the organization holds, the
 # environments it defines on them and what runs where, carried over from the

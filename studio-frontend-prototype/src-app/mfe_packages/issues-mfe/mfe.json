@@ -27,13 +27,13 @@
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.issues.mfe.main.v1",
       "presentation": {
-        "label": "Issues",
+        "label": "Open questions",
         "icon": "lucide:triangle-alert",
         "route": "/issues",
         "order": 15,
         "level": "project",
         "experimental": true,
-        "kit": "project-issues"
+        "kit": "project-domain-model"
       }
     }
   ]

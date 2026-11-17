@@ -3,7 +3,7 @@
  * English under every language (`loadScreenTranslations`). Call sites write
  * `t('title')` while the registry is asked for `screen.infrastructure.main:title`.
  *
- * Two screens: Organization › Infrastructure (`main`, the org-infrastructure
+ * Two screens: Organization › Infrastructure (`main`, the delivery
  * kit) and Organization › Constructor Research (`research`, the constructor-research kit).
  */
 

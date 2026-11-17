@@ -354,6 +354,10 @@ pub fn render(input: &GdlInput<'_>) -> String {
             .collect::<Vec<_>>(),
     );
     a.list_if_any(
+        "requires",
+        &c.requires.iter().map(|r| quote(r)).collect::<Vec<_>>(),
+    );
+    a.list_if_any(
         "gears",
         &c.gears
             .iter()

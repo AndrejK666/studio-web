@@ -16,6 +16,7 @@
 import { useMemo } from 'react';
 import { useSharedProperty, type ChildMfeBridge } from '@gears-frontx/react';
 import { STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE } from './hostProperties';
+import { kitIn } from './kitAliases';
 
 export interface AvailableScreens {
   /** The routes of the screens that show where the person is. */
@@ -28,6 +29,13 @@ export interface AvailableScreens {
    * from. Absent from a shell that predates it.
    */
   tabs?: ShellTab[];
+  /**
+   * The domain types, by GTS id (`gts.cf.studio.domain.pull_request.v1~`),
+   * that a registered screen declares in `needs` or `sectionNeeds` and that
+   * are installed where the person is (ADR-0071 §5); `null` while unknown.
+   * Absent from a shell that predates it, which counts as unknown.
+   */
+  types?: string[] | null;
 }
 
 /** One registered screen as a level's tab bar lists it (`AvailableScreens.tabs`). */
@@ -73,7 +81,10 @@ export function isAvailableScreens(value: unknown): value is AvailableScreens {
   return (
     Array.isArray(v.routes) &&
     v.routes.every((r) => typeof r === 'string') &&
-    (v.kits === null || (Array.isArray(v.kits) && v.kits.every((k) => typeof k === 'string')))
+    (v.kits === null || (Array.isArray(v.kits) && v.kits.every((k) => typeof k === 'string'))) &&
+    (v.types === undefined ||
+      v.types === null ||
+      (Array.isArray(v.types) && v.types.every((k) => typeof k === 'string')))
   );
 }
 
@@ -86,7 +97,18 @@ export function routeAvailable(available: AvailableScreens | null, route: string
 /** Whether the kit `slug` is installed where the person is: unknown counts as yes. */
 export function kitAvailable(available: AvailableScreens | null, slug: string | null | undefined): boolean {
   if (!slug) return true;
-  return available === null || available.kits === null || available.kits.includes(slug);
+  // A retired slug counts where everything it resolves to is (ADR-0071 §8).
+  return available === null || available.kits === null || kitIn(new Set(available.kits), slug);
+}
+
+/**
+ * Whether the domain type `gts` (a GTS id, as `needs` names it) is installed
+ * where the person is: unknown counts as yes, so nothing hides before the
+ * shell knows.
+ */
+export function typeAvailable(available: AvailableScreens | null, gts: string | null | undefined): boolean {
+  if (!gts) return true;
+  return available === null || available.types == null || available.types.includes(gts);
 }
 
 export interface ScreenAvailability {
@@ -94,18 +116,26 @@ export interface ScreenAvailability {
   route: (route: string | null | undefined) => boolean;
   /** Whether this kit is installed where the person is. */
   kit: (slug: string | null | undefined) => boolean;
+  /**
+   * Whether this domain type (GTS id) is installed where the person is: for a
+   * section a screen shows only with another kit's type (`sectionNeeds`).
+   */
+  type: (gts: string | null | undefined) => boolean;
 }
 
 /** The shell's answer, as two questions a screen asks before drawing a button. */
 export function useScreenAvailability(options?: { bridge?: ChildMfeBridge }): ScreenAvailability {
   const value = useSharedProperty<unknown>(STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE, options);
   // By content: the bridge hands a new object on every publish.
-  const key = isAvailableScreens(value) ? JSON.stringify({ routes: value.routes, kits: value.kits }) : '';
+  const key = isAvailableScreens(value)
+    ? JSON.stringify({ routes: value.routes, kits: value.kits, types: value.types ?? null })
+    : '';
   return useMemo(() => {
     const available = key ? (JSON.parse(key) as AvailableScreens) : null;
     return {
       route: (route) => routeAvailable(available, route),
       kit: (slug) => kitAvailable(available, slug),
+      type: (gts) => typeAvailable(available, gts),
     };
   }, [key]);
 }

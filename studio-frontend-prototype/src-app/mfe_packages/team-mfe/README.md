@@ -1,9 +1,9 @@
-# team-mfe — the Team kit
+# team-mfe — the project's People
 
-Project › Team, carried over from the prototype (`people.tsx` in
-`mode="team"`, ADR-0069). The screen of the built-in kit `project-team`
-(ADR-0068 §7), a base kit until a platform administrator removes it
-(ADR-0069 §4).
+Project › People (`/projects/team`), carried over from the prototype
+(`people.tsx` in `mode="team"`, ADR-0069). The shell's own tab since
+ADR-0071 step 6: People on the project level, no kit (it was the built-in
+kit `project-team`, now an alias of the shell for one release).
 
 - `src/screens/team/TeamScreen.tsx` — the team: this project's member grants
   and the organization-wide ones, a role per person, add (a dialog), change

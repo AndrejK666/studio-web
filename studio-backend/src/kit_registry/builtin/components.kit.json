@@ -2,7 +2,7 @@
   "manifest_version": "1",
   "slug": "components",
   "icon": "lucide:package",
-  "name": "Components",
+  "name": "Catalogue",
   "description": "The platform's and the organization's component catalogue and registry, their gear repositories and publication requests.",
   "publisher": "Constructor Fabric",
   "levels": [
@@ -154,18 +154,6 @@
           "relationLabel": "Components",
           "description": "A tab of the organization: what it shows."
         }
-      },
-      {
-        "on": "project",
-        "property": {
-          "name": "parts",
-          "type": "gear",
-          "relation": "gear",
-          "extends": "edge",
-          "relationType": "shows",
-          "relationLabel": "Components",
-          "description": "A tab of the project: what it shows."
-        }
       }
     ]
   },
@@ -191,7 +179,6 @@
       "GET /studio-components-catalog/v1/registry/projects",
       "GET /studio-components-catalog/v1/registry/excluded-projects",
       "GET /studio-components-catalog/v1/registry/gear-repository",
-      "GET /studio-components-catalog/v1/project-components",
       "GET /studio-tasks/v1/runs/{id}",
       "GET /studio-kits/v1/catalog",
       "GET /studio-product/v1/gearbox",
@@ -226,10 +213,7 @@
       "PUT /studio-components-catalog/v1/registry/gear-repository",
       "DELETE /studio-components-catalog/v1/registry/gear-repository",
       "POST /studio-components-catalog/v1/registry/gear-repository/create",
-      "POST /studio-components-catalog/v1/registry/scaffold",
-      "POST /studio-connector/v1/connections",
-      "PATCH /studio-connector/v1/connections/{id}",
-      "DELETE /studio-connector/v1/connections/{id}"
+      "POST /studio-components-catalog/v1/registry/scaffold"
     ]
   },
   "gears": [
