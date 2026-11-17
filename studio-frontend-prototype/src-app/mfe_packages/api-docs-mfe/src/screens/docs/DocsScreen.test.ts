@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SCALAR_URL, viewerPage } from './DocsScreen';
+import { SCALAR_URL, STORAGE_SHIM, viewerPage } from './DocsScreen';
 
 describe("the viewer's page", () => {
   const doc = {
@@ -15,7 +15,16 @@ describe("the viewer's page", () => {
 
   it('never lets the description end its script', () => {
     const page = viewerPage(doc, true);
-    expect(page.match(/<\/script>/g)).toHaveLength(2);
+    // The storage shim, the viewer, and the call that starts it: three scripts, none ended early.
+    expect(page.match(/<\/script>/g)).toHaveLength(3);
     expect(page).toContain('"darkMode":true');
+  });
+
+  // A sandboxed frame has no origin, so its localStorage throws: the viewer read it while
+  // loading and never defined window.Scalar (walk 2026-11-17).
+  it('gives the frame storage before the viewer loads', () => {
+    const page = viewerPage(doc, false);
+    expect(page.indexOf(STORAGE_SHIM)).toBeGreaterThan(-1);
+    expect(page.indexOf(STORAGE_SHIM)).toBeLessThan(page.indexOf(SCALAR_URL));
   });
 });

@@ -81,6 +81,34 @@ pub trait DocumentClassifier: Send + Sync + 'static {
         node_ids: Vec<String>,
     ) -> anyhow::Result<usize>;
 
+    /// Move the bindings of files whose node is gone onto the node that now
+    /// has their path, and return how many moved.
+    ///
+    /// A file node's id is derived from the attachment (project, connection,
+    /// repository, path), so the same repository attached again through
+    /// another connection writes every file under a new id. Bindings are keyed
+    /// on the node, so without this every decision a person made about those
+    /// files (a confirmed type, "not a document") stayed on a node nothing
+    /// lists any more: the Specs list read "No longer connected" on every row
+    /// and the Sources tab counted 0 specs for the repository.
+    ///
+    /// `alive` is every file node the scope still has, across all its
+    /// repositories, and `by_path` the files of the repository just walked
+    /// whose path no other live repository of the scope also has. A binding
+    /// moves only when its node is not alive and its path is in `by_path`,
+    /// and never onto a node that already has a binding of its own. Scoped
+    /// like [`Self::classify_ingested`]: `(tenant, project, node)`.
+    async fn adopt_ingested(
+        &self,
+        _ctx: &SecurityContext,
+        _workspace_id: Uuid,
+        _project_id: Option<Uuid>,
+        _alive: std::collections::HashSet<String>,
+        _by_path: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<usize> {
+        Ok(0)
+    }
+
     /// Of `ids`, the documents written in Studio that still exist in
     /// `workspace_id` — the tenant they are stored against, the parent
     /// workspace for a project's document.

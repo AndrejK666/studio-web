@@ -9,8 +9,8 @@ import {
 } from '@gears-frontx/react';
 import { executeAndSettle } from '@/app/mfe/shellOutcomes';
 import { Button } from '@gears-frontx/ui-kit/button';
-import { Icon } from '@iconify/react';
 import { cn } from '@/app/lib/utils';
+import { BundledIcon } from '@/app/icons/BundledIcon';
 import type { OverlayExtension } from './overlayExtension';
 import { ContextChain } from './ContextChain';
 import { ProjectStatusSlot } from './KitSlot';
@@ -43,7 +43,7 @@ const IconPill: React.FC<{
       title={title ?? label}
       aria-disabled={disabled || undefined}
       onClick={disabled ? undefined : onClick}
-      icon={<Icon icon={icon} />}
+      icon={<BundledIcon declared={icon} />}
       className={cn(
         'rounded-full [--button-bg:var(--muted)] [--icon-size-sm:1.125rem]',
         disabled
@@ -117,7 +117,7 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
 
       <div className="ml-auto flex items-center gap-2">
         <IconPill
-          icon={searchExtension?.presentation?.icon ?? 'material-symbols:search'}
+          icon={searchExtension?.presentation?.icon ?? 'lucide:search'}
           label={searchExtension?.presentation?.label ?? 'Search'}
           disabled={!searchExtension}
           onClick={
@@ -126,7 +126,7 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
         />
         {/* The count is the server's (GET /me/inbox): nothing shows while it is unknown. */}
         <IconPill
-          icon={inbox.screen?.presentation?.icon ?? 'material-symbols:inbox'}
+          icon={inbox.screen?.presentation?.icon ?? 'lucide:inbox'}
           label={t('inbox')}
           title={inbox.count ? t('inbox_waiting', { count: inbox.count }) : t('inbox')}
           count={inbox.count}

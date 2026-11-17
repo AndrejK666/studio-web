@@ -1,6 +1,6 @@
 /**
  * A grid's search, one-choice filters and order kept in the address under a
- * prefix, as the Admin lists kept them with `useListState` before they moved
+ * prefix, as the lists kept them with `useListState` before they moved
  * onto the kit's DataGrid (#1076): a reload, a shared link or Back opens the
  * list as it was. The grid itself keeps its state in memory; this bridge seeds
  * it from the address once, and `writeGridAddress`, called from the list's
@@ -16,8 +16,8 @@ import {
   type DataGridOrderPluginApi,
   type DataGridTextSearchPluginApi,
 } from '@gears-frontx/ui-kit';
-import { readListState, writeListState } from '@constructor-studio/mfe-shared';
-import { searchQuery, tagGroupChoice } from '@constructor-studio/mfe-shared/grid';
+import { readListState, writeListState } from '../listState';
+import { searchQuery, tagGroupChoice } from './dataGridFilters';
 
 function replaceSearch(search: string): void {
   if (search === window.location.search) return;

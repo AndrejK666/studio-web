@@ -36,7 +36,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -52,6 +51,7 @@ import {
   useHostChrome,
   useOrganization,
 } from '@constructor-studio/mfe-shared';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { CostsApiService } from '../../api/CostsApiService';
 import type { BudgetList, BudgetStatus, CostGroup, CostReport, ModelPrice, PriceList, SessionPrice } from '../../api/types';
 import {
@@ -66,8 +66,9 @@ import {
   standingText,
   type BudgetRow,
 } from '../../model/budgets';
-import { GROUPS, PERIODS, blankModel, hours, money, periodRange, priceProblem, rowLabel, tokens, type Period } from '../../model/costs';
+import { GROUPS, PERIODS, blankModel, money, periodRange, priceProblem, type Period } from '../../model/costs';
 import { useCostsTranslations } from '../../i18n';
+import { CostReportGrid } from './CostReportGrid';
 import styles from './CostsScreen.module.css';
 
 type Text = ReturnType<typeof useCostsTranslations>['t'];
@@ -164,7 +165,9 @@ function OrgCosts({
   }, [api, org.id, t]);
 
   const mayView = prices?.may_view_costs ?? false;
-  const ask = `${period}|${group}|${personal}|${revision}`;
+  /** Bumped by Retry on a report that did not load: the same read, once more. */
+  const [attempt, setAttempt] = useState(0);
+  const ask = `${period}|${group}|${personal}|${revision}|${attempt}`;
   useEffect(() => {
     if (!mayView) return;
     let live = true;
@@ -300,7 +303,7 @@ function OrgCosts({
       {mayView && shownTab === 'report' && !unpricedList && (
         <Card data-cost-report>
           <CardContent className={styles.cardBody}>
-            {read?.error && (
+            {read?.error && report && (
               <p role="alert" className={styles.error}>
                 {read.error}
               </p>
@@ -344,58 +347,11 @@ function OrgCosts({
               </label>
               {counting && <span className={styles.muted}>{t('counting')}</span>}
             </div>
-            {report && report.rows.length === 0 && (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>{t('nothing_used')}</EmptyTitle>
-                </EmptyHeader>
-              </Empty>
-            )}
-            {report && report.rows.length > 0 && (
-              <Table data-cost-table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{groupLabel(report.group_by ?? group)}</TableHead>
-                    <TableHead className={styles.num}>{t('col_input')}</TableHead>
-                    <TableHead className={styles.num}>{t('col_output')}</TableHead>
-                    <TableHead className={styles.num}>{t('col_cache_read')}</TableHead>
-                    <TableHead className={styles.num}>{t('col_cache_write')}</TableHead>
-                    <TableHead className={styles.num}>{t('col_sessions')}</TableHead>
-                    <TableHead className={styles.num}>{t('col_cost')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {report.rows.map((r) => (
-                    <TableRow key={r.key || '-'} data-cost-row={r.key}>
-                      <TableCell>{rowLabel(r, report.group_by ?? group, you)}</TableCell>
-                      <TableCell className={styles.num}>{tokens(r.input_tokens)}</TableCell>
-                      <TableCell className={styles.num}>{tokens(r.output_tokens)}</TableCell>
-                      <TableCell className={styles.num}>{tokens(r.cache_read_tokens)}</TableCell>
-                      <TableCell className={styles.num}>{tokens(r.cache_write_tokens)}</TableCell>
-                      <TableCell className={styles.num}>{hours(r.session_seconds)}</TableCell>
-                      <TableCell className={styles.num}>
-                        {money(r.cost, report.currency)}
-                        {r.unpriced && (
-                          <span className={styles.unpriced} title={t('row_unpriced')}>
-                            {' '}
-                            *
-                          </span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-                <TableFooter>
-                  <TableRow>
-                    <TableCell className={styles.strong}>{t('total')}</TableCell>
-                    <TableCell colSpan={5} />
-                    <TableCell className={`${styles.num} ${styles.strong}`} data-cost-total>
-                      {money(report.total, report.currency)}
-                    </TableCell>
-                  </TableRow>
-                </TableFooter>
-              </Table>
-            )}
+            {read?.error && !report ? (
+              <GridFailed message={read.error} retry={t('retry')} onRetry={() => setAttempt((n) => n + 1)} />
+            ) : report ? (
+              <CostReportGrid report={report} group={group} you={you} t={t} />
+            ) : null}
             {report && report.unpriced.length > 0 && (
               <p className={styles.unpriced} data-cost-unpriced>
                 {t('report_unpriced', { models: report.unpriced.join(', ') })}{' '}

@@ -2,6 +2,10 @@ import { createRef } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChildMfeBridge } from '@gears-frontx/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
+
+// The kit's DataGrid measures its header.
+stubResizeObserver();
 
 const { translations, openScreen } = vi.hoisted(() => ({ translations: vi.fn(), openScreen: vi.fn() }));
 
@@ -92,13 +96,38 @@ describe('ProjectComponentsInventory', () => {
     const onOpenProduct = vi.fn();
     vi.spyOn(api, 'conformance').mockResolvedValue({ components_in_code: ['cf-gears-auth'] } as never);
     draw(onOpenProduct);
-    await waitFor(() => expect(document.querySelector('[data-role-chip="platform"]')).not.toBeNull());
-    fireEvent.click(document.querySelector('[data-role-chip="platform"]')!);
-    expect(document.querySelectorAll('[data-inventory-row]')).toHaveLength(1);
+    await waitFor(() => expect(document.querySelector('[data-role="platform"]')).not.toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: /^whose/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: 'Platform · 1' }));
+    await waitFor(() => expect(document.querySelectorAll('[data-inventory-row]')).toHaveLength(1));
+    expect(document.querySelector('[data-list-grid="project-components"] [data-role="platform"]')).not.toBeNull();
     fireEvent.click(screen.getByText('open_catalogue'));
     expect(openScreen).toHaveBeenCalledWith(expect.anything(), '/components');
     fireEvent.click(screen.getByText('put_into_product'));
     expect(onOpenProduct).toHaveBeenCalledTimes(1);
+  });
+
+  it('narrows the list by the search, says when nothing matches, and opens why a row is there under the list', async () => {
+    draw();
+    await waitFor(() => expect(document.querySelector('[data-role="create"]')).not.toBeNull());
+    fireEvent.click(document.querySelector('[data-role="create"]')!.closest('td')!);
+    expect((await waitFor(() => document.querySelector('[data-inventory-detail]')))?.textContent).toContain('billing');
+
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'other' } });
+    await waitFor(() => expect(document.querySelector('[data-role="create"]')).toBeNull());
+    expect(document.querySelector('[data-role="organization"]')).not.toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'nothing like it' } });
+    expect(await screen.findByText('no_matches')).toBeTruthy();
+    fireEvent.click(screen.getByText('clear_search'));
+    await waitFor(() => expect(document.querySelector('[data-role="create"]')).not.toBeNull());
+  });
+
+  it('says the project has nothing yet when the plan is empty', async () => {
+    vi.spyOn(api, 'projectPlan').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(api, 'projectProduct').mockResolvedValue({ gears: [] });
+    draw();
+    expect(await screen.findByText('empty_title')).toBeTruthy();
+    expect(screen.getByText('empty_body')).toBeTruthy();
   });
 
   it('shows the plan read failure with Retry', async () => {

@@ -10,9 +10,7 @@
   "load_failed": "Не удалось прочитать запуски: {error}",
   "action_failed": "Не получилось: {error}",
   "runs": "Запуски",
-  "filter_attention": "Упавшие + идущие",
   "filter_every": "все состояния",
-  "filter_every_type": "Все типы задач",
   "state_queued": "в очереди",
   "state_running": "идёт",
   "state_succeeded": "успешно",
@@ -52,5 +50,13 @@
   "col_next": "Следующий",
   "col_last": "Последний",
   "disabled": "выключено",
-  "run_now": "Запустить сейчас"
+  "run_now": "Запустить сейчас",
+  "showing_attention": "Показаны упавшие и идущие; выберите состояние, чтобы увидеть остальные.",
+  "filter_task_type": "Тип задачи",
+  "search_runs": "Поиск запусков",
+  "runs_no_matches": "Ни один запуск не подходит.",
+  "search_schedules": "Поиск расписаний",
+  "schedules_no_matches": "Ни одно расписание не подходит.",
+  "clear_search": "Очистить поиск",
+  "try_again": "Повторить"
 }

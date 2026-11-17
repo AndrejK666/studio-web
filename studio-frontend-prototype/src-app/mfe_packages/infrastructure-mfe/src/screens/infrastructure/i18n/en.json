@@ -309,5 +309,11 @@
   "delete_version_body": "It is deleted from the registry, every tag of it with it. A deploy that names it cannot pull it again.",
   "this_version": "this version",
   "no_digest_to_delete": "The registry's listing gives no digest for it.",
-  "deleting_version": "Deleting it from the registry."
+  "deleting_version": "Deleting it from the registry.",
+  "search_assignments": "Search by project, environment or namespace",
+  "search_projects": "Search by project",
+  "no_matches": "Nothing matches this search.",
+  "clear_search": "Clear search",
+  "assignments_unreadable": "Could not read the namespace assignments: {error}",
+  "retry": "Retry"
 }

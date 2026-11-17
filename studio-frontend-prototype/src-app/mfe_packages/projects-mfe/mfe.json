@@ -93,7 +93,7 @@
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.project_create.v1",
       "presentation": {
         "label": "New project",
-        "icon": "material-symbols:add",
+        "icon": "lucide:plus",
         "route": "/projects/new"
       }
     },
@@ -103,7 +103,7 @@
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.projects.mfe.workspace_create.v1",
       "presentation": {
         "label": "New workspace",
-        "icon": "material-symbols:workspaces-outline",
+        "icon": "lucide:layout-grid",
         "route": "/workspaces/new"
       }
     },

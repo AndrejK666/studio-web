@@ -66,5 +66,12 @@
   "status_cancelled": "cancelled",
   "status_skipped": "skipped",
   "status_unknown": "unknown",
-  "open_specs": "Open Specs →"
+  "open_specs": "Open Specs →",
+  "retry": "Retry",
+  "search_runs": "Find a run: workflow, branch, commit or failed job",
+  "search_pulls": "Find a pull request: number, title, repository or reviewer",
+  "no_runs_match": "No run matches.",
+  "no_pulls_match": "No pull request matches.",
+  "clear_search": "Clear search",
+  "no_data": "Not known"
 }

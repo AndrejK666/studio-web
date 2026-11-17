@@ -1,10 +1,14 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
   FRONTX_SHARED_PROPERTY_LANGUAGE,
   FRONTX_SHARED_PROPERTY_THEME,
 } from '@gears-frontx/react';
 import { createMfeBridgeFixture } from '@frontx-test-utils/createMfeBridgeFixture';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The kit's DataGrid measures its header.
+stubResizeObserver();
 
 const { translations, service, scope } = vi.hoisted(() => ({
   translations: vi.fn(),
@@ -94,6 +98,59 @@ describe('TestsScreen', () => {
     expect(screen.getAllByText(/test → cargo test/).length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.getByText(/spec_covered/)).toBeTruthy());
     expect(screen.getByText(/"implemented":0,"functional":1/)).toBeTruthy();
+  });
+
+  it('lists the runs through the grid: the search narrows them, a click opens the jobs under the list', async () => {
+    const runs = (service.ciRuns as () => { fetch: () => Promise<{ items: unknown[] }> })().fetch();
+    const first = (await runs).items[0] as Record<string, unknown>;
+    service.ciRuns = query({
+      total: 2,
+      latest_completed: 'r1',
+      items: [first, { ...first, id: 'r2', workflow: 'Deploy', conclusion: 'success', jobs: [] }],
+    });
+    render(<TestsScreen bridge={bridge()} />);
+    await waitFor(() => expect(document.querySelector('[data-list-grid="tests-runs"] [data-tests-run-id="r2"]')).not.toBeNull());
+    expect(document.querySelector('[data-tests-run-id="r1"]')).not.toBeNull();
+
+    fireEvent.click(document.querySelector('[data-tests-run-id="r1"]')!.closest('td')!);
+    expect(await waitFor(() => document.querySelector('[data-tests-jobs="r1"] [data-tests-job="failed"]'))).not.toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText('search_runs'), { target: { value: 'deploy' } });
+    await waitFor(() => expect(document.querySelector('[data-tests-run-id="r1"]')).toBeNull());
+    expect(document.querySelector('[data-tests-run-id="r2"]')).not.toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('search_runs'), { target: { value: 'nothing like it' } });
+    expect(await screen.findByText('no_runs_match')).toBeTruthy();
+    fireEvent.click(screen.getByText('clear_search'));
+    await waitFor(() => expect(document.querySelector('[data-tests-run-id="r1"]')).not.toBeNull());
+  });
+
+  it('says there was no run in two weeks, and lists the open pull requests through the grid', async () => {
+    service.ciRuns = query({ total: 0, latest_completed: null, items: [] });
+    service.openPullRequests = query({
+      total: 2,
+      items: [
+        { id: 'pr1', repo: 'acme/app', number: 7, title: 'Add login', url: null, source_branch: 'login', waiting_on: [], days_open: 2 },
+        { id: 'pr2', repo: 'acme/app', number: 8, title: 'Fix billing', url: null, source_branch: null, waiting_on: [], days_open: 1 },
+      ],
+    });
+    render(<TestsScreen bridge={bridge()} />);
+    expect(await screen.findByText('runs_empty')).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('[data-list-grid="tests-pulls"]')?.textContent).toContain('Add login'));
+    expect(screen.getByText('branch_unknown')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('search_pulls'), { target: { value: 'billing' } });
+    await waitFor(() => expect(screen.queryByText(/Add login/)).toBeNull());
+    expect(screen.getByText(/Fix billing/)).toBeTruthy();
+  });
+
+  it('offers Retry when the runs could not be read', async () => {
+    let fail = true;
+    const ok = service.ciRuns as () => { fetch: () => Promise<unknown> };
+    service.ciRuns = () => ({ fetch: () => (fail ? Promise.reject(new Error('down')) : ok().fetch()) });
+    render(<TestsScreen bridge={bridge()} />);
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    fail = false;
+    fireEvent.click(screen.getByText('retry'));
+    expect(await screen.findByText('mainline_red')).toBeTruthy();
   });
 
   it('asks for a project when none is open', () => {

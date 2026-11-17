@@ -61,9 +61,12 @@ export function ProjectBuilds({
   now,
   onChanged,
   onFollow,
+  runningIn = null,
 }: {
   /** The product's builds as recorded (`build` nodes), read by Releases. */
   ideBuilds: IdeBuild[];
+  /** The environment something of the product runs in, when one does: with no build on record it was built outside Studio. */
+  runningIn?: string | null;
   environments: DeployEnvironment[];
   deployments: Deployment[];
   /** Bumped by Releases when it read again: read the runs again too. */
@@ -132,7 +135,13 @@ export function ProjectBuilds({
   // Building in Studio is not in this portal yet (parity.md): the line says
   // what it can without it.
   const screens = useScreenAvailability();
-  const hint = buildsHint(builds, false, now, screens.route(ROUTES.infrastructure));
+  // What runs with no build on record was built outside Studio (the IDE or CI): the
+  // path already says Build and Image are done, and "Nothing built yet" under it
+  // contradicted it (walk 2026-11-17).
+  const hint =
+    runningIn && !builds.some((b) => b.action !== 'run')
+      ? { text: t('build_outside_hint', { environment: runningIn }), tone: 'done' as const }
+      : buildsHint(builds, false, now, screens.route(ROUTES.infrastructure));
 
   return (
     <section className={styles.stack} data-release-builds>

@@ -107,7 +107,13 @@ function readBuiltIndex(): Promise<unknown> {
     builtIndex =
       typeof fetch === 'function'
         ? fetch(BUILT_PREVIEWS_INDEX, { headers: { accept: 'application/json' } }).then(
-            (r) => (r.ok && (r.headers.get('content-type') ?? '').includes('json') ? r.json() : []),
+            (r) => {
+              if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) return r.json();
+              // A portal without pictures answers with its index.html: drop the body unread, or
+              // the response stays open for the rest of the page's life.
+              void r.body?.cancel().catch(() => undefined);
+              return [];
+            },
             () => []
           )
         : Promise.resolve([]);

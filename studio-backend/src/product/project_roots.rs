@@ -230,6 +230,10 @@ pub async fn read(
             )]);
         }
     };
+    let outcomes = hub
+        .get::<dyn crate::artifact_ingest::port::CloneOutcomes>()
+        .ok();
+    let outcomes = &outcomes;
     let deadline = tokio::time::Instant::now() + READ_DEADLINE;
     let reads: Vec<(Uuid, (ProjectRead, Vec<UnreadableSource>))> = futures_util::stream::iter(projects)
         .map(|project| {
@@ -237,7 +241,7 @@ pub async fn read(
             async move {
                 let read = tokio::time::timeout_at(
                     deadline,
-                    read_project(gearbox, service, am.as_ref(), ctx, org, project.id),
+                    read_project(gearbox, service, am.as_ref(), outcomes.as_ref(), ctx, org, project.id),
                 )
                 .await
                 .unwrap_or_else(|_| {
@@ -269,10 +273,70 @@ pub async fn read(
 /// One project's product file and the roots it names: its first source that
 /// keeps one. Every source that could not be read is returned beside it, with
 /// why.
+/// What a failed fetch of a project source says on the project's Sources
+/// (clone status), when git's answer names a cause a person can fix: the
+/// branch the source names is gone, or the host says the repository is not
+/// there. Anything else (a timeout, a full disk) is the server's, not the
+/// source's, and is only logged.
+fn fetch_failure(error: &str, branch: &str) -> Option<crate::artifact_ingest::port::CloneFailure> {
+    use crate::artifact_ingest::port::{CloneCause, CloneFailure};
+    if crate::connectors::sdk::git_checkout::is_missing_ref(error) {
+        return Some(CloneFailure::new(CloneCause::BranchNotFound).with_detail(branch));
+    }
+    if error.to_ascii_lowercase().contains("repository not found") {
+        return Some(CloneFailure::new(CloneCause::RepositoryNotFound));
+    }
+    None
+}
+
+/// Record `failure` for the source, as the server's own fetch (channel
+/// `sync`). The product's fetch is often the only one a stand makes of a
+/// source: without this a deleted branch read as "8 errors" on Product and
+/// "Starting the editor…" on IDE, with nothing saying why. Best-effort.
+async fn note_failure(
+    outcomes: Option<&Arc<dyn crate::artifact_ingest::port::CloneOutcomes>>,
+    project: Uuid,
+    clone_url: &str,
+    failure: crate::artifact_ingest::port::CloneFailure,
+    order: i64,
+) {
+    use crate::artifact_ingest::port::{CloneChannel, CloneOutcome};
+    let Some(outcomes) = outcomes else {
+        return;
+    };
+    let failed = CloneOutcome::failed(CloneChannel::Sync, failure);
+    if let Err(e) = outcomes
+        .record(project, clone_url, CloneOutcome { order, ..failed })
+        .await
+    {
+        warn!(project_id = %project, error = %format!("{e:#}"), "studio-product: the source's clone status was not recorded");
+    }
+}
+
+/// The fetch worked: a failure the server's fetch recorded no longer holds.
+async fn note_fetched(
+    outcomes: Option<&Arc<dyn crate::artifact_ingest::port::CloneOutcomes>>,
+    project: Uuid,
+    clone_url: &str,
+    order: i64,
+) {
+    use crate::artifact_ingest::port::CloneChannel;
+    let Some(outcomes) = outcomes else {
+        return;
+    };
+    if let Err(e) = outcomes
+        .clear_failure(project, clone_url, CloneChannel::Sync, order)
+        .await
+    {
+        warn!(project_id = %project, error = %format!("{e:#}"), "studio-product: the source's clone status was not recorded");
+    }
+}
+
 async fn read_project(
     gearbox: &Arc<Gearbox>,
     service: &Arc<crate::connectors::sdk::ConnectorService>,
     am: &dyn account_management_sdk::AccountManagementClient,
+    outcomes: Option<&Arc<dyn crate::artifact_ingest::port::CloneOutcomes>>,
     ctx: &SecurityContext,
     org: Uuid,
     project: Uuid,
@@ -310,15 +374,23 @@ async fn read_project(
             subdir: Some(String::new()),
         };
         let dir = checkout_dir(gearbox.workdir(), &probe);
+        let order = crate::artifact_ingest::port::clone_order();
         let clone = match gearbox_checkout(gearbox, &dir, &corpus).await {
-            Some(Ok(c)) => c,
+            Some(Ok(c)) => {
+                note_fetched(outcomes, project, &source.clone_url, order).await;
+                c
+            }
             None => {
                 warn!(project_id = %project, repo = %source.full_path, "studio-product: a project source is still being cloned; its gears are read on the next refresh");
                 unread = true;
                 continue;
             }
             Some(Err(e)) => {
-                warn!(project_id = %project, repo = %source.full_path, error = %format!("{e:#}"), "studio-product: a project source could not be checked out for its product file");
+                let error = format!("{e:#}");
+                if let Some(failure) = fetch_failure(&error, &branch) {
+                    note_failure(outcomes, project, &source.clone_url, failure, order).await;
+                }
+                warn!(project_id = %project, repo = %source.full_path, %error, "studio-product: a project source could not be checked out for its product file");
                 unreadable.push(UnreadableSource::new(
                     Some(project),
                     &source.full_path,
@@ -783,5 +855,26 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    /// The stand's two sources: one pinned to a deleted branch, one whose
+    /// repository the host does not show. Both say why on Sources and IDE.
+    #[test]
+    fn a_fetch_that_failed_on_the_source_says_why() {
+        use crate::artifact_ingest::port::CloneCause;
+        let gone = fetch_failure(
+            "git fetch failed (exit status: 128): fatal: couldn't find remote ref AndrejK666/product-infra-gdl",
+            "AndrejK666/product-infra-gdl",
+        )
+        .expect("a deleted branch");
+        assert_eq!(gone.cause, CloneCause::BranchNotFound);
+        assert_eq!(gone.detail, "AndrejK666/product-infra-gdl");
+        let missing = fetch_failure(
+            "git fetch failed (exit status: 128): remote: Repository not found.",
+            "main",
+        )
+        .expect("a repository the host does not show");
+        assert_eq!(missing.cause, CloneCause::RepositoryNotFound);
+        assert!(fetch_failure("the checkout task timed out", "main").is_none());
     }
 }

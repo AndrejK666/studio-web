@@ -30,7 +30,7 @@
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::installed::{KitInstaller, LEVEL_PROJECT, Refusal};
+use super::installed::{KitInstaller, LEVEL_PROJECT, PLATFORM_TENANT, Refusal};
 use super::manifest::{
     INBOX_KIND_ENDPOINT, INBOX_KIND_STUDIO, ManifestInboxSource, builtin_manifest,
 };
@@ -76,7 +76,15 @@ impl KitInstaller {
                     if descriptor.shelf != SHELF_BUILTIN {
                         continue;
                     }
-                } else if source.kind() != INBOX_KIND_ENDPOINT && source.query.is_none() {
+                } else if source.kind() != INBOX_KIND_ENDPOINT
+                    && (source.query.is_none() || org == PLATFORM_TENANT)
+                {
+                    // The platform's own tenant is no organization: its model
+                    // never carries a kit's overlay (`reconcile` leaves it), so
+                    // a query over a kit's fields there could only be refused,
+                    // and the Inbox of everybody whose home it is said "not
+                    // everything could be read" over it (`phase_owner` is not a
+                    // field of `project`). It has no projects to find either.
                     continue;
                 }
                 out.push(KitInboxSource {

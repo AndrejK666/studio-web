@@ -79,6 +79,7 @@ export const SpecsActions: React.FC<SpecsActionsProps> = ({ projectId, projectNa
           <Button
             size="sm"
             icon={icon}
+            title={t('check_scope_hint')}
             onClick={() => (targets.length > CHECK_CONFIRM_ABOVE ? setConfirming(true) : start())}
           >
             {label}

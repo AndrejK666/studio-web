@@ -22,6 +22,20 @@ const SPEC_URL = '/cf/openapi.json';
 export const SCALAR_URL = 'https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.72.3';
 const DARK_HOST_THEMES = ['dark', 'dracula', 'dracula-large'];
 
+/**
+ * The frame has no origin of its own (no `allow-same-origin`), so reading its
+ * `localStorage` throws, and the viewer reads it as it loads: the bundle threw
+ * before it defined `window.Scalar`, and the page stayed blank. The frame gets
+ * storage that lives as long as it does, in memory.
+ */
+export const STORAGE_SHIM = [
+  '(function(){function mem(){var m=new Map();return{get length(){return m.size},',
+  'key:function(i){return Array.from(m.keys())[i]??null},getItem:function(k){return m.has(String(k))?m.get(String(k)):null},',
+  'setItem:function(k,v){m.set(String(k),String(v))},removeItem:function(k){m.delete(String(k))},clear:function(){m.clear()}}}',
+  "['localStorage','sessionStorage'].forEach(function(n){try{window[n].getItem('x')}catch(e){",
+  'Object.defineProperty(window,n,{value:mem(),configurable:true})}})})();',
+].join('');
+
 /** The frame's page: the viewer, and the grouped description inline. `</` is
  *  escaped so no string in the description can end the script early. */
 export function viewerPage(doc: OpenApiDoc, dark: boolean): string {
@@ -41,6 +55,7 @@ export function viewerPage(doc: OpenApiDoc, dark: boolean): string {
   return [
     '<!doctype html><html><head><meta charset="utf-8"><title>Studio API</title>',
     '<style>body{margin:0}</style></head><body><div id="app"></div>',
+    `<script>${STORAGE_SHIM}</script>`,
     `<script src="${SCALAR_URL}"></script>`,
     `<script>window.Scalar.createApiReference('#app', ${json});</script>`,
     '</body></html>',
