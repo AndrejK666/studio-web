@@ -57,6 +57,7 @@ import type { ProjectComponent } from '../model/project-checks';
 import type { GlossaryEntry, SpecModel } from '../model/spec-model';
 import type { GearCatalogue } from '../model/product-configurator';
 import type { GearBrings } from '../model/gear-brings';
+import type { GearMatch, GearMatchDiff, GearMatchItem } from '../model/gear-match';
 
 /** The tenant-metadata type a project's configuration is kept under. */
 export const PROJECT_CONFIG_TYPE = 'gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~';
@@ -89,7 +90,9 @@ const project = (id: string) => `project_id=${enc(id)}`;
 /** The POSTs that start background work: a lost answer retried answers the
  *  run the first one started instead of a second. */
 const idempotentPost = (url: string) =>
-  /\/studio-components-catalog\/v1\/sync(\?|$)|\/studio-environments\/v1\/images\/imports(\?|$)/.test(url);
+  /\/studio-components-catalog\/v1\/sync(\?|$)|\/studio-environments\/v1\/images\/imports(\?|$)|\/studio-product\/v1\/gear-matches(\?|$)/.test(
+    url
+  );
 
 class IdempotencyPlugin extends RestPlugin {
   onRequest(context: RestRequestContext): RestRequestContext {
@@ -510,6 +513,54 @@ export class ProductApiService extends BaseApiService {
     },
     { projectId: string }
   >(({ projectId }) => `/studio-artifact-ingest/v1/sources/clone-status?project_id=${enc(projectId)}`);
+
+  /* ── gear matches (studio-product, docs/design/product-gear-match.md) ── */
+
+  /** Send the project's specifications to the gears-matcher: one background run. */
+  startGearMatch(projectId: string) {
+    return this.rest.mutation<
+      { run_id: string; match_id: string; state: string },
+      { paths?: string[]; glob?: string; extract_max_calls?: number; idempotency_key?: string }
+    >('POST', orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}`));
+  }
+
+  readonly gearMatches = this.protocol(RestEndpointProtocol).queryWith<
+    { items: GearMatchItem[]; total: number },
+    { projectId: string }
+  >(({ projectId }) => orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}`));
+
+  /** One match (`latest` or its id), read per requirement. */
+  readonly gearMatch = this.protocol(RestEndpointProtocol).queryWith<GearMatch, { projectId: string; matchId: string }>(
+    ({ projectId, matchId }) => orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}?${project(projectId)}`)
+  );
+
+  readonly gearMatchDiff = this.protocol(RestEndpointProtocol).queryWith<
+    GearMatchDiff,
+    { projectId: string; matchId: string; base?: string }
+  >(({ projectId, matchId, base }) =>
+    orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}/diff?${project(projectId)}${base ? `&base=${enc(base)}` : ''}`)
+  );
+
+  cancelGearMatch(projectId: string, matchId: string) {
+    return this.rest.mutation<GearMatchItem, Record<string, never>>(
+      'POST',
+      orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}/cancel?${project(projectId)}`)
+    );
+  }
+
+  putGearMatchDecision(projectId: string) {
+    return this.rest.mutation<
+      { subject: string; value?: string | null },
+      { requirement_id: string; gear_id: string; decision: 'accepted' | 'rejected' | 'undecided'; match_id?: string }
+    >('PUT', orgScoped(`/studio-product/v1/gear-match-decisions?${project(projectId)}`));
+  }
+
+  putGearMatchAnswer(projectId: string) {
+    return this.rest.mutation<
+      { subject: string; value?: string | null },
+      { question_id: string; text: string; topic?: string; match_id?: string }
+    >('PUT', orgScoped(`/studio-product/v1/gear-match-answers?${project(projectId)}`));
+  }
 
   readonly artifactNodes = this.protocol(RestEndpointProtocol).queryWith<ArtifactNodePage, { query: string }>(
     ({ query }) => `/studio-artifact-ingest/v1/nodes${query ? `?${query}` : ''}`

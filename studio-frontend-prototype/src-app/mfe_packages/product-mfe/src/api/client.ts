@@ -198,6 +198,28 @@ export const api = {
   declaredCapabilities: (_token: string, projectId: string) => svc().declaredCapabilities({ projectId }).fetch(FRESH),
   declaredRequirements: (_token: string, projectId: string) => svc().declaredRequirements({ projectId }).fetch(FRESH),
   projectPlan: (_token: string, projectId: string) => svc().projectPlan({ projectId }).fetch(FRESH),
+
+  startGearMatch: (
+    _token: string,
+    projectId: string,
+    body: { paths?: string[]; glob?: string; extract_max_calls?: number; idempotency_key?: string } = {}
+  ) => svc().startGearMatch(projectId).fetch(body),
+  gearMatches: (_token: string, projectId: string) => svc().gearMatches({ projectId }).fetch(FRESH),
+  gearMatch: (_token: string, projectId: string, matchId = 'latest') => svc().gearMatch({ projectId, matchId }).fetch(FRESH),
+  gearMatchDiff: (_token: string, projectId: string, matchId: string, base?: string) =>
+    svc().gearMatchDiff({ projectId, matchId, base }).fetch(FRESH),
+  cancelGearMatch: (_token: string, projectId: string, matchId: string) =>
+    svc().cancelGearMatch(projectId, matchId).fetch({}),
+  putGearMatchDecision: (
+    _token: string,
+    projectId: string,
+    body: { requirement_id: string; gear_id: string; decision: 'accepted' | 'rejected' | 'undecided'; match_id?: string }
+  ) => svc().putGearMatchDecision(projectId).fetch(body),
+  putGearMatchAnswer: (
+    _token: string,
+    projectId: string,
+    body: { question_id: string; text: string; topic?: string; match_id?: string }
+  ) => svc().putGearMatchAnswer(projectId).fetch(body),
   conformance: (_token: string, projectId: string, capabilities: string[], vocabulary: readonly Capability[]) => {
     const terms: Record<string, string[]> = {};
     const contracts: Record<string, string[]> = {};

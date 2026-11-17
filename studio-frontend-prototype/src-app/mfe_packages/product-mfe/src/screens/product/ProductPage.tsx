@@ -48,6 +48,7 @@ import { ProductFrontend } from './frontend/ProductFrontend';
 import { ProductInfrastructure } from './infra/ProductInfrastructure';
 import { ProductMap } from './map/ProductMap';
 import { SourceRoles } from './SourceRoles';
+import { GearMatchSection } from './match/GearMatchSection';
 import styles from '../product.module.css';
 
 /** The section this member last looked at for the project; storage may be
@@ -60,7 +61,7 @@ function storedSection(projectId: string): string | null {
     return null;
   }
 }
-function storeSection(projectId: string, id: ProductSectionId) {
+function storeSection(projectId: string, id: PageSection) {
   try {
     window.localStorage.setItem(sectionKey(projectId), id);
   } catch {
@@ -69,6 +70,9 @@ function storeSection(projectId: string, id: ProductSectionId) {
 }
 
 /** A part's state as its tab's dot. */
+/** The page's parts, and Gear match: what the gears-matcher read in the specs. */
+type PageSection = ProductSectionId | 'match';
+
 const DOT: Record<FlowState, Tone> = {
   done: 'ok',
   todo: 'warn',
@@ -91,11 +95,12 @@ const ACTION_KEY: Record<ProductAction, string> = {
 export function ProductPage() {
   const { projectId, bridge } = useScope();
   const { t } = useProductTranslations();
-  const [section, setSection] = useState<ProductSectionId>(() => {
+  const [section, setSection] = useState<PageSection>(() => {
     // The map is Configure's overview: where the page opens unless this
     // member's last look says otherwise. (The prototype also honoured an old
     // address's `/…/frontend`; the portal's routes have no such suffix.)
     const stored = storedSection(projectId);
+    if (stored === 'match') return 'match';
     return stored === null || stored === 'map' ? 'map' : openingSection(null, stored);
   });
   const [summary, setSummary] = useState<ProductSummary | null>(null);
@@ -161,7 +166,7 @@ export function ProductPage() {
     return () => window.removeEventListener(PRODUCT_NEXT_EVENT, said);
   }, [projectId]);
 
-  const pick = (id: ProductSectionId) => {
+  const pick = (id: PageSection) => {
     setSection(id);
     storeSection(projectId, id);
     // The header follows what the sections changed: a save, a frontend added.
@@ -186,12 +191,13 @@ export function ProductPage() {
   const partsOf = steps?.find((s) => s.id === 'configure')?.parts ?? [];
   const partOf = (id: string) => partsOf.find((p) => p.id === id);
   const gears = summary?.gears ?? 0;
-  const tabs: { id: ProductSectionId; label: string }[] = [
+  const tabs: { id: PageSection; label: string }[] = [
     { id: 'map', label: t('tab_map') },
     { id: 'infrastructure', label: t('tab_infrastructure') },
     { id: 'backend', label: gears > 0 ? t('tab_backend_gears', { count: String(gears) }) : t('tab_backend') },
     { id: 'frontend', label: t('tab_frontend') },
     { id: 'parts', label: t('tab_parts') },
+    { id: 'match', label: t('tab_match') },
   ];
 
   return (
@@ -295,6 +301,7 @@ export function ProductPage() {
       <div hidden={section !== 'backend'} data-product-section="backend">
         <ProductBackend />
       </div>
+      {section === 'match' && <GearMatchSection key={projectId} />}
       {section === 'frontend' && <ProductFrontend onChanged={() => setRound((r) => r + 1)} />}
     </>
   );
