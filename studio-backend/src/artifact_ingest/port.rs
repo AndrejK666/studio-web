@@ -292,6 +292,28 @@ pub trait ArtifactFiles: Send + Sync + 'static {
         scope: &str,
     ) -> anyhow::Result<Vec<IngestedFile>>;
 
+    /// The repository each of `node_ids` came from, for those that are
+    /// files of `scope` with a repository: what counting specs per source
+    /// needs, without the scope's whole file listing.
+    ///
+    /// Defaulted to [`ArtifactFiles::list_files`] narrowed here. An `Err`
+    /// means it is UNKNOWN, as for `list_files`.
+    async fn repos_of_files(
+        &self,
+        ctx: &toolkit_security::SecurityContext,
+        scope: &str,
+        node_ids: &[String],
+    ) -> anyhow::Result<std::collections::HashMap<String, String>> {
+        let wanted: std::collections::HashSet<&str> = node_ids.iter().map(String::as_str).collect();
+        Ok(self
+            .list_files(ctx, scope)
+            .await?
+            .into_iter()
+            .filter(|f| !f.repo.is_empty() && wanted.contains(f.node_id.as_str()))
+            .map(|f| (f.node_id, f.repo))
+            .collect())
+    }
+
     /// Each document's recorded verdicts in `scope`, folded, keyed by the
     /// verdict's `subject`: a file's node id, or `studio-doc:<id>` for a
     /// document written in Studio. A document with no entry was never checked.

@@ -9068,24 +9068,6 @@ async fn specs_per_source(
     })?;
     service.authorize(&ctx, scope_id).await.map_err(no_tenant)?;
 
-    // Which repository each ingested file came from. Absent means the count is
-    // UNKNOWN — a screen must not draw that as zero, because "no specs here"
-    // and "nobody could tell me" are different sentences.
-    let (repo_of, files_known) = match quality.files() {
-        Some(files) => match files.list_files(&ctx, scope).await {
-            Ok(found) => (
-                found
-                    .into_iter()
-                    .filter(|f| !f.repo.is_empty())
-                    .map(|f| (f.node_id, f.repo))
-                    .collect::<std::collections::HashMap<String, String>>(),
-                true,
-            ),
-            Err(_) => (std::collections::HashMap::new(), false),
-        },
-        None => (std::collections::HashMap::new(), false),
-    };
-
     // The bindings of this scope. A workspace reads its own; a project reads
     // its own plus what it inherits, which is the pairing every other Documents
     // read uses and the one this has to repeat to count the same rows.
@@ -9098,14 +9080,32 @@ async fn specs_per_source(
         _ => service.every_binding_under(&ctx, scope_id).await,
     }
     .map_err(internal)?;
+    // Only a file somebody decided about counts.
+    let decided: Vec<String> = bindings
+        .into_iter()
+        .filter(|b| matches!(b.state.as_str(), "confirmed" | "manual"))
+        .map(|b| b.node_id)
+        .collect();
+
+    // Which repository each of those files came from, asked for those files
+    // alone: the scope's whole file listing used to be read to join it here.
+    // Absent means the count is UNKNOWN — a screen must not draw that as
+    // zero, because "no specs here" and "nobody could tell me" are different
+    // sentences.
+    let mut ids: Vec<String> = decided.clone();
+    ids.sort();
+    ids.dedup();
+    let (repo_of, files_known) = match quality.files() {
+        Some(files) => match files.repos_of_files(&ctx, scope, &ids).await {
+            Ok(found) => (found, true),
+            Err(_) => (std::collections::HashMap::new(), false),
+        },
+        None => (std::collections::HashMap::new(), false),
+    };
 
     let mut counts: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
-    for binding in bindings {
-        // Only a file somebody decided about counts.
-        if !matches!(binding.state.as_str(), "confirmed" | "manual") {
-            continue;
-        }
-        if let Some(repo) = repo_of.get(&binding.node_id) {
+    for node_id in decided {
+        if let Some(repo) = repo_of.get(&node_id) {
             *counts.entry(repo.clone()).or_insert(0) += 1;
         }
     }

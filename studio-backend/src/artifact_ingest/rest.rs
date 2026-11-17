@@ -1394,8 +1394,6 @@ async fn source_activity(
     }
     let service = ingest.get()?;
 
-    let pulls = scoped_values(service, &ctx, "pull_request", scope).await?;
-    let commits = scoped_values(service, &ctx, "commit", scope).await?;
     // One instant for every row: a render spanning midnight would otherwise
     // put two repositories on different axes.
     let now = i64::try_from(
@@ -1406,17 +1404,23 @@ async fn source_activity(
     )
     .unwrap_or(0);
 
-    let items: Vec<RepoActivityDto> =
-        super::activity::repo_activity(&pulls, &commits, now, days as usize)
-            .into_iter()
-            .map(|(repo, a)| RepoActivityDto {
-                repo,
-                open: a.open,
-                merged: a.merged,
-                commits: a.commits,
-                days: a.days,
-            })
-            .collect();
+    // Counted by the store: the index reads a few columns, and of the
+    // commits only the window's, where every pull request and commit of the
+    // scope used to be read whole and folded here (`source-activity` at
+    // 10 s on Dev, growing with every commit ever synced).
+    let items: Vec<RepoActivityDto> = service
+        .repo_activity(&ctx, scope, now, days as usize)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .into_iter()
+        .map(|(repo, a)| RepoActivityDto {
+            repo,
+            open: a.open,
+            merged: a.merged,
+            commits: a.commits,
+            days: a.days,
+        })
+        .collect();
     Ok(Json(SourceActivityListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
@@ -1808,24 +1812,6 @@ async fn open_pull_requests(
     }))
 }
 
-/// The payloads of one type that name `scope`, through the same predicate the
-/// listing route applies — not a second spelling of it.
-async fn scoped_values(
-    service: &Arc<IngestService>,
-    ctx: &SecurityContext,
-    type_leaf: &str,
-    scope: &str,
-) -> ApiResult<Vec<serde_json::Value>> {
-    Ok(service
-        .list_in_scope(ctx, Some(type_leaf), scope)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
-        .into_iter()
-        .map(|node| node.value)
-        .collect())
-}
-
-/// The same, keeping each node's instance id — what a feed row is keyed on.
 /// One CI run, as the sync kept it.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]

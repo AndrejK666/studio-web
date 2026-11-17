@@ -1078,12 +1078,47 @@ impl GraphStore for ModelGraph {
         ctx: &SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<IngestedFile>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            // The old store's own file read: the index reads three columns.
+            return s.legacy.files_in_scope(ctx, scope).await;
+        }
         Ok(self
             .list_in_scope(ctx, Some(gts::FILE_TYPE), scope)
             .await?
             .iter()
             .filter_map(ingested_file)
             .collect())
+    }
+
+    async fn repos_of_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        node_ids: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.repos_of_files(ctx, scope, node_ids).await;
+        }
+        super::graph::repos_of_listed_files(self, ctx, scope, node_ids).await
+    }
+
+    async fn repo_activity(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        now: i64,
+        days: usize,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.repo_activity(ctx, scope, now, days).await;
+        }
+        // The model's types do not declare the fields the window is on
+        // (`created_at` of a commit, `merged` of a pull request), so it
+        // cannot count them: both are read, side by side.
+        super::graph::activity_of_listing(self, ctx, scope, now, days).await
     }
 
     async fn page(
@@ -1277,6 +1312,25 @@ impl GraphStore for ReturningGraph {
     ) -> anyhow::Result<Vec<IngestedFile>> {
         self.0.back_to_graph(ctx).await;
         self.0.legacy.files_in_scope(ctx, scope).await
+    }
+    async fn repos_of_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        node_ids: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        self.0.back_to_graph(ctx).await;
+        self.0.legacy.repos_of_files(ctx, scope, node_ids).await
+    }
+    async fn repo_activity(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        now: i64,
+        days: usize,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        self.0.back_to_graph(ctx).await;
+        self.0.legacy.repo_activity(ctx, scope, now, days).await
     }
     async fn page(
         &self,

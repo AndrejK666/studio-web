@@ -736,3 +736,126 @@ async fn a_batch_that_fails_part_way_does_not_leave_the_listing_behind() {
         .unwrap();
     assert!(listed.iter().any(|n| n.instance_id == "late-00"));
 }
+
+/// Pull requests and commits with the shapes a window meets: open, closed and
+/// merged (by flag or by state), moved inside and outside it, with no
+/// `updated_at`, times with an offset that names another day than their
+/// instant, a non-string `state` and `merged`, commits of a repository that
+/// has none in the window, a node without a repository, and another scope.
+fn activity_fixture(now_ms: i64) -> Vec<GtsNode> {
+    let day = super::super::activity::DAY_MS;
+    let at = |ms: i64| {
+        let secs = ms.div_euclid(1000);
+        let date = super::super::activity::date_of_day(secs.div_euclid(86_400));
+        let s = secs.rem_euclid(86_400);
+        format!("{date}T{:02}:{:02}:{:02}Z", s / 3600, (s / 60) % 60, s % 60)
+    };
+    let in_project = json!({ "workspace_id": WS, "project_id": PROJECT });
+    let mut out = Vec::new();
+    let pulls = [
+        json!({ "repo": "acme/web", "state": "open", "updated_at": at(now_ms - day) }),
+        json!({ "repo": "acme/web", "state": "open", "updated_at": at(now_ms - 40 * day) }),
+        json!({ "repo": "acme/web", "state": "closed", "merged": true, "updated_at": at(now_ms - 2 * day) }),
+        json!({ "repo": "acme/web", "state": "merged", "updated_at": at(now_ms - 3 * day) }),
+        json!({ "repo": "acme/api", "state": "closed", "updated_at": at(now_ms - day) }),
+        json!({ "repo": "acme/api", "state": "closed", "merged": true, "updated_at": at(now_ms - 30 * day) }),
+        json!({ "repo": "acme/api", "state": "open", "created_at": at(now_ms - day) }),
+        json!({ "repo": "acme/api", "state": 3, "merged": "true", "updated_at": at(now_ms) }),
+        json!({ "repo": "acme/api", "state": "open", "updated_at": "2026-11-16T23:30:00-05:00" }),
+        json!({ "state": "open", "updated_at": at(now_ms) }),
+    ];
+    for (i, mut v) in pulls.into_iter().enumerate() {
+        merge(&mut v, &in_project);
+        out.push(node(gts::PULL_REQUEST_TYPE, &format!("pr-{i}"), v));
+    }
+    let commits = [
+        json!({ "repo": "acme/web", "created_at": at(now_ms - day) }),
+        json!({ "repo": "acme/web", "created_at": at(now_ms - 6 * day) }),
+        json!({ "repo": "acme/web", "created_at": at(now_ms - 7 * day) }),
+        json!({ "repo": "acme/web", "created_at": at(now_ms - 8 * day) }),
+        json!({ "repo": "acme/old", "created_at": at(now_ms - 90 * day) }),
+        json!({ "repo": "acme/old" }),
+        json!({ "repo": "acme/api", "created_at": "2026-11-12T01:00:00+14:00" }),
+        json!({ "repo": "acme/api", "created_at": "2026-11-09T22:00:00-12:00" }),
+        json!({ "repo": "acme/api", "created_at": 12 }),
+        json!({ "created_at": at(now_ms) }),
+    ];
+    for (i, mut v) in commits.into_iter().enumerate() {
+        merge(&mut v, &in_project);
+        out.push(node(gts::COMMIT_TYPE, &format!("c-{i}"), v));
+    }
+    out.push(node(
+        gts::COMMIT_TYPE,
+        "c-other",
+        json!({ "workspace_id": WS, "project_id": OTHER, "repo": "acme/web", "created_at": at(now_ms) }),
+    ));
+    out
+}
+
+/// The activity the index counts is the activity the in-process fold of the
+/// whole listing gives, for every scope and window.
+#[tokio::test]
+async fn repo_activity_matches_the_graph() {
+    // 2026-11-17T09:30:00Z: the fixture's fixed offsets are around it.
+    let now_ms = 1_794_907_800_000;
+    let ctx = ctx();
+    let graph = Arc::new(InMemoryGraphStore::default());
+    graph
+        .upsert_nodes(&ctx, &activity_fixture(now_ms))
+        .await
+        .expect("seed graph");
+    let index = index().await;
+    fill_tenant(&*graph, &index, &FillState::default(), &ctx)
+        .await
+        .expect("fill");
+    let store = IndexedGraphStore::new(graph.clone(), index);
+    assert!(store.ready(&ctx).await);
+    let mut checked = 0;
+    for scope in [WS, PROJECT, OTHER, "nobody"] {
+        for days in [1, 7, 30] {
+            for now in [now_ms, now_ms + 14 * 3_600_000] {
+                let want =
+                    super::super::graph::activity_of_listing(&*graph, &ctx, scope, now, days)
+                        .await
+                        .unwrap();
+                let got = store.repo_activity(&ctx, scope, now, days).await.unwrap();
+                assert_eq!(got, want, "{scope} {days} {now}");
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, 4 * 3 * 2);
+    // And it says something: the project's web repository moved this week.
+    let week = store.repo_activity(&ctx, PROJECT, now_ms, 7).await.unwrap();
+    assert!(
+        week.get("acme/web")
+            .is_some_and(|a| a.commits > 0 && a.merged > 0)
+    );
+    assert!(week.contains_key("acme/old"));
+}
+
+/// The repositories of a set of files, asked by id, are those the scope's
+/// file listing gives them.
+#[tokio::test]
+async fn repos_of_files_match_the_graph() {
+    let ctx = ctx();
+    let (graph, store) = filled(&ctx).await;
+    let mut ids: Vec<String> = (0..30).map(|i| format!("f-{i:03}")).collect();
+    ids.extend(["f-nopath", "r-web", "c-1", "missing"].map(String::from));
+    for scope in [WS, PROJECT, OTHER] {
+        for asked in [&ids[..], &ids[..3], &[][..]] {
+            let want = super::super::graph::repos_of_listed_files(&*graph, &ctx, scope, asked)
+                .await
+                .unwrap();
+            let got = store.repos_of_files(&ctx, scope, asked).await.unwrap();
+            assert_eq!(got, want, "{scope} {}", asked.len());
+        }
+    }
+    assert!(
+        !store
+            .repos_of_files(&ctx, PROJECT, &ids)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
