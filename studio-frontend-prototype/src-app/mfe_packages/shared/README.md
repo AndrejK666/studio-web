@@ -86,6 +86,10 @@ each MFE's build bundles them into its own stylesheet, as it does its own.
   the line under a list is `GridFooter`.
 - **Filters**: `TEXT_SEARCH_FILTER_KEY`, and `tagGroupChoice`, `listChoices`,
   `searchQuery` read what a stored filter holds, whatever shape it has.
+- **Address**: a list that kept its search, one-choice filters and order in
+  the address (`useListState` with a prefix) keeps them there with
+  `GridAddress` (inside the grid: seeds it once from the address) and
+  `writeGridAddress` (called from its `load`: writes what the grid asks for).
 - **Theme**: `StudioMfeLifecycle` keeps `data-kit-theme` on the MFE's shadow
   host in step with the portal theme, and `anchorKitThemeOnShadowHost` lets
   the kit's light and dark palettes match it, so every node under the host
