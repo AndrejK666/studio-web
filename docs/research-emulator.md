@@ -103,3 +103,27 @@ Studio is then configured with:
 | `client_id` | `constructor-studio` |
 | `client_secret` | the emulator's `--client-secret` |
 | `redirect_uri` | the portal's `/connections/oauth/callback` |
+
+## A local stand against Research DEV
+
+A machine on the VPN reaches Research DEV (`https://dev-constructor.dev`), and
+a local backend can be pointed at it through `.env`:
+
+| Variable | Value |
+|---|---|
+| `STUDIO_RESEARCH_ISSUER` | `https://dev-constructor.dev/idp` |
+| `STUDIO_RESEARCH_API_URL` | `https://dev-constructor.dev/api/platform-account/v1` |
+| `STUDIO_RESEARCH_CLIENT_ID` | `constructor-studio` |
+| `STUDIO_RESEARCH_CLIENT_SECRET` | `research_client_secret` of the `studio-web-app` Secret (namespace `studio-dev`) |
+
+The sign-in does not come back to a local portal, though. The identity
+provider's client `constructor-studio` knows only Studio-dev's callbacks
+(checked 2026-11-17): `https://studio-dev.cfabric.org/connections/oauth/callback`
+is accepted, and `http://localhost:…/connections/oauth/callback` is answered
+`invalid_request` before any sign-in page. Until Research registers a local
+callback, a member signing in from a local portal has to start the sign-in
+with Studio-dev's callback (add it to `STUDIO_RESEARCH_REDIRECT_URI` and send
+it as `redirect_uri` to `POST /studio-connector/v1/oauth/start`) and carry the
+`code` and `state` the identity provider sends there to the local portal's
+`/connections/oauth/callback`. The exchange uses the callback the sign-in
+started with, so the code is accepted.
