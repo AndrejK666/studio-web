@@ -26,12 +26,14 @@ import {
 } from '@gears-frontx/ui-kit';
 import type { OrganizationRef, ScreenText } from '@constructor-studio/mfe-shared';
 import {
+  GridAddress,
   GridClearFilters,
   GridEmpty,
   ListGrid,
   createGridCells,
   tagGroupChoice,
   useLocalGridLoad,
+  writeGridAddress,
 } from '@constructor-studio/mfe-shared/grid';
 import { AdminApiService } from '../../../api/AdminApiService';
 import type { ConnectorProvider, StoredConnection } from '../../../api/types';
@@ -44,7 +46,6 @@ import {
   nonDefaultAddress,
 } from '../../../model/connections';
 import { errText, useAdmin, useConfirm } from '../common';
-import { GridAddress, writeGridAddress } from '../GridAddress';
 import { ConnectorLogo, LogoSlot } from './ConnectorLogo';
 import { EditConnection } from './EditConnection';
 import { RepoBrowser } from './RepoBrowser';

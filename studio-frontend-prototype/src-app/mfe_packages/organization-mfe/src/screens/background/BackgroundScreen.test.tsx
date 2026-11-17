@@ -1,6 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import type { TaskRun } from '../../background/types';
+
+// The kit's DataGrid measures its header.
+stubResizeObserver();
 
 const { service, calls, live } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -73,13 +77,16 @@ describe('BackgroundScreen', () => {
             ],
           }),
       },
-      runs: ({ state, organizationId }: { state?: string; organizationId?: string }) => ({
+      runs: ({ state, organizationId, limit }: { state?: string; organizationId?: string; limit?: number }) => ({
         fetch: () => {
           if (organizationId !== 'o1') throw new Error('runs read outside the organization in view');
-          calls.push(state ?? 'every');
-          return Promise.resolve(
-            state === 'failed' ? { items: [run('f1', 'failed')], total: 1 } : { items: [], total: 0 }
-          );
+          // The header's counts read one run per state; the list reads a page.
+          if (limit !== 1) calls.push(state ?? 'every');
+          if (state === 'failed') return Promise.resolve({ items: [run('f1', 'failed')], total: 1 });
+          if (state === 'running') return Promise.resolve({ items: [run('r1', 'running', 'notify.deliver')], total: 1 });
+          if (state === undefined)
+            return Promise.resolve({ items: [run('f1', 'failed'), run('s1', 'succeeded', 'docs.index')], total: 2 });
+          return Promise.resolve({ items: [], total: 0 });
         },
       }),
       retry: (id: string) => ({ fetch: () => (calls.push(`retry:${id}`), Promise.resolve({})) }),
@@ -121,5 +128,78 @@ describe('BackgroundScreen', () => {
     view.rerender(<BackgroundScreen />);
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(calls.length).toBe(before);
+  });
+
+  it('lists the runs through the grid: the search narrows them and says when nothing matched', async () => {
+    render(<BackgroundScreen />);
+    expect(await screen.findByText('the token was refused')).toBeTruthy();
+    const runs = document.querySelector('[data-list-grid="background-runs"]') as HTMLElement;
+    expect(runs.querySelector('[data-run-id="r1-0000-0000"]')).toBeTruthy();
+    fireEvent.change(within(runs).getByPlaceholderText('search_runs'), { target: { value: 'notify' } });
+    await waitFor(() => expect(runs.querySelector('[data-run-id="f1-0000-0000"]')).toBeNull());
+    expect(runs.querySelector('[data-run-id="r1-0000-0000"]')).toBeTruthy();
+    fireEvent.change(within(runs).getByPlaceholderText('search_runs'), { target: { value: 'nothing like it' } });
+    expect(await within(runs).findByText('runs_no_matches')).toBeTruthy();
+    fireEvent.click(within(runs).getByText('clear_search'));
+    await waitFor(() => expect(runs.querySelector('[data-run-id="f1-0000-0000"]')).toBeTruthy());
+  });
+
+  it('asks the server for the state the grid filter chose', async () => {
+    render(<BackgroundScreen />);
+    expect(await screen.findByText('the token was refused')).toBeTruthy();
+    const runs = document.querySelector('[data-list-grid="background-runs"]') as HTMLElement;
+    const filter = within(runs)
+      .getAllByRole('button', { name: /col_state/ })
+      .find((b) => !b.closest('thead')) as HTMLElement;
+    fireEvent.click(filter);
+    fireEvent.click(await screen.findByRole('radio', { name: 'filter_every' }));
+    await waitFor(() => expect(calls).toContain('every'));
+    expect(await screen.findByText('docs.index')).toBeTruthy();
+  });
+
+  it('opens a run under the list', async () => {
+    render(<BackgroundScreen />);
+    await screen.findByText('the token was refused');
+    // The runs are read again once the schedules arrive (a recurring task folds), and the grid redraws its
+    // rows: click the row on screen until the click lands on a row still there.
+    await waitFor(() => {
+      if (!document.querySelector('[data-run-details]')) fireEvent.click(screen.getByText('the token was refused'));
+      expect(document.querySelector('[data-run-details="f1-0000-0000"]')).toBeTruthy();
+    });
+  });
+
+  it('says so when nothing failed and nothing is running, and when no schedule matched', async () => {
+    Object.assign(service, {
+      runs: () => ({ fetch: () => Promise.resolve({ items: [], total: 0 }) }),
+    });
+    render(<BackgroundScreen />);
+    expect(await screen.findByText('runs_empty')).toBeTruthy();
+    const schedules = await waitFor(() => {
+      const found = document.querySelector('[data-list-grid="background-schedules"]');
+      if (!found) throw new Error('no schedules grid');
+      return found as HTMLElement;
+    });
+    await within(schedules).findByText('Nightly catalogue');
+    fireEvent.change(within(schedules).getByPlaceholderText('search_schedules'), { target: { value: 'weekly' } });
+    expect(await within(schedules).findByText('schedules_no_matches')).toBeTruthy();
+  });
+
+  it('offers a retry when the runs could not be read', async () => {
+    let fail = true;
+    Object.assign(service, {
+      runs: ({ state, limit }: { state?: string; limit?: number }) => ({
+        fetch: () => {
+          if (limit === 1) return Promise.resolve({ items: [], total: 0 });
+          return fail
+            ? Promise.reject(new Error('boom'))
+            : Promise.resolve(state === 'failed' ? { items: [run('f1', 'failed')], total: 1 } : { items: [], total: 0 });
+        },
+      }),
+    });
+    render(<BackgroundScreen />);
+    const retry = await screen.findByRole('button', { name: 'try_again' });
+    fail = false;
+    fireEvent.click(retry);
+    expect(await screen.findByText('the token was refused')).toBeTruthy();
   });
 });

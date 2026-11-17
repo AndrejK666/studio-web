@@ -2,9 +2,10 @@ import { renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodesParams } from '../api/ArtifactIngestApiService';
 import { ARTIFACT_NODE_TYPES } from '../api/artifactTypes';
+import type { DocumentDto } from '../api/documentTypes';
 
 /**
- * The header's repository total is its own read: the table's page carries the
+ * The header's repository total is its own read: the grid's page carries the
  * search and the type, the header must not (DoD `...-counters`).
  */
 
@@ -14,14 +15,25 @@ interface Answer {
   isError: boolean;
 }
 
-const { answer, invalidate, imported } = vi.hoisted(() => ({
+const { answer, invalidate, imported, fetched } = vi.hoisted(() => ({
   answer: vi.fn<(params: NodesParams) => Answer>(),
   invalidate: vi.fn(),
   imported: vi.fn(),
+  fetched: [] as NodesParams[],
 }));
 
 vi.mock('@gears-frontx/react', () => ({
-  apiRegistry: { getService: () => ({ nodes: (params: NodesParams) => ({ params }) }) },
+  apiRegistry: {
+    getService: () => ({
+      nodes: (params: NodesParams) => ({
+        params,
+        fetch: () => {
+          fetched.push(params);
+          return Promise.resolve({ nodes: [], total: 40 });
+        },
+      }),
+    }),
+  },
   useApiQuery: (descriptor: { params: NodesParams }) => answer(descriptor.params),
   useQueryCache: () => ({ invalidate }),
 }));
@@ -34,106 +46,97 @@ vi.mock('./useProjectDocuments', () => ({
   useProjectDocuments: () => ({ documents: [], own: [], loading: false, failed: false }),
 }));
 
-import { useArtifacts } from './useArtifacts';
+import { readArtifactsPage, useArtifacts } from './useArtifacts';
 
 const ok = (total: number): Answer => ({ data: { nodes: [], total }, isLoading: false, isError: false });
 const isRepositoryTotal = (params: NodesParams) =>
   params.limit === 1 && params.repo !== undefined;
+const noop = () => {};
 
 beforeEach(() => {
   invalidate.mockClear();
+  fetched.length = 0;
   imported.mockReturnValue({ phase: 'idle', repos: [] });
   answer.mockReset();
-  // The page answers for its filters; every limit=1 read with a repo answers 96.
+  // Every limit=1 read with a repo answers 96; the project count 1286.
   answer.mockImplementation((params) => {
     if (isRepositoryTotal(params)) return ok(96);
     if (params.limit === 1) return ok(1286);
-    return ok(params.q || params.type ? 3 : 96);
+    return ok(96);
   });
 });
 
 describe('the repository total in the header', () => {
-  it('is the repository read, not the filtered page', () => {
-    const { result } = renderHook(() =>
-      useArtifacts('p1', 'w1', { repo: 'r-1', kind: 'issue', search: 'broken', offset: 0 })
-    );
-    expect(result.current.total).toBe(3);
+  it('is the repository read', () => {
+    const { result } = renderHook(() => useArtifacts('p1', 'w1', 'r-1', noop));
     expect(result.current.repositoryTotal).toBe(96);
     expect(answer).toHaveBeenCalledWith({ scope: 'p1', repo: 'r-1', limit: 1 });
   });
 
   it('is absent with no repository chosen, and its read is the project count', () => {
-    const { result } = renderHook(() =>
-      useArtifacts('p1', 'w1', { repo: null, kind: null, search: '', offset: 0 })
-    );
+    const { result } = renderHook(() => useArtifacts('p1', 'w1', null, noop));
     expect(result.current.repositoryTotal).toBeNull();
     expect(result.current.projectTotal).toBe(1286);
     expect(answer.mock.calls.some(([params]) => isRepositoryTotal(params))).toBe(false);
   });
 
-  it('fails on its own, without taking the table down', () => {
+  it('fails on its own, without taking the tab down', () => {
     answer.mockImplementation((params) =>
       isRepositoryTotal(params) ? { isLoading: false, isError: true } : ok(96)
     );
-    const { result } = renderHook(() =>
-      useArtifacts('p1', 'w1', { repo: 'r-1', kind: null, search: '', offset: 0 })
-    );
+    const { result } = renderHook(() => useArtifacts('p1', 'w1', 'r-1', noop));
     expect(result.current.repositoryTotal).toBeNull();
     expect(result.current.repositoryTotalFailed).toBe(true);
     expect(result.current.failed).toBe(false);
   });
 
-  it('is asked again by refetch', () => {
-    const { result } = renderHook(() =>
-      useArtifacts('p1', 'w1', { repo: 'r-1', kind: null, search: '', offset: 0 })
-    );
+  it('is asked again by refetch, and so is the list', () => {
+    const onRefresh = vi.fn();
+    const { result } = renderHook(() => useArtifacts('p1', 'w1', 'r-1', onRefresh));
     result.current.refetch();
-    expect(invalidate).toHaveBeenCalledWith({ params: { scope: 'p1', repo: 'r-1', limit: 1 } });
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ params: { scope: 'p1', repo: 'r-1', limit: 1 } }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('a page on the way', () => {
-  it('keeps the last total of the same project, and only of the same project', () => {
-    const { result, rerender } = renderHook(
-      ({ projectId, search }) => useArtifacts(projectId, 'w1', { repo: null, kind: null, search, offset: 0 }),
-      { initialProps: { projectId: 'p1', search: '' } }
-    );
-    // The first page answered 96; the search narrows it to 3.
-    rerender({ projectId: 'p1', search: 'broken' });
-    expect(result.current.total).toBe(3);
+describe("the grid's page", () => {
+  const NAMES = new Map<string, string>();
+  const doc = (id: string, title: string) => ({ id, title, updated_at: '2026-01-01T00:00:00Z' }) as DocumentDto;
 
-    answer.mockImplementation((params) => {
-      if (params.sort === 'updated') return { isLoading: true, isError: false };
-      return params.limit === 1 ? ok(1286) : ok(96);
+  it('sends the chosen kind as its full GTS id, the repository and the search', async () => {
+    await readArtifactsPage('p1', [], NAMES, { repo: 'r-1', kind: 'issue', search: ' broken ' }, 0, 25);
+    expect(fetched[0]).toMatchObject({
+      scope: 'p1',
+      sort: 'updated',
+      repo: 'r-1',
+      type: ARTIFACT_NODE_TYPES.issue,
+      q: 'broken',
+      limit: 25,
     });
-    rerender({ projectId: 'p1', search: 'other' });
-    expect(result.current).toMatchObject({ total: 3, refreshing: true, loading: false });
-
-    rerender({ projectId: 'p2', search: 'other' });
-    expect(result.current).toMatchObject({ total: 0, refreshing: false, loading: true });
-  });
-});
-
-describe('the type filter', () => {
-  const pageRequest = () =>
-    answer.mock.calls.map(([params]) => params).find((params) => params.sort === 'updated');
-
-  it('sends the chosen kind as its full GTS id', () => {
-    renderHook(() => useArtifacts('p1', 'w1', { repo: null, kind: 'issue', search: '', offset: 0 }));
-    expect(pageRequest()?.type).toBe(ARTIFACT_NODE_TYPES.issue);
   });
 
-  it('sends no type for all types — the gear answers its default kinds', () => {
-    renderHook(() => useArtifacts('p1', 'w1', { repo: null, kind: null, search: '', offset: 0 }));
-    expect(pageRequest()).toBeDefined();
-    expect(pageRequest()).not.toHaveProperty('type', expect.anything());
+  it('sends no type for all types — the gear answers its default kinds', async () => {
+    await readArtifactsPage('p1', [], NAMES, { repo: null, kind: null, search: '' }, 0, 25);
+    expect(fetched[0]).not.toHaveProperty('type', expect.anything());
+  });
+
+  it("puts the project's own documents first, and counts them in the total", async () => {
+    const page = await readArtifactsPage('p1', [doc('d1', 'Plan')], NAMES, { repo: null, kind: null, search: '' }, 0, 25);
+    expect(page.rows.map((r) => r.id)).toEqual(['d1']);
+    expect(page.total).toBe(41);
+    expect(fetched[0]).toMatchObject({ limit: 24, offset: 0 });
+  });
+
+  it('hides the documents under a repository or a type filter', async () => {
+    const page = await readArtifactsPage('p1', [doc('d1', 'Plan')], NAMES, { repo: 'r-1', kind: null, search: '' }, 0, 25);
+    expect(page.rows).toEqual([]);
+    expect(page.total).toBe(40);
   });
 });
 
 describe('the re-read while an import runs', () => {
-  const QUERY = { repo: null, kind: null, search: '', offset: 0 };
-  /** One refetch invalidates the page, the repositories, the project count and the repository total. */
-  const READS_PER_REFETCH = 4;
+  /** One refetch invalidates the repositories, the project count and the repository total, and re-reads the page. */
+  const READS_PER_REFETCH = 3;
   const importing = (...repos: [status: string, stored: number][]) => ({
     phase: 'running',
     repos: repos.map(([status, stored], i) => ({ repo: `acme/r-${i}`, status, stored })),
@@ -148,13 +151,16 @@ describe('the re-read while an import runs', () => {
   });
 
   it('happens at once when a sync starts or settles, and not again for the same statuses', () => {
+    const onRefresh = vi.fn();
     imported.mockReturnValue(importing(['queued', 0], ['queued', 0]));
-    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
+    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', null, onRefresh));
     invalidate.mockClear();
+    onRefresh.mockClear();
 
     imported.mockReturnValue(importing(['running', 0], ['queued', 0]));
     rerender();
     expect(invalidate).toHaveBeenCalledTimes(READS_PER_REFETCH);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
 
     rerender();
     expect(invalidate).toHaveBeenCalledTimes(READS_PER_REFETCH);
@@ -162,7 +168,7 @@ describe('the re-read while an import runs', () => {
 
   it('happens once in two seconds however often the stored count grows', () => {
     imported.mockReturnValue(importing(['running', 0]));
-    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
+    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', null, noop));
     invalidate.mockClear();
 
     for (const stored of [1_000, 2_000, 3_000]) {
@@ -177,7 +183,7 @@ describe('the re-read while an import runs', () => {
 
   it('keeps happening every two seconds while the stored count keeps growing', () => {
     imported.mockReturnValue(importing(['running', 0]));
-    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
+    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', null, noop));
     invalidate.mockClear();
 
     for (let second = 1; second <= 5; second += 1) {
@@ -192,7 +198,7 @@ describe('the re-read while an import runs', () => {
 
   it('drops the pending one when a status change re-reads at once', () => {
     imported.mockReturnValue(importing(['running', 0], ['queued', 0]));
-    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
+    const { rerender } = renderHook(() => useArtifacts('p1', 'w1', null, noop));
     invalidate.mockClear();
 
     imported.mockReturnValue(importing(['running', 1_000], ['queued', 0]));
@@ -206,7 +212,7 @@ describe('the re-read while an import runs', () => {
 
   it('does not happen once the hook is gone', () => {
     imported.mockReturnValue(importing(['running', 0]));
-    const { rerender, unmount } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
+    const { rerender, unmount } = renderHook(() => useArtifacts('p1', 'w1', null, noop));
     invalidate.mockClear();
 
     imported.mockReturnValue(importing(['running', 1_000]));

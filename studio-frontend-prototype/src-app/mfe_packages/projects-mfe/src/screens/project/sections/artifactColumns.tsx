@@ -5,6 +5,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  type DataGridTableColumn,
 } from '@gears-frontx/ui-kit';
 import {
   FileText,
@@ -18,7 +19,7 @@ import {
 } from 'lucide-react';
 import type { ArtifactKind } from '../../../api/artifactTypes';
 import { opensInEditor, type ArtifactRow } from '../../../model/artifact';
-import { NameCell } from '@constructor-studio/mfe-shared/grid';
+import { NameCell, NoData, createGridCells } from '@constructor-studio/mfe-shared/grid';
 import styles from './ArtifactsSection.module.css';
 
 const KIND_ICON: Record<ArtifactKind | 'document', React.ReactNode> = {
@@ -44,34 +45,77 @@ export interface ArtifactColumnLabels {
   open: string;
   openInEditor: string;
   copyLink: string;
-}
-
-export interface ArtifactColumn {
-  key: string;
-  label: string;
-  className: string;
-  sorted?: boolean;
-  render: (row: ArtifactRow) => React.ReactNode;
-}
-
-export interface ArtifactColumnDeps {
-  labels: ArtifactColumnLabels;
-  formatRelative: (value: number) => string;
-  container?: HTMLElement | null;
-  onOpen?: ArtifactOpen;
+  /** What an empty cell says on hover. */
+  none: string;
 }
 
 /** Which control asked: the name button or the row menu's Open in editor. */
 export type ArtifactOpenVia = 'name' | 'menu';
 export type ArtifactOpen = (row: ArtifactRow, via: ArtifactOpenVia) => void;
 
-// @cpt-dod:cpt-studiofrontend-dod-project-artifacts-open-request:p1
-const RowMenu: React.FC<{
-  row: ArtifactRow;
+/** What a cell needs beyond its row. */
+export interface ArtifactCells {
   labels: ArtifactColumnLabels;
+  formatRelative: (value: number) => string;
   container?: HTMLElement | null;
   onOpen?: ArtifactOpen;
-}> = ({ row, labels, container, onOpen }) => {
+}
+
+const [ArtifactCellsProvider, useArtifactCells] = createGridCells<ArtifactCells>('Artifacts');
+export { ArtifactCellsProvider };
+
+const NameOfRow: React.FC<{ item: ArtifactRow }> = ({ item }) => {
+  const { onOpen } = useArtifactCells();
+  return (
+    <NameCell
+      name={item.name}
+      icon={item.kind !== null && KIND_ICON[item.kind]}
+      onOpen={onOpen !== undefined && opensInEditor(item) ? () => onOpen(item, 'name') : undefined}
+    />
+  );
+};
+
+const RepositoryCell: React.FC<{ item: ArtifactRow }> = ({ item }) => {
+  const { labels } = useArtifactCells();
+  if (item.kind === 'document' || !item.repository) return <NoData label={labels.none} />;
+  return (
+    <span className={`${styles.truncate} ${styles.muted}`} title={item.repository}>
+      {item.repository}
+    </span>
+  );
+};
+
+const PathCell: React.FC<{ item: ArtifactRow }> = ({ item }) => (
+  <span className={`${styles.truncate} ${styles.muted}`} title={item.path}>
+    {item.path}
+  </span>
+);
+
+// TODO: plain text until ui-kit carries a plain status badge again (0.4
+// dropped Badge's `shape="plain"`/`dot`).
+const SyncCell: React.FC<{ item: ArtifactRow }> = ({ item }) => {
+  const { labels } = useArtifactCells();
+  return <span className={styles.muted}>{item.sync === 'uploaded' ? labels.provenance.upload : labels.ingested}</span>;
+};
+
+// @cpt-dod:cpt-studiofrontend-dod-project-artifacts-updated:p1
+const UpdatedCell: React.FC<{ item: ArtifactRow }> = ({ item }) => {
+  const { labels, formatRelative } = useArtifactCells();
+  return (
+    <span className={styles.muted}>
+      {item.updatedAt !== null
+        ? formatRelative(item.updatedAt)
+        : item.provenance
+          ? labels.provenance[item.provenance]
+          : ''}
+    </span>
+  );
+};
+
+// @cpt-dod:cpt-studiofrontend-dod-project-artifacts-open-request:p1
+/** The row's menu: Open in editor for what the editor opens, else Open on the forge; Copy link with a url. */
+export const ArtifactRowMenu: React.FC<{ item: ArtifactRow }> = ({ item: row }) => {
+  const { labels, container, onOpen } = useArtifactCells();
   const editor = onOpen !== undefined && opensInEditor(row);
   return (
     <div className={styles.actionsCell}>
@@ -90,9 +134,7 @@ const RowMenu: React.FC<{
         />
         <DropdownMenuContent align="end" container={container ?? undefined}>
           {editor ? (
-            <DropdownMenuItem onClick={() => onOpen(row, 'menu')}>
-              {labels.openInEditor}
-            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onOpen(row, 'menu')}>{labels.openInEditor}</DropdownMenuItem>
           ) : (
             <DropdownMenuItem
               onClick={() => {
@@ -117,70 +159,28 @@ const RowMenu: React.FC<{
   );
 };
 
-RowMenu.displayName = 'RowMenu';
+ArtifactRowMenu.displayName = 'ArtifactRowMenu';
+
+/** The cells the Artifacts grid draws, by column id. */
+export const ARTIFACT_CELLS = {
+  name: NameOfRow,
+  repository: RepositoryCell,
+  path: PathCell,
+  sync: SyncCell,
+  updated: UpdatedCell,
+} as const;
 
 // @cpt-dod:cpt-studiofrontend-dod-project-artifacts-table:p1
-// @cpt-dod:cpt-studiofrontend-dod-project-artifacts-updated:p1
-export function artifactColumns({
-  labels,
-  formatRelative,
-  container,
-  onOpen,
-}: ArtifactColumnDeps): ArtifactColumn[] {
+/** The grid's columns; nothing sorts but the gear, newest first, so every header is plain. */
+export function artifactColumns(labels: ArtifactColumnLabels): DataGridTableColumn<ArtifactRow>[] {
   return [
-    {
-      key: 'name',
-      label: labels.name,
-      className: styles.colName,
-      render: (row) => (
-        <NameCell
-          name={row.name}
-          icon={row.kind !== null && KIND_ICON[row.kind]}
-          onOpen={onOpen !== undefined && opensInEditor(row) ? () => onOpen(row, 'name') : undefined}
-        />
-      ),
-    },
-    {
-      key: 'repository',
-      label: labels.repository,
-      className: styles.colRepository,
-      render: (row) => (
-        <span className={styles.truncate}>{row.kind === 'document' ? '—' : row.repository}</span>
-      ),
-    },
-    {
-      key: 'path',
-      label: labels.path,
-      className: styles.colPath,
-      render: (row) => <span className={styles.truncate}>{row.path}</span>,
-    },
-    {
-      key: 'sync',
-      label: labels.sync,
-      className: styles.colSync,
-      // TODO: plain text until ui-kit carries a plain status badge again (0.4
-      // dropped Badge's `shape="plain"`/`dot`).
-      render: (row) => (row.sync === 'uploaded' ? labels.provenance.upload : labels.ingested),
-    },
-    {
-      key: 'updated',
-      label: labels.updated,
-      className: styles.colUpdated,
-      sorted: true,
-      render: (row) =>
-        row.updatedAt !== null
-          ? formatRelative(row.updatedAt)
-          : row.provenance
-            ? labels.provenance[row.provenance]
-            : '',
-    },
-    {
-      key: 'actions',
-      label: '',
-      className: styles.colActions,
-      render: (row) => (
-        <RowMenu row={row} labels={labels} container={container} onOpen={onOpen} />
-      ),
-    },
+    { id: 'name', label: labels.name, component: ARTIFACT_CELLS.name },
+    { id: 'repository', label: labels.repository, component: ARTIFACT_CELLS.repository, width: 160 },
+    { id: 'path', label: labels.path, component: ARTIFACT_CELLS.path, width: 200 },
+    { id: 'sync', label: labels.sync, component: ARTIFACT_CELLS.sync, width: 150 },
+    { id: 'updated', label: labels.updated, component: ARTIFACT_CELLS.updated, width: 170 },
   ];
 }
+
+/** Every column id: the gear sorts the list, so none has a sort in its header. */
+export const ARTIFACT_COLUMN_IDS = Object.keys(ARTIFACT_CELLS);

@@ -7,7 +7,8 @@
  * this deployment been doing, and what went wrong". **Schedules** is "what
  * fires on its own", with the one control a person needs: run it now. The
  * runs open on what failed and what is running; a scheduled task's succeeded
- * runs fold into one row.
+ * runs fold into one row. Both lists are on the kit's DataGrid
+ * (`BackgroundGrids`, #1076).
  *
  * `studio-tasks` announces every run transition on `studio-events`, and the
  * shell relays its one subscription to this screen: the list reads itself
@@ -18,59 +19,20 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiRegistry, useSharedProperty, FRONTX_SHARED_PROPERTY_LANGUAGE } from '@gears-frontx/react';
-import {
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@gears-frontx/ui-kit';
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '@gears-frontx/ui-kit';
 import { isRunEvent, useOrganization, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { BackgroundApiService, scheduleOf } from '../../api/BackgroundApiService';
-import {
-  ATTENTION_STATES,
-  EVERY_STATE,
-  STATES,
-  duration,
-  finished,
-  foldRecurring,
-  headline,
-  mergePages,
-  stateTone,
-  type ShownRun,
-  type Tone,
-} from '../../background/model';
+import { ATTENTION_STATES, EVERY_STATE, STATES, foldRecurring, mergePages, type ShownRun } from '../../background/model';
 import type { TaskRun, TaskSchedule } from '../../background/types';
 import { useBackgroundTranslations } from '../../i18n';
+import { RunDetails, RunsGrid, SchedulesGrid, type RunQuery } from './BackgroundGrids';
 import styles from './BackgroundScreen.module.css';
-
-type Text = ReturnType<typeof useBackgroundTranslations>['t'];
 
 const PAGE = 50;
 const LIVE_POLL_MS = 4000;
 
-const VARIANT: Record<Tone, 'success' | 'info' | 'danger' | 'warning' | 'secondary'> = {
-  ok: 'success',
-  running: 'info',
-  danger: 'danger',
-  warn: 'warning',
-  neutral: 'secondary',
-};
-
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-function when(iso: string | null | undefined, language: string): string {
-  if (!iso) return '—';
-  const at = new Date(iso);
-  return Number.isNaN(at.getTime()) ? iso : at.toLocaleString(language);
-}
 
 interface Page {
   at: number;
@@ -91,6 +53,9 @@ export const BackgroundScreen: React.FC = () => {
   const [limit, setLimit] = useState(PAGE);
   const [tick, setTick] = useState(0);
   const [page, setPage] = useState<Page | null>(null);
+  /** The runs did not load: the grid gives way to a retry. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** A retry, a cancel or a run-now did not work. */
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [counts, setCounts] = useState<Partial<Record<string, number>>>({});
@@ -178,7 +143,7 @@ export const BackgroundScreen: React.FC = () => {
       (p) => {
         if (!alive) return;
         setPage(p);
-        setError(null);
+        setLoadError(null);
         setUnavailable(false);
       },
       (e: unknown) => {
@@ -186,7 +151,7 @@ export const BackgroundScreen: React.FC = () => {
         const text = message(e);
         // 503: studio-tasks has no database here — a configuration fact.
         if (text.includes('not available in this deployment') || text.includes('503')) setUnavailable(true);
-        else setError(text);
+        else setLoadError(text);
       }
     );
     return () => {
@@ -203,27 +168,43 @@ export const BackgroundScreen: React.FC = () => {
     return () => clearInterval(timer);
   }, [live, refresh]);
 
-  const act = async (run: TaskRun, what: 'cancel' | 'retry') => {
-    if (what === 'cancel' && !window.confirm(t('cancel_confirm', { task: run.task_type, id: run.id.slice(0, 8) })))
-      return;
-    try {
-      await (what === 'cancel' ? api.cancel(run.id, run.tenant_id) : api.retry(run.id, run.tenant_id)).fetch(undefined);
-    } catch (e) {
-      setError(t('action_failed', { error: message(e) }));
-    }
-    refresh();
-  };
+  const onAct = useCallback(
+    (run: TaskRun, what: 'cancel' | 'retry') => {
+      if (what === 'cancel' && !window.confirm(t('cancel_confirm', { task: run.task_type, id: run.id.slice(0, 8) })))
+        return;
+      void (what === 'cancel' ? api.cancel(run.id, run.tenant_id) : api.retry(run.id, run.tenant_id))
+        .fetch(undefined)
+        .catch((e: unknown) => setError(t('action_failed', { error: message(e) })))
+        .finally(refresh);
+    },
+    [api, t, refresh]
+  );
 
-  const runNow = async (sc: TaskSchedule) => {
-    try {
-      await api.runNow(sc.id).fetch(undefined);
-    } catch (e) {
-      setError(t('action_failed', { error: message(e) }));
-    }
-    refresh();
-  };
+  const onRunNow = useCallback(
+    (sc: TaskSchedule) => {
+      void api
+        .runNow(sc.id)
+        .fetch(undefined)
+        .catch((e: unknown) => setError(t('action_failed', { error: message(e) })))
+        .finally(refresh);
+    },
+    [api, t, refresh]
+  );
+
+  // The grid's state and type filters are the server's question: a new one reads the runs again.
+  const onQuery = useCallback((query: RunQuery) => {
+    setState(query.state);
+    setTaskType(query.taskType);
+  }, []);
+  const cadenceOf = useCallback(
+    (type: string) => schedules?.find((sc) => sc.task_type === type)?.expression,
+    [schedules]
+  );
+  const onOpen = useCallback((run: ShownRun) => setOpen((was) => (was === run.id ? null : run.id)), []);
 
   if (loading) return null;
+
+  const opened = open ? page?.items.find((run) => run.id === open) : undefined;
 
   return (
     <div className={styles.screen} data-background-work>
@@ -256,69 +237,26 @@ export const BackgroundScreen: React.FC = () => {
           <CardTitle>{t('runs')}</CardTitle>
         </CardHeader>
         <CardContent className={styles.body}>
-          <div className={styles.filters} role="group" aria-label={t('col_state')}>
-            <FilterChip on={state === null} onClick={() => setState(null)}>
-              {t('filter_attention')}
-            </FilterChip>
-            {STATES.map((st) => (
-              <FilterChip key={st} on={state === st} onClick={() => setState(st)}>
-                {t(`state_${st}`)}
-                {counts[st] !== undefined && <span className={styles.chipCount}>{counts[st]}</span>}
-              </FilterChip>
-            ))}
-            <FilterChip on={state === EVERY_STATE} onClick={() => setState(EVERY_STATE)}>
-              {t('filter_every')}
-            </FilterChip>
-            {types.length > 0 && (
-              <select
-                className={styles.select}
-                value={taskType}
-                aria-label={t('filter_every_type')}
-                onChange={(e) => setTaskType(e.target.value)}
-              >
-                <option value="">{t('filter_every_type')}</option>
-                {types.map((ty) => (
-                  <option key={ty} value={ty}>
-                    {ty}
-                  </option>
-                ))}
-              </select>
-            )}
+          <div className={styles.filters}>
+            {state === null && <span className={styles.muted}>{t('showing_attention')}</span>}
             {live && <span className={styles.muted}>{t('live')}</span>}
           </div>
-
-          {page && page.items.length === 0 ? (
-            <p className={styles.muted}>{t('runs_empty')}</p>
+          {loadError ? (
+            <GridFailed message={t('load_failed', { error: loadError })} retry={t('try_again')} onRetry={refresh} />
           ) : (
             page && (
-              <Table data-background-runs-table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('col_task')}</TableHead>
-                    <TableHead>{t('col_state')}</TableHead>
-                    <TableHead>{t('col_what')}</TableHead>
-                    <TableHead>{t('col_tries')}</TableHead>
-                    <TableHead>{t('col_took')}</TableHead>
-                    <TableHead>{t('col_started')}</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {page.items.map((run) => (
-                    <RunRow
-                      key={run.id}
-                      run={run}
-                      now={page.at}
-                      cadence={schedules?.find((sc) => sc.task_type === run.task_type)?.expression}
-                      open={open === run.id}
-                      onToggle={() => setOpen(open === run.id ? null : run.id)}
-                      onAct={act}
-                      t={t}
-                      language={language}
-                    />
-                  ))}
-                </TableBody>
-              </Table>
+              <RunsGrid
+                rows={page.items}
+                t={t}
+                language={language}
+                now={page.at}
+                counts={counts}
+                types={types}
+                cadenceOf={cadenceOf}
+                onAct={onAct}
+                onQuery={onQuery}
+                onOpen={onOpen}
+              />
             )
           )}
           {page && page.total > page.items.length && page.items.length >= limit && (
@@ -326,6 +264,8 @@ export const BackgroundScreen: React.FC = () => {
               {t('more')}
             </Button>
           )}
+          {/* A run's details open under the list, not under its row. */}
+          {opened && <RunDetails run={opened} t={t} language={language} />}
         </CardContent>
       </Card>
 
@@ -334,54 +274,7 @@ export const BackgroundScreen: React.FC = () => {
           <CardTitle>{t('schedules')}</CardTitle>
         </CardHeader>
         <CardContent>
-          {schedules && schedules.length === 0 ? (
-            <p className={styles.muted}>{t('schedules_empty')}</p>
-          ) : (
-            schedules && (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('col_schedule')}</TableHead>
-                    <TableHead>{t('col_runs')}</TableHead>
-                    <TableHead>{t('col_cadence')}</TableHead>
-                    <TableHead>{t('col_policies')}</TableHead>
-                    <TableHead>{t('col_next')}</TableHead>
-                    <TableHead>{t('col_last')}</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {[...schedules]
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map((sc) => (
-                      <TableRow key={sc.id} data-schedule={sc.id}>
-                        <TableCell>
-                          <b>{sc.name}</b> {!sc.enabled && <Badge variant="warning">{t('disabled')}</Badge>}
-                        </TableCell>
-                        <TableCell className={styles.muted}>{sc.task_type}</TableCell>
-                        <TableCell className={styles.muted}>
-                          {sc.expression}
-                          <div>
-                            {sc.expression_kind} · {sc.timezone}
-                          </div>
-                        </TableCell>
-                        <TableCell className={styles.muted}>
-                          {sc.concurrency} · {sc.missed_policy}
-                          {sc.missed_policy === 'backfill' && ` (≤${sc.max_catch_up_runs})`}
-                        </TableCell>
-                        <TableCell>{when(sc.next_run_at, language)}</TableCell>
-                        <TableCell>{when(sc.last_fired_at, language)}</TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="sm" onClick={() => void runNow(sc)}>
-                            {t('run_now')}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                </TableBody>
-              </Table>
-            )
-          )}
+          {schedules && <SchedulesGrid schedules={schedules} t={t} language={language} runNow={onRunNow} />}
         </CardContent>
       </Card>
     </div>
@@ -389,117 +282,3 @@ export const BackgroundScreen: React.FC = () => {
 };
 
 BackgroundScreen.displayName = 'BackgroundScreen';
-
-function FilterChip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button type="button" className={`${styles.chip} ${on ? styles.chipOn : ''}`} aria-pressed={on} onClick={onClick}>
-      {children}
-    </button>
-  );
-}
-
-function RunRow({
-  run,
-  now,
-  cadence,
-  open,
-  onToggle,
-  onAct,
-  t,
-  language,
-}: {
-  run: ShownRun;
-  now: number;
-  cadence: string | undefined;
-  open: boolean;
-  onToggle: () => void;
-  onAct: (run: TaskRun, what: 'cancel' | 'retry') => void;
-  t: Text;
-  language: string;
-}) {
-  return (
-    <>
-      <TableRow data-run={run.state} onClick={onToggle} className={styles.clickable}>
-        <TableCell>
-          <b>{run.task_type}</b>
-          <div className={styles.muted}>
-            {run.folded !== undefined ? (
-              <>
-                {t('folded', { cadence: cadence ?? t('scheduled') })}
-                {run.folded > 0 && ` · ${t('folded_more', { count: run.folded })}`}
-              </>
-            ) : (
-              run.id.slice(0, 8)
-            )}
-          </div>
-        </TableCell>
-        <TableCell>
-          <Badge variant={VARIANT[stateTone(run.state)]}>{t(`state_${run.state}`)}</Badge>
-          {run.cancel_requested && !finished(run) && <div className={styles.muted}>{t('stop_requested')}</div>}
-        </TableCell>
-        <TableCell className={styles.muted}>{headline(run)}</TableCell>
-        <TableCell>{run.attempts}</TableCell>
-        <TableCell className={styles.muted}>{duration(run, now)}</TableCell>
-        <TableCell>{when(run.started_at ?? run.created_at, language)}</TableCell>
-        <TableCell onClick={(e) => e.stopPropagation()}>
-          {(run.state === 'failed' || run.state === 'cancelled') && (
-            <Button variant="ghost" size="sm" onClick={() => onAct(run, 'retry')}>
-              {t('retry')}
-            </Button>
-          )}
-          {!finished(run) && (
-            <Button variant="ghost" size="sm" disabled={run.cancel_requested} onClick={() => onAct(run, 'cancel')}>
-              {t('cancel')}
-            </Button>
-          )}
-        </TableCell>
-      </TableRow>
-      {open && (
-        <TableRow className={styles.detailRow}>
-          <TableCell colSpan={7}>
-            <dl className={styles.details}>
-              <dt>{t('detail_id')}</dt>
-              <dd>{run.id}</dd>
-              <dt>{t('detail_by')}</dt>
-              <dd>{run.requested_by}</dd>
-              {run.partition_key && (
-                <>
-                  <dt>{t('detail_partition')}</dt>
-                  <dd>{run.partition_key}</dd>
-                </>
-              )}
-              <dt>{t('detail_created')}</dt>
-              <dd>{when(run.created_at, language)}</dd>
-              <dt>{t('detail_finished')}</dt>
-              <dd>{when(run.finished_at, language)}</dd>
-              {run.progress && (
-                <>
-                  <dt>{t('detail_progress')}</dt>
-                  <dd>{run.progress}</dd>
-                </>
-              )}
-              {run.last_error && (
-                <>
-                  <dt>{t('detail_error')}</dt>
-                  <dd>{run.last_error}</dd>
-                </>
-              )}
-              <dt>{t('detail_payload')}</dt>
-              <dd>
-                <pre className={styles.json}>{JSON.stringify(run.payload, null, 2)}</pre>
-              </dd>
-              {run.result && (
-                <>
-                  <dt>{t('detail_result')}</dt>
-                  <dd>
-                    <pre className={styles.json}>{JSON.stringify(run.result, null, 2)}</pre>
-                  </dd>
-                </>
-              )}
-            </dl>
-          </TableCell>
-        </TableRow>
-      )}
-    </>
-  );
-}

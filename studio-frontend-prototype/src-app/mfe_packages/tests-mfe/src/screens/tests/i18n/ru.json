@@ -66,5 +66,12 @@
   "status_cancelled": "отменён",
   "status_skipped": "пропущен",
   "status_unknown": "неизвестно",
-  "open_specs": "Открыть Specs →"
+  "open_specs": "Открыть Specs →",
+  "retry": "Повторить",
+  "search_runs": "Найти запуск: workflow, ветка, коммит или упавшая задача",
+  "search_pulls": "Найти pull request: номер, заголовок, репозиторий или ревьюер",
+  "no_runs_match": "Ни один запуск не подходит.",
+  "no_pulls_match": "Ни один pull request не подходит.",
+  "clear_search": "Сбросить поиск",
+  "no_data": "Неизвестно"
 }

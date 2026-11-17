@@ -1,7 +1,14 @@
+import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ArtifactRow } from '../../../model/artifact';
-import { artifactColumns, type ArtifactColumnLabels, type ArtifactOpen } from './artifactColumns';
+import {
+  ARTIFACT_CELLS,
+  ArtifactCellsProvider,
+  ArtifactRowMenu,
+  type ArtifactColumnLabels,
+  type ArtifactOpen,
+} from './artifactColumns';
 
 /**
  * What a row offers depends on its kind: a file opens in the editor, anything
@@ -21,6 +28,7 @@ const LABELS: ArtifactColumnLabels = {
   open: 'Open',
   openInEditor: 'Open in editor',
   copyLink: 'Copy link',
+  none: 'None',
 };
 
 const FILE: ArtifactRow = {
@@ -45,19 +53,18 @@ const ISSUE: ArtifactRow = {
   provenance: null,
 };
 
-function cells(row: ArtifactRow, onOpen?: ArtifactOpen) {
-  const columns = artifactColumns({ labels: LABELS, formatRelative: () => '', onOpen });
-  const byKey = new Map(columns.map((column) => [column.key, column]));
-  return {
-    name: byKey.get('name')!.render(row),
-    actions: byKey.get('actions')!.render(row),
-  };
+function cell(Component: React.FC<{ item: ArtifactRow }>, row: ArtifactRow, onOpen?: ArtifactOpen) {
+  return (
+    <ArtifactCellsProvider value={{ labels: LABELS, formatRelative: () => '', onOpen }}>
+      <Component item={row} />
+    </ArtifactCellsProvider>
+  );
 }
 
 describe('artifact name cell', () => {
   it('is a button for a file, and hands the row to onOpen', () => {
     const onOpen = vi.fn();
-    render(<>{cells(FILE, onOpen).name}</>);
+    render(cell(ARTIFACT_CELLS.name, FILE, onOpen));
 
     const button = screen.getByRole('button', { name: 'README.md' });
     fireEvent.click(button);
@@ -67,21 +74,32 @@ describe('artifact name cell', () => {
   });
 
   it('stays text for an issue — its home is the forge', () => {
-    render(<>{cells(ISSUE, vi.fn()).name}</>);
+    render(cell(ARTIFACT_CELLS.name, ISSUE, vi.fn()));
     expect(screen.queryByRole('button')).toBeNull();
     expect(screen.getByText('#12 Broken link')).toBeTruthy();
   });
 
   it('stays text when nothing can open it', () => {
-    render(<>{cells(FILE).name}</>);
+    render(cell(ARTIFACT_CELLS.name, FILE));
     expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+describe('artifact repository cell', () => {
+  it('names the repository, and none for a Studio document', () => {
+    const { unmount } = render(cell(ARTIFACT_CELLS.repository, FILE));
+    expect(screen.getByText('group/repo')).toBeTruthy();
+    unmount();
+    render(cell(ARTIFACT_CELLS.repository, { ...FILE, kind: 'document' }));
+    expect(screen.queryByText('group/repo')).toBeNull();
+    expect(screen.getByTitle('None')).toBeTruthy();
   });
 });
 
 describe('artifact row menu', () => {
   it('offers Open in editor for a file, even one without a forge url', async () => {
     const onOpen = vi.fn();
-    render(<>{cells(FILE, onOpen).actions}</>);
+    render(cell(ArtifactRowMenu, FILE, onOpen));
 
     const trigger = screen.getByRole('button', { name: 'Actions for README.md' }) as HTMLButtonElement;
     expect(trigger.disabled).toBe(false);
@@ -97,7 +115,7 @@ describe('artifact row menu', () => {
   });
 
   it('offers Open and Copy link for an issue', async () => {
-    render(<>{cells(ISSUE, vi.fn()).actions}</>);
+    render(cell(ArtifactRowMenu, ISSUE, vi.fn()));
 
     fireEvent.click(screen.getByRole('button', { name: 'Actions for #12 Broken link' }));
 
@@ -108,7 +126,7 @@ describe('artifact row menu', () => {
   });
 
   it('is disabled when the row has neither a path to edit nor a url to visit', () => {
-    render(<>{cells({ ...ISSUE, url: null }, vi.fn()).actions}</>);
+    render(cell(ArtifactRowMenu, { ...ISSUE, url: null }, vi.fn()));
     const trigger = screen.getByRole('button', { name: /Actions for/ }) as HTMLButtonElement;
     expect(trigger.disabled).toBe(true);
   });

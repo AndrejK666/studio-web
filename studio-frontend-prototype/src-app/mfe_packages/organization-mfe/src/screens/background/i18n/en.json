@@ -10,9 +10,7 @@
   "load_failed": "The runs could not be read: {error}",
   "action_failed": "That did not work: {error}",
   "runs": "Runs",
-  "filter_attention": "Failed + running",
   "filter_every": "every state",
-  "filter_every_type": "Every task type",
   "state_queued": "queued",
   "state_running": "running",
   "state_succeeded": "succeeded",
@@ -52,5 +50,13 @@
   "col_next": "Next",
   "col_last": "Last",
   "disabled": "disabled",
-  "run_now": "Run now"
+  "run_now": "Run now",
+  "showing_attention": "Showing what failed and what is running; choose a state to see the others.",
+  "filter_task_type": "Task type",
+  "search_runs": "Search runs",
+  "runs_no_matches": "No run matches.",
+  "search_schedules": "Search schedules",
+  "schedules_no_matches": "No schedule matches.",
+  "clear_search": "Clear search",
+  "try_again": "Try again"
 }

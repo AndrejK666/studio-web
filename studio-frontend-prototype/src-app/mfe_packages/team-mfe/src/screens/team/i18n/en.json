@@ -37,5 +37,9 @@
   "role_default": "Role: {role}",
   "role_none": "default",
   "cancel": "Cancel",
-  "close": "Close"
+  "close": "Close",
+  "search": "Search the team",
+  "no_matches": "Nobody on the team matches.",
+  "clear_search": "Clear search",
+  "retry": "Try again"
 }

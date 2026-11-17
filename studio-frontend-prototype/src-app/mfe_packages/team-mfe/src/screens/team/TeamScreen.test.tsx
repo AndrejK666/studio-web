@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChildMfeBridge } from '@gears-frontx/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
+
+// The kit's DataGrid measures its header.
+stubResizeObserver();
 
 const { service, scope, puts, screens } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -77,6 +81,9 @@ function serve(access: Partial<AccessConfig> | null, over: Record<string, unknow
 const bridge = {} as ChildMfeBridge;
 const lastPut = () => puts[puts.length - 1].body as AccessConfig;
 
+/** A grant's row in the grid. */
+const rowOf = (id: string) => document.querySelector(`[data-team-grant="${id}"]`)?.closest('tr') ?? null;
+
 beforeEach(() => {
   puts.length = 0;
   screens.length = 0;
@@ -107,7 +114,7 @@ describe('Project › Team', () => {
     expect(screen.queryByText('Cid')).toBeNull();
     expect(screen.getByText('people:2')).toBeTruthy();
     // An organization-wide grant is shown, managed in Access.
-    const orgRow = document.querySelector('[data-team-grant="g2"]') as HTMLElement;
+    const orgRow = rowOf('g2') as HTMLElement;
     expect(orgRow.textContent).toContain('scope_org');
     expect(orgRow.textContent).toContain('in_access');
     expect((orgRow.querySelector('select') as HTMLSelectElement).disabled).toBe(true);
@@ -116,7 +123,7 @@ describe('Project › Team', () => {
   it("changes a member's role by writing the access config", async () => {
     render(<TeamScreen bridge={bridge} />);
     await screen.findByText('Bob');
-    const select = document.querySelector('[data-team-grant="g1"] select') as HTMLSelectElement;
+    const select = rowOf('g1')?.querySelector('select') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'viewer' } });
     await waitFor(() => expect(puts).toHaveLength(1));
     expect(puts[0].tenant).toBe('o1');
@@ -160,7 +167,7 @@ describe('Project › Team', () => {
     );
     render(<TeamScreen bridge={bridge} />);
     await screen.findByText('Bob');
-    fireEvent.change(document.querySelector('[data-team-grant="g1"] select') as HTMLSelectElement, {
+    fireEvent.change(rowOf('g1')?.querySelector('select') as HTMLSelectElement, {
       target: { value: 'viewer' },
     });
     expect(await screen.findByRole('alert')).toBeTruthy();
@@ -185,6 +192,38 @@ describe('Project › Team', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('members unreadable');
     expect(screen.queryByText(/^tenant_title/)).toBeNull();
     expect(screen.queryByText('loading_team')).toBeNull();
+  });
+
+  it('renders the team through the grid, and its search narrows the rows', async () => {
+    render(<TeamScreen bridge={bridge} />);
+    await screen.findByText('Bob');
+    expect(document.querySelector('[data-list-grid="team"]')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'ann@' } });
+    await waitFor(() => expect(screen.queryByText('Bob')).toBeNull());
+    expect(screen.getByText('Ann')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'nobody' } });
+    expect(await screen.findByText('no_matches')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'clear_search' }));
+    expect(await screen.findByText('Bob')).toBeTruthy();
+  });
+
+  it('reads the team again from Retry after a failed read', async () => {
+    let fail = true;
+    serve(
+      { model: 'roles', roles: ROLES, grants: [grant('g1', 'u2')] },
+      {
+        myColleagues: () => (fail ? Promise.reject(new Error('down')) : Promise.resolve([])),
+        orgMembers: () =>
+          fail
+            ? Promise.reject(new Error('down'))
+            : Promise.resolve([{ user_id: 'u2', display_name: 'Bob', role: 'member', status: 'active' }]),
+      }
+    );
+    render(<TeamScreen bridge={bridge} />);
+    await screen.findByRole('alert');
+    fail = false;
+    fireEvent.click(screen.getByRole('button', { name: 'retry' }));
+    expect(await screen.findByText('Bob')).toBeTruthy();
   });
 
   it('offers adding and inviting when nobody is on the team', async () => {

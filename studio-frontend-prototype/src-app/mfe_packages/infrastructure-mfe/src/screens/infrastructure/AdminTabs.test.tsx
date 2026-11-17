@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import type { DeployEnvironment } from '../../api/types';
+
+// The kit's DataGrid measures its header.
+stubResizeObserver();
 
 const { service, calls } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -83,6 +87,56 @@ describe('Namespaces', () => {
       })
     );
     expect(await screen.findByText(/assignment_saved/)).toBeTruthy();
+  });
+});
+
+describe('Namespaces grid', () => {
+  const assignment = (project_id: string, namespace: string) => ({
+    project_id,
+    environment_id: 'e-dev',
+    namespace,
+    assigned_by: 'studio',
+  });
+  const projects = [
+    { id: 'p1', name: 'Shop' },
+    { id: 'p2', name: 'Blog' },
+  ];
+
+  it('lists the assignments through the grid: the search narrows them, and Change opens the form', async () => {
+    Object.assign(service, {
+      namespaceAssignments: read('namespaceAssignments', {
+        items: [assignment('p1', 'shop-dev'), assignment('p2', 'blog-dev')],
+        total: 2,
+      }),
+    });
+    wrap(<NamespaceAssignments environments={[dev]} projects={projects} people={new Map()} />);
+    await waitFor(() =>
+      expect(document.querySelector('[data-list-grid="namespace-assignments"] [data-assignment="p2/e-dev"]')).not.toBeNull()
+    );
+    fireEvent.change(screen.getByPlaceholderText('search_assignments'), { target: { value: 'shop' } });
+    await waitFor(() => expect(document.querySelector('[data-assignment="p2/e-dev"]')).toBeNull());
+    fireEvent.click(document.querySelector('[data-assignment-change="p1/e-dev"]') as HTMLElement);
+    const form = document.querySelector('[data-assignment-form]') as HTMLElement;
+    expect((within(form).getByLabelText('col_project') as HTMLSelectElement).value).toBe('p1');
+    fireEvent.change(screen.getByPlaceholderText('search_assignments'), { target: { value: 'nothing' } });
+    expect(await screen.findByText('no_matches')).toBeTruthy();
+  });
+
+  it('says the assignments did not load, and reads them again on Retry', async () => {
+    let failed = false;
+    Object.assign(service, {
+      namespaceAssignments: () => ({
+        fetch: () => {
+          if (failed) return Promise.resolve({ items: [assignment('p1', 'shop-dev')], total: 1 });
+          failed = true;
+          return Promise.reject(new Error('down'));
+        },
+      }),
+    });
+    wrap(<NamespaceAssignments environments={[dev]} projects={projects} people={new Map()} />);
+    expect(await screen.findByText(/assignments_unreadable/)).toBeTruthy();
+    fireEvent.click(screen.getByText('retry'));
+    await waitFor(() => expect(document.querySelector('[data-assignment="p1/e-dev"]')).not.toBeNull());
   });
 });
 

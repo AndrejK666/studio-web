@@ -11,7 +11,7 @@
  *     for every project without a retention of its own.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Badge,
   Button,
@@ -24,13 +24,8 @@ import {
   Input,
   NativeSelect,
   NativeSelectOption,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@gears-frontx/ui-kit';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import type { DeployEnvironment, ImageRetention, NamespaceAssignment } from '../../api/types';
 import { retentionProblem, retentionSummary } from '../../model/images';
 import {
@@ -41,7 +36,8 @@ import {
   type AssignmentInput,
 } from '../../model/namespace-assignments';
 import type { ProjectRef } from './EnvironmentForm';
-import { errText, personLabel, relTime, useApi, useInfra, type PeopleNames } from './parts';
+import { NamespacesGrid } from './NamespacesGrid';
+import { errText, useApi, useInfra, type PeopleNames } from './parts';
 import styles from './InfrastructureScreen.module.css';
 
 export function NamespaceAssignments({
@@ -53,9 +49,11 @@ export function NamespaceAssignments({
   projects: ProjectRef[];
   people: PeopleNames;
 }) {
-  const { t, org, language } = useInfra();
+  const { t, org } = useInfra();
   const api = useApi();
   const [items, setItems] = useState<NamespaceAssignment[] | null>(null);
+  /** The list's own read failed: the list says so, with a retry. */
+  const [readError, setReadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AssignmentInput | null>(null);
   const [tried, setTried] = useState(false);
@@ -72,12 +70,12 @@ export function NamespaceAssignments({
       .then((r) => {
         if (!live) return;
         setItems(r.items);
-        setError(null);
+        setReadError(null);
       })
       .catch((e: unknown) => {
         if (!live) return;
         setItems([]);
-        setError(errText(e));
+        setReadError(errText(e));
       });
     return () => {
       live = false;
@@ -87,7 +85,19 @@ export function NamespaceAssignments({
   const clusters = environments.filter((e) => e.kind !== 'research');
   const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? id;
   const envName = (id: string) => environments.find((e) => e.id === id)?.name ?? id;
-  const rows = items ? assignmentRows(items, projectName, envName) : null;
+  // A new array only when the assignments or the names changed: each one reloads the grid.
+  const rows = useMemo(
+    () =>
+      items
+        ? assignmentRows(
+            items,
+            (id) => projects.find((p) => p.id === id)?.name ?? id,
+            (id) => environments.find((e) => e.id === id)?.name ?? id
+          )
+        : null,
+    [items, projects, environments]
+  );
+  const change = useCallback((r: { assignment: NamespaceAssignment }) => setEditing(assignmentInput(r.assignment)), []);
   const problem = editing ? assignmentProblem(editing, environments) : null;
   const env = editing ? environments.find((e) => e.id === editing.environment_id) : undefined;
   const suggestion = editing ? suggestedNamespace(env, projectName(editing.project_id)) : '';
@@ -247,63 +257,12 @@ export function NamespaceAssignments({
             </div>
           </form>
         )}
-        {rows === null ? (
+        {readError ? (
+          <GridFailed message={t('assignments_unreadable', { error: readError })} retry={t('retry')} onRetry={reload} />
+        ) : rows === null ? (
           <p className={styles.hint}>{t('loading')}</p>
-        ) : rows.length === 0 ? (
-          <Empty>
-            <EmptyHeader>
-              <EmptyTitle>{t('no_assignments')}</EmptyTitle>
-            </EmptyHeader>
-          </Empty>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('col_project')}</TableHead>
-                <TableHead>{t('col_environment')}</TableHead>
-                <TableHead>{t('col_namespace')}</TableHead>
-                <TableHead>{t('col_builds_in')}</TableHead>
-                <TableHead>{t('col_assigned_by')}</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.key} data-assignment={r.key}>
-                  <TableCell>
-                    <b>{r.project}</b>
-                  </TableCell>
-                  <TableCell>{r.environment}</TableCell>
-                  <TableCell>
-                    <code>{r.namespace}</code>
-                  </TableCell>
-                  <TableCell>
-                    {r.build ? <code>{r.build}</code> : <span className={styles.muted}>{t('the_same')}</span>}
-                  </TableCell>
-                  <TableCell>
-                    <span title={r.at ?? undefined}>
-                      {r.assignment.assigned_by === 'studio'
-                        ? t('assigned_by_run')
-                        : r.assignment.assigned_by
-                          ? personLabel(r.assignment.assigned_by, null, people, t)
-                          : '—'}
-                      {r.at ? <span className={styles.muted}> · {relTime(r.at, language)}</span> : null}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <button
-                      type="button"
-                      className={styles.link}
-                      onClick={() => setEditing(assignmentInput(r.assignment))}
-                      data-assignment-change={r.key}
-                    >
-                      {t('change')}
-                    </button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <NamespacesGrid rows={rows} people={people} onChange={change} />
         )}
       </CardContent>
     </Card>
