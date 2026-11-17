@@ -170,22 +170,29 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
 
   useEffect(() => {
     let live = true;
+    // The path to running; an older backend has none and the screen goes on without it.
+    // It carries the targets and the deploys the server read to make it; where it does
+    // not (it failed, or the backend is older), they are read on their own.
+    const pathRead = api
+      .projectPath({ projectId, include: 'targets,deployments' })
+      .fetch({ staleTime: 0 })
+      .catch(() => null);
     Promise.all([
-      api.targets({ projectId }).fetch({ staleTime: 0 }),
-      api
-        .deployments({ projectId })
-        .fetch({ staleTime: 0 })
-        .catch(() => ({ items: [] as Deployment[], total: 0 })),
+      pathRead.then((pt) => pt?.targets ?? api.targets({ projectId }).fetch({ staleTime: 0 })),
+      pathRead.then(
+        (pt) =>
+          pt?.deployments ??
+          api
+            .deployments({ projectId })
+            .fetch({ staleTime: 0 })
+            .catch(() => ({ items: [] as Deployment[], total: 0 }))
+      ),
       api
         .nodes({ projectId, type: 'build', limit: 200, sort: 'updated' })
         .fetch({ staleTime: 0 })
         .then((p) => ideBuildsOf(p.nodes ?? []))
         .catch(() => [] as IdeBuild[]),
-      // The path to running; an older backend has none and the screen goes on without it.
-      api
-        .projectPath({ projectId })
-        .fetch({ staleTime: 0 })
-        .catch(() => null),
+      pathRead,
       api
         .specPlan({ projectId })
         .fetch({ staleTime: 0 })

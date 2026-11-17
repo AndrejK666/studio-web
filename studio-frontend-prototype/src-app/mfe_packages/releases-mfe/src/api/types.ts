@@ -525,6 +525,14 @@ export interface ProjectPath {
   /** Whether the Constructor Research kit applies: without it no Research target is offered. */
   research_kit: boolean;
   research?: ResearchSignIn | null;
+  /**
+   * With `include=targets`: the body of `GET /targets` for the project, which
+   * the server reads to answer anyway. Absent when not asked for, and from a
+   * backend before `include`.
+   */
+  targets?: ProjectTargets | null;
+  /** With `include=deployments`: the body of `GET /deployments` for the project; absent likewise. */
+  deployments?: DeploymentList | null;
 }
 
 /** The caller's own Research projects, and the connection they were read with (#1053). */
