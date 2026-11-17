@@ -18,6 +18,7 @@ export interface OrganizationRootProps {
 }
 
 function screenOf(section: unknown): React.ReactNode {
+  if (section === 'tasks') return <BackgroundScreen />;
   if (section === 'workspaces') return <WorkspacesScreen />;
   if (section === 'settings') return <SettingsScreen />;
   if (section === 'inbox') return <InboxScreen />;
@@ -28,8 +29,9 @@ export const OrganizationRoot: React.FC<OrganizationRootProps> = () => {
   const section = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_SECTION);
 
   // The overview is the level's entry point (ADR-0069 parity), and what a
-  // section this root does not know falls back to.
-  if (section === 'tasks') return <BackgroundScreen />;
+  // section this root does not know falls back to. Background work reads the
+  // organization in view too: outside the provider it had none, and listed no
+  // run and no schedule of any organization.
   return <OrganizationProvider>{screenOf(section)}</OrganizationProvider>;
 };
 
