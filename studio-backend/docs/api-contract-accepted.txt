@@ -899,6 +899,11 @@ request	POST /studio-presence/v1/messages	from_display_name	String	optional
 request	POST /studio-presence/v1/messages	text	String	required
 request	POST /studio-presence/v1/messages	to_user_id	String	required
 request	POST /studio-product/v1/gear-explanations/{}/generations	force	bool	optional
+request	POST /studio-product/v1/gear-matches	extract_max_calls	u32	optional
+request	POST /studio-product/v1/gear-matches	glob	String	optional
+request	POST /studio-product/v1/gear-matches	idempotency_key	String	optional
+request	POST /studio-product/v1/gear-matches	own_gears	Vec<String>	optional
+request	POST /studio-product/v1/gear-matches	paths	Vec<String>	optional
 request	POST /studio-product/v1/gearbox/brings	candidate	String	required
 request	POST /studio-product/v1/gearbox/brings	config	Value	optional
 request	POST /studio-product/v1/gearbox/brings	gears	Vec<String>	required
@@ -1248,6 +1253,14 @@ request	PUT /studio-organizations/v1/name	name	String	required
 request	PUT /studio-organizations/v1/project-types	phases	Vec<Value>	optional
 request	PUT /studio-organizations/v1/project-types	types	Vec<Value>	optional
 request	PUT /studio-product/v1/gear-explanations/{}	text	String	required
+request	PUT /studio-product/v1/gear-match-answers	match_id	Uuid	optional
+request	PUT /studio-product/v1/gear-match-answers	question_id	String	required
+request	PUT /studio-product/v1/gear-match-answers	text	String	required
+request	PUT /studio-product/v1/gear-match-answers	topic	String	optional
+request	PUT /studio-product/v1/gear-match-decisions	decision	String	required
+request	PUT /studio-product/v1/gear-match-decisions	gear_id	String	required
+request	PUT /studio-product/v1/gear-match-decisions	match_id	Uuid	optional
+request	PUT /studio-product/v1/gear-match-decisions	requirement_id	String	required
 request	PUT /studio-product/v1/product-infra	base_revision	i64	optional
 request	PUT /studio-product/v1/product-infra	items	Vec<Value>	required
 request	PUT /studio-product/v1/product-kind	kind	String	required
@@ -4942,6 +4955,105 @@ response	GET /studio-product/v1/gear-explanations	items.text	String	always
 response	GET /studio-product/v1/gear-explanations	items.updated_at	String	always
 response	GET /studio-product/v1/gear-explanations	may_manage	bool	always
 response	GET /studio-product/v1/gear-explanations	total	u32	always
+response	GET /studio-product/v1/gear-matches	items	Vec<{}>	always
+response	GET /studio-product/v1/gear-matches	items.created_at	String	always
+response	GET /studio-product/v1/gear-matches	items.error	String	optional
+response	GET /studio-product/v1/gear-matches	items.finished_at	String	optional
+response	GET /studio-product/v1/gear-matches	items.match_id	String	always
+response	GET /studio-product/v1/gear-matches	items.matcher_run_id	String	optional
+response	GET /studio-product/v1/gear-matches	items.progress	Value	optional
+response	GET /studio-product/v1/gear-matches	items.requested_by	String	always
+response	GET /studio-product/v1/gear-matches	items.run_id	String	optional
+response	GET /studio-product/v1/gear-matches	items.state	String	always
+response	GET /studio-product/v1/gear-matches	items.totals	{}	optional
+response	GET /studio-product/v1/gear-matches	items.totals.clarification_needed	u32	optional
+response	GET /studio-product/v1/gear-matches	items.totals.covered	u32	optional
+response	GET /studio-product/v1/gear-matches	items.totals.gap	u32	optional
+response	GET /studio-product/v1/gear-matches	items.totals.not_assessed	u32	optional
+response	GET /studio-product/v1/gear-matches	items.totals.partial	u32	optional
+response	GET /studio-product/v1/gear-matches	items.totals.requirements	u32	optional
+response	GET /studio-product/v1/gear-matches	total	u32	always
+response	GET /studio-product/v1/gear-matches/{}	catalogue_commit	String	optional
+response	GET /studio-product/v1/gear-matches/{}	documents	Vec<{}>	always
+response	GET /studio-product/v1/gear-matches/{}	documents.answered	Vec<String>	always
+response	GET /studio-product/v1/gear-matches/{}	documents.branch	String	optional
+response	GET /studio-product/v1/gear-matches/{}	documents.bytes	u64	always
+response	GET /studio-product/v1/gear-matches/{}	documents.commit	String	optional
+response	GET /studio-product/v1/gear-matches/{}	documents.doc_type	String	optional
+response	GET /studio-product/v1/gear-matches/{}	documents.matcher_path	String	always
+response	GET /studio-product/v1/gear-matches/{}	documents.path	String	always
+response	GET /studio-product/v1/gear-matches/{}	documents.sha256	String	always
+response	GET /studio-product/v1/gear-matches/{}	matcher	Value	optional
+response	GET /studio-product/v1/gear-matches/{}	product	String	always
+response	GET /studio-product/v1/gear-matches/{}	project_id	String	always
+response	GET /studio-product/v1/gear-matches/{}	questions	Vec<{}>	always
+response	GET /studio-product/v1/gear-matches/{}	questions.answer	String	optional
+response	GET /studio-product/v1/gear-matches/{}	questions.answered_by	String	optional
+response	GET /studio-product/v1/gear-matches/{}	questions.id	String	always
+response	GET /studio-product/v1/gear-matches/{}	questions.path	String	optional
+response	GET /studio-product/v1/gear-matches/{}	questions.quote	String	optional
+response	GET /studio-product/v1/gear-matches/{}	questions.reason	String	always
+response	GET /studio-product/v1/gear-matches/{}	questions.requirement_id	String	optional
+response	GET /studio-product/v1/gear-matches/{}	questions.topic	String	always
+response	GET /studio-product/v1/gear-matches/{}	report	Value	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements	Vec<{}>	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.action	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates	Vec<{}>	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.confidence	f64	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.covers	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.decision	String	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.evidence	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.gear_id	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.in_code	bool	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.listed	String	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.missing	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.name	String	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.pick	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.proposed	bool	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.rationale	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.role	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.candidates.verdict	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.confidence	f64	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.coverage	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.extracted	bool	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.gear_provides	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.kind	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.low_confidence	bool	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.passage	{}	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.passage.line	u32	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.passage.path	String	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.passage.text	String	optional
+response	GET /studio-product/v1/gear-matches/{}	requirements.reason	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.remaining_work	String	always
+response	GET /studio-product/v1/gear-matches/{}	requirements.requirement_id	String	always
+response	GET /studio-product/v1/gear-matches/{}	schema_version	String	optional
+response	GET /studio-product/v1/gear-matches/{}	summary	{}	always
+response	GET /studio-product/v1/gear-matches/{}	summary.created_at	String	always
+response	GET /studio-product/v1/gear-matches/{}	summary.error	String	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.finished_at	String	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.match_id	String	always
+response	GET /studio-product/v1/gear-matches/{}	summary.matcher_run_id	String	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.progress	Value	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.requested_by	String	always
+response	GET /studio-product/v1/gear-matches/{}	summary.run_id	String	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.state	String	always
+response	GET /studio-product/v1/gear-matches/{}	summary.totals	{}	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.totals.clarification_needed	u32	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.totals.covered	u32	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.totals.gap	u32	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.totals.not_assessed	u32	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.totals.partial	u32	optional
+response	GET /studio-product/v1/gear-matches/{}	summary.totals.requirements	u32	optional
+response	GET /studio-product/v1/gear-matches/{}	usage	Value	optional
+response	GET /studio-product/v1/gear-matches/{}/diff	base	String	always
+response	GET /studio-product/v1/gear-matches/{}/diff	changes	Vec<{}>	always
+response	GET /studio-product/v1/gear-matches/{}/diff	changes.after	String	optional
+response	GET /studio-product/v1/gear-matches/{}/diff	changes.before	String	optional
+response	GET /studio-product/v1/gear-matches/{}/diff	changes.gears_after	Vec<String>	always
+response	GET /studio-product/v1/gear-matches/{}/diff	changes.gears_before	Vec<String>	always
+response	GET /studio-product/v1/gear-matches/{}/diff	changes.requirement_id	String	always
+response	GET /studio-product/v1/gear-matches/{}/diff	match_id	String	always
+response	GET /studio-product/v1/gear-matches/{}/diff	same	u32	always
 response	GET /studio-product/v1/gearbox	corpus_commit	String	optional
 response	GET /studio-product/v1/gearbox	corpus_ref	String	optional
 response	GET /studio-product/v1/gearbox	corpus_url	String	optional
@@ -4998,6 +5110,14 @@ response	GET /studio-product/v1/gearbox/extension-points	items.sdk	String	always
 response	GET /studio-product/v1/gearbox/extension-points	items.spec	String	always
 response	GET /studio-product/v1/gearbox/extension-points	items.trait_ident	String	always
 response	GET /studio-product/v1/gearbox/extension-points	total	u32	always
+response	GET /studio-product/v1/inbox/gear-match-questions	items	Vec<{}>	always
+response	GET /studio-product/v1/inbox/gear-match-questions	items.detail	String	optional
+response	GET /studio-product/v1/inbox/gear-match-questions	items.id	String	always
+response	GET /studio-product/v1/inbox/gear-match-questions	items.match_id	String	always
+response	GET /studio-product/v1/inbox/gear-match-questions	items.project_id	String	always
+response	GET /studio-product/v1/inbox/gear-match-questions	items.question_id	String	always
+response	GET /studio-product/v1/inbox/gear-match-questions	items.title	String	always
+response	GET /studio-product/v1/inbox/gear-match-questions	total	u32	always
 response	GET /studio-product/v1/product-description	latest	{}	optional
 response	GET /studio-product/v1/product-description	latest.author	String	optional
 response	GET /studio-product/v1/product-description	latest.created_at	String	optional
@@ -7578,6 +7698,25 @@ response	POST /studio-product/v1/gear-explanations/{}/generations	gear_id	String
 response	POST /studio-product/v1/gear-explanations/{}/generations	source	String	always
 response	POST /studio-product/v1/gear-explanations/{}/generations	text	String	always
 response	POST /studio-product/v1/gear-explanations/{}/generations	updated_at	String	always
+response	POST /studio-product/v1/gear-matches	match_id	String	always
+response	POST /studio-product/v1/gear-matches	run_id	String	always
+response	POST /studio-product/v1/gear-matches	state	String	always
+response	POST /studio-product/v1/gear-matches/{}/cancel	created_at	String	always
+response	POST /studio-product/v1/gear-matches/{}/cancel	error	String	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	finished_at	String	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	match_id	String	always
+response	POST /studio-product/v1/gear-matches/{}/cancel	matcher_run_id	String	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	progress	Value	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	requested_by	String	always
+response	POST /studio-product/v1/gear-matches/{}/cancel	run_id	String	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	state	String	always
+response	POST /studio-product/v1/gear-matches/{}/cancel	totals	{}	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	totals.clarification_needed	u32	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	totals.covered	u32	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	totals.gap	u32	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	totals.not_assessed	u32	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	totals.partial	u32	optional
+response	POST /studio-product/v1/gear-matches/{}/cancel	totals.requirements	u32	optional
 response	POST /studio-product/v1/gearbox/brings	brought	Vec<{}>	always
 response	POST /studio-product/v1/gearbox/brings	brought.database	bool	always
 response	POST /studio-product/v1/gearbox/brings	brought.gear	String	always
@@ -8324,6 +8463,16 @@ response	PUT /studio-product/v1/gear-explanations/{}	gear_id	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	source	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	text	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	updated_at	String	always
+response	PUT /studio-product/v1/gear-match-answers	author	String	always
+response	PUT /studio-product/v1/gear-match-answers	gear_id	String	optional
+response	PUT /studio-product/v1/gear-match-answers	subject	String	always
+response	PUT /studio-product/v1/gear-match-answers	updated_at	String	always
+response	PUT /studio-product/v1/gear-match-answers	value	String	optional
+response	PUT /studio-product/v1/gear-match-decisions	author	String	always
+response	PUT /studio-product/v1/gear-match-decisions	gear_id	String	optional
+response	PUT /studio-product/v1/gear-match-decisions	subject	String	always
+response	PUT /studio-product/v1/gear-match-decisions	updated_at	String	always
+response	PUT /studio-product/v1/gear-match-decisions	value	String	optional
 response	PUT /studio-product/v1/product-infra	items	Vec<Value>	always
 response	PUT /studio-product/v1/product-infra	revision	i64	optional
 response	PUT /studio-product/v1/product-infra	services	Vec<{}>	always
@@ -8861,11 +9010,15 @@ route	GET /studio-organizations/v1/rollups
 route	GET /studio-presence/v1/online
 route	GET /studio-product/v1/gdl-file
 route	GET /studio-product/v1/gear-explanations
+route	GET /studio-product/v1/gear-matches
+route	GET /studio-product/v1/gear-matches/{}
+route	GET /studio-product/v1/gear-matches/{}/diff
 route	GET /studio-product/v1/gearbox
 route	GET /studio-product/v1/gearbox/catalogue
 route	GET /studio-product/v1/gearbox/corpus/info/refs
 route	GET /studio-product/v1/gearbox/corpus/{}/info/refs
 route	GET /studio-product/v1/gearbox/extension-points
+route	GET /studio-product/v1/inbox/gear-match-questions
 route	GET /studio-product/v1/organizations/{}/gearbox/corpus/{}/info/refs
 route	GET /studio-product/v1/product-description
 route	GET /studio-product/v1/product-description-branches
@@ -9061,6 +9214,8 @@ route	POST /studio-organizations/v1/project-creations
 route	POST /studio-presence/v1/me
 route	POST /studio-presence/v1/messages
 route	POST /studio-product/v1/gear-explanations/{}/generations
+route	POST /studio-product/v1/gear-matches
+route	POST /studio-product/v1/gear-matches/{}/cancel
 route	POST /studio-product/v1/gearbox/brings
 route	POST /studio-product/v1/gearbox/complete
 route	POST /studio-product/v1/gearbox/config-schema
@@ -9141,6 +9296,8 @@ route	PUT /studio-organizations/v1/logo
 route	PUT /studio-organizations/v1/name
 route	PUT /studio-organizations/v1/project-types
 route	PUT /studio-product/v1/gear-explanations/{}
+route	PUT /studio-product/v1/gear-match-answers
+route	PUT /studio-product/v1/gear-match-decisions
 route	PUT /studio-product/v1/product-infra
 route	PUT /studio-product/v1/product-kind
 route	PUT /studio-product/v1/projects/{}/product

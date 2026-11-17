@@ -109,6 +109,11 @@ backend:
   # the Constructor identity provider, see `research` below]).
   appSecrets:
     existingSecret: "studio-web-app"
+  # The gears-matcher release's in-cluster address (its Service, port 80), e.g.
+  # "http://gears-matcher"; its shared secret is appSecrets key
+  # gears_matcher_secret [optional]. Empty: gear matches answer 503.
+  gearsMatcher:
+    url: ""
   # WHO ADMINISTERS THIS INSTALLATION, as Keycloak subject ids, comma-separated.
   #
   # A platform administrator is a membership of the platform root and nothing

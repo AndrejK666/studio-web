@@ -297,6 +297,61 @@ pub fn tools() -> Vec<Tool> {
             experimental: false,
             run: Run::Get("/studio-product/v1/gdl-file"),
         },
+        Tool {
+            name: "project_gear_match",
+            description: "Ask the gears-matcher service which gears of the catalogue cover the \
+                project's specifications: its PRDs by default, or the documents of its domain \
+                model `paths` and `glob` select (at most 20). One background run of a few \
+                minutes, paid model calls; answers `match_id` and `run_id` at once. Read the \
+                result with `project_gear_match_report` (`match_id`, or `latest`) once its \
+                state is `succeeded` or `partial`. Nothing is added to the product: a proposed \
+                gear goes in when your person adds it. Pass an `idempotency_key` so a resend \
+                does not start a second run. Say that you start one first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "paths": { "type": "array", "maxItems": 20, "items": { "type": "string" },
+                            "description": "Documents of the project's model: `docs/...`, `studio:<id>`, `upload:<name>`." },
+                        "glob": { "type": "string" },
+                        "extract_max_calls": { "type": "integer", "minimum": 1,
+                            "description": "Also read documents not in the spec format, with at most this many model calls." },
+                        "idempotency_key": { "type": "string" }
+                    }),
+                    &["project_id"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-product/v1/gear-matches",
+                query: &["project_id"],
+            },
+        },
+        Tool {
+            name: "project_gear_match_report",
+            description: "A gear match of the project (`match_id`, or `latest`): its state and \
+                progress, the documents sent with their hashes and commits, the matcher's \
+                catalogue commit, and per requirement the verdict (`covered`, `partial`, \
+                `gap`, `clarification_needed`, `not_assessed`), the candidate gears with the \
+                matcher's evidence and the members' decisions, the passage of the \
+                specification, and what Studio offers (`propose`, `create_gear`, `answer`, \
+                `rerun`); then the questions with the project's answers. Results vary \
+                between runs: `GET .../diff` compares two.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "match_id": { "type": "string",
+                            "description": "A match's id from `project_gear_match`, or `latest`." }
+                    }),
+                    &["project_id", "match_id"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-product/v1/gear-matches/{match_id}"),
+        },
     ]
 }
 

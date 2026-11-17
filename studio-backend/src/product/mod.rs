@@ -18,6 +18,7 @@ mod description_edit;
 mod descriptions;
 mod explanations;
 mod frontx;
+mod gear_match;
 mod gear_roots;
 mod gearbox;
 mod infra_gdl;
@@ -73,6 +74,10 @@ pub struct StudioProductGear {
     /// A product's description by revision (ADR-0053 §1); `None` when no
     /// database is configured, and the description routes answer 503.
     descriptions: OnceLock<Option<Arc<descriptions::DescriptionStore>>>,
+    /// Which gears the gears-matcher service reads in a project's
+    /// specifications (`gear_match`); its routes answer 503 without the
+    /// service or the database.
+    matches: OnceLock<Arc<gear_match::GearMatches>>,
 }
 
 impl DatabaseCapability for StudioProductGear {
@@ -87,8 +92,12 @@ impl Gear for StudioProductGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         // The descriptions stand down without a database, rather than the
         // whole gear: previews, writes and the corpus need none.
+        let mut match_store = None;
         let store = match ctx.db_required() {
-            Ok(db) => Some(Arc::new(descriptions::DescriptionStore::new(db.db()))),
+            Ok(db) => {
+                match_store = Some(Arc::new(gear_match::store::MatchStore::new(db.db())));
+                Some(Arc::new(descriptions::DescriptionStore::new(db.db())))
+            }
             Err(e) => {
                 warn!(
                     "studio-product: no database configured — product descriptions are not \
@@ -99,6 +108,29 @@ impl Gear for StudioProductGear {
             }
         };
         let _ = self.descriptions.set(store);
+
+        // The gears-matcher service: optional, and said so when it is off.
+        let config: gear_match::config::ProductConfig = ctx.config_or_default()?;
+        let matcher = Arc::new(gear_match::client::HttpMatcher::from_config(
+            &config.gears_matcher,
+        ));
+        match gear_match::client::Matcher::missing(matcher.as_ref()) {
+            Some(why) => info!("studio-product: gear matches are off -- {why}"),
+            None => info!(
+                url = %config.gears_matcher.resolve_base_url(),
+                "studio-product: gear matches through the gears-matcher service"
+            ),
+        }
+        let matches = Arc::new(gear_match::GearMatches::new(
+            config.gears_matcher,
+            matcher,
+            match_store,
+            ctx.client_hub(),
+        ));
+        crate::tasks::sdk::register(Arc::new(gear_match::task::GearMatchTask::new(Arc::clone(
+            &matches,
+        ))))?;
+        let _ = self.matches.set(matches);
         let storage = crate::model_metadata::storage_of(ctx);
         crate::data_places::note(
             "studio-product",
@@ -218,6 +250,10 @@ impl RestApiCapability for StudioProductGear {
 
         let gearbox = port::engine(&ctx.client_hub());
         let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);
+        let router = match self.matches.get() {
+            Some(m) => router.layer(axum::Extension(Arc::clone(m))),
+            None => router,
+        };
         // The platform's gear repositories, read on the way in (ADR-0046).
         let router = port::with_gear_roots(router, &ctx.client_hub());
         // The write routes a kit claims answer KIT_NOT_INSTALLED without it

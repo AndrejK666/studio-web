@@ -69,7 +69,11 @@
       "GET /studio-spec-mapping/v1/plan",
       "GET /studio-spec-mapping/v1/capabilities",
       "GET /studio-spec-mapping/v1/requirements",
-      "POST /studio-spec-mapping/v1/conformance"
+      "POST /studio-spec-mapping/v1/conformance",
+      "GET /studio-product/v1/gear-matches",
+      "GET /studio-product/v1/gear-matches/{match_id}",
+      "GET /studio-product/v1/gear-matches/{match_id}/diff",
+      "GET /studio-product/v1/inbox/gear-match-questions"
     ],
     "writes": [
       "PUT /studio-product/v1/projects/{project_id}/product",
@@ -80,7 +84,11 @@
       "POST /studio-product/v1/gear-explanations/{gear_id}/generations",
       "POST /studio-spec-mapping/v1/decisions",
       "POST /studio-components-catalog/v1/sync",
-      "PUT /studio-components-catalog/v1/sources"
+      "PUT /studio-components-catalog/v1/sources",
+      "POST /studio-product/v1/gear-matches",
+      "POST /studio-product/v1/gear-matches/{match_id}/cancel",
+      "PUT /studio-product/v1/gear-match-decisions",
+      "PUT /studio-product/v1/gear-match-answers"
     ]
   },
   "gears": [
@@ -104,7 +112,9 @@
         "product_description_outline",
         "product_kind",
         "product_kind_confirm",
-        "gdl_file"
+        "gdl_file",
+        "project_gear_match",
+        "project_gear_match_report"
       ],
       "routes": [
         "PUT /studio-product/v1/projects/{project_id}/product",
@@ -112,7 +122,11 @@
         "PUT /studio-product/v1/product-infra",
         "PUT /studio-product/v1/product-kind",
         "PUT /studio-product/v1/gear-explanations/{gear_id}",
-        "POST /studio-product/v1/gear-explanations/{gear_id}/generations"
+        "POST /studio-product/v1/gear-explanations/{gear_id}/generations",
+        "POST /studio-product/v1/gear-matches",
+        "POST /studio-product/v1/gear-matches/{match_id}/cancel",
+        "PUT /studio-product/v1/gear-match-decisions",
+        "PUT /studio-product/v1/gear-match-answers"
       ]
     },
     {
@@ -126,6 +140,14 @@
       "routes": [
         "POST /studio-spec-mapping/v1/decisions"
       ]
+    }
+  ],
+  "inbox": [
+    {
+      "id": "gear-match-questions",
+      "label": "Questions your gear matches wait on",
+      "kind": "endpoint",
+      "path": "/studio-product/v1/inbox/gear-match-questions"
     }
   ]
 }

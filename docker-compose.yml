@@ -198,6 +198,13 @@ services:
       # deployment. Values live in .env.
       STUDIO_INSIGHT_API_KEY: ${STUDIO_INSIGHT_API_KEY:-}
       STUDIO_INSIGHT_BASE_URL: ${STUDIO_INSIGHT_BASE_URL:-}
+      # Gear matches through the gears-matcher service (studio-product,
+      # docs/design/product-gear-match.md). config/docker.yaml names its
+      # address on this network (http://gears-matcher:8080); the shared secret
+      # is the service's `shared_secret` and lives in .env only. Unset, the
+      # match routes answer 503 and nothing else changes.
+      STUDIO_GEARS_MATCHER_SECRET: ${STUDIO_GEARS_MATCHER_SECRET:-}
+      STUDIO_GEARS_MATCHER_URL: ${STUDIO_GEARS_MATCHER_URL:-}
       # Encryption key for credstore secret VALUES at rest (issue #66, base64,
       # 32 bytes). Without it the backend falls back to the in-memory value
       # store and every secret typed into the portal — source PATs, connector

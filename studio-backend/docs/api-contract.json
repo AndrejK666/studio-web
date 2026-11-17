@@ -3613,6 +3613,54 @@
     },
     {
       "method": "GET",
+      "path": "/studio-product/v1/gear-matches",
+      "operation_id": "studio_product.list_gear_matches",
+      "tag": "StudioProduct",
+      "summary": "The project's gear matches, newest first",
+      "authenticated": true,
+      "responses": [
+        "GearMatchListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gear-matches/{match_id}",
+      "operation_id": "studio_product.get_gear_match",
+      "tag": "StudioProduct",
+      "summary": "One gear match, its report read per requirement",
+      "authenticated": true,
+      "responses": [
+        "GearMatchDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gear-matches/{match_id}/diff",
+      "operation_id": "studio_product.get_gear_match_diff",
+      "tag": "StudioProduct",
+      "summary": "What changed between two gear matches",
+      "authenticated": true,
+      "responses": [
+        "GearMatchDiffDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-product/v1/gearbox",
       "operation_id": "studio_product.get_gearbox_status",
       "tag": "StudioProduct",
@@ -3678,6 +3726,21 @@
       "authenticated": true,
       "responses": [
         "ExtensionPointListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/inbox/gear-match-questions",
+      "operation_id": "studio_product.list_inbox_gear_match_questions",
+      "tag": "StudioProduct",
+      "summary": "Questions the caller's gear matches wait on",
+      "authenticated": true,
+      "responses": [
+        "GearMatchInboxListDto"
       ],
       "errors": [
         "401",
@@ -6984,6 +7047,40 @@
     },
     {
       "method": "POST",
+      "path": "/studio-product/v1/gear-matches",
+      "operation_id": "studio_product.start_gear_match",
+      "tag": "StudioProduct",
+      "summary": "Match gears to the project's specifications with the gears-matcher",
+      "authenticated": true,
+      "request": "StartGearMatchRequest",
+      "responses": [
+        "GearMatchStartedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/gear-matches/{match_id}/cancel",
+      "operation_id": "studio_product.cancel_gear_match",
+      "tag": "StudioProduct",
+      "summary": "Stop a gear match and the matcher's run",
+      "authenticated": true,
+      "responses": [
+        "GearMatchItemDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-product/v1/gearbox/brings",
       "operation_id": "studio_product.query_gear_brings",
       "tag": "StudioProduct",
@@ -8317,6 +8414,42 @@
         "400",
         "401",
         "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/gear-match-answers",
+      "operation_id": "studio_product.upsert_gear_match_answer",
+      "tag": "StudioProduct",
+      "summary": "Answer a question a gear match asks",
+      "authenticated": true,
+      "request": "GearMatchAnswerRequest",
+      "responses": [
+        "GearMatchNoteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/gear-match-decisions",
+      "operation_id": "studio_product.upsert_gear_match_decision",
+      "tag": "StudioProduct",
+      "summary": "Accept or reject a gear a match proposes",
+      "authenticated": true,
+      "request": "GearMatchDecisionRequest",
+      "responses": [
+        "GearMatchNoteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "404",
         "500"
       ]

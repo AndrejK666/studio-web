@@ -708,6 +708,14 @@ gears:
 
   # ── studio-product (a product's description by revision, ADR-0053) ──
   studio-product:
+    # Gear matches (docs/design/product-gear-match.md): the gears-matcher
+    # service on the stand's network. Its shared secret is
+    # STUDIO_GEARS_MATCHER_SECRET (docker-compose.yml, no default); without it
+    # the match routes answer 503 and the rest of the product is unchanged.
+    config:
+      gears_matcher:
+        base_url: "http://gears-matcher:8080"
+        secret_env: "STUDIO_GEARS_MATCHER_SECRET"
     database:
       server: "pg_main"
       dbname: "studio_product"

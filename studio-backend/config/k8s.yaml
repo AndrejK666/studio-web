@@ -775,6 +775,15 @@ gears:
   # Small text per revision, read on every build and every open. `pool` is
   # small on purpose and counted against the budget on `pg_main` above.
   studio-product:
+    # Gear matches: the gears-matcher release's in-cluster address comes from
+    # STUDIO_GEARS_MATCHER_URL (backend.gearsMatcher.url), its secret from
+    # STUDIO_GEARS_MATCHER_SECRET (appSecrets gears_matcher_secret). Either
+    # unset turns gear matches off (503), nothing else.
+    config:
+      gears_matcher:
+        base_url: ""
+        base_url_env: "STUDIO_GEARS_MATCHER_URL"
+        secret_env: "STUDIO_GEARS_MATCHER_SECRET"
     database:
       server: "pg_main"
       dbname: "studio_product"
