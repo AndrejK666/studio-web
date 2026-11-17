@@ -70,6 +70,10 @@ export function violationOfType(error: unknown, type: string): Violation | null 
  */
 export function refusalText(error: unknown): string | null {
   const problem = parseProblemDetails(error);
+  // A failed precondition says only "Operation precondition not met" in
+  // `detail`; its sentence is the violation's (docs/errors-catalog.md).
+  const said = problem.violations.map((v) => text(v.description)).filter((d): d is string => d !== null);
+  if (said.length > 0) return said.join(' ');
   if (problem.detail) return problem.detail;
   if (problem.message) return problem.message;
   return typeof error === 'object' && error !== null
