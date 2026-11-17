@@ -118,6 +118,49 @@ fn gone_files<'a>(
         .collect()
 }
 
+/// What [`DocumentClassifier::adopt_ingested`] is given after a walk of
+/// `repo_id`: the file ids the scope keeps, and this walk's path → id for the
+/// paths no other kept repository has.
+///
+/// `repos` and `files` are the scope's as stored, `walked` this walk's files.
+/// Kept are this walk's files and the stored files of every repository that is
+/// neither this one (the walk replaces its files) nor an older attachment of
+/// the same path (the sync forgets those once it is stored).
+fn adoption_inputs(
+    repos: &[GtsNode],
+    files: &[super::port::IngestedFile],
+    repo_id: &str,
+    repo_full_path: &str,
+    walked: impl Iterator<Item = (String, String)>,
+) -> (HashSet<String>, HashMap<String, String>) {
+    let superseded: HashSet<&str> = repos
+        .iter()
+        .filter(|r| {
+            r.instance_id != repo_id
+                && r.value.get("full_path").and_then(serde_json::Value::as_str)
+                    == Some(repo_full_path)
+        })
+        .map(|r| r.instance_id.as_str())
+        .collect();
+    let mut alive: HashSet<String> = HashSet::new();
+    let mut elsewhere: HashSet<&str> = HashSet::new();
+    for f in files {
+        if f.repo == repo_id || superseded.contains(f.repo.as_str()) {
+            continue;
+        }
+        alive.insert(f.node_id.clone());
+        elsewhere.insert(f.path.as_str());
+    }
+    let mut by_path = HashMap::new();
+    for (path, id) in walked {
+        alive.insert(id.clone());
+        if !elsewhere.contains(path.as_str()) {
+            by_path.insert(path, id);
+        }
+    }
+    (alive, by_path)
+}
+
 /// The content nodes that go with `gone` files.
 ///
 /// Named rather than read: a content node's id is derived from its file's, so
@@ -1074,6 +1117,24 @@ impl IngestService {
                     }
                 }
             }
+        }
+
+        // Before anything is classified: the decisions recorded against this
+        // repository's files under the ids an older attachment gave them move
+        // onto the ids this walk gives them, so the pass below finds them
+        // decided rather than guessing again, and the prune of the older
+        // attachment at the end has nothing of a person's left to forget.
+        if listing_complete {
+            self.adopt_moved_bindings(
+                ctx,
+                workspace_id,
+                project_id,
+                &repo_id,
+                repo_full_path,
+                connector_id,
+                &file_paths,
+            )
+            .await;
         }
 
         // Decide what every file is, now, while the whole repository's text is
@@ -2137,6 +2198,87 @@ impl IngestService {
                 .is_some_and(|p| p.eq_ignore_ascii_case(repo_full_path))
         })
         .await
+    }
+
+    /// Hand the documents gear the bindings to move after this repository's
+    /// files got new ids (see [`DocumentClassifier::adopt_ingested`]).
+    ///
+    /// Live are the files of every repository the scope has, except older
+    /// attachments of this one, which the end of the sync forgets, and this
+    /// repository's stored files, which this walk replaces. A path that a
+    /// live file of another repository also has is left out: a binding knows
+    /// its path but not its repository, so it could belong to either.
+    ///
+    /// Best-effort, like the prunes: a failure is logged and the next sync
+    /// tries again.
+    #[allow(clippy::too_many_arguments)]
+    async fn adopt_moved_bindings(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+        repo_id: &str,
+        repo_full_path: &str,
+        connector_id: &str,
+        file_paths: &HashSet<String>,
+    ) {
+        let (Some(classifier), Some(workspace)) = (
+            self.classifier.as_ref(),
+            workspace_id.and_then(|w| Uuid::parse_str(w).ok()),
+        ) else {
+            return;
+        };
+        if file_paths.is_empty() {
+            return;
+        }
+        let scope = project_id.or(workspace_id).unwrap_or("unscoped");
+        let read = async {
+            let repos = self
+                .graph
+                .list_in_scope(ctx, Some(gts::REPO_TYPE), scope)
+                .await?;
+            let files = self.graph.files_in_scope(ctx, scope).await?;
+            anyhow::Ok((repos, files))
+        };
+        let (repos, files) = match read.await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: could not read the scope's files; bindings stay where they are this sync"
+                );
+                return;
+            }
+        };
+        let (alive, by_path) = adoption_inputs(
+            &repos,
+            &files,
+            repo_id,
+            repo_full_path,
+            file_paths.iter().map(|path| {
+                (
+                    path.clone(),
+                    gts::file_instance_id(scope, connector_id, repo_full_path, path),
+                )
+            }),
+        );
+        let project = project_id.and_then(|p| Uuid::parse_str(p).ok());
+        match classifier
+            .adopt_ingested(ctx, workspace, project, alive, by_path)
+            .await
+        {
+            Ok(0) => {}
+            Ok(moved) => info!(
+                repo = repo_full_path,
+                moved, "studio-artifact-ingest: bindings moved onto the files' new ids"
+            ),
+            Err(e) => warn!(
+                error = %e,
+                repo = repo_full_path,
+                "studio-artifact-ingest: could not move bindings onto the files' new ids; the next sync retries"
+            ),
+        }
     }
 
     /// After a sync of `repo_full_path`: forget the same repository as it was
@@ -3766,6 +3908,77 @@ mod search_hit_tests {
         super::name_repositories(&mut hits, &repos);
         assert_eq!(hits[0].value["repository"], "acme/web");
         assert!(hits[1].value.get("repository").is_none());
+    }
+}
+
+#[cfg(test)]
+mod adoption_input_tests {
+    //! What a walk hands `adopt_ingested`: which files the scope keeps and
+    //! which paths a dead binding may move to.
+    use super::super::graph::GtsNode;
+    use super::super::port::IngestedFile;
+    use serde_json::json;
+
+    fn repo(id: &str, path: &str) -> GtsNode {
+        GtsNode {
+            type_id: super::super::gts::REPO_TYPE,
+            instance_id: id.into(),
+            value: json!({"full_path": path}),
+        }
+    }
+
+    fn file(id: &str, path: &str, repo: &str) -> IngestedFile {
+        IngestedFile {
+            node_id: id.into(),
+            path: path.into(),
+            repo: repo.into(),
+        }
+    }
+
+    fn walked(pairs: &[(&str, &str)]) -> impl Iterator<Item = (String, String)> {
+        pairs
+            .iter()
+            .map(|(p, n)| ((*p).to_string(), (*n).to_string()))
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    #[test]
+    fn an_older_attachment_of_the_repository_is_not_kept() {
+        let repos = [repo("now", "acme/web"), repo("before", "acme/web")];
+        let files = [
+            file("old-a", "docs/a.md", "before"),
+            file("stored-a", "docs/a.md", "now"),
+        ];
+        let (alive, by_path) = super::adoption_inputs(
+            &repos,
+            &files,
+            "now",
+            "acme/web",
+            walked(&[("docs/a.md", "new-a")]),
+        );
+        assert!(!alive.contains("old-a"), "the older attachment is forgotten");
+        assert!(!alive.contains("stored-a"), "the walk replaces this repo's files");
+        assert!(alive.contains("new-a"));
+        assert_eq!(by_path.get("docs/a.md").map(String::as_str), Some("new-a"));
+    }
+
+    /// A binding knows its path, not its repository: a path another kept
+    /// repository has too could be that repository's binding.
+    #[test]
+    fn a_path_another_repository_has_is_not_offered() {
+        let repos = [repo("now", "acme/web"), repo("docs", "acme/docs")];
+        let files = [file("docs-readme", "README.md", "docs")];
+        let (alive, by_path) = super::adoption_inputs(
+            &repos,
+            &files,
+            "now",
+            "acme/web",
+            walked(&[("README.md", "web-readme"), ("docs/a.md", "new-a")]),
+        );
+        assert!(alive.contains("docs-readme"));
+        assert!(!by_path.contains_key("README.md"));
+        assert!(by_path.contains_key("docs/a.md"));
     }
 }
 
