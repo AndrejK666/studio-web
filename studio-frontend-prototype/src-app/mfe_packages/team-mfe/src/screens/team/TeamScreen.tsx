@@ -26,12 +26,6 @@ import {
   NativeSelect,
   NativeSelectOption,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@gears-frontx/ui-kit';
 import {
   ACCESS_CONFIG_TYPE,
@@ -43,7 +37,6 @@ import {
   errorMessage,
   grantsForProject,
   holderName,
-  initials,
   normalizeAccessConfig,
   openScreen,
   orgPeople,
@@ -61,7 +54,9 @@ import {
   type RoleDef,
   type ScreenText,
 } from '@constructor-studio/mfe-shared';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { useTeamTranslations } from '../../i18n';
+import { TeamGrid, type TeamCells, type TeamGridRow } from './TeamGrid';
 import styles from './TeamScreen.module.css';
 
 const errText = (e: unknown): string => refusalText(e) ?? errorMessage(e);
@@ -156,23 +151,28 @@ function Team({
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<GrantDef | null>(null);
+  /** Why nobody could be read: shown with a retry in place of the list. */
+  const [readError, setReadError] = useState<string | null>(null);
+  // Bumped by Retry: the same read, once more.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let live = true;
     readTeam(org.id, projectId).then(
       (read) => {
         if (!live) return;
+        setReadError(null);
         setPeople(read.members);
         setCfg(read.cfg);
         setProjectName(read.projectName);
       },
       // Nobody could be read: say why, and show no team rather than an empty one.
-      (e: unknown) => live && setError(errText(e))
+      (e: unknown) => live && setReadError(errText(e))
     );
     return () => {
       live = false;
     };
-  }, [org.id, projectId]);
+  }, [org.id, projectId, attempt]);
 
   const save = async (next: AccessConfig) => {
     setBusy(true);
@@ -199,6 +199,28 @@ function Team({
   const granted = new Set(teamGrants.map((g) => g.subjectId));
   const candidates = all.filter((p) => !granted.has(p.id));
   const personName = (g: GrantDef) => holderName(g, all);
+  // A new array only when the config or the people changed: each one reloads the grid.
+  const rows = useMemo<TeamGridRow[]>(
+    () =>
+      grantsForProject(cfg, projectId).map((g) => ({
+        ...g,
+        person: holderName(g, all),
+        email: all.find((p) => p.id === g.subjectId)?.email ?? '',
+        roleName: cfg?.roles.find((r) => r.key === g.roleKey)?.name ?? g.roleKey,
+        orgWide: g.scopeType === 'org',
+      })),
+    [cfg, all, projectId]
+  );
+  const cells: TeamCells | null = cfg && {
+    t,
+    cfg,
+    busy,
+    canAdd: candidates.length > 0,
+    changeRole: (g, roleKey) => void save(withGrantRole(cfg, g.id, roleKey)),
+    remove: setRemoving,
+    add: () => setAdding(true),
+    openPeople: () => openScreen(bridge, PEOPLE_ROUTE),
+  };
 
   return (
     <>
@@ -241,10 +263,10 @@ function Team({
         </p>
       )}
 
-      {people === null || cfg === null ? (
-        error ? null : (
-          <p className={styles.muted}>{t('loading_team')}</p>
-        )
+      {readError ? (
+        <GridFailed message={readError} retry={t('retry')} onRetry={() => setAttempt((n) => n + 1)} />
+      ) : people === null || cfg === null || cells === null ? (
+        <p className={styles.muted}>{t('loading_team')}</p>
       ) : !roleBased ? (
         <div className={styles.empty} data-team-tenant>
           <strong>{t('tenant_title', { org: org.name })}</strong>
@@ -253,82 +275,8 @@ function Team({
             {t('open_access')}
           </Button>
         </div>
-      ) : teamGrants.length === 0 ? (
-        <div className={styles.empty} data-team-empty>
-          <strong>{t('empty_title')}</strong>
-          <div className={styles.chips}>
-            <Button disabled={candidates.length === 0} onClick={() => setAdding(true)}>
-              {t('add')}
-            </Button>
-            <Button variant="ghost" onClick={() => openScreen(bridge, PEOPLE_ROUTE)}>
-              {t('open_people')}
-            </Button>
-          </div>
-        </div>
       ) : (
-        <Table data-team-list>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('col_person')}</TableHead>
-              <TableHead>{t('col_role')}</TableHead>
-              <TableHead>{t('col_scope')}</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {[...teamGrants]
-              .sort((a, b) => personName(a).localeCompare(personName(b)))
-              .map((g) => {
-                const person = all.find((p) => p.id === g.subjectId);
-                const orgWide = g.scopeType === 'org';
-                return (
-                  <TableRow key={g.id} data-team-grant={g.id}>
-                    <TableCell>
-                      <div className={styles.pcell}>
-                        <span className={styles.photo} aria-hidden>
-                          {initials(personName(g))}
-                        </span>
-                        <div>
-                          <div className={styles.pname}>{personName(g)}</div>
-                          <div className={styles.muted}>{person?.email ?? ''}</div>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <NativeSelect
-                        size="sm"
-                        aria-label={t('role_of', { name: personName(g) })}
-                        value={g.roleKey}
-                        disabled={busy || orgWide}
-                        onChange={(e) => void save(withGrantRole(cfg, g.id, e.target.value))}
-                      >
-                        {cfg.roles.map((r) => (
-                          <NativeSelectOption key={r.key} value={r.key}>
-                            {r.name}
-                          </NativeSelectOption>
-                        ))}
-                        {!cfg.roles.some((r) => r.key === g.roleKey) && (
-                          <NativeSelectOption value={g.roleKey}>{g.roleKey}</NativeSelectOption>
-                        )}
-                      </NativeSelect>
-                    </TableCell>
-                    <TableCell className={styles.muted}>{orgWide ? t('scope_org') : t('scope_project')}</TableCell>
-                    <TableCell className={styles.actions}>
-                      {orgWide ? (
-                        <span className={styles.muted} title={t('in_access_title')}>
-                          {t('in_access')}
-                        </span>
-                      ) : (
-                        <Button variant="ghost" size="sm" disabled={busy} onClick={() => setRemoving(g)}>
-                          {t('remove')}
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-          </TableBody>
-        </Table>
+        <TeamGrid rows={rows} cells={cells} />
       )}
 
       {adding && cfg && (
