@@ -38,13 +38,13 @@ describe('InboxGroup tells the top bar its count', () => {
 
   it('reports the total of the open view it read', async () => {
     inbox.mockResolvedValue({ items: [], total: 3, other: 0, unread: [] });
-    render(<InboxGroup t={t as never} />);
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
     await waitFor(() => expect(reported()).toEqual([3]));
   });
 
   it('reports a read that failed as unknown, not zero', async () => {
     inbox.mockRejectedValue(new Error('HTTP 503'));
-    render(<InboxGroup t={t as never} />);
+    render(<InboxGroup organizationId="o1" workspaces={1} t={t as never} />);
     await waitFor(() => expect(reported()).toEqual([null]));
   });
 });
